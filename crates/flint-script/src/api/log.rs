@@ -36,6 +36,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
         "Log a message at info level (log's other name).",
     )
     .arg("message", Any)
+    .deprecated("use log")
     .also_exact(&exact(TypeId::of::<ImmutableString>()))
     .run(|call, (message,)| push(call, LogLevel::Info, message));
 

@@ -108,6 +108,35 @@ mod native {
              each function's returns line says which. The entity module's transform \
              getters return #{} for an entity without a transform.",
         ),
+        (
+            "names",
+            "A name puts its verb first, then what it acts on: play_sprite, \
+             set_sprite_speed, shake_camera, stop_camera_shake. A value a script can \
+             change is read with get_<noun> and changed with set_<noun>, the same noun \
+             (get_lod_scale and set_lod_scale, get_current_scene); a yes-or-no question \
+             starts is_ or has_ (is_sprite_playing). What no script sets is named for what \
+             it returns, with no get_: this frame's input, the clocks and the screen \
+             (mouse_x, touch_x, delta_time, screen_width) and a calculation \
+             (distance, raycast, measure_text). A family one module owns keeps its prefix \
+             before the verb (persist_, ui_, spline_, conducted_). One name a function: no \
+             aliases and no _ex variants. A renamed function's old name works for one \
+             release, listed as deprecated with its new name, and flint script check warns \
+             at each call.",
+        ),
+        (
+            "opts_maps",
+            "A draw call takes what places it as positional numbers (a position and a \
+             size, two points, a centre and a radius) and then either its colour as four \
+             numbers (r, g, b, a, 0..1) or an opts map holding everything else, every key \
+             optional: draw_rect(x, y, w, h, #{color: \"#ff8800\", rounding: 6, layer: 2}). \
+             In a map a colour is [r, g, b], [r, g, b, a] or \"#rrggbb(aa)\", white when \
+             left out; layer orders draws (higher on top, 0); thickness is in points (1). \
+             Each function's description lists its keys; a key it doesn't take, or a \
+             value of the wrong shape, is ignored with a warning once per function and \
+             key. A map costs a call 0.15 to 0.22 us more than four colour numbers \
+             (draw_rect: 315 ns positional, 534 ns with a three-key map), so a loop of \
+             hundreds of draws a frame that needs only a colour keeps the positional form.",
+        ),
     ];
 
     /// A callback the engine calls on a script that defines it.

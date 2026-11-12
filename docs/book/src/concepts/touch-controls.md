@@ -134,7 +134,7 @@ The controls are drawn on their own Foreground egui layer, over the script UI an
 Flint Kart's menu scene calls `set_touch_controls(false)` on entering, and its race HUD brings them out while racing and puts them away under the pause and finish menus:
 
 ```rust
-let want = if current_state() != "paused" && !finish_menu_active { 1 } else { 0 };
+let want = if get_current_state() != "paused" && !finish_menu_active { 1 } else { 0 };
 if want != touch_controls_out {
     set_touch_controls(want == 1);
     touch_controls_out = want;

@@ -72,19 +72,46 @@ The engine lists its own API: `flint script api` prints every function with its 
 
 The function tables on this page, and the whole [Script API Reference](../reference/script-api.md) (every module, the conventions and the callbacks on one page), are written from those same declarations by `flint script api --book`. CI fails a pull request whose book has fallen behind them, or whose pages call a function the engine doesn't have. A table here shows a function's parameters with their kinds and what it returns; the notes under a table add what a one-line description can't.
 
-In every function a number takes an integer as well as a float (`set_position(id, 0, 1, 0)`, `set_camera_fov(60)`, `sin(1)`, `draw_rect(10, 10, 100, 50, 1, 1, 1, 1)`, `set_wooze(knobs, 2)`), and an integer parameter, such as a layer index, a mouse button or a particle count, takes a float with nothing after the point (`is_mouse_pressed(0.0)`, `draw_rect_ex(.., 0.0)`, `emit_burst(id, 3.0)`).
+In every function a number takes an integer as well as a float (`set_position(id, 0, 1, 0)`, `set_camera_fov(60)`, `sin(1)`, `draw_rect(10, 10, 100, 50, 1, 1, 1, 1)`, `set_wooze(knobs, 2)`), and an integer parameter, such as a layer index, a mouse button or a particle count, takes a float with nothing after the point (`is_mouse_pressed(0.0)`, `draw_ring(.., 2.0)`, `emit_burst(id, 3.0)`).
 
 A call whose numbers are all floats, or (for a function with four or more numbers, such as the draw calls) all ints, is found at once. A call that mixes ints and floats among its numbers, `draw_text(10, 20, "hp", 16, 1.0, 1.0, 1.0, 1.0)`, works too, but Rhai finds the function by trying the combinations of its argument types, which costs about 4 µs a call for eight numbers when nothing in the callback has been called before the loop it is in (Rhai remembers the answer for the rest of a callback once it has one). In a loop that draws hundreds of things a frame, write the numbers all one way.
 
+### Names and opts maps
+
+The API's names follow one set of rules (#702), stated with the others at the top of the [Script API Reference](../reference/script-api.md#conventions):
+
+- **Verb first**, then what it acts on: `play_sprite`, `set_sprite_speed`, `shake_camera`, `stop_camera_shake`, as `play_clip` and `play_sound` always were.
+- **`get_` and `set_` with the same noun** for a value a script can change: `set_lod_scale` / `get_lod_scale`, `set_camera_follow_position` / `get_camera_follow_position`, `get_current_scene`. A yes-or-no question starts `is_` or `has_` (`is_sprite_playing`). What no script sets is named for what it returns: this frame's input, the clocks and the screen (`mouse_x()`, `touch_x(id)`, `delta_time()`, `screen_width()`) and calculations (`distance`, `raycast`, `measure_text`).
+- **A family one module owns keeps its prefix** before the verb: `persist_*`, `ui_*`, `spline_*`, `conducted_*`.
+- **One name a function.** No aliases (`self_entity`, not `this_entity`; `log`, not `log_info`) and no `_ex` variants: the draw calls' extras moved into an opts map. Two names that look alike are two functions: `set_visible` hides an entity and everything under it, `set_sprite_visible` only its sprite; `draw_line_3d` is a HUD line through world points, over everything, and `draw_world_line` is drawn in the 3D frame, behind what is nearer.
+
+A renamed function keeps its old name for one release. The old name does exactly what the new one does, `flint script api` lists it as deprecated with the name to use, and `flint script check` warns at every call:
+
+```text
+touch_demo.rhai:61:5: warning[deprecated-function]: `draw_line_ex` is deprecated
+    hint: use draw_line(x1, y1, x2, y2, #{color, thickness, layer})
+```
+
+Every draw primitive has two forms under one name. One takes what places it (a position and a size, two points, a centre and a radius) and its colour as four numbers; the other takes what places it and an **opts map** with everything else, every key optional:
+
+```rhai
+draw_rect(20.0, 20.0, 200.0, 40.0, 0.05, 0.05, 0.07, 0.6);                        // colour only
+draw_rect(20.0, 20.0, 200.0, 40.0, #{ color: "#0d0d12", rounding: 10.0, layer: -1 }); // everything else
+draw_text(28.0, 30.0, "SCORE", 16.0, #{ color: [1.0, 0.82, 0.55], layer: 1 });
+```
+
+In a map a colour is `[r, g, b]`, `[r, g, b, a]` (0..1) or `"#rrggbb(aa)"`, white when left out; `layer` orders draws (higher on top, 0); `thickness` is in points (1). Each function's description in the tables below lists its keys. A key the function doesn't take (`colour`), or a value of the wrong shape, is ignored with a warning once per function and key, and the draw goes ahead without it.
+
+A map costs a call about 0.15 to 0.22 µs more than four colour numbers: building it, then reading it (measured in `docs/design/script-api-overhead.md`: `draw_rect` 315 ns positional, 534 ns with a three-key map, 404 ns when the colour is a hex string rather than an array). A HUD of a few dozen draws doesn't notice. A loop of hundreds of draws a frame that needs only a colour should keep the positional form; one that needs a layer or a rounding pays the map, about 0.2 ms for a thousand calls. A map held in a variable costs the same as a literal, since Rhai copies it into each call.
+
 ### Entity API
 
-<!-- script-api:begin self_entity this_entity get_entity entity_exists entity_name has_component get_component get_field set_field get_position set_position get_rotation set_rotation get_rotation_quat set_rotation_quat get_scale set_scale set_visible is_visible rotate_local set_shear get_shear clear_shear distance set_parent get_parent get_children get_world_position set_material_color set_material_override set_material_emissive clear_material_override find_entities_with entity_count_with spawn_entity despawn_entity -->
+<!-- script-api:begin self_entity get_entity entity_exists entity_name has_component get_component get_field set_field get_position set_position get_rotation set_rotation get_rotation_quat set_rotation_quat get_scale set_scale set_visible is_visible rotate_local set_shear get_shear clear_shear distance set_parent get_parent get_children get_world_position set_material_color set_material_override set_material_emissive clear_material_override find_entities_with entity_count_with spawn_entity despawn_entity -->
 <!-- Generated by `flint script api --book` from the engine's declarations (crates/flint-script/src/api/): edit the doc there, not here. CI's headless job runs --check-book. -->
 
 | Function | Returns | Description |
 |---|---|---|
 | `self_entity()` | `entity`: its id | The entity this script is on. |
-| `this_entity()` | `entity`: its id | The entity this script is on (`self_entity`'s other name). |
 | `get_entity(name: str)` | `entity`: its id, or -1 when no entity has that name | The entity with this name. |
 | `entity_exists(id: entity?)` | `bool`: false for -1 or a despawned id | Whether the id names a live entity; never warns. |
 | `entity_name(id: entity)` | `str`: its name, or "" when it has none | The entity's name. |
@@ -287,7 +314,7 @@ Animation functions write directly to the `animator` component on the target ent
 | `blend_to(id: entity, clip: str, duration: num)` | — | Crossfade to another clip over a duration in seconds. |
 | `set_anim_speed(id: entity, speed: num)` | — | Set the animator's playback speed (1 normal). |
 | `set_anim_layer(id: entity, index: int, clip: str, weight: num)` | — | Play a clip on layer \`index\`, additive and unmasked, at a weight. |
-| `set_anim_layer_ex(id: entity, index: int, clip: str, weight: num, mode: str, mask: str)` | — | Play a clip on a layer with a mode ("additive" or "override") and a root-joint mask. |
+| `set_anim_layer(id: entity, index: int, clip: str, weight: num, opts: map)` | — | Play a clip on layer \`index\` at a weight; opts: mode ("additive", the default, or "override"), mask (a root joint; "" unmasked). |
 | `set_anim_layer_weight(id: entity, index: int, weight: num)` | — | Set a layer's weight at once, cancelling any fade. |
 | `clear_anim_layer(id: entity, index: int)` | — | Deactivate a layer, keeping its slot so the indices stay stable. |
 | `fade_anim_layer(id: entity, index: int, weight: num, duration: num)` | — | Ramp a layer's weight over a duration in seconds; `set_anim_layer_weight` cancels it. |
@@ -531,7 +558,6 @@ The feed logs each state it delivers at info under the `expression` target
 | Function | Returns | Description |
 |---|---|---|
 | `log(message: any)` | — | Log a message (any value) at info level. |
-| `log_info(message: any)` | — | Log a message at info level (log's other name). |
 | `log_warn(message: any)` | — | Log a message at warning level. |
 | `log_error(message: any)` | — | Log a message at error level. |
 
@@ -664,18 +690,18 @@ A follow camera with deadzone and smoothing, plus a stackable shake. All positio
 
 | Function | Returns | Description |
 |---|---|---|
-| `camera_follow(id: entity, offset_x: num, offset_y: num, speed: num, deadzone_w: num, deadzone_h: num)` | — | Follow an entity from an offset, at a speed, moving only once it leaves a deadzone; call every frame. |
-| `camera_follow_position()` | `map`: `#{x, y}` | Where `camera_follow` has the camera. |
-| `camera_follow_set(x: num, y: num)` | — | Put `camera_follow`'s camera at a point at once, without smoothing. |
-| `camera_shake(amplitude: num, frequency: num, decay: num)` | — | Shake the camera: an amplitude (stacking on a shake under way), a frequency and a decay rate. |
-| `camera_shake_stop()` | — | Stop the camera shake at once. |
-| `camera_apply_shake()` | — | Add this frame's shake to a camera the script sets itself, without `camera_follow`. |
+| `follow_with_camera(id: entity, offset_x: num, offset_y: num, speed: num, deadzone_w: num, deadzone_h: num)` | — | Follow an entity with the camera from an offset, at a speed, moving only once it leaves a deadzone; call every frame. |
+| `get_camera_follow_position()` | `map`: `#{x, y}` | Where `follow_with_camera` has the camera. |
+| `set_camera_follow_position(x: num, y: num)` | — | Put `follow_with_camera`'s camera at a point at once, without smoothing. |
+| `shake_camera(amplitude: num, frequency: num, decay: num)` | — | Shake the camera: an amplitude (stacking on a shake under way), a frequency and a decay rate. |
+| `stop_camera_shake()` | — | Stop the camera shake at once. |
+| `apply_camera_shake()` | — | Add this frame's shake to a camera the script sets itself, without `follow_with_camera`. |
 
 <!-- script-api:end -->
 
-- `camera_follow(id, offset_x, offset_y, speed, deadzone_w, deadzone_h)`: Track an entity each frame: the camera only moves when the target leaves the deadzone rectangle, then eases toward it with frame-rate-independent smoothing at `speed`. Applies any active shake
-- `camera_shake(amplitude, frequency, decay)`: Start or stack a shake. Amplitude takes the max of current and new; frequency in Hz; amplitude decays exponentially at `decay` per second
-- `camera_apply_shake()`: Advance and apply the shake to a camera you position yourself with `set_camera_position` (not needed when `camera_follow` is in use)
+- `follow_with_camera(id, offset_x, offset_y, speed, deadzone_w, deadzone_h)`: Track an entity each frame: the camera only moves when the target leaves the deadzone rectangle, then eases toward it with frame-rate-independent smoothing at `speed`. Applies any active shake
+- `shake_camera(amplitude, frequency, decay)`: Start or stack a shake. Amplitude takes the max of current and new; frequency in Hz; amplitude decays exponentially at `decay` per second
+- `apply_camera_shake()`: Advance and apply the shake to a camera you position yourself with `set_camera_position` (not needed when `follow_with_camera` is in use)
 
 #### Chunks
 
@@ -871,12 +897,12 @@ Control the HDR post-processing pipeline at runtime from scripts:
 | `set_render_mode_params(x: num, y: num, z: num, w: num)` | — | The render mode's four tuning values (see Post-Processing: Render Modes). |
 | `set_lod_scale(scale: num)` | — | Multiply every level-of-detail switch distance (1 as authored, 0.5 simpler levels at half the distance). |
 | `set_draw_distance_scale(scale: num)` | — | Multiply every model's draw distance (1 as authored). |
-| `lod_scale()` | `num` | The level-of-detail scale in force, or the one just asked for. |
-| `draw_distance_scale()` | `num` | The draw-distance scale in force, or the one just asked for. |
+| `get_lod_scale()` | `num` | The level-of-detail scale in force, or the one just asked for. |
+| `get_draw_distance_scale()` | `num` | The draw-distance scale in force, or the one just asked for. |
 
 <!-- script-api:end -->
 
-- `set_lod_scale(scale)` / `lod_scale()`: Multiply every level-of-detail switch distance (1 = as authored, 0.5 = simpler levels at half the distance; kept across scenes; see Rendering)
+- `set_lod_scale(scale)` / `get_lod_scale()`: Multiply every level-of-detail switch distance (1 = as authored, 0.5 = simpler levels at half the distance; kept across scenes; see Rendering)
 
 These overrides are applied each frame and combine with the scene's `[post_process]` baseline settings. Useful for dynamic effects like speed vignetting, boost bloom, or exposure flashes.
 
@@ -1057,7 +1083,7 @@ Load new scenes, manage game state, and persist data across transitions:
 | `load_scene(path: str)` | — | Leave this scene for another, by its path, after the frame. |
 | `reload_scene()` | — | Load this scene again from its file, after the frame. |
 | `quit_game()` | — | End the run as closing the window does: saves flushed, exit 0 (on the web, back to the game list). |
-| `current_scene()` | `str`: the path as the host loaded it | The path of the scene loaded now. |
+| `get_current_scene()` | `str`: the path as the host loaded it | The path of the scene loaded now. |
 | `complete_transition()` | — | Advance the scene transition to its next phase (the script's fade is done). |
 | `transition_progress()` | `num`: 0..1 during a transition; -1.0 when none is running | How far through its current phase a scene transition is. |
 | `is_transitioning()` | `bool` | Whether a scene transition is running. |
@@ -1100,8 +1126,8 @@ A pushdown automaton for managing game states (playing, paused, custom):
 | `push_state(name: str)` | — | Push a registered state on top of the stack (a pause menu over play). |
 | `pop_state()` | — | Pop the top state off the stack. |
 | `replace_state(name: str)` | — | Replace the top state with another. |
-| `current_state()` | `str`: its name; "playing" without a state machine | The state on top of the stack. |
-| `state_stack()` | `array`: their names; \["playing"\] without a state machine | Every state on the stack, bottom first. |
+| `get_current_state()` | `str`: its name; "playing" without a state machine | The state on top of the stack. |
+| `get_state_stack()` | `array`: their names; \["playing"\] without a state machine | Every state on the stack, bottom first. |
 | `register_state(name: str, config: map)` | — | Make a state: each of physics, scripts, animation, particles, audio, rendering "run", "pause" or "hidden", and transparent. |
 
 <!-- script-api:end -->
@@ -1408,46 +1434,47 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 
 #### Draw Primitives
 
-<!-- script-api:begin draw_text draw_text_ex draw_text_stroked draw_text_opts draw_rect draw_rect_ex draw_rect_outline draw_rect_outline_ex draw_rect_ex4 draw_rect_gradient draw_text_stroked_ex draw_circle draw_circle_ex draw_circle_outline draw_circle_outline_ex draw_line draw_line_ex draw_line_3d draw_line_3d_ex draw_world_line draw_world_text draw_ring draw_arc draw_polygon draw_polygon_outline draw_sprite draw_sprite_ex -->
+<!-- script-api:begin draw_text draw_rect draw_rect_outline draw_rect_gradient draw_circle draw_circle_outline draw_line draw_line_3d draw_world_line draw_world_text draw_ring draw_arc draw_polygon draw_polygon_outline draw_sprite -->
 <!-- Generated by `flint script api --book` from the engine's declarations (crates/flint-script/src/api/): edit the doc there, not here. CI's headless job runs --check-book. -->
 
 | Function | Returns | Description |
 |---|---|---|
 | `draw_text(x: num, y: num, text: str, size: num, r: num, g: num, b: num, a: num)` | — | Draw text at a point, its top left, in the default font. |
-| `draw_text_ex(x: num, y: num, text: str, size: num, r: num, g: num, b: num, a: num, layer: int)` | — | `draw_text` on a layer. |
-| `draw_text_stroked(x: num, y: num, text: str, size: num, r: num, g: num, b: num, a: num, stroke_r: num, stroke_g: num, stroke_b: num, stroke_a: num, stroke_width: num)` | — | `draw_text` with an outline: its colour and width in points. |
-| `draw_text_opts(x: num, y: num, text: str, size: num, opts: map)` | — | Draw text with a map of any of font, color, align, stroke, spacing, layer, shadow, glow. |
+| `draw_text(x: num, y: num, text: str, size: num, opts: map)` | — | Draw text at a point; opts: color, font, align, stroke \[r, g, b, a, width\], spacing, layer, shadow \[dx, dy, r, g, b, a\], glow \[r, g, b, a, radius\]. |
 | `draw_rect(x: num, y: num, w: num, h: num, r: num, g: num, b: num, a: num)` | — | Fill a rectangle. |
-| `draw_rect_ex(x: num, y: num, w: num, h: num, r: num, g: num, b: num, a: num, rounding: num, layer: int)` | — | Fill a rectangle with rounded corners, on a layer. |
+| `draw_rect(x: num, y: num, w: num, h: num, opts: map)` | — | Fill a rectangle; opts: color, rounding (a radius, or \[tl, tr, br, bl\]), layer. |
 | `draw_rect_outline(x: num, y: num, w: num, h: num, r: num, g: num, b: num, a: num, thickness: num)` | — | Outline a rectangle, thickness in points. |
-| `draw_rect_outline_ex(x: num, y: num, w: num, h: num, r: num, g: num, b: num, a: num, thickness: num, rounding: num, layer: int)` | — | Outline a rectangle with rounded corners, on a layer. |
-| `draw_rect_ex4(x: num, y: num, w: num, h: num, r: num, g: num, b: num, a: num, tl: num, tr: num, br: num, bl: num, layer: int)` | — | Fill a rectangle with its own rounding at each corner (top left, top right, bottom right, bottom left). |
-| `draw_rect_gradient(x: num, y: num, w: num, h: num, r1: num, g1: num, b1: num, a1: num, r2: num, g2: num, b2: num, a2: num, vertical: bool, layer: int)` | — | Fill a rectangle from one colour to another, top to bottom when vertical, else left to right. |
-| `draw_text_stroked_ex(x: num, y: num, text: str, size: num, r: num, g: num, b: num, a: num, stroke_r: num, stroke_g: num, stroke_b: num, stroke_a: num, stroke_width: num, layer: int)` | — | `draw_text_stroked` on a layer. |
+| `draw_rect_outline(x: num, y: num, w: num, h: num, opts: map)` | — | Outline a rectangle; opts: color, thickness (points, 1), rounding (a radius), layer. |
+| `draw_rect_gradient(x: num, y: num, w: num, h: num, opts: map)` | — | Fill a rectangle from one colour to another; opts: from, to (colours, white), vertical (top to bottom, true; false is left to right), layer. |
 | `draw_circle(x: num, y: num, radius: num, r: num, g: num, b: num, a: num)` | — | Fill a circle. |
-| `draw_circle_ex(x: num, y: num, radius: num, r: num, g: num, b: num, a: num, layer: int)` | — | Fill a circle on a layer. |
+| `draw_circle(x: num, y: num, radius: num, opts: map)` | — | Fill a circle; opts: color, layer. |
 | `draw_circle_outline(x: num, y: num, radius: num, r: num, g: num, b: num, a: num, thickness: num)` | — | Outline a circle, thickness in points. |
-| `draw_circle_outline_ex(x: num, y: num, radius: num, r: num, g: num, b: num, a: num, thickness: num, layer: int)` | — | Outline a circle on a layer. |
+| `draw_circle_outline(x: num, y: num, radius: num, opts: map)` | — | Outline a circle; opts: color, thickness (points, 1), layer. |
 | `draw_line(x1: num, y1: num, x2: num, y2: num, r: num, g: num, b: num, a: num, thickness: num)` | — | Draw a line between two points, thickness in points. |
-| `draw_line_ex(x1: num, y1: num, x2: num, y2: num, r: num, g: num, b: num, a: num, thickness: num, layer: int)` | — | `draw_line` on a layer. |
+| `draw_line(x1: num, y1: num, x2: num, y2: num, opts: map)` | — | Draw a line between two points; opts: color, thickness (points, 1), layer. |
 | `draw_line_3d(x1: num, y1: num, z1: num, x2: num, y2: num, z2: num, r: num, g: num, b: num, a: num, thickness: num)` | — | A line between two world points, projected onto the HUD and clipped at the near plane. |
-| `draw_line_3d_ex(x1: num, y1: num, z1: num, x2: num, y2: num, z2: num, r: num, g: num, b: num, a: num, thickness: num, layer: int)` | — | `draw_line_3d` on a HUD layer. |
+| `draw_line_3d(x1: num, y1: num, z1: num, x2: num, y2: num, z2: num, opts: map)` | — | A line between two world points projected onto the HUD; opts: color, thickness (points, 1), layer. |
 | `draw_world_line(x1: num, y1: num, z1: num, x2: num, y2: num, z2: num, r: num, g: num, b: num, a: num, thickness: num)` | — | A line between two world points drawn in the 3D frame, depth-tested; thickness in points. |
-| `draw_world_text(x: num, y: num, z: num, text: str, size: num, opts: map)` | — | Text at a world point, depth-tested: `draw_text_opts`'s options (no layer) plus valign, facing and up. |
+| `draw_world_line(x1: num, y1: num, z1: num, x2: num, y2: num, z2: num, opts: map)` | — | A line between two world points in the 3D frame, depth-tested; opts: color, thickness (points, 1). |
+| `draw_world_text(x: num, y: num, z: num, text: str, size: num, opts: map)` | — | Text at a world point, depth-tested; opts: `draw_text`'s (no layer) plus valign, facing \[x, y, z\] (a plane's normal; none is a billboard) and up. |
 | `draw_ring(cx: num, cy: num, r_inner: num, r_outer: num, start_deg: num, end_deg: num, r: num, g: num, b: num, a: num, layer: int)` | — | Fill an annular sector: degrees clockwise from 12 o'clock, end after start, `r_inner` 0 for a pie. |
+| `draw_ring(cx: num, cy: num, r_inner: num, r_outer: num, start_deg: num, end_deg: num, opts: map)` | — | Fill an annular sector (degrees clockwise from 12 o'clock); opts: color, layer. |
 | `draw_arc(cx: num, cy: num, radius: num, start_deg: num, end_deg: num, r: num, g: num, b: num, a: num, thickness: num, layer: int)` | — | Stroke an arc of a circle: `draw_ring` centred on radius, thickness wide. |
+| `draw_arc(cx: num, cy: num, radius: num, start_deg: num, end_deg: num, opts: map)` | — | Stroke an arc of a circle; opts: color, thickness (points, 1), layer. |
 | `draw_polygon(points: array, r: num, g: num, b: num, a: num, layer: int)` | — | Fill a convex polygon: points \[\[x, y\], ...\] or flat \[x0, y0, x1, y1, ...\]. |
+| `draw_polygon(points: array, opts: map)` | — | Fill a convex polygon (points \[\[x, y\], ...\] or flat); opts: color, layer. |
 | `draw_polygon_outline(points: array, r: num, g: num, b: num, a: num, thickness: num, closed: bool, layer: int)` | — | Stroke a polygon's edges, closing it back to the first point when closed. |
+| `draw_polygon_outline(points: array, opts: map)` | — | Stroke a polygon's edges; opts: color, thickness (points, 1), closed (back to the first point, true), layer. |
 | `draw_sprite(x: num, y: num, w: num, h: num, name: str)` | — | Draw a whole image (a sprite name) into a rectangle. |
-| `draw_sprite_ex(x: num, y: num, w: num, h: num, name: str, u0: num, v0: num, u1: num, v1: num, r: num, g: num, b: num, a: num, layer: int)` | — | Draw part of an image (uv 0..1) into a rectangle, tinted, on a layer. |
+| `draw_sprite(x: num, y: num, w: num, h: num, name: str, opts: map)` | — | Draw an image (a sprite name) into a rectangle; opts: uv \[u0, v0, u1, v1\] (0..1, the whole image), color (multiplies the image), layer. |
 
 <!-- script-api:end -->
 
-- `draw_rect_gradient(x, y, w, h, r1, g1, b1, a1, r2, g2, b2, a2, vertical, layer)`: Two-colour linear gradient fill: colour 1 to colour 2, top to bottom when `vertical` is `true`, left to right otherwise
+- `draw_rect_gradient(x, y, w, h, #{from, to, vertical, layer})`: Two-colour linear gradient fill: `from` to `to`, top to bottom unless `vertical` is `false`, then left to right
 
 #### Query Functions
 
-<!-- script-api:begin screen_width screen_height measure_text measure_text_ex find_nearest_interactable world_to_screen screen_to_ground screen_to_mesh screen_to_heightfield ground_height -->
+<!-- script-api:begin screen_width screen_height measure_text find_nearest_interactable world_to_screen screen_to_ground screen_to_mesh screen_to_heightfield ground_height -->
 <!-- Generated by `flint script api --book` from the engine's declarations (crates/flint-script/src/api/): edit the doc there, not here. CI's headless job runs --check-book. -->
 
 | Function | Returns | Description |
@@ -1455,7 +1482,7 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 | `screen_width()` | `num`: points | The window's width in logical points, the draw space. |
 | `screen_height()` | `num`: points | The window's height in logical points, the draw space. |
 | `measure_text(text: str, size: num)` | `map`: `#{width, height}` in points | The size text would draw at, in the default font. |
-| `measure_text_ex(text: str, size: num, font: str, spacing: num)` | `map`: `#{width, height}` in points | The size text would draw at in a font ("" for the default) with extra letter spacing. |
+| `measure_text(text: str, size: num, opts: map)` | `map`: `#{width, height}` in points | The size text would draw at; opts: font ("" for the default), spacing (extra letter spacing). |
 | `find_nearest_interactable()` | `map`: `#{entity, prompt_text, interaction_type, distance}`, or () when none is in range | The enabled interactable nearest the player within its own range, as the HUD's prompt shows it. |
 | `world_to_screen(x: num, y: num, z: num)` | `map`: `#{x, y, depth, visible}`; visible is false behind the near plane, where x and y mean nothing | Where a world point lands on the screen, with the camera the last frame rendered with. |
 | `screen_to_ground(x: num, y: num, plane_y: num)` | `any`: \[x, z\], or () where the view doesn't reach the plane (sky, a level orthographic camera, a plane behind) | Where the ray through a screen point meets the plane y = `plane_y`. |
@@ -1487,16 +1514,16 @@ Rust hosts can set the same lines on the renderer directly with `SceneRenderer::
 
 #### Text in the world
 
-`draw_text_opts` at a `world_to_screen` point floats over everything, so a name on a sign shows through the roof in front of it. `draw_world_text(x, y, z, text, size, opts)` writes text in the world instead. Like a world line, it's drawn over the finished image, before the HUD, and hidden wherever the scene's depth is nearer, glyph by glyph: a name half behind a post is half drawn. It doesn't write depth, and fog, bloom and tonemapping don't touch it. It's laid out in the HUD's fonts and colours, so it looks like the same text drawn with `draw_text_opts`.
+`draw_text` at a `world_to_screen` point floats over everything, so a name on a sign shows through the roof in front of it. `draw_world_text(x, y, z, text, size, opts)` writes text in the world instead. Like a world line, it's drawn over the finished image, before the HUD, and hidden wherever the scene's depth is nearer, glyph by glyph: a name half behind a post is half drawn. It doesn't write depth, and fog, bloom and tonemapping don't touch it. It's laid out in the HUD's fonts and colours, so it looks like the same text drawn with `draw_text`.
 
-`opts` takes `draw_text_opts`'s keys: `font`, `color`, `align`, `stroke`, `spacing`, `shadow` and `glow`. There's no `layer`, and no clip rect. The text is centred on the point unless `align` (`"left"`, `"center"`, `"right"`) or `valign` (`"top"`, `"middle"`, `"bottom"`) say otherwise.
+`opts` takes `draw_text`'s keys: `font`, `color`, `align`, `stroke`, `spacing`, `shadow` and `glow`. There's no `layer`, and no clip rect. The text is centred on the point unless `align` (`"left"`, `"center"`, `"right"`) or `valign` (`"top"`, `"middle"`, `"bottom"`) say otherwise.
 
 Without `facing`, the text is a billboard: it faces the screen at `size` logical points wherever the point is, like a name tag, and takes the point's depth. With `facing: [nx, ny, nz]` it lies in the plane through the point with that normal, as if painted there, and reads from that side. It isn't drawn from behind, so paint a two-sided sign twice, once on each face. `up` (default `[0, 1, 0]`) says which way the letters stand; only its part across the plane counts. On a plane every length is in world units: `size` is the em, and `spacing`, the stroke's width, the glow's radius and the shadow's offset are world units too. The letters are rasterised at the size the em spans on screen, in whole pixels from 4 to 128, so they stay sharp as the camera comes close.
 
 ```rust
 // A shop's name on both faces of its sign, fitted to a 0.5 m board.
 fn sign(x, y, z, fx, fz, name) {
-    let m = measure_text_ex(name, 20.0, "display", 0.0);
+    let m = measure_text(name, 20.0, #{ font: "display" });
     let size = (0.5 * 20.0 / m.width).min(0.13);
     for side in [1.0, -1.0] {
         draw_world_text(x + fx * side * 0.03, y, z + fz * side * 0.03, name, size,
@@ -1532,10 +1559,10 @@ Both `measure_text` calls lay the string out with the same font stack the HUD dr
 
 #### Text Options and Fonts
 
-`draw_text_opts` takes a map whose keys are all optional:
+`draw_text(x, y, text, size, opts)` takes a map whose keys are all optional:
 
 ```rhai
-draw_text_opts(40.0, 40.0, "128", 96.0, #{
+draw_text(40.0, 40.0, "128", 96.0, #{
     font: "BarlowCondensed-BlackItalic",   // family name; unknown → default font (warned once)
     color: [1.0, 0.85, 0.2, 1.0],          // default white
     align: "center",                       // "left" | "center" | "right"
@@ -1686,10 +1713,10 @@ Runtime control of the `sprite` component on 2D entities (see [2D Sprites](sprit
 | `set_sprite_layer(id: entity, layer: int)` | — | Set an entity's sprite layer (higher draws in front). |
 | `set_sprite_visible(id: entity, visible: bool)` | — | Show or hide an entity's sprite. |
 | `get_sprite_layer(id: entity)` | `int`: 0 without a sprite or a layer | An entity's sprite layer. |
-| `sprite_play(id: entity, clip: str)` | — | Play one of an entity's `sprite_animator` clips. |
-| `sprite_stop(id: entity)` | — | Stop an entity's sprite animation. |
-| `sprite_set_speed(id: entity, speed: num)` | — | Set an entity's sprite animation playback speed (1 is the clip's own). |
-| `sprite_is_playing(id: entity)` | `bool`: false without a `sprite_animator` | Whether an entity's sprite animation is playing. |
+| `play_sprite(id: entity, clip: str)` | — | Play one of an entity's `sprite_animator` clips. |
+| `stop_sprite(id: entity)` | — | Stop an entity's sprite animation. |
+| `set_sprite_speed(id: entity, speed: num)` | — | Set an entity's sprite animation playback speed (1 is the clip's own). |
+| `is_sprite_playing(id: entity)` | `bool`: false without a `sprite_animator` | Whether an entity's sprite animation is playing. |
 
 <!-- script-api:end -->
 
@@ -1779,8 +1806,8 @@ y = 10
 | `font` | string | --- | Font family from `<project>/fonts/` (file stem or `fonts.toml` alias); unset = default font |
 | `letter_spacing` | float | `0` | Extra spacing between glyphs, in points |
 | `shadow` | [dx,dy,r,g,b,a] | --- | Drop shadow offset and colour, drawn beneath the text |
-| `stroke_color`, `stroke_width` | [r,g,b,a], float | `[0,0,0,1]`, `0` | A text stroke, as `draw_text_opts`'s `stroke` |
-| `glow_color`, `glow_radius` | [r,g,b,a], float | `[1,1,1,0.5]`, `0` | A text glow, as `draw_text_opts`'s `glow`; on while `glow_radius` is above 0 |
+| `stroke_color`, `stroke_width` | [r,g,b,a], float | `[0,0,0,1]`, `0` | A text stroke, as `draw_text`'s `stroke` |
+| `glow_color`, `glow_radius` | [r,g,b,a], float | `[1,1,1,0.5]`, `0` | A text glow, as `draw_text`'s `glow`; on while `glow_radius` is above 0 |
 | `text_align` | string | `"left"` | Text alignment: `left`, `center`, `right` |
 | `rounding` | float | `0` | Corner rounding for panels/rects |
 | `opacity` | float | `1.0` | Element opacity multiplier |

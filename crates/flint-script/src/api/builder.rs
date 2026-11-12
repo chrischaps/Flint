@@ -203,13 +203,21 @@ impl<'f, K: Kinds> Func<'f, K> {
     /// Mark it deprecated (ADR 0116 decision 3): it stays for one release,
     /// `flint script api` lists it with `note` (what to use instead) and
     /// `flint script check` warns at every call. Then it goes, with a
-    /// changelog entry.
+    /// changelog entry. `None` marks nothing, for a loop that declares a
+    /// function under its name and its old one (#702):
+    ///
+    /// ```ignore
+    /// for (name, old) in [("get_lod_scale", None), ("lod_scale", Some("use get_lod_scale"))] {
+    ///     m.func(name, "...").deprecated(old).run(|call, ()| ...);
+    /// }
+    /// ```
     #[cfg_attr(target_arch = "wasm32", inline(always))]
     #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
-    pub fn deprecated(mut self, note: &'static str) -> Self {
+    pub fn deprecated(mut self, note: impl Into<Option<&'static str>>) -> Self {
+        let note = note.into();
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.entry.deprecated = Some(note);
+            self.entry.deprecated = note;
         }
         #[cfg(target_arch = "wasm32")]
         let _ = note;

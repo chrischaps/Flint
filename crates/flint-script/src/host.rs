@@ -446,7 +446,7 @@ mod tests {
                 "SetLodScales"
             ]
         );
-        // `lod_scale()` reads the scale asked for until the host says
+        // `get_lod_scale()` reads the scale asked for until the host says
         assert_eq!(c.lod_scale, 0.5);
         // and nothing is asked twice
         assert!(c.take_commands().is_empty());

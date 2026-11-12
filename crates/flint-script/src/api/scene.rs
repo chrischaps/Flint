@@ -33,9 +33,15 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .run(|call, ()| call.ctx().commands.push(ScriptCommand::QuitGame));
 
-    m.func("current_scene", "The path of the scene loaded now.")
-        .returns(Str, "the path as the host loaded it")
-        .run(|call, ()| call.ctx_ref().current_scene_path.clone());
+    for (name, old) in [
+        ("get_current_scene", None),
+        ("current_scene", Some("use get_current_scene")),
+    ] {
+        m.func(name, "The path of the scene loaded now.")
+            .returns(Str, "the path as the host loaded it")
+            .deprecated(old)
+            .run(|call, ()| call.ctx_ref().current_scene_path.clone());
+    }
 
     m.func(
         "complete_transition",

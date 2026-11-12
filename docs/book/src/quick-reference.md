@@ -355,12 +355,12 @@ position = [0, 0, 0]
 | `ui_set_style_array(id, prop, [..])` | --- | Override `color` / `bg_color` / `stroke_color` / `padding` / `uv` / `shadow` |
 | `ui_token(name)` | value or `()` | Read a style token (`"accent"`, `"$accent"`, `"color.accent"`) as float / float array / string |
 | `ui_hit(id, x, y)` | `bool` | Point-in-rect against the element's resolved layout (logical points) |
-| `draw_text_opts(x, y, text, size, #{font, color, align, stroke, spacing, layer, shadow})` | --- | HUD text in a project font (`fonts/*.ttf`, family = file stem) |
-| `measure_text_ex(text, size, font, spacing)` | `#{width,height}` | Real laid-out text size (also `measure_text(text, size)`) |
+| `draw_text(x, y, text, size, #{font, color, align, stroke, spacing, layer, shadow, glow})` | --- | HUD text in a project font (`fonts/*.ttf`, family = file stem) |
+| `measure_text(text, size, #{font, spacing})` | `#{width,height}` | Real laid-out text size (also `measure_text(text, size)`) |
 | `draw_ring(cx, cy, r_in, r_out, start_deg, end_deg, r, g, b, a, layer)` | --- | Annular sector; degrees from 12 o'clock, clockwise (`draw_arc(cx, cy, radius, a0, a1, r, g, b, a, thickness, layer)` for a stroke) |
 | `draw_polygon(points, r, g, b, a, layer)` | --- | Convex fill from `[[x,y],...]` or flat `[x0,y0,...]`; `draw_polygon_outline(points, r, g, b, a, thickness, closed, layer)` |
-| `draw_rect_gradient(x, y, w, h, r1,g1,b1,a1, r2,g2,b2,a2, vertical, layer)` | --- | Two-colour linear gradient fill |
-| `draw_rect_ex4(x, y, w, h, r, g, b, a, tl, tr, br, bl, layer)` | --- | Filled rect with per-corner rounding; `draw_rect_outline_ex(..., thickness, rounding, layer)` |
+| `draw_rect_gradient(x, y, w, h, #{from, to, vertical, layer})` | --- | Two-colour linear gradient fill |
+| `draw_rect(x, y, w, h, #{color, rounding: [tl, tr, br, bl], layer})` | --- | Filled rect with per-corner rounding; `draw_rect_outline(x, y, w, h, #{color, thickness, rounding, layer})` |
 | `push_clip(x, y, w, h)` / `pop_clip()` | --- | Clip following draw calls to a rect (nests by intersection; reset each frame) |
 | `push_over_ui()` / `pop_over_ui()` | --- | Draw following calls above the game's egui panels and windows (nests; reset each frame) |
 | `import "ui_kit" as ui;` | --- | Load `scripts/lib/ui_kit.rhai`; call `ui::fn_name(...)`. Edits under `scripts/lib/` hot-reload every script |

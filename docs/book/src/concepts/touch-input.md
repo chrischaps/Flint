@@ -103,6 +103,7 @@ Touch state is accessible from [Rhai scripts](scripting.md) via these functions:
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `touch_count()` | `i64` | Number of currently active touches |
+| `touch_id(index)` | `i64` | The ID of the touch at `index`, `0` to `touch_count() - 1`, lowest ID first (`-1` past the last) |
 | `touch_x(id)` | `f64` | Normalized X position (0--1) of the touch with that ID (`-1.0` if none) |
 | `touch_y(id)` | `f64` | Normalized Y position (0--1) of the touch with that ID (`-1.0` if none) |
 | `is_touching(id)` | `bool` | Whether the given touch ID is currently active |
@@ -160,8 +161,11 @@ fn on_draw_ui() {
     let h = screen_height();
 
     for i in 0..touch_count() {
-        let tx = touch_x(i) * w;
-        let ty = touch_y(i) * h;
+        // touch_x takes a touch's ID, which isn't its index: the platform
+        // names fingers (a browser's pointer IDs start well above 0)
+        let id = touch_id(i);
+        let tx = touch_x(id) * w;
+        let ty = touch_y(id) * h;
         draw_circle(tx, ty, 20.0, 1.0, 1.0, 1.0, 0.4);
     }
 }

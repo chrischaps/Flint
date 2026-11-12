@@ -43,7 +43,7 @@ fn on_draw_ui() {
     let h = rows.len().to_float() * line_h + pad * 2.0;
     let x = 24.0;
     let y = sh - h - 24.0;
-    draw_rect_ex(x, y, w, h, 0.05, 0.05, 0.07, 0.6, 10.0, -1);
+    draw_rect(x, y, w, h, #{ color: [0.05, 0.05, 0.07, 0.6], rounding: 10.0, layer: -1 });
     let row_y = y + pad;
     for row in rows {
         draw_text(x + pad, row_y, row[0], 14.0, 1.0, 0.82, 0.55, 0.95);

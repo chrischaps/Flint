@@ -134,25 +134,38 @@ pub(crate) fn register(api: &mut ScriptApi) {
         call.ctx().requests.draw_distance_scale = Some(scale as f32);
     });
 
-    m.func(
-        "lod_scale",
-        "The level-of-detail scale in force, or the one just asked for.",
-    )
-    .returns(Num, "")
-    .run(|call, ()| {
-        let c = call.ctx_ref();
-        c.requests.lod_scale.unwrap_or(c.lod_scale) as f64
-    });
+    // Each under its name and, for one release, its old one (#702)
+    for (name, old) in [
+        ("get_lod_scale", None),
+        ("lod_scale", Some("use get_lod_scale")),
+    ] {
+        m.func(
+            name,
+            "The level-of-detail scale in force, or the one just asked for.",
+        )
+        .returns(Num, "")
+        .deprecated(old)
+        .run(|call, ()| {
+            let c = call.ctx_ref();
+            c.requests.lod_scale.unwrap_or(c.lod_scale) as f64
+        });
+    }
 
-    m.func(
-        "draw_distance_scale",
-        "The draw-distance scale in force, or the one just asked for.",
-    )
-    .returns(Num, "")
-    .run(|call, ()| {
-        let c = call.ctx_ref();
-        c.requests
-            .draw_distance_scale
-            .unwrap_or(c.draw_distance_scale) as f64
-    });
+    for (name, old) in [
+        ("get_draw_distance_scale", None),
+        ("draw_distance_scale", Some("use get_draw_distance_scale")),
+    ] {
+        m.func(
+            name,
+            "The draw-distance scale in force, or the one just asked for.",
+        )
+        .returns(Num, "")
+        .deprecated(old)
+        .run(|call, ()| {
+            let c = call.ctx_ref();
+            c.requests
+                .draw_distance_scale
+                .unwrap_or(c.draw_distance_scale) as f64
+        });
+    }
 }

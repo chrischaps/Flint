@@ -1,4 +1,4 @@
-# What the declared script API costs a call (ADR 0116, steps 1 and 2)
+# What the declared script API costs a call (ADR 0116, steps 1 and 2; opts maps, #702)
 
 ADR 0116 declares script functions through a builder that takes arguments as
 `Dynamic` and converts them by kind, where every function used to be a typed
@@ -214,6 +214,49 @@ own copy by more than from A. The gate is +5% of the frame, about 40 us at
 this frame time; the harness puts the port at -5 us. **The phone was not
 measured**; Chris waived that half of the gate (ADR 0116, Decisions 4).
 
+## Opts maps (#702)
+
+#702 gave every draw primitive an opts form under its own name,
+`draw_rect(x, y, w, h, #{color, rounding, layer})`, and deprecated the
+`_ex` variants and the long positional lists it replaces. What a map costs
+a call, against the positional forms that stay:
+
+`cargo run --release -p flint-script --example api_overhead -- --opts`,
+2026-11-11, same machine as above, the engine's own functions (a fresh
+`ScriptEngine` a case), `screen_width()` before the loop. ns per call over
+an empty loop's, best of 7 rounds of 400 frames x 1000 calls; two runs, an
+idle machine:
+
+| | run 1 | run 2 | over positional |
+|---|---:|---:|---:|
+| `draw_rect(1.0, 2.0, 3.0, 4.0, 0.5, 0.5, 0.5, 1.0)` | 316.3 | 315.1 | |
+| `draw_rect_ex(.., 4.0, 2)`, 10 positional (deprecated) | 353.8 | 351.6 | +12% |
+| `draw_rect(.., #{color: [0.5, 0.5, 0.5, 1.0]})` | 470.6 | 472.9 | +49% |
+| `draw_rect(.., #{color: [..], rounding: 4.0, layer: 2})` | 533.5 | 534.4 | +69% |
+| the same with `color: "#808080"` | 410.5 | 404.3 | +29% |
+| the three-key map held in a variable | 528.8 | 532.9 | +68% |
+| `draw_text(1.0, 2.0, "score", 16.0, 1.0, 1.0, 1.0, 1.0)` | 362.8 | 361.3 | |
+| `draw_text_ex(.., 2)`, 9 positional (deprecated) | 375.9 | 381.0 | +4% |
+| `draw_text(.., #{color: [1.0, 1.0, 1.0, 1.0], layer: 2})` | 563.5 | 564.3 | +56% |
+
+A map costs a call 0.15 to 0.22 us: Rhai building it (a map, and for an
+array colour an array of four), then the reader walking its keys. A hex
+colour is the cheaper map colour, a string where an array is four values.
+A map in a variable is no cheaper than a literal: Rhai copies an argument
+that isn't the first into the call.
+
+At 1000 `draw_rect` calls a frame that is 315 us positional and 534 us with
+a three-key map, 0.22 ms more, 1.3% of a 60 Hz frame. The heaviest
+script-drawn demo (`seeded_stars`, 146 draws) keeps its positional
+`draw_rect`/`draw_circle` and makes one map call a frame (its title, now
+`draw_text(.., opts)`), so it doesn't move. The migrated demos' maps are in
+HUDs of a few dozen draws: under 10 us a frame. The book's convention text
+says so: a loop of hundreds of draws that needs only a colour keeps the
+positional form. One that needs a layer or a rounding now pays the map
+(the `_ex` forms are deprecated); if that matters for a game, a positional
+form with a layer under the base name (`draw_rect(x, y, w, h, r, g, b, a,
+layer)`) is the cheap addition, left undone until something needs it.
+
 ## The web build
 
 The registry is native-only and the builder drops docs and return notes on
@@ -227,5 +270,4 @@ has that name"); the parameter names and the argument errors stay, by design.
 - **The phone** (Pixel 8 Pro, web build). Rhai's search and the conversions
   are the same code there, and wasm runs it several times slower, so the
   ratios should hold; that is an expectation, not a measurement.
-- Calls with map or string arguments (`draw_text_opts`): the demo makes one a
-  frame.
+- String arguments on their own. Map arguments are measured above (#702).

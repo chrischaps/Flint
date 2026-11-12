@@ -65,25 +65,38 @@ pub(crate) fn register(api: &mut ScriptApi) {
             });
         });
 
-    m.func("current_state", "The state on top of the stack.")
-        .returns(Str, "its name; \"playing\" without a state machine")
-        .run(|call, ()| match call.ctx_ref().try_state_machine() {
-            Some(sm) => sm.current_state().to_string(),
-            None => PLAYING.to_string(),
-        });
+    // Each under its name and, for one release, its old one (#702)
+    for (name, old) in [
+        ("get_current_state", None),
+        ("current_state", Some("use get_current_state")),
+    ] {
+        m.func(name, "The state on top of the stack.")
+            .returns(Str, "its name; \"playing\" without a state machine")
+            .deprecated(old)
+            .run(|call, ()| match call.ctx_ref().try_state_machine() {
+                Some(sm) => sm.current_state().to_string(),
+                None => PLAYING.to_string(),
+            });
+    }
 
-    m.func("state_stack", "Every state on the stack, bottom first.")
-        .returns(Array, "their names; [\"playing\"] without a state machine")
-        .run(|call, ()| -> rhai::Array {
-            match call.ctx_ref().try_state_machine() {
-                Some(sm) => sm
-                    .stack_names()
-                    .into_iter()
-                    .map(|s| Dynamic::from(s.to_string()))
-                    .collect(),
-                None => vec![Dynamic::from(PLAYING.to_string())],
-            }
-        });
+    for (name, old) in [
+        ("get_state_stack", None),
+        ("state_stack", Some("use get_state_stack")),
+    ] {
+        m.func(name, "Every state on the stack, bottom first.")
+            .returns(Array, "their names; [\"playing\"] without a state machine")
+            .deprecated(old)
+            .run(|call, ()| -> rhai::Array {
+                match call.ctx_ref().try_state_machine() {
+                    Some(sm) => sm
+                        .stack_names()
+                        .into_iter()
+                        .map(|s| Dynamic::from(s.to_string()))
+                        .collect(),
+                    None => vec![Dynamic::from(PLAYING.to_string())],
+                }
+            });
+    }
 
     m.func(
         "register_state",

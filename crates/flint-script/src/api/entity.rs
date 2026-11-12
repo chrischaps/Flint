@@ -44,6 +44,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
         "The entity this script is on (self_entity's other name).",
     )
     .returns(Entity, "its id")
+    .deprecated("use self_entity")
     .run(|call, ()| id_of(call.ctx_ref().current_entity));
 
     m.func("get_entity", "The entity with this name.")

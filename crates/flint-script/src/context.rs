@@ -535,7 +535,7 @@ impl CameraOverrides {
 
 /// What scripts asked of this frame that the frame keeps one value of: the
 /// last call wins, and some are read back before the host has them
-/// (`camera_apply_shake` shakes the camera asked for, `lod_scale()` says
+/// (`apply_camera_shake` shakes the camera asked for, `get_lod_scale()` says
 /// the scale asked for). [`ScriptCallContext::take_commands`] turns them
 /// into commands.
 #[derive(Debug, Clone, Default)]
@@ -785,8 +785,8 @@ pub struct ScriptCallContext {
     /// (#697). The host gets them as commands, from the same drain as the
     /// rest ([`Self::take_commands`]).
     pub requests: FrameRequests,
-    /// The renderer's scales now, for `lod_scale()` and
-    /// `draw_distance_scale()`. The host sets them each frame.
+    /// The renderer's scales now, for `get_lod_scale()` and
+    /// `get_draw_distance_scale()`. The host sets them each frame.
     pub lod_scale: f32,
     pub draw_distance_scale: f32,
     /// The quality settings as scripts see them (FlintKart#55): what the
@@ -849,6 +849,9 @@ pub struct ScriptCallContext {
     /// The (script, function) pairs that have already warned about a setter
     /// given an entity that isn't there (#635), so each warns once.
     pub bad_target_warned: HashSet<(String, &'static str)>,
+    /// The (function, key) pairs whose opts map has already warned about a
+    /// key it doesn't take or a value of the wrong shape (#702).
+    pub opts_warned: HashSet<(&'static str, String)>,
     /// Seconds into each playing `audio_source`'s sound, wrapped for a loop,
     /// for `audio_position` (#658). The host sets it each frame, paused or
     /// not; a source missing from it hasn't started.
@@ -944,6 +947,7 @@ impl ScriptCallContext {
             conducted: ConductedSnapshot::default(),
             expression: rhai::Map::new(),
             bad_target_warned: HashSet::new(),
+            opts_warned: HashSet::new(),
             audio_positions: std::collections::HashMap::new(),
             audio_output_latency: None,
         }
@@ -1065,7 +1069,7 @@ impl ScriptCallContext {
     /// commands in the order they were made, then this frame's requests
     /// (camera, post-processing, time scale...), one command each, for
     /// those asked for. A distance scale asked for reads back from here on
-    /// (`lod_scale()`) until the host says what it applied.
+    /// (`get_lod_scale()`) until the host says what it applied.
     pub fn take_commands(&mut self) -> Vec<ScriptCommand> {
         let mut out = std::mem::take(&mut self.commands);
         let r = std::mem::take(&mut self.requests);

@@ -4,6 +4,8 @@
 //!
 //! ```bash
 //! cargo run --release -p flint-script --example api_overhead
+//! cargo run --release -p flint-script --example api_overhead -- --math   # pure functions
+//! cargo run --release -p flint-script --example api_overhead -- --opts   # opts maps (#702)
 //! ```
 //!
 //! Each side is a fresh `ScriptEngine` with the whole API (so Rhai looks
@@ -195,10 +197,95 @@ fn math(rounds: usize) {
     }
 }
 
+/// What an opts map costs over the positional form (#702), on the
+/// engine's own draw functions: a map literal built by every call (the
+/// way a script writes it), a map held in a variable (Rhai clones it into
+/// the call), a hex colour, and the deprecated `_ex` positional call the
+/// map replaces.
+fn opts(rounds: usize) {
+    let warm = "let w = screen_width();";
+    let held =
+        "let w = screen_width(); let o = #{color: [0.5, 0.5, 0.5, 1.0], rounding: 4.0, layer: 2};";
+    let cases: [(&str, &str, &str); 9] = [
+        (
+            "draw_rect, 8 floats (positional)",
+            "draw_rect(1.0, 2.0, 3.0, 4.0, 0.5, 0.5, 0.5, 1.0)",
+            warm,
+        ),
+        (
+            "draw_rect_ex, 10 positional (deprecated)",
+            "draw_rect_ex(1.0, 2.0, 3.0, 4.0, 0.5, 0.5, 0.5, 1.0, 4.0, 2)",
+            warm,
+        ),
+        (
+            "draw_rect, #{color} literal",
+            "draw_rect(1.0, 2.0, 3.0, 4.0, #{color: [0.5, 0.5, 0.5, 1.0]})",
+            warm,
+        ),
+        (
+            "draw_rect, #{color, rounding, layer} literal",
+            "draw_rect(1.0, 2.0, 3.0, 4.0, #{color: [0.5, 0.5, 0.5, 1.0], rounding: 4.0, layer: 2})",
+            warm,
+        ),
+        (
+            "draw_rect, same with a hex colour",
+            "draw_rect(1.0, 2.0, 3.0, 4.0, #{color: \"#808080\", rounding: 4.0, layer: 2})",
+            warm,
+        ),
+        (
+            "draw_rect, the map held in a variable",
+            "draw_rect(1.0, 2.0, 3.0, 4.0, o)",
+            held,
+        ),
+        (
+            "draw_text, 8 positional",
+            "draw_text(1.0, 2.0, \"score\", 16.0, 1.0, 1.0, 1.0, 1.0)",
+            warm,
+        ),
+        (
+            "draw_text_ex, 9 positional (deprecated)",
+            "draw_text_ex(1.0, 2.0, \"score\", 16.0, 1.0, 1.0, 1.0, 1.0, 2)",
+            warm,
+        ),
+        (
+            "draw_text, #{color, layer} literal",
+            "draw_text(1.0, 2.0, \"score\", 16.0, #{color: [1.0, 1.0, 1.0, 1.0], layer: 2})",
+            warm,
+        ),
+    ];
+    println!();
+    println!(
+        "opts maps (#702): ns per call over an empty loop's; best of {rounds} rounds of 400 frames x 1000 calls,"
+    );
+    println!(
+        "the engine's own functions, screen_width() before the loop (the cache lasts the frame)"
+    );
+    let mut best = [f64::MAX; 9];
+    for _ in 0..rounds {
+        for (i, (_, call, before)) in cases.iter().enumerate() {
+            let ns = per_call_on(ScriptEngine::new(), call, before, 1000, 400);
+            best[i] = best[i].min(ns);
+        }
+    }
+    let (rect_base, text_base) = (best[0], best[6]);
+    for (i, ((label, _, _), ns)) in cases.iter().zip(best).enumerate() {
+        let base = if i < 6 { rect_base } else { text_base };
+        println!(
+            "  {label:<46} {ns:>8.1} ns  {:>+8.1} ns  {:>+7.1}%",
+            ns - base,
+            (ns - base) / base * 100.0
+        );
+    }
+}
+
 fn main() {
     let rounds = 7;
     if std::env::args().any(|a| a == "--math") {
         math(rounds);
+        return;
+    }
+    if std::env::args().any(|a| a == "--opts") {
+        opts(rounds);
         return;
     }
     let cases = [

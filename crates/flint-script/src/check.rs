@@ -564,7 +564,9 @@ impl Run<'_> {
         let mut arities: BTreeSet<usize> = other;
         let mut signatures: Vec<String> = Vec::new();
         if let Some(entries) = declared {
-            for e in entries {
+            // A deprecated form (#702) isn't offered beside a live one
+            let live = entries.iter().any(|e| e.deprecated.is_none());
+            for e in entries.iter().filter(|e| !live || e.deprecated.is_none()) {
                 arities.insert(e.params.len());
                 if !signatures.contains(&e.signature()) {
                     signatures.push(e.signature());

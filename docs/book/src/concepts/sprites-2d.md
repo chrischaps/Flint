@@ -204,10 +204,10 @@ Control sprite animation from [Rhai scripts](scripting.md):
 
 | Function | Description |
 |----------|-------------|
-| `sprite_play(entity_id, clip_name)` | Start playing a clip |
-| `sprite_stop(entity_id)` | Stop playback |
-| `sprite_set_speed(entity_id, speed)` | Set playback speed |
-| `sprite_is_playing(entity_id)` | Check if currently playing |
+| `play_sprite(entity_id, clip_name)` | Start playing a clip |
+| `stop_sprite(entity_id)` | Stop playback |
+| `set_sprite_speed(entity_id, speed)` | Set playback speed |
+| `is_sprite_playing(entity_id)` | Check if currently playing |
 
 The `on_animation_end(clip_name)` callback fires when a `once` clip finishes:
 
@@ -215,7 +215,7 @@ The `on_animation_end(clip_name)` callback fires when a `once` clip finishes:
 // Rhai script: character animation controller
 fn on_init() {
     let me = self_entity();
-    sprite_play(me, "idle");
+    play_sprite(me, "idle");
 }
 
 fn on_update() {
@@ -226,16 +226,16 @@ fn on_update() {
     if is_action_pressed("move_left") { vx = -1.0; }
 
     if vx != 0.0 {
-        sprite_play(me, "run");
+        play_sprite(me, "run");
         set_field(me, "sprite", "flip_x", vx < 0.0);
     } else {
-        sprite_play(me, "idle");
+        play_sprite(me, "idle");
     }
 }
 
 fn on_animation_end(clip) {
     if clip == "jump" {
-        sprite_play(self_entity(), "idle");
+        play_sprite(self_entity(), "idle");
     }
 }
 ```

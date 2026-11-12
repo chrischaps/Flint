@@ -180,12 +180,15 @@ fn returns_cell(e: &ApiEntry) -> String {
 fn function_table(entries: &[&ApiEntry]) -> String {
     let mut out = String::from("| Function | Returns | Description |\n|---|---|---|\n");
     for e in entries {
+        let doc = match e.deprecated {
+            Some(note) => format!("**Deprecated:** {}. {}", cell(note), cell(e.doc)),
+            None => cell(e.doc),
+        };
         let _ = writeln!(
             out,
-            "| {} | {} | {} |",
+            "| {} | {} | {doc} |",
             signature_cell(e),
             returns_cell(e),
-            cell(e.doc)
         );
     }
     out
@@ -291,6 +294,18 @@ pub fn region(selector: &str, listing: &ApiListing) -> Result<String, String> {
                 .filter(|e| e.name == token)
                 .collect(),
         };
+        // A chapter's table shows what to call: a deprecated name (#702) is
+        // on the reference page, marked, and nowhere else
+        if !found.is_empty() && found.iter().all(|e| e.deprecated.is_some()) {
+            return Err(format!(
+                "`{token}` is deprecated ({}): the reference page lists it, a chapter's table doesn't",
+                found[0].deprecated.unwrap_or_default()
+            ));
+        }
+        let found: Vec<&ApiEntry> = found
+            .into_iter()
+            .filter(|e| e.deprecated.is_none())
+            .collect();
         if found.is_empty() {
             let hint = if listing.declared.iter().any(|e| e.module == token) {
                 format!(" (the module is `module:{token}`)")

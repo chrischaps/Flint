@@ -144,11 +144,13 @@ impl ScriptSystem {
         delta_time: f64,
     ) {
         // Snapshot input state
-        let touches: Vec<(i64, f64, f64)> = input
+        // Lowest id first, so `touch_id(i)` is the same finger frame to frame
+        let mut touches: Vec<(i64, f64, f64)> = input
             .active_touches()
             .values()
             .map(|t| (t.id as i64, t.position.0, t.position.1))
             .collect();
+        touches.sort_unstable_by_key(|t| t.0);
         let touch_just_started: Vec<(i64, f64, f64)> = input
             .touches_just_started_set()
             .iter()
@@ -463,7 +465,7 @@ impl ScriptSystem {
     }
 
     /// Tell scripts the renderer's distance scales in force (#56), for
-    /// `lod_scale()` and `draw_distance_scale()`.
+    /// `get_lod_scale()` and `get_draw_distance_scale()`.
     pub fn set_lod_state(&mut self, lod_scale: f32, draw_distance_scale: f32) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.lod_scale = lod_scale;
