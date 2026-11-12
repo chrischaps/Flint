@@ -8,7 +8,12 @@ bash docs/publish.sh --skip-rustdoc --serve              # preview at http://loc
 bash docs/publish.sh --publish                           # mdBook + rustdoc into ~/dev/docs.chaps.dev/flint, committed and pushed
 cargo run -p flint-arch-analyzer -- --book               # rewrite the crate table in architecture/crate-graph.md (CI checks it)
 cargo run --bin flint -- script api --book               # rewrite the script API reference and the chapters' script-api tables (CI checks it)
+python scripts/docs-check.py                             # flags, styles and images the book and CLAUDE.md files name, against target/debug/flint (CI checks it)
 ```
+
+**What a docs change runs**, and what a docs ticket should tell its agent (#375): update the book by hand, checking against the code; then `mdbook build docs/book`, `python scripts/docs-check.py`, and `flint script api --check-book` if a page names script functions. Nothing else exists: no `tools/docs-check/check.py`, `docs/DOCS_SYNC.md`, `.synced-to` or docs-sync workflow. A 2026-09 Vault note described that pipeline as built; it never landed (#175).
+
+`scripts/docs-check.py` asks the binary, not the source: `flint <cmd> --help` for each command a line runs (a hidden one like `flint serve` answers its own `--help`), and `flint render --list-styles --json` for the styles. It reads command lines in code blocks (a block tagged `toml`, `rhai`, `text` and the like holds none: tag program output `text`) and in code spans, and in `cli-reference/` the flag tables under a command's heading ("The `render` Command", "`flint play-chart`") or one of its "... Flags" headings. A table under another heading is not read (the standalone player's flags under `play`). `--flint <path>` names the binary; `--json` for a list. What isn't drift (a user style a page makes up, a command a plan names) goes in `docs/book/docs-check-allow.txt`, by page.
 
 Without `--publish` the script builds and copies into the docs repo but doesn't commit. `publish.sh` is the only implementation (#764): `docs/build.ps1` (`-SkipRustdoc`, `-Publish`, `-Serve`, `-DocsRepo`) and `docs/publish.bat` (`publish.sh --publish`) hand their switches to it through `scripts/sh.cmd`, which finds Git for Windows' bash rather than WSL's. Change the script, not the shims.
 

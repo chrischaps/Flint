@@ -591,7 +591,7 @@ The default matters on dual-GPU laptops: before this, `PowerPreference::None`
 let the backend hand back whichever adapter enumerated first, usually the
 integrated GPU.
 
-## Common Flags
+### Edit Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
