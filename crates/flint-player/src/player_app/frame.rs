@@ -1674,6 +1674,7 @@ impl PlayerApp {
         let ui_fonts_warned = &mut self.hud.fonts_warned;
         let text_halos = &mut self.hud.text_halos;
         text_halos.begin_frame();
+        let key_note = &mut self.hud.key_note;
 
         // World text needs the frame's depth to be drawn against.
         let world_texts = std::mem::take(&mut self.hud.world_texts);
@@ -1791,6 +1792,9 @@ impl PlayerApp {
 
             // On the web, above the page's wordmark in the same corner
             // (index.html's `.mark`, two lines at bottom 20px; #415)
+            // A debug key's note (#367), over everything
+            key_note.paint(ctx, 16.0);
+
             #[cfg(feature = "debug-hud")]
             flint_debug_ui::paint_style_errors(
                 ctx,

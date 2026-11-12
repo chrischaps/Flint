@@ -829,7 +829,7 @@ impl PlayerApp {
                     .map(|(i, _)| i)
                     .collect();
                 if scene_panels.is_empty() {
-                    tracing::info!("No debug panels in current scene");
+                    self.hud.key_note.say("F3", "no debug panels in this scene");
                 } else {
                     // Toggle the panels, then adjust cursor outside the borrow
                     for i in scene_panels {
@@ -851,6 +851,7 @@ impl PlayerApp {
             KeyCode::Backquote => {
                 self.toggle_named_panel(
                     music_guide_panel::MUSIC_GUIDE_PANEL,
+                    "`",
                     "no music session running — nothing to guide",
                 );
             }
@@ -860,6 +861,7 @@ impl PlayerApp {
             KeyCode::Backslash => {
                 self.toggle_named_panel(
                     timeline_panel::MANIFEST_MAP_PANEL,
+                    "\\",
                     "no music session running — nothing to map",
                 );
             }
@@ -874,7 +876,9 @@ impl PlayerApp {
                     ms.debug_force_fail();
                     println!("[music] DEBUG: full-fail forced — rewind incoming");
                 } else {
-                    println!("[music] no music session running — nothing to fail");
+                    self.hud
+                        .key_note
+                        .say("F9", "no music session running — nothing to fail");
                 }
             }
             // Rendering & Effects menu (ADR 0053): the
@@ -885,6 +889,7 @@ impl PlayerApp {
             KeyCode::F4 => {
                 self.toggle_named_panel(
                     flint_debug_ui::RENDER_DEBUG_PANEL,
+                    "F4",
                     "no renderer active — nothing to tune",
                 );
             }
