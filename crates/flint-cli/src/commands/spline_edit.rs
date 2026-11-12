@@ -19,6 +19,12 @@ pub struct EditArgs {
 }
 
 pub fn run(args: EditArgs) -> Result<()> {
+    launch(args, flint_viewer::app::ViewerWindow::default())
+}
+
+/// `run` with the window's size and grid: `flint edit <scene> --spline`
+/// passes its `--width` / `--height` / `--no-grid` (#423).
+pub fn launch(args: EditArgs, window: flint_viewer::app::ViewerWindow) -> Result<()> {
     // The one resolver (ADR 0114): --schemas, else the manifest, else discovery
     let (registry, schema_dirs) =
         super::common_args::load_schemas(Some(&args.scene), &args.schemas)?;
@@ -134,5 +140,5 @@ pub fn run(args: EditArgs) -> Result<()> {
     };
 
     // Launch viewer in editor mode with file watching enabled
-    flint_viewer::app::run_editor(&args.scene, true, &args.schemas, editor_config)
+    flint_viewer::app::run_editor(&args.scene, true, &args.schemas, editor_config, window)
 }

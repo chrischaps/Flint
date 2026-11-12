@@ -62,6 +62,27 @@ pub struct ViewerStyle {
     pub time: Option<f32>,
 }
 
+/// The viewer window's size in physical pixels and whether it draws the
+/// editor grid: `flint edit scene.toml --width --height --no-grid` (#423).
+/// The grid writes depth, so a depth-reading style traces it; `grid: false`
+/// keeps it out of the frame from the first one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewerWindow {
+    pub width: u32,
+    pub height: u32,
+    pub grid: bool,
+}
+
+impl Default for ViewerWindow {
+    fn default() -> Self {
+        Self {
+            width: 1600,
+            height: 900,
+            grid: true,
+        }
+    }
+}
+
 /// What the viewer loads for a scene: the schemas and constraints of every
 /// directory the one resolver names (ADR 0114: `--schemas` flags if given,
 /// else the project manifest's list, else `schemas/` in the working
@@ -140,6 +161,7 @@ pub fn run(
     inspector: bool,
     auto_orbit: bool,
     style: ViewerStyle,
+    window: ViewerWindow,
 ) -> Result<()> {
     let (registry, constraint_registry, schema_dirs) = load_schemas(scene_path, schemas)?;
 
@@ -220,6 +242,7 @@ pub fn run(
     app.auto_orbit = auto_orbit;
     app.style_specs = style.specs;
     app.style_time = style.time;
+    app.window_opts = window;
     event_loop.run_app(&mut app)?;
 
     Ok(())
@@ -265,6 +288,7 @@ pub fn run_editor(
     watch: bool,
     schemas: &[String],
     editor_config: SplineEditorConfig,
+    window: ViewerWindow,
 ) -> Result<()> {
     let (registry, constraint_registry, schema_dirs) = load_schemas(scene_path, schemas)?;
 
@@ -338,6 +362,7 @@ pub fn run_editor(
 
     let editor = SplineEditor::from_config(editor_config);
     let mut app = ViewerApp::new_editor(state, editor);
+    app.window_opts = window;
     event_loop.run_app(&mut app)?;
 
     Ok(())
@@ -438,6 +463,9 @@ pub struct ViewerApp {
     style_specs: Vec<String>,
     /// `--style-time`: the post time animated styles see.
     style_time: Option<f32>,
+    /// `--width` / `--height` / `--no-grid` (#423): the window's first size
+    /// and whether the renderer draws the editor grid.
+    window_opts: ViewerWindow,
 
     // Live particles (ADR 0068): the viewer steps the same ParticleSystem the
     // player uses, so inspector edits to particle_emitter / particle_effect
@@ -567,6 +595,7 @@ impl ViewerApp {
             auto_orbit_speed: 0.5,
             style_specs: Vec::new(),
             style_time: None,
+            window_opts: ViewerWindow::default(),
             particles: flint_particles::ParticleSystem::new(),
             show_particles: true,
             particles_paused: false,
@@ -627,6 +656,7 @@ impl ViewerApp {
             auto_orbit_speed: 0.5,
             style_specs: Vec::new(),
             style_time: None,
+            window_opts: ViewerWindow::default(),
             particles: flint_particles::ParticleSystem::new(),
             show_particles: true,
             particles_paused: false,
@@ -680,7 +710,10 @@ impl ViewerApp {
 
         let window_attrs = Window::default_attributes()
             .with_title(title)
-            .with_inner_size(PhysicalSize::new(1600, 900));
+            .with_inner_size(PhysicalSize::new(
+                self.window_opts.width.max(1),
+                self.window_opts.height.max(1),
+            ));
 
         let window = Arc::new(
             event_loop
@@ -748,7 +781,7 @@ impl ViewerApp {
         let mut scene_renderer = SceneRenderer::new(
             &render_context,
             RendererConfig {
-                show_grid: true,
+                show_grid: self.window_opts.grid,
                 ..Default::default()
             },
         );
@@ -2312,7 +2345,10 @@ impl ViewerApp {
         if let Some(ctx) = &self.render_context {
             [ctx.config.width as f32, ctx.config.height as f32]
         } else {
-            [1600.0, 900.0]
+            [
+                self.window_opts.width as f32,
+                self.window_opts.height as f32,
+            ]
         }
     }
 

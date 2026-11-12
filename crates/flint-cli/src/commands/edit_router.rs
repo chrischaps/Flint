@@ -68,6 +68,18 @@ pub fn detect_file_kind(path: &Path) -> Result<FileKind> {
     }
 }
 
+/// The scene viewer's window from `--width` / `--height` / `--no-grid`
+/// (#423: the viewer took none of them and opened 1600 x 900 with the grid).
+/// A size left out keeps the viewer's default for that side.
+fn scene_window(args: &EditArgs) -> flint_viewer::app::ViewerWindow {
+    let default = flint_viewer::app::ViewerWindow::default();
+    flint_viewer::app::ViewerWindow {
+        width: args.width.unwrap_or(default.width),
+        height: args.height.unwrap_or(default.height),
+        grid: !args.no_grid,
+    }
+}
+
 /// CLI arguments for the unified `flint edit` command.
 #[derive(clap::Args)]
 pub struct EditArgs {
@@ -202,10 +214,14 @@ pub fn run(args: EditArgs) -> Result<()> {
         FileKind::Scene => {
             if args.spline {
                 // Delegate to the spline/track editor
-                spline_edit::run(spline_edit::EditArgs {
-                    scene: args.file,
-                    schemas: args.schemas,
-                })
+                let window = scene_window(&args);
+                spline_edit::launch(
+                    spline_edit::EditArgs {
+                        scene: args.file,
+                        schemas: args.schemas,
+                    },
+                    window,
+                )
             } else {
                 flint_viewer::app::run(
                     &args.file,
@@ -217,6 +233,7 @@ pub fn run(args: EditArgs) -> Result<()> {
                         specs: args.style.styles.clone(),
                         time: args.style.style_time,
                     },
+                    scene_window(&args),
                 )
             }
         }
@@ -306,6 +323,7 @@ pub fn run(args: EditArgs) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::scene_window;
     use clap::Parser;
     use std::path::{Path, PathBuf};
 
@@ -370,6 +388,45 @@ name = \"x\"
                     dirs.dirs
                 );
                 assert_eq!(dirs.source, flint_schema::SchemaSource::Flags);
+            })
+            .unwrap()
+            .join()
+            .unwrap_or_else(|e| std::panic::resume_unwind(e));
+    }
+
+    /// #423: `flint edit <scene> --no-grid --width W --height H` opened a
+    /// 1600 x 900 window with the grid. Parsed through the real command
+    /// line, on a big-stack thread as above.
+    #[test]
+    fn the_scene_viewer_gets_its_size_and_grid_flags() {
+        std::thread::Builder::new()
+            .stack_size(16 << 20)
+            .spawn(|| {
+                let window = |words: &[&str]| {
+                    let cli = crate::Cli::try_parse_from(
+                        ["flint", "edit", "x.scene.toml"].iter().chain(words),
+                    )
+                    .unwrap_or_else(|e| panic!("{e}"));
+                    let crate::Commands::Edit(args) = cli.command else {
+                        panic!("not an edit command");
+                    };
+                    scene_window(&args)
+                };
+                let given = window(&["--no-grid", "--width", "1280", "--height", "720"]);
+                assert_eq!(
+                    given,
+                    flint_viewer::app::ViewerWindow {
+                        width: 1280,
+                        height: 720,
+                        grid: false,
+                    }
+                );
+                // No flags: the viewer's own default, grid on
+                assert_eq!(window(&[]), flint_viewer::app::ViewerWindow::default());
+                assert!(window(&[]).grid);
+                // One side given keeps the other's default
+                let tall = window(&["--height", "1200"]);
+                assert_eq!((tall.width, tall.height, tall.grid), (1600, 1200, true));
             })
             .unwrap()
             .join()

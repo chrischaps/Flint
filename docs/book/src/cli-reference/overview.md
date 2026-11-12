@@ -596,9 +596,9 @@ integrated GPU.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--schemas <path>` | manifest, else discovered | Schemas directory (repeatable; see [Common Flags](#common-flags)) |
-| `--width <px>` | (auto) | Window width |
-| `--height <px>` | (auto) | Window height |
-| `--no-grid` | `false` | Disable ground grid |
+| `--width <px>` | per editor (scene viewer and track editor `1600`) | Window width in physical pixels |
+| `--height <px>` | per editor (scene viewer and track editor `900`) | Window height in physical pixels |
+| `--no-grid` | `false` | Disable the ground grid, in every editor including the scene viewer and `--spline` |
 | `--watch` | `false` | Watch for file changes |
 | `--seed <u64>` | (auto) | Override seed (procgen) |
 | `--no-inspector` | `false` | Hide egui inspector (scene) |
