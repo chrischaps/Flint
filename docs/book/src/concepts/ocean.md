@@ -32,7 +32,7 @@ configure and no edge to sail off.
 
 This is the single most important thing to know about the ocean.
 
-**`flint-core/src/ocean.rs` is the sole source of truth for wave math.** It
+**`flint-geometry/src/ocean.rs` is the sole source of truth for wave math.** It
 builds the wave array on the CPU, and the GPU only *sums the array it is
 given* — `ocean_shader.wgsl` contains no spectrum logic of its own. That is
 what lets a script ask `ocean_height(x, z)` and get the same answer the

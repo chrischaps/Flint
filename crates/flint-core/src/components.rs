@@ -1,6 +1,12 @@
 //! Engine component name constants.
 //!
 //! Use these instead of bare string literals so the compiler catches typos.
+//! A feature crate owns the names of its own components (#754):
+//! `flint_geometry::components` (ocean, water body, splines) and
+//! `flint_wooze::components` (shallow wooze), so adding one rebuilds that
+//! crate's readers, not the engine. `LIVING_PROP` and `MUSIC_SESSION` stay
+//! here: a player built without living props or music still names them to
+//! say so (`flint-player`'s `missing_features.rs`).
 
 // --- Spatial ---
 pub const TRANSFORM: &str = "transform";
@@ -28,7 +34,6 @@ pub const SKELETON: &str = "skeleton";
 pub const SPRITE_ANIMATOR: &str = "sprite_animator";
 pub const IK_TWO_BONE: &str = "ik_two_bone";
 pub const LIVING_PROP: &str = "living_prop";
-pub const SHALLOW_WOOZE: &str = "shallow_wooze";
 
 // --- Physics ---
 pub const RIGIDBODY: &str = "rigidbody";
@@ -53,23 +58,11 @@ pub const TERRAIN: &str = "terrain";
 /// Compute grass on a game's own ground: a mask over a rectangle (ADR 0089).
 pub const GRASS_GROUND: &str = "grass_ground";
 
-// --- Ocean ---
-pub const OCEAN: &str = "ocean";
-pub const OCEAN_CONTACT: &str = "ocean_contact";
-/// Water on a mesh of its own: a lake at its level or a river down its path (ADR 0094).
-pub const WATER_BODY: &str = "water_body";
-
 // --- Skeletal probes ---
 pub const BONE_PROBE: &str = "bone_probe";
 
 // --- Procedural sky ---
 pub const SKY: &str = "sky";
-
-// --- Splines ---
-pub const SPLINE: &str = "spline";
-pub const SPLINE_DATA: &str = "spline_data";
-pub const SPLINE_MESH: &str = "spline_mesh";
-pub const SPLINE_CHUNK: &str = "spline_chunk";
 
 // --- UI ---
 pub const SCREEN_ANCHOR: &str = "screen_anchor";

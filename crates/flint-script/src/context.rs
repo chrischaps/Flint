@@ -690,7 +690,7 @@ pub struct ScriptCallContext {
     /// The meshes drawn as ray targets, where the last frame drew them, for
     /// `raycast_meshes` and `screen_to_mesh` (ADR 0105). Set by the host
     /// after each render update (`ScriptSystem::set_ray_scene`).
-    pub ray_scene: Arc<flint_core::ray_mesh::RayScene>,
+    pub ray_scene: Arc<flint_geometry::ray_mesh::RayScene>,
     /// What `get_entity_style` and `get_style_param` ask (#372). Set by the
     /// host, which can see the renderer's style registry; survives `clear()`.
     pub style_reader: Option<Arc<dyn crate::style_reader::StyleReader>>,

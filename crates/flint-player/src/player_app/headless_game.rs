@@ -27,8 +27,6 @@ use std::collections::BTreeSet;
 
 use flint_core::project::Project;
 use flint_core::quality::QualitySettings;
-#[cfg(feature = "living")]
-use flint_core::wooze::{BoilFrame, WoozeField};
 use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
 #[cfg(feature = "living")]
@@ -37,6 +35,8 @@ use flint_render::{Camera, PostProcessConfig, SceneRenderer};
 use flint_runtime::{InputState, RuntimeSystem};
 use flint_script::context::ScriptCommand;
 use flint_script::{PostProcessOverrides, ScriptHost};
+#[cfg(feature = "living")]
+use flint_wooze::{BoilFrame, WoozeField};
 
 use super::expression_feed::{ExpressionFeed, ExpressionSubsystem, ExpressionTimeline};
 use super::game_core::{self, FrameHost, GameCore, Lent};

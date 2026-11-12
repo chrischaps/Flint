@@ -21,7 +21,7 @@
 //! Steepness is normalized (`Qᵢ = choppiness / (kᵢ·Aᵢ·N)`) so the summed
 //! steepness never exceeds `choppiness ≤ 1` — no self-intersecting loops.
 
-use crate::toml_util::toml_f32;
+use flint_core::toml_util::toml_f32;
 
 fn toml_i64(v: &toml::Value) -> Option<i64> {
     match v {

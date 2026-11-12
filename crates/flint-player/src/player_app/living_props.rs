@@ -26,7 +26,6 @@
 
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f32;
-use flint_core::wooze::WoozeField;
 use flint_ecs::FlintWorld;
 use flint_import::{AlphaMode, ImportResult, ImportedMaterial, ImportedMesh, ImportedTexture};
 use flint_procgen::{
@@ -36,6 +35,7 @@ use flint_procgen::{
 };
 use flint_render::model_loader::ModelLoadConfig;
 use flint_render::SceneRenderer;
+use flint_wooze::WoozeField;
 
 use super::procgen_assets::{AssetSink, ProcGenMode};
 
@@ -100,15 +100,13 @@ pub fn species_of(
     say: &mut dyn FnMut(String),
 ) -> SpeciesOverride {
     let mut knob = |name: &str, value: Option<f32>| {
-        value.filter(
-            |&value| match flint_core::wooze::check_knob_named(name, value) {
-                Ok(_) => true,
-                Err(problem) => {
-                    say(problem);
-                    false
-                }
-            },
-        )
+        value.filter(|&value| match flint_wooze::check_knob_named(name, value) {
+            Ok(_) => true,
+            Err(problem) => {
+                say(problem);
+                false
+            }
+        })
     };
     let clock = ClockOverride {
         amplitude: knob("amplitude", def.amplitude),
@@ -281,7 +279,7 @@ pub fn wooze_of_scene(
     let mut field = field_of(table);
     if let Some(knobs) = knobs {
         field
-            .get_or_insert_with(|| WoozeField::new(flint_core::wooze::WoozeSample::NEUTRAL))
+            .get_or_insert_with(|| WoozeField::new(flint_wooze::WoozeSample::NEUTRAL))
             .set_global(knobs, 0.0, 0.0)?;
     }
     Ok(field)
@@ -289,14 +287,9 @@ pub fn wooze_of_scene(
 
 /// The shading boil's drawing at `time` for a viewer at `viewer`, in one tick
 /// at the tempo of that moment, whatever a clock says: `--boil-time`.
-pub fn boil_at(
-    field: &WoozeField,
-    viewer: [f32; 3],
-    time: f64,
-    on: u32,
-) -> flint_core::wooze::BoilFrame {
+pub fn boil_at(field: &WoozeField, viewer: [f32; 3], time: f64, on: u32) -> flint_wooze::BoilFrame {
     let sample = field.sample(viewer, time);
-    let mut clock = flint_core::wooze::BoilClock::default();
+    let mut clock = flint_wooze::BoilClock::default();
     clock.tick(time, &sample);
     clock.frame(&sample, on)
 }
@@ -667,7 +660,7 @@ pub fn knobs_report(stats: &LivingStats, props: &LivingProps) -> Option<String> 
 /// The `[wooze]` line `--exit-after` prints: how far apart the field has put the
 /// props, knob by knob, so that a run says whether its zones reached anything.
 pub fn wooze_report(field: &WoozeField, props: &LivingProps) -> String {
-    let range = |read: fn(&flint_core::wooze::WoozeSample) -> f32| {
+    let range = |read: fn(&flint_wooze::WoozeSample) -> f32| {
         props
             .props()
             .iter()

@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use crate::EntityId;
+use flint_core::EntityId;
 
 /// Triangles per leaf of the hierarchy, at most.
 const LEAF: usize = 4;
@@ -337,7 +337,7 @@ impl RayScene {
         let to_local = if identity {
             None
         } else {
-            match crate::projection::mat4_inverse_f64(&model) {
+            match flint_core::projection::mat4_inverse_f64(&model) {
                 Some(inv) => Some(inv.map(|col| col.map(|v| v as f32))),
                 None => return,
             }

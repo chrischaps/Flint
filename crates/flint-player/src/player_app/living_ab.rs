@@ -18,9 +18,9 @@
 //! the second side's to both. Both sides write every bone every frame while
 //! split, since the buffers swap hands twice a frame. A is always left.
 
-use flint_core::wooze::{BoilClock, BoilFrame, WoozeField};
 use flint_procgen::{BlendFrame, LivingProps, ProcGenResolver};
 use flint_render::{Camera, SceneRenderer, SplitView};
+use flint_wooze::{BoilClock, BoilFrame, WoozeField};
 
 use super::living_subsystem::LivingSubsystem;
 use super::shallow_wooze::ShallowWooze;

@@ -315,7 +315,7 @@ impl ProcGenResolver {
     pub fn process_living_in(
         &mut self,
         dt: f64,
-        wooze: Option<(&flint_core::wooze::WoozeField, f64)>,
+        wooze: Option<(&flint_wooze::WoozeField, f64)>,
     ) -> Vec<LineageDone> {
         if self.living.is_empty() {
             return Vec::new();
@@ -335,7 +335,7 @@ impl ProcGenResolver {
     pub fn step_living_now(
         &mut self,
         dt: f64,
-        wooze: Option<(&flint_core::wooze::WoozeField, f64)>,
+        wooze: Option<(&flint_wooze::WoozeField, f64)>,
     ) -> Vec<LineageDone> {
         if self.living.is_empty() {
             return Vec::new();
@@ -351,7 +351,7 @@ impl ProcGenResolver {
         &mut self,
         side: &mut LivingProps,
         dt: f64,
-        wooze: Option<(&flint_core::wooze::WoozeField, f64)>,
+        wooze: Option<(&flint_wooze::WoozeField, f64)>,
     ) {
         if side.is_empty() {
             return;

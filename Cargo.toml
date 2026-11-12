@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/flint-core",
+    "crates/flint-wooze",
+    "crates/flint-geometry",
     "crates/flint-schema",
     "crates/flint-ecs",
     "crates/flint-scene",
@@ -36,6 +38,8 @@ members = [
 # Exclude it from default `cargo build`; build with `cargo ndk -p flint-android`.
 default-members = [
     "crates/flint-core",
+    "crates/flint-wooze",
+    "crates/flint-geometry",
     "crates/flint-schema",
     "crates/flint-ecs",
     "crates/flint-scene",
@@ -179,6 +183,8 @@ egui-snarl = "0.6.0"
 
 # Internal crates
 flint-core = { path = "crates/flint-core" }
+flint-wooze = { path = "crates/flint-wooze" }
+flint-geometry = { path = "crates/flint-geometry" }
 flint-schema = { path = "crates/flint-schema" }
 flint-ecs = { path = "crates/flint-ecs" }
 flint-scene = { path = "crates/flint-scene" }

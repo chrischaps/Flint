@@ -1,11 +1,11 @@
 //! Scripts asking for changes to the wooze field and Living Props (#213,
 //! #218, #246), through the modules the living subsystem owns (#698): the
-//! script's half, held to what `flint_core::wooze::WoozeField` and a
+//! script's half, held to what `flint_wooze::WoozeField` and a
 //! `.wooze.toml` take, and the "not enabled" error in a scene without the
 //! subsystem. The player's half is `living_props_tests.rs`.
 
 use super::LivingCommand;
-use flint_core::wooze::{WoozeField, WoozeSample};
+use flint_wooze::{WoozeField, WoozeSample};
 
 /// What a script asked for, with the living modules enabled.
 fn commands_of(src: &str) -> Vec<LivingCommand> {

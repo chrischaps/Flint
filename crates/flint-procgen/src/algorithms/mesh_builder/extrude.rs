@@ -1,7 +1,7 @@
 use crate::types::{BoundingBox, MaterialData, MeshData, Vertex};
 use crate::{ProcGenError, Result};
-use flint_core::spline::SplineSample;
 use flint_core::Vec3;
+use flint_geometry::spline::SplineSample;
 use std::f32::consts::TAU;
 
 /// A single point along an extrusion spine.

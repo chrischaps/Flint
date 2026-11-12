@@ -12,9 +12,9 @@ use super::{
 };
 use flint_core::project::{AssetKind, Project};
 use flint_core::vfs;
-use flint_core::wooze::{check_knob_named, preset, WoozeField, WoozeSample};
 use flint_scene::SceneFile;
 use flint_schema::{validate_component_data, SchemaRegistry};
+use flint_wooze::{check_knob_named, preset, WoozeField, WoozeSample};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -467,7 +467,7 @@ impl WoozeDef {
         let base = match self.preset.as_deref() {
             None => WoozeSample::NEUTRAL,
             Some(name) => preset(name).unwrap_or_else(|| {
-                let names: Vec<&str> = flint_core::wooze::PRESETS.iter().map(|p| p.0).collect();
+                let names: Vec<&str> = flint_wooze::PRESETS.iter().map(|p| p.0).collect();
                 issues.push(global(format!(
                     "preset '{name}' isn't a file in wooze/ or one of {}",
                     names.join(", ")
@@ -867,9 +867,9 @@ mod preset_tests {
 #[cfg(test)]
 mod tests {
     use crate::scene_tables::LivingTables;
-    use flint_core::wooze::{preset, WoozeSample, AMPLITUDE_MAX, JITTER_MAX, STEP_MIN};
     use flint_scene::SceneFile;
     use flint_schema::SchemaRegistry;
+    use flint_wooze::{preset, WoozeSample, AMPLITUDE_MAX, JITTER_MAX, STEP_MIN};
 
     /// The living tables of a scene holding `table`.
     fn scene(table: &str) -> LivingTables {
@@ -1067,7 +1067,7 @@ zone = { type = "array", element = { type = "table", fields = { glide = { type =
         }
         let mut names: Vec<&str> = zone.field_names();
         names.sort_unstable();
-        let mut keys = flint_core::wooze::ZONE_KEYS.to_vec();
+        let mut keys = flint_wooze::ZONE_KEYS.to_vec();
         keys.sort_unstable();
         assert_eq!(names, keys);
     }

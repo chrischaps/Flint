@@ -25,6 +25,7 @@ dialogs = ["dep:rfd"]
 
 [dependencies]
 flint-core = { workspace = true }
+flint-wooze = { workspace = true }
 flint-schema = { workspace = true }
 flint-ecs = { workspace = true }
 flint-scene = { workspace = true }

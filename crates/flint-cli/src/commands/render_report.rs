@@ -161,7 +161,7 @@ pub struct WoozeReport {
 /// `field` is the stage's, where its clock stands.
 pub fn props_report(
     props: &LivingProps,
-    field: Option<(&flint_core::wooze::WoozeField, f64)>,
+    field: Option<(&flint_wooze::WoozeField, f64)>,
 ) -> Vec<PropReport> {
     let mut report: Vec<PropReport> = props
         .props()
@@ -211,7 +211,7 @@ pub fn props_report(
 fn values_of(
     props: &LivingProps,
     id: LivingPropId,
-    field: Option<(&flint_core::wooze::WoozeField, f64)>,
+    field: Option<(&flint_wooze::WoozeField, f64)>,
 ) -> BTreeMap<&'static str, ValueReport> {
     let at = props.resolved(id, field);
     BTreeMap::from([

@@ -7,7 +7,6 @@
 
 use super::builder::kind::{Bool, Entity, Map as MapKind, Num};
 use super::builder::ScriptApi;
-use flint_core::components as comp;
 use flint_core::toml_util::toml_f64;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -15,7 +14,10 @@ use rhai::{Dynamic, Map};
 
 /// The entity's `spline_data` table, if it has one.
 fn spline_table(world: &FlintWorld, id: EntityId) -> Option<&toml::Table> {
-    world.get_components(id)?.get(comp::SPLINE_DATA)?.as_table()
+    world
+        .get_components(id)?
+        .get(flint_geometry::components::SPLINE_DATA)?
+        .as_table()
 }
 
 /// One of the table's number arrays.

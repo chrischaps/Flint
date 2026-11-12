@@ -11,7 +11,6 @@
 //! while frozen, and glide and drift arrive on each part's next beat, as they do
 //! at speed.
 
-use flint_core::wooze::{preset as builtin_preset, WoozeField, WoozeSample, PRESETS};
 use flint_procgen::{
     commit_look, read_preset, BoilDef, LivingDef, LivingEchoesDef, LivingSpeciesDef,
     LivingVarianceDef, WoozeKnobs, WoozePreset,
@@ -20,6 +19,7 @@ use flint_procgen::{
     EchoConfig, EchoOverride, LivingLayer, LivingLayers, LivingPropId, LivingScope, Resolved,
     ResolvedProp, SpeciesOverride, Stagger, VarianceConfig, VarianceOverride,
 };
+use flint_wooze::{preset as builtin_preset, WoozeField, WoozeSample, PRESETS};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -1146,7 +1146,7 @@ pub(super) mod panel {
                     let id = LivingPropId(i);
                     let clock = prop.clock();
                     let beats = prop.beats();
-                    let (index, weight) = flint_core::wooze::warp(beats, clock.glide);
+                    let (index, weight) = flint_wooze::warp(beats, clock.glide);
                     LivingPropRow {
                         name: prop.entity_name().to_string(),
                         species: props.species_of(id).to_string(),

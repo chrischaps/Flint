@@ -2,10 +2,10 @@
 //! the way the panel and scripts move them.
 
 use super::*;
-use flint_core::wooze::warp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_procgen::{LivingPropRequest, ProcGenSpec, Stagger, VarianceConfig};
+use flint_wooze::warp;
 
 const SPEC: &str = r#"
 generator = "tree_v1"

@@ -19,8 +19,8 @@ use crate::algorithms::space_colonization::{
 };
 use crate::types::{BranchSegment, MaterialData, MeshData};
 use crate::{ProcGenError, Result, SeededRng};
-use flint_core::spline::rotate_around_axis;
 use flint_core::Vec3;
+use flint_geometry::spline::rotate_around_axis;
 
 use super::{BranchMethod, BranchOutput, BranchParams, CrownShape};
 
