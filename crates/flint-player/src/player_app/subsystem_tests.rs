@@ -252,7 +252,7 @@ fn a_scene_with_a_wooze_field_gets_living_props_and_the_next_scene_drops_it() {
     vfs::scoped(Arc::new(game()), || {
         let mut app = started_in_a(None);
         assert!(app.execute_scene_transition("woozy.scene.toml"));
-        assert_eq!(app.core.subsystems.names(), ["living props"]);
+        assert_eq!(app.core.subsystems.names(), ["living"]);
 
         assert!(app
             .core
@@ -266,5 +266,52 @@ fn a_scene_with_a_wooze_field_gets_living_props_and_the_next_scene_drops_it() {
             "{:?}",
             app.core.subsystems.names()
         );
+    });
+}
+
+#[test]
+fn a_state_pauses_the_grove_by_its_living_entry_and_not_by_animation() {
+    use flint_runtime::{StateConfig, SystemPolicy};
+    vfs::scoped(Arc::new(game()), || {
+        let mut app = started_in_a(None);
+        assert!(app.execute_scene_transition("woozy.scene.toml"));
+        let time = |app: &PlayerApp| {
+            app.core
+                .subsystems
+                .find::<super::living_subsystem::LivingSubsystem>()
+                .expect("the grove")
+                .wooze_time
+        };
+        let states = [
+            (
+                "still",
+                StateConfig::playing().with("living", SystemPolicy::Pause),
+            ),
+            (
+                "cutscene",
+                StateConfig::playing().with("animation", SystemPolicy::Pause),
+            ),
+        ];
+        for (name, config) in &states {
+            app.core
+                .state_machine
+                .register_state(name, config.clone())
+                .expect("the player's machine knows `living`");
+        }
+
+        // The first frame after a transition has no time step yet
+        let before = time(&app);
+        app.tick();
+        app.tick();
+        assert!(time(&app) > before, "the grove's clock runs while playing");
+
+        for (state, moves) in [("still", false), ("cutscene", true), ("paused", false)] {
+            assert!(app.core.state_machine.push_state(state));
+            let before = time(&app);
+            app.tick();
+            app.tick();
+            assert_eq!(time(&app) > before, moves, "under `{state}`");
+            app.core.state_machine.pop_state();
+        }
     });
 }

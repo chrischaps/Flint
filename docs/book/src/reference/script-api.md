@@ -503,7 +503,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `current_state()` | `str`: its name; "playing" without a state machine | **Deprecated:** use `get_current_state`. The state on top of the stack. |
 | `get_state_stack()` | `array`: their names; \["playing"\] without a state machine | Every state on the stack, bottom first. |
 | `state_stack()` | `array`: their names; \["playing"\] without a state machine | **Deprecated:** use `get_state_stack`. Every state on the stack, bottom first. |
-| `register_state(name: str, config: map)` | — | Make a state: each of physics, scripts, animation, particles, audio, rendering "run", "pause" or "hidden", and transparent. |
+| `register_state(name: str, config: map)` | — | Make a state: a system's name (physics, scripts, animation, particles, audio, living) to "run" or "pause"; one left out runs. An unknown name is an error. |
 
 ## persistence
 

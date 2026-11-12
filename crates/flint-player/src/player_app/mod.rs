@@ -11,6 +11,8 @@ mod capture_gate_tests;
 mod debug_key_tests;
 mod debug_panels;
 mod egui_input;
+#[cfg(test)]
+mod event_bus_tests;
 mod events;
 pub mod expression_feed;
 #[cfg(test)]

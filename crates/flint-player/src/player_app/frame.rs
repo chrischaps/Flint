@@ -22,7 +22,8 @@ use flint_core::components as comp;
 #[cfg(feature = "debug-hud")]
 use flint_debug_ui::DebugPanel as _;
 use flint_render::GrassEntityPosition;
-use flint_runtime::{RuntimeSystem, StateConfig, SystemPolicy};
+use flint_runtime::state::AUDIO;
+use flint_runtime::{RuntimeSystem, StateConfig};
 use std::collections::HashSet;
 
 /// Frame time given to decoding sounds while a late audio bundle settles in
@@ -947,10 +948,10 @@ impl PlayerApp {
             };
             ext.pre_update(&mut ctx);
         }
-        // Queued with the physics events, so collect_game_events hands them
-        // to scripts and audio this frame.
+        // Onto the frame's bus, so collect_game_events hands them to scripts
+        // and audio this frame.
         for event in fired_events {
-            self.core.physics.push_event(event);
+            self.core.events.push(event);
         }
     }
 
@@ -1627,7 +1628,7 @@ impl super::game_core::FrameHost for PlayerApp {
         self.audio.engine.decode_queued(AUDIO_DECODE_BUDGET);
 
         // Audio triggers from game events (skip when paused)
-        if config.audio == SystemPolicy::Run {
+        if config.runs(AUDIO) {
             self.audio.process_events(game_events, &self.core.world);
             self.audio
                 .update(&mut self.core.world, self.core.clock.delta_time)

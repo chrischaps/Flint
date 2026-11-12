@@ -10,6 +10,9 @@ use flint_core::project::{SchemaDirs, SchemaSource};
 use flint_core::vfs::{self, MemorySource};
 use std::sync::Arc;
 
+/// It reads no game-state policy.
+pub(crate) const POLICY: Option<&str> = None;
+
 #[derive(Default)]
 pub(crate) struct Toy {
     pub(crate) frames: u32,

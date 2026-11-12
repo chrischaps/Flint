@@ -26,9 +26,10 @@ use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_procgen::ProcGenResolver;
 use flint_render::{Camera, SceneRenderer};
+use flint_runtime::state::{ANIMATION, AUDIO, PARTICLES, PHYSICS, SCRIPTS};
 use flint_runtime::{
-    GameClock, GameEvent, GameStateMachine, InputState, PersistentStore, RuntimeSystem,
-    StateConfig, SystemPolicy,
+    EventBus, GameClock, GameEvent, GameStateMachine, InputState, PersistentStore, RuntimeSystem,
+    StateConfig,
 };
 use flint_script::ScriptSystem;
 
@@ -45,10 +46,17 @@ pub struct GameCore {
     pub project: Project,
     pub clock: GameClock,
     pub physics: PhysicsSystem,
+    /// The frame's game events (#727): physics pushes its contacts at each
+    /// fixed step, extensions, style tweens and scripts' `fire_event` their
+    /// own, and the frame drains them before scripts run. Physics' `clear`
+    /// at a transition leaves it alone.
+    pub(crate) events: EventBus,
     pub animation: AnimationSystem,
     pub particles: ParticleSystem,
     pub script: ScriptSystem,
-    /// Game states and the persistent store survive scene transitions.
+    /// Game states and the persistent store survive scene transitions. The
+    /// machine knows the built-in systems and every scene subsystem's
+    /// policy name (`subsystem::state_machine`, #727).
     pub(crate) state_machine: GameStateMachine,
     pub(crate) store: PersistentStore,
     /// Entity style tweens (#370), stepped with game time.
@@ -74,10 +82,11 @@ impl GameCore {
             project,
             clock: GameClock::new(),
             physics: PhysicsSystem::new(),
+            events: EventBus::new(),
             animation: AnimationSystem::new(),
             particles: ParticleSystem::new(),
             script: ScriptSystem::new(),
-            state_machine: GameStateMachine::new(),
+            state_machine: super::subsystem::state_machine(),
             store: PersistentStore::new(),
             style_tweens: Default::default(),
             style_reader_generation: None,
@@ -336,11 +345,12 @@ impl GameCore {
         f(&mut self.subsystems, &mut ctx)
     }
 
-    /// The physics events of the last fixed steps, then this frame's
-    /// actions pressed and released. Always collected: input is processed
-    /// while paused, so pause/unpause keybinds work.
+    /// The bus's events (the last frame's physics contacts, extension,
+    /// style-tween and script events), then this frame's actions pressed and
+    /// released. Always collected: input is processed while paused, so
+    /// pause/unpause keybinds work.
     fn collect_game_events(&mut self, input: &InputState) -> Vec<GameEvent> {
-        let mut game_events = self.physics.drain_events();
+        let mut game_events = self.events.drain();
         for action in input.actions_just_pressed() {
             game_events.push(GameEvent::ActionPressed(action));
         }
@@ -383,7 +393,7 @@ impl GameCore {
             self.clock.total_time,
             self.clock.delta_time,
         );
-        if config.scripts == SystemPolicy::Run {
+        if config.runs(SCRIPTS) {
             self.script
                 .update(&mut self.world, self.clock.delta_time)
                 .unwrap_or_else(|e| tracing::warn!("Script error: {:?}", e));
@@ -406,12 +416,12 @@ impl GameCore {
         while self.clock.should_fixed_update() {
             let dt = self.clock.fixed_timestep;
 
-            if config.physics == SystemPolicy::Run {
+            if config.runs(PHYSICS) {
                 if has_fps_player {
                     self.physics.update_character(input, &mut self.world, dt);
                 }
                 self.physics
-                    .fixed_update(&mut self.world, dt)
+                    .fixed_update(&mut self.world, dt, &mut self.events)
                     .unwrap_or_else(|e| tracing::warn!("Physics error: {:?}", e));
             }
 
@@ -430,7 +440,7 @@ impl GameCore {
             self.physics.camera_pitch(),
         );
         camera.target = cam_target;
-        (config.audio == SystemPolicy::Run).then(|| {
+        config.runs(AUDIO).then(|| {
             Listener::FirstPerson(
                 cam_pos,
                 self.physics.camera_yaw(),
@@ -442,12 +452,12 @@ impl GameCore {
     /// Move the style tweens on by this frame's game time (#370), while
     /// scripts run.
     fn step_style_tweens(&mut self) {
-        if self.state_machine.active_config().scripts == SystemPolicy::Run {
+        if self.state_machine.active_config().runs(SCRIPTS) {
             let step = self
                 .style_tweens
                 .step(&mut self.world, self.clock.delta_time);
             for event in step.events {
-                self.physics.push_event(event);
+                self.events.push(event);
             }
             for message in step.failures {
                 tracing::warn!(target: "script", "{message}");
@@ -476,7 +486,7 @@ impl GameCore {
     /// the scripts (skipped while the game state pauses animation).
     #[profiling::function]
     fn animate(&mut self, config: &StateConfig) {
-        if config.animation != SystemPolicy::Run {
+        if !config.runs(ANIMATION) {
             return;
         }
         self.animation
@@ -517,7 +527,7 @@ impl GameCore {
         self.animation.run_ik(&mut self.world);
 
         // Advance particle simulation (skip when paused)
-        if config.particles == SystemPolicy::Run {
+        if config.runs(PARTICLES) {
             self.particles
                 .update(&mut self.world, self.clock.delta_time)
                 .ok();

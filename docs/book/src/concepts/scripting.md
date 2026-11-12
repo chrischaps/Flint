@@ -8,7 +8,7 @@ The `flint-script` crate integrates Rhai into the game loop:
 
 - **ScriptEngine** --- compiles and runs `.rhai` scripts, manages per-entity state (scope, AST, callbacks)
 - **ScriptSync** --- discovers entities with `script` components, handles hot-reload by watching file timestamps
-- **ScriptSystem** --- implements `RuntimeSystem` for game loop integration, running in `update()` (variable-rate)
+- **ScriptSystem** --- implements `RuntimeSystem`: the player calls its `update()` once a frame (variable-rate)
 
 Scripts run each frame during the `update()` phase, after physics and before rendering. This gives them access to the latest physics state while allowing their output to affect the current frame's visuals.
 
@@ -493,9 +493,10 @@ reaches `on_event` at the start of the next frame, before that frame's
 - **Player extensions** call `ExtensionCtx::fire_event(name, data)` in
   `pre_update`. `data` is anything that converts into a `toml::Value`, usually
   a `toml::Table`. Scripts see it before this frame's `on_update`.
-- **Engine code** pushes a `GameEvent::Custom { name, data }` onto the physics
-  event queue, which hands it to scripts with the next batch of collisions
-  and input actions.
+- **Engine code** pushes a `GameEvent::Custom { name, data }` onto the
+  player's `EventBus`, which hands it to scripts with the next batch of
+  collisions and input actions. Physics pushes its contacts onto the same
+  bus, so a collision and an event fired the frame before arrive together.
 
 A payload that isn't a table arrives as `#{ value: data }`. Events are dropped
 while the game state pauses scripts, as input actions are.
@@ -1146,14 +1147,32 @@ A pushdown automaton for managing game states (playing, paused, custom):
 | `replace_state(name: str)` | — | Replace the top state with another. |
 | `get_current_state()` | `str`: its name; "playing" without a state machine | The state on top of the stack. |
 | `get_state_stack()` | `array`: their names; \["playing"\] without a state machine | Every state on the stack, bottom first. |
-| `register_state(name: str, config: map)` | — | Make a state: each of physics, scripts, animation, particles, audio, rendering "run", "pause" or "hidden", and transparent. |
+| `register_state(name: str, config: map)` | — | Make a state: a system's name (physics, scripts, animation, particles, audio, living) to "run" or "pause"; one left out runs. An unknown name is an error. |
 
 <!-- script-api:end -->
 
+A state names the systems it changes, each `"run"` or `"pause"`, and every system it leaves out runs:
+
+```rhai
+register_state("menu", #{ physics: "pause", scripts: "pause", living: "pause" });
+push_state("menu");
+```
+
+| Key | What pauses |
+|---|---|
+| `physics` | the fixed physics steps and the character controller |
+| `scripts` | `on_update`, the events and actions it hears, and style tweens; `on_draw_ui` runs under every state |
+| `animation` | property, skeletal, node and sprite animation and sequences |
+| `particles` | the particle simulation |
+| `audio` | audio triggers, source sync and the first-person listener |
+| `living` | the living props' and wooze field's clock (living props follow their own key, not `animation`) |
+
+The frame always draws, under every state. `register_state` is a script error for a key no system answers to (`#{ grass: "pause" }`), a policy other than `"run"` or `"pause"`, and for `rendering`, `transparent` and `"hidden"`, which were once listed here and never did anything: leave them out.
+
 Built-in state templates:
 - **`"playing"`** --- all systems run (default)
-- **`"paused"`** --- physics, scripts, animation, particles, and audio are paused; rendering runs; `on_draw_ui()` still fires (for pause menus)
-- **`"loading"`** --- all systems paused
+- **`"paused"`** --- every system paused, living props too; the frame draws and `on_draw_ui()` still fires (for pause menus)
+- **`"loading"`** --- every system paused, as `"paused"`
 
 ### Persistent Data API
 

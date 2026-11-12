@@ -38,7 +38,7 @@ use flint_core::project::Project;
 use flint_ecs::FlintWorld;
 use flint_procgen::ProcGenResolver;
 use flint_render::{Camera, SceneRenderer};
-use flint_runtime::{GameClock, InputState, StateConfig};
+use flint_runtime::{GameClock, GameStateMachine, InputState, StateConfig};
 use flint_script::context::ScriptCommand;
 use flint_script::ScriptSystem;
 use std::any::Any;
@@ -129,7 +129,8 @@ pub(crate) struct StageCtx<'a> {
     pub camera: &'a Camera,
     /// Which systems the game state lets run this frame. `None` at
     /// `Stage::Input`, which runs before the frame reads it (a transition
-    /// may still change the state that frame), and outside a stage.
+    /// may still change the state that frame), and outside a stage. A
+    /// subsystem asks by its `name()`: [`StageCtx::runs`].
     pub policy: Option<&'a StateConfig>,
     /// `None` in a headless test.
     pub renderer: Option<&'a mut SceneRenderer>,
@@ -148,6 +149,14 @@ pub(crate) struct StageCtx<'a> {
     /// The F3/F4 panels, for a subsystem that has one.
     #[cfg(feature = "debug-hud")]
     pub panels: &'a mut Vec<Box<dyn flint_debug_ui::DebugPanel>>,
+}
+
+impl StageCtx<'_> {
+    /// Whether the game state lets the system `name` run this frame (a
+    /// subsystem asks by its own `name()`). Outside a stage, it does.
+    pub(crate) fn runs(&self, name: &str) -> bool {
+        self.policy.is_none_or(|policy| policy.runs(name))
+    }
 }
 
 /// A key the debug keys hear (a real press or a scripted one).
@@ -203,11 +212,25 @@ pub(crate) enum Lasts {
     Scene,
 }
 
-// The scene subsystems' modules, one a file of `player_app/subsystems/`, and
-// `for_scene_builders()`, their builders in file-name order (build.rs). Each
-// builder looks at the scene being entered and makes its subsystem only if
-// the scene uses it.
+// The scene subsystems' modules, one a file of `player_app/subsystems/`,
+// `for_scene_builders()`, their builders in file-name order, and
+// `subsystem_policies()`, each file's `POLICY` (build.rs). Each builder looks
+// at the scene being entered and makes its subsystem only if the scene uses
+// it.
 include!(concat!(env!("OUT_DIR"), "/subsystems.rs"));
+
+/// The player's game-state machine: a state may name the built-in systems
+/// and every scene subsystem that reads its policy (its file's `POLICY`),
+/// whether or not this scene has it, so a state registered in one scene
+/// pauses the grove of the next. Any other name is `register_state`'s error
+/// (#727).
+pub(crate) fn state_machine() -> GameStateMachine {
+    let mut machine = GameStateMachine::new();
+    for name in subsystem_policies() {
+        machine.add_system(name);
+    }
+    machine
+}
 
 /// A scene subsystem's builder: its subsystem, if the scene uses it.
 pub(crate) type BuildForScene = fn(&mut SceneCtx) -> Option<Box<dyn Subsystem>>;
@@ -240,7 +263,8 @@ impl ExitReport {
 /// `PlayerExtension` gains the same hooks once the engine's own features
 /// have shown what they must carry (decision 5).
 pub(crate) trait Subsystem: Any {
-    /// For logs and the debug panels.
+    /// For logs and the debug panels, and the name a game state's policy
+    /// pauses it by when its file lists it as its `POLICY` (#727).
     fn name(&self) -> &'static str;
 
     /// For one scene (the default) or the whole run.

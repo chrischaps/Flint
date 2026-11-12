@@ -139,7 +139,7 @@ The audio system has three main components:
 - **AudioSync** --- bridges TOML `audio_source` components to Kira spatial tracks. Discovers new audio entities each frame and updates spatial positions from entity transforms.
 - **AudioTrigger** --- maps game events (collisions, interactions) to `AudioCommand`s that play sounds at specific positions.
 
-The system implements the `RuntimeSystem` trait, ticking in the `update()` phase of the game loop (not `fixed_update()`, since audio doesn't need fixed-timestep processing).
+The system implements the `RuntimeSystem` trait: the player calls its `update()` once a frame, not at the fixed physics rate, since audio doesn't need fixed-timestep processing. A game state with `audio: "pause"` skips it.
 
 ## Graceful Degradation
 
