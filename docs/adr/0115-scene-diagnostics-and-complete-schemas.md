@@ -69,7 +69,7 @@ Open issues #339, #282 and #556 each cover a corner of this.
 
 4. **The schema language gains what scenes get wrong most** (#684):
    `entity` (checked to exist), `asset` with a kind (checked through the
-   resolver of ADR 0114), fixed-length `vec2`/`vec3`/`vec4`, array-form
+   resolver of [ADR 0114](0114-project-manifest-and-one-resolver.md)), fixed-length `vec2`/`vec3`/`vec4`, array-form
    `color`, and nested field tables. One spelling per type (`f32`, not
    `float`), with the old spellings accepted and listed by a lint. A
    `[table.<name>]` schema kind covers scene-level tables (#686), and
@@ -103,7 +103,7 @@ the tickets' blocked-by links. The steps get no sub-issues.
 3. Schema types and the JSON Schema export (#684); scene tables (#686).
 4. The typed view, physics and audio first (#685).
 5. `flint check` over a project, sharing `flint bundle`'s reference checks
-   (#687; also needs ADR 0114).
+   (#687; also needs [ADR 0114](0114-project-manifest-and-one-resolver.md)).
 
 ## Alternatives considered
 

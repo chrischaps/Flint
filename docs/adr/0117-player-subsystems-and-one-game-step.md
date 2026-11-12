@@ -67,7 +67,7 @@ problems are around it:
    `PlayerApp` holds `Vec<Box<dyn Subsystem>>`. A subsystem is constructed
    when a scene has its component or table (a `living_prop`, a `[wooze]`
    table, a `music_session`), so a scene without it runs no code for it. A
-   subsystem registers its own script module (ADR 0116), debug panels and
+   subsystem registers its own script module ([ADR 0116](0116-declared-script-api.md)), debug panels and
    debug keys.
 
 3. **Scene bring-up is one function.** `enter_scene(SceneFile)` is called by
@@ -134,7 +134,7 @@ the tickets' blocked-by links. The steps get no sub-issues.
   It is the one case that may need a hook of its own in `pre_render`, or to
   stay special. Decide at step 3 with the code in hand.
 - **Drop order.** The music session is declared first in `PlayerApp` so it
-  drops before the audio engine (ADR 0017). The subsystem list must keep an
+  drops before the audio engine ([ADR 0017](0017-one-shared-audio-manager.md)). The subsystem list must keep an
   explicit teardown order.
 - **Dynamic dispatch per stage per subsystem per frame** is a handful of
   virtual calls; negligible, but `demo/phase4_runtime` and the woozy grove's

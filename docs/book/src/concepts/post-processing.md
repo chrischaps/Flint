@@ -54,7 +54,7 @@ SSAO darkens crevices, corners, and areas where surfaces meet, adding depth and 
 | `ssao_enabled` | bool | `true` | Enable SSAO |
 | `ssao_radius` | f32 | `0.5` | Sample radius in world units (larger = wider darkening) |
 | `ssao_intensity` | f32 | `1.0` | Occlusion strength (higher = darker crevices) |
-| `ssao_samples` | u32 | `64` | Hemisphere samples per pixel, 1--64 (ADR 0052) |
+| `ssao_samples` | u32 | `64` | Hemisphere samples per pixel, 1--64 ([ADR 0052](https://github.com/chrischaps/Flint/blob/main/docs/adr/0052-authorable-ssao-sample-count.md)) |
 
 SSAO is the heaviest per-pixel pass in the post stack. The sample kernel is strided, so lower counts keep full radius coverage; `ssao_samples = 16` is usually indistinguishable on soft matte scenes and roughly four times cheaper. The clay-look demo scenes use 16.
 
@@ -78,7 +78,7 @@ Depth of field defocuses everything outside a focus band. The composite pass com
 | `dof_focus_distance` | f32 | `10.0` | Distance of the focus plane in world units |
 | `dof_focus_range` | f32 | `5.0` | Half-width of the sharp band around the focus plane |
 
-Distances are plain view-space meters. Earlier builds linearized depth with the OpenGL `[-1, 1]` convention, which made focus values drift with the far plane; ADR 0055 moved every depth consumer to wgpu's `[0, 1]` convention, so `dof_focus_distance = 10` now means ten meters from the camera.
+Distances are plain view-space meters. Earlier builds linearized depth with the OpenGL `[-1, 1]` convention, which made focus values drift with the far plane; [ADR 0055](https://github.com/chrischaps/Flint/blob/main/docs/adr/0055-wgpu-zero-to-one-depth-convention.md) moved every depth consumer to wgpu's `[0, 1]` convention, so `dof_focus_distance = 10` now means ten meters from the camera.
 
 In the scene viewer, the Rendering & Effects menu offers **DoF follow**: the focus plane tracks the last selected entity, which is a fast way to find a focus distance by eye.
 
@@ -102,13 +102,13 @@ Distance-based fog blends a configurable fog color into the scene based on pixel
 | `fog_tint_start` | f32 | `100.0` | Distance where the tint starts to come in |
 | `fog_tint_end` | f32 | `1000.0` | Distance where it reaches `fog_tint_strength` |
 
-**Height fog** (ADR 0101) is a layer of air whose density is `fog_height_density` at `fog_height_origin` and falls exponentially above it (and rises below it). The composite integrates that density exactly along each view ray, from the camera to the pixel, and adds it to the distance fog's optical depth: `fog = 1 - exp(-(fog_density * max(d - fog_start, 0) + height_depth))`. So a view low in the layer goes milky at a short distance, a view across it from above sees only the hollows fill, and the layer lies round the camera too (it isn't held off by `fog_start`). The layer is one horizontal slab across the whole scene: for mist that keeps to valleys at different heights, use the ground fog below. Before ADR 0101, height fog took `max(distance fog, exp(-falloff × h) × distance fog)`, which is never more than the distance fog, so it did nothing on screen. `fog_height_density` defaults to 0, so a scene that turned height fog on then looks as it did.
+**Height fog** ([ADR 0101](https://github.com/chrischaps/Flint/blob/main/docs/adr/0101-height-fog-layer-and-aerial-tint.md)) is a layer of air whose density is `fog_height_density` at `fog_height_origin` and falls exponentially above it (and rises below it). The composite integrates that density exactly along each view ray, from the camera to the pixel, and adds it to the distance fog's optical depth: `fog = 1 - exp(-(fog_density * max(d - fog_start, 0) + height_depth))`. So a view low in the layer goes milky at a short distance, a view across it from above sees only the hollows fill, and the layer lies round the camera too (it isn't held off by `fog_start`). The layer is one horizontal slab across the whole scene: for mist that keeps to valleys at different heights, use the ground fog below. Before [ADR 0101](https://github.com/chrischaps/Flint/blob/main/docs/adr/0101-height-fog-layer-and-aerial-tint.md), height fog took `max(distance fog, exp(-falloff × h) × distance fog)`, which is never more than the distance fog, so it did nothing on screen. `fog_height_density` defaults to 0, so a scene that turned height fog on then looks as it did.
 
-**The aerial tint** (ADR 0101) mixes `fog_tint_color` over each drawn pixel by `fog_tint_strength × smoothstep(fog_tint_start, fog_tint_end, d)`, before the fog is mixed in. Far land turns blue (aerial perspective), while the farthest of it still runs into `fog_color` and, with a fog the colour of the sky's horizon, into the sky with no line. Like the fog, the tint is light in the air, not a surface colour: keep it with the hour, darker at night, as you would `fog_color`. It leaves the sky alone.
+**The aerial tint** ([ADR 0101](https://github.com/chrischaps/Flint/blob/main/docs/adr/0101-height-fog-layer-and-aerial-tint.md)) mixes `fog_tint_color` over each drawn pixel by `fog_tint_strength × smoothstep(fog_tint_start, fog_tint_end, d)`, before the fog is mixed in. Far land turns blue (aerial perspective), while the farthest of it still runs into `fog_color` and, with a fog the colour of the sky's horizon, into the sky with no line. Like the fog, the tint is light in the air, not a surface colour: keep it with the hour, darker at night, as you would `fog_color`. It leaves the sky alone.
 
 ### Ground fog
 
-**Ground fog** (ADR 0106) is fog that lies on floors of its own, so a mist can fill hollows at many heights where the height fog is one level layer. The game gives it a map over a world rectangle, `GroundFog { origin, size, width, depth, texels }`, each texel a `[floor, amount]`: the floor a world Y (the ground's, usually) and the amount 0 to 1. Over a texel the density is `amount × ground_fog_density` at the floor, falling by e every `1 / ground_fog_falloff` metres above it and holding at the floor's under it. Set the map with `SceneRenderer::set_ground_fog(device, queue, &fog)` (`ExtensionGpu::set_ground_fog` from an extension), once and again when the ground changes; `clear_ground_fog` removes it, and so does a map with no fog on it. The look is on the post-process config and can change every frame:
+**Ground fog** ([ADR 0106](https://github.com/chrischaps/Flint/blob/main/docs/adr/0106-ground-fog-on-own-floors.md)) is fog that lies on floors of its own, so a mist can fill hollows at many heights where the height fog is one level layer. The game gives it a map over a world rectangle, `GroundFog { origin, size, width, depth, texels }`, each texel a `[floor, amount]`: the floor a world Y (the ground's, usually) and the amount 0 to 1. Over a texel the density is `amount × ground_fog_density` at the floor, falling by e every `1 / ground_fog_falloff` metres above it and holding at the floor's under it. Set the map with `SceneRenderer::set_ground_fog(device, queue, &fog)` (`ExtensionGpu::set_ground_fog` from an extension), once and again when the ground changes; `clear_ground_fog` removes it, and so does a map with no fog on it. The look is on the post-process config and can change every frame:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -121,7 +121,7 @@ The composite marches each view ray through the box the fog can lie in: the map'
 
 A texel's value is at the middle of its cell, and the fog blends the four round a point, so give a texel with no fog the ground's height too: its floor still shapes the fog at its edges. Its cost is the march over every pixel whose ray crosses the box, `ground_fog_steps + 2` reads each; at 1080p with 24 steps it was within the noise of a frame without it in The Capitol's wilds.
 
-Fog reaches **everything drawn, at any distance** (ADR 0078). The sky and skybox never write depth and the scene clears it to exactly 1.0, so the composite treats a pixel as sky only when its depth is 1.0; any geometry inside the camera's far plane is fogged. Set `far` to what the scene draws, not larger. SSAO, volumetric lighting and depth of field use the same sky test. Before ADR 0078 the cut was depth ≥ 0.9999, which with a 1 m near plane is about 2.9 km at `far` = 4 km and never more than 10 km, so a ground running to the horizon ended in an unfogged band.
+Fog reaches **everything drawn, at any distance** ([ADR 0078](https://github.com/chrischaps/Flint/blob/main/docs/adr/0078-fog-reaches-everything-drawn.md)). The sky and skybox never write depth and the scene clears it to exactly 1.0, so the composite treats a pixel as sky only when its depth is 1.0; any geometry inside the camera's far plane is fogged. Set `far` to what the scene draws, not larger. SSAO, volumetric lighting and depth of field use the same sky test. Before [ADR 0078](https://github.com/chrischaps/Flint/blob/main/docs/adr/0078-fog-reaches-everything-drawn.md) the cut was depth ≥ 0.9999, which with a 1 m near plane is about 2.9 km at `far` = 4 km and never more than 10 km, so a ground running to the horizon ended in an unfogged band.
 
 ## Volumetric Lighting (God Rays)
 
@@ -302,7 +302,7 @@ Headless, `--boil-time <seconds>` picks the drawing: the same value gives the sa
 
 ## Color Grade, Film Grain and FXAA
 
-Three finishing controls from ADR 0050 sit at the end of the composite pass.
+Three finishing controls from [ADR 0050](https://github.com/chrischaps/Flint/blob/main/docs/adr/0050-color-grade-film-grain-and-fxaa.md) sit at the end of the composite pass.
 
 **Color grade** is an ASC-CDL-shaped lift/gamma/gain applied right after ACES tonemapping, so it grades the display-referred image: `pow(max(color * gain + lift, 0), 1 / gamma)`. The grade is skipped entirely while all three are neutral.
 
@@ -324,7 +324,7 @@ These three are the "feel" levers scripts reach for most; see the script notes b
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `desaturate` | f32 | `0.0` | Mix toward a darkened ash grey (0 = full color, 1 = drained). Applied after the grade, before render modes (ADR 0021) |
+| `desaturate` | f32 | `0.0` | Mix toward a darkened ash grey (0 = full color, 1 = drained). Applied after the grade, before render modes ([ADR 0021](https://github.com/chrischaps/Flint/blob/main/docs/adr/0021-ladder-visuals-through-the-post-stack.md)) |
 | `chromatic_aberration` | f32 | `0.0` | Splits the red and blue channels radially from the screen center |
 | `radial_blur` | f32 | `0.0` | 8-tap blur that grows toward the screen edges while the center stays sharp |
 
@@ -343,7 +343,7 @@ Desaturation mixes toward `luma * 0.62` rather than neutral grey on purpose: it 
 
 ## MSAA
 
-The scene passes can run with 4x multisample anti-aliasing (ADR 0058). Post-processing, shadow and blit passes stay single-sample; depth consumers such as SSAO, fog and DoF read a sample-0 depth resolve.
+The scene passes can run with 4x multisample anti-aliasing ([ADR 0058](https://github.com/chrischaps/Flint/blob/main/docs/adr/0058-opt-in-4x-msaa-for-scene-passes.md)). Post-processing, shadow and blit passes stay single-sample; depth consumers such as SSAO, fog and DoF read a sample-0 depth resolve.
 
 ![MSAA comparison](../images/msaa-compare.png)
 
@@ -391,7 +391,7 @@ WARN levels/demo.scene.toml: [post_process] has no field 'bloom_intensty', did y
 
 When the pipeline is disabled (`--no-postprocess` or the menu checkbox), most effects are zeroed: bloom, vignette, fog, dither, desaturate, film grain, DoF, render mode and grade. Two are not: `chromatic_aberration` and `radial_blur` predate the gate and stay live even with post-processing off.
 
-The scene viewer applies the scene's `[post_process]` block on load (ADR 0046). The Rendering & Effects menu can swap between the authored block and the viewer's default look.
+The scene viewer applies the scene's `[post_process]` block on load ([ADR 0046](https://github.com/chrischaps/Flint/blob/main/docs/adr/0046-viewer-applies-scene-post-process.md)). The Rendering & Effects menu can swap between the authored block and the viewer's default look.
 
 ## CLI Flags
 
@@ -480,7 +480,7 @@ CLI flags take precedence over scene TOML settings.
 
 ## The Rendering & Effects Menu (F4)
 
-There are no longer per-effect function keys. ADR 0053 consolidated every render and post-process debug control into one egui window, opened with **F4** in both the player and the scene viewer. Every toggle above appears there with its non-binary parameters, and changes write straight through to the renderer.
+There are no longer per-effect function keys. [ADR 0053](https://github.com/chrischaps/Flint/blob/main/docs/adr/0053-one-rendering-and-effects-menu-on-f4.md) consolidated every render and post-process debug control into one egui window, opened with **F4** in both the player and the scene viewer. Every toggle above appears there with its non-binary parameters, and changes write straight through to the renderer.
 
 | Section | Controls |
 |---------|----------|

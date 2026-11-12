@@ -7,7 +7,7 @@ Prototype: `crates/flint-render/src/stylize/custom.rs`, demos in `demo/styles/`.
 
 ## Context
 
-ADR 0111 made a style a Rust module: a `StyleDescriptor` plus a
+[ADR 0111](0111-stylized-rendering.md) made a style a Rust module: a `StyleDescriptor` plus a
 `StylePass`, compiled into the engine and listed in `register_styles!`.
 Six styles have been written that way (Kuwahara, watercolor, ASCII,
 pencil, invert, mask_view). A game that wants a look of its own has to
@@ -167,7 +167,7 @@ prototype; #275 wires the player and viewer.
 | a later edit breaks it (hot reload) | rebuild | the **last good build keeps drawing**; the error replaces the old one; fixing it logs "compiles again" |
 | a loop that never ends | **not detectable**, so every loop is **guarded** (#411, natively) | each user loop stops after `LOOP_LIMIT` (4096) turns a run; its pixel draws whatever it had reached, and the frame finishes. A `loop {}` style renders in `flint render` in 0.9 ms of GPU at 960x540. On the web (no naga) the loop runs as written, unguarded |
 | many texture reads | check | >32 reads written out are warned |
-| the shader crashes the driver | `catch_unwind` around `create` (ADR 0111) | the style stays off; the renderer reports a lost device |
+| the shader crashes the driver | `catch_unwind` around `create` ([ADR 0111](0111-stylized-rendering.md)) | the style stays off; the renderer reports a lost device |
 
 `stylize::custom::errors()` lists each style's current error for the host
 to show. The prototype logs; #275 draws it on screen.
@@ -270,7 +270,7 @@ scene's `[post_process]` (see "Built in #275" below).
   a graph needs ordering and cycle checks. It should be designed from a
   game asking for one. Filed as a follow-up.
 - **Rust styles behind a `PlayerExtension` hook.** Games already embed
-  `PlayerApp` (ADRs 0071-0075), so a game could register a Rust style.
+  `PlayerApp` (ADRs [0071](0071-player-extensions-in-a-game-binary.md)-[0075](0075-screen-to-ground-picking.md)), so a game could register a Rust style.
   That covers the power user, but not `flint render`, the viewer, the web
   page's shared player or agents iterating on a look. It is worth doing
   separately (a public `register_style`), and it is not a substitute.
@@ -354,7 +354,7 @@ and contract above and changed five things:
   wrong size. Each install now names its groups `<style> ... #<n>`.
 - **A user style that panics building is not a lost device.** The
   renderer switches it off and records the panic as its error. Only a
-  built-in's panic still marks the device lost (ADR 0111).
+  built-in's panic still marks the device lost ([ADR 0111](0111-stylized-rendering.md)).
 - **`flint bundle`** loads every user style each scene sees from the
   packed files, through the bundle's vfs, as the web player will. It
   refuses the bundle if a description doesn't read, a shader isn't packed

@@ -77,7 +77,7 @@ Five commented specs in `specs/examples/` are the place to start: each opens by 
 
 The crate's [README](https://github.com/chrischaps/Flint/blob/main/crates/flint-procgen/README.md) holds the full parameter catalog, generated from the schemas, and its [CONTRIBUTING guide](https://github.com/chrischaps/Flint/blob/main/crates/flint-procgen/CONTRIBUTING.md) builds a new generator from scratch.
 
-A game can add generators of its own without touching the engine: its binary registers them through a player extension's `register_generators`, and its specs then name them like any of the ones below (ADR 0119; [Player Extensions: Procgen generators](../guides/player-extensions.md#procgen-generators)).
+A game can add generators of its own without touching the engine: its binary registers them through a player extension's `register_generators`, and its specs then name them like any of the ones below ([ADR 0119](https://github.com/chrischaps/Flint/blob/main/docs/adr/0119-game-generators-through-player-extensions.md); [Player Extensions: Procgen generators](../guides/player-extensions.md#procgen-generators)).
 
 ## Generators
 

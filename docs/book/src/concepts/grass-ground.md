@@ -1,6 +1,6 @@
 # Grass on Any Ground
 
-The [terrain](terrain.md#grass) grows grass from its own heightmap and splat map. A game whose ground is something else, such as a mesh it builds itself, a level made of boxes or a race track, can give the grass pass its own ground instead (ADR 0089). That ground is two things over a world-space rectangle:
+The [terrain](terrain.md#grass) grows grass from its own heightmap and splat map. A game whose ground is something else, such as a mesh it builds itself, a level made of boxes or a race track, can give the grass pass its own ground instead ([ADR 0089](https://github.com/chrischaps/Flint/blob/main/docs/adr/0089-compute-grass-over-any-ground.md)). That ground is two things over a world-space rectangle:
 
 - **a density mask.** One byte per texel: 0 grows no grass and 255 grows full density.
 - **a height.** Either level ground at one `y`, or a heightmap of world `y` values.
@@ -73,11 +73,11 @@ if let Err(e) = gpu.set_grass_ground(&config, &ground) {
 ```
 
 - **`set_grass_ground`** uploads the mask and height, and replaces any grass already loaded. Call it again to repaint: a road laid, a lot built on, a field cleared. It returns `Err` only when a slice doesn't match its stated size. On a device without compute shaders it does nothing.
-- **`update_grass_mask(x, y, width, height, &bytes)`** repaints part of the mask in place (ADR 0093): the `width × height` texels from texel (`x`, `y`), one byte each, row by row toward +Z. The buffers and bind groups stay as they are, so a small change costs a small upload. Use it for something that comes and goes often, such as a clearing round a thing placed or picked up. It returns `Err` when no ground is set (a terrain's grass has no mask to repaint), or when the rectangle runs off the mask or `bytes` is the wrong length. On a device without compute shaders it does nothing.
+- **`update_grass_mask(x, y, width, height, &bytes)`** repaints part of the mask in place ([ADR 0093](https://github.com/chrischaps/Flint/blob/main/docs/adr/0093-repaint-grass-mask-in-place.md)): the `width × height` texels from texel (`x`, `y`), one byte each, row by row toward +Z. The buffers and bind groups stay as they are, so a small change costs a small upload. Use it for something that comes and goes often, such as a clearing round a thing placed or picked up. It returns `Err` when no ground is set (a terrain's grass has no mask to repaint), or when the rectangle runs off the mask or `bytes` is the wrong length. On a device without compute shaders it does nothing.
 - **`set_grass_config`** retunes the grass without uploading the ground again. If the new config needs more instances than the buffer holds, the buffer grows before the next frame.
 - **`clear_grass`** removes it.
 
-`GrassHeight::Map { heights, width, depth }` gives the ground a shape. It's a grid of world `y` values over the same rectangle. Each value is the height at the middle of its texel's cell, and a blade stands on the blend of the four values round it (ADR 0098), so on a slope the blades follow the ground rather than stepping with the grid. A grid as fine as the ground's own detail is enough. Within half a cell of the rectangle's edge the height holds level at the outermost values. The heights are world units, unlike a terrain's heightmap, which is scaled by `height_scale`.
+`GrassHeight::Map { heights, width, depth }` gives the ground a shape. It's a grid of world `y` values over the same rectangle. Each value is the height at the middle of its texel's cell, and a blade stands on the blend of the four values round it ([ADR 0098](https://github.com/chrischaps/Flint/blob/main/docs/adr/0098-grass-stands-on-blended-heights.md)), so on a slope the blades follow the ground rather than stepping with the grid. A grid as fine as the ground's own detail is enough. Within half a cell of the rectangle's edge the height holds level at the outermost values. The heights are world units, unlike a terrain's heightmap, which is scaled by `height_scale`.
 
 `SceneRenderer::read_grass_blades` reads back the blades the last frame grew: each root, height, turn and tint. It waits for the GPU, so it's for tests and tools, not for a frame.
 
@@ -89,7 +89,7 @@ The compute pass covers only the grid cells within `max_distance` of the camera,
 
 Each cell keeps its place in the whole grid, so a blade doesn't move as the window follows the camera. Terrain grass gets the same windowing, and grows exactly as it did before.
 
-## Only what the camera sees (ADR 0092)
+## Only what the camera sees ([ADR 0092](https://github.com/chrischaps/Flint/blob/main/docs/adr/0092-grass-culled-to-view-drawn-indirect.md))
 
 Within that window, the compute pass keeps a blade only if its root is inside the camera frustum. The planes are pushed out first, so nothing visible is lost at the frame's edges. They move out by the tallest blade, which covers a blade leaning in from just outside. With shadows on, they move out further, by as far as a blade's shadow reaches along the ground: its height over the tangent of the sun's elevation, capped at eight blade heights for a sun near the horizon. A blade just off screen whose shadow falls on screen is still drawn into the shadow cascades.
 

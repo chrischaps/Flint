@@ -18,7 +18,7 @@ GPU: 1.46ms
 
 (SET + DRIFT at 1280x720 on an RTX 4070, Vulkan.)
 
-Each line is a **scope**, a stretch of the frame between two timestamps the GPU writes as it reaches them (ADR 0108). The renderer scopes its own phases:
+Each line is a **scope**, a stretch of the frame between two timestamps the GPU writes as it reaches them ([ADR 0108](https://github.com/chrischaps/Flint/blob/main/docs/adr/0108-gpu-timing-from-timestamp-queries.md)). The renderer scopes its own phases:
 - `Grass`: the compute that scatters blades, when grass is on.
 - `Shadows`: every cascade.
 - `Scene`: the sky, the opaque and transparent draws, and the water.
@@ -124,7 +124,7 @@ renderer.finish_gpu_timings(&device, &queue); // after the frame's last timed su
 
 ## The `profile` feature
 
-Build the player with `--features profile` (a game binary passes it on: `profile = ["flint-player/profile"]`) and run [Tracy's viewer](https://github.com/wolfpld/tracy/releases) beside it. The viewer finds the game on this machine and shows each frame as a stack of scopes on a timeline (ADR 0109):
+Build the player with `--features profile` (a game binary passes it on: `profile = ["flint-player/profile"]`) and run [Tracy's viewer](https://github.com/wolfpld/tracy/releases) beside it. The viewer finds the game on this machine and shows each frame as a stack of scopes on a timeline ([ADR 0109](https://github.com/chrischaps/Flint/blob/main/docs/adr/0109-tracy-frame-profiler.md)):
 
 - the frame loop: `tick` and its phases (`run_extension_pre_updates`, `run_scripts`, `tick_fixed_physics`, `tick_av_systems`, `sync_renderer`, ...), then `render` and `render_hud`;
 - the renderer: `update_from_world`, `render_to`, and inside it `render_shadow_pass`, `render_main_pass` and `render_postprocess`;
