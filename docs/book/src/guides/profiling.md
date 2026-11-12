@@ -78,8 +78,8 @@ Timing needs `wgpu::Features::TIMESTAMP_QUERY`. Flint's window and headless cont
 
 With `--exit-after` and `--stats`, the player prints the average GPU frame time beside its other `[perf]` lines, so a change can be compared without watching the overlay:
 
-```
-[perf] avg GPU 2.10 ms/frame over 412 timed frames
+```text
+[perf] avg GPU 2.73 ms/frame over 6692 timed frames no vsync
 ```
 
 ### The perf line
@@ -87,8 +87,18 @@ With `--exit-after` and `--stats`, the player prints the average GPU frame time 
 `flint-player --perf` prints one line every ten seconds: frame p50, p99 and max, the CPU time of each phase of the frame (input, scripts, physics, script ui, anim/fx, sync, render, hud, present; mean and worst), the four scripts with the worst single `on_update` (and the script system's own steps, such as `[hot reload]`), the GPU time of each scope above, draws and triangles. In a browser, `?perf=1` shows the same numbers in a corner of the page and copies them as the same line ([web.md](https://github.com/chrischaps/Flint/blob/main/docs/design/web.md#the-perf-readout-120)).
 
 ```text
-flint perf · float · t=24s | native · NVIDIA GeForce RTX 4070 (Vulkan) | 1280x720 DPR 1.5 | frame p50 6.4 p99 11.1 max 25.8 ms (1459 frames/10s) | cpu 6.70 ms: input 0.02/0.2, scripts 1.65/7.0, … | gpu 1.46 ms: Shadows 0.58, Scene 0.23, SSAO 0.45, Bloom 0.16, Composite 0.03, UI 0.00 | 72 draws 50.6K tris
+flint perf · phase4_runtime · t=19s | native · NVIDIA GeForce RTX 4070 (Vulkan) | 1920x1080 DPR 1.5 | scene 1920x1080 scale 1 | frame p50 2.7 p90 3.9 p99 5.0 max 20.6 ms (3463 frames/10s) | cpu 2.78 ms: input 0.01/0.1, scripts 0.43/2.1, … | present immediate | worst scripts: … | gpu 2.82 ms no vsync: Shadows 0.11, Scene 1.29, SSAO 0.56, Volumetric 0.76, Bloom 0.06, FXAA 0.05, UI 0.00 | 92 draws 246.8K tris
 ```
+
+#### Vsync and idle clocks
+
+Under vsync the GPU finishes a frame and then waits for the display, and a GPU that waits most of each frame clocks down. Its passes then take longer than the same passes at full clocks, so a vsync timing is easy to file as a regression. Each line says which it is: `present` names the swapchain's present mode (`fifo`, `fifo-relaxed`, `mailbox` or `immediate`, as wgpu resolved `FLINT_VSYNC`), the GPU part says `under vsync` or `no vsync`, and when the GPU was busy for less than three quarters of the wall clock under vsync it adds `at idle clocks`. The `--exit-after` line above carries the same words, and `?perf=1`'s panel has a `present` row and a note under its GPU times. The same scene, vsync on:
+
+```text
+… | present fifo-relaxed | … | gpu 3.90 ms under vsync at idle clocks (23% busy, reads high; FLINT_VSYNC=0 for pass costs): Shadows 0.17, Scene 1.94, SSAO 0.76, Volumetric 0.89, … | …
+```
+
+Here the frame read 3.9 ms against 2.8 unlocked, about 1.4x; in #270 (DX12, 1080p) SSAO read 4.4 ms under vsync against 0.80 without, about 5x. To compare passes, take them with `FLINT_VSYNC=0` or with `flint render --gpu-time`, which presents nothing. The share is the GPU's frame time over the mean time between frames, not the median: under Fifo on a hybrid-GPU laptop frames come in bursts (see Frame pacing below), and the median frame there was 5 ms at a 60 fps mean.
 
 ### From a game
 

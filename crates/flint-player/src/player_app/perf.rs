@@ -298,6 +298,9 @@ pub(crate) struct PerfContext {
     pub mix: Option<flint_audio::MixCounts>,
     /// What the GPU lines are.
     pub gpu: GpuSource,
+    /// The swapchain's present mode, as wgpu resolved it (#380); `None`
+    /// where the player has no surface to ask.
+    pub present: Option<wgpu::PresentMode>,
     /// The frame-rate pacing (#140), when the web player paces.
     pub pacing: Option<String>,
     /// The WebGPU calls a frame made, on the web (#139).
@@ -352,6 +355,95 @@ pub(crate) enum GpuSource {
     },
 }
 
+/// Under vsync, a GPU busy for less than this share of the wall clock
+/// idles long enough between frames to clock down (#380). How far it
+/// reads high depends on the GPU and driver: in #270 (DX12, 1080p) SSAO
+/// read 4.4 ms under Fifo against 0.80 with `FLINT_VSYNC=0`, about 5x; in
+/// #380 (RTX 4070 laptop, Vulkan, `phase4_runtime` at 1080p, 23% busy)
+/// the frame read 3.9 ms against 2.7, about 1.4x.
+const IDLE_CLOCK_SHARE: f32 = 0.75;
+
+/// What the readout calls a present mode: wgpu's name, lower case.
+fn present_name(mode: wgpu::PresentMode) -> &'static str {
+    use wgpu::PresentMode as P;
+    match mode {
+        P::Fifo | P::AutoVsync => "fifo",
+        P::FifoRelaxed => "fifo-relaxed",
+        P::Mailbox => "mailbox",
+        P::Immediate | P::AutoNoVsync => "immediate",
+    }
+}
+
+/// True when each frame waits for a vblank: the frame rate is the
+/// display's and the GPU rests in whatever the frame leaves over.
+fn under_vsync(mode: wgpu::PresentMode) -> bool {
+    use wgpu::PresentMode as P;
+    matches!(mode, P::Fifo | P::FifoRelaxed | P::AutoVsync)
+}
+
+/// The mean time between frames over the window, ms: the wall time a
+/// frame's GPU work is set against. Not the median: on a hybrid-GPU laptop
+/// Fifo lets frames through in bursts (p50 5 ms, p90 50 ms at a 60 fps
+/// mean), and the GPU's share of the wall clock is what sets its clocks.
+fn mean_frame_ms(s: &PerfSummary) -> f32 {
+    if s.frames.frames == 0 {
+        return 0.0;
+    }
+    (s.secs * 1000.0 / s.frames.frames as f64) as f32
+}
+
+/// The share of the wall clock the GPU was busy, when its times were
+/// taken under vsync with headroom, so at idle clocks: they read higher
+/// than the passes cost at full clocks (#380). `None` without vsync, GPU
+/// times, or headroom.
+fn idle_clock_share(s: &PerfSummary, c: &PerfContext) -> Option<f32> {
+    let GpuSource::Timed { frame_ms, .. } = &c.gpu else {
+        return None;
+    };
+    idle_share(c.present, *frame_ms, mean_frame_ms(s))
+}
+
+/// The GPU's share of a `frame_ms` frame when it spent `gpu_ms` of it
+/// under vsync with headroom (below [`IDLE_CLOCK_SHARE`]).
+fn idle_share(present: Option<wgpu::PresentMode>, gpu_ms: f32, frame_ms: f32) -> Option<f32> {
+    if !present.is_some_and(under_vsync) || frame_ms <= 0.0 {
+        return None;
+    }
+    let share = gpu_ms / frame_ms;
+    (share < IDLE_CLOCK_SHARE).then_some(share)
+}
+
+/// What follows a GPU time on one line: whether it was taken under vsync,
+/// and at idle clocks when the GPU had headroom (#380). Empty when the
+/// present mode isn't known. `--perf`'s line and `--exit-after`'s
+/// `[perf] avg GPU` both carry it.
+pub(super) fn gpu_vsync_note(
+    present: Option<wgpu::PresentMode>,
+    gpu_ms: f32,
+    frame_ms: f32,
+) -> String {
+    match (present, idle_share(present, gpu_ms, frame_ms)) {
+        (_, Some(share)) => format!(
+            " under vsync at idle clocks ({:.0}% busy, reads high; FLINT_VSYNC=0 for pass costs)",
+            share * 100.0
+        ),
+        (Some(mode), None) if under_vsync(mode) => " under vsync".to_string(),
+        (Some(_), None) => " no vsync".to_string(),
+        (None, None) => String::new(),
+    }
+}
+
+/// The readout's present line: the mode, and whether it waits for vblank.
+fn present_line(mode: wgpu::PresentMode) -> String {
+    use wgpu::PresentMode as P;
+    let what = match mode {
+        P::Fifo | P::FifoRelaxed | P::AutoVsync => "vsync",
+        P::Mailbox => "no vsync, newest frame each refresh",
+        P::Immediate | P::AutoNoVsync => "no vsync",
+    };
+    format!("{} ({what})", present_name(mode))
+}
+
 /// The scene's pixels as a share of the canvas's.
 fn pixel_share(c: &PerfContext) -> f64 {
     let canvas = c.surface[0] as f64 * c.surface[1] as f64;
@@ -384,6 +476,9 @@ pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
     ));
     if let Some(pacing) = &c.pacing {
         line(format!("pace   {pacing}"));
+    }
+    if let Some(mode) = c.present {
+        line(format!("present {}", present_line(mode)));
     }
     line(format!(
         "worst  {:.1} ms, {:.1} of it the player's",
@@ -465,9 +560,26 @@ pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
             line("gpu ms   no timestamp-query here: cpu phases only".to_string())
         }
         GpuSource::Timed { passes, frame_ms } => {
-            line(format!("gpu ms   timestamp-query ({frame_ms:.2} a frame)"));
+            let vsync = if c.present.is_some_and(under_vsync) {
+                ", vsync"
+            } else {
+                ""
+            };
+            line(format!(
+                "gpu ms   timestamp-query ({frame_ms:.2} a frame{vsync})"
+            ));
             for (label, ms) in passes {
                 line(format!("  {label:<12}{ms:5.2}"));
+            }
+            if let Some(share) = idle_clock_share(s, c) {
+                line(format!(
+                    "  at idle clocks: busy {:.0}% of a {:.1} ms frame,",
+                    share * 100.0,
+                    mean_frame_ms(s)
+                ));
+                line("  so these read high (1.4x to 5x measured).".to_string());
+                line("  Compare passes with FLINT_VSYNC=0 or".to_string());
+                line("  flint render --gpu-time".to_string());
             }
         }
     }
@@ -507,6 +619,9 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
     if let Some(pacing) = &c.pacing {
         parts.insert(5, format!("pace {pacing}"));
     }
+    if let Some(mode) = c.present {
+        parts.push(format!("present {}", present_name(mode)));
+    }
     if !s.scripts.is_empty() {
         parts.push(format!(
             "worst scripts: {}",
@@ -521,7 +636,8 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
         GpuSource::Off => parts.push("gpu off".into()),
         GpuSource::Unsupported => parts.push("gpu untimed".into()),
         GpuSource::Timed { passes, frame_ms } => parts.push(format!(
-            "gpu {frame_ms:.2} ms: {}",
+            "gpu {frame_ms:.2} ms{}: {}",
+            gpu_vsync_note(c.present, *frame_ms, mean_frame_ms(s)),
             passes
                 .iter()
                 .map(|(l, ms)| format!("{l} {ms:.2}"))
@@ -643,6 +759,7 @@ impl super::PlayerApp {
                     .map(|b| (b.late, b.buffers, b.buffer_ms, b.mix_mean_ms)),
                 mix: self.audio.mix_counts(),
                 gpu,
+                present: Some(context.present_mode_in_use()),
                 pacing: self.frame_rate_line(),
                 webgpu: None,
             },
@@ -884,6 +1001,7 @@ mod tests {
                 passes: vec![("Scene", 3.1), ("SSAO", 0.8)],
                 frame_ms: 3.9,
             },
+            present: Some(wgpu::PresentMode::Fifo),
             pacing: Some("30 fps, 1 in 4 of 120 Hz (auto)".into()),
             webgpu: Some(WebGpuCalls {
                 submits: 1.0,
@@ -1003,6 +1121,82 @@ mod tests {
             "{}",
             readout(&s, &c)
         );
+    }
+
+    /// #270's numbers: under Fifo at 60 fps SSAO read 4.4 ms and Scene
+    /// 1.9; with `FLINT_VSYNC=0`, 0.80 and 0.37. The line has to say which.
+    #[test]
+    fn a_perf_line_says_when_its_gpu_times_were_taken_under_vsync() {
+        let (s, mut c) = sample();
+        c.gpu = GpuSource::Timed {
+            passes: vec![("Scene", 1.9), ("SSAO", 4.4)],
+            frame_ms: 6.6,
+        };
+        let line = summary_line(&s, &c);
+        assert!(line.contains("present fifo"), "{line}");
+        assert!(
+            line.contains("gpu 6.60 ms under vsync at idle clocks (40% busy"),
+            "{line}"
+        );
+        assert!(line.contains("FLINT_VSYNC=0"), "{line}");
+        let text = readout(&s, &c);
+        assert!(text.contains("present fifo (vsync)"), "{text}");
+        assert!(text.contains("(6.60 a frame, vsync)"), "{text}");
+        assert!(
+            text.contains("at idle clocks: busy 40% of a 16.7 ms frame"),
+            "{text}"
+        );
+
+        // Unlocked: the same passes at full clocks, and no note.
+        c.present = Some(wgpu::PresentMode::Immediate);
+        c.gpu = GpuSource::Timed {
+            passes: vec![("Scene", 0.37), ("SSAO", 0.80)],
+            frame_ms: 1.2,
+        };
+        let line = summary_line(&s, &c);
+        assert!(line.contains("present immediate"), "{line}");
+        assert!(line.contains("gpu 1.20 ms no vsync: Scene 0.37"), "{line}");
+        let text = readout(&s, &c);
+        assert!(text.contains("present immediate (no vsync)"), "{text}");
+        assert!(!text.contains("idle clocks"), "{text}");
+
+        // A GPU that fills the vsync frame keeps its clocks up: vsync, no note.
+        c.present = Some(wgpu::PresentMode::Fifo);
+        c.gpu = GpuSource::Timed {
+            passes: vec![("Scene", 15.0)],
+            frame_ms: 15.0,
+        };
+        let line = summary_line(&s, &c);
+        assert!(line.contains("gpu 15.00 ms under vsync: Scene"), "{line}");
+        assert!(!readout(&s, &c).contains("idle clocks"));
+
+        // Mailbox draws uncapped.
+        c.present = Some(wgpu::PresentMode::Mailbox);
+        assert!(readout(&s, &c).contains("present mailbox (no vsync"));
+        assert!(summary_line(&s, &c).contains("gpu 15.00 ms no vsync"));
+    }
+
+    /// Fifo on a hybrid-GPU laptop lets frames through in bursts: 6, 6, 6,
+    /// then 45 ms. The median frame is 6 ms, but the GPU's 4 ms are a
+    /// quarter of the wall clock, and that is what clocks it down.
+    #[test]
+    fn idle_clocks_are_judged_against_the_wall_clock_not_the_median_frame() {
+        let (_, mut c) = sample();
+        let mut rec = PerfRecorder::new(true);
+        let mut t = rec.start;
+        for _ in 0..40 {
+            run(&mut rec, &mut t, 3, 6.0, 0.5);
+            run(&mut rec, &mut t, 1, 45.0, 0.5);
+        }
+        rec.begin_frame_at(t);
+        let s = rec.summary().unwrap();
+        assert!((s.frames.p50 - 6.0).abs() < 0.01);
+        c.gpu = GpuSource::Timed {
+            passes: vec![("Scene", 4.0)],
+            frame_ms: 4.0,
+        };
+        let line = summary_line(&s, &c);
+        assert!(line.contains("at idle clocks (25% busy"), "{line}");
     }
 
     #[test]
