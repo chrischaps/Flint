@@ -788,6 +788,17 @@ impl ViewerApp {
                 project,
                 scene_dir_of(&state.scene_path),
             );
+
+            // Grass on a mesh ground (ADR 0089), as the player and
+            // `flint render` load it (#332)
+            flint_render::load_grass_ground_in(
+                &state.world,
+                project,
+                scene_dir_of(&state.scene_path),
+                &render_context.device,
+                &render_context.queue,
+                &mut scene_renderer,
+            );
         }
 
         // Apply the scene's authored [post_process] block (DoF, vignette,
@@ -2233,6 +2244,18 @@ impl ViewerApp {
                             &self.particles.sync,
                             project,
                             scene_dir_of(&state.scene_path),
+                        );
+
+                        // Grass: the scene's grass_ground (or its mask) may
+                        // have changed, or gone; drop the old field first
+                        renderer.unload_grass();
+                        flint_render::load_grass_ground_in(
+                            &state.world,
+                            project,
+                            scene_dir_of(&state.scene_path),
+                            &context.device,
+                            &context.queue,
+                            renderer,
                         );
 
                         // Re-derive the authored post-process so [post_process]

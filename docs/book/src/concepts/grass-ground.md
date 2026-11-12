@@ -38,7 +38,7 @@ scale_by_mask = true
 | `scale_by_mask` | bool | true | Grey thins the field in proportion. When `false`, anything over `grass.density_threshold` grows at full density, as a terrain's splat layer does |
 | `grass.*` | | | As on the [terrain](terrain.md#grass). `grass.enabled` defaults to `true` here; `density_layer` and `density_source` don't apply |
 
-A scene has one grass field. A `grass_ground` replaces a terrain's grass, with a warning. The **Grass Debug** panel (`F3`) works on it as on a terrain, and commits its changes back to the `grass_ground` component. `flint render` draws it too.
+A scene has one grass field. A `grass_ground` replaces a terrain's grass, with a warning. The **Grass Debug** panel (`F3`) works on it as on a terrain, and commits its changes back to the `grass_ground` component. `flint render` and the scene viewer (`flint edit`, which reloads it on each change under `--watch`) draw it too.
 
 Try it with `flint play examples/mesh_meadow.scene.toml`.
 
@@ -81,7 +81,7 @@ if let Err(e) = gpu.set_grass_ground(&config, &ground) {
 
 `SceneRenderer::read_grass_blades` reads back the blades the last frame grew: each root, height, turn and tint. It waits for the GPU, so it's for tests and tools, not for a frame.
 
-The same calls are on `SceneRenderer` (`set_grass_ground`, `update_grass_mask`, `set_grass_config`, `unload_grass`) for code that drives the renderer directly. A scene transition clears the grass.
+The same calls are on `SceneRenderer` (`set_grass_ground`, `update_grass_mask`, `set_grass_config`, `unload_grass`) for code that drives the renderer directly. A scene transition clears the grass. To load a scene's `grass_ground` component as the player, `flint render` and the viewer do, call `flint_render::load_scene_grass_ground(&world, scene_path, device, queue, &mut renderer)`: it finds the mask through the project's search and returns the `GrassConfig` and entity it set, or `None`.
 
 ## Only the reach of the camera
 
