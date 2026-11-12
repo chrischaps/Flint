@@ -154,11 +154,7 @@ impl PlayerApp {
             .set_living_defaults(super::living_props::defaults_of(self.living.def.as_ref()));
         self.living.wooze = super::living_props::field_of(self.living.wooze_def.as_ref());
         self.living.wooze_time = 0.0;
-        self.living.shallow_wooze.clear();
-        renderer.set_shallow_wooze(std::iter::empty());
-        super::shallow_wooze::warn_without_a_field(&self.world, self.living.wooze.as_ref());
         self.living.boil_clock = Default::default();
-        self.living.grass_wooze = Default::default();
         self.living.tune.for_new_scene();
 
         // Procgen before the model loader: catalog > procgen > file (#32).
@@ -257,10 +253,6 @@ impl PlayerApp {
             &mut self.physics,
             &mut self.terrain,
             &mut grass,
-        );
-        super::shallow_wooze::warn_grass_without_a_field(
-            renderer.grass_config(),
-            self.living.wooze.as_ref(),
         );
         grass
     }

@@ -22,7 +22,7 @@ use flint_core::wooze::{BoilClock, BoilFrame, WoozeField};
 use flint_procgen::{BlendFrame, LivingProps, ProcGenResolver};
 use flint_render::{Camera, SceneRenderer, SplitView};
 
-use super::shallow_wooze::ShallowWooze;
+use super::shallow_wooze::{ShallowWooze, ShallowWoozeSubsystem};
 use super::PlayerApp;
 
 /// What a side called "as it was" names: the knobs as they stood when the
@@ -221,7 +221,9 @@ impl PlayerApp {
         std::mem::swap(&mut self.living.wooze, &mut side.wooze);
         std::mem::swap(&mut self.living.wooze_time, &mut side.wooze_time);
         std::mem::swap(&mut self.living.boil_clock, &mut side.boil_clock);
-        std::mem::swap(&mut self.living.shallow_wooze, &mut side.shallow);
+        if let Some(own) = self.subsystems.find_mut::<ShallowWoozeSubsystem>() {
+            std::mem::swap(&mut own.shallow, &mut side.shallow);
+        }
         let theirs = std::mem::replace(&mut side.boil, boil);
         self.set_side_boil(theirs);
     }
@@ -258,7 +260,11 @@ impl PlayerApp {
             wooze: self.living.wooze.clone(),
             wooze_time: self.living.wooze_time,
             boil_clock: self.living.boil_clock,
-            shallow: self.living.shallow_wooze.clone(),
+            shallow: self
+                .subsystems
+                .find::<ShallowWoozeSubsystem>()
+                .map(|s| s.shallow.clone())
+                .unwrap_or_default(),
             boil: self.side_boil(),
         };
         self.living.tune.ab = Some(Box::new(LivingAb {

@@ -21,6 +21,8 @@ use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_render::{ShallowWoozeDraw, WAVELENGTH_MIN};
 
+use super::subsystem::{SceneCtx, Stage, StageCtx, Subsystem};
+
 /// Metres at full swing, unless a component says.
 pub const DEFAULT_AMPLITUDE: f32 = 0.03;
 /// Metres from one swell to the next, unless a component says.
@@ -106,11 +108,6 @@ impl ShallowWooze {
             ));
         }
         &self.draws
-    }
-
-    /// Forget everything, for a new scene.
-    pub fn clear(&mut self) {
-        *self = Self::default();
     }
 
     /// What each entity draws with, as of the last [`Self::advance`].
@@ -275,6 +272,84 @@ pub fn warn_grass_without_a_field(
         tracing::warn!(
             "grass.wooze is on and this scene has no [wooze] table, so the grass keeps the wall clock: give it one to opt in"
         );
+    }
+}
+
+/// Shallow wooze and woozy grass as one of the player's subsystems (ADR 0117,
+/// #724 step 3b). A scene has it when it could use it: a wooze field, an
+/// entity with `shallow_wooze`, or grass that asks to wooze. It moves on at
+/// `Stage::Procgen`, on the field and `dt` living props just used, and sets the
+/// grass's clock at `Stage::Sync`.
+///
+/// The Living Props A/B forks it with the rest of a grove's state, and hand
+/// tuning moves it on when beats are skipped; both reach it with
+/// `Subsystems::find_mut` until living props are a subsystem too.
+#[derive(Default)]
+pub(crate) struct ShallowWoozeSubsystem {
+    pub(crate) shallow: ShallowWooze,
+    pub(crate) grass: GrassWooze,
+}
+
+impl ShallowWoozeSubsystem {
+    /// The subsystem for the scene being entered, if it uses shallow wooze or
+    /// woozy grass. A scene that asks for either and has no field to drive it
+    /// is told so, once, here.
+    pub(crate) fn for_scene(ctx: &SceneCtx) -> Option<Box<dyn Subsystem>> {
+        let grass = ctx.renderer.as_deref().and_then(|r| r.grass_config());
+        warn_without_a_field(ctx.world, ctx.wooze);
+        warn_grass_without_a_field(grass, ctx.wooze);
+        let woozy_grass = grass.is_some_and(|c| c.enabled && c.wooze);
+        let shallow = !ctx
+            .world
+            .entities_with_component(comp::SHALLOW_WOOZE)
+            .is_empty();
+        // A field with no taker yet still gets one: hand tuning can add a
+        // taker's field later, and a chunk can bring entities that take it
+        (ctx.wooze.is_some() || shallow || woozy_grass)
+            .then(|| Box::new(Self::default()) as Box<dyn Subsystem>)
+    }
+}
+
+impl Subsystem for ShallowWoozeSubsystem {
+    fn name(&self) -> &'static str {
+        "shallow wooze"
+    }
+
+    fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
+        match stage {
+            // Hand-made meshes read the field living props just moved on,
+            // on the same dt (#215), and so does grass that asks to (#252),
+            // where the viewer stands
+            Stage::Procgen => {
+                let (Some(now), Some(renderer)) = (ctx.wooze, ctx.renderer.as_deref_mut()) else {
+                    return;
+                };
+                let draws = self.shallow.advance(ctx.world, now.field, now.time, now.dt);
+                renderer.set_shallow_wooze(draws.iter().copied());
+                self.grass.advance(
+                    renderer.grass_config(),
+                    now.field,
+                    ctx.camera.position_array(),
+                    now.time,
+                    now.dt,
+                );
+            }
+            // The grass's clock: the field's, or the wall clock when it isn't
+            // woozy (the renderer's own default, set in its sync)
+            Stage::Sync => {
+                if let Some(renderer) = ctx.renderer.as_deref_mut() {
+                    self.grass.apply(renderer, ctx.clock.total_time);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn scene_unloading(&mut self, ctx: &mut SceneCtx) {
+        // The renderer keeps the last draws it was handed
+        if let Some(renderer) = ctx.renderer.as_deref_mut() {
+            renderer.set_shallow_wooze(std::iter::empty());
+        }
     }
 }
 

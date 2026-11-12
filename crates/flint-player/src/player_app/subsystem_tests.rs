@@ -5,7 +5,7 @@
 
 use super::expression_feed::{ExpressionFeed, ExpressionTimeline};
 use super::scene_entry::SceneEntry;
-use super::subsystem::{ExitReport, SceneCtx, Stage, StageCtx, Subsystem, Subsystems};
+use super::subsystem::{ExitReport, Lasts, SceneCtx, Stage, StageCtx, Subsystem, Subsystems};
 use super::PlayerApp;
 use flint_core::project::{SchemaDirs, SchemaSource};
 use flint_core::vfs::{self, MemorySource};
@@ -27,11 +27,25 @@ const SCENE_B: &str = r#"
 name = "B"
 "#;
 
+const WOOZY: &str = r#"
+[scene]
+name = "Woozy"
+
+[wooze]
+step = 0.5
+
+[entities.bench.transform]
+position = [0.0, 0.0, 0.0]
+[entities.bench.shallow_wooze]
+amplitude = 0.05
+"#;
+
 fn game() -> MemorySource {
     let mut files = MemorySource::new();
     files.insert("game/flint.toml", "");
     files.insert(A, SCENE_A);
     files.insert("game/scenes/b.scene.toml", SCENE_B);
+    files.insert("game/scenes/woozy.scene.toml", WOOZY);
     files
 }
 
@@ -56,8 +70,7 @@ fn started_in_a(feed: Option<ExpressionFeed>) -> PlayerApp {
 
 type Log = Arc<Mutex<Vec<String>>>;
 
-/// Says what it heard. `scene_only`: it goes with a scene that has no
-/// `[toy]` table.
+/// Says what it heard. `scene_only`: it goes when its scene unloads.
 struct Toy {
     name: &'static str,
     log: Log,
@@ -84,8 +97,12 @@ impl Subsystem for Toy {
     fn name(&self) -> &'static str {
         self.name
     }
-    fn wanted_by(&self, ctx: &SceneCtx) -> bool {
-        !self.scene_only || ctx.tables.contains_key("toy")
+    fn lasts(&self) -> Lasts {
+        if self.scene_only {
+            Lasts::Scene
+        } else {
+            Lasts::Run
+        }
     }
     fn scene_loaded(&mut self, ctx: &mut SceneCtx) {
         let file = std::path::Path::new(ctx.scene_path).file_name().unwrap();
@@ -141,7 +158,7 @@ fn a_toy_hears_every_stage_in_order() {
 }
 
 #[test]
-fn a_transition_unloads_last_added_first_and_drops_what_the_next_scene_does_not_use() {
+fn a_transition_unloads_last_added_first_and_drops_the_scenes_own() {
     vfs::scoped(Arc::new(game()), || {
         let log = Log::default();
         let mut app = started_in_a(None);
@@ -158,7 +175,7 @@ fn a_transition_unloads_last_added_first_and_drops_what_the_next_scene_does_not_
                 "run loaded b.scene.toml"
             ]
             .map(String::from),
-            "B has no [toy]: the scene's toy goes before B comes up"
+            "the scene's toy goes with A, before B comes up"
         );
         assert_eq!(app.subsystems.names(), ["run"]);
     });
@@ -214,5 +231,22 @@ fn the_expression_feed_is_a_subsystem_only_when_the_run_has_one() {
         // A transition keeps it: it belongs to the run, not the scene
         assert!(app.execute_scene_transition("b.scene.toml"));
         assert_eq!(app.subsystems.names(), ["expression feed"]);
+    });
+}
+
+#[test]
+fn a_scene_with_a_wooze_field_gets_shallow_wooze_and_the_next_scene_drops_it() {
+    vfs::scoped(Arc::new(game()), || {
+        let mut app = started_in_a(None);
+        assert!(app.execute_scene_transition("woozy.scene.toml"));
+        assert_eq!(app.subsystems.names(), ["shallow wooze"]);
+
+        assert!(app
+            .subsystems
+            .find::<super::shallow_wooze::ShallowWoozeSubsystem>()
+            .is_some());
+
+        assert!(app.execute_scene_transition("b.scene.toml"));
+        assert!(app.subsystems.is_empty(), "{:?}", app.subsystems.names());
     });
 }
