@@ -72,6 +72,26 @@ film = "A line under the film."
 
 A game with no `engine/schemas` folder of its own (no engine subtree) and no `[mount]` for one gets the engine's schemas packed for it, so a lone scene in an empty folder exports as it plays. When `video` or `poster` is a path in the game rather than a URL, the file is copied next to the bundle. `--meta key=value` overrides any `[web]` key for a single export, and an empty value clears it.
 
+## One scene: `flint bundle <scene>`
+
+Give `flint bundle` a `.scene.toml` instead of a folder and it packs that scene alone, with only what it reaches. This is how to check one engine feature in the browser without packing the whole `examples/` folder:
+
+```bash
+flint bundle examples/ascii_entities.scene.toml   # examples/dist/ascii_entities.flintpack
+# serve a web player build with the pack beside it, then open
+#   http://localhost:8000/?bundle=ascii_entities.flintpack
+```
+
+The bundle's paths are the scene's project's: `flint.toml`'s folder, or the checkout itself for a scene in the engine repository. A scene plays from the pack exactly as it does from the disk, and `examples/`' showcase scenes, which name files by paths from the repository root, pack this way too. The pack is named after the scene, starts there, and is written to `dist/` beside it (`--name` and `--out-dir` change both). For `ascii_entities`, it holds the scene, its four models, `mesh_meadow/mask.png` and the schemas: 46.6 MB, against 110 MB for the whole demo pack.
+
+What goes in:
+
+- the scene, the project's `flint.toml` and input config, and the schema directories the scene resolves by. A directory outside the project (a game naming the engine's schemas by path) goes in at `engine/schemas`;
+- the small kinds, as the scene's search sees them: what is loaded whole or found by a bare name the check can't follow (animations, sequences, user styles, looks, palettes, glyph sets, fonts, papers, strokes, wooze presets, procgen specs, particle effects) and the `scripts/lib/` modules a script may `import`;
+- then every model, texture, sound, script, prefab, scene and file the scene reaches. The bundle's own check runs over what has been gathered, and each missing file it reports is added from the first path it tried. That check is the player's search, so what it finds missing is what the player would read. A prefab, a script, or a scene a script loads gets checked in the next round, so the chain is followed to its end: scene, script, the scene it loads, that scene's models, their textures.
+
+A project-root `bundle.toml` still applies: its `exclude` keeps a file out even when the scene reaches it, and `[late]` splits the parts. `--scene` is refused, since the argument is the scene already.
+
 ## Flags
 
 | Flag | Default | |

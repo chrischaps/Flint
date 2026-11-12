@@ -328,7 +328,9 @@ fn a_clean_project_exits_zero() {
     let dir = clean("clean");
     let o = flint(&dir, &["check"]);
     assert_eq!(o.status.code(), Some(0), "{}{}", stdout(&o), stderr(&o));
-    assert_eq!(stdout(&o), "checked 1 scene and 2 files: no problems\n");
+    // The scene, its script and its model (a glTF is read for the files it
+    // keeps beside it, #382)
+    assert_eq!(stdout(&o), "checked 1 scene and 3 files: no problems\n");
 
     let doc = json(&flint(&dir, &["check", "--json"]));
     assert_eq!(doc["valid"], true);

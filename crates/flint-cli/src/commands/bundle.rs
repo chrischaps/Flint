@@ -55,24 +55,38 @@
 //! A game with no `engine/schemas` of its own and no mount for it packs the
 //! engine's schemas from the Flint tree this CLI was built from, so a scene
 //! an agent wrote in an empty folder packs as it plays.
+//!
+//! **One scene** (#382): given a `.scene.toml` instead of a folder, the
+//! packer takes that scene and only what it reaches, from its project
+//! (`flint.toml`'s root; in the engine checkout, the checkout):
+//!
+//! ```bash
+//! flint bundle examples/ascii_entities.scene.toml   # examples/dist/ascii_entities.flintpack
+//! ```
+//!
+//! See [`gather_scene`] for what "reaches" means. The bundle's paths are the
+//! project's, so the scene plays from the bundle as it does from the disk.
 
 use crate::check::{self, Checks, Schemas, Subject};
 use anyhow::{bail, Context, Result};
 use clap::Args;
 use flint_core::bundle::{Bundle, BundleManifest, LateBundle, EXTENSION};
+use flint_core::project::{AssetKind, Project};
 use flint_core::vfs::{self, normalize, MemorySource};
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Args)]
 pub struct BundleArgs {
-    /// The game's root folder
+    /// The game's root folder, or one `.scene.toml` to pack alone with the
+    /// files it reaches
     #[arg(default_value = ".")]
     pub game: PathBuf,
 
-    /// Where to write the bundles (default: `dist/` in the game root)
+    /// Where to write the bundles (default: `dist/` in the game root, or
+    /// beside a scene packed alone)
     #[arg(long)]
     pub out_dir: Option<PathBuf>,
 
@@ -82,7 +96,8 @@ pub struct BundleArgs {
     pub scene: Option<String>,
 
     /// The bundle's name (overrides bundle.toml, which overrides
-    /// flint.toml's `[project] id`; default: the folder's name)
+    /// flint.toml's `[project] id`; default: the folder's name, or a scene
+    /// packed alone's file stem)
     #[arg(long)]
     pub name: Option<String>,
 
@@ -445,25 +460,47 @@ pub struct Packed {
     pub scene: String,
     /// The files, in the order written: the main bundle first.
     pub files: Vec<(String, u64)>,
+    /// Where they went.
+    pub out_dir: PathBuf,
 }
 
 pub fn run(args: BundleArgs) -> Result<()> {
-    let out_dir = args
-        .out_dir
-        .clone()
-        .unwrap_or_else(|| args.game.join("dist"));
     let dry_run = args.dry_run;
-    pack(args)?;
+    let packed = pack(args)?;
     if !dry_run {
-        println!("written to {}", out_dir.display());
+        println!("written to {}", packed.out_dir.display());
     }
     Ok(())
 }
 
+/// What goes in a bundle, before it is checked and written.
+struct Gathered {
+    name: String,
+    scene: String,
+    schemas: Vec<String>,
+    files: BTreeMap<String, Vec<u8>>,
+    rules: Rules,
+    out_dir: PathBuf,
+}
+
 pub fn pack(args: BundleArgs) -> Result<Packed> {
+    let gathered = if is_scene_file(&args.game) {
+        gather_scene(&args)?
+    } else {
+        gather_game(&args)?
+    };
+    write(gathered, args.list, args.dry_run)
+}
+
+/// Whether `flint bundle` was handed one scene rather than a game folder.
+fn is_scene_file(path: &Path) -> bool {
+    path.is_file() && normalize(path).ends_with(".scene.toml")
+}
+
+fn gather_game(args: &BundleArgs) -> Result<Gathered> {
     let root = args.game.as_path();
     if !root.is_dir() {
-        bail!("{} is not a folder", root.display());
+        bail!("{} is not a folder or a .scene.toml", root.display());
     }
     let config = read_config(root)?;
     let rules = Rules::from_config(&config);
@@ -550,6 +587,387 @@ pub fn pack(args: BundleArgs) -> Result<Packed> {
     .filter(|s| files.keys().any(|p| p.starts_with(&format!("{s}/"))))
     .collect();
 
+    Ok(Gathered {
+        name,
+        scene,
+        schemas,
+        files,
+        rules,
+        out_dir: args.out_dir.clone().unwrap_or_else(|| root.join("dist")),
+    })
+}
+
+/// The kinds a scene names one file at a time, and the bundle's check
+/// reports by name when the file isn't packed, with every path tried: a
+/// model, a texture, a sound, a script. A scene packed alone takes these
+/// only when it reaches them. Every other kind is small and is found by a
+/// bare name the check doesn't follow (a palette, a look, a particle
+/// effect: `particle_effect.effect` is a plain string) or loaded whole
+/// (animations, user styles, specs), so it goes in as the scene's search
+/// sees it. A script's `import`s are not checked by a bundle either: the
+/// `scripts/lib/` modules go in the same way.
+const BY_REFERENCE: &[AssetKind] = &[
+    AssetKind::Models,
+    AssetKind::Textures,
+    AssetKind::Sprites,
+    AssetKind::Audio,
+    AssetKind::Scripts,
+    AssetKind::Scenes,
+    AssetKind::Files,
+    AssetKind::ParticleTextures,
+    // A missing prefab is a `bad-prefab` with no paths tried: a packed
+    // scene's `[prefabs]` are resolved here (`prefabs_of`)
+    AssetKind::Prefabs,
+];
+
+/// How many times the reach is widened before giving up: each round adds
+/// what the last round's files name, so this is the depth of the chain
+/// (scene -> script -> the scene it loads -> its models ...).
+const MAX_ROUNDS: usize = 64;
+
+/// One scene and what it reaches, from its project (#382):
+///
+/// 1. the scene, the project's `flint.toml` and input config, and its
+///    schema directories (a directory outside the project goes in at
+///    `engine/schemas`, as a game's subtree would hold it);
+/// 2. every kind not [`BY_REFERENCE`], as the scene's search sees it: the
+///    kind's folders whole at each step of the walk (a glyph set's `.txt`,
+///    a style's `luts/`), or only the kind's own files in a folder a
+///    by-reference kind shares (`specs` in `models/`);
+/// 3. then, until nothing changes, the bundle's own check is run over what
+///    is gathered, and each missing file it reports is added from the first
+///    path it tried that is on the disk. The check is the player's search
+///    (`flint check`'s, #687), so what it says is missing is what the
+///    player would read; a scene, script or prefab added this way is
+///    checked in the next round, so the chain is followed to its end.
+///
+/// `bundle.toml` in the project root still applies: its `exclude` keeps a
+/// file out even when reached, and `[late]` splits the parts.
+fn gather_scene(args: &BundleArgs) -> Result<Gathered> {
+    let scene_path = args.game.as_path();
+    if args.scene.is_some() {
+        bail!(
+            "--scene names a game's start scene; {} is the scene already",
+            scene_path.display()
+        );
+    }
+    let project = Project::for_path(scene_path)
+        .map_err(|e| anyhow::anyhow!("reading the project manifest: {e}"))?;
+    let root = project.root.clone();
+    let scene = key_under(scene_path, &root).with_context(|| {
+        format!(
+            "{} is not under its project root {}",
+            scene_path.display(),
+            root.display()
+        )
+    })?;
+    let config = read_config(&root)?;
+    let rules = Rules::from_config(&config);
+    let user_excluded = |key: &str| config.exclude.iter().any(|p| glob_match(p, key));
+
+    let name = args.name.clone().unwrap_or_else(|| {
+        scene
+            .rsplit('/')
+            .next()
+            .unwrap_or(&scene)
+            .trim_end_matches(".scene.toml")
+            .to_lowercase()
+    });
+
+    // Bundle path -> the file on the disk
+    let mut paths: BTreeMap<String, PathBuf> = BTreeMap::new();
+    paths.insert(scene.clone(), scene_path.to_path_buf());
+
+    // The schemas the scene resolves by, at their place in the project
+    let dirs = flint_core::project::schema_dirs(Some(scene_path), &[] as &[&str])
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .dirs;
+    let mut mounts: BTreeMap<String, PathBuf> = BTreeMap::new();
+    let mut schemas = Vec::new();
+    for dir in &dirs {
+        let at = match key_under(dir, &root) {
+            Some(key) => key,
+            None => {
+                // A game naming the engine's schemas by path: where its
+                // bundle.toml mounts them, else where a subtree would be
+                let mounted = config.mount.iter().find_map(|(at, from)| {
+                    same_dir(&root.join(from), dir).then(|| normalize(Path::new(at)))
+                });
+                let at = mounted.unwrap_or_else(|| match mounts.contains_key("engine/schemas") {
+                    false => "engine/schemas".into(),
+                    true => format!("external/{}", mounts.len()),
+                });
+                mounts.insert(at.clone(), dir.clone());
+                at
+            }
+        };
+        // All of it but notes and dotfiles: the directory was asked for
+        for rel in files_under(dir)? {
+            if !rel.split('/').any(|s| s.starts_with('.')) && !rel.ends_with(".md") {
+                paths.insert(join_key(&at, &rel), dir.join(&rel));
+            }
+        }
+        schemas.push(at);
+    }
+    if dirs.is_empty() {
+        if let Some(dir) = engine_schemas() {
+            println!(
+                "{scene} resolves no schemas: packing the engine's, from {}",
+                dir.display()
+            );
+            for rel in files_under(&dir)? {
+                paths.insert(join_key("engine/schemas", &rel), dir.join(&rel));
+            }
+            mounts.insert("engine/schemas".into(), dir);
+            schemas.push("engine/schemas".into());
+        }
+    }
+
+    // Where a bundle path is on the disk: under a mount, else the project
+    let disk = |key: &str| -> PathBuf {
+        mounts
+            .iter()
+            .filter_map(|(at, dir)| {
+                key.strip_prefix(&format!("{at}/"))
+                    .map(|rest| (at.len(), dir.join(rest)))
+            })
+            .max_by_key(|(len, _)| *len)
+            .map(|(_, path)| path)
+            .unwrap_or_else(|| root.join(key))
+    };
+    let add = |paths: &mut BTreeMap<String, PathBuf>, key: String, path: PathBuf| {
+        if !user_excluded(&key) && !paths.contains_key(&key) {
+            paths.insert(key, path);
+            true
+        } else {
+            false
+        }
+    };
+
+    // The project's own files the player opens with no scene naming them
+    let scene_dir = scene_path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut fixed: Vec<PathBuf> = vec![project.manifest_path()];
+    fixed.extend(project.input_path());
+    fixed.extend(
+        project
+            .resolve(AssetKind::Files, "config/input.toml", scene_dir)
+            .ok(),
+    );
+    for path in fixed.into_iter().filter(|p| p.is_file()) {
+        if let Some(key) = key_under(&path, &root) {
+            add(&mut paths, key, path);
+        }
+    }
+
+    // The small kinds, as the scene's search sees them
+    let shared: BTreeSet<&str> = BY_REFERENCE
+        .iter()
+        .flat_map(|kind| kind.info().folders.iter().copied())
+        .filter(|f| !f.is_empty())
+        .collect();
+    for kind in AssetKind::ALL.iter().filter(|k| !BY_REFERENCE.contains(k)) {
+        for listed in project.list(*kind, scene_dir) {
+            if let Some(key) = key_under(&listed.path, &root) {
+                add(&mut paths, key, listed.path);
+            }
+        }
+        // `search_dirs` is each of the kind's folders under each step of
+        // the walk, in that order. A folder of `""` is the step itself,
+        // and a shared one holds media: both were listed above.
+        let folders = kind.info().folders;
+        let dirs = project.search_dirs(*kind, scene_dir);
+        for (i, dir) in dirs.iter().enumerate() {
+            let folder = folders[i % folders.len()];
+            if folder.is_empty() || shared.contains(folder) || !dir.is_dir() {
+                continue;
+            }
+            let Some(at) = key_under(dir, &root) else {
+                continue;
+            };
+            for rel in files_under(dir)? {
+                let key = join_key(&at, &rel);
+                if rules.packs(&key) {
+                    add(&mut paths, key, dir.join(&rel));
+                }
+            }
+        }
+    }
+
+    // The modules a script may import (`import "m"` is `scripts/lib/m.rhai`)
+    for dir in project.search_dirs(AssetKind::Scripts, scene_dir) {
+        let lib = dir.join("lib");
+        let Some(at) = key_under(&lib, &root).filter(|_| lib.is_dir()) else {
+            continue;
+        };
+        for rel in files_under(&lib)? {
+            let key = join_key(&at, &rel);
+            if rules.packs(&key) {
+                add(&mut paths, key, lib.join(&rel));
+            }
+        }
+    }
+
+    // Then what the scene names, round by round
+    let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut reached = 0usize;
+    for round in 0.. {
+        for (key, path) in &paths {
+            if !files.contains_key(key) {
+                let bytes =
+                    std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+                files.insert(key.clone(), bytes);
+            }
+        }
+        if round == MAX_ROUNDS {
+            break;
+        }
+        let mut grew = false;
+        // The prefabs each packed scene is made from
+        let scenes: Vec<String> = files
+            .keys()
+            .filter(|k| k.ends_with(".scene.toml"))
+            .cloned()
+            .collect();
+        for key in scenes {
+            for path in prefabs_of(&files[&key], &disk(&key)) {
+                if let Some(prefab) = key_under(&path, &root) {
+                    if add(&mut paths, prefab, path) {
+                        reached += 1;
+                        grew = true;
+                    }
+                }
+            }
+        }
+        if grew {
+            continue;
+        }
+        let report = check_packed(&files, &schemas);
+        for d in report.diagnostics.iter().filter(|d| d.is_error()) {
+            let found = d.tried.iter().find_map(|tried| {
+                let key = normalize(tried);
+                let path = disk(&key);
+                (!key.starts_with("../") && path.is_file()).then_some((key, path))
+            });
+            if let Some((key, path)) = found {
+                if add(&mut paths, key, path) {
+                    reached += 1;
+                    grew = true;
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    // Only the directories that hold something, as a game's bundle lists them
+    schemas.retain(|s| files.keys().any(|p| p.starts_with(&format!("{s}/"))));
+    let bytes: usize = files.values().map(Vec::len).sum();
+    println!(
+        "{scene}: {} files from {} ({} reached by name, {})",
+        files.len(),
+        flint_core::project::shown(&root),
+        reached,
+        mb(bytes as u64)
+    );
+
+    let out_dir = args
+        .out_dir
+        .clone()
+        .unwrap_or_else(|| scene_dir.join("dist"));
+    Ok(Gathered {
+        name,
+        scene,
+        schemas,
+        files,
+        rules,
+        out_dir,
+    })
+}
+
+/// The prefab files a scene's `[prefabs]` name, as the loader finds them
+/// from the scene's place on the disk. One that isn't found is left for
+/// the bundle's check to report.
+fn prefabs_of(text: &[u8], scene: &Path) -> Vec<PathBuf> {
+    let Ok(file) = flint_scene::SceneFile::parse(&String::from_utf8_lossy(text)) else {
+        return Vec::new();
+    };
+    let project = Project::for_scene(scene);
+    let dir = scene.parent().unwrap_or(Path::new("."));
+    let templates: BTreeSet<&str> = file.prefabs.values().map(|p| p.template.as_str()).collect();
+    templates
+        .into_iter()
+        .filter_map(|t| project.resolve(AssetKind::Prefabs, t, dir).ok())
+        .collect()
+}
+
+/// Every file under `dir`, as `/`-separated paths relative to it, sorted.
+fn files_under(dir: &Path) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    let mut stack = vec![PathBuf::new()];
+    while let Some(rel) = stack.pop() {
+        let here = dir.join(&rel);
+        for entry in
+            std::fs::read_dir(&here).with_context(|| format!("reading {}", here.display()))?
+        {
+            let entry = entry?;
+            let rel_path = rel.join(entry.file_name());
+            if entry.file_type()?.is_dir() {
+                stack.push(rel_path);
+            } else {
+                out.push(normalize(&rel_path));
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+fn join_key(at: &str, rel: &str) -> String {
+    match at.is_empty() {
+        true => rel.to_string(),
+        false => format!("{at}/{rel}"),
+    }
+}
+
+/// `path` as a bundle path under `root` (`/`-separated, no `..`), if it is
+/// under it. The two may be spelled differently (one relative, one
+/// absolute), so they are compared as absolute paths.
+fn key_under(path: &Path, root: &Path) -> Option<String> {
+    let rel = match path.strip_prefix(root) {
+        Ok(rel) => rel.to_path_buf(),
+        Err(_) => {
+            let absolute = |p: &Path| std::path::absolute(p).ok();
+            absolute(path)?
+                .strip_prefix(absolute(root)?)
+                .ok()?
+                .to_path_buf()
+        }
+    };
+    let key = normalize(&rel);
+    (!key.is_empty() && !key.split('/').any(|s| s == "..")).then_some(key)
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Check the gathered files as the player will read them, then split them
+/// into the main bundle and its late parts and write each.
+fn write(gathered: Gathered, list: bool, dry_run: bool) -> Result<Packed> {
+    let Gathered {
+        name,
+        scene,
+        schemas,
+        files,
+        rules,
+        out_dir,
+    } = gathered;
     // Check before writing: a bundle with a hole in it fails here. The
     // checks are `flint check`'s, over the packed files (#687).
     let report = check_packed(&files, &schemas);
@@ -583,7 +1001,7 @@ pub fn pack(args: BundleArgs) -> Result<Packed> {
         parts.entry(part).or_default().push((path, bytes));
     }
 
-    if args.list {
+    if list {
         for (part, list) in &parts {
             let label = part.as_deref().unwrap_or("main");
             for (path, bytes) in list {
@@ -593,7 +1011,6 @@ pub fn pack(args: BundleArgs) -> Result<Packed> {
         println!();
     }
 
-    let out_dir = args.out_dir.clone().unwrap_or_else(|| root.join("dist"));
     let file_name = |part: &Option<String>| match part {
         None => format!("{name}.{EXTENSION}"),
         Some(p) => format!("{name}.{p}.{EXTENSION}"),
@@ -646,8 +1063,9 @@ pub fn pack(args: BundleArgs) -> Result<Packed> {
             .iter()
             .map(|(file, _, bytes)| (file.clone(), bytes.len() as u64))
             .collect(),
+        out_dir: out_dir.clone(),
     };
-    if args.dry_run {
+    if dry_run {
         println!("(dry run: nothing written)");
         return Ok(packed);
     }
