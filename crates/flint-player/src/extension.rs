@@ -90,6 +90,32 @@ pub trait PlayerExtension {
     #[cfg(feature = "procgen")]
     fn register_generators(&mut self, _registry: &mut flint_procgen::GeneratorRegistry) {}
 
+    /// The game's own Rust styles (#419): stylize passes written as the
+    /// engine's are (a `static` [`StyleDescriptor`] built with its `const`
+    /// constructor and a `create` that builds a `StylePass`). Called once,
+    /// from `add_extension`, which registers each with
+    /// [`flint_render::stylize::register`]; from then on a style here is
+    /// one like a built-in: F4 lists it (tagged `game`), `--style <name>`
+    /// and `[post_process.styles.<name>]` switch it on, and the player
+    /// draws it.
+    ///
+    /// Add the extension before the event loop starts: the scene's
+    /// `[post_process]` is read against the registry when the renderer is
+    /// made, and a table naming a style not yet registered is dropped. A
+    /// name that is taken (a built-in, a user `.shader.toml` style already
+    /// loaded, another extension's) is refused with an error in the log and
+    /// the rest still register. The registry is the process's, so a second
+    /// `PlayerApp` given the same descriptors changes nothing.
+    ///
+    /// Only the player sees these: `flint render`, `flint edit` and the
+    /// viewer are other binaries. Example game binary:
+    /// `crates/flint-player/examples/cyanotype/`.
+    ///
+    /// [`StyleDescriptor`]: flint_render::stylize::StyleDescriptor
+    fn styles(&self) -> Vec<&'static flint_render::stylize::StyleDescriptor> {
+        Vec::new()
+    }
+
     /// Per-frame Rust, run after the clock ticks and before the scripts'
     /// `on_update`, so anything written to the world here is visible to
     /// scripts in the same frame. It falls between [`Stage::Input`] and

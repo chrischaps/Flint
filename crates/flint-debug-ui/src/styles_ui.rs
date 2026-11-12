@@ -271,6 +271,13 @@ impl StylesEditor {
                         "Runs on the finished picture at output resolution, before FXAA"
                     }
                 });
+                // A game binary's own Rust style (#419)
+                if stylize::is_game_style(style.name) {
+                    ui.weak("game").on_hover_text(
+                        "Written in Rust by this game and registered with \
+                         stylize::register; not part of the engine",
+                    );
+                }
                 // A user-authored style (ADR 0112, #275): where it lives, and
                 // whether it compiles
                 if let Some(source) = stylize::custom::source(style.name) {

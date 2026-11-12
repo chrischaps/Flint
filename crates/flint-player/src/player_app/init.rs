@@ -135,6 +135,12 @@ impl PlayerApp {
         if !extension.script_modules().is_empty() {
             self.core.enable_script_modules();
         }
+        // The game's Rust styles (#419), before any scene's tables are read
+        for descriptor in extension.styles() {
+            if let Err(e) = flint_render::stylize::register(descriptor) {
+                tracing::error!("player extension style: {e}");
+            }
+        }
         self.extensions.push(extension);
         // A late extension still gets its `fonts` hook.
         if self.hud.fonts_installed {

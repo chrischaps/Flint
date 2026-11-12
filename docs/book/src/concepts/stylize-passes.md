@@ -895,7 +895,7 @@ flint render examples/pbr_test.scene.toml --ascii --ascii-palette phosphor --sty
 
 ## Looks and sweeps
 
-A **look** (#279) is a named preset you can put over any scene. It lives in `styles/<name>.look.toml`, next to the `*.style.toml` generation guides, and has two tables. `[look]` says what the look is and which sweeps to try first. `[post_process]` is a block in exactly the scene format. The look's block is merged into the scene's own `[post_process]` key by key: tables merge and everything else replaces, so a look changes only the keys it names. A field or style the engine doesn't know is an error that names the closest real one, because otherwise a typo would quietly fall back to a default.
+A **look** (#279) is a named preset you can put over any scene. It lives in `styles/<name>.look.toml`, next to the `*.styleguide.toml` generation guides, and has two tables. `[look]` says what the look is and which sweeps to try first. `[post_process]` is a block in exactly the scene format. The look's block is merged into the scene's own `[post_process]` key by key: tables merge and everything else replaces, so a look changes only the keys it names. A field or style the engine doesn't know is an error that names the closest real one, because otherwise a typo would quietly fall back to a default.
 
 ```toml
 [look]
@@ -1120,7 +1120,7 @@ Kuwahara's default is unchanged: off.
 
 ## Writing a style
 
-A style is one module in `crates/flint-render/src/stylize/` plus its name in the `register_styles!` list at the bottom of `stylize/mod.rs`. The module exports a `StyleDescriptor` called `STYLE`, built with `const` constructors (#366) so that a field added to the descriptor, a parameter or an option later gets its default in the constructor and no style has to change (the types are `#[non_exhaustive]`, so a game crate can't write a literal either):
+A style is one module in `crates/flint-render/src/stylize/` plus its name in the `register_styles!` list at the bottom of `stylize/mod.rs`. A game writes one the same way in its own crate and registers it at run time instead (#419): `flint_render::stylize::register(&STYLE)` before the first scene is read, or `PlayerExtension::styles` for a game that embeds the player ([Player Extensions](../guides/player-extensions.md#styles)). Everything below is public, so a game's style is built from the same parts; `--list-styles --json` gives it `"source": "game"`. The module exports a `StyleDescriptor` called `STYLE`, built with `const` constructors (#366) so that a field added to the descriptor, a parameter or an option later gets its default in the constructor and no style has to change (the types are `#[non_exhaustive]`, so a game crate can't write a literal either):
 
 ```rust
 pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(

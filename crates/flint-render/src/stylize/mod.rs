@@ -2440,8 +2440,99 @@ register_styles!(
 static SNAPSHOT: std::sync::RwLock<&'static [&'static StyleDescriptor]> =
     std::sync::RwLock::new(REGISTRY);
 
+/// The names of the styles a game binary registered in Rust ([`register`],
+/// #419), in the order it registered them.
+static GAME_STYLES: std::sync::RwLock<Vec<&'static str>> = std::sync::RwLock::new(Vec::new());
+
+/// Add a style written in Rust outside the engine: a game binary's own
+/// (#419). From then on it is a style like a built-in: F4 lists it, `--style
+/// <name>` and `[post_process.styles.<name>]` switch it on, `--list-styles`
+/// names it with `"source": "game"`, and the player draws it.
+///
+/// Build the descriptor as the engine's styles are, a `static` made with
+/// [`StyleDescriptor::new`] and its setters (they are `const`, so a field
+/// the engine adds later gets its default there and the game's code still
+/// builds, #366):
+///
+/// ```ignore
+/// static CYANOTYPE: StyleDescriptor =
+///     StyleDescriptor::new("cyanotype", "Cyanotype", StyleStage::Display, create)
+///         .params(&[StyleParam::new("exposure", 1.0, 0.25..=3.0)]);
+///
+/// flint_render::stylize::register(&CYANOTYPE)?;
+/// ```
+///
+/// Call it before the first scene is read: a `[post_process.styles]` table
+/// or a `--style` word naming a style the registry doesn't know yet is
+/// dropped with a warning. A game that embeds `PlayerApp` returns the
+/// descriptor from `PlayerExtension::styles` instead, and `add_extension`
+/// calls this.
+///
+/// The name must be lowercase letters, digits and `_`, and new: a built-in,
+/// a user style already loaded or another game style of that name is
+/// refused, as is a per-entity `component` another style already takes.
+/// Registering the same descriptor again (a second `PlayerApp` in one
+/// process) is accepted and changes nothing. The registry is one for the
+/// process and append-only, so a style stays registered once added.
+///
+/// A user `.shader.toml` style can't take a game style's name afterwards,
+/// and a hot reload never replaces one.
+pub fn register(descriptor: &'static StyleDescriptor) -> Result<(), String> {
+    let name = descriptor.name;
+    if !custom::is_identifier(name) {
+        return Err(format!(
+            "style name \"{name}\" must start with a lowercase letter and hold only \
+             lowercase letters, digits and _"
+        ));
+    }
+    // Held across the check and the append, so two threads registering one
+    // name can't both pass
+    let mut game = GAME_STYLES.write().unwrap_or_else(|e| e.into_inner());
+    if let Some(existing) = find(name) {
+        if std::ptr::eq(existing, descriptor) {
+            return Ok(());
+        }
+        let what = if is_builtin(name) {
+            "a built-in style"
+        } else if game.contains(&name) {
+            "a style the game has already registered"
+        } else {
+            "a user style already loaded (styles/*.shader.toml)"
+        };
+        return Err(format!(
+            "style \"{name}\" is {what}; pick another name. Registered: {}",
+            names().join(", ")
+        ));
+    }
+    if let Some(component) = descriptor.component {
+        if let Some(other) = registry().iter().find(|d| d.component == Some(component)) {
+            return Err(format!(
+                "style \"{name}\": component \"{component}\" is already style \"{}\"'s",
+                other.name
+            ));
+        }
+    }
+    register_runtime(descriptor);
+    game.push(name);
+    Ok(())
+}
+
+/// Whether `name` is a style a game registered in Rust ([`register`]).
+pub fn is_game_style(name: &str) -> bool {
+    GAME_STYLES
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&name)
+}
+
+/// Whether `name` is written in Rust: a built-in or a game's style, not a
+/// user `.shader.toml` one.
+pub fn is_native(name: &str) -> bool {
+    is_builtin(name) || is_game_style(name)
+}
+
 /// Append `descriptor` to the registry. Its name must be new (checked by
-/// the caller, [`custom::load_dir`]).
+/// the caller: [`register`], [`custom::load_dir`]).
 pub(crate) fn register_runtime(descriptor: &'static StyleDescriptor) {
     let mut snapshot = SNAPSHOT.write().unwrap_or_else(|e| e.into_inner());
     let mut all: Vec<&'static StyleDescriptor> = snapshot.to_vec();
@@ -2451,14 +2542,17 @@ pub(crate) fn register_runtime(descriptor: &'static StyleDescriptor) {
 
 /// Put `new` where the runtime style named `new.name` stands (an edited
 /// `.shader.toml`, #275), keeping its index; [`StyleSet`] sees a new
-/// descriptor there and builds it again. Returns false when no runtime
-/// style has that name (built-ins can't be replaced).
+/// descriptor there and builds it again. Returns false when no user style
+/// has that name (built-ins and game styles can't be replaced).
 pub(crate) fn replace_runtime(new: &'static StyleDescriptor) -> bool {
+    // Asked before the snapshot is locked: `register` takes the game list
+    // and then the snapshot, so the other order here could deadlock. A name
+    // is in the registry once, so a non-native match is the user style.
+    if is_native(new.name) {
+        return false;
+    }
     let mut snapshot = SNAPSHOT.write().unwrap_or_else(|e| e.into_inner());
-    let Some(i) = snapshot
-        .iter()
-        .position(|d| d.name == new.name && !is_builtin(d.name))
-    else {
+    let Some(i) = snapshot.iter().position(|d| d.name == new.name) else {
         return false;
     };
     let mut all: Vec<&'static StyleDescriptor> = snapshot.to_vec();
@@ -2540,6 +2634,98 @@ pub fn names() -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn never_built(_: &StyleDevice) -> Box<dyn StylePass> {
+        unreachable!("never built")
+    }
+
+    static GAME_WASH: StyleDescriptor =
+        StyleDescriptor::new("utest_game_wash", "Wash", StyleStage::Hdr, never_built)
+            .params(&[StyleParam::new("amount", 0.5, 0.0..=1.0)])
+            .component("utest_game_wash_style");
+
+    /// #419: a game's Rust style joins the registry after the built-ins,
+    /// is read from a scene table and a `--style` word, is listed as the
+    /// game's, and registering it again is a no-op.
+    #[test]
+    fn a_registered_game_style_is_a_style_like_a_builtin() {
+        register(&GAME_WASH).unwrap();
+        register(&GAME_WASH).expect("the same descriptor again changes nothing");
+        assert_eq!(
+            registry()
+                .iter()
+                .filter(|d| d.name == "utest_game_wash")
+                .count(),
+            1
+        );
+        let at = registry_index(&GAME_WASH).unwrap();
+        assert!(at >= REGISTRY.len(), "after the built-ins");
+        assert!(is_game_style("utest_game_wash") && is_native("utest_game_wash"));
+        assert!(!is_builtin("utest_game_wash"));
+
+        let tables: BTreeMap<String, toml::Table> =
+            toml::from_str("[utest_game_wash]\namount = 0.75\n").unwrap();
+        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.param("utest_game_wash", "amount"), Some(0.75));
+
+        let mut config = PostProcessConfig::default();
+        let errors = apply_style_specs(&mut config, &["utest_game_wash:amount=0.2".into()]);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(config.styles.is_enabled("utest_game_wash"));
+        assert_eq!(config.styles.param("utest_game_wash", "amount"), Some(0.2));
+
+        let listing = catalog::listing_in(&GAME_WASH, None);
+        assert_eq!(listing.source, "game");
+    }
+
+    #[test]
+    fn register_refuses_taken_names_components_and_bad_names() {
+        static BUILTIN: StyleDescriptor =
+            StyleDescriptor::new("ascii", "Mine", StyleStage::Display, never_built);
+        let e = register(&BUILTIN).unwrap_err();
+        assert!(e.contains("is a built-in style"), "{e}");
+        assert_eq!(find("ascii").unwrap().label, "ASCII");
+
+        static FIRST: StyleDescriptor = StyleDescriptor::new(
+            "utest_game_twice",
+            "First",
+            StyleStage::Display,
+            never_built,
+        );
+        static SECOND: StyleDescriptor = StyleDescriptor::new(
+            "utest_game_twice",
+            "Second",
+            StyleStage::Display,
+            never_built,
+        );
+        register(&FIRST).unwrap();
+        let e = register(&SECOND).unwrap_err();
+        assert!(e.contains("already registered"), "{e}");
+        assert_eq!(find("utest_game_twice").unwrap().label, "First");
+
+        static TAKES_ASCIIS: StyleDescriptor =
+            StyleDescriptor::new("utest_game_comp", "Comp", StyleStage::Display, never_built)
+                .component("ascii_style");
+        let e = register(&TAKES_ASCIIS).unwrap_err();
+        assert!(
+            e.contains("\"ascii_style\" is already style \"ascii\"'s"),
+            "{e}"
+        );
+        assert!(find("utest_game_comp").is_none());
+
+        for bad in ["", "Sepia", "9lives", "two words", "dash-ed"] {
+            // Leaked: a descriptor is 'static, and a refused one is never kept
+            let d: &'static StyleDescriptor = Box::leak(Box::new(StyleDescriptor::new(
+                bad,
+                "Bad",
+                StyleStage::Display,
+                never_built,
+            )));
+            let e = register(d).unwrap_err();
+            assert!(e.contains("lowercase"), "{bad:?}: {e}");
+        }
+    }
 
     /// #365: ASCII's tint and palette settings say they're unused outside
     /// their colour modes, and background outside the grounds and the

@@ -1,6 +1,6 @@
 //! Looks (#279, #356): named post-processing presets laid over a scene.
 //!
-//! A look is a `styles/<name>.look.toml`, beside the `*.style.toml`
+//! A look is a `styles/<name>.look.toml`, beside the `*.styleguide.toml`
 //! generation guides: a `[look]` table that says what it is and what to tune,
 //! and a `[post_process]` block in exactly the scene format. Blocks merge key
 //! by key (tables merge, everything else replaces), so a look changes only

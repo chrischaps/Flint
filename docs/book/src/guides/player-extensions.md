@@ -144,6 +144,26 @@ Add the extension before the event loop starts. The first scene's specs are reso
 
 A complete game binary with one is in the engine: `cargo run -p flint-player --example cave_game` (`crates/flint-player/examples/cave_game/`).
 
+### Styles
+
+A game can bring a [stylize pass](../concepts/stylize-passes.md) of its own, written in Rust as the engine's styles are (#419): a `static` `StyleDescriptor` built with its `const` constructor and setters, and a `create` that builds the `StylePass` drawing it (`stylize::kit` and `StyleFrame` are the same public parts the built-ins use; [Writing a style](../concepts/stylize-passes.md#writing-a-style) walks through one). Hand the descriptor to the player from `styles`:
+
+```rust
+use flint_render::stylize::StyleDescriptor;
+
+impl PlayerExtension for SunPrints {
+    fn styles(&self) -> Vec<&'static StyleDescriptor> {
+        vec![&cyanotype::STYLE]
+    }
+}
+```
+
+`add_extension` registers each one with `flint_render::stylize::register`, and from then on the style is like a built-in: F4's Styles list shows it (tagged `game`), a scene's `[post_process.styles.<name>]` and a `--style <name>:key=value` word switch it on and set it, a style chain orders it, and the player draws it. Add the extension before the event loop starts. The scene's `[post_process]` tables are kept as written and read against the registry when the renderer is made, so a scene loaded before `add_extension` still finds the style; a table naming a style that is never registered is dropped with a warning.
+
+A name that is taken is refused with an error in the log, and the extension's other styles still register: a built-in's, a user `.shader.toml` style already loaded, or another game style's (as is a per-entity `component` another style takes). A user style can't take a game style's name afterwards, and a hot reload never replaces one. The registry is the process's, so a second `PlayerApp` given the same descriptor changes nothing. A game that doesn't embed `PlayerApp`, or wants a style registered before it reads anything, calls `flint_render::stylize::register(&STYLE)` from `main` itself; it returns the refusal as an `Err`.
+
+Only the game's binary knows these styles: the stock `flint-player`, `flint render` and the viewer are other programs, and say the style is unknown. A complete game binary with a two-pass style is in the engine: `cargo run -p flint-player --example cyanotype` (`crates/flint-player/examples/cyanotype/`) prints two palms against the sky the way Anna Atkins printed algae, and takes `--style`, `--scene`, `--input-script` and `--screenshot`.
+
 ### The frame
 
 Each frame the player ticks the clock, applies any input script, advances a scene transition, then calls every extension's `pre_update`. Game events are collected next, and then scripts' `on_update` runs. Whatever an extension writes to the world is visible to scripts **in the same frame**.

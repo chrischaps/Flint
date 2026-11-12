@@ -782,6 +782,12 @@ impl ShaderStyleDef {
                 self.name
             ));
         }
+        if super::is_game_style(&self.name) {
+            return Err(format!(
+                "{at}: \"{}\" is a style the game registers in Rust (#419); pick another name",
+                self.name
+            ));
+        }
         let stage = match self.stage.as_str() {
             "display" => StyleStage::Display,
             "hdr" => StyleStage::Hdr,
@@ -996,7 +1002,7 @@ pub fn component_name(name: &str) -> String {
     format!("{name}_style")
 }
 
-fn is_identifier(name: &str) -> bool {
+pub(super) fn is_identifier(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
@@ -4717,6 +4723,55 @@ fn style(p: StylePixel) -> vec4<f32> {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    fn game_pass(_: &super::super::StyleDevice) -> Box<dyn super::super::StylePass> {
+        unreachable!("never built")
+    }
+
+    static GAME_TAKEN: StyleDescriptor = StyleDescriptor::new(
+        "utest_game_owned",
+        "Game owned",
+        StyleStage::Display,
+        game_pass,
+    );
+
+    /// #419: a `.shader.toml` can't take a name a game registered in Rust,
+    /// and the game's descriptor stays where it was.
+    #[test]
+    fn a_user_style_cannot_take_a_game_styles_name() {
+        super::super::register(&GAME_TAKEN).unwrap();
+        let dir = std::env::temp_dir().join(format!("flint-game-owned-{}", std::process::id()));
+        let styles = dir.join("styles");
+        std::fs::create_dir_all(&styles).unwrap();
+        std::fs::write(
+            styles.join("utest_game_owned.shader.toml"),
+            "version = 1\nname = \"utest_game_owned\"\nshader = \"s.wgsl\"\n",
+        )
+        .unwrap();
+        std::fs::write(styles.join("s.wgsl"), PASSTHROUGH).unwrap();
+        let messages = load_dir(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("is a style the game registers in Rust")),
+            "{messages:?}"
+        );
+        let found = super::super::find("utest_game_owned").unwrap();
+        assert!(std::ptr::eq(found, &GAME_TAKEN));
+        // Nor can a hot reload put one in its place
+        static IMPOSTOR: StyleDescriptor = StyleDescriptor::new(
+            "utest_game_owned",
+            "Impostor",
+            StyleStage::Display,
+            game_pass,
+        );
+        assert!(!super::super::replace_runtime(&IMPOSTOR));
+        assert!(std::ptr::eq(
+            super::super::find("utest_game_owned").unwrap(),
+            &GAME_TAKEN
+        ));
+    }
+
     fn index_of(name: &str) -> usize {
         super::super::registry()
             .iter()
@@ -4730,8 +4785,19 @@ fn style(p: StylePixel) -> vec4<f32> {
     /// the next scene, in another folder, gets its own nearest, in the same
     /// registry slot; and a nearer file that appears later takes over at
     /// the next reload poll, and gives the name back when it goes.
+    /// Held by every test that polls for edits: `reload_changed` reads every
+    /// user style loaded in the process, so one test's edit shows up in
+    /// another's poll (`utest_edit` in the nearest-folder test's) while they
+    /// run side by side.
+    static RELOAD_POLL: Mutex<()> = Mutex::new(());
+
+    fn reload_poll() -> std::sync::MutexGuard<'static, ()> {
+        RELOAD_POLL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn the_nearest_styles_folder_wins_a_name() {
+        let _poll = reload_poll();
         let root = std::env::temp_dir().join(format!("flint-user-426-{}", std::process::id()));
         let cave = root.join("levels/act/cave");
         let other = root.join("other");
@@ -4806,6 +4872,7 @@ fn style(p: StylePixel) -> vec4<f32> {
     /// scene's settings are read again for what changed.
     #[test]
     fn toml_edits_replace_the_style_in_place() {
+        let _poll = reload_poll();
         let dir = std::env::temp_dir().join(format!("flint-user-toml-{}", std::process::id()));
         let styles = dir.join("styles");
         std::fs::create_dir_all(&styles).unwrap();
@@ -4821,10 +4888,8 @@ fn style(p: StylePixel) -> vec4<f32> {
         let index = index_of("utest_edit");
         let old = super::super::find("utest_edit").unwrap();
         let old_bind = loaded("utest_edit").unwrap().names.passes[0].frame;
-        assert!(
-            reload_changed(&dir).replaced.is_empty(),
-            "nothing changed yet"
-        );
+        let first = reload_changed(&dir);
+        assert!(first.replaced.is_empty(), "nothing changed yet: {first:?}");
 
         // A new parameter, a new label
         std::thread::sleep(std::time::Duration::from_millis(30));
@@ -4898,6 +4963,7 @@ fn style(p: StylePixel) -> vec4<f32> {
     /// pass away when its descriptor is replaced, and builds the new one.
     #[test]
     fn a_replaced_descriptor_is_built_again() {
+        let _poll = reload_poll();
         let Some((device, _queue)) = device() else {
             crate::gpu_select::skip_without_gpu("no GPU adapter");
             return;
