@@ -417,10 +417,14 @@ fn luma(c: vec3<f32>) -> f32 {
 // from scattered holes to full-screen as mode_mix rises — patch interiors
 // are fully torn so the effect reads as reality tearing, not a crossfade.
 // Style 1: radial iris from screen center with an fbm-wobbled rim.
+// A scale of 0 or less means "unset" and gets the default 3 (#395): at ~0 the
+// noise is one value over the whole screen, so the sweep tears all or nothing.
+// The config can't default it instead, since mode 5 reads x as eye depth.
 fn tear_mask(uv: vec2<f32>) -> f32 {
     let m = params.mode_mix;
     let aspect = params.texel_size.y / params.texel_size.x; // width / height
-    let scale = max(params.mode_params.x, 0.0001);
+    var scale = params.mode_params.x;
+    if (scale <= 0.0) { scale = 3.0; }
     let t = params.mode_time;
     if (params.mode_params.y < 0.5) {
         let p = uv * vec2<f32>(aspect, 1.0) * scale

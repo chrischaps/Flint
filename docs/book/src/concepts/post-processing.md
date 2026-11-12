@@ -569,7 +569,7 @@ Four uniforms carry the state: `render_mode`, `mode_mix` (0..1 blend),
 
 | Mode | `mode_params` |
 |------|---------------|
-| 1--4 | `x` = bleed-mask scale, `y` = mask style (0 = fbm patches, 1 = radial iris), `z` = rate, `w` = spare |
+| 1--4 | `x` = bleed-mask scale (0 or less = the default 3), `y` = mask style (0 = fbm patches, 1 = radial iris), `z` = rate (Matrix glyph rerolls per second; 0 = the default 6), `w` = spare |
 | 5 | `x` = signed eye depth in meters (+ = submerged), `y` = sea energy 0..1, `z` = daylight 0..1, `w` = bioluminescence 0..1 |
 
 Modes 1--4 fade in through an fbm **bleed mask** whose threshold sweeps across
