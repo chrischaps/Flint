@@ -24,7 +24,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::living_props::{echoes_of, species_of, stagger_name, stagger_of, variance_of};
-use super::PlayerApp;
+use super::living_subsystem::LivingSubsystem;
+use super::subsystem::StageCtx;
 
 /// What's been done to a running grove by hand.
 #[derive(Debug, Default)]
@@ -228,18 +229,6 @@ fn read_knob<T: Clone + PartialEq>(
     }
 }
 
-impl LivingTune {
-    /// Nothing done by hand, for a new scene, keeping only what was asked for
-    /// before any scene was: which presets to compare, and whether to at start.
-    pub(super) fn for_new_scene(&mut self) {
-        *self = Self {
-            ab_picks: self.ab_picks.take(),
-            compare_at_start: self.compare_at_start.take(),
-            ..Self::default()
-        };
-    }
-}
-
 impl LivingView {
     /// Every knob over `props`, for the whole grove or for one species.
     fn of(props: &[ResolvedProp], grove: bool) -> Self {
@@ -310,16 +299,12 @@ pub(crate) fn species_def_of(moved: &WoozePreset) -> LivingSpeciesDef {
     }
 }
 
-impl PlayerApp {
+impl LivingSubsystem {
     /// Every prop's values, each with the layer that set it, as `flint render
     /// --report json` reads them.
-    fn living_resolved(&self) -> Vec<ResolvedProp> {
-        let living = self.procgen_resolver.living_props();
-        let field = self
-            .living
-            .wooze
-            .as_ref()
-            .map(|field| (field, self.living.wooze_time));
+    pub(super) fn living_resolved(&self, ctx: &StageCtx<'_>) -> Vec<ResolvedProp> {
+        let living = ctx.resolver.living_props();
+        let field = self.wooze.as_ref().map(|field| (field, self.wooze_time));
         (0..living.props().len())
             .map(|i| living.resolved(LivingPropId(i), field))
             .collect()
@@ -328,14 +313,14 @@ impl PlayerApp {
     /// Every knob over the whole grove, or over one species' props (#247). For
     /// the grove, a species with its own value for a knob is left out of it, and
     /// the clock's four are the field's, in a scene that has one.
-    pub(crate) fn living_view(&self, species: Option<&str>) -> LivingView {
-        let mut props = self.living_resolved();
+    pub(crate) fn living_view(&self, ctx: &StageCtx<'_>, species: Option<&str>) -> LivingView {
+        let mut props = self.living_resolved(ctx);
         if let Some(species) = species {
             props.retain(|prop| prop.species == species);
         }
         let mut view = LivingView::of(&props, species.is_none());
-        if let (None, Some(field)) = (species, &self.living.wooze) {
-            let global = field.global(self.living.wooze_time);
+        if let (None, Some(field)) = (species, &self.wooze) {
+            let global = field.global(self.wooze_time);
             for (knob, value) in [
                 (&mut view.amplitude, global.amplitude),
                 (&mut view.step, global.step),
@@ -350,8 +335,8 @@ impl PlayerApp {
     }
 
     /// The species any prop grows from, by name.
-    pub(crate) fn living_species(&self) -> Vec<String> {
-        let living = self.procgen_resolver.living_props();
+    pub(crate) fn living_species(&self, ctx: &StageCtx<'_>) -> Vec<String> {
+        let living = ctx.resolver.living_props();
         let mut names: Vec<String> = (living.species_names().into_iter())
             .filter(|species| living.has_species(species))
             .map(str::to_string)
@@ -363,17 +348,20 @@ impl PlayerApp {
     /// Every knob as it stands now for the whole grove, all of them set. Where
     /// props disagree it's the first prop's value; a species that sets its own
     /// is left out, as [`Self::living_view`] says.
-    pub(super) fn living_knobs(&self) -> WoozePreset {
-        self.living_view(None).knobs(self.living_boil())
+    pub(super) fn living_knobs(&self, ctx: &StageCtx<'_>) -> WoozePreset {
+        self.living_view(ctx, None).knobs(self.living_boil(ctx))
     }
 
     /// The knobs every prop agrees on, as a preset, and the names of the ones
     /// left out: what a file can say for the whole grove without flattening its
     /// species. Loading it leaves each species its own of the rest. A species'
     /// own value doesn't count as disagreeing: it's a layer of its own.
-    pub(super) fn living_shared_knobs(&self) -> (WoozePreset, Vec<&'static str>) {
-        let view = self.living_view(None);
-        let mut knobs = view.knobs(self.living_boil());
+    pub(super) fn living_shared_knobs(
+        &self,
+        ctx: &StageCtx<'_>,
+    ) -> (WoozePreset, Vec<&'static str>) {
+        let view = self.living_view(ctx, None);
+        let mut knobs = view.knobs(self.living_boil(ctx));
         let mut left_out = Vec::new();
         let mut out = |is: bool, name: &'static str| {
             if is {
@@ -437,18 +425,18 @@ impl PlayerApp {
 
     /// The boil's knobs. The amounts it has while switched off are the ones it
     /// remembers, not the zeroes the passes are getting.
-    fn living_boil(&self) -> BoilDef {
-        let config = self
-            .scene_renderer
+    fn living_boil(&self, ctx: &StageCtx<'_>) -> BoilDef {
+        let config = ctx
+            .renderer
             .as_ref()
             .map(|renderer| renderer.post_process_config());
         let (paint, ink, on) = config.map_or((0.0, 0.0, 2), |config| {
             let (paint, ink) = config.boil_amounts();
             (paint, ink, config.boil_on)
         });
-        let (paint, ink) = self.living.tune.boil_off.unwrap_or((paint, ink));
+        let (paint, ink) = self.tune.boil_off.unwrap_or((paint, ink));
         BoilDef {
-            enabled: Some(self.living.tune.boil_off.is_none()),
+            enabled: Some(self.tune.boil_off.is_none()),
             kuwahara: Some(paint),
             contour: Some(ink),
             on: Some(on),
@@ -457,26 +445,35 @@ impl PlayerApp {
 
     /// Turn the knobs a preset sets. What can't be used is named and the rest
     /// still happen, since this is a person or a script at work.
-    pub(super) fn tune_living(&mut self, tune: &WoozePreset) -> Result<(), String> {
-        self.tune_living_as(tune, false)
+    pub(super) fn tune_living(
+        &mut self,
+        ctx: &mut StageCtx<'_>,
+        tune: &WoozePreset,
+    ) -> Result<(), String> {
+        self.tune_living_as(ctx, tune, false)
     }
 
     /// [`Self::tune_living`], with each species the preset names given exactly
     /// its values if `replace`, as loading a preset does (#249), rather than
     /// those laid over what it has, as a script's tune does.
-    fn tune_living_as(&mut self, tune: &WoozePreset, replace: bool) -> Result<(), String> {
-        let mut problems = self.tune_wooze(&tune.wooze);
-        problems.extend(self.tune_props(&tune.living));
+    fn tune_living_as(
+        &mut self,
+        ctx: &mut StageCtx<'_>,
+        tune: &WoozePreset,
+        replace: bool,
+    ) -> Result<(), String> {
+        let mut problems = self.tune_wooze(ctx, &tune.wooze);
+        problems.extend(self.tune_props(ctx, &tune.living));
         for (name, species) in &tune.living.species {
             if replace {
-                problems.extend(self.replace_species(name, species));
+                problems.extend(self.replace_species(ctx, name, species));
             } else {
-                problems.extend(self.tune_species(name, species));
+                problems.extend(self.tune_species(ctx, name, species));
             }
         }
         if let Some(boil) = tune.boil {
             problems.extend(boil_problem(&boil));
-            self.tune_boil(boil);
+            self.tune_boil(ctx, boil);
         }
         if problems.is_empty() {
             Ok(())
@@ -488,10 +485,14 @@ impl PlayerApp {
     /// A script's `tune_living` table: a `.wooze.toml`'s shape, or with a
     /// `species` name, one species' own values in the shape of a scene's
     /// `[living.species.<spec>]` (#246).
-    pub(super) fn tune_living_from_script(&mut self, knobs: toml::Value) -> Result<(), String> {
+    pub(super) fn tune_living_from_script(
+        &mut self,
+        ctx: &mut StageCtx<'_>,
+        knobs: toml::Value,
+    ) -> Result<(), String> {
         let problems = match ScriptTune::of(knobs)? {
-            ScriptTune::Grove(tune) => return self.tune_living(&tune),
-            ScriptTune::Species(name, def) => self.tune_species(&name, &def),
+            ScriptTune::Grove(tune) => return self.tune_living(ctx, &tune),
+            ScriptTune::Species(name, def) => self.tune_species(ctx, &name, &def),
         };
         if problems.is_empty() {
             Ok(())
@@ -500,42 +501,50 @@ impl PlayerApp {
         }
     }
 
-    fn tune_wooze(&mut self, knobs: &WoozeKnobs) -> Vec<String> {
-        let start = self
-            .procgen_resolver
+    fn tune_wooze(&mut self, ctx: &mut StageCtx<'_>, knobs: &WoozeKnobs) -> Vec<String> {
+        let start = ctx
+            .resolver
             .living_props()
             .props()
             .first()
             .map_or(WoozeSample::NEUTRAL, |prop| prop.wooze_below());
-        tune_field(&mut self.living.wooze, start, self.living.wooze_time, knobs)
+        tune_field(&mut self.wooze, start, self.wooze_time, knobs)
     }
 
     /// Stagger, echoes and variance. A field that's set goes to every prop, and
     /// one that isn't stays as each prop has it: moving echo `count` in a grove
     /// of several species leaves each its own `spread` and `alpha`.
-    fn tune_props(&mut self, living: &LivingDef) -> Vec<String> {
-        tune_props(self.procgen_resolver.living_props_mut(), living)
+    fn tune_props(&mut self, ctx: &mut StageCtx<'_>, living: &LivingDef) -> Vec<String> {
+        tune_props(ctx.resolver.living_props_mut(), living)
     }
 
     /// One species' own values (#246), over whatever it has already: they beat
     /// the global ones, the field and its zones. A species no prop grows from
     /// keeps them, and is named, since it's most likely a misspelling.
-    pub(super) fn tune_species(&mut self, name: &str, def: &LivingSpeciesDef) -> Vec<String> {
-        let (mut problems, grown) =
-            tune_species(self.procgen_resolver.living_props_mut(), name, def);
+    pub(super) fn tune_species(
+        &mut self,
+        ctx: &mut StageCtx<'_>,
+        name: &str,
+        def: &LivingSpeciesDef,
+    ) -> Vec<String> {
+        let (mut problems, grown) = tune_species(ctx.resolver.living_props_mut(), name, def);
         if !grown {
-            problems.push(self.no_such_species(name));
+            problems.push(self.no_such_species(ctx, name));
         }
         problems
     }
 
     /// One species' own values made exactly `def` (#249): what it had and `def`
     /// doesn't say goes back to the layers below.
-    fn replace_species(&mut self, name: &str, def: &LivingSpeciesDef) -> Vec<String> {
-        let (mut problems, grown) =
-            replace_species(self.procgen_resolver.living_props_mut(), name, def);
+    fn replace_species(
+        &mut self,
+        ctx: &mut StageCtx<'_>,
+        name: &str,
+        def: &LivingSpeciesDef,
+    ) -> Vec<String> {
+        let (mut problems, grown) = replace_species(ctx.resolver.living_props_mut(), name, def);
         if !grown {
-            problems.push(self.no_such_species(name));
+            problems.push(self.no_such_species(ctx, name));
         }
         problems
     }
@@ -544,32 +553,33 @@ impl PlayerApp {
     /// layers below decide them again. Keys are [`SPECIES_KEYS`].
     pub(super) fn clear_living_species(
         &mut self,
+        ctx: &mut StageCtx<'_>,
         name: &str,
         keys: &[String],
     ) -> Result<(), String> {
-        if clear_species(self.procgen_resolver.living_props_mut(), name, keys)? {
+        if clear_species(ctx.resolver.living_props_mut(), name, keys)? {
             Ok(())
         } else {
-            Err(self.no_such_species(name))
+            Err(self.no_such_species(ctx, name))
         }
     }
 
     /// What to say about a species no prop grows from.
-    fn no_such_species(&self, name: &str) -> String {
-        let grown = self.living_species();
+    fn no_such_species(&self, ctx: &StageCtx<'_>, name: &str) -> String {
+        let grown = self.living_species(ctx);
         format!(
             "no living prop grows from '{name}', so it changes nothing; the species here are {}",
             grown.join(", ")
         )
     }
 
-    fn tune_boil(&mut self, boil: BoilDef) {
-        let Some(renderer) = &mut self.scene_renderer else {
-            self.living.tune.boil_waiting = Some(boil);
+    fn tune_boil(&mut self, ctx: &mut StageCtx<'_>, boil: BoilDef) {
+        let Some(renderer) = &mut ctx.renderer else {
+            self.tune.boil_waiting = Some(boil);
             return;
         };
         let mut config = renderer.post_process_config().clone();
-        tune_boil(&mut config, &mut self.living.tune.boil_off, boil);
+        tune_boil(&mut config, &mut self.tune.boil_off, boil);
         renderer.set_post_process_config(config);
     }
 
@@ -580,16 +590,20 @@ impl PlayerApp {
     /// species with values of its own gets a `[living.species.<spec>]` (#249),
     /// and one the scene gave values that now has none an empty one, so that
     /// loading the file gives every species what it has now.
-    pub(super) fn save_living_preset(&mut self, name: &str) -> Result<PathBuf, String> {
-        let (mut knobs, _) = self.living_shared_knobs();
-        knobs.living.species = self.living_species_tables();
-        flint_procgen::write_preset_in(&self.project, Path::new(&self.scene_path), name, &knobs)
+    pub(super) fn save_living_preset(
+        &mut self,
+        ctx: &mut StageCtx<'_>,
+        name: &str,
+    ) -> Result<PathBuf, String> {
+        let (mut knobs, _) = self.living_shared_knobs(ctx);
+        knobs.living.species = self.living_species_tables(ctx);
+        flint_procgen::write_preset_in(ctx.project, Path::new(&ctx.scene_path), name, &knobs)
     }
 
     /// Each species' own values as a preset holds them: every one that has some,
     /// and an empty table for each the file gave values to that now has none.
-    fn living_species_tables(&self) -> BTreeMap<String, LivingSpeciesDef> {
-        let mut tables = self.living_look().living.species;
+    fn living_species_tables(&self, ctx: &StageCtx<'_>) -> BTreeMap<String, LivingSpeciesDef> {
+        let mut tables = self.living_look(ctx).living.species;
         if let Some(base) = self.living_base() {
             for name in base.living.species.into_keys() {
                 tables.entry(name).or_default();
@@ -601,11 +615,11 @@ impl PlayerApp {
     /// The look as it stands now, in a scene's terms (#249): the field's global
     /// knobs, if there's a field, the global layer of `[living]` as it was set,
     /// a field at a time, each species' own values, and the boil.
-    pub(super) fn living_look(&self) -> WoozePreset {
-        let props = self.procgen_resolver.living_props();
-        let wooze = match &self.living.wooze {
+    pub(super) fn living_look(&self, ctx: &StageCtx<'_>) -> WoozePreset {
+        let props = ctx.resolver.living_props();
+        let wooze = match &self.wooze {
             Some(field) => {
-                let global = field.global(self.living.wooze_time);
+                let global = field.global(self.wooze_time);
                 WoozeKnobs {
                     amplitude: Some(global.amplitude),
                     step: Some(global.step),
@@ -616,7 +630,7 @@ impl PlayerApp {
             None => WoozeKnobs::default(),
         };
         let (echoes, stagger, variance) = props.global_layer();
-        let species = (self.living_species().into_iter())
+        let species = (self.living_species(ctx).into_iter())
             .filter_map(|name| {
                 let over = props.species_override(&name)?;
                 (!over.is_empty()).then(|| (name, species_table(&over)))
@@ -632,21 +646,21 @@ impl PlayerApp {
                 softness: props.global_softness(),
                 species,
             },
-            boil: Some(self.living_boil()),
+            boil: Some(self.living_boil(ctx)),
         }
     }
 
     /// The look the scene file gives: as last committed, or as it loaded.
     fn living_base(&self) -> Option<WoozePreset> {
-        let tune = &self.living.tune;
+        let tune = &self.tune;
         (tune.committed.clone()).or_else(|| tune.at_load.as_ref().map(|at| at.look.clone()))
     }
 
     /// What a commit would write now, level by level.
     #[cfg(any(feature = "debug-hud", test))]
-    pub(crate) fn living_unsaved(&self) -> Unsaved {
+    pub(crate) fn living_unsaved(&self, ctx: &StageCtx<'_>) -> Unsaved {
         match self.living_base() {
-            Some(base) => Unsaved::of(flint_procgen::look_edits(&base, &self.living_look())),
+            Some(base) => Unsaved::of(flint_procgen::look_edits(&base, &self.living_look(ctx))),
             None => Unsaved::default(),
         }
     }
@@ -656,16 +670,16 @@ impl PlayerApp {
     /// `[living]`, the boil to `[post_process]`, each on its own line and the rest
     /// of the file as it was. Returns what was said about it. On the web it's an
     /// error, as saving a preset is.
-    pub(super) fn commit_living(&mut self) -> Result<String, String> {
+    pub(super) fn commit_living(&mut self, ctx: &mut StageCtx<'_>) -> Result<String, String> {
         let base = self
             .living_base()
             .ok_or_else(|| "there are no living props to commit".to_string())?;
-        let now = self.living_look();
-        let path = PathBuf::from(&self.scene_path);
+        let now = self.living_look(ctx);
+        let path = PathBuf::from(&ctx.scene_path);
         let report = commit_look(&path, &base, &now)?;
-        self.living.tune.committed = Some(now);
+        self.tune.committed = Some(now);
         let file = path.file_name().map_or_else(
-            || self.scene_path.clone(),
+            || ctx.scene_path.to_string(),
             |name| name.to_string_lossy().into_owned(),
         );
         let mut said = match report.edits.len() {
@@ -693,49 +707,53 @@ impl PlayerApp {
 
     /// Load a preset file, or a built-in, which holds only the field's knobs. A
     /// file comes first, as it does when a scene names one.
-    pub(super) fn load_living_preset(&mut self, name: &str) -> Result<(), String> {
-        let found = find_preset(Path::new(&self.scene_path), name)?;
-        self.tune_living_as(&found, true)
+    pub(super) fn load_living_preset(
+        &mut self,
+        ctx: &mut StageCtx<'_>,
+        name: &str,
+    ) -> Result<(), String> {
+        let found = find_preset(Path::new(&ctx.scene_path), name)?;
+        self.tune_living_as(ctx, &found, true)
     }
 
     /// Every knob as it stands, layer by layer, to go back to.
-    pub(super) fn living_at_load(&self) -> AtLoad {
-        let mut knobs = self.living_knobs();
+    pub(super) fn living_at_load(&self, ctx: &StageCtx<'_>) -> AtLoad {
+        let mut knobs = self.living_knobs(ctx);
         knobs.living = LivingDef::default();
-        let no_field = self.living.wooze.is_none();
+        let no_field = self.wooze.is_none();
         if no_field {
             knobs.wooze = WoozeKnobs::default();
         }
         AtLoad {
             knobs,
             no_field,
-            layers: self.procgen_resolver.living_props().layers(),
-            look: self.living_look(),
+            layers: ctx.resolver.living_props().layers(),
+            look: self.living_look(ctx),
         }
     }
 
     /// Put the knobs back as the scene loaded them: each prop's echoes and
     /// stagger, each lineage's variance, each species' own values, and in a scene
     /// that had no field, each prop's own clock.
-    pub(super) fn reset_living_knobs(&mut self) {
-        let Some(at_load) = self.living.tune.at_load.clone() else {
+    pub(super) fn reset_living_knobs(&mut self, ctx: &mut StageCtx<'_>) {
+        let Some(at_load) = self.tune.at_load.clone() else {
             return;
         };
-        if let Err(problem) = self.tune_living(&at_load.knobs) {
+        if let Err(problem) = self.tune_living(ctx, &at_load.knobs) {
             tracing::warn!("Living Props: {problem}");
         }
         if at_load.no_field {
             // A clock knob may since have given the scene a field it didn't have.
-            self.living.wooze = None;
+            self.wooze = None;
         }
-        self.procgen_resolver
+        ctx.resolver
             .living_props_mut()
             .restore_layers(&at_load.layers);
     }
 
     /// Queue exactly one beat of the clock.
     pub(super) fn step_living(&mut self) {
-        self.living.tune.steps_queued += 1;
+        self.tune.steps_queued += 1;
     }
 
     /// Before the clock is read: hand over a boil that had to wait, note where the
@@ -747,60 +765,54 @@ impl PlayerApp {
     /// ordinary clock instead, returned to be added to the frame's `dt`, so both
     /// sides move on by the same time: a whole beat of the side being shown,
     /// wherever its step is the global one.
-    pub(super) fn before_living_tick(&mut self) -> f64 {
-        if let Some(boil) = self.living.tune.boil_waiting {
-            if self.scene_renderer.is_some() {
-                self.living.tune.boil_waiting = None;
-                self.tune_boil(boil);
+    pub(super) fn before_living_tick(&mut self, ctx: &mut StageCtx<'_>) -> f64 {
+        if let Some(boil) = self.tune.boil_waiting {
+            if ctx.renderer.is_some() {
+                self.tune.boil_waiting = None;
+                self.tune_boil(ctx, boil);
             }
         }
-        if self.living.tune.at_load.is_none() && !self.procgen_resolver.living_props().is_empty() {
-            self.living.tune.at_load = Some(self.living_at_load());
+        if self.tune.at_load.is_none() && !ctx.resolver.living_props().is_empty() {
+            self.tune.at_load = Some(self.living_at_load(ctx));
         }
-        self.start_asked_comparison();
-        let steps = std::mem::take(&mut self.living.tune.steps_queued);
+        self.start_asked_comparison(ctx);
+        let steps = std::mem::take(&mut self.tune.steps_queued);
         if steps == 0 {
             return 0.0;
         }
         let beats = f64::from(steps);
-        let seconds = match &self.living.wooze {
-            Some(field) => f64::from(field.global(self.living.wooze_time).step),
-            None => self
-                .procgen_resolver
+        let seconds = match &self.wooze {
+            Some(field) => f64::from(field.global(self.wooze_time).step),
+            None => ctx
+                .resolver
                 .living_props()
                 .props()
                 .first()
                 .map_or(0.0, |prop| f64::from(prop.clock().step)),
         } * beats;
-        if self.living.tune.ab.is_some() {
+        if self.tune.ab.is_some() {
             return seconds;
         }
-        self.procgen_resolver
+        ctx.resolver
             .living_props_mut()
             .advance_beats(beats, seconds);
-        if let Some(field) = &self.living.wooze {
-            let sample = field.sample(self.camera.position_array(), self.living.wooze_time);
-            self.living
-                .boil_clock
+        if let Some(field) = &self.wooze {
+            let sample = field.sample(ctx.camera.position_array(), self.wooze_time);
+            self.boil_clock
                 .tick(f64::from(sample.step) * beats, &sample);
-            self.living.wooze_time += seconds;
+            self.wooze_time += seconds;
             // Shallow wooze runs its own clocks in seconds, so inside a zone with
             // its own step this isn't a whole beat of theirs.
-            if let Some(own) = self
-                .subsystems
-                .find_mut::<super::shallow_wooze::ShallowWoozeSubsystem>()
-            {
-                own.shallow
-                    .advance(&self.world, field, self.living.wooze_time, seconds);
-            }
+            self.shallow_wooze
+                .advance(ctx.world, field, self.wooze_time, seconds);
         }
         0.0
     }
 
     /// The names a preset can go by here: this scene's files, then the built-ins
     /// that no file has taken.
-    pub(super) fn living_preset_names(&self) -> Vec<String> {
-        let mut names = flint_procgen::list_presets_in(&self.project, Path::new(&self.scene_path));
+    pub(super) fn living_preset_names(&self, ctx: &StageCtx<'_>) -> Vec<String> {
+        let mut names = flint_procgen::list_presets_in(ctx.project, Path::new(&ctx.scene_path));
         for (name, _) in PRESETS {
             if !names.iter().any(|taken| taken == name) {
                 names.push((*name).to_string());
@@ -1038,7 +1050,7 @@ pub(crate) fn scene_says(scene: &flint_scene::SceneFile) -> Vec<String> {
 /// The F3 panel's half: its actions come in here and what's true goes back out.
 #[cfg(feature = "debug-hud")]
 pub(super) mod panel {
-    use super::{species_def_of, KnobRead, LivingView, PlayerApp};
+    use super::{species_def_of, KnobRead, LivingSubsystem, LivingView, StageCtx};
     use flint_debug_ui::{
         DebugPanel, Knob, KnobFlags, KnobSources, LivingKnobs, LivingPanelAction,
         LivingPickedState, LivingPropRow, LivingPropsDebugPanel, LivingSpeciesState, PanelScope,
@@ -1088,27 +1100,28 @@ pub(super) mod panel {
         sources
     }
 
-    impl PlayerApp {
+    impl LivingSubsystem {
         /// The knobs the props disagree on, over the whole grove: echoes and
         /// stagger from prop to prop, variance from lineage to lineage, and in
         /// a scene with no field, the clocks their specs gave them. A species
         /// with its own value for a knob is left out of it.
         #[cfg(test)]
-        pub(in super::super) fn living_mixed(&self) -> KnobFlags {
-            mixed_of(&self.living_view(None))
+        pub(in super::super) fn living_mixed(&self, ctx: &StageCtx<'_>) -> KnobFlags {
+            mixed_of(&self.living_view(ctx, None))
         }
 
         /// Each species the props grow from, with its knobs, where its own
         /// props disagree, and the layer behind each value (#247).
         pub(in super::super) fn living_species_states(
             &self,
+            ctx: &StageCtx<'_>,
             unsaved: &super::Unsaved,
         ) -> Vec<LivingSpeciesState> {
-            let boil = self.living_boil();
-            self.living_species()
+            let boil = self.living_boil(ctx);
+            self.living_species(ctx)
                 .into_iter()
                 .map(|name| {
-                    let view = self.living_view(Some(&name));
+                    let view = self.living_view(ctx, Some(&name));
                     LivingSpeciesState {
                         props: view.props,
                         knobs: LivingKnobs::from_preset(&view.knobs(boil)),
@@ -1122,8 +1135,8 @@ pub(super) mod panel {
         }
 
         /// Each prop's place on its clock, for the panel and the overlay.
-        pub(in super::super) fn living_rows(&self) -> Vec<LivingPropRow> {
-            let props = self.procgen_resolver.living_props();
+        pub(in super::super) fn living_rows(&self, ctx: &StageCtx<'_>) -> Vec<LivingPropRow> {
+            let props = ctx.resolver.living_props();
             props
                 .props()
                 .iter()
@@ -1155,8 +1168,8 @@ pub(super) mod panel {
                 })
                 .collect()
         }
-        fn living_panel(&mut self) -> Option<&mut LivingPropsDebugPanel> {
-            self.debug_panels.iter_mut().find_map(|panel| {
+        fn living_panel<'c>(ctx: &'c mut StageCtx<'_>) -> Option<&'c mut LivingPropsDebugPanel> {
+            ctx.panels.iter_mut().find_map(|panel| {
                 if panel.name() != flint_debug_ui::LIVING_PROPS_DEBUG_PANEL {
                     return None;
                 }
@@ -1169,16 +1182,13 @@ pub(super) mod panel {
         /// json` reads, and the zones it stands in.
         pub(in super::super) fn living_picked_state(
             &self,
+            ctx: &StageCtx<'_>,
             name: &str,
         ) -> Option<LivingPickedState> {
-            let living = self.procgen_resolver.living_props();
+            let living = ctx.resolver.living_props();
             let i = (living.props().iter()).position(|prop| prop.entity_name() == name)?;
             let prop = &living.props()[i];
-            let field = self
-                .living
-                .wooze
-                .as_ref()
-                .map(|field| (field, self.living.wooze_time));
+            let field = self.wooze.as_ref().map(|field| (field, self.wooze_time));
             let resolved = living.resolved(LivingPropId(i), field);
             let view = LivingView::of(std::slice::from_ref(&resolved), false);
             let zones = field.map_or_else(Vec::new, |(field, time)| {
@@ -1189,7 +1199,7 @@ pub(super) mod panel {
             Some(LivingPickedState {
                 name: name.to_string(),
                 zones,
-                knobs: LivingKnobs::from_preset(&view.knobs(self.living_boil())),
+                knobs: LivingKnobs::from_preset(&view.knobs(self.living_boil(ctx))),
                 sources: sources_of(&view),
             })
         }
@@ -1197,49 +1207,61 @@ pub(super) mod panel {
         /// Pick the living prop under `at`, in egui points, the nearest if
         /// several are, as a click in the world does (#248). Returns whether one
         /// was there: a click that finds none goes on to the game.
-        pub(in super::super) fn pick_living_at(&mut self, at: egui::Pos2) -> bool {
-            let rows = self.living_rows();
-            let screen = self.living_screen();
-            let view_proj = self.camera.view_projection_matrix();
+        pub(in super::super) fn pick_living_at(
+            &mut self,
+            ctx: &mut StageCtx<'_>,
+            at: egui::Pos2,
+        ) -> bool {
+            let rows = self.living_rows(ctx);
+            let screen = self.living_screen(ctx);
+            let view_proj = ctx.camera.view_projection_matrix();
             let Some(i) = flint_debug_ui::pick_prop(&rows, &view_proj, screen, at) else {
                 return false;
             };
-            self.pick_living(Some(&rows[i].name))
+            self.pick_living(ctx, Some(&rows[i].name))
         }
 
         /// Pick the prop at the view centre, as F8 does with the cursor captured.
-        pub(in super::super) fn pick_living_at_centre(&mut self) -> bool {
-            let centre = self.living_screen().center();
-            self.pick_living_at(centre)
+        pub(in super::super) fn pick_living_at_centre(&mut self, ctx: &mut StageCtx<'_>) -> bool {
+            let centre = self.living_screen(ctx).center();
+            self.pick_living_at(ctx, centre)
         }
 
         /// The screen in egui points, as the overlay projects onto it.
-        fn living_screen(&self) -> egui::Rect {
-            let (w, h) = self.input.screen_size();
-            let ppp = self.hud.egui_ctx.pixels_per_point();
+        fn living_screen(&self, ctx: &StageCtx<'_>) -> egui::Rect {
+            let (w, h) = ctx.input.screen_size();
+            let ppp = ctx.pixels_per_point;
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w as f32 / ppp, h as f32 / ppp))
         }
 
         /// Pick a prop by name, or let go with `None`. The panel turns to its
         /// species. Returns whether one is picked.
-        pub(in super::super) fn pick_living(&mut self, name: Option<&str>) -> bool {
-            self.mirror_living_panel();
-            let picked = self.living_panel().is_some_and(|panel| panel.select(name));
-            self.mirror_living_panel();
+        pub(in super::super) fn pick_living(
+            &mut self,
+            ctx: &mut StageCtx<'_>,
+            name: Option<&str>,
+        ) -> bool {
+            self.mirror_living_panel(ctx);
+            let picked = Self::living_panel(ctx).is_some_and(|panel| panel.select(name));
+            self.mirror_living_panel(ctx);
             picked
         }
 
         /// The next prop by name, or the one before, as Shift+F8 does.
-        pub(in super::super) fn pick_next_living(&mut self, forward: bool) -> bool {
-            self.mirror_living_panel();
-            let picked = (self.living_panel()).is_some_and(|panel| panel.select_next(forward));
-            self.mirror_living_panel();
+        pub(in super::super) fn pick_next_living(
+            &mut self,
+            ctx: &mut StageCtx<'_>,
+            forward: bool,
+        ) -> bool {
+            self.mirror_living_panel(ctx);
+            let picked = (Self::living_panel(ctx)).is_some_and(|panel| panel.select_next(forward));
+            self.mirror_living_panel(ctx);
             picked
         }
 
         /// The name of the prop picked in the world, if one is.
-        pub(in super::super) fn picked_living(&self) -> Option<String> {
-            let panel = self.debug_panels.iter().find_map(|panel| {
+        pub(in super::super) fn picked_living(&self, ctx: &StageCtx<'_>) -> Option<String> {
+            let panel = ctx.panels.iter().find_map(|panel| {
                 (panel.name() == flint_debug_ui::LIVING_PROPS_DEBUG_PANEL)
                     .then(|| panel.as_any().downcast_ref::<LivingPropsDebugPanel>())
                     .flatten()
@@ -1249,10 +1271,10 @@ pub(super) mod panel {
 
         /// Whether a click is the Living Props panel's to take (#248): its panel
         /// is open, the cursor is free, and there are props to pick.
-        pub(in super::super) fn living_wants_clicks(&self) -> bool {
-            !self.focus.cursor_captured
-                && !self.procgen_resolver.living_props().is_empty()
-                && self.debug_panels.iter().any(|panel| {
+        pub(in super::super) fn living_wants_clicks(&self, ctx: &StageCtx<'_>) -> bool {
+            !ctx.cursor_captured
+                && !ctx.resolver.living_props().is_empty()
+                && ctx.panels.iter().any(|panel| {
                     panel.name() == flint_debug_ui::LIVING_PROPS_DEBUG_PANEL && panel.is_open()
                 })
         }
@@ -1260,8 +1282,8 @@ pub(super) mod panel {
         /// Apply what the panel asked for last frame and show it what's true now.
         /// It costs nothing while the panel's closed, there's no overlay and no
         /// tree is picked.
-        pub(in super::super) fn drain_living_panel(&mut self) {
-            let Some(panel) = self.living_panel() else {
+        pub(in super::super) fn drain_living_panel(&mut self, ctx: &mut StageCtx<'_>) {
+            let Some(panel) = Self::living_panel(ctx) else {
                 return;
             };
             let actions = panel.take_actions();
@@ -1269,45 +1291,45 @@ pub(super) mod panel {
             let showing = panel.is_open();
             let picking = panel.selected().is_some();
             for action in actions {
-                self.apply_living_action(action);
+                self.apply_living_action(ctx, action);
             }
             if !showing {
                 // Closing it is what looks in the folder again next time.
-                self.living.tune.preset_names = None;
-                if !self.living.tune.overlay && !picking {
+                self.tune.preset_names = None;
+                if !self.tune.overlay && !picking {
                     return;
                 }
             }
-            self.mirror_living_panel();
+            self.mirror_living_panel(ctx);
         }
 
         /// Show the panel what's true now.
-        fn mirror_living_panel(&mut self) {
-            let picked = self.picked_living();
-            let picked = picked.and_then(|name| self.living_picked_state(&name));
-            let view = self.living_view(None);
-            let knobs = view.knobs(self.living_boil());
+        fn mirror_living_panel(&mut self, ctx: &mut StageCtx<'_>) {
+            let picked = self.picked_living(ctx);
+            let picked = picked.and_then(|name| self.living_picked_state(ctx, &name));
+            let view = self.living_view(ctx, None);
+            let knobs = view.knobs(self.living_boil(ctx));
             let mixed = mixed_of(&view);
-            let unsaved = self.living_unsaved();
-            let species = self.living_species_states(&unsaved);
-            let no_field = self.living.wooze.is_none();
-            let rows = self.living_rows();
-            let shadows = match self.procgen_resolver.living_props().shadows() {
+            let unsaved = self.living_unsaved(ctx);
+            let species = self.living_species_states(ctx, &unsaved);
+            let no_field = self.wooze.is_none();
+            let rows = self.living_rows(ctx);
+            let shadows = match ctx.resolver.living_props().shadows() {
                 LivingShadows::Blended => "blended",
                 LivingShadows::Drift => "drift",
             };
-            let names = match self.living.tune.preset_names.clone() {
+            let names = match self.tune.preset_names.clone() {
                 Some(names) => names,
                 None => {
-                    let names = self.living_preset_names();
-                    self.living.tune.preset_names = Some(names.clone());
+                    let names = self.living_preset_names(ctx);
+                    self.tune.preset_names = Some(names.clone());
                     names
                 }
             };
-            let frozen = self.living.tune.frozen;
-            let overlay = self.living.tune.overlay;
-            let status = self.living.tune.status.clone();
-            let props = self.procgen_resolver.living_props();
+            let frozen = self.tune.frozen;
+            let overlay = self.tune.overlay;
+            let status = self.tune.status.clone();
+            let props = ctx.resolver.living_props();
             let health = flint_debug_ui::LivingHealth {
                 rings_short: props
                     .props()
@@ -1319,16 +1341,13 @@ pub(super) mod panel {
                 frames_starved: props.stats().frames_starved,
                 blends_starved: props.stats().blends_starved,
             };
-            let (paint_pass, ink_pass) =
-                self.scene_renderer
-                    .as_ref()
-                    .map_or((false, false), |renderer| {
-                        let config = renderer.post_process_config();
-                        (
-                            config.styles.is_enabled("kuwahara"),
-                            config.styles.is_enabled("contour"),
-                        )
-                    });
+            let (paint_pass, ink_pass) = ctx.renderer.as_ref().map_or((false, false), |renderer| {
+                let config = renderer.post_process_config();
+                (
+                    config.styles.is_enabled("kuwahara"),
+                    config.styles.is_enabled("contour"),
+                )
+            });
             let ab = self
                 .living_ab_state()
                 .map(|ab| flint_debug_ui::LivingAbState {
@@ -1337,7 +1356,7 @@ pub(super) mod panel {
                     showing_b: ab.showing_b,
                     split: ab.split,
                 });
-            if let Some(panel) = self.living_panel() {
+            if let Some(panel) = Self::living_panel(ctx) {
                 panel.refresh(flint_debug_ui::LivingPanelState {
                     ab,
                     knobs: LivingKnobs::from_preset(&knobs),
@@ -1360,68 +1379,72 @@ pub(super) mod panel {
             }
         }
 
-        pub(in super::super) fn apply_living_action(&mut self, action: LivingPanelAction) {
-            let tune = &mut self.living.tune;
+        pub(in super::super) fn apply_living_action(
+            &mut self,
+            ctx: &mut StageCtx<'_>,
+            action: LivingPanelAction,
+        ) {
+            let tune = &mut self.tune;
             match action {
                 LivingPanelAction::Set(PanelScope::Global, moved) => {
-                    if let Err(problem) = self.tune_living(&moved) {
-                        self.living.tune.status = Some(problem);
+                    if let Err(problem) = self.tune_living(ctx, &moved) {
+                        self.tune.status = Some(problem);
                     }
                 }
                 // A species' own values (#247), through the layer #246 added:
                 // they beat the grove's, the field and its zones.
                 LivingPanelAction::Set(PanelScope::Species(name), moved) => {
-                    let problems = self.tune_species(&name, &species_def_of(&moved));
+                    let problems = self.tune_species(ctx, &name, &species_def_of(&moved));
                     if !problems.is_empty() {
-                        self.living.tune.status = Some(problems.join("; "));
+                        self.tune.status = Some(problems.join("; "));
                     }
                 }
                 LivingPanelAction::Clear(name, knob) => {
                     let keys: Vec<String> = knob.iter().map(|k| k.key().to_string()).collect();
-                    let said = match self.clear_living_species(&name, &keys) {
+                    let said = match self.clear_living_species(ctx, &name, &keys) {
                         Ok(()) => match knob {
                             Some(knob) => format!("{name} takes the grove's {} again.", knob.key()),
                             None => format!("{name} takes every value from the grove again."),
                         },
                         Err(problem) => problem,
                     };
-                    self.living.tune.status = Some(said);
+                    self.tune.status = Some(said);
                 }
                 LivingPanelAction::Freeze(frozen) => tune.frozen = frozen,
                 LivingPanelAction::Step => self.step_living(),
                 LivingPanelAction::Overlay(on) => tune.overlay = on,
                 LivingPanelAction::Reset => {
-                    self.reset_living_knobs();
-                    self.living.tune.status = Some("Back as the scene loaded.".to_string());
+                    self.reset_living_knobs(ctx);
+                    self.tune.status = Some("Back as the scene loaded.".to_string());
                 }
                 LivingPanelAction::Save(name) => {
-                    let said = match self.save_living_preset(&name) {
-                        Ok(path) => saved_message(self, &name, &path),
+                    let said = match self.save_living_preset(ctx, &name) {
+                        Ok(path) => saved_message(self, ctx, &name, &path),
                         Err(problem) => format!("Couldn't save: {problem}"),
                     };
                     println!("[living] {said}");
-                    self.living.tune.status = Some(said);
-                    self.living.tune.preset_names = None;
+                    self.tune.status = Some(said);
+                    self.tune.preset_names = None;
                 }
                 LivingPanelAction::Commit => {
-                    let said = match self.commit_living() {
+                    let said = match self.commit_living(ctx) {
                         Ok(said) => said,
                         Err(problem) => format!("Couldn't commit: {problem}"),
                     };
                     println!("[living] {said}");
-                    self.living.tune.status = Some(said);
+                    self.tune.status = Some(said);
                 }
                 LivingPanelAction::Load(name) => {
-                    self.living.tune.status = Some(match self.load_living_preset(&name) {
+                    self.tune.status = Some(match self.load_living_preset(ctx, &name) {
                         Ok(()) => format!("Loaded {name}."),
                         Err(problem) => format!("{name}: {problem}"),
                     });
                 }
                 LivingPanelAction::PickAb(a, b) => tune.ab_picks = Some((a, b)),
                 LivingPanelAction::Compare(a, b) => {
-                    self.living.tune.ab_picks = Some((a.clone(), b.clone()));
+                    self.tune.ab_picks = Some((a.clone(), b.clone()));
                     let label = super::super::living_ab::side_label;
-                    self.living.tune.status = Some(match self.compare_living(&a, &b) {
+                    self.tune.status = Some(match self.compare_living(ctx, &a, &b) {
                         Ok(()) => format!(
                             "Comparing A ({}) with B ({}). F6 flips, F7 splits.",
                             label(&a),
@@ -1431,12 +1454,12 @@ pub(super) mod panel {
                     });
                 }
                 LivingPanelAction::Flip => {
-                    self.flip_living();
+                    self.flip_living(ctx);
                 }
                 LivingPanelAction::Split(split) => {
-                    self.split_living(split);
+                    self.split_living(ctx, split);
                 }
-                LivingPanelAction::StopComparing => self.stop_comparing_living(),
+                LivingPanelAction::StopComparing => self.stop_comparing_living(ctx),
             }
         }
     }
@@ -1444,19 +1467,24 @@ pub(super) mod panel {
     /// What was saved, how to load it, and which of the scene's own settings would
     /// still win over it. Those can't be read off the loaded scene, which has had
     /// any preset it names filled in, so this reads its text.
-    fn saved_message(app: &PlayerApp, name: &str, path: &std::path::Path) -> String {
+    fn saved_message(
+        living: &LivingSubsystem,
+        ctx: &StageCtx,
+        name: &str,
+        path: &std::path::Path,
+    ) -> String {
         let mut said = format!(
             "Saved {}. In a scene: [wooze] preset = \"{name}\"",
             path.display()
         );
-        let (_, left_out) = app.living_shared_knobs();
+        let (_, left_out) = living.living_shared_knobs(ctx);
         if !left_out.is_empty() {
             said.push_str(&format!(
                 ". Left out, as the species differ: {}",
                 left_out.join(", ")
             ));
         }
-        let scene = flint_core::vfs::read_to_string(&app.scene_path)
+        let scene = flint_core::vfs::read_to_string(ctx.scene_path)
             .ok()
             .and_then(|text| toml::from_str::<flint_scene::SceneFile>(&text).ok());
         let wins = scene.as_ref().map(super::scene_says).unwrap_or_default();
@@ -1515,5 +1543,10 @@ pub(super) fn clear_species(
 }
 
 #[cfg(test)]
+#[path = "living_test_glue.rs"]
+mod glue;
+#[cfg(test)]
 #[path = "living_tuning_tests.rs"]
 mod tests;
+#[cfg(test)]
+use super::PlayerApp;

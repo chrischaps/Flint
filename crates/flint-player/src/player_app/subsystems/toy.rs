@@ -16,7 +16,7 @@ pub(crate) struct Toy {
 }
 
 /// A toy for a scene with a `[toy]` table.
-pub(crate) fn for_scene(ctx: &SceneCtx) -> Option<Box<dyn Subsystem>> {
+pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     ctx.tables
         .contains_key("toy")
         .then(|| Box::new(Toy::default()) as Box<dyn Subsystem>)

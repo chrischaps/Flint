@@ -5,7 +5,9 @@
 
 use super::expression_feed::{ExpressionFeed, ExpressionTimeline};
 use super::scene_entry::SceneEntry;
-use super::subsystem::{ExitReport, Lasts, SceneCtx, Stage, StageCtx, Subsystem, Subsystems};
+use super::subsystem::{
+    ExitReport, KeyPress, Lasts, ReportCtx, SceneCtx, Stage, StageCtx, Subsystem,
+};
 use super::PlayerApp;
 use flint_core::project::{SchemaDirs, SchemaSource};
 use flint_core::vfs::{self, MemorySource};
@@ -111,11 +113,11 @@ impl Subsystem for Toy {
     fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
         self.say(format!("{stage:?} policy={}", ctx.policy.is_some()));
     }
-    fn on_key(&mut self, key: KeyCode) -> bool {
-        self.say(format!("key {key:?}"));
-        key == KeyCode::F8
+    fn on_key(&mut self, key: KeyPress, _ctx: &mut StageCtx) -> bool {
+        self.say(format!("key {:?}", key.code));
+        key.code == KeyCode::F8
     }
-    fn exit_report(&self, report: &mut ExitReport) {
+    fn exit_report(&self, _ctx: &ReportCtx, report: &mut ExitReport) {
         report.line(format!("[{}] done", self.name));
     }
 }
@@ -180,21 +182,23 @@ fn a_transition_unloads_last_added_first_and_drops_the_scenes_own() {
 
 #[test]
 fn subsystems_take_debug_keys_and_add_to_the_exit_report() {
-    let log = Log::default();
-    let mut list = Subsystems::default();
-    list.push(Toy::boxed("a", &log, false));
-    list.push(Toy::boxed("b", &log, false));
-    assert!(list.on_key(KeyCode::F8), "a takes F8");
-    assert_eq!(take(&log), ["a key F8"], "b never sees a key a took");
-    assert!(!list.on_key(KeyCode::F2));
-    assert_eq!(take(&log), ["a key F2", "b key F2"]);
+    vfs::scoped(Arc::new(game()), || {
+        let log = Log::default();
+        let mut app = started_in_a(None);
+        app.subsystems.push(Toy::boxed("a", &log, false));
+        app.subsystems.push(Toy::boxed("b", &log, false));
+        let key = |code| KeyPress { code, shift: false };
+        assert!(app.subsystems_take_key(key(KeyCode::F8)), "a takes F8");
+        assert_eq!(take(&log), ["a key F8"], "b never sees a key a took");
+        assert!(!app.subsystems_take_key(key(KeyCode::F2)));
+        assert_eq!(take(&log), ["a key F2", "b key F2"]);
 
-    let mut report = ExitReport::default();
-    list.exit_report(&mut report);
-    assert_eq!(report.lines, ["[a] done", "[b] done"]);
+        assert_eq!(app.subsystem_report(), ["[a] done", "[b] done"]);
 
-    drop(list);
-    assert_eq!(take(&log), ["b dropped", "a dropped"], "last added first");
+        let list = std::mem::take(&mut app.subsystems);
+        drop(list);
+        assert_eq!(take(&log), ["b dropped", "a dropped"], "last added first");
+    });
 }
 
 #[test]
@@ -232,15 +236,15 @@ fn the_expression_feed_is_a_subsystem_only_when_the_run_has_one() {
 }
 
 #[test]
-fn a_scene_with_a_wooze_field_gets_shallow_wooze_and_the_next_scene_drops_it() {
+fn a_scene_with_a_wooze_field_gets_living_props_and_the_next_scene_drops_it() {
     vfs::scoped(Arc::new(game()), || {
         let mut app = started_in_a(None);
         assert!(app.execute_scene_transition("woozy.scene.toml"));
-        assert_eq!(app.subsystems.names(), ["shallow wooze"]);
+        assert_eq!(app.subsystems.names(), ["living props"]);
 
         assert!(app
             .subsystems
-            .find::<super::shallow_wooze::ShallowWoozeSubsystem>()
+            .find::<super::living_subsystem::LivingSubsystem>()
             .is_some());
 
         assert!(app.execute_scene_transition("b.scene.toml"));

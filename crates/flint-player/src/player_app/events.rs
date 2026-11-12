@@ -551,7 +551,9 @@ impl ApplicationHandler for PlayerApp {
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
-                if !self.living_takes_click(state, button) {
+                if !self
+                    .subsystems_take_input(super::subsystem::PlayerInput::Click { state, button })
+                {
                     self.handle_mouse_input(state, button);
                 }
             }
@@ -713,7 +715,7 @@ impl PlayerApp {
                     // cursor still lets go, but the window stays open
                     // (Alt+F4 and the close button still close it).
                     if key_code == KeyCode::Escape {
-                        if self.living_let_go() {
+                        if self.subsystems_take_input(super::subsystem::PlayerInput::Escape) {
                             return;
                         }
                         let escape = Escape::decide(
@@ -801,7 +803,11 @@ impl PlayerApp {
     /// it (`Escape::decide`, #639); a scripted one never does.
     pub(super) fn handle_debug_key(&mut self, key_code: KeyCode) {
         // A subsystem's own debug keys come first (ADR 0117)
-        if self.subsystems.on_key(key_code) {
+        let key = super::subsystem::KeyPress {
+            code: key_code,
+            shift: self.focus.key_modifiers.shift_key(),
+        };
+        if self.subsystems_take_key(key) {
             return;
         }
         match key_code {
@@ -882,27 +888,8 @@ impl PlayerApp {
                     "no renderer active — nothing to tune",
                 );
             }
-            // Living Props A/B (#238): F5 freezes the living clock, F6 flips
-            // between the two presets, F7 splits the view between them. F6 and
-            // F7 start a comparison of the panel's picks if none is running.
-            KeyCode::F5 => self.toggle_living_freeze(),
-            // Pick a living prop (#248): F8 the one at the view centre, as with
-            // the cursor captured, and Shift+F8 the next by name, for a click
-            // that missed. A scripted Escape lets go, as a real one does first.
-            #[cfg(feature = "debug-hud")]
-            KeyCode::F8 => {
-                if self.focus.key_modifiers.shift_key() {
-                    self.pick_next_living(true);
-                } else if !self.pick_living_at_centre() {
-                    tracing::info!("Living Props: no living prop at the view centre");
-                }
-            }
-            #[cfg(feature = "debug-hud")]
-            KeyCode::Escape => {
-                self.living_let_go();
-            }
-            KeyCode::F6 => self.living_ab_key(false),
-            KeyCode::F7 => self.living_ab_key(true),
+            // F5-F8 and a scripted Escape are the living subsystem's
+            // (`LivingSubsystem::on_key`)
             KeyCode::F11 => {
                 if let Some(window) = &self.window {
                     if window.fullscreen().is_some() {
@@ -1079,7 +1066,9 @@ impl PlayerApp {
         }
         match event {
             WindowEvent::MouseInput { state, button, .. } => {
-                if !self.living_takes_click(state, button) {
+                if !self
+                    .subsystems_take_input(super::subsystem::PlayerInput::Click { state, button })
+                {
                     self.handle_mouse_input(state, button);
                 }
             }
@@ -1092,46 +1081,6 @@ impl PlayerApp {
             }
             _ => {}
         }
-    }
-
-    /// A left click on a living prop while the Living Props panel is open picks
-    /// it (#248), and the click, press and release, stops there: the game never
-    /// hears it. One that lands on no prop goes on as it would have.
-    pub(super) fn living_takes_click(&mut self, state: ElementState, button: MouseButton) -> bool {
-        #[cfg(feature = "debug-hud")]
-        {
-            if button != MouseButton::Left {
-                return false;
-            }
-            match state {
-                ElementState::Pressed => {
-                    if !self.living_wants_clicks() {
-                        return false;
-                    }
-                    let ppp = self.hud.egui_ctx.pixels_per_point();
-                    let (x, y) = self.input.mouse_position;
-                    let took = self.pick_living_at(egui::pos2(x as f32 / ppp, y as f32 / ppp));
-                    self.living.tune.click_held = took;
-                    took
-                }
-                ElementState::Released => std::mem::take(&mut self.living.tune.click_held),
-            }
-        }
-        #[cfg(not(feature = "debug-hud"))]
-        {
-            let _ = (state, button);
-            false
-        }
-    }
-
-    /// Let go of the tree picked in the world, if one is. Returns whether one was.
-    pub(super) fn living_let_go(&mut self) -> bool {
-        #[cfg(feature = "debug-hud")]
-        if self.picked_living().is_some() {
-            self.pick_living(None);
-            return true;
-        }
-        false
     }
 
     fn handle_mouse_input(&mut self, state: ElementState, button: MouseButton) {
