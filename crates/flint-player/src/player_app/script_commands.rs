@@ -240,10 +240,16 @@ impl ScriptHost for PlayerApp {
         // One-shot sounds play to completion (same as AudioCommand::Stop)
     }
 
-    fn fire_event(&mut self, name: String, _data: toml::Value) {
-        // The one event the core hands on: a transition's script saying
-        // it's done (`game_core::for_the_host`)
-        debug_assert_eq!(name, TRANSITION_COMPLETE);
+    fn fire_event(&mut self, name: String, data: toml::Value) {
+        // The core hands on only a transition's script saying it's done
+        // (`game_core::for_the_host`); any other event called here goes on
+        // the frame's bus, as the core's dispatcher puts it
+        if name != TRANSITION_COMPLETE {
+            self.core
+                .events
+                .push(flint_runtime::GameEvent::Custom { name, data });
+            return;
+        }
         match &self.transition_phase {
             TransitionPhase::Exiting { target_scene, .. } => {
                 let target = target_scene.clone();
