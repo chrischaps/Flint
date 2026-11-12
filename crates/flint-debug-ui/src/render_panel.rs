@@ -506,8 +506,8 @@ impl RenderDebugPanel {
                     }
                 });
             f.pp_changed |= slider(ui, "Mix", &mut self.pp.mode_mix, 0.0..=1.0);
-            let hover = "Tears (1-4): x = mask scale, y = mask style (0 fbm / 1 iris), \
-                         z = rate, w = spare. Underwater (5): x = signed eye depth m, \
+            let hover = "Tears (1-4): x = mask scale (0 = 3), y = mask style (0 fbm / 1 iris), \
+                         z = rate (0 = 6), w = spare. Underwater (5): x = signed eye depth m, \
                          y = sea energy, z = daylight, w = biolum.";
             let r = ui.horizontal(|ui| {
                 ui.label("Params");

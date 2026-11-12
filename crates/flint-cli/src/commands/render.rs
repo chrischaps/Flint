@@ -601,8 +601,9 @@ pub struct RenderArgs {
     #[arg(long)]
     pub mode_mix: Option<f32>,
 
-    /// Render mode params as X,Y,Z,W. Tears 1-4: mask scale, mask style,
-    /// rate, spare. Underwater 5: eye depth m, sea energy, daylight, biolum
+    /// Render mode params as X,Y,Z,W. Tears 1-4: mask scale (0 = 3), mask
+    /// style, rate (0 = 6), spare. Underwater 5: eye depth m, sea energy,
+    /// daylight, biolum
     #[arg(long, value_parser = crate::commands::common_args::parse_vec4)]
     pub mode_params: Option<[f32; 4]>,
 

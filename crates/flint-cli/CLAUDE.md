@@ -163,7 +163,7 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    # default) and is a real control since the texel-size upload (ADR 0049).
    #   --render-mode 1 --mode-mix 1.0 --mode-params 3,0,6,0
    #     (modes: 1=matrix 2=blood 3=drunk 4=tron [reality tears; params =
-   #      mask scale, mask style 0 fbm/1 iris, rate, spare] 5=underwater
+   #      mask scale (0 = 3, #395), mask style 0 fbm/1 iris, rate (0 = 6), spare] 5=underwater
    #      [params = signed eye depth m, sea energy 0-1, daylight 0-1,
    #      biolum 0-1; masks by per-pixel waterline, not the tear mask])
    ```

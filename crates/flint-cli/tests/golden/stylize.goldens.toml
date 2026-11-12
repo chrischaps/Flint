@@ -684,3 +684,13 @@ name = "selection-nothing-drawn"
 scene = "tests/fixtures/scenes/selection_outline.scene.toml"
 args = ["--no-grid", "--no-shadows", "--select", "sun"]
 matches = ["--no-grid", "--no-shadows"]
+
+# A reality tear with no mode_params (#395): a mask scale of 0 is read as the
+# default 3 in the shader, so a partial mix tears in patches, the same as the
+# documented 3,0,6,0. Before, the scale sat at ~0, the fbm was one value over
+# the whole screen, and mix 0.55 tore nothing at all
+[[case]]
+name = "tear-default-params"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--render-mode", "1", "--mode-mix", "0.55"]
+matches = ["--no-grid", "--render-mode", "1", "--mode-mix", "0.55", "--mode-params", "3,0,6,0"]
