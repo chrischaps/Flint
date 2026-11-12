@@ -28,13 +28,15 @@ pub use player_app::expression_feed::{ExpressionFeed, ExpressionTimeline, TimedS
 pub use player_app::fonts::project_font_definitions;
 pub use player_app::frame_rate::FrameRateSetting;
 pub use player_app::headless_animation::HeadlessAnimation;
-pub use player_app::headless_scripts::{
-    apply_look, CameraView, HeadlessScripts, RendererRequests, ScriptLook, Skipped,
-    PRESENTATION_ONLY, SCRIPT_SEED,
+pub use player_app::headless_game::{
+    apply_look, HeadlessGame, ScriptLook, Skipped, PRESENTATION_ONLY, SCRIPT_SEED,
 };
 pub use player_app::input_script::{Applied, InputScript, PointerEvent, ScriptEvent};
 pub use player_app::living_props::import_of as living_import;
-pub use player_app::living_props::{species_problems, LivingRun, WoozeClocks};
+pub use player_app::living_props::{
+    apply_preset as apply_living_preset, boil_at, species_problems, wanted_by as living_wanted,
+    wooze_of_scene,
+};
 pub use player_app::procgen_assets::{GpuSink, ProcGenMode};
 pub use player_app::render_scale::{RenderScaleSetting, WEB_DPR_CAP};
 pub use player_app::scene_loading::{

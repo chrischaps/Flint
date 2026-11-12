@@ -4,6 +4,11 @@
 #
 #   cargo run --bin flint-player -- examples/ascii_story.scene.toml
 #
+# A plain `flint render` of it is a smooth clearing, since no script has run
+# yet. To see a beat headless, run the script to it (#371):
+#
+#   cargo run --bin flint -- render examples/ascii_story.scene.toml --script-time 3 -o barrel.png
+#
 #   0 s  everything smooth
 #   2 s  barrel -> ascii (object grid), its cells settling from 22 to 7 points
 #   4 s  bench  -> ascii in amber blocks, its glow breathing; the crate in

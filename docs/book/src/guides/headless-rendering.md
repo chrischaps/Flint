@@ -317,14 +317,24 @@ What doesn't run: physics, so a ragdoll or a character pushed by its controller 
 
 ## Scripts and an Expression Timeline
 
-`--scripts` runs the scene's Rhai scripts as the player does, so what they do to the scene is in the capture. `--expression-timeline` feeds them [expression states](../concepts/scripting.md#expression-api) from a file and implies `--scripts`:
+`--scripts` runs the scene's Rhai scripts as the player does, so what they do to the scene is in the capture. `--script-time <t>` is `--scripts --time <t>` in one flag (#371), named like `--particle-time` and `--anim-time`: the scripts run to game time `t` and the capture is taken there. `examples/ascii_story.scene.toml` styles nothing until its script does, so a still of it is a plain clearing; at its beats it isn't:
+
+```bash
+flint render examples/ascii_story.scene.toml --script-time 3 -o barrel.png   # the barrel in glyphs
+flint render examples/ascii_story.scene.toml --script-time 5 -o bench.png    # the bench in amber blocks
+flint render examples/ascii_story.scene.toml --script-time 0..8 -o story.gif # the whole loop
+```
+
+A render that doesn't run a scene's scripts, a still included, names them in a warning and the flag that would. The stylize goldens hold it (`script-beat-is-the-authored-style`): a scene whose script takes its props' authored ASCII off at the first frame and gives it back at 2 s renders, at `--script-time 3`, the same bytes as `--time 3` with no script run.
+
+`--expression-timeline` feeds scripts [expression states](../concepts/scripting.md#expression-api) from a file and implies `--scripts`:
 
 ```bash
 flint render scenes/stage.scene.toml --expression-timeline timelines/one-turn.timeline.json \
   --time 0..12 --fps 12 -o one-turn.gif
 ```
 
-Scripts start once the models are loaded, as in the player, and tick once per clock step (1/60 s, or `--frame-step`), in the player's frame order: the timeline's states that have come due, `on_expression` then `on_update`, `on_draw_ui`, then what the scripts asked for, then the wooze field and living props. Time 0 is the player's first frame: its `dt` is 0, and a state at `t = 0` is heard before anything is drawn. A state is due once the clock reaches its `t`, to within a microsecond, since 120 steps of 1/60 add up to a hair under 2.
+Scripts start once the models are loaded, as in the player, and the scene steps once per clock step (1/60 s, or `--frame-step`) through the player's own frame, the same code (`flint_player::GameCore`, #725): the timeline's states that have come due, `on_expression` then `on_update`, the style tweens, what `on_update` asked for, the camera, `on_draw_ui` and what it asked for, animation, then the wooze field and living props. A script's style reads (`get_style_param`, `get_entity_style`) see the frame's styles as the scripts have left them, the step after they change, as in the player. Time 0 is the player's first frame: its `dt` is 0, and a state at `t = 0` is heard before anything is drawn. A state is due once the clock reaches its `t`, to within a microsecond, since 120 steps of 1/60 add up to a hair under 2.
 
 It's deterministic, so a review can diff two renders:
 
@@ -333,7 +343,7 @@ It's deterministic, so a review can diff two renders:
 - Scripts run in the order of their entities' names, here and in the player. That order used to come from ids, which differ run to run.
 - There is no input.
 
-A capture carries out what scripts ask through the same dispatcher as the player (`flint_script::host`, #697): one `ScriptHost` interface, of which the player and a headless capture are two implementations, so a command reads the same in both and the capture differs only in what it can do. What changes the picture runs:
+A capture carries out what scripts ask through the same dispatcher as the player (`flint_script::host`, #697), and the same code does each command that changes the game (#725): only sound, the window, other scenes and the like are each host's own, so a command reads the same in both and the capture differs only in what it can do. What changes the picture runs:
 
 - everything scripts write to the world (`set_field`, `set_position`, a light's colour, a material);
 - entity styles: `set_entity_style`, `set_style_param`, `clear_entity_style`, and `tween_style_param`, whose tweens step on the scripts' clock as the player's do; `get_entity_style` and `get_style_param` read the config the capture draws with;
@@ -487,7 +497,7 @@ flint render examples/wooze_field.scene.toml --time 3.5 -o at-3.5.png --report j
     }]
   }],
   "still_props": [],
-  "warnings": ["scripts don't run without --scripts, so what director would do to this scene isn't in it"]
+  "warnings": ["scripts don't run without --scripts, so what director would do to this scene isn't in it (--script-time T runs them to game time T)"]
 }
 ```
 

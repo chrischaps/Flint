@@ -52,7 +52,7 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-`PlayerApp` is a winit `ApplicationHandler`, so it runs directly with no wrapper. Set the same launch options `flint-player`'s `main.rs` sets for the features your scenes use, on `player.launch` (`window_size`, `msaa_sample_count`, `style_specs`, ...), and `capture` for `--screenshot`-style runs. What the scene's file says is `player.scene` (`SceneSettings`), which `apply_scene_settings` fills in. Pass the engine's `schemas/` yourself, ahead of the game's. The game itself, with no window, is `player.core` (a `GameCore`, [ADR 0117](https://github.com/chrischaps/Flint/blob/main/docs/adr/0117-player-subsystems-and-one-game-step.md)): the world, its clock, scripts, physics, animation and particles are `player.core.world`, `player.core.clock`, `player.core.script` and so on, and each frame runs the core's one frame order.
+`PlayerApp` is a winit `ApplicationHandler`, so it runs directly with no wrapper. Set the same launch options `flint-player`'s `main.rs` sets for the features your scenes use, on `player.launch` (`window_size`, `msaa_sample_count`, `style_specs`, ...), and `capture` for `--screenshot`-style runs. What the scene's file says is `player.scene` (`SceneSettings`), which `apply_scene_settings` fills in. Pass the engine's `schemas/` yourself, ahead of the game's. The game itself, with no window, is `player.core` (a `GameCore`, [ADR 0117](https://github.com/chrischaps/Flint/blob/main/docs/adr/0117-player-subsystems-and-one-game-step.md)): the world, its clock, scripts, physics, animation and particles are `player.core.world`, `player.core.clock`, `player.core.script` and so on, and each frame runs the core's one frame order, the one `flint render --scripts` runs too.
 
 ## The Hooks
 
