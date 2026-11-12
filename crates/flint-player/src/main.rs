@@ -388,8 +388,8 @@ fn main() -> Result<()> {
     if let Some(name) = &args.look {
         // Refuse a bad name now. The scene's user styles first: a look may
         // name one (they are loaded again, harmlessly, with the scene)
-        flint_player::load_user_styles(&app.scene_path);
-        let look = flint_render::look::find(name, &app.scene_path)
+        flint_player::load_user_styles(&app.core.scene_path);
+        let look = flint_render::look::find(name, &app.core.scene_path)
             .map_err(|e| anyhow::anyhow!("--look: {e}"))?;
         println!("Look: {} ({})", look.name, look.source);
         app.launch.look = Some(name.clone());
@@ -426,13 +426,13 @@ fn main() -> Result<()> {
     if args.perf {
         app.enable_perf(true);
     }
-    app.clock.frame_step = args.frame_step.filter(|s| *s > 0.0);
+    app.core.clock.frame_step = args.frame_step.filter(|s| *s > 0.0);
     // A stepped run is meant to repeat, so its scripts' randomness does too
     if let Some(seed) = args
         .seed
-        .or(app.clock.frame_step.map(|_| flint_player::SCRIPT_SEED))
+        .or(app.core.clock.frame_step.map(|_| flint_player::SCRIPT_SEED))
     {
-        app.script.seed_random(seed);
+        app.core.script.seed_random(seed);
     }
 
     // Apply initial mixer bus volumes from CLI (e.g. --music-volume 0)

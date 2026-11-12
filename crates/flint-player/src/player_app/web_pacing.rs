@@ -130,10 +130,10 @@ impl PlayerApp {
         }
         let sleeps = flint_audio::page::sleeps();
         if SLEEPS_SEEN.with(|s| s.replace(sleeps)) != sleeps {
-            self.clock.resync();
+            self.core.clock.resync();
             tracing::info!(
                 "[sleep] the page is back; game time carries on from {:.3} s",
-                self.clock.total_time
+                self.core.clock.total_time
             );
         }
         false
@@ -148,7 +148,7 @@ impl PlayerApp {
             if held {
                 tracing::info!("[hold] the page holds the game");
             } else {
-                self.clock.resync();
+                self.core.clock.resync();
                 tracing::info!("[hold] the page let go of the game");
             }
         }
@@ -168,13 +168,13 @@ impl PlayerApp {
             tracing::info!("[frame-rate] {}", pacer.describe());
         }
         let period = pacer.refresh_ms().map(|ms| ms / 1000.0);
-        let current = self.clock.vsync_period();
+        let current = self.core.clock.vsync_period();
         let changed = match (period, current) {
             (Some(a), Some(b)) => (a - b).abs() > 1e-5,
             (a, b) => a.is_some() != b.is_some(),
         };
         if changed {
-            self.clock.set_vsync_period(period);
+            self.core.clock.set_vsync_period(period);
         }
     }
 }

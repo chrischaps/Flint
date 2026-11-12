@@ -263,17 +263,17 @@ impl PlayerApp {
             return Ok(());
         };
 
-        let scene_path = Path::new(&self.scene_path);
+        let scene_path = Path::new(&self.core.scene_path);
         let game_id = &self.input.config().game_id;
         let mut target = user_override_save_path(
-            &self.project,
+            &self.core.project,
             scene_path,
             game_id,
             paths.user_override.as_deref(),
         );
 
         if let Err(err) = write_user_override_file(&target, &self.input_layers.user_override) {
-            let fallback = fallback_user_override_path(&self.project, scene_path, game_id);
+            let fallback = fallback_user_override_path(&self.core.project, scene_path, game_id);
             if fallback != target {
                 write_user_override_file(&fallback, &self.input_layers.user_override)?;
                 target = fallback;
@@ -686,12 +686,12 @@ impl PlayerApp {
             .flatten()
             .filter(|&mhz| mhz > 0)
             .map(|mhz| 1000.0 / mhz as f64);
-        if period != self.clock.vsync_period() {
+        if period != self.core.clock.vsync_period() {
             tracing::info!(
                 "frame pacing: {}",
                 period.map_or("off".to_string(), |p| format!("{:.2} Hz", 1.0 / p))
             );
-            self.clock.set_vsync_period(period);
+            self.core.clock.set_vsync_period(period);
         }
     }
 
@@ -840,7 +840,7 @@ impl PlayerApp {
                     let any_open = self.debug_panels.iter().any(|p| p.is_open());
                     if any_open {
                         self.release_cursor();
-                    } else if self.physics.has_player_entity() {
+                    } else if self.core.physics.has_player_entity() {
                         self.capture_cursor();
                     }
                 }
@@ -1102,7 +1102,7 @@ impl PlayerApp {
         }
 
         if !self.focus.cursor_captured
-            && self.physics.has_player_entity()
+            && self.core.physics.has_player_entity()
             && state == ElementState::Pressed
             && button == MouseButton::Left
         {

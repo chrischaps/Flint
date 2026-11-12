@@ -2026,7 +2026,7 @@ and exits 1. What else it reports: a syntax error at its line, a literal no decl
 
 `flint check` and `flint validate` run the same check, so a script error fails them too.
 
-**A game's own functions.** A function the game's binary registers through a [player extension](../guides/player-extensions.md) is not in the engine's API, so the check reports a call of it as `unknown-function`. Name each one with `--allow <name>`, or give the binary's own listing, which has them with their parameters, with `--api <file>`: the game binary prints `app.script.api_listing()` in the shape `flint script api --json` prints (a `functions` list, each with a `name` and its `params`). `flint check` and `flint validate` take both flags.
+**A game's own functions.** A function the game's binary registers through a [player extension](../guides/player-extensions.md) is not in the engine's API, so the check reports a call of it as `unknown-function`. Name each one with `--allow <name>`, or give the binary's own listing, which has them with their parameters, with `--api <file>`: the game binary prints `app.core.script.api_listing()` in the shape `flint script api --json` prints (a `functions` list, each with a `name` and its `params`). `flint check` and `flint validate` take both flags.
 
 ## Hot-Reload
 

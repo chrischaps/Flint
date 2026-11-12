@@ -18,6 +18,7 @@ mod extension_tests;
 pub mod fonts;
 mod frame;
 pub mod frame_rate;
+pub mod game_core;
 pub mod headless_animation;
 pub mod headless_scripts;
 #[cfg(test)]
@@ -74,15 +75,11 @@ mod world_text;
 
 #[cfg(target_os = "android")]
 use events::AndroidGamepadTracker;
-use flint_animation::AnimationSystem;
 use flint_audio::AudioSystem;
-use flint_ecs::FlintWorld;
-use flint_particles::ParticleSystem;
-use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
 use flint_runtime::pad::Gilrs;
-use flint_runtime::{GameClock, GameStateMachine, InputState};
-use flint_script::ScriptSystem;
+use flint_runtime::InputState;
+pub use game_core::GameCore;
 pub use state::{LaunchOptions, SceneSettings};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -266,26 +263,18 @@ impl CaptureConfig {
 }
 
 pub struct PlayerApp {
-    // Core state
-    pub world: FlintWorld,
-    pub scene_path: String,
-
-    // Systems
-    pub clock: GameClock,
+    /// The game with no window (ADR 0117 decision 4): the world, its clock,
+    /// scripts, physics, animation, particles, states and the subsystems,
+    /// and the frame order (`game_core::step`). Declared before `audio`, so
+    /// whatever a subsystem holds of the audio engine goes before the
+    /// engine.
+    pub core: GameCore,
     pub input: InputState,
-    pub physics: PhysicsSystem,
-    /// The optional parts a scene uses (ADR 0117): the expression feed so
-    /// far. Declared before `audio`, and torn down last added first, so
-    /// whatever one holds of the audio engine goes before the engine.
-    subsystems: subsystem::Subsystems,
     // Scene-declared music session (F3, ADR 0019): declared before `audio`
     // so the suite's kira handles drop before the shared AudioManager
     // (ADR 0017 drop-order rule).
     music: state::MusicState,
     pub audio: AudioSystem,
-    pub animation: AnimationSystem,
-    pub particles: ParticleSystem,
-    pub script: ScriptSystem,
 
     /// What the host asked for before the event loop started (the command
     /// line, the page's query, a dev profile).
@@ -318,10 +307,6 @@ pub struct PlayerApp {
     /// The window's focus, the cursor and the keys held
     focus: state::Focus,
 
-    /// What scripts asked of the frame (#697): the camera, post-processing,
-    /// distance levers, cursor and touch, held from the command that asked
-    /// to the step of the frame that applies each.
-    script_requests: flint_script::FrameRequests,
     /// Script commands no part of this scene takes that have been warned
     /// about, once a run each (`set_wooze` in a scene with no field).
     commands_warned: std::collections::HashSet<&'static str>,
@@ -354,8 +339,7 @@ pub struct PlayerApp {
     /// A script's `rumble()`s playing now, through `gilrs` (#748).
     pad_rumble: flint_runtime::PadRumble,
 
-    // State machine + persistence (survive scene transitions)
-    state_machine: GameStateMachine,
+    // Where the persistent store saves, and when
     saves: state::Saves,
 
     // Scene transition lifecycle
@@ -369,11 +353,6 @@ pub struct PlayerApp {
     // and a failed read keeps it
     schemas: schemas::HeldSchemas,
 
-    // The project the current scene belongs to (ADR 0114): what every asset
-    // search starts from. Found when the first scene loads and again at each
-    // transition (`refresh_project`), replaced when the scene's root differs.
-    project: flint_core::project::Project,
-
     // Terrain data for height queries
     terrain: Option<(flint_terrain::Terrain, flint_terrain::TerrainConfig)>,
 
@@ -386,9 +365,6 @@ pub struct PlayerApp {
 
     /// The F2 stats overlay and the perf readout
     stats: state::Stats,
-
-    // Procedural generation resolver for runtime asset resolution
-    procgen_resolver: flint_procgen::ProcGenResolver,
 
     // Chunk streaming: chunk_id → spawned entity IDs
     loaded_chunks: HashMap<String, Vec<flint_core::EntityId>>,

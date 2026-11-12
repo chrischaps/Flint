@@ -13,7 +13,7 @@
 //! **Borrowing.** A hook never sees `PlayerApp`. It gets a context that lends
 //! the parts it may touch, each borrowed from its own field: the world, the
 //! clock, input, the script system, the camera, the renderer. The list lives
-//! in a field of its own (`PlayerApp::subsystems`), so the player can lend
+//! in a field of its own (`GameCore::subsystems`), so the player can lend
 //! those while it walks the list. What a context holds is what the clients so
 //! far have needed, and it grows with the next ones (shallow wooze, living
 //! props); see each context's notes.
@@ -413,17 +413,17 @@ impl Drop for Subsystems {
 macro_rules! stage_ctx {
     ($app:expr, $policy:expr) => {
         $crate::player_app::subsystem::StageCtx {
-            world: &mut $app.world,
-            clock: &$app.clock,
+            world: &mut $app.core.world,
+            clock: &$app.core.clock,
             input: &$app.input,
-            script: &mut $app.script,
+            script: &mut $app.core.script,
             camera: &$app.camera,
             policy: $policy,
             renderer: $app.scene_renderer.as_mut(),
             gpu: $app.render_context.as_ref().map(|c| (&c.device, &c.queue)),
-            resolver: &mut $app.procgen_resolver,
-            project: &$app.project,
-            scene_path: &$app.scene_path,
+            resolver: &mut $app.core.procgen_resolver,
+            project: &$app.core.project,
+            scene_path: &$app.core.scene_path,
             scene_file_writable: $app.launch.scene_file_writable,
             pixels_per_point: $app.hud.egui_ctx.pixels_per_point(),
             cursor_captured: $app.focus.cursor_captured,
@@ -439,14 +439,14 @@ pub(crate) use stage_ctx;
 macro_rules! scene_ctx {
     ($app:expr) => {
         $crate::player_app::subsystem::SceneCtx {
-            world: &mut $app.world,
-            scene_path: &$app.scene_path,
+            world: &mut $app.core.world,
+            scene_path: &$app.core.scene_path,
             tables: &$app.scene.tables,
             scene: &$app.scene,
             launch: &mut $app.launch,
-            project: &$app.project,
-            script: &mut $app.script,
-            resolver: &mut $app.procgen_resolver,
+            project: &$app.core.project,
+            script: &mut $app.core.script,
+            resolver: &mut $app.core.procgen_resolver,
             renderer: $app.scene_renderer.as_mut(),
         }
     };
@@ -463,43 +463,32 @@ impl super::PlayerApp {
         if entry == super::scene_entry::SceneEntry::Start {
             // The feed belongs to the run (#518), so it outlives every scene
             if let Some(feed) = self.launch.expression_feed.take() {
-                self.subsystems
-                    .push(Box::new(super::expression_feed::ExpressionSubsystem::new(
-                        feed,
-                    )));
+                self.core.subsystems.push(Box::new(
+                    super::expression_feed::ExpressionSubsystem::new(feed),
+                ));
             }
         }
         let mut ctx = scene_ctx!(self);
         for build in for_scene_builders() {
             if let Some(subsystem) = build(&mut ctx) {
-                self.subsystems.push(subsystem);
+                self.core.subsystems.push(subsystem);
             }
         }
-        if self.subsystems.is_empty() {
+        if self.core.subsystems.is_empty() {
             return;
         }
-        self.subsystems.scene_loaded(&mut ctx);
+        self.core.subsystems.scene_loaded(&mut ctx);
     }
 
     /// The scene is going: each subsystem hears `scene_unloading`, last
     /// added first, before anything is cleared, and the scene's own go.
     pub(super) fn subsystems_leave_scene(&mut self) {
-        if self.subsystems.is_empty() {
+        if self.core.subsystems.is_empty() {
             return;
         }
         let mut ctx = scene_ctx!(self);
-        self.subsystems.scene_unloading(&mut ctx);
-        self.subsystems.drop_scene_ones();
-    }
-
-    /// Run `stage` on every subsystem. Nothing to do, and no context made,
-    /// when there are none.
-    pub(super) fn run_stage(&mut self, stage: Stage, policy: Option<&StateConfig>) {
-        if self.subsystems.is_empty() {
-            return;
-        }
-        let mut ctx = stage_ctx!(self, policy);
-        self.subsystems.update(stage, &mut ctx);
+        self.core.subsystems.scene_unloading(&mut ctx);
+        self.core.subsystems.drop_scene_ones();
     }
 
     /// The script commands no subsystem takes, in the order they came.
@@ -507,41 +496,41 @@ impl super::PlayerApp {
         &mut self,
         mut commands: Vec<ScriptCommand>,
     ) -> Vec<ScriptCommand> {
-        if self.subsystems.is_empty() || commands.is_empty() {
+        if self.core.subsystems.is_empty() || commands.is_empty() {
             return commands;
         }
         let mut ctx = stage_ctx!(self, None);
-        let subsystems = &mut self.subsystems;
+        let subsystems = &mut self.core.subsystems;
         commands.retain(|command| !subsystems.script_command(command, &mut ctx));
         commands
     }
 
     /// Whether a subsystem took a debug key.
     pub(super) fn subsystems_take_key(&mut self, key: KeyPress) -> bool {
-        if self.subsystems.is_empty() {
+        if self.core.subsystems.is_empty() {
             return false;
         }
         let mut ctx = stage_ctx!(self, None);
-        self.subsystems.on_key(key, &mut ctx)
+        self.core.subsystems.on_key(key, &mut ctx)
     }
 
     /// Whether a subsystem took a click or an Escape.
     pub(super) fn subsystems_take_input(&mut self, input: PlayerInput) -> bool {
-        if self.subsystems.is_empty() {
+        if self.core.subsystems.is_empty() {
             return false;
         }
         let mut ctx = stage_ctx!(self, None);
-        self.subsystems.on_input(input, &mut ctx)
+        self.core.subsystems.on_input(input, &mut ctx)
     }
 
     /// The subsystems' lines for the `--exit-after` report.
     pub(super) fn subsystem_report(&self) -> Vec<String> {
         let mut report = ExitReport::default();
         let ctx = ReportCtx {
-            resolver: &self.procgen_resolver,
+            resolver: &self.core.procgen_resolver,
             renderer: self.scene_renderer.as_ref(),
         };
-        self.subsystems.exit_report(&ctx, &mut report);
+        self.core.subsystems.exit_report(&ctx, &mut report);
         report.lines
     }
 }

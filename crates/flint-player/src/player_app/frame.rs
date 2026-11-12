@@ -7,7 +7,7 @@ use super::hud_render::render_draw_commands;
 #[cfg(feature = "debug-hud")]
 use super::music_guide_panel;
 use super::music_session;
-use super::subsystem::{EncodeCtx, RenderCtx, Stage};
+use super::subsystem::{EncodeCtx, RenderCtx};
 #[cfg(feature = "debug-hud")]
 use super::timeline_panel;
 use super::PlayerApp;
@@ -97,15 +97,15 @@ impl PlayerApp {
         // The shading boil (#214): none, unless a subsystem draws one (the
         // living subsystem, where the viewer stands in its wooze field)
         renderer.set_boil(Default::default());
-        if !self.subsystems.is_empty() {
+        if !self.core.subsystems.is_empty() {
             let mut ctx = RenderCtx {
                 renderer: &mut *renderer,
                 device: &context.device,
                 queue: &context.queue,
                 camera: &self.camera,
-                clock: &self.clock,
+                clock: &self.core.clock,
             };
-            self.subsystems.pre_render(&mut ctx);
+            self.core.subsystems.pre_render(&mut ctx);
         }
 
         // Apply script-driven post-processing overrides before rendering.
@@ -160,18 +160,19 @@ impl PlayerApp {
                 for action in pp.take_actions() {
                     use flint_debug_ui::ParticlePanelAction as A;
                     match action {
-                        A::Play(id) => self.particles.sync.set_playing(id, true),
-                        A::Stop(id) => self.particles.sync.set_playing(id, false),
-                        A::Burst(id, n) => self.particles.sync.queue_burst(id, n),
-                        A::StopDetached(h) => self.particles.sync.stop_effect(h),
-                        A::RestartAll => self.particles.sync.restart_all(),
-                        A::SetBudget(b) => self.particles.sync.set_budget(b as usize),
+                        A::Play(id) => self.core.particles.sync.set_playing(id, true),
+                        A::Stop(id) => self.core.particles.sync.set_playing(id, false),
+                        A::Burst(id, n) => self.core.particles.sync.queue_burst(id, n),
+                        A::StopDetached(h) => self.core.particles.sync.stop_effect(h),
+                        A::RestartAll => self.core.particles.sync.restart_all(),
+                        A::SetBudget(b) => self.core.particles.sync.set_budget(b as usize),
                         A::SetRender(on) => self.particles_render_enabled = on,
                     }
                 }
                 flint_debug_ui::DebugPanel::clear_dirty(pp);
             } else {
                 let rows: Vec<flint_debug_ui::EmitterRow> = self
+                    .core
                     .particles
                     .sync
                     .instances()
@@ -180,7 +181,7 @@ impl PlayerApp {
                             flint_particles::InstanceKey::Entity(id) => (
                                 Some(id),
                                 0,
-                                self.world.get_name(id).unwrap_or("?").to_string(),
+                                self.core.world.get_name(id).unwrap_or("?").to_string(),
                             ),
                             flint_particles::InstanceKey::Detached(h) => {
                                 (None, h, format!("effect #{h}"))
@@ -204,8 +205,8 @@ impl PlayerApp {
                     .collect();
                 pp.refresh(
                     rows,
-                    self.particles.sync.total_alive(),
-                    self.particles.sync.budget() as u32,
+                    self.core.particles.sync.total_alive(),
+                    self.core.particles.sync.budget() as u32,
                 );
                 pp.render_enabled = self.particles_render_enabled;
             }
@@ -265,7 +266,7 @@ impl PlayerApp {
                 }
                 if flags.mode_changed {
                     renderer.set_debug_mode(rp.debug_mode);
-                    renderer.update_from_world(&self.world, &context.device);
+                    renderer.update_from_world(&self.core.world, &context.device);
                 }
                 if flags.fov_changed {
                     self.camera.fov = rp.fov_deg;
@@ -293,7 +294,7 @@ impl PlayerApp {
                 .iter()
                 .any(|p| p.name() == flint_debug_ui::STYLES_DEBUG_PANEL && p.is_open())
                 .then(|| {
-                    super::debug_panels::styled_entity_rows(&self.world, renderer.style_ids())
+                    super::debug_panels::styled_entity_rows(&self.core.world, renderer.style_ids())
                 });
             for panel in &mut self.debug_panels {
                 if panel.name() != flint_debug_ui::STYLES_DEBUG_PANEL {
@@ -339,8 +340,8 @@ impl PlayerApp {
                     .as_any_mut()
                     .downcast_mut::<flint_debug_ui::OceanDebugPanel>()
                     .unwrap();
-                if let Some(entity_id) = self.world.get_id(ocean_panel.entity_name()) {
-                    if let Some(comps) = self.world.get_components_mut(entity_id) {
+                if let Some(entity_id) = self.core.world.get_id(ocean_panel.entity_name()) {
+                    if let Some(comps) = self.core.world.get_components_mut(entity_id) {
                         for (field, value) in ocean_panel.config().to_fields() {
                             comps.set_field(comp::OCEAN, field, value);
                         }
@@ -365,22 +366,23 @@ impl PlayerApp {
                 .as_any_mut()
                 .downcast_mut::<flint_debug_ui::TimeOfDayDebugPanel>()
                 .unwrap();
-            let Some(entity_id) = self.world.get_id(tod_panel.entity_name()) else {
+            let Some(entity_id) = self.core.world.get_id(tod_panel.entity_name()) else {
                 continue;
             };
             if let Some(day) = tod_panel.take_day_set() {
-                if let Some(comps) = self.world.get_components_mut(entity_id) {
+                if let Some(comps) = self.core.world.get_components_mut(entity_id) {
                     comps.set_field(TIME_OF_DAY_COMPONENT, "day", toml::Value::Float(day as f64));
                 }
             }
             if tod_panel.is_dirty() {
-                if let Some(comps) = self.world.get_components_mut(entity_id) {
+                if let Some(comps) = self.core.world.get_components_mut(entity_id) {
                     for (field, value) in tod_panel.config().to_fields() {
                         comps.set_field(TIME_OF_DAY_COMPONENT, field, value);
                     }
                 }
                 tod_panel.clear_dirty();
             } else if let Some(hours) = self
+                .core
                 .world
                 .get_components(entity_id)
                 .and_then(|comps| comps.get(TIME_OF_DAY_COMPONENT))
@@ -390,6 +392,7 @@ impl PlayerApp {
                 tod_panel.sync_time(hours);
             }
             let day = self
+                .core
                 .world
                 .get_components(entity_id)
                 .and_then(|comps| comps.get(TIME_OF_DAY_COMPONENT))
@@ -410,12 +413,12 @@ impl PlayerApp {
                 .as_any_mut()
                 .downcast_mut::<flint_debug_ui::WeatherDebugPanel>()
                 .unwrap();
-            let Some(entity_id) = self.world.get_id(weather_panel.entity_name()) else {
+            let Some(entity_id) = self.core.world.get_id(weather_panel.entity_name()) else {
                 continue;
             };
             let one_shots = weather_panel.take_one_shots();
             if weather_panel.is_dirty() || !one_shots.is_empty() {
-                if let Some(comps) = self.world.get_components_mut(entity_id) {
+                if let Some(comps) = self.core.world.get_components_mut(entity_id) {
                     if weather_panel.is_dirty() {
                         for (field, value) in weather_panel.config().to_fields() {
                             comps.set_field(WEATHER_COMPONENT, field, value);
@@ -428,6 +431,7 @@ impl PlayerApp {
                 weather_panel.clear_dirty();
             }
             if let Some(comp) = self
+                .core
                 .world
                 .get_components(entity_id)
                 .and_then(|comps| comps.get(WEATHER_COMPONENT))
@@ -453,12 +457,12 @@ impl PlayerApp {
                 .as_any_mut()
                 .downcast_mut::<flint_debug_ui::RealityDebugPanel>()
                 .unwrap();
-            let Some(entity_id) = self.world.get_id(reality_panel.entity_name()) else {
+            let Some(entity_id) = self.core.world.get_id(reality_panel.entity_name()) else {
                 continue;
             };
             let one_shots = reality_panel.take_one_shots();
             if reality_panel.is_dirty() || !one_shots.is_empty() {
-                if let Some(comps) = self.world.get_components_mut(entity_id) {
+                if let Some(comps) = self.core.world.get_components_mut(entity_id) {
                     if reality_panel.is_dirty() {
                         for (field, value) in reality_panel.config().to_fields() {
                             comps.set_field(REALITY_COMPONENT, field, value);
@@ -471,6 +475,7 @@ impl PlayerApp {
                 reality_panel.clear_dirty();
             }
             if let Some(comp) = self
+                .core
                 .world
                 .get_components(entity_id)
                 .and_then(|comps| comps.get(REALITY_COMPONENT))
@@ -500,18 +505,19 @@ impl PlayerApp {
                 .as_any_mut()
                 .downcast_mut::<flint_debug_ui::VisitorDebugPanel>()
                 .unwrap();
-            let Some(entity_id) = self.world.get_id(visitor_panel.entity_name()) else {
+            let Some(entity_id) = self.core.world.get_id(visitor_panel.entity_name()) else {
                 continue;
             };
             let one_shots = visitor_panel.take_one_shots();
             if !one_shots.is_empty() {
-                if let Some(comps) = self.world.get_components_mut(entity_id) {
+                if let Some(comps) = self.core.world.get_components_mut(entity_id) {
                     for (field, value) in one_shots {
                         comps.set_field(RAFT_VISITOR_COMPONENT, field, value);
                     }
                 }
             }
             if let Some(comp) = self
+                .core
                 .world
                 .get_components(entity_id)
                 .and_then(|comps| comps.get(RAFT_VISITOR_COMPONENT))
@@ -537,18 +543,19 @@ impl PlayerApp {
                 .as_any_mut()
                 .downcast_mut::<flint_debug_ui::DeadCalmDebugPanel>()
                 .unwrap();
-            let Some(entity_id) = self.world.get_id(calm_panel.entity_name()) else {
+            let Some(entity_id) = self.core.world.get_id(calm_panel.entity_name()) else {
                 continue;
             };
             let one_shots = calm_panel.take_one_shots();
             if !one_shots.is_empty() {
-                if let Some(comps) = self.world.get_components_mut(entity_id) {
+                if let Some(comps) = self.core.world.get_components_mut(entity_id) {
                     for (field, value) in one_shots {
                         comps.set_field(DEAD_CALM_COMPONENT, field, value);
                     }
                 }
             }
             if let Some(comp) = self
+                .core
                 .world
                 .get_components(entity_id)
                 .and_then(|comps| comps.get(DEAD_CALM_COMPONENT))
@@ -576,8 +583,8 @@ impl PlayerApp {
                 .unwrap();
             if cam_panel.is_dirty() {
                 self.camera.fov = cam_panel.config().fov_deg;
-                if let Some(entity_id) = self.world.get_id(cam_panel.entity_name()) {
-                    if let Some(comps) = self.world.get_components_mut(entity_id) {
+                if let Some(entity_id) = self.core.world.get_id(cam_panel.entity_name()) {
+                    if let Some(comps) = self.core.world.get_components_mut(entity_id) {
                         for (field, value) in cam_panel.config().to_fields() {
                             comps.set_field(CAMERA_TUNING_COMPONENT, field, value);
                         }
@@ -635,7 +642,7 @@ impl PlayerApp {
         );
         // A second look drawn over part of the frame, before the HUD (the
         // Living Props A/B split, #238)
-        if !self.subsystems.is_empty() {
+        if !self.core.subsystems.is_empty() {
             let mut ctx = EncodeCtx {
                 encoder: &mut encoder,
                 device: &context.device,
@@ -644,11 +651,11 @@ impl PlayerApp {
                 depth_view: &context.depth_view,
                 formats: (context.view_format, context.hud_format),
                 renderer: &mut *renderer,
-                world: &self.world,
+                world: &self.core.world,
                 camera: &self.camera,
-                resolver: &mut self.procgen_resolver,
+                resolver: &mut self.core.procgen_resolver,
             };
-            self.subsystems.post_encode(&mut ctx);
+            self.core.subsystems.post_encode(&mut ctx);
         }
         // A field borrow, not `perf_mark`: `context` is still held.
         if let Some(perf) = &mut self.stats.perf {
@@ -671,7 +678,7 @@ impl PlayerApp {
         self.perf_mark(super::perf::Phase::Hud);
 
         // Capture the composited frame (scene + HUD) before it is presented.
-        self.capture.last_frame_time = Some(self.clock.total_time);
+        self.capture.last_frame_time = Some(self.core.clock.total_time);
         if let Some(path) = self.capture_path_due() {
             match self.write_screenshot(&output.texture, &path) {
                 Ok(()) => self.capture.written += 1,
@@ -691,12 +698,12 @@ impl PlayerApp {
         self.print_perf();
 
         if let Some(exit_after) = self.capture.exit_after {
-            if self.clock.total_time >= super::PERF_SKIP_SECS {
+            if self.core.clock.total_time >= super::PERF_SKIP_SECS {
                 self.capture.perf_frames += 1;
-                self.capture.perf_time += self.clock.delta_time;
+                self.capture.perf_time += self.core.clock.delta_time;
                 self.capture
                     .perf_pacing
-                    .record(self.clock.delta_time, presented);
+                    .record(self.core.clock.delta_time, presented);
                 if let Some(renderer) = &self.scene_renderer {
                     let stats = renderer.collect_stats();
                     self.capture.perf_draws += stats.draw_calls as u64;
@@ -712,7 +719,7 @@ impl PlayerApp {
                 }
             }
             // A shot that's due but failed waits for its retries (#639).
-            let now = self.clock.total_time;
+            let now = self.core.clock.total_time;
             // A script's `quit_game()` this frame has already said it (#659).
             if now >= exit_after && !self.capture.shot_pending(now) && !self.outcome.exit_requested
             {
@@ -776,7 +783,7 @@ impl PlayerApp {
     /// numbered `<stem>_0001.<ext>`, `<stem>_0002.<ext>`, ...
     fn capture_path_due(&mut self) -> Option<std::path::PathBuf> {
         let base = self.capture.path.clone()?;
-        let now = self.clock.total_time;
+        let now = self.core.clock.total_time;
         // Tolerance so `--screenshot-at` means the frame at that time: 210 steps of
         // 1/60 add up to a hair under 3.5, and the next frame is a step too late.
         let reached = now + 1e-6 >= self.capture.at;
@@ -842,7 +849,7 @@ impl PlayerApp {
             path.display(),
             texture.width(),
             texture.height(),
-            self.clock.total_time
+            self.core.clock.total_time
         );
         Ok(())
     }
@@ -870,15 +877,15 @@ impl PlayerApp {
         self.tick_music_session();
 
         // Advance game clock
-        self.clock.tick();
+        self.core.clock.tick();
         if self
             .launch
             .hold_at
-            .is_some_and(|t| self.clock.total_time >= t)
-            && self.clock.frame_step != Some(0.0)
+            .is_some_and(|t| self.core.clock.total_time >= t)
+            && self.core.clock.frame_step != Some(0.0)
         {
-            self.clock.frame_step = Some(0.0);
-            tracing::info!("game time held at {:.3} s", self.clock.total_time);
+            self.core.clock.frame_step = Some(0.0);
+            tracing::info!("game time held at {:.3} s", self.core.clock.total_time);
         }
 
         // `--stats`: the overlay starts open, and F2 can still close it.
@@ -890,133 +897,15 @@ impl PlayerApp {
         // Keys and the pointer go the way a real keyboard's and mouse's do:
         // egui first (ADR 0082, 0097), then the debug keys (H9) and InputState.
         if let Some(script) = &mut self.capture.input_script {
-            let applied = script.apply(self.clock.total_time, &mut self.input);
+            let applied = script.apply(self.core.clock.total_time, &mut self.input);
             for event in applied.events {
                 self.scripted_event(event);
             }
         }
 
-        // Outside input for scripts, queued for their update below (the
-        // expression feed, Flint#518, is a subsystem: ADR 0117)
-        self.run_stage(Stage::Input, None);
-
-        // Advance transition phase timing
-        self.advance_transition();
-
-        // Game extensions, before anything below reads the world
-        self.run_extension_pre_updates();
-
-        // Read active state config to decide which systems run
-        let config = self.state_machine.active_config().clone();
-
-        let has_fps_player = self.physics.has_player_entity();
-
-        // Physics events from the previous frame's fixed steps + this frame's
-        // input events — scripts and audio both consume them. Drained before
-        // the scripts run, so a collision reaches scripts one frame after the
-        // step that produced it.
-        let game_events = self.collect_game_events();
-        self.perf_mark(Phase::Input);
-        self.run_stage(Stage::PreScripts, Some(&config));
-
-        // on_update runs BEFORE the fixed physics loop. Scripts pose kinematic
-        // bodies with this frame's delta_time, and PhysicsSystem::begin_frame
-        // spreads that motion over this frame's accumulator: the two must
-        // describe the same span of wall time. With physics first, the loop
-        // spread a pose written with the previous frame's delta over the
-        // current frame's accumulator, and whenever consecutive frame times
-        // disagreed (a maximized, GPU-bound window) the kinematic parent's
-        // step velocity swung by their ratio and jointed children rang.
-        //
-        // The state guard sets raw state-machine / store / physics pointers
-        // for script access and clears them on drop; it cannot overlap the
-        // physics tick's mutable borrow, so scripts get their own scope here
-        // and the later script calls (UI, sprite-anim-end callbacks) another
-        // below.
-        {
-            let _state_scope = self.script.state_scope(
-                &mut self.state_machine,
-                &mut self.saves.store,
-                &self.physics,
-            );
-            self.script
-                .set_current_scene(&self.scene_path, &self.project);
-
-            // Script context (transition state, camera, input/events, conducted
-            // parameters — session tick above precedes set_conducted, which
-            // precedes provide_context/on_update: F4/ADR 0020 ordering), then
-            // on_update.
-            self.run_scripts(&config, &game_events);
-        }
-        self.perf_mark(Phase::Scripts);
-        if let Some(perf) = &mut self.stats.perf {
-            perf.record_scripts(self.script.update_times());
-        }
-        self.run_stage(Stage::Scripts, Some(&config));
-
-        // Fixed-timestep physics + FPS camera/listener follow, against the
-        // poses and joint targets the scripts just wrote
-        self.tick_fixed_physics(&config, has_fps_player);
-        self.perf_mark(Phase::Physics);
-        self.run_stage(Stage::Physics, Some(&config));
-
-        // Script pointers again for every remaining script call this frame —
-        // including the sprite-anim-end callbacks inside tick_av_systems —
-        // so the guard lives here, in tick's own scope, not in a sub-step.
-        let _state_scope = self.script.state_scope(
-            &mut self.state_machine,
-            &mut self.saves.store,
-            &self.physics,
-        );
-
-        // Style tweens (#370) move on with game time, and pause with the
-        // scripts that started them. Stepped before this frame's commands,
-        // so a tween asked for now starts moving next frame, and a
-        // set_style_param this frame overrides (and stops) it.
-        self.step_style_tweens();
-
-        // What on_update asked (#697): the one dispatcher, so the camera a
-        // script set is in place for on_draw_ui and the frame
-        self.dispatch_script_commands();
-
-        // Script camera overrides (chase cam etc.) + roll basis + listener
-        self.apply_script_camera_overrides(has_fps_player);
-
-        // The camera is final for this frame now. Give on_draw_ui the one the
-        // frame renders with, so world_to_screen / screen_to_ground there
-        // line up with the drawn world instead of trailing it by a frame.
-        self.script
-            .set_camera(self.camera.position_array(), self.camera.forward_vector());
-        self.script
-            .set_camera_view_proj(self.camera.view_projection_matrix());
-        self.run_stage(Stage::PostPhysics, Some(&config));
-
-        // on_draw_ui (always runs), script commands, draw-command collection
-        self.drive_script_ui();
-        self.perf_mark(Phase::ScriptUi);
-        self.run_stage(Stage::ScriptUi, Some(&config));
-
-        // Audio triggers, animations + sprite-end callbacks, bone matrices,
-        // bone probes, particles
-        self.tick_av_systems(&config, &game_events);
-        self.perf_mark(Phase::AnimFx);
-        self.run_stage(Stage::Animation, Some(&config));
-
-        // Frame-budgeted procgen queue, then whatever it left to living props,
-        // whose clock stops when animation does
-        self.tick_procgen();
-        self.run_stage(Stage::Procgen, Some(&config));
-
-        // Renderer sync: transforms, particle upload, grass/ocean time
-        self.sync_renderer();
-
-        // Script post-override drain + music-session ladder merge (ADR 0021)
-        self.drain_post_overrides();
-
-        // A script's set_quality (FlintKart#55), applied here, between the
-        // frame's scripts and its draw
-        self.apply_script_quality();
-        self.run_stage(Stage::Sync, Some(&config));
+        // The game's frame (ADR 0117 decision 4): the stages, with this
+        // window's part in them (`impl FrameHost for PlayerApp` below)
+        super::game_core::step(self);
 
         // Script audio/cursor frame overrides, then per-frame input clear
         self.finish_frame();
@@ -1044,12 +933,12 @@ impl PlayerApp {
                 _ => None,
             };
             let mut ctx = crate::extension::ExtensionCtx {
-                world: &mut self.world,
-                clock: &self.clock,
+                world: &mut self.core.world,
+                clock: &self.core.clock,
                 input: &self.input,
                 camera: &self.camera,
                 gpu,
-                persist: &mut self.saves.store,
+                persist: &mut self.core.store,
                 audio: crate::extension::ExtensionAudio::new(&mut self.audio),
                 rays: rays.clone(),
                 scene_tables: &self.scene.tables,
@@ -1061,25 +950,25 @@ impl PlayerApp {
         // Queued with the physics events, so collect_game_events hands them
         // to scripts and audio this frame.
         for event in fired_events {
-            self.physics.push_event(event);
+            self.core.physics.push_event(event);
         }
     }
 
     fn finish_frame(&mut self) {
         // Apply audio low-pass filter override from scripts
-        if let Some(cutoff) = self.script_requests.audio_lowpass.take() {
+        if let Some(cutoff) = self.core.script_requests.audio_lowpass.take() {
             self.audio.set_filter_cutoff(cutoff);
         }
 
         // A menu put the touch controls away, or play brought them back.
-        if let Some(enabled) = self.script_requests.touch_controls.take() {
+        if let Some(enabled) = self.core.script_requests.touch_controls.take() {
             self.input.touch_controls_mut().set_enabled(enabled);
         }
 
         // A quality setting moved the distance levers (#56).
         if let Some(renderer) = &mut self.scene_renderer {
-            let lod = self.script_requests.lod_scale.take();
-            let draw = self.script_requests.draw_distance_scale.take();
+            let lod = self.core.script_requests.lod_scale.take();
+            let draw = self.core.script_requests.draw_distance_scale.take();
             let mut s = renderer.lod_settings();
             if lod.is_some() || draw.is_some() {
                 s.lod_scale = lod.unwrap_or(s.lod_scale);
@@ -1087,13 +976,14 @@ impl PlayerApp {
                 renderer.set_lod_settings(s);
                 s = renderer.lod_settings();
             }
-            self.script
+            self.core
+                .script
                 .set_lod_state(s.lod_scale, s.draw_distance_scale);
         }
 
         // Apply cursor capture request from scripts (skipped while a debug
         // panel is open — the panel needs the mouse).
-        if let Some(capture) = self.script_requests.cursor_captured.take() {
+        if let Some(capture) = self.core.script_requests.cursor_captured.take() {
             #[cfg(feature = "debug-hud")]
             let panel_open = self.debug_panels.iter().any(|p| p.is_open());
             #[cfg(not(feature = "debug-hud"))]
@@ -1170,332 +1060,12 @@ impl PlayerApp {
         }
     }
 
-    #[profiling::function]
-    fn tick_fixed_physics(&mut self, config: &StateConfig, has_fps_player: bool) {
-        // Fixed-timestep physics loop (skip when paused, but still consume steps to avoid spiral)
-        self.physics.begin_frame(self.clock.pending_fixed_ratio());
-        while self.clock.should_fixed_update() {
-            let dt = self.clock.fixed_timestep;
-
-            if config.physics == SystemPolicy::Run {
-                if has_fps_player {
-                    self.physics
-                        .update_character(&self.input, &mut self.world, dt);
-                }
-                self.physics
-                    .fixed_update(&mut self.world, dt)
-                    .unwrap_or_else(|e| tracing::warn!("Physics error: {:?}", e));
-            }
-
-            self.clock.consume_fixed_step();
-        }
-
-        // Update camera from player character position (FPS mode)
-        if has_fps_player {
-            let cam_pos = self.physics.camera_position(&self.world);
-            let cam_target = self.physics.camera_target(cam_pos);
-            self.camera.update_first_person(
-                cam_pos,
-                self.physics.camera_yaw(),
-                self.physics.camera_pitch(),
-            );
-            self.camera.target = cam_target;
-
-            if config.audio == SystemPolicy::Run {
-                self.audio.update_listener(
-                    cam_pos,
-                    self.physics.camera_yaw(),
-                    self.physics.camera_pitch(),
-                );
-            }
-        }
-    }
-
-    fn collect_game_events(&mut self) -> Vec<flint_runtime::GameEvent> {
-        // Process physics events — scripts + audio both consume them
-        // Always collect events (input always processed so pause/unpause keybinds work)
-        let mut game_events = self.physics.drain_events();
-        for action in self.input.actions_just_pressed() {
-            game_events.push(flint_runtime::GameEvent::ActionPressed(action));
-        }
-        for action in self.input.actions_just_released() {
-            game_events.push(flint_runtime::GameEvent::ActionReleased(action));
-        }
-        game_events
-    }
-
-    #[profiling::function]
-    /// Hand scripts' style reads (#372) the settings the renderer draws
-    /// with, copied only when they've changed since the last hand-over.
-    fn publish_style_reader(&mut self) {
-        let Some(renderer) = &self.scene_renderer else {
-            return;
-        };
-        let generation = renderer.post_config_generation();
-        if self.style.reader_generation != Some(generation) {
-            self.style.reader_generation = Some(generation);
-            let config = renderer.effective_post_process_config().clone();
-            self.script.set_style_reader(std::sync::Arc::new(
-                super::style_commands::SceneStyles::new(config),
-            ));
-        }
-    }
-
-    fn run_scripts(&mut self, config: &StateConfig, game_events: &Vec<flint_runtime::GameEvent>) {
-        self.publish_style_reader();
-        // Set transition state for script access
-        match &self.transition_phase {
-            TransitionPhase::Idle => {
-                self.script.set_transition_state(-1.0, "idle");
-            }
-            TransitionPhase::Exiting { elapsed, .. } => {
-                self.script.set_transition_state(*elapsed as f64, "exiting");
-            }
-            TransitionPhase::Loading { .. } => {
-                self.script.set_transition_state(1.0, "loading");
-            }
-            TransitionPhase::Entering { elapsed } => {
-                self.script
-                    .set_transition_state(*elapsed as f64, "entering");
-            }
-        }
-
-        // Script system: provide camera context, then run updates
-        self.script
-            .set_camera(self.camera.position_array(), self.camera.forward_vector());
-        self.script
-            .set_camera_view_proj(self.camera.view_projection_matrix());
-        self.script.provide_context(
-            &self.input,
-            &game_events,
-            self.clock.total_time,
-            self.clock.delta_time,
-        );
-        let (screen_w, screen_h) = self.script_screen_size();
-        self.script.set_screen_size(screen_w, screen_h);
-        // Cursor in the same logical-point space as screen_width()/draw_*:
-        // InputState holds physical pixels, egui's ppp is the window scale.
-        {
-            let ppp = self.hud.egui_ctx.pixels_per_point().max(0.01);
-            let (mx, my) = self.input.mouse_position;
-            self.script
-                .set_mouse_position(mx as f32 / ppp, my as f32 / ppp);
-        }
-        self.script.set_cursor_captured(self.focus.cursor_captured);
-
-        // Sync loaded chunk IDs so scripts can query is_chunk_loaded()
-        let chunk_ids: HashSet<String> = self.loaded_chunks.keys().cloned().collect();
-        self.script.set_loaded_chunk_ids(chunk_ids);
-
-        // Where each audio_source is in its sound (#658), read every frame,
-        // paused or not: loops play on under a pause menu.
-        self.audio.sample_positions();
-        self.script
-            .set_audio_clock(self.audio.sync.positions(), self.audio.output_latency());
-
-        // Conducted parameters (F4, ADR 0020): the music session's per-frame
-        // state for scene bindings; neutral defaults when no session (also
-        // resets the frame after a session ends).
-        self.script.set_conducted(
-            self.music
-                .session
-                .as_ref()
-                .map(|ms| ms.conducted_snapshot())
-                .unwrap_or_default(),
-        );
-
-        // Only run on_update when scripts are not paused
-        if config.scripts == SystemPolicy::Run {
-            self.script
-                .update(&mut self.world, self.clock.delta_time)
-                .unwrap_or_else(|e| tracing::warn!("Script error: {:?}", e));
-        }
-    }
-
-    fn apply_script_camera_overrides(&mut self, has_fps_player: bool) {
-        // Apply script camera overrides (for non-FPS camera modes like chase camera)
-        let cam = std::mem::take(&mut self.script_requests.camera);
-        super::script_commands::apply_camera_overrides(&mut self.camera, &cam);
-
-        // Update audio listener for script-driven cameras (chase cam, etc.)
-        if !has_fps_player && cam.position.is_some() {
-            let cam_pos = self.camera.position;
-            let dir = flint_core::Vec3::new(
-                self.camera.target.x - cam_pos.x,
-                self.camera.target.y - cam_pos.y,
-                self.camera.target.z - cam_pos.z,
-            );
-            let yaw = dir.x.atan2(dir.z);
-            let horiz = (dir.x * dir.x + dir.z * dir.z).sqrt();
-            let pitch = (-dir.y).atan2(horiz);
-            self.audio.update_listener(cam_pos, yaw, pitch);
-        }
-    }
-
-    /// Move the style tweens on by this frame's game time (#370), while
-    /// scripts run.
-    fn step_style_tweens(&mut self) {
-        if self.state_machine.active_config().scripts == SystemPolicy::Run {
-            let step = self
-                .style
-                .tweens
-                .step(&mut self.world, self.clock.delta_time);
-            for event in step.events {
-                self.physics.push_event(event);
-            }
-            for message in step.failures {
-                tracing::warn!(target: "script", "{message}");
-            }
-        }
-    }
-
-    #[profiling::function]
-    fn drive_script_ui(&mut self) {
-        // on_draw_ui() ALWAYS runs (pause menus, transition visuals need to draw)
-        self.script.call_draw_uis(&mut self.world);
-
-        // What on_draw_ui asked, through the same dispatcher
-        self.dispatch_script_commands();
-
-        // Collect draw commands for this frame (scripts + data-driven UI)
-        let mut commands = self.script.drain_draw_commands();
-        let (screen_w, screen_h) = self.script_screen_size();
-        let ui_commands = self.script.generate_ui_draw_commands(screen_w, screen_h);
-        commands.extend(ui_commands);
-        self.hud.draw_commands = commands;
-
-        // Depth-tested world lines (ADR 0083) render with this frame's scene.
-        let world_lines = self.script.drain_world_lines();
-        if let Some(renderer) = &mut self.scene_renderer {
-            renderer.set_world_lines(world_lines, self.hud.egui_ctx.pixels_per_point());
-        }
-        // World text (ADR 0104) is laid out in the HUD's egui pass.
-        self.hud.world_texts = self.script.drain_world_texts();
-    }
-
-    #[profiling::function]
-    fn tick_av_systems(
-        &mut self,
-        config: &StateConfig,
-        game_events: &Vec<flint_runtime::GameEvent>,
-    ) {
-        // A late bundle (audio, #98) landed: queue what wasn't there at
-        // start. Already-loaded sounds are skipped, and an autoplay source
-        // that was waiting for its file starts on the update after its
-        // sound is decoded.
-        let generation = flint_core::vfs::generation();
-        if generation != self.audio_vfs_generation {
-            self.audio_vfs_generation = generation;
-            super::scene_loading::load_audio_from_world(
-                &self.world,
-                &mut self.audio,
-                &self.project,
-                &self.scene_path,
-                self.scene.preload_audio,
-                true,
-            );
-        }
-        // ...and decode it a few milliseconds a frame (#124).
-        self.audio.engine.decode_queued(AUDIO_DECODE_BUDGET);
-
-        // Audio triggers from game events (skip when paused)
-        if config.audio == SystemPolicy::Run {
-            self.audio.process_events(&game_events, &self.world);
-            self.audio
-                .update(&mut self.world, self.clock.delta_time)
-                .ok();
-        }
-
-        // Advance animations (skip when paused)
-        if config.animation == SystemPolicy::Run {
-            self.animation
-                .update(&mut self.world, self.clock.delta_time)
-                .ok();
-
-            // Deliver sprite animation end events to scripts
-            let sprite_events = self.animation.drain_sprite_events();
-            if !sprite_events.is_empty() {
-                self.script
-                    .call_sprite_anim_ends(&mut self.world, &sprite_events);
-            }
-
-            // Deliver animation sequence cues to the owning entity's script
-            let cues = self.animation.drain_sequence_cues();
-            if !cues.is_empty() {
-                for cue in &cues {
-                    println!(
-                        "[sequence] {:?} '{}' cue '{}' at {:.2}s",
-                        cue.entity_id, cue.sequence, cue.cue, cue.time
-                    );
-                }
-                self.script.call_sequence_cues(&mut self.world, &cues);
-            }
-        }
-
-        // Push skeletal bone matrices to GPU
-        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
-            for (entity_id, asset_name) in &self.skeletal_entity_assets {
-                if let Some(matrices) = self.animation.bone_matrices(entity_id) {
-                    renderer.update_bone_matrices(
-                        &context.device,
-                        &context.queue,
-                        *entity_id,
-                        asset_name,
-                        matrices,
-                    );
-                }
-            }
-        }
-
-        // Publish bone_probe joints: model-local joint positions written
-        // into the component right after the pose computation, so scripts
-        // read this frame's pose (e.g. seat_camera following the eye).
-        super::headless_animation::publish_bone_probes(&self.animation, &mut self.world);
-
-        // Two-bone IK (ADR 0070): pin chain tips to their targets now that
-        // scripts, physics and animation have all posed the world; the renderer
-        // reads world matrices on demand, so this is the last writer it sees.
-        self.animation.run_ik(&mut self.world);
-
-        // Advance particle simulation (skip when paused)
-        if config.particles == SystemPolicy::Run {
-            self.particles
-                .update(&mut self.world, self.clock.delta_time)
-                .ok();
-        }
-    }
-
-    #[profiling::function]
-    /// The frame-budgeted procgen queue: what it finished goes to the
-    /// renderer. Living props move on after it, at `Stage::Procgen`, in
-    /// whatever it left of the budget.
+    /// The frame-budgeted procgen queue, as the frame runs it (tests).
+    #[cfg(test)]
     pub(super) fn tick_procgen(&mut self) {
-        // Process procgen generation queue (frame-budgeted)
-        {
-            let camera_pos = self.camera.position_array();
-            let completed = self.procgen_resolver.process_frame(camera_pos);
-            let failures = self.procgen_resolver.take_failures();
-            if !completed.is_empty() || !failures.is_empty() {
-                if let (Some(renderer), Some(ctx)) =
-                    (&mut self.scene_renderer, &self.render_context)
-                {
-                    // Catalog names never reach the queue, so the file
-                    // fallback needs only the scene's own search paths.
-                    let config = flint_render::model_loader::ModelLoadConfig::in_project(
-                        self.project.clone(),
-                        &self.scene_path,
-                    );
-                    let mut sink = super::procgen_assets::GpuSink {
-                        renderer,
-                        device: &ctx.device,
-                        queue: &ctx.queue,
-                        config: &config,
-                    };
-                    super::procgen_assets::apply_completed(&completed, &mut sink);
-                    super::procgen_assets::apply_failures(&failures, &mut sink);
-                }
-            }
-        }
+        use super::game_core::FrameHost;
+        let (core, lent) = self.lend();
+        core.tick_procgen(lent);
     }
 
     #[profiling::function]
@@ -1540,7 +1110,7 @@ impl PlayerApp {
         let cut = self.style.camera_cut.observe(
             self.camera.position_array(),
             self.camera.forward_vector(),
-            self.clock.delta_time as f32,
+            self.core.clock.delta_time as f32,
         );
         if cut {
             if let Some(renderer) = &mut self.scene_renderer {
@@ -1557,19 +1127,19 @@ impl PlayerApp {
                 10.0
             };
             renderer.aspect_ratio = self.camera.aspect;
-            renderer.update_from_world(&self.world, &context.device);
+            renderer.update_from_world(&self.core.world, &context.device);
             // Next frame's scripts cast against what this one draws (ADR 0105).
-            self.script.set_ray_scene(renderer.ray_scene());
+            self.core.script.set_ray_scene(renderer.ray_scene());
         }
 
         // Pack (camera-sorted) and upload particle instances (ADR 0068)
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             if self.particles_render_enabled {
-                self.particles.pack(Some(self.camera.position_array()));
+                self.core.particles.pack(Some(self.camera.position_array()));
                 renderer.update_particles_from(
                     &context.device,
                     &context.queue,
-                    &self.particles.sync,
+                    &self.core.particles.sync,
                 );
             } else {
                 renderer.update_particles(&context.device, &context.queue, &[]);
@@ -1580,14 +1150,14 @@ impl PlayerApp {
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             // The wall clock, unless the grass is on the wooze field's (#252):
             // then the shallow wooze subsystem sets it at Stage::Sync
-            renderer.grass_time = self.clock.total_time as f32;
+            renderer.grass_time = self.core.clock.total_time as f32;
             renderer.grass_wooze = None;
             // Ocean waves run on the same clock scripts see via total_time(),
             // keeping script-side ocean_height() queries in sync with the GPU.
-            renderer.ocean_time = self.clock.total_time;
+            renderer.ocean_time = self.core.clock.total_time;
             // History styles decay by game time (#342), so a --frame-step
             // capture settles alike at any step
-            renderer.style_dt = self.clock.delta_time as f32;
+            renderer.style_dt = self.core.clock.delta_time as f32;
             // --style-time holds the post time, as `flint render`'s does (#328)
             if let Some(t) = self.launch.style_time {
                 renderer.ocean_time = t as f64;
@@ -1609,7 +1179,7 @@ impl PlayerApp {
         // ladder merge below; there is no restore machinery because owning
         // scripts write it every frame and scene loads reset the sticky
         // config from the def.
-        self.post.take_from(&mut self.script_requests);
+        self.post.take_from(&mut self.core.script_requests);
 
         // Music-session ladder/reintegration visuals (ADR 0021). Script
         // overrides win — F4/F6 script-authored rung visuals supersede this
@@ -1655,14 +1225,14 @@ impl PlayerApp {
         // animations (a header opening, a tooltip fading) would otherwise
         // follow the wall clock, and a slow capture frame would land them
         // somewhere else on every run
-        if let Some(step) = self.clock.frame_step {
-            raw_input.time = Some(self.clock.total_time);
+        if let Some(step) = self.core.clock.frame_step {
+            raw_input.time = Some(self.core.clock.total_time);
             raw_input.predicted_dt = step as f32;
         }
 
         let draw_commands = std::mem::take(&mut self.hud.draw_commands);
         let mut extensions = std::mem::take(&mut self.extensions);
-        let mut subsystems = std::mem::take(&mut self.subsystems);
+        let mut subsystems = std::mem::take(&mut self.core.subsystems);
         #[cfg(feature = "debug-hud")]
         let mut debug_panels = std::mem::take(&mut self.debug_panels);
         #[cfg(feature = "debug-hud")]
@@ -1699,7 +1269,7 @@ impl PlayerApp {
             self.scene_renderer.as_ref().map(|r| {
                 let mut stats = r.collect_stats();
                 // FPS smoothing: rolling window of delta_time samples
-                self.stats.frame_times.push_back(self.clock.delta_time);
+                self.stats.frame_times.push_back(self.core.clock.delta_time);
                 while self.stats.frame_times.len() > 60 {
                     self.stats.frame_times.pop_front();
                 }
@@ -1803,7 +1373,7 @@ impl PlayerApp {
 
         self.hud.draw_commands = draw_commands;
         self.extensions = extensions;
-        self.subsystems = subsystems;
+        self.core.subsystems = subsystems;
         #[cfg(feature = "debug-hud")]
         {
             self.debug_panels = debug_panels;
@@ -1897,6 +1467,201 @@ impl PlayerApp {
         }
 
         self.hud.egui_renderer = Some(egui_renderer);
+    }
+}
+/// The player's part in the game's frame (ADR 0117 decision 4): what
+/// `game_core::step` calls back, in the order it does.
+impl super::game_core::FrameHost for PlayerApp {
+    fn lend(&mut self) -> (&mut super::game_core::GameCore, super::game_core::Lent<'_>) {
+        (
+            &mut self.core,
+            super::game_core::Lent {
+                input: &self.input,
+                camera: &mut self.camera,
+                renderer: self.scene_renderer.as_mut(),
+                gpu: self.render_context.as_ref().map(|c| (&c.device, &c.queue)),
+                pixels_per_point: self.hud.egui_ctx.pixels_per_point(),
+                cursor_captured: self.focus.cursor_captured,
+                scene_file_writable: self.launch.scene_file_writable,
+                #[cfg(feature = "debug-hud")]
+                panels: &mut self.debug_panels,
+            },
+        )
+    }
+
+    fn core(&mut self) -> &mut super::game_core::GameCore {
+        &mut self.core
+    }
+
+    fn before_events(&mut self) {
+        // Advance transition phase timing
+        self.advance_transition();
+        // Game extensions, before anything below reads the world
+        self.run_extension_pre_updates();
+    }
+
+    fn phase_done(&mut self, phase: super::perf::Phase) {
+        self.perf_mark(phase);
+        if phase == super::perf::Phase::Scripts {
+            if let Some(perf) = &mut self.stats.perf {
+                perf.record_scripts(self.core.script.update_times());
+            }
+        }
+    }
+
+    fn window_for_scripts(&mut self) {
+        // Transition state for script access
+        let script = &mut self.core.script;
+        match &self.transition_phase {
+            TransitionPhase::Idle => {
+                script.set_transition_state(-1.0, "idle");
+            }
+            TransitionPhase::Exiting { elapsed, .. } => {
+                script.set_transition_state(*elapsed as f64, "exiting");
+            }
+            TransitionPhase::Loading { .. } => {
+                script.set_transition_state(1.0, "loading");
+            }
+            TransitionPhase::Entering { elapsed } => {
+                script.set_transition_state(*elapsed as f64, "entering");
+            }
+        }
+        let (screen_w, screen_h) = self.script_screen_size();
+        let script = &mut self.core.script;
+        script.set_screen_size(screen_w, screen_h);
+        // Cursor in the same logical-point space as screen_width()/draw_*:
+        // InputState holds physical pixels, egui's ppp is the window scale.
+        {
+            let ppp = self.hud.egui_ctx.pixels_per_point().max(0.01);
+            let (mx, my) = self.input.mouse_position;
+            script.set_mouse_position(mx as f32 / ppp, my as f32 / ppp);
+        }
+        script.set_cursor_captured(self.focus.cursor_captured);
+
+        // Sync loaded chunk IDs so scripts can query is_chunk_loaded()
+        let chunk_ids: HashSet<String> = self.loaded_chunks.keys().cloned().collect();
+        script.set_loaded_chunk_ids(chunk_ids);
+
+        // Where each audio_source is in its sound (#658), read every frame,
+        // paused or not: loops play on under a pause menu.
+        self.audio.sample_positions();
+        script.set_audio_clock(self.audio.sync.positions(), self.audio.output_latency());
+
+        // Conducted parameters (F4, ADR 0020): the music session's per-frame
+        // state for scene bindings; neutral defaults when no session (also
+        // resets the frame after a session ends). The session's tick, at
+        // the frame's start, precedes this, which precedes on_update.
+        script.set_conducted(
+            self.music
+                .session
+                .as_ref()
+                .map(|ms| ms.conducted_snapshot())
+                .unwrap_or_default(),
+        );
+    }
+
+    fn listener(&mut self, at: super::game_core::Listener) {
+        match at {
+            super::game_core::Listener::FirstPerson(position, yaw, pitch) => {
+                self.audio.update_listener(position, yaw, pitch);
+            }
+            // A script-driven camera (chase cam, etc.)
+            super::game_core::Listener::ScriptCamera => {
+                let cam_pos = self.camera.position;
+                let dir = flint_core::Vec3::new(
+                    self.camera.target.x - cam_pos.x,
+                    self.camera.target.y - cam_pos.y,
+                    self.camera.target.z - cam_pos.z,
+                );
+                let yaw = dir.x.atan2(dir.z);
+                let horiz = (dir.x * dir.x + dir.z * dir.z).sqrt();
+                let pitch = (-dir.y).atan2(horiz);
+                self.audio.update_listener(cam_pos, yaw, pitch);
+            }
+        }
+    }
+
+    fn dispatch_script_commands(&mut self) {
+        PlayerApp::dispatch_script_commands(self);
+    }
+
+    fn script_ui_drawn(&mut self) {
+        // Collect draw commands for this frame (scripts + data-driven UI)
+        let mut commands = self.core.script.drain_draw_commands();
+        let (screen_w, screen_h) = self.script_screen_size();
+        let ui_commands = self
+            .core
+            .script
+            .generate_ui_draw_commands(screen_w, screen_h);
+        commands.extend(ui_commands);
+        self.hud.draw_commands = commands;
+
+        // Depth-tested world lines (ADR 0083) render with this frame's scene.
+        let world_lines = self.core.script.drain_world_lines();
+        if let Some(renderer) = &mut self.scene_renderer {
+            renderer.set_world_lines(world_lines, self.hud.egui_ctx.pixels_per_point());
+        }
+        // World text (ADR 0104) is laid out in the HUD's egui pass.
+        self.hud.world_texts = self.core.script.drain_world_texts();
+    }
+
+    #[profiling::function]
+    fn sound(&mut self, config: &StateConfig, game_events: &[flint_runtime::GameEvent]) {
+        // A late bundle (audio, #98) landed: queue what wasn't there at
+        // start. Already-loaded sounds are skipped, and an autoplay source
+        // that was waiting for its file starts on the update after its
+        // sound is decoded.
+        let generation = flint_core::vfs::generation();
+        if generation != self.audio_vfs_generation {
+            self.audio_vfs_generation = generation;
+            super::scene_loading::load_audio_from_world(
+                &self.core.world,
+                &mut self.audio,
+                &self.core.project,
+                &self.core.scene_path,
+                self.scene.preload_audio,
+                true,
+            );
+        }
+        // ...and decode it a few milliseconds a frame (#124).
+        self.audio.engine.decode_queued(AUDIO_DECODE_BUDGET);
+
+        // Audio triggers from game events (skip when paused)
+        if config.audio == SystemPolicy::Run {
+            self.audio.process_events(game_events, &self.core.world);
+            self.audio
+                .update(&mut self.core.world, self.core.clock.delta_time)
+                .ok();
+        }
+    }
+
+    fn bones_posed(&mut self) {
+        // Push skeletal bone matrices to GPU
+        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
+            for (entity_id, asset_name) in &self.skeletal_entity_assets {
+                if let Some(matrices) = self.core.animation.bone_matrices(entity_id) {
+                    renderer.update_bone_matrices(
+                        &context.device,
+                        &context.queue,
+                        *entity_id,
+                        asset_name,
+                        matrices,
+                    );
+                }
+            }
+        }
+    }
+
+    fn sync(&mut self) {
+        // Renderer sync: transforms, particle upload, grass/ocean time
+        self.sync_renderer();
+
+        // Script post-override drain + music-session ladder merge (ADR 0021)
+        self.drain_post_overrides();
+
+        // A script's set_quality (FlintKart#55), applied here, between the
+        // frame's scripts and its draw
+        self.apply_script_quality();
     }
 }
 

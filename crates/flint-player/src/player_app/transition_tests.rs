@@ -79,16 +79,16 @@ fn started_in(path: &str) -> PlayerApp {
 }
 
 fn is_in(app: &PlayerApp, scene: &str) -> bool {
-    app.scene_path.ends_with(scene)
+    app.core.scene_path.ends_with(scene)
 }
 
 #[test]
 fn a_bare_load_scene_reaches_the_next_scene() {
     vfs::scoped(Arc::new(game()), || {
         let mut app = started_in("game/scenes/a.scene.toml");
-        assert!(app.world.get_id("controller").is_some());
+        assert!(app.core.world.get_id("controller").is_some());
         assert!(
-            !app.script.can_complete_transition(),
+            !app.core.script.can_complete_transition(),
             "leave.rhai never calls complete_transition"
         );
 
@@ -100,15 +100,15 @@ fn a_bare_load_scene_reaches_the_next_scene() {
 
         // The next frame's advance: loaded, and nothing to fade back in
         app.advance_transition();
-        assert!(is_in(&app, "b.scene.toml"), "{}", app.scene_path);
-        assert!(app.world.get_id("marker_b").is_some());
-        assert!(app.world.get_id("marker_a").is_none());
+        assert!(is_in(&app, "b.scene.toml"), "{}", app.core.scene_path);
+        assert!(app.core.world.get_id("marker_b").is_some());
+        assert!(app.core.world.get_id("marker_a").is_none());
         assert!(app.transition_phase.is_idle());
 
         // ...so the next load_scene is heard, not dropped as mid-transition
         ScriptHost::load_scene(&mut app, "a.scene.toml".into());
         app.advance_transition();
-        assert!(is_in(&app, "a.scene.toml"), "{}", app.scene_path);
+        assert!(is_in(&app, "a.scene.toml"), "{}", app.core.scene_path);
         assert!(app.transition_phase.is_idle());
     });
 }
@@ -117,7 +117,7 @@ fn a_bare_load_scene_reaches_the_next_scene() {
 fn a_scene_that_draws_its_fades_waits_for_them() {
     vfs::scoped(Arc::new(game()), || {
         let mut app = started_in("game/scenes/hud.scene.toml");
-        assert!(app.script.can_complete_transition());
+        assert!(app.core.script.can_complete_transition());
 
         ScriptHost::reload_scene(&mut app);
         for _ in 0..3 {
@@ -127,7 +127,7 @@ fn a_scene_that_draws_its_fades_waits_for_them() {
                 "the HUD is still fading out"
             );
         }
-        assert!(app.world.get_id("marker_hud").is_some());
+        assert!(app.core.world.get_id("marker_hud").is_some());
 
         // The HUD's complete_transition()
         ScriptHost::fire_event(
@@ -178,7 +178,7 @@ fn a_fade_that_never_finishes_is_ended_after_the_timeout() {
             elapsed: TRANSITION_PHASE_TIMEOUT,
         };
         app.advance_transition();
-        assert!(is_in(&app, "b.scene.toml"), "{}", app.scene_path);
+        assert!(is_in(&app, "b.scene.toml"), "{}", app.core.scene_path);
         // b has no HUD: nothing to wait for on the way in
         assert!(app.transition_phase.is_idle());
 

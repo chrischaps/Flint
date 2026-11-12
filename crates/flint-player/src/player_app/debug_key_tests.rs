@@ -28,7 +28,7 @@ fn with_script(src: &str) -> PlayerApp {
 fn scripted_f2_toggles_the_stats_overlay() {
     // Frames at t = 0, 0.25, 0.5: press, release, press.
     let mut app = with_script("0 tap F2\n0.5 tap F2\n");
-    app.clock.frame_step = Some(0.25);
+    app.core.clock.frame_step = Some(0.25);
     assert!(!app.stats.show);
     app.tick();
     assert!(app.stats.show, "the first tap opens it");
@@ -54,7 +54,7 @@ fn scripted_game_keys_reach_input_state_as_before() {
 fn show_stats_opens_the_overlay_once() {
     // Frames at t = 0, 0.25, 0.5: F2 is tapped on the third.
     let mut app = with_script("0.5 tap F2\n");
-    app.clock.frame_step = Some(0.25);
+    app.core.clock.frame_step = Some(0.25);
     app.capture.show_stats = true;
     app.tick();
     assert!(app.stats.show);
@@ -83,7 +83,7 @@ fn focus_a_field(app: &PlayerApp) {
 fn a_focused_egui_field_keeps_scripted_keys_from_the_game() {
     // Frames at t = 0, 0.25, 0.5 (ADR 0097).
     let mut app = with_script("0 down KeyW\n0.25 up KeyW\n0.5 tap F2\n");
-    app.clock.frame_step = Some(0.25);
+    app.core.clock.frame_step = Some(0.25);
     app.add_extension(Box::new(Bare));
     focus_a_field(&app);
     assert!(app.hud.egui_ctx.wants_keyboard_input());
@@ -131,7 +131,7 @@ fn a_release_follows_a_scripted_press_that_reached_the_game() {
     // The game saw W go down, then a field took focus: the release still
     // reaches the game, so W isn't stuck down there.
     let mut app = with_script("0 down KeyW\n0.25 up KeyW\n");
-    app.clock.frame_step = Some(0.25);
+    app.core.clock.frame_step = Some(0.25);
     app.add_extension(Box::new(Bare));
     app.tick();
     assert!(app.input.is_key_down(KeyCode::KeyW));
@@ -144,7 +144,7 @@ fn a_release_follows_a_scripted_press_that_reached_the_game() {
 fn a_scripted_click_reaches_input_state_a_frame_after_the_pointer() {
     // Frames at t = 0, 0.25, 0.5: move, press, release (ADR 0082).
     let mut app = with_script("0 click 100 50\n");
-    app.clock.frame_step = Some(0.25);
+    app.core.clock.frame_step = Some(0.25);
     app.tick();
     assert_eq!(app.input.mouse_position, (100.0, 50.0));
     assert!(!app.input.is_mouse_button_down(0));

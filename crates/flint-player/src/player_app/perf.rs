@@ -569,7 +569,7 @@ impl super::PlayerApp {
     /// submissions a frame, so `?perf=cpu` leaves it off.
     pub fn enable_perf(&mut self, gpu: bool) {
         self.stats.perf = Some(PerfRecorder::new(gpu));
-        self.script.set_update_timing(true);
+        self.core.script.set_update_timing(true);
     }
 
     /// The end of `phase` in this frame, when recording.
@@ -618,7 +618,7 @@ impl super::PlayerApp {
                 frame_ms: stats.gpu_frame_ms,
             }
         };
-        let game = std::path::Path::new(&self.scene_path)
+        let game = std::path::Path::new(&self.core.scene_path)
             .file_name()
             .and_then(|n| n.to_str())
             .map(|n| n.split('.').next().unwrap_or(n).to_string())
@@ -635,7 +635,7 @@ impl super::PlayerApp {
                 scale: renderer.render_scale(),
                 draw_calls: stats.draw_calls,
                 triangles: stats.triangles,
-                game_time: self.clock.total_time,
+                game_time: self.core.clock.total_time,
                 audio: self
                     .audio
                     .engine
