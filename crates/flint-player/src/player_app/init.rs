@@ -17,10 +17,10 @@ use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
 use flint_core::vfs;
 use flint_ecs::FlintWorld;
-use flint_input_capture::pad::Gilrs;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
+use flint_runtime::pad::Gilrs;
 use flint_runtime::{GameClock, GameStateMachine, InputConfig, InputState, PersistentStore};
 use flint_script::context::DrawCommand;
 use flint_script::ScriptSystem;
@@ -183,6 +183,7 @@ impl PlayerApp {
             },
             pending_rebind: None,
             gilrs: None,
+            pad_rumble: flint_runtime::PadRumble::new(),
             state_machine: GameStateMachine::new(),
             persistent_store: PersistentStore::new(),
             persist_debounce: flint_runtime::SaveDebounce::default(),

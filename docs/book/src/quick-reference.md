@@ -317,6 +317,7 @@ position = [0, 0, 0]
 | `is_action_pressed(action)` | `bool` | Check if action is held |
 | `is_action_just_pressed(action)` | `bool` | Check if action pressed this frame |
 | `last_input_device()` / `gamepad_connected()` | `String` / `bool` | `"keyboard"` \| `"mouse"` \| `"gamepad"` \| `"touch"` latch for prompt glyphs; whether a pad is attached |
+| `rumble(pad, strength, seconds)` | --- | Buzz a pad (`-1` every pad) at 0..1 for up to 10 s; `0` stops it. No music session needed |
 | `is_touch_device()` / `safe_area()` | `bool` / `Map` | touch-first device (`pointer: coarse` page, Android) from frame one; `#{ left, top, right, bottom }` insets in points, zeros where none |
 | `mouse_x()` / `mouse_y()` | `f64` | Cursor in logical points; `is_mouse_pressed(b)` / `is_mouse_just_pressed(b)` (0 left, 1 right, 2 middle) |
 | `screen_to_ground(x, y, plane_y)` | `[x, z]`/`()` | Ground point under a screen point (e.g. the cursor); `world_to_screen(x, y, z)` is the inverse |

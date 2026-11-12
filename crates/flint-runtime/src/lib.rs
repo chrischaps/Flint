@@ -5,13 +5,17 @@
 //! - `InputState` — keyboard and mouse input tracking with action bindings
 //! - `GameEvent` / `EventBus` — typed event queue for inter-system communication
 //! - `RuntimeSystem` — trait for systems ticked by the game loop
+//! - `pad` — the gamepad backend (gilrs, or a stand-in without `gamepad`)
+//! - `rumble` — a general pad rumble, `PadRumble` (#748)
 
 pub mod atomic_file;
 mod clock;
 mod event;
 mod event_bus;
 mod input;
+pub mod pad;
 pub mod persist;
+pub mod rumble;
 pub mod state;
 mod system;
 pub mod touch_controls;
@@ -28,6 +32,7 @@ pub use persist::{
     check_slot_name, CorruptSave, Loaded, PersistentStore, SaveBackend, SaveDebounce, SaveText,
     DEFAULT_SLOT,
 };
+pub use rumble::{PadRumble, PadTarget, RumbleError, RumbleRequest, MAX_RUMBLE_SECONDS};
 pub use state::{GameState, GameStateMachine, StateConfig, SystemPolicy};
 pub use system::RuntimeSystem;
 pub use touch_controls::{TouchControls, TouchControlsConfig, TouchControlsMode, TouchWidget};

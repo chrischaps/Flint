@@ -190,6 +190,42 @@ fn test_play_sound_command() {
     }
 }
 
+/// `rumble()` asks the host for a buzz, with no music session anywhere
+/// (#748): ints or floats, every pad or one, and a zero that stops.
+#[test]
+fn rumble_queues_a_command_for_the_host() {
+    let mut engine = ScriptEngine::new();
+    let mut world = FlintWorld::new();
+    let id = world.spawn("buzz").unwrap();
+    let ast = engine
+        .compile(
+            r#"
+        fn on_init() {
+            rumble(-1, 0.6, 0.25);
+            rumble(0, 1, 2);
+            rumble(-1, 0, 0);
+        }
+    "#,
+        )
+        .unwrap();
+    engine.add_script(id, ast, "buzz.rhai".into());
+    engine.call_inits(&mut world);
+
+    let rumbles: Vec<_> = engine
+        .drain_commands()
+        .into_iter()
+        .filter_map(|c| match c {
+            ScriptCommand::Rumble {
+                pad,
+                strength,
+                seconds,
+            } => Some((pad, strength, seconds)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(rumbles, [(-1, 0.6, 0.25), (0, 1.0, 2.0), (-1, 0.0, 0.0)]);
+}
+
 #[test]
 fn test_play_sound_pitch_and_falloff() {
     let mut engine = ScriptEngine::new();

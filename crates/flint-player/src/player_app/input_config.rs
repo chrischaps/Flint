@@ -267,7 +267,7 @@ pub(super) fn write_user_override_file(path: &Path, config: &InputConfig) -> Res
     Ok(())
 }
 
-pub(super) fn gamepad_id_to_u32(id: flint_input_capture::pad::GamepadId) -> u32 {
+pub(super) fn gamepad_id_to_u32(id: flint_runtime::pad::GamepadId) -> u32 {
     // gilrs GamepadId is opaque; convert via usize
     let raw: usize = id.into();
     raw as u32

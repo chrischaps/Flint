@@ -3,6 +3,7 @@
 
 use super::builder::kind::{Bool, Int, Map, Num, Str};
 use super::builder::ScriptApi;
+use crate::context::ScriptCommand;
 
 pub(crate) fn register(api: &mut ScriptApi) {
     let mut m = api.module("input");
@@ -84,6 +85,21 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .returns(Bool, "")
     .run(|call, ()| call.ctx_ref().input.gamepad_connected);
+
+    m.func(
+        "rumble",
+        "Buzz a pad's motors at strength 0..1 for seconds (up to 10, in 50 ms steps); pad -1 is every pad, 0 of either stops it.",
+    )
+    .arg("pad", Int)
+    .arg("strength", Num)
+    .arg("seconds", Num)
+    .run(|call, (pad, strength, seconds)| {
+        call.ctx().commands.push(ScriptCommand::Rumble {
+            pad,
+            strength,
+            seconds,
+        });
+    });
 
     // ── Touch ──
     m.func(

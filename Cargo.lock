@@ -1811,7 +1811,7 @@ version = "0.1.0"
 dependencies = [
  "flint-core",
  "flint-music",
- "gilrs",
+ "flint-runtime",
  "gilrs-core",
  "tracing",
  "web-time",
@@ -1996,6 +1996,7 @@ version = "0.1.0"
 dependencies = [
  "flint-core",
  "flint-ecs",
+ "gilrs",
  "serde",
  "toml",
  "web-time",

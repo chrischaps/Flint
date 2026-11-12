@@ -95,7 +95,7 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
   ├── flint-audio    Kira spatial audio
   ├── flint-terrain  Heightmap terrain with splat-map blending
   ├── flint-physics  Rapier 3D (character controller, static/kinematic/dynamic bodies, impulse joints)
-  ├── flint-runtime  GameClock, InputState, InputConfig, EventBus, GameStateMachine, PersistentStore
+  ├── flint-runtime  GameClock, InputState, InputConfig, EventBus, GameStateMachine, PersistentStore, pad (gilrs), PadRumble
   ├── flint-viewer   egui inspector with transform gizmos, undo/redo, TOML write-back
   ├── flint-import   glTF model importer
   ├── flint-asset    Content-addressed asset catalog

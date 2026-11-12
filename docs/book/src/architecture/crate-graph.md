@@ -68,13 +68,13 @@ The workspace has 28 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 1 | `flint-terrain` | core | cli, debug-ui, player, render, script |
 | 2 | `flint-ecs` | core, schema | android, animation, audio, cli, constraint, particles, physics, player, query, render, runtime, scene, script, viewer |
 | 2 | `flint-import` | asset, core | animation, asset-gen, cli, player, procgen, render, viewer |
-| 2 | `flint-input-capture` | core, music | cli, player |
 | 3 | `flint-query` | core, ecs | cli, constraint |
-| 3 | `flint-runtime` | core, ecs | animation, audio, cli, particles, physics, player, script |
+| 3 | `flint-runtime` | core, ecs | animation, audio, cli, input-capture, particles, physics, player, script |
 | 3 | `flint-scene` | core, ecs, schema | android, cli, debug-ui, player, procgen, render, viewer |
 | 4 | `flint-animation` | core, ecs, import, runtime | cli, player, script |
 | 4 | `flint-audio` | core, ecs, runtime | player |
 | 4 | `flint-constraint` | core, ecs, query, schema | cli, viewer |
+| 4 | `flint-input-capture` | core, music, runtime | cli, player |
 | 4 | `flint-particles` | core, ecs, runtime | cli, player, render, viewer |
 | 4 | `flint-physics` | core, ecs, runtime | cli, player, script |
 | 4 | `flint-procgen` | core, import, scene, schema | asset-gen, cli, debug-ui, player, procgen-ai, viewer |
@@ -106,7 +106,7 @@ The workspace has 28 crates under `crates/`, plus one tool (`tools/arch-analyzer
 
 **Two entry points.** The CLI binary (`flint-cli`) serves scene authoring, validation, and the rhythm-game tooling (`play-chart`, `replay-chart`, `render-suite`). The player binary (`flint-player`) serves interactive gameplay, and `flint-cli` embeds it so `flint play` and `flint-player` run the same code. Both share the same underlying crate hierarchy.
 
-**Mostly independent subsystems.** The constraint, asset, physics, audio, particles, asset generation, and render systems don't depend on each other. The exceptions are deliberate: `flint-script` depends on `flint-physics` (raycasts, camera direction) and `flint-animation` (layer and sequence bindings); `flint-input-capture` depends on `flint-music` for the `InputEvent` type and clock bridge; `flint-render` depends on `flint-terrain` for the shared vertex format and on `flint-scene` for the post-process and environment definitions; and `flint-debug-ui` depends on `flint-render` because its panels mirror and write through to renderer state. Most subsystems can still be built and tested in isolation.
+**Mostly independent subsystems.** The constraint, asset, physics, audio, particles, asset generation, and render systems don't depend on each other. The exceptions are deliberate: `flint-script` depends on `flint-physics` (raycasts, camera direction) and `flint-animation` (layer and sequence bindings); `flint-input-capture` depends on `flint-music` for the `InputEvent` type and clock bridge, and on `flint-runtime` for the gamepad backend it shares with the player; `flint-render` depends on `flint-terrain` for the shared vertex format and on `flint-scene` for the post-process and environment definitions; and `flint-debug-ui` depends on `flint-render` because its panels mirror and write through to renderer state. Most subsystems can still be built and tested in isolation.
 
 ## External Dependencies
 
@@ -134,7 +134,7 @@ Key third-party crates used across the workspace:
 | `gltf` | flint-import | glTF file parsing (meshes, materials, skins, animations) |
 | `crossbeam` | flint-physics | Channel-based event collection (Rapier) |
 | `rhai` | flint-script | Embedded scripting language |
-| `gilrs` | flint-player, flint-input-capture | Gamepad input (buttons, axes, multi-controller) |
+| `gilrs` | flint-runtime (optional, `gamepad`) | Gamepad input (buttons, axes, multi-controller) and a script's `rumble()`; the player and the rhythm capture read it through `flint_runtime::pad` |
 | `gilrs-core` | flint-input-capture | Direct 1 kHz polling and XInput rumble |
 | `noise` | flint-procgen, flint-terrain | Perlin / simplex / Worley noise |
 | `rand`, `rand_chacha` | flint-procgen, flint-procgen-ai, flint-terrain | Seeded, reproducible randomness |
