@@ -38,6 +38,18 @@ pub(crate) struct LivingSubsystem {
     pub(crate) grass_wooze: GrassWooze,
     /// What's been done to a running grove by hand (#218).
     pub(crate) tune: super::living_tuning::LivingTune,
+    /// `Some` in a capture (`flint render`, #216, #725): see [`Capture`].
+    pub(crate) capture: Option<Capture>,
+}
+
+/// How a capture's grove differs from the player's: every pose a step asks
+/// for is made then, off the frame budget, since a pose arriving late would
+/// change the picture; the props are blended once, at the capture, not each
+/// step; and shallow wooze draws only in a capture of a moment (a plain
+/// render shows those meshes at rest, #215).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Capture {
+    pub shallow: bool,
 }
 
 impl LivingSubsystem {
@@ -125,6 +137,17 @@ impl LivingSubsystem {
     /// One frame of living props, on `dt` of the living clock: the clock and
     /// the field, the boil, the poses, shallow wooze and grass on the same
     /// field and `dt`, then new lineages and the blends.
+    /// The subsystem a capture's grove runs on: its field (the scene's
+    /// `[wooze]` with any sweep's knobs over it), and whether it's a capture
+    /// of a moment, which draws shallow wooze.
+    pub(crate) fn for_capture(wooze: Option<flint_core::wooze::WoozeField>, moment: bool) -> Self {
+        Self {
+            wooze,
+            capture: Some(Capture { shallow: moment }),
+            ..Default::default()
+        }
+    }
+
     pub(super) fn tick(&mut self, ctx: &mut StageCtx, dt: f64) {
         let living_dt = dt + self.before_living_tick(ctx);
         // A scene with a wooze field reads it where each prop now stands.
@@ -141,13 +164,19 @@ impl LivingSubsystem {
             self.boil_clock.tick(living_dt, &sample);
         }
         let wooze = self.wooze.as_ref().map(|field| (field, self.wooze_time));
-        let lineages = ctx.resolver.process_living_in(living_dt, wooze);
+        let lineages = match self.capture {
+            Some(_) => ctx.resolver.step_living_now(living_dt, wooze),
+            None => ctx.resolver.process_living_in(living_dt, wooze),
+        };
+        let shallow = self.capture.is_none_or(|c| c.shallow);
         // Hand-made meshes read the same field on the same dt (#215).
         if let (Some(field), Some(renderer)) = (&self.wooze, ctx.renderer.as_deref_mut()) {
-            let draws = self
-                .shallow_wooze
-                .advance(ctx.world, field, self.wooze_time, living_dt);
-            renderer.set_shallow_wooze(draws.iter().copied());
+            if shallow {
+                let draws =
+                    self.shallow_wooze
+                        .advance(ctx.world, field, self.wooze_time, living_dt);
+                renderer.set_shallow_wooze(draws.iter().copied());
+            }
             // And so does grass that asks to (#252), where the viewer stands.
             self.grass_wooze.advance(
                 renderer.grass_config(),
@@ -173,7 +202,11 @@ impl LivingSubsystem {
                 living_props::apply_lineages(&lineages, &mut sink);
             }
         }
-        // Blend after the rings have slid and any new lineage is up.
+        // Blend after the rings have slid and any new lineage is up (a
+        // capture blends once, when it draws).
+        if self.capture.is_some() {
+            return;
+        }
         if let (Some(renderer), Some((device, queue))) = (ctx.renderer.as_deref_mut(), ctx.gpu) {
             living_props::upload_blends(ctx.resolver, &mut self.blend, renderer, device, queue);
         }

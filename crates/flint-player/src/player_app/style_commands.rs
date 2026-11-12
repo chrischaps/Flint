@@ -9,9 +9,9 @@
 //! `flint_render::post_style` instead ([`set_post_style`] and the two after
 //! it).
 //!
-//! Both hosts call these from their `ScriptHost` methods (#697): the player
-//! (`script_commands.rs`) and a headless capture (`headless_scripts.rs`), so
-//! a style command does the same in each.
+//! The game core's dispatcher calls these (`game_core.rs`, #697, #725), for
+//! the player and a headless capture alike, so a style command does the
+//! same in each.
 
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;

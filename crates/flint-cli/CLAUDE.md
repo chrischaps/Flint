@@ -134,16 +134,16 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #   --time 3.5             (living props, wooze field and other clocks at that game time;
    #                           byte-identical, and the same pixels as flint-player --frame-step
    #                           at that time. No physics. --frame-step S names the step)
-   #   --scripts              (run the scene's scripts headless, a tick a step in the player's frame order:
-   #                           seeded random(), no timestamp(), name-ordered; what can't be drawn is
-   #                           warned. flint_player::HeadlessScripts, #8; tune_living's boil, step_living,
-   #                           load_living_preset and script particles too, #579: boil tunes queue and
-   #                           land on the config at capture via living_tuning::tune_boil, the player's;
-   #                           particles made at load step on the script clock, Stage::step_particles_to.
-   #                           Commands go through the player's dispatcher, a ScriptHost, #697: entity
-   #                           styles and tweens, post styles, set_look, camera roll, render modes, LOD,
-   #                           quality and states apply too; what a capture can't is PRESENTATION_ONLY.
-   #                           What needs the renderer lands at capture: Stage::lay_script_requests)
+   #   --scripts              (run the scene's scripts headless. A Stage's scene is a flint_player::HeadlessGame,
+   #                           #725: the player's GameCore stepped through game_core::step, the player's
+   #                           frame, with its LivingSubsystem (for_capture) for props and the field, with
+   #                           or without --scripts; seeded random(), no timestamp(), name-ordered; what
+   #                           can't be drawn is warned. Commands go through the core's dispatcher, #697:
+   #                           styles, tweens and boil tunes land on the renderer as asked, and style reads
+   #                           see them the next step; set_look waits for the capture
+   #                           (Stage::lay_script_requests), then the post overrides. Particles made at
+   #                           load step on the clock, Stage::step_particles_to; what a capture can't do
+   #                           is PRESENTATION_ONLY)
    #   --script-time 3        (#371: --scripts --time 3 in one flag, folded into those two at the top of
    #                           render::run_in, so goldens and variants get it; takes any TimeSpec, and
    #                           --frame-step / --fps through the `clock` / `span` groups. A render that
@@ -170,7 +170,7 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
 
 ## `flint render` over time
 
-- **`flint render` over time** (#216) -- `render.rs` loads a `Stage` per sweep column, each a world, renderer and clocks of its own. `flint_player::LivingRun` is the player's living-prop load and step with no window and no budget (`ProcGenResolver::step_living_now`), and only runs in a scene with `living_prop` entities, whose plain renders were empty before; every other scene's plain render stays byte-identical. To match the player it keeps the authored camera position (going through `update_orbit` rounds it, which changed 7,000 pixels at 1280 x 720) and draws no grid. `--screenshot-at` has a tolerance, since 210 steps of 1/60 sum to a hair under 3.5. Stdout is the JSON report's: flint-cli's tracing goes to stderr, and so do the load path's progress lines, so a new `println!` on that path breaks `--report json`. GIFs go through `gif_writer.rs`, one palette and transparent unchanged pixels, because `image`'s encoder shimmers still pixels. Not a new dep: `gif` and `color_quant` were in the tree through `image`
+- **`flint render` over time** (#216) -- `render.rs` loads a `Stage` per sweep column, each a world, renderer and clocks of its own. The world is a `flint_player::HeadlessGame` (#725): the player's game core, whose `LivingSubsystem::for_capture` is the player's living-prop step with no window and no budget (`ProcGenResolver::step_living_now`); props are resolved (`resolve_procgen`) only in a scene with `living_prop` entities, whose plain renders were empty before; every other scene's plain render stays byte-identical. To match the player it keeps the authored camera position (going through `update_orbit` rounds it, which changed 7,000 pixels at 1280 x 720) and draws no grid. `--screenshot-at` has a tolerance, since 210 steps of 1/60 sum to a hair under 3.5. Stdout is the JSON report's: flint-cli's tracing goes to stderr, and so do the load path's progress lines, so a new `println!` on that path breaks `--report json`. GIFs go through `gif_writer.rs`, one palette and transparent unchanged pixels, because `image`'s encoder shimmers still pixels. Not a new dep: `gif` and `color_quant` were in the tree through `image`
 
 ## `flint edit`
 

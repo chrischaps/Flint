@@ -862,3 +862,90 @@ fn a_script_loads_a_living_preset() {
         "the preset isn't its tune"
     );
 }
+
+/// A marker drawn in ASCII at the scene's cell size, which a script grows
+/// mid-span and reads back each frame (#725).
+const READS_SCENE: &str = r#"
+[scene]
+name = "A Style Read Back"
+
+[camera]
+position = [0.0, 3.0, 4.0]
+target = [0.0, 0.0, 0.0]
+
+[post_process.styles.ascii]
+enabled = false
+cell = 8.0
+
+[entities.marker]
+archetype = "floor"
+[entities.marker.bounds]
+min = [-0.5, 0.0, -0.5]
+max = [0.5, 1.0, 0.5]
+
+[entities.director.script]
+source = "reads.rhai"
+"#;
+
+const READS: &str = r#"
+let frames = 0;
+let said = false;
+fn on_init() { set_entity_style(get_entity("marker"), "ascii"); }
+fn on_update() {
+    frames += 1;
+    if frames == 30 { set_post_style_param("ascii", "cell", 20.0); }
+    let cell = get_style_param(get_entity("marker"), "cell");
+    if type_of(cell) != "()" && cell > 19.0 && !said {
+        said = true;
+        log_warn("the read caught up on frame " + frames);
+    }
+}
+"#;
+
+#[test]
+fn a_style_read_sees_a_change_the_step_after_it_as_the_player_does() {
+    // Before #725 a capture handed scripts the styles it drew with only at a
+    // capture, so a read between two pictures was the last picture's.
+    let dir = project("style_reads");
+    std::fs::write(dir.join("floor.scene.toml"), READS_SCENE).unwrap();
+    std::fs::write(dir.join("scripts/reads.rhai"), READS).unwrap();
+    let o = render(&dir, "reads.png", &["--scripts", "--time", "1"]);
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let said = stderr(&o);
+    assert!(said.contains("the read caught up on frame 31"), "{said}");
+}
+
+#[test]
+fn a_state_that_pauses_living_stills_the_grove_as_in_the_player() {
+    // #727's policies by name, read by the player's living subsystem, which
+    // a capture runs too (#725): a state that pauses `living` holds the
+    // grove's clock, and one that pauses only scripts doesn't.
+    let held = grove(
+        "policy_living",
+        r#"fn on_init() { register_state("still", #{ living: "pause" }); push_state("still"); }"#,
+    );
+    let o = render_grove(&held, "held.gif", &["--scripts"]);
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let frames = gif_frames(&held.join("held.gif"));
+    assert!(frames.len() > 1);
+    assert!(
+        all_alike(&frames),
+        "a state pausing `living` let the grove move"
+    );
+
+    let moving = grove(
+        "policy_scripts",
+        r#"fn on_init() { register_state("quiet", #{ scripts: "pause" }); push_state("quiet"); }"#,
+    );
+    ok(&render_grove(&moving, "moving.gif", &["--scripts"]));
+    assert!(
+        !all_alike(&gif_frames(&moving.join("moving.gif"))),
+        "pausing scripts stilled the grove"
+    );
+}

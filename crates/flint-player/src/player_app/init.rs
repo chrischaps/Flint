@@ -82,7 +82,6 @@ impl PlayerApp {
             hud: Default::default(),
             assets: AssetSources::from_working_dir(),
             focus: Default::default(),
-            commands_warned: Default::default(),
             post: Default::default(),
             audio_vfs_generation: flint_core::vfs::generation(),
             capture: CaptureConfig::default(),
