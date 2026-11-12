@@ -197,15 +197,49 @@ fn a_scene_that_cannot_load_leaves_the_current_one_and_fails_the_run() {
             "names the path it was read from: {failure}"
         );
 
-        // The phase still moves on, so the scripts can fade back in
+        // The phase still moves on: with no script to draw a fade, straight
+        // back to idle (#362), not stuck loading
         app.transition_phase = super::TransitionPhase::Loading {
             target_scene: "missing.scene.toml".into(),
         };
         app.advance_transition();
-        assert!(matches!(
-            app.transition_phase,
-            super::TransitionPhase::Entering { .. }
-        ));
+        assert!(matches!(app.transition_phase, super::TransitionPhase::Idle));
+    });
+}
+
+/// A HUD that draws its fades and says when each is done, so the player
+/// waits for it (#362).
+const FADER: &str = r#"
+fn on_update() {
+    if transition_phase() == "entering" { complete_transition(); }
+}
+"#;
+
+#[test]
+fn a_scene_that_cannot_load_fades_back_in_over_the_current_one() {
+    let mut files = game();
+    files.insert(
+        A,
+        format!("{SCENE_A}\n[entities.fader]\n[entities.fader.script]\nsource = \"fader.rhai\"\n"),
+    );
+    files.insert("game/scripts/fader.rhai", FADER);
+    vfs::scoped(Arc::new(files), || {
+        let mut app = started_in_a(None);
+        assert!(app.script.can_complete_transition());
+
+        app.transition_phase = super::TransitionPhase::Loading {
+            target_scene: "missing.scene.toml".into(),
+        };
+        app.advance_transition();
+        assert_eq!(app.scene_path, A, "the scene playing is kept");
+        assert!(app.run_failure().is_some());
+        assert!(
+            matches!(
+                app.transition_phase,
+                super::TransitionPhase::Entering { .. }
+            ),
+            "its fader fades back in over it"
+        );
     });
 }
 
