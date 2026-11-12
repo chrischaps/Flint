@@ -493,7 +493,15 @@ impl RenderDebugPanel {
         });
 
         section(ui, "Render mode", false, |ui| {
-            let labels = ["None", "Matrix", "Blood", "Drunk", "Tron", "Underwater"];
+            let labels = [
+                "None",
+                "Matrix",
+                "Blood",
+                "Drunk",
+                "Tron",
+                "Underwater",
+                "Tear (props)",
+            ];
             let cur = (self.pp.render_mode as usize).min(labels.len() - 1);
             egui::ComboBox::from_label("Mode")
                 .selected_text(labels[cur])
@@ -506,7 +514,7 @@ impl RenderDebugPanel {
                     }
                 });
             f.pp_changed |= slider(ui, "Mix", &mut self.pp.mode_mix, 0.0..=1.0);
-            let hover = "Tears (1-4): x = mask scale (0 = 3), y = mask style (0 fbm / 1 iris), \
+            let hover = "Tears (1-4, 6): x = mask scale (0 = 3), y = mask style (0 fbm / 1 iris), \
                          z = rate (0 = 6), w = spare. Underwater (5): x = signed eye depth m, \
                          y = sea energy, z = daylight, w = biolum.";
             let r = ui.horizontal(|ui| {

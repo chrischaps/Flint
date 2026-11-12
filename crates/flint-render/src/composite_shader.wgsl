@@ -377,70 +377,20 @@ fn bayer8(pos: vec2<f32>) -> f32 {
 }
 
 // ── Reality-tear helpers ────────────────────────────────────────────────
-// Noise ported from ocean_shader.wgsl (no include mechanism): Hoskins-style
-// sinless hash so large time-drifted coords don't degenerate.
-fn hash2(p: vec2<f32>) -> f32 {
-    var p3 = fract(vec3<f32>(p.x, p.y, p.x) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
-}
-
-fn value_noise(p: vec2<f32>) -> f32 {
-    let i = floor(p);
-    let f = fract(p);
-    let u = f * f * (3.0 - 2.0 * f);
-    let a = hash2(i);
-    let b = hash2(i + vec2<f32>(1.0, 0.0));
-    let c = hash2(i + vec2<f32>(0.0, 1.0));
-    let d = hash2(i + vec2<f32>(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-fn fbm(p: vec2<f32>) -> f32 {
-    var v = 0.0;
-    var a = 0.5;
-    var q = p;
-    for (var i = 0; i < 3; i = i + 1) {
-        v += a * value_noise(q);
-        q = q * 2.13 + vec2<f32>(17.0, 9.2);
-        a *= 0.5;
-    }
-    return v;
-}
+// hash2, value_noise, fbm and tear_mask_at live in tear_mask.wgsl, which
+// Rust prepends to this file (`postprocess::COMPOSITE_WGSL`, #397): the
+// style mask reads the same tear for `blend_source = "tear"`.
 
 fn luma(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
 }
 
 // Where the other reality shows through: 1 = torn, 0 = normal view.
-// Style 0 (mode_params.y < 0.5): drifting fbm patches whose coverage grows
-// from scattered holes to full-screen as mode_mix rises — patch interiors
-// are fully torn so the effect reads as reality tearing, not a crossfade.
-// Style 1: radial iris from screen center with an fbm-wobbled rim.
-// A scale of 0 or less means "unset" and gets the default 3 (#395): at ~0 the
-// noise is one value over the whole screen, so the sweep tears all or nothing.
-// The config can't default it instead, since mode 5 reads x as eye depth.
+// The mask itself (fbm patches or an iris; a scale of 0 or less is 3):
+// tear_mask.wgsl.
 fn tear_mask(uv: vec2<f32>) -> f32 {
-    let m = params.mode_mix;
     let aspect = params.texel_size.y / params.texel_size.x; // width / height
-    var scale = params.mode_params.x;
-    if (scale <= 0.0) { scale = 3.0; }
-    let t = params.mode_time;
-    if (params.mode_params.y < 0.5) {
-        let p = uv * vec2<f32>(aspect, 1.0) * scale
-            + vec2<f32>(t * 0.02, -t * 0.013);
-        // 3-octave fbm lives in ~[0, 0.875] with mean ≈ 0.44: sweep the
-        // threshold across that span so coverage tracks mode_mix, and pin
-        // the top so mix = 1 is guaranteed fully torn.
-        let th = 0.44 + 0.4 * (1.0 - 2.0 * m);
-        let patches = smoothstep(th - 0.08, th + 0.08, fbm(p));
-        return max(patches, smoothstep(0.85, 1.0, m));
-    }
-    let d = length((uv - vec2<f32>(0.5, 0.5)) * vec2<f32>(aspect, 1.0));
-    let dir = normalize(uv - vec2<f32>(0.5, 0.5) + vec2<f32>(0.0001, 0.0));
-    let wobble = (fbm(dir * 3.0 + vec2<f32>(t * 0.1, 0.0)) - 0.5) * 0.1;
-    let r0 = m * (0.5 * aspect + 0.65) + wobble;
-    return smoothstep(r0, r0 - 0.15, d);
+    return tear_mask_at(uv, aspect, params.mode_mix, params.mode_params, params.mode_time);
 }
 
 // Mode 1 — Matrix code: screen quantized into glyph cells, procedural
@@ -787,7 +737,10 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     // tear — it masks by the per-pixel waterline, never tear_mask.
     if (params.render_mode == 5u && params.mode_mix > 0.001) {
         mapped = underwater_view(mapped, uv);
-    } else if (params.render_mode != 0u && params.mode_mix > 0.001) {
+    } else if (params.render_mode != 0u && params.render_mode != 6u
+        && params.mode_mix > 0.001) {
+        // Mode 6 (#397) is a tear with no look of its own: only the styled
+        // props with `blend_source = "tear"` show it, in the style mask.
         let mask = tear_mask(uv);
         if (params.render_mode == 1u) {
             mapped = mix(mapped, matrix_code(in.position.xy), mask);

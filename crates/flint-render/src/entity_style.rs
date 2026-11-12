@@ -20,7 +20,9 @@
 //! that can.
 
 use crate::postprocess::PostProcessConfig;
-use crate::style_mask::{self, StyleVariant, BLEND_FIELD, STYLE_MASK_COMPONENT};
+use crate::style_mask::{
+    self, StyleVariant, BLEND_FIELD, BLEND_SOURCES, BLEND_SOURCE_FIELD, STYLE_MASK_COMPONENT,
+};
 use crate::stylize::{self, StyleDescriptor, StyleStage};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -87,8 +89,9 @@ pub fn set_entity_style(world: &mut FlintWorld, id: EntityId, style: &str) -> Re
 
 /// Set one setting of `id`'s style: a parameter (a number, clamped to the
 /// style's range), an option (a string), `enabled` (a bool), `blend` (a
-/// number, clamped to 0..1; #278), or a colour (`tint`: a 3-array or a
-/// `"#rrggbb"` string, stored as the array; #315). Returns the style.
+/// number, clamped to 0..1; #278), `blend_source` (`"own"` or `"tear"`,
+/// #397), or a colour (`tint`: a 3-array or a `"#rrggbb"` string, stored
+/// as the array; #315). Returns the style.
 pub fn set_style_param(
     world: &mut FlintWorld,
     id: EntityId,
@@ -120,6 +123,17 @@ pub fn set_style_param(
             Some(n) => toml::Value::Float(n.clamp(0.0, 1.0)),
             None => return wrong("a number from 0 to 1"),
         }
+    } else if param == BLEND_SOURCE_FIELD {
+        match value.as_str() {
+            Some(s) if BLEND_SOURCES.contains(&s) => value,
+            Some(s) => {
+                return Err(format!(
+                    "`{style}` setting `{param}` is one of {}, not \"{s}\"",
+                    BLEND_SOURCES.join(", ")
+                ))
+            }
+            None => return wrong("\"own\" or \"tear\""),
+        }
     } else if let Some(p) = d.params.iter().find(|p| p.name == param) {
         match number(&value) {
             Some(n) => toml::Value::Float(n.clamp(p.min as f64, p.max as f64)),
@@ -145,7 +159,7 @@ pub fn set_style_param(
     } else {
         let known = d.setting_keys();
         return Err(format!(
-            "`{style}` has no setting `{param}`; it takes enabled, blend, {}",
+            "`{style}` has no setting `{param}`; it takes enabled, blend, blend_source, {}",
             known.join(", ")
         ));
     };
@@ -221,14 +235,17 @@ pub fn tween_endpoints(
         };
         return Ok((style, clamp(from), clamp(to)));
     }
-    if param == "enabled" || d.options.iter().any(|o| o.name == param) {
+    if param == "enabled"
+        || param == BLEND_SOURCE_FIELD
+        || d.options.iter().any(|o| o.name == param)
+    {
         return Err(format!(
             "`{style}` setting `{param}` can't ease (it isn't a number or a colour); \
              set it with set_style_param"
         ));
     }
     Err(format!(
-        "`{style}` has no setting `{param}`; it takes enabled, blend, {}",
+        "`{style}` has no setting `{param}`; it takes enabled, blend, blend_source, {}",
         d.setting_keys().join(", ")
     ))
 }
@@ -320,7 +337,8 @@ pub fn drawn_style(
 /// entity's (or the ancestor's it inherits), else the scene's
 /// `[post_process.styles.<name>]` table, else the style's default. A
 /// parameter is a float, an option a string, a colour (`tint`) a 3-array,
-/// `blend` the root's 0..1 (1 for a whole-frame style) and `enabled` true.
+/// `blend` the root's 0..1 (1 for a whole-frame style), `blend_source`
+/// the root's `"own"` or `"tear"` (#397) and `enabled` true.
 /// `None` when the entity is drawn in no style, the style isn't registered,
 /// or it has no such setting.
 pub fn style_setting(
@@ -340,6 +358,12 @@ pub fn style_setting(
             .root
             .map_or(1.0, |r| style_mask::requested_blend(world, r));
         return Some(toml::Value::Float(blend as f64));
+    }
+    if param == BLEND_SOURCE_FIELD {
+        let tear = drawn
+            .root
+            .is_some_and(|r| style_mask::follows_tear(world, r));
+        return Some(BLEND_SOURCES[usize::from(tear)].into());
     }
     if d.params.iter().any(|p| p.name == param) {
         return Some(toml::Value::Float(v.param(d, config, param) as f64));
@@ -478,6 +502,7 @@ mod tests {
                 &mut ids,
                 &mut out,
                 &mut blends,
+                &mut std::collections::HashSet::new(),
             );
             (ids, out, blends)
         };

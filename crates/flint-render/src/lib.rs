@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn composite_shader_wgsl_parses_and_validates() {
-        let source = include_str!("composite_shader.wgsl");
+        let source = crate::postprocess::COMPOSITE_WGSL;
         let module =
             naga::front::wgsl::parse_str(source).expect("composite_shader.wgsl failed to parse");
         naga::valid::Validator::new(
@@ -306,7 +306,7 @@ mod tests {
         // Every member of the WGSL struct sits where the Rust one puts it.
         use crate::postprocess::PostProcessUniforms as U;
         use std::mem::offset_of;
-        let module = naga::front::wgsl::parse_str(include_str!("composite_shader.wgsl")).unwrap();
+        let module = naga::front::wgsl::parse_str(crate::postprocess::COMPOSITE_WGSL).unwrap();
         let members = module
             .types
             .iter()

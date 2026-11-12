@@ -197,7 +197,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `set_desaturation(amount: num)` | — | Desaturate toward ash grey (0 full colour, 1 grey). |
 | `set_dof(strength: num)` | — | Depth-of-field defocus strength (0 sharp, 1 full blur). |
 | `set_dof_focus(distance: num, range: num)` | — | The depth-of-field focus plane's distance and half-width, view metres. |
-| `set_render_mode(mode: int, mix: num)` | — | A stylized render mode (0 none, 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater) at a mix of 0..1; call it every frame it shows. |
+| `set_render_mode(mode: int, mix: num)` | — | A stylized render mode (0 none, 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater, 6 a tear only props with `blend_source` = "tear" show) at a mix of 0..1; call it every frame it shows. |
 | `set_render_mode_params(x: num, y: num, z: num, w: num)` | — | The render mode's four tuning values (see Post-Processing: Render Modes). |
 | `set_lod_scale(scale: num)` | — | Multiply every level-of-detail switch distance (1 as authored, 0.5 simpler levels at half the distance). |
 | `set_draw_distance_scale(scale: num)` | — | Multiply every model's draw distance (1 as authored). |

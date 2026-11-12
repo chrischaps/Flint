@@ -593,7 +593,7 @@ pub struct RenderArgs {
     pub edge_normal: Option<f32>,
 
     /// Stylized render mode (0=none, 1=matrix, 2=blood, 3=drunk, 4=tron,
-    /// 5=underwater)
+    /// 5=underwater, 6=tear: a tear only `blend_source = "tear"` props show)
     #[arg(long)]
     pub render_mode: Option<u32>,
 

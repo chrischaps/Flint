@@ -95,7 +95,7 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--contour-boil <f32>` | `0.0` | How far each drawing moves the lines (enables contour) |
 | `--boil-on <u32>` | `2` | Film frames each drawing is held: 1, 2 or 3 |
 | `--boil-time <f64>` | `0` | Seconds of the wooze field to run, which picks the drawing |
-| `--render-mode <0-5>` | `0` | Stylized render mode |
+| `--render-mode <0-6>` | `0` | Stylized render mode (6: the tear alone, for `blend_source = "tear"` props) |
 | `--mode-mix <f32>` | `0` | Render mode blend, 0--1 |
 | `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters |
 | `--film-grain <f32>` | `0` | Film grain intensity |
