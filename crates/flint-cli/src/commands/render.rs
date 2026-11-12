@@ -78,7 +78,7 @@ pub struct RenderArgs {
 
     /// A look over the scene's post-processing (#279): a built-in
     /// (ascii_noir, matrix, ink_wash, graphite, watercolor,
-    /// coloured_pencil, blueprint, charcoal), a
+    /// coloured_pencil, blueprint, charcoal, rotoscope), a
     /// `styles/<name>.look.toml` beside the scene, or a path. Merged over
     /// the scene's [post_process] key by key; the other flags apply over
     /// it. `--look help` lists every look and what to tune

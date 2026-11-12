@@ -545,6 +545,7 @@ angle = 50.0           # the base angle, degrees
 contrast = 1.2         # tone contrast before it picks layers (brightness too)
 contour = 1.0          # outline strength; contour_width in points
 depth = 1.0            # outline sensitivity to depth steps; crease to creases
+grazing = 0.0          # 1 spares a plane seen edge-on: the floor inks one horizon, not a band
 detail = 0.35          # outlines from the picture's own luminance edges
 wobble = 1.5           # how far lines wander, points
 sketchy = 0.6          # a second, offset outline beside the first
@@ -569,7 +570,8 @@ How it draws:
 
 - **Hatching builds tone the way a hand does.** Each layer switches on as the tone darkens past its threshold, and its strokes thicken from nothing rather than popping in. A layer crosses the one before it off the square (at 0°, +65°, −40° and +25°), so layers never make a grid. Each stroke is a dash of its own length that tapers at both ends, is jittered off its row and is bent by a slow wobble. A few dashes are left out.
 - **Stroke direction.** `surface` runs strokes along the surface's iso-depth lines, taken from the gradient of 1/z. That gradient is constant over a plane, so a box face hatches straight, and it turns smoothly round a barrel and across a floor. `screen` hatches everything at `angle`. `tensor` follows the picture's luminance edges, a structure tensor blurred over about three stroke spacings in two separable passes at half resolution (#392). In that blur each pixel's direction is weighted by its contour strength, so silhouettes and creases steer the flow and a flat, noisy patch (soft shadow, ambient occlusion) barely counts. The strokes sweep round a shadow's edge instead of fraying into short crossing patches. Where a surface or tensor direction is unsure (a face turned square to the camera, a flat colour), `angle` shows through. Directions are quantized to 15° bins with neighbouring bins blended, so strokes stay straight within a patch, as hand hatching does.
-- **Contours** come from depth steps (drawn on the near side), creases (the normal rebuilt from depth turns), the edge of a styled entity's mask, and luminance edges by `detail`. They are read back through a noise offset (`wobble`), twice when `sketchy` is set.
+- **Contours** come from depth steps (drawn on the near side), creases (the normal rebuilt from depth turns), the edge of a styled entity's mask, and luminance edges by `detail`. They are read back through a noise offset (`wobble`), twice when `sketchy` is set. A floor seen edge-on steps in depth from row to row as much as a silhouette does, so near the horizon it inks a thick band; `grazing = 1` keeps a depth step only where the second difference of 1/z (zero across any plane) says the neighbours lie on another surface, and the floor draws one horizon line (#404). No crease is drawn within two pixels of the frame's edge, where the neighbours are clamped (before #404 every pencil look outlined the frame).
+- **Line only.** `layers = 0` with `shade = 0` draws contours on paper and nothing else, and skips the stroke-direction work, so it is the cheapest pencil.
 - **Deterministic.** Every random choice is an integer hash of the stroke's row, dash, layer and `seed`, so the same seed draws byte-identical frames. `boil` moves the seed in whole steps of post time, which `--style-time` fixes.
 
 ![The three stroke directions on stylize_props](../images/pencil-directions.png)
@@ -913,7 +915,7 @@ contrast = 1.4
 wobble = 1.8
 ```
 
-Eight looks ship, compiled into the engine (`flint_render::look`) so they work from a game repo and on the web as well. A look is found by [the one asset search](assets.md#where-the-engine-looks-for-a-file) (kind `looks`): `styles/<name>.look.toml` beside the scene, in each directory above it up to the project root, then in the mounted engine (`<root>/engine/styles/`, where a game's engine subtree keeps these eight as files). A file found there takes the place of a built-in with the same name; the built-in is what is used when there is no file. `--look` also takes a path ending `.look.toml` (or `.toml`), tried from the scene's folder and each folder above it. The working directory's `styles/` is not searched: run from a project's root it is the root's, which the search reaches anyway. `flint asset where looks graphite --scene <scene>` shows which it is.
+Nine looks ship, compiled into the engine (`flint_render::look`) so they work from a game repo and on the web as well. A look is found by [the one asset search](assets.md#where-the-engine-looks-for-a-file) (kind `looks`): `styles/<name>.look.toml` beside the scene, in each directory above it up to the project root, then in the mounted engine (`<root>/engine/styles/`, where a game's engine subtree keeps these nine as files). A file found there takes the place of a built-in with the same name; the built-in is what is used when there is no file. `--look` also takes a path ending `.look.toml` (or `.toml`), tried from the scene's folder and each folder above it. The working directory's `styles/` is not searched: run from a project's root it is the root's, which the search reaches anyway. `flint asset where looks graphite --scene <scene>` shows which it is.
 
 | Look | Built from |
 |------|------------|
@@ -925,6 +927,7 @@ Eight looks ship, compiled into the engine (`flint_render::look`) so they work f
 | `coloured_pencil` | the pencil style at `color = 0.6`: the scene's colours in a warm lead on cream paper, two layers, heavy grain (#391) |
 | `blueprint` | the pencil style in white lead on blue paper, `direction = "screen"`, no wobble, sketch or texture lines: a technical drawing (#391) |
 | `charcoal` | the pencil style at an 11-point spacing and 3-point strokes, rubbed shade 0.8, heavy grain, doubled outlines (#391) |
+| `rotoscope` | the pencil style ink-forward on a blank white sheet: contours at 1.5 points, one layer of screen hatching only in the darks (brightness 0.5), `grazing = 1` so the floor is one horizon line, boil 12 a second; no bloom, SSAO or vignette (#404) |
 
 ![The four pencil looks on stylize_props: graphite, coloured_pencil, blueprint, charcoal](../images/look-sweep-pencil.png)
 
