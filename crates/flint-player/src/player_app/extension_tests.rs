@@ -303,7 +303,7 @@ fn the_fonts_hook_runs_on_every_install_and_its_families_reach_scripts() {
 
     app.refresh_project_fonts();
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert!(app.ui_fonts.contains("game"), "scripts can draw in it");
+    assert!(app.hud.fonts.contains("game"), "scripts can draw in it");
 
     // Same project root: nothing to reload.
     app.refresh_project_fonts();
@@ -317,11 +317,11 @@ fn the_fonts_hook_runs_on_every_install_and_its_families_reach_scripts() {
     }));
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(late.load(Ordering::SeqCst), 1);
-    assert!(app.ui_fonts.contains("game"));
+    assert!(app.hud.fonts.contains("game"));
 
     // egui has the family on the next pass, so laying text out in it from
     // `ui` doesn't panic.
-    let _ = app.egui_ctx.run(egui::RawInput::default(), |ctx| {
+    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
         ctx.fonts(|f| {
             f.layout_no_wrap(
                 "Capitol".into(),
@@ -398,18 +398,16 @@ impl PlayerExtension for Greeter {
 fn an_extension_write_starts_the_save_debounce() {
     let mut app = headless_app();
     app.add_extension(Box::new(Greeter { done: false }));
-    assert!(!app.persist_debounce.is_pending());
+    assert!(!app.saves.debounce.is_pending());
 
     app.tick();
 
     // Dirty, and waiting out the debounce: no script wrote anything, so
     // the extension's write alone is what the next save will carry.
-    assert!(app.persistent_store.is_dirty());
-    assert!(app.persist_debounce.is_pending());
+    assert!(app.saves.store.is_dirty());
+    assert!(app.saves.debounce.is_pending());
     assert_eq!(
-        app.persistent_store
-            .get("greeting")
-            .and_then(|v| v.as_str()),
+        app.saves.store.get("greeting").and_then(|v| v.as_str()),
         Some("hello")
     );
 }
@@ -695,7 +693,7 @@ position = [0, 0, 0]
 
         // A scene with no [weather] reads as none, and the next scene's
         // tables replace this one's
-        app.scene_tables = flint_scene::SceneFile::new("calm").scene_tables();
+        app.scene.tables = flint_scene::SceneFile::new("calm").scene_tables();
         app.tick();
         assert_eq!(seen.lock().unwrap()[1], None);
     }

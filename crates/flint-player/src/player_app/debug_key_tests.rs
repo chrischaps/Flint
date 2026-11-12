@@ -29,17 +29,17 @@ fn scripted_f2_toggles_the_stats_overlay() {
     // Frames at t = 0, 0.25, 0.5: press, release, press.
     let mut app = with_script("0 tap F2\n0.5 tap F2\n");
     app.clock.frame_step = Some(0.25);
-    assert!(!app.show_stats);
+    assert!(!app.stats.show);
     app.tick();
-    assert!(app.show_stats, "the first tap opens it");
+    assert!(app.stats.show, "the first tap opens it");
     // Still pressed this frame, as a real key would be.
     assert!(app.input.is_key_down(KeyCode::F2));
     app.input.end_frame();
     app.tick();
-    assert!(app.show_stats, "the release doesn't toggle it");
+    assert!(app.stats.show, "the release doesn't toggle it");
     app.input.end_frame();
     app.tick();
-    assert!(!app.show_stats, "the second tap closes it");
+    assert!(!app.stats.show, "the second tap closes it");
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn scripted_game_keys_reach_input_state_as_before() {
     let mut app = with_script("0 down KeyW\n");
     app.tick();
     assert!(app.input.is_key_down(KeyCode::KeyW));
-    assert!(!app.show_stats);
+    assert!(!app.stats.show);
 }
 
 #[test]
@@ -57,12 +57,12 @@ fn show_stats_opens_the_overlay_once() {
     app.clock.frame_step = Some(0.25);
     app.capture.show_stats = true;
     app.tick();
-    assert!(app.show_stats);
+    assert!(app.stats.show);
     app.input.end_frame();
     app.tick();
     app.input.end_frame();
     app.tick();
-    assert!(!app.show_stats, "F2 still closes it");
+    assert!(!app.stats.show, "F2 still closes it");
 }
 
 /// An extension with nothing but defaults, so egui sees input first.
@@ -71,7 +71,7 @@ impl crate::extension::PlayerExtension for Bare {}
 
 /// Run one egui frame on the app's context with a text field focused.
 fn focus_a_field(app: &PlayerApp) {
-    let _ = app.egui_ctx.run(egui::RawInput::default(), |ctx| {
+    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             let mut text = String::new();
             ui.text_edit_singleline(&mut text).request_focus();
@@ -86,12 +86,12 @@ fn a_focused_egui_field_keeps_scripted_keys_from_the_game() {
     app.clock.frame_step = Some(0.25);
     app.add_extension(Box::new(Bare));
     focus_a_field(&app);
-    assert!(app.egui_ctx.wants_keyboard_input());
+    assert!(app.hud.egui_ctx.wants_keyboard_input());
     app.tick();
     assert!(!app.input.is_key_down(KeyCode::KeyW), "the field took it");
     app.tick();
     app.tick();
-    assert!(!app.show_stats, "the debug keys don't see it either");
+    assert!(!app.stats.show, "the debug keys don't see it either");
 }
 
 #[test]
@@ -101,12 +101,15 @@ fn a_focused_button_leaves_scripted_keys_to_the_game() {
 ",
     );
     app.add_extension(Box::new(Bare));
-    let _ = app.egui_ctx.run(egui::RawInput::default(), |ctx| {
+    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.button("Buy").request_focus();
         });
     });
-    assert!(app.egui_ctx.wants_keyboard_input(), "egui counts any focus");
+    assert!(
+        app.hud.egui_ctx.wants_keyboard_input(),
+        "egui counts any focus"
+    );
     app.tick();
     assert!(
         app.input.is_key_down(KeyCode::KeyW),

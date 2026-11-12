@@ -219,11 +219,11 @@ fn a_deep_scene_finds_the_projects_ui_sprites() {
         let mut app = PlayerApp::new(FlintWorld::new(), DEEP.into(), false, None, None);
         assert_eq!(app.project().root, Path::new("game"));
         assert!(app.load_ui_texture("heart.png"));
-        assert!(app.ui_textures.contains_key("heart.png"));
+        assert!(app.hud.textures.contains_key("heart.png"));
         // A miss is remembered, so a draw command repeating it every frame
         // warns once.
         assert!(!app.load_ui_texture("gone.png"));
         assert!(!app.load_ui_texture("gone.png"));
-        assert_eq!(app.ui_sprites_warned.len(), 1);
+        assert_eq!(app.hud.sprites_warned.len(), 1);
     });
 }

@@ -39,7 +39,8 @@ impl PlayerApp {
     /// Authored button and markers (#268).
     #[cfg(feature = "debug-hud")]
     pub(super) fn authored_styles(&self) -> flint_render::stylize::StyleSettings {
-        self.scene_post_process
+        self.scene
+            .post_process
             .as_ref()
             .map(|d| super::scene_loading::post_process_config_from_def(d).styles)
             .unwrap_or_default()
@@ -57,7 +58,8 @@ impl PlayerApp {
     /// to write) or the web.
     #[cfg(feature = "debug-hud")]
     fn styles_scene_file(&self) -> Option<std::path::PathBuf> {
-        self.scene_file_writable
+        self.launch
+            .scene_file_writable
             .then(|| std::path::PathBuf::from(&self.scene_path))
     }
 
@@ -715,7 +717,7 @@ mod tests {
         assert!(names(&plain).is_empty(), "no style, no panel");
 
         let mut styled = app();
-        styled.scene_post_process = Some(styled_scene());
+        styled.scene.post_process = Some(styled_scene());
         assert_eq!(styled.authored_styles().param("ascii", "cell"), Some(12.0));
         styled.create_styles_debug_panel();
         assert_eq!(names(&styled), [flint_debug_ui::STYLES_DEBUG_PANEL]);
@@ -724,7 +726,7 @@ mod tests {
     #[test]
     fn f4_and_the_games_panels_outlive_a_scene_transition() {
         let mut app = app();
-        app.scene_post_process = Some(styled_scene());
+        app.scene.post_process = Some(styled_scene());
         app.debug_panels.push(Box::new(Dummy));
         app.create_styles_debug_panel();
         app.create_render_debug_panel();
@@ -743,7 +745,7 @@ mod tests {
         app.drop_scene_debug_panels();
         assert_eq!(names(&app), [flint_debug_ui::RENDER_DEBUG_PANEL, "Net"]);
         // The new scene's creators don't make a second F4, and it stays open
-        app.scene_post_process = None;
+        app.scene.post_process = None;
         app.create_styles_debug_panel();
         app.create_render_debug_panel();
         assert_eq!(names(&app), [flint_debug_ui::RENDER_DEBUG_PANEL, "Net"]);

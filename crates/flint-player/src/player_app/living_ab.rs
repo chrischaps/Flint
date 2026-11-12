@@ -174,7 +174,7 @@ pub fn side_label(name: &str) -> &str {
 impl PlayerApp {
     /// How the comparison stands, if there is one.
     pub(super) fn living_ab_state(&self) -> Option<AbState> {
-        let ab = self.living_tune.ab.as_ref()?;
+        let ab = self.living.tune.ab.as_ref()?;
         Some(AbState {
             a: ab.names[0].clone(),
             b: ab.names[1].clone(),
@@ -193,12 +193,12 @@ impl PlayerApp {
             paint,
             ink,
             on,
-            off: self.living_tune.boil_off,
+            off: self.living.tune.boil_off,
         }
     }
 
     fn set_side_boil(&mut self, boil: SideBoil) {
-        self.living_tune.boil_off = boil.off;
+        self.living.tune.boil_off = boil.off;
         if let Some(renderer) = &mut self.scene_renderer {
             let mut config = renderer.post_process_config().clone();
             config.set_boil_amounts(boil.paint, boil.ink);
@@ -211,17 +211,17 @@ impl PlayerApp {
     /// hidden side was. The pose cache stays with the scene.
     fn swap_living_sides(&mut self) {
         let boil = self.side_boil();
-        let Some(ab) = self.living_tune.ab.as_mut() else {
+        let Some(ab) = self.living.tune.ab.as_mut() else {
             return;
         };
         let side = &mut ab.hidden;
         let live = self.procgen_resolver.living_props_mut();
         std::mem::swap(live, &mut side.props);
         live.swap_cache(&mut side.props);
-        std::mem::swap(&mut self.wooze, &mut side.wooze);
-        std::mem::swap(&mut self.wooze_time, &mut side.wooze_time);
-        std::mem::swap(&mut self.boil_clock, &mut side.boil_clock);
-        std::mem::swap(&mut self.shallow_wooze, &mut side.shallow);
+        std::mem::swap(&mut self.living.wooze, &mut side.wooze);
+        std::mem::swap(&mut self.living.wooze_time, &mut side.wooze_time);
+        std::mem::swap(&mut self.living.boil_clock, &mut side.boil_clock);
+        std::mem::swap(&mut self.living.shallow_wooze, &mut side.shallow);
         let theirs = std::mem::replace(&mut side.boil, boil);
         self.set_side_boil(theirs);
     }
@@ -250,18 +250,18 @@ impl PlayerApp {
             return Err("this scene has no living props to compare".to_string());
         }
         self.stop_comparing_living();
-        if self.living_tune.at_load.is_none() {
-            self.living_tune.at_load = Some(self.living_at_load());
+        if self.living.tune.at_load.is_none() {
+            self.living.tune.at_load = Some(self.living_at_load());
         }
         let hidden = LivingSide {
             props: self.procgen_resolver.living_props().fork(),
-            wooze: self.wooze.clone(),
-            wooze_time: self.wooze_time,
-            boil_clock: self.boil_clock,
-            shallow: self.shallow_wooze.clone(),
+            wooze: self.living.wooze.clone(),
+            wooze_time: self.living.wooze_time,
+            boil_clock: self.living.boil_clock,
+            shallow: self.living.shallow_wooze.clone(),
             boil: self.side_boil(),
         };
-        self.living_tune.ab = Some(Box::new(LivingAb {
+        self.living.tune.ab = Some(Box::new(LivingAb {
             names: [a.to_string(), b.to_string()],
             hidden,
             showing_b: false,
@@ -289,11 +289,11 @@ impl PlayerApp {
     /// Show the other side, on the same clock and camera. Returns whether there
     /// was a comparison to flip.
     pub(super) fn flip_living(&mut self) -> bool {
-        if self.living_tune.ab.is_none() {
+        if self.living.tune.ab.is_none() {
             return false;
         }
         self.swap_living_sides();
-        if let Some(ab) = self.living_tune.ab.as_mut() {
+        if let Some(ab) = self.living.tune.ab.as_mut() {
             ab.showing_b = !ab.showing_b;
         }
         self.procgen_resolver.living_props_mut().redraw_all();
@@ -303,7 +303,7 @@ impl PlayerApp {
     /// Show A and B side by side, or one at a time. Returns whether there was a
     /// comparison to split.
     pub(super) fn split_living(&mut self, split: bool) -> bool {
-        let Some(ab) = self.living_tune.ab.as_mut() else {
+        let Some(ab) = self.living.tune.ab.as_mut() else {
             return false;
         };
         if ab.split != split {
@@ -316,14 +316,14 @@ impl PlayerApp {
 
     /// End the comparison, keeping the side that's shown.
     pub(super) fn stop_comparing_living(&mut self) {
-        if self.living_tune.ab.take().is_some() {
+        if self.living.tune.ab.take().is_some() {
             self.procgen_resolver.living_props_mut().redraw_all();
         }
     }
 
     /// Move the hidden side on by the same `dt` as the scene's own, after it.
     pub(super) fn tick_hidden_side(&mut self, dt: f64) {
-        let Some(ab) = self.living_tune.ab.as_mut() else {
+        let Some(ab) = self.living.tune.ab.as_mut() else {
             return;
         };
         let side = &mut ab.hidden;
@@ -349,14 +349,14 @@ impl PlayerApp {
 
     /// The hidden side's ring report, for `--exit-after`.
     pub(super) fn hidden_side_stats(&self) -> Option<flint_procgen::LivingStats> {
-        Some(self.living_tune.ab.as_ref()?.hidden.props.stats())
+        Some(self.living.tune.ab.as_ref()?.hidden.props.stats())
     }
 
     /// What A and B would be, for a key or the panel that starts a comparison:
     /// the panel's picks, or the knobs as they stand against `linklater` (the
     /// epic's sweet spot) or the first preset on offer.
     pub(super) fn living_ab_picks(&self) -> (String, String) {
-        if let Some(picks) = &self.living_tune.ab_picks {
+        if let Some(picks) = &self.living.tune.ab_picks {
             return picks.clone();
         }
         let names = self.living_preset_names();
@@ -372,7 +372,7 @@ impl PlayerApp {
     /// F5: stop or start the clock living props run on, as the panel's Freeze.
     pub(super) fn toggle_living_freeze(&mut self) {
         if !self.procgen_resolver.living_props().is_empty() {
-            self.living_tune.frozen = !self.living_tune.frozen;
+            self.living.tune.frozen = !self.living.tune.frozen;
         }
     }
 
@@ -382,7 +382,7 @@ impl PlayerApp {
         if self.procgen_resolver.living_props().is_empty() {
             return;
         }
-        if self.living_tune.ab.is_none() {
+        if self.living.tune.ab.is_none() {
             let (a, b) = self.living_ab_picks();
             let said = match self.compare_living(&a, &b) {
                 Ok(()) => format!(
@@ -393,7 +393,7 @@ impl PlayerApp {
                 Err(problem) => problem,
             };
             println!("[living] {said}");
-            self.living_tune.status = Some(said);
+            self.living.tune.status = Some(said);
             if split {
                 self.split_living(true);
             }
@@ -410,8 +410,8 @@ impl PlayerApp {
     /// Start comparing `a` with `b` once the scene's living props are built,
     /// split if `split`: `--compare a,b` and `--split` (#238).
     pub fn compare_living_at_start(&mut self, a: &str, b: &str, split: bool) {
-        self.living_tune.ab_picks = Some((a.to_string(), b.to_string()));
-        self.living_tune.compare_at_start = Some(split);
+        self.living.tune.ab_picks = Some((a.to_string(), b.to_string()));
+        self.living.tune.compare_at_start = Some(split);
     }
 
     /// The comparison asked for at start, once there are props to compare.
@@ -419,7 +419,7 @@ impl PlayerApp {
         if self.procgen_resolver.living_props().is_empty() {
             return;
         }
-        let Some(split) = self.living_tune.compare_at_start.take() else {
+        let Some(split) = self.living.tune.compare_at_start.take() else {
             return;
         };
         let (a, b) = self.living_ab_picks();
@@ -439,7 +439,7 @@ impl PlayerApp {
 
     /// Whether this frame is split.
     pub(super) fn living_split(&self) -> bool {
-        self.living_tune.ab.as_ref().is_some_and(|ab| ab.split)
+        self.living.tune.ab.as_ref().is_some_and(|ab| ab.split)
     }
 }
 

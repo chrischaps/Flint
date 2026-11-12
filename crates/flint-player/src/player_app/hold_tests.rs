@@ -14,7 +14,7 @@ fn game_time_stops_at_hold_at() {
         None,
     );
     app.clock.frame_step = Some(0.25);
-    app.hold_at = Some(0.5);
+    app.launch.hold_at = Some(0.5);
 
     // The first tick only starts the clock; then 0.25 a frame.
     let mut times = Vec::new();

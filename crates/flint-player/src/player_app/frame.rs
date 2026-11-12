@@ -40,13 +40,14 @@ impl PlayerApp {
     /// a texture past the GPU's limit (#657). Until egui agrees, it's the
     /// window's size at the scale egui is about to use.
     pub(super) fn script_screen_size(&self) -> (f32, f32) {
-        let rect = self.egui_ctx.screen_rect();
+        let rect = self.hud.egui_ctx.screen_rect();
         let egui_size = (rect.width(), rect.height());
         let Some(window) = &self.window else {
             return egui_size;
         };
         let size = window.inner_size();
         let ppp = self
+            .launch
             .pixels_per_point
             .unwrap_or(window.scale_factor() as f32)
             .max(0.01);
@@ -67,7 +68,7 @@ impl PlayerApp {
             return;
         }
         self.update_render_scale();
-        if let Some(look) = self.pending_look.take() {
+        if let Some(look) = self.style.pending_look.take() {
             if let Err(e) = self.set_look(look.as_deref()) {
                 tracing::warn!("look: {e}");
             }
@@ -95,11 +96,13 @@ impl PlayerApp {
         // The shading boil's drawing (#214): the field where the viewer stands. With
         // no field the amount is 0, and neither pass boils.
         let boil = self
+            .living
             .wooze
             .as_ref()
             .map(|field| {
-                let sample = field.sample(self.camera.position_array(), self.wooze_time);
-                self.boil_clock
+                let sample = field.sample(self.camera.position_array(), self.living.wooze_time);
+                self.living
+                    .boil_clock
                     .frame(&sample, renderer.post_process_config().boil_on)
             })
             .unwrap_or_default();
@@ -111,81 +114,12 @@ impl PlayerApp {
         // drained overrides are plain Options re-filled each tick, so nothing
         // piles up and un-freezing resumes on the next script write.
         #[cfg(feature = "debug-hud")]
-        let pp_stamp_frozen = self.pp_debug_freeze;
+        let pp_stamp_frozen = self.post.debug_freeze;
         #[cfg(not(feature = "debug-hud"))]
         let pp_stamp_frozen = false;
-        if !pp_stamp_frozen
-            && (self.pp_vignette_override.is_some()
-                || self.pp_bloom_override.is_some()
-                || self.pp_exposure_override.is_some()
-                || self.pp_chromatic_aberration_override.is_some()
-                || self.pp_radial_blur_override.is_some()
-                || self.pp_ssao_intensity_override.is_some()
-                || self.pp_fog_density_override.is_some()
-                || self.pp_desaturation_override.is_some()
-                || self.pp_dof_strength_override.is_some()
-                || self.pp_dof_focus_distance_override.is_some()
-                || self.pp_dof_focus_range_override.is_some()
-                || self.pp_fog_color_override.is_some()
-                || self.pp_render_mode_override.is_some()
-                || self.pp_mode_params_override.is_some()
-                || self.pp_mode_was_active)
-        {
+        if !pp_stamp_frozen && self.post.any() {
             let mut config = renderer.post_process_config().clone();
-            if let Some(v) = self.pp_vignette_override {
-                config.vignette_enabled = v > 0.001;
-                config.vignette_intensity = v;
-            }
-            if let Some(b) = self.pp_bloom_override {
-                config.bloom_intensity = b;
-            }
-            if let Some(e) = self.pp_exposure_override {
-                config.exposure = e;
-            }
-            if let Some(ca) = self.pp_chromatic_aberration_override {
-                config.chromatic_aberration = ca;
-            }
-            if let Some(rb) = self.pp_radial_blur_override {
-                config.radial_blur = rb;
-            }
-            if let Some(si) = self.pp_ssao_intensity_override {
-                config.ssao_intensity = si;
-            }
-            if let Some(fd) = self.pp_fog_density_override {
-                config.fog_density = fd;
-            }
-            if let Some(d) = self.pp_desaturation_override {
-                config.desaturate = d;
-            }
-            if let Some(s) = self.pp_dof_strength_override {
-                config.dof_strength = s;
-            }
-            if let Some(fd) = self.pp_dof_focus_distance_override {
-                config.dof_focus_distance = fd;
-            }
-            if let Some(fr) = self.pp_dof_focus_range_override {
-                config.dof_focus_range = fr;
-            }
-            if let Some(fc) = self.pp_fog_color_override {
-                config.fog_color = fc;
-            }
-            // Reality tear: transient, unlike the sticky overrides above.
-            match self.pp_render_mode_override {
-                Some((mode, mix)) => {
-                    config.render_mode = mode;
-                    config.mode_mix = mix;
-                    self.pp_mode_was_active = mode != 0 && mix > 0.0;
-                }
-                None if self.pp_mode_was_active => {
-                    config.render_mode = 0;
-                    config.mode_mix = 0.0;
-                    self.pp_mode_was_active = false;
-                }
-                None => {}
-            }
-            if let Some(mp) = self.pp_mode_params_override {
-                config.mode_params = mp;
-            }
+            self.post.stamp(&mut config);
             renderer.set_post_process_config(config);
         }
 
@@ -297,11 +231,11 @@ impl PlayerApp {
             else {
                 continue;
             };
-            self.pp_debug_freeze = rp.freeze_scripts;
+            self.post.debug_freeze = rp.freeze_scripts;
             if flint_debug_ui::DebugPanel::is_dirty(rp) {
                 let flags = rp.take_flags();
                 if flags.look_changed {
-                    self.pending_look = Some(rp.look.clone());
+                    self.style.pending_look = Some(rp.look.clone());
                 }
                 if flags.styles_committed {
                     committed_styles = rp.authored_styles().cloned();
@@ -658,14 +592,14 @@ impl PlayerApp {
         // F2's stats show the GPU's time too (ADR 0108), as does the perf
         // readout unless it was asked not to (#120): time the frame while
         // either is up. Timing the game turned on stays on after.
-        if self.show_stats || self.perf.as_ref().is_some_and(|p| p.gpu_wanted) {
+        if self.stats.show || self.stats.perf.as_ref().is_some_and(|p| p.gpu_wanted) {
             if !renderer.gpu_timing() {
-                self.stats_gpu_timing =
+                self.stats.gpu_timing =
                     renderer.set_gpu_timing(&context.device, &context.queue, true);
             }
-        } else if self.stats_gpu_timing {
+        } else if self.stats.gpu_timing {
             renderer.set_gpu_timing(&context.device, &context.queue, false);
-            self.stats_gpu_timing = false;
+            self.stats.gpu_timing = false;
         }
 
         // The whole frame (scene, HUD, the GPU timer's resolve) goes into
@@ -682,11 +616,11 @@ impl PlayerApp {
         // capture's glyphs and panels are the same size on any display
         if let Some(window) = &self.window {
             let native = window.scale_factor() as f32;
-            renderer.pixels_per_point = self.pixels_per_point.unwrap_or(native);
-            if let Some(ppp) = self.pixels_per_point {
+            renderer.pixels_per_point = self.launch.pixels_per_point.unwrap_or(native);
+            if let Some(ppp) = self.launch.pixels_per_point {
                 let zoom = ppp / native.max(0.01);
-                if (self.egui_ctx.zoom_factor() - zoom).abs() > 1e-4 {
-                    self.egui_ctx.set_zoom_factor(zoom);
+                if (self.hud.egui_ctx.zoom_factor() - zoom).abs() > 1e-4 {
+                    self.hud.egui_ctx.set_zoom_factor(zoom);
                 }
             }
         }
@@ -702,7 +636,8 @@ impl PlayerApp {
         // A split A/B (#238): this drawing is the side being shown, so it goes
         // to the GPU now, and the other side draws over its half after it.
         if let Some(ab) = self
-            .living_tune
+            .living
+            .tune
             .ab
             .as_deref_mut()
             .filter(|ab| ab.is_split())
@@ -724,11 +659,11 @@ impl PlayerApp {
                 super::living_ab::OtherSide {
                     ab,
                     resolver: &mut self.procgen_resolver,
-                    blend: &mut self.living_blend,
+                    blend: &mut self.living.blend,
                     world: &self.world,
                     camera: &self.camera,
                     own_boil: boil,
-                    own_shallow: &self.shallow_wooze,
+                    own_shallow: &self.living.shallow_wooze,
                 },
                 renderer,
                 &context.device,
@@ -741,7 +676,7 @@ impl PlayerApp {
             );
         }
         // A field borrow, not `perf_mark`: `context` is still held.
-        if let Some(perf) = &mut self.perf {
+        if let Some(perf) = &mut self.stats.perf {
             perf.mark(super::perf::Phase::Render);
         }
 
@@ -804,8 +739,9 @@ impl PlayerApp {
             // A shot that's due but failed waits for its retries (#639).
             let now = self.clock.total_time;
             // A script's `quit_game()` this frame has already said it (#659).
-            if now >= exit_after && !self.capture.shot_pending(now) && !self.exit_requested {
-                self.exit_requested = true;
+            if now >= exit_after && !self.capture.shot_pending(now) && !self.outcome.exit_requested
+            {
+                self.outcome.exit_requested = true;
                 self.print_exit_report();
             }
         }
@@ -897,12 +833,12 @@ impl PlayerApp {
                 stats.blend_frames,
             );
         }
-        if let Some(field) = &self.wooze {
+        if let Some(field) = &self.living.wooze {
             eprintln!("{}", super::living_props::wooze_report(field, props));
             eprintln!(
                 "[wooze] shallow: {} entities on {} clocks",
-                self.shallow_wooze.draw_count(),
-                self.shallow_wooze.clock_count()
+                self.living.shallow_wooze.draw_count(),
+                self.living.shallow_wooze.clock_count()
             );
         }
         if let Some(renderer) = &self.scene_renderer {
@@ -1001,7 +937,7 @@ impl PlayerApp {
     #[profiling::function]
     pub(super) fn tick(&mut self) {
         // A frame begins: the perf readout's clock (#120).
-        if let Some(perf) = &mut self.perf {
+        if let Some(perf) = &mut self.stats.perf {
             perf.begin_frame();
         }
         use super::perf::Phase;
@@ -1022,7 +958,10 @@ impl PlayerApp {
 
         // Advance game clock
         self.clock.tick();
-        if self.hold_at.is_some_and(|t| self.clock.total_time >= t)
+        if self
+            .launch
+            .hold_at
+            .is_some_and(|t| self.clock.total_time >= t)
             && self.clock.frame_step != Some(0.0)
         {
             self.clock.frame_step = Some(0.0);
@@ -1031,7 +970,7 @@ impl PlayerApp {
 
         // `--stats`: the overlay starts open, and F2 can still close it.
         if std::mem::take(&mut self.capture.show_stats) {
-            self.show_stats = true;
+            self.stats.show = true;
         }
 
         // Scripted input due by now (`--input-script`), before anything reads it.
@@ -1047,7 +986,7 @@ impl PlayerApp {
         // Expression states due by now (Flint#518): the timeline on the game
         // clock, then what the socket's reader threads have parsed. Queued
         // for the scripts' update below, which hears them before on_update.
-        if let Some(feed) = &mut self.expression_feed {
+        if let Some(feed) = &mut self.launch.expression_feed {
             for state in feed.poll(self.clock.total_time) {
                 self.script.queue_expression(state);
             }
@@ -1088,7 +1027,7 @@ impl PlayerApp {
         {
             let _state_scope = self.script.state_scope(
                 &mut self.state_machine,
-                &mut self.persistent_store,
+                &mut self.saves.store,
                 &self.physics,
             );
             self.script
@@ -1101,7 +1040,7 @@ impl PlayerApp {
             self.run_scripts(&config, &game_events);
         }
         self.perf_mark(Phase::Scripts);
-        if let Some(perf) = &mut self.perf {
+        if let Some(perf) = &mut self.stats.perf {
             perf.record_scripts(self.script.update_times());
         }
 
@@ -1115,7 +1054,7 @@ impl PlayerApp {
         // so the guard lives here, in tick's own scope, not in a sub-step.
         let _state_scope = self.script.state_scope(
             &mut self.state_machine,
-            &mut self.persistent_store,
+            &mut self.saves.store,
             &self.physics,
         );
 
@@ -1153,7 +1092,7 @@ impl PlayerApp {
         // whose clock stops when animation does
         #[cfg(feature = "debug-hud")]
         self.drain_living_panel();
-        let living_dt = if config.animation == SystemPolicy::Run && !self.living_tune.frozen {
+        let living_dt = if config.animation == SystemPolicy::Run && !self.living.tune.frozen {
             self.clock.delta_time
         } else {
             0.0
@@ -1201,12 +1140,12 @@ impl PlayerApp {
                 input: &self.input,
                 camera: &self.camera,
                 gpu,
-                persist: &mut self.persistent_store,
+                persist: &mut self.saves.store,
                 audio: crate::extension::ExtensionAudio::new(&mut self.audio),
                 rays: rays.clone(),
-                scene_tables: &self.scene_tables,
+                scene_tables: &self.scene.tables,
                 fired_events: &mut fired_events,
-                cursor_captured: self.cursor_captured,
+                cursor_captured: self.focus.cursor_captured,
             };
             ext.pre_update(&mut ctx);
         }
@@ -1250,9 +1189,9 @@ impl PlayerApp {
             let panel_open = self.debug_panels.iter().any(|p| p.is_open());
             #[cfg(not(feature = "debug-hud"))]
             let panel_open = false;
-            if capture && !panel_open && !self.cursor_captured {
+            if capture && !panel_open && !self.focus.cursor_captured {
                 self.capture_cursor();
-            } else if !capture && self.cursor_captured {
+            } else if !capture && self.focus.cursor_captured {
                 self.release_cursor();
             }
         }
@@ -1270,7 +1209,7 @@ impl PlayerApp {
         // Music session (F3, ADR 0018): while a session is active the capture
         // thread owns the pad — its drain replaces the player's own polling,
         // feeding the Judge at full precision and InputState down-sampled.
-        let session_finished = if let Some(ms) = &mut self.music_session {
+        let session_finished = if let Some(ms) = &mut self.music.session {
             ms.tick(&mut self.input)
         } else {
             self.poll_gamepad_events();
@@ -1280,13 +1219,14 @@ impl PlayerApp {
             // Natural mid-scene finish: gilrs back, the scene keeps running —
             // unless the component asked for `quit_on_finish`.
             let quit = self
-                .music_session
+                .music
+                .session
                 .as_ref()
                 .is_some_and(music_session::MusicSession::quit_on_finish);
             self.stop_music_session();
             if quit {
                 println!("[music] quit_on_finish — exiting player");
-                self.music_exit_requested = true;
+                self.music.exit_requested = true;
             }
         }
 
@@ -1294,7 +1234,7 @@ impl PlayerApp {
         // so a closed panel costs nothing (history accumulates in the core
         // regardless).
         #[cfg(feature = "debug-hud")]
-        if let Some(ms) = &self.music_session {
+        if let Some(ms) = &self.music.session {
             for panel in &mut self.debug_panels {
                 if !panel.is_open() {
                     continue;
@@ -1383,8 +1323,8 @@ impl PlayerApp {
             return;
         };
         let generation = renderer.post_config_generation();
-        if self.style_reader_generation != Some(generation) {
-            self.style_reader_generation = Some(generation);
+        if self.style.reader_generation != Some(generation) {
+            self.style.reader_generation = Some(generation);
             let config = renderer.effective_post_process_config().clone();
             self.script.set_style_reader(std::sync::Arc::new(
                 super::style_commands::SceneStyles::new(config),
@@ -1427,12 +1367,12 @@ impl PlayerApp {
         // Cursor in the same logical-point space as screen_width()/draw_*:
         // InputState holds physical pixels, egui's ppp is the window scale.
         {
-            let ppp = self.egui_ctx.pixels_per_point().max(0.01);
+            let ppp = self.hud.egui_ctx.pixels_per_point().max(0.01);
             let (mx, my) = self.input.mouse_position;
             self.script
                 .set_mouse_position(mx as f32 / ppp, my as f32 / ppp);
         }
-        self.script.set_cursor_captured(self.cursor_captured);
+        self.script.set_cursor_captured(self.focus.cursor_captured);
 
         // Sync loaded chunk IDs so scripts can query is_chunk_loaded()
         let chunk_ids: HashSet<String> = self.loaded_chunks.keys().cloned().collect();
@@ -1448,7 +1388,8 @@ impl PlayerApp {
         // state for scene bindings; neutral defaults when no session (also
         // resets the frame after a session ends).
         self.script.set_conducted(
-            self.music_session
+            self.music
+                .session
                 .as_ref()
                 .map(|ms| ms.conducted_snapshot())
                 .unwrap_or_default(),
@@ -1487,7 +1428,8 @@ impl PlayerApp {
     fn step_style_tweens(&mut self) {
         if self.state_machine.active_config().scripts == SystemPolicy::Run {
             let step = self
-                .style_tweens
+                .style
+                .tweens
                 .step(&mut self.world, self.clock.delta_time);
             for event in step.events {
                 self.physics.push_event(event);
@@ -1511,15 +1453,15 @@ impl PlayerApp {
         let (screen_w, screen_h) = self.script_screen_size();
         let ui_commands = self.script.generate_ui_draw_commands(screen_w, screen_h);
         commands.extend(ui_commands);
-        self.draw_commands = commands;
+        self.hud.draw_commands = commands;
 
         // Depth-tested world lines (ADR 0083) render with this frame's scene.
         let world_lines = self.script.drain_world_lines();
         if let Some(renderer) = &mut self.scene_renderer {
-            renderer.set_world_lines(world_lines, self.egui_ctx.pixels_per_point());
+            renderer.set_world_lines(world_lines, self.hud.egui_ctx.pixels_per_point());
         }
         // World text (ADR 0104) is laid out in the HUD's egui pass.
-        self.world_texts = self.script.drain_world_texts();
+        self.hud.world_texts = self.script.drain_world_texts();
     }
 
     #[profiling::function]
@@ -1540,7 +1482,7 @@ impl PlayerApp {
                 &mut self.audio,
                 &self.project,
                 &self.scene_path,
-                self.scene_preload_audio,
+                self.scene.preload_audio,
                 true,
             );
         }
@@ -1643,8 +1585,8 @@ impl PlayerApp {
                 }
             }
             // A scene with a wooze field reads it where each prop now stands.
-            if self.wooze.is_some() {
-                self.wooze_time += living_dt;
+            if self.living.wooze.is_some() {
+                self.living.wooze_time += living_dt;
                 let world = &self.world;
                 self.procgen_resolver
                     .living_props_mut()
@@ -1653,24 +1595,31 @@ impl PlayerApp {
                     });
             }
             // So does the shading boil, where the viewer stands (#214).
-            if let Some(field) = &self.wooze {
-                let sample = field.sample(self.camera.position_array(), self.wooze_time);
-                self.boil_clock.tick(living_dt, &sample);
+            if let Some(field) = &self.living.wooze {
+                let sample = field.sample(self.camera.position_array(), self.living.wooze_time);
+                self.living.boil_clock.tick(living_dt, &sample);
             }
-            let wooze = self.wooze.as_ref().map(|field| (field, self.wooze_time));
+            let wooze = self
+                .living
+                .wooze
+                .as_ref()
+                .map(|field| (field, self.living.wooze_time));
             let lineages = self.procgen_resolver.process_living_in(living_dt, wooze);
             // Hand-made meshes read the same field on the same dt (#215).
-            if let (Some(field), Some(renderer)) = (&self.wooze, &mut self.scene_renderer) {
-                let draws =
-                    self.shallow_wooze
-                        .advance(&self.world, field, self.wooze_time, living_dt);
+            if let (Some(field), Some(renderer)) = (&self.living.wooze, &mut self.scene_renderer) {
+                let draws = self.living.shallow_wooze.advance(
+                    &self.world,
+                    field,
+                    self.living.wooze_time,
+                    living_dt,
+                );
                 renderer.set_shallow_wooze(draws.iter().copied());
                 // And so does grass that asks to (#252), where the viewer stands.
-                self.grass_wooze.advance(
+                self.living.grass_wooze.advance(
                     renderer.grass_config(),
                     field,
                     self.camera.position_array(),
-                    self.wooze_time,
+                    self.living.wooze_time,
                     living_dt,
                 );
             }
@@ -1695,7 +1644,7 @@ impl PlayerApp {
             if let (Some(renderer), Some(ctx)) = (&mut self.scene_renderer, &self.render_context) {
                 super::living_props::upload_blends(
                     &mut self.procgen_resolver,
-                    &mut self.living_blend,
+                    &mut self.living.blend,
                     renderer,
                     &ctx.device,
                     &ctx.queue,
@@ -1745,7 +1694,7 @@ impl PlayerApp {
         // The camera is final for the frame: a cut (a teleport, a jump to a
         // new shot) means the picture no longer follows on from the last
         // one, so styles that keep history start over (#343)
-        let cut = self.camera_cut.observe(
+        let cut = self.style.camera_cut.observe(
             self.camera.position_array(),
             self.camera.forward_vector(),
             self.clock.delta_time as f32,
@@ -1787,7 +1736,9 @@ impl PlayerApp {
         // Update grass time and entity positions for bend-on-contact
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             // The wall clock, unless the grass is on the wooze field's (#252).
-            self.grass_wooze.apply(renderer, self.clock.total_time);
+            self.living
+                .grass_wooze
+                .apply(renderer, self.clock.total_time);
             // Ocean waves run on the same clock scripts see via total_time(),
             // keeping script-side ocean_height() queries in sync with the GPU.
             renderer.ocean_time = self.clock.total_time;
@@ -1795,7 +1746,7 @@ impl PlayerApp {
             // capture settles alike at any step
             renderer.style_dt = self.clock.delta_time as f32;
             // --style-time holds the post time, as `flint render`'s does (#328)
-            if let Some(t) = self.style_time {
+            if let Some(t) = self.launch.style_time {
                 renderer.ocean_time = t as f64;
             }
 
@@ -1810,29 +1761,12 @@ impl PlayerApp {
 
     fn drain_post_overrides(&mut self) {
         // Script post-processing overrides for this frame (the commands
-        // are in by now: both drains run before this)
-        let requests = &mut self.script_requests;
-        let pp = std::mem::take(&mut requests.post);
-        let fog_color = requests.fog_color.take();
-        let pp_mode = requests.render_mode.take();
-        let pp_mode_params = requests.mode_params.take();
-        self.pp_vignette_override = pp.vignette;
-        self.pp_bloom_override = pp.bloom;
-        self.pp_exposure_override = pp.exposure;
-        self.pp_chromatic_aberration_override = pp.chromatic_aberration;
-        self.pp_radial_blur_override = pp.radial_blur;
-        self.pp_ssao_intensity_override = pp.ssao_intensity;
-        self.pp_fog_density_override = pp.fog_density;
-        self.pp_desaturation_override = pp.desaturation;
-        // DoF is script-owned (ADR 0027) — never touched by the ladder merge
-        // below; there is no restore machinery because owning scripts write it
-        // every frame and scene loads reset the sticky config from the def.
-        self.pp_dof_strength_override = pp.dof_strength;
-        self.pp_dof_focus_distance_override = pp.dof_focus_distance;
-        self.pp_dof_focus_range_override = pp.dof_focus_range;
-        self.pp_fog_color_override = fog_color;
-        self.pp_render_mode_override = pp_mode;
-        self.pp_mode_params_override = pp_mode_params;
+        // are in by now: both drains run before this), in place of last
+        // frame's. DoF is script-owned (ADR 0027) — never touched by the
+        // ladder merge below; there is no restore machinery because owning
+        // scripts write it every frame and scene loads reset the sticky
+        // config from the def.
+        self.post.take_from(&mut self.script_requests);
 
         // Music-session ladder/reintegration visuals (ADR 0021). Script
         // overrides win — F4/F6 script-authored rung visuals supersede this
@@ -1840,20 +1774,20 @@ impl PlayerApp {
         // merge writes base + rung every frame so a recovered ladder actively
         // restores the scene's authored post config (the renderer config is
         // sticky); after teardown a one-shot restore does the same.
-        if let Some(ms) = &self.music_session {
+        if let Some(ms) = &self.music.session {
             let vf = ms.visual_frame();
             music_session::merge_ladder_postprocess(
-                &mut self.pp_radial_blur_override,
-                &mut self.pp_chromatic_aberration_override,
-                &mut self.pp_desaturation_override,
+                &mut self.post.script.radial_blur,
+                &mut self.post.script.chromatic_aberration,
+                &mut self.post.script.desaturation,
                 &vf,
-                self.music_pp_base.unwrap_or_default(),
+                self.music.pp_base.unwrap_or_default(),
             );
-        } else if let Some(base) = self.music_pp_restore.take() {
+        } else if let Some(base) = self.music.pp_restore.take() {
             music_session::restore_ladder_postprocess(
-                &mut self.pp_radial_blur_override,
-                &mut self.pp_chromatic_aberration_override,
-                &mut self.pp_desaturation_override,
+                &mut self.post.script.radial_blur,
+                &mut self.post.script.chromatic_aberration,
+                &mut self.post.script.desaturation,
                 base,
             );
         }
@@ -1870,7 +1804,7 @@ impl PlayerApp {
         let Some(context) = &self.render_context else {
             return;
         };
-        let Some(egui_winit) = &mut self.egui_winit else {
+        let Some(egui_winit) = &mut self.hud.egui_winit else {
             return;
         };
 
@@ -1884,20 +1818,20 @@ impl PlayerApp {
             raw_input.predicted_dt = step as f32;
         }
 
-        let draw_commands = std::mem::take(&mut self.draw_commands);
+        let draw_commands = std::mem::take(&mut self.hud.draw_commands);
         let mut extensions = std::mem::take(&mut self.extensions);
         #[cfg(feature = "debug-hud")]
         let mut debug_panels = std::mem::take(&mut self.debug_panels);
         #[cfg(feature = "debug-hud")]
         let view_proj = self.camera.view_projection_matrix();
-        let ui_textures = &self.ui_textures;
-        let ui_fonts = &self.ui_fonts;
-        let ui_fonts_warned = &mut self.ui_fonts_warned;
-        let text_halos = &mut self.text_halos;
+        let ui_textures = &self.hud.textures;
+        let ui_fonts = &self.hud.fonts;
+        let ui_fonts_warned = &mut self.hud.fonts_warned;
+        let text_halos = &mut self.hud.text_halos;
         text_halos.begin_frame();
 
         // World text needs the frame's depth to be drawn against.
-        let world_texts = std::mem::take(&mut self.world_texts);
+        let world_texts = std::mem::take(&mut self.hud.world_texts);
         let text_view = (!world_texts.is_empty()
             && self
                 .scene_renderer
@@ -1907,27 +1841,27 @@ impl PlayerApp {
             view_proj: self.camera.view_projection_matrix(),
             eye: self.camera.position_array(),
             screen: [
-                context.config.width as f32 / self.egui_ctx.pixels_per_point(),
-                context.config.height as f32 / self.egui_ctx.pixels_per_point(),
+                context.config.width as f32 / self.hud.egui_ctx.pixels_per_point(),
+                context.config.height as f32 / self.hud.egui_ctx.pixels_per_point(),
             ],
-            px_per_point: self.egui_ctx.pixels_per_point(),
+            px_per_point: self.hud.egui_ctx.pixels_per_point(),
         });
         let mut laid_text = Vec::new();
 
         let touch_widgets = self.input.touch_controls().widgets();
         let touch_opacity = self.input.touch_controls().opacity();
 
-        let show_stats = self.show_stats;
+        let show_stats = self.stats.show;
         let stats_data = if show_stats {
             self.scene_renderer.as_ref().map(|r| {
                 let mut stats = r.collect_stats();
                 // FPS smoothing: rolling window of delta_time samples
-                self.stats_frame_times.push_back(self.clock.delta_time);
-                while self.stats_frame_times.len() > 60 {
-                    self.stats_frame_times.pop_front();
+                self.stats.frame_times.push_back(self.clock.delta_time);
+                while self.stats.frame_times.len() > 60 {
+                    self.stats.frame_times.pop_front();
                 }
-                let avg_dt: f64 = self.stats_frame_times.iter().sum::<f64>()
-                    / self.stats_frame_times.len().max(1) as f64;
+                let avg_dt: f64 = self.stats.frame_times.iter().sum::<f64>()
+                    / self.stats.frame_times.len().max(1) as f64;
                 stats.fps = (1.0 / avg_dt) as f32;
                 stats.frame_time_ms = (avg_dt * 1000.0) as f32;
                 if let Some(ctx) = &self.render_context {
@@ -1943,7 +1877,7 @@ impl PlayerApp {
         #[cfg(feature = "debug-hud")]
         let style_errors = flint_render::stylize::custom::errors();
 
-        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+        let full_output = self.hud.egui_ctx.run(raw_input, |ctx| {
             // Layers, back to front: script UI, game egui, debug panels.
             // Script UI first: it shares the background layer with any game
             // panels, so issuing it first puts those panels in front of it
@@ -2025,23 +1959,25 @@ impl PlayerApp {
             );
         });
 
-        self.draw_commands = draw_commands;
+        self.hud.draw_commands = draw_commands;
         self.extensions = extensions;
         #[cfg(feature = "debug-hud")]
         {
             self.debug_panels = debug_panels;
         }
         // Fonts exist from here on; measure_text may now lay text out for real.
-        self.egui_fonts_ready
+        self.hud
+            .egui_fonts_ready
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
         egui_winit.handle_platform_output(window, full_output.platform_output);
 
         let paint_jobs = self
+            .hud
             .egui_ctx
             .tessellate(full_output.shapes, full_output.pixels_per_point);
         let glyphs = text_view
-            .map(|view| super::world_text::tessellate(&self.egui_ctx, laid_text, &view))
+            .map(|view| super::world_text::tessellate(&self.hud.egui_ctx, laid_text, &view))
             .unwrap_or_default();
 
         let screen_descriptor = egui_wgpu::ScreenDescriptor {
@@ -2049,7 +1985,7 @@ impl PlayerApp {
             pixels_per_point: full_output.pixels_per_point,
         };
 
-        let mut egui_renderer = self.egui_renderer.take().unwrap();
+        let mut egui_renderer = self.hud.egui_renderer.take().unwrap();
 
         // The HUD's GPU time, with the renderer's phases (ADR 0108).
         let ui_scope = self
@@ -2072,7 +2008,7 @@ impl PlayerApp {
 
         // World text goes under the HUD, against the scene's depth.
         if !glyphs.is_empty() {
-            let pipeline = self.world_text_pipeline.get_or_insert_with(|| {
+            let pipeline = self.hud.world_text_pipeline.get_or_insert_with(|| {
                 super::world_text::WorldTextPipeline::new(&context.device, context.hud_format)
             });
             pipeline.draw(
@@ -2117,7 +2053,7 @@ impl PlayerApp {
             egui_renderer.free_texture(id);
         }
 
-        self.egui_renderer = Some(egui_renderer);
+        self.hud.egui_renderer = Some(egui_renderer);
     }
 }
 

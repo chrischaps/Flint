@@ -194,7 +194,7 @@ impl PlayerApp {
         else {
             return;
         };
-        let frames_begun = self.perf.as_ref().map_or(0, |p| p.frames_begun);
+        let frames_begun = self.stats.perf.as_ref().map_or(0, |p| p.frames_begun);
         context.webgpu = calls_per_frame(frames_begun);
         if let Some((frames, secs)) = raf_frames() {
             summary.frames = frames;

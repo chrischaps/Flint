@@ -86,10 +86,10 @@ impl PlayerApp {
         // player captures it.
         #[cfg(target_os = "android")]
         {
-            self.cursor_captured = true;
+            self.focus.cursor_captured = true;
         }
         #[cfg(not(target_os = "android"))]
-        if self.physics.has_player_entity() && !self.cursor_captured {
+        if self.physics.has_player_entity() && !self.focus.cursor_captured {
             self.capture_cursor();
         }
         Ok(())
@@ -143,28 +143,28 @@ impl PlayerApp {
             &self.project,
             &self.scene_path,
             &self.world,
-            self.catalog.as_ref(),
-            self.content_store.as_ref(),
+            self.assets.catalog.as_ref(),
+            self.assets.content_store.as_ref(),
         );
 
         // Living props and the wooze field, their clocks started over
         self.procgen_resolver
-            .set_living_defaults(super::living_props::defaults_of(self.scene_living.as_ref()));
-        self.wooze = super::living_props::field_of(self.scene_wooze.as_ref());
-        self.wooze_time = 0.0;
-        self.shallow_wooze.clear();
+            .set_living_defaults(super::living_props::defaults_of(self.living.def.as_ref()));
+        self.living.wooze = super::living_props::field_of(self.living.wooze_def.as_ref());
+        self.living.wooze_time = 0.0;
+        self.living.shallow_wooze.clear();
         renderer.set_shallow_wooze(std::iter::empty());
-        super::shallow_wooze::warn_without_a_field(&self.world, self.wooze.as_ref());
-        self.boil_clock = Default::default();
-        self.grass_wooze = Default::default();
-        self.living_tune.for_new_scene();
+        super::shallow_wooze::warn_without_a_field(&self.world, self.living.wooze.as_ref());
+        self.living.boil_clock = Default::default();
+        self.living.grass_wooze = Default::default();
+        self.living.tune.for_new_scene();
 
         // Procgen before the model loader: catalog > procgen > file (#32).
         super::procgen_assets::resolve_scene(
             &self.scene_path,
             &mut self.world,
             &mut self.procgen_resolver,
-            self.procgen_mode,
+            self.launch.procgen_mode,
             super::procgen_assets::GpuSink {
                 renderer,
                 device,
@@ -195,23 +195,23 @@ impl PlayerApp {
         // (ASCII's temporal stability, #277) start over, and its first
         // camera is no cut from the last scene's
         renderer.reset_style_history();
-        self.camera_cut.forget();
+        self.style.camera_cut.forget();
 
         // Lighting: the built-in ambient and levers, then what the scene
         // authors (absent = renderer default)
         renderer.reset_ambient();
-        renderer.set_scene_shadows(self.scene_shadows);
-        renderer.set_default_lights(self.scene_default_lights);
-        if let Some((sky, ground)) = self.scene_ambient {
+        renderer.set_scene_shadows(self.scene.shadows);
+        renderer.set_default_lights(self.scene.default_lights);
+        if let Some((sky, ground)) = self.scene.ambient {
             renderer.set_ambient(sky, ground);
         }
-        if let Some(wrap) = self.scene_diffuse_wrap {
+        if let Some(wrap) = self.scene.diffuse_wrap {
             renderer.set_diffuse_wrap(wrap);
         }
-        if let Some(oren) = self.scene_oren_nayar {
+        if let Some(oren) = self.scene.oren_nayar {
             renderer.set_oren_nayar(oren);
         }
-        if let Some((color, strength)) = self.scene_sheen {
+        if let Some((color, strength)) = self.scene.sheen {
             renderer.set_sheen(color, strength);
         }
 
@@ -219,7 +219,7 @@ impl PlayerApp {
         // project's one search (`AssetKind::Files`); a miss is warned about
         // with every path tried
         renderer.clear_skybox();
-        if let Some(skybox_rel) = &self.skybox_path {
+        if let Some(skybox_rel) = &self.scene.skybox_path {
             let scene_dir = self.scene_dir();
             let skybox_path = self
                 .project
@@ -258,7 +258,7 @@ impl PlayerApp {
         );
         super::shallow_wooze::warn_grass_without_a_field(
             renderer.grass_config(),
-            self.wooze.as_ref(),
+            self.living.wooze.as_ref(),
         );
         grass
     }
@@ -315,7 +315,7 @@ impl PlayerApp {
             &mut self.audio,
             &self.project,
             &self.scene_path,
-            self.scene_preload_audio,
+            self.scene.preload_audio,
             // In the browser the audio may already be here, and decoding it
             // all in one frame is the stall #124 removed: queue it. The
             // desktop decodes up front, as a load can afford.
@@ -358,7 +358,7 @@ impl PlayerApp {
         {
             let _state_scope = self.script.state_scope(
                 &mut self.state_machine,
-                &mut self.persistent_store,
+                &mut self.saves.store,
                 &self.physics,
             );
             self.script

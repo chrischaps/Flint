@@ -345,16 +345,16 @@ fn main() -> Result<()> {
         scene_file.scene.input_config.clone(),
     );
 
-    app.msaa_sample_count = args.msaa;
-    app.save_dir = args.save_dir.clone();
+    app.launch.msaa_sample_count = args.msaa;
+    app.launch.save_dir = args.save_dir.clone();
     // A bundle's files aren't on the disk: nothing to key a disk cache by.
-    app.procgen_disk_cache = args.bundle.is_none();
-    app.scene_file_writable = args.bundle.is_none();
+    app.launch.procgen_disk_cache = args.bundle.is_none();
+    app.launch.scene_file_writable = args.bundle.is_none();
     if args.procgen_defer {
-        app.procgen_mode = flint_player::ProcGenMode::Deferred;
+        app.launch.procgen_mode = flint_player::ProcGenMode::Deferred;
     }
     if let Some(value) = &args.render_scale {
-        app.render_scale = flint_player::RenderScaleSetting::default()
+        app.launch.render_scale = flint_player::RenderScaleSetting::default()
             .parse(value)
             .ok_or_else(|| anyhow::anyhow!("--render-scale {value}: a number or auto"))?;
     }
@@ -364,7 +364,7 @@ fn main() -> Result<()> {
         if let Some(e) = errors.first() {
             anyhow::bail!("--quality: {e}");
         }
-        app.quality_overrides = quality.clone();
+        app.launch.quality_overrides = quality.clone();
     }
     let touch_mode = flint_runtime::TouchControlsMode::parse(&args.touch_controls)
         .ok_or_else(|| anyhow::anyhow!("--touch-controls: auto, always or never"))?;
@@ -381,10 +381,10 @@ fn main() -> Result<()> {
         if sides.iter().any(|v| !v.is_finite() || *v < 0.0) {
             anyhow::bail!("--safe-area: insets are points, 0 or more");
         }
-        app.safe_area = Some([l, t, r, b]);
+        app.launch.safe_area = Some([l, t, r, b]);
     }
-    app.touch_device = args.touch_device;
-    app.pixels_per_point = args.pixels_per_point.filter(|p| *p > 0.0);
+    app.launch.touch_device = args.touch_device;
+    app.launch.pixels_per_point = args.pixels_per_point.filter(|p| *p > 0.0);
     if let Some(name) = &args.look {
         // Refuse a bad name now. The scene's user styles first: a look may
         // name one (they are loaded again, harmlessly, with the scene)
@@ -392,14 +392,14 @@ fn main() -> Result<()> {
         let look = flint_render::look::find(name, &app.scene_path)
             .map_err(|e| anyhow::anyhow!("--look: {e}"))?;
         println!("Look: {} ({})", look.name, look.source);
-        app.look = Some(name.clone());
+        app.launch.look = Some(name.clone());
     }
-    app.style_specs = args.styles.clone();
-    app.style_time = args.style_time;
+    app.launch.style_specs = args.styles.clone();
+    app.launch.style_time = args.style_time;
     // Skybox, ambient, shading levers, camera and post from the scene file
     app.apply_scene_settings(&scene_file);
-    app.window_size = args.window.size();
-    app.window_options = args.window.clone();
+    app.launch.window_size = args.window.size();
+    app.launch.window_options = args.window.clone();
     app.capture = flint_player::CaptureConfig::new(
         args.screenshot.map(std::path::PathBuf::from),
         args.screenshot_at,
@@ -409,7 +409,7 @@ fn main() -> Result<()> {
     if let Some(path) = &args.input_script {
         app.capture.input_script = Some(flint_player::InputScript::load(path)?);
     }
-    app.expression_feed = flint_player::ExpressionFeed::open(
+    app.launch.expression_feed = flint_player::ExpressionFeed::open(
         args.expression_timeline.as_deref(),
         args.expression_listen.as_deref(),
     )?;

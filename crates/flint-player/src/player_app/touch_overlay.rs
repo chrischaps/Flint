@@ -159,12 +159,12 @@ impl PlayerApp {
     /// is touch-first (`is_touch_device()`, #660).
     pub(super) fn sync_touch_controls(&mut self) {
         let screen = self.input.screen_size();
-        let ppp = self.egui_ctx.pixels_per_point() as f64;
+        let ppp = self.hud.egui_ctx.pixels_per_point() as f64;
         #[cfg(target_arch = "wasm32")]
         let insets = super::web_page::safe_area_insets();
         #[cfg(not(target_arch = "wasm32"))]
         let insets = [0.0; 4];
-        let insets = self.safe_area.unwrap_or(insets);
+        let insets = self.launch.safe_area.unwrap_or(insets);
         self.input
             .touch_controls_mut()
             .set_metrics(screen, ppp, insets);
@@ -175,12 +175,12 @@ impl PlayerApp {
         #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
         let touch_first = false;
         self.input
-            .set_touch_device(touch_first || self.touch_device);
+            .set_touch_device(touch_first || self.launch.touch_device);
         // A finger can't look through a captured cursor: let it go when the
         // controls come up (a touchscreen laptop, or `--touch-controls
         // always`). Android's capture is only a flag.
         #[cfg(not(target_os = "android"))]
-        if self.cursor_captured && self.input.touch_controls_visible() {
+        if self.focus.cursor_captured && self.input.touch_controls_visible() {
             self.release_cursor();
         }
     }

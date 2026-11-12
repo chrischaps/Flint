@@ -260,12 +260,12 @@ mod web {
             None,
             loaded.scene_file.scene.input_config.clone(),
         );
-        app.msaa_sample_count = args.msaa;
-        app.render_scale = args.render_scale;
-        app.quality_overrides = args.quality;
+        app.launch.msaa_sample_count = args.msaa;
+        app.launch.render_scale = args.render_scale;
+        app.launch.quality_overrides = args.quality;
         // A bad word is a warning in the console, not a page that won't
         // start: the scene's user styles register later, at init (#274)
-        app.style_specs = args.styles;
+        app.launch.style_specs = args.styles;
         app.input.touch_controls_mut().set_mode(args.touch);
         app.clock.frame_step = args.frame_step;
         if let Some(seed) = args
@@ -274,7 +274,7 @@ mod web {
         {
             app.script.seed_random(seed);
         }
-        app.hold_at = args.hold_at;
+        app.launch.hold_at = args.hold_at;
         app.set_frame_rate(args.fps);
         if let Some(gpu) = args.perf {
             app.enable_perf(gpu);

@@ -17,9 +17,9 @@ impl PlayerApp {
     /// shadow switches in the environment, then `quality_overrides`.
     fn startup_quality(&self) -> QualitySettings {
         let mut q = QualitySettings {
-            render_scale: self.render_scale.scale,
-            render_scale_auto: self.render_scale.dynamic,
-            msaa: self.msaa_sample_count,
+            render_scale: self.launch.render_scale.scale,
+            render_scale_auto: self.launch.render_scale.dynamic,
+            msaa: self.launch.msaa_sample_count,
             ..QualitySettings::default()
         };
         // FLINT_SHADOWS=0 starts with the shadow pass off, so a perf run
@@ -34,7 +34,7 @@ impl PlayerApp {
         {
             q.shadow_resolution = res;
         }
-        for e in q.apply_str(&self.quality_overrides) {
+        for e in q.apply_str(&self.launch.quality_overrides) {
             tracing::warn!("--quality: {e}");
         }
         q.clamped()
@@ -57,19 +57,19 @@ impl PlayerApp {
         }
         let q = self.startup_quality();
         self.apply_quality(q);
-        tracing::info!("[quality] {}", self.quality.to_query());
+        tracing::info!("[quality] {}", self.quality.settings.to_query());
     }
 
     /// Apply `q` now. Call between frames: an MSAA change rebuilds the
     /// scene pipelines, a shadow-resolution change the shadow maps.
     pub(crate) fn apply_quality(&mut self, q: QualitySettings) {
         let q = q.clamped();
-        if q.render_scale_auto != self.render_scale.dynamic || !q.render_scale_auto {
+        if q.render_scale_auto != self.launch.render_scale.dynamic || !q.render_scale_auto {
             // A fresh start under the new ceiling (and none when fixed).
-            self.dynamic_scale = Default::default();
+            self.quality.dynamic_scale = Default::default();
         }
-        self.render_scale.scale = q.render_scale;
-        self.render_scale.dynamic = q.render_scale_auto;
+        self.launch.render_scale.scale = q.render_scale;
+        self.launch.render_scale.dynamic = q.render_scale_auto;
         let mut applied = q;
         if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
             // The scale is update_render_scale's to set (with the pixel
@@ -85,20 +85,20 @@ impl PlayerApp {
                 ..renderer.set_quality(&context.device, &r)
             };
         }
-        self.quality = applied;
+        self.quality.settings = applied;
         self.script.set_quality_state(applied);
     }
 
     /// A script's `set_quality` from this frame, applied before the frame
     /// draws.
     pub(super) fn apply_script_quality(&mut self) {
-        if let Some(q) = self.script_quality.take() {
-            if q != self.quality {
+        if let Some(q) = self.quality.script_request.take() {
+            if q != self.quality.settings {
                 tracing::info!("[quality] script: {}", q.clamped().to_query());
                 self.apply_quality(q);
             } else {
                 // Asked for what's in force; just hand the state back.
-                self.script.set_quality_state(self.quality);
+                self.script.set_quality_state(self.quality.settings);
             }
         }
     }
@@ -108,12 +108,12 @@ impl PlayerApp {
     /// apply the settings again over the resized chain.
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     pub(super) fn reapply_quality(&mut self) {
-        let q = self.quality;
+        let q = self.quality.settings;
         self.apply_quality(q);
     }
 
     /// The quality settings in force.
     pub fn quality(&self) -> &QualitySettings {
-        &self.quality
+        &self.quality.settings
     }
 }

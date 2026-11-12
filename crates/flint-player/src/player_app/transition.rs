@@ -308,8 +308,8 @@ impl PlayerApp {
             Ok(next) => next,
             Err(e) => {
                 tracing::error!("[transition] {e}; staying in {}", self.scene_path);
-                if self.scene_failure.is_none() {
-                    self.scene_failure = Some(e);
+                if self.outcome.scene_failure.is_none() {
+                    self.outcome.scene_failure = Some(e);
                 }
                 return false;
             }
@@ -341,7 +341,7 @@ impl PlayerApp {
         {
             let _state_scope = self.script.state_scope(
                 &mut self.state_machine,
-                &mut self.persistent_store,
+                &mut self.saves.store,
                 &self.physics,
             );
             self.script.call_scene_exits(&mut self.world);
@@ -353,10 +353,10 @@ impl PlayerApp {
         // The session's post restore belongs to this scene: the next one's
         // config replaces the renderer's whole (`stage_scene`), and a restore
         // landing after it would stamp this scene's values over it
-        self.music_pp_restore = None;
+        self.music.pp_restore = None;
         // ...as does a render mode a script held on: the next frame would
         // otherwise switch the new scene's authored mode off
-        self.pp_mode_was_active = false;
+        self.post.mode_was_active = false;
 
         // Clear all systems
         self.script.clear();
@@ -381,12 +381,12 @@ impl PlayerApp {
 
         // Clear transient rendering state
         self.skeletal_entity_assets.clear();
-        self.ui_textures.clear();
-        self.draw_commands.clear();
-        self.world_texts.clear();
+        self.hud.textures.clear();
+        self.hud.draw_commands.clear();
+        self.hud.world_texts.clear();
         self.loaded_chunks.clear();
         // Style tweens name the old scene's entities (#370)
-        self.style_tweens.clear();
+        self.style.tweens.clear();
     }
 
     /// The registry for `scene`, after asking the one resolver (ADR 0114)
