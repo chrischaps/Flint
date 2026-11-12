@@ -10,7 +10,8 @@ use std::path::PathBuf;
 /// The variants of `ScriptCommand`, read from where it is declared, so a new
 /// one is seen here the day it is added.
 fn declared_variants() -> BTreeSet<String> {
-    let source = include_str!("../../../flint-script/src/context.rs");
+    // A Windows checkout with `core.autocrlf` has CRLF line endings.
+    let source = include_str!("../../../flint-script/src/context.rs").replace("\r\n", "\n");
     let start = source
         .find("pub enum ScriptCommand {")
         .expect("ScriptCommand is declared in flint-script's context.rs");
