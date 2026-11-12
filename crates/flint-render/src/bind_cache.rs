@@ -171,6 +171,24 @@ impl BindCache {
         }
     }
 
+    /// Forget every group and every first write, as a new cache would
+    /// (the count of groups made goes on): for when what they bind was
+    /// made again (a style rebuilt from a changed shader, #418).
+    pub fn clear(&self) {
+        self.groups
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        let mut caller = self.caller.lock().unwrap_or_else(|e| e.into_inner());
+        caller.0 = 0;
+        caller.1.clear();
+        drop(caller);
+        self.written
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+
     /// How many bind groups it holds.
     pub fn len(&self) -> usize {
         self.groups.lock().map_or(0, |g| g.len()) + self.caller.lock().map_or(0, |c| c.1.len())
