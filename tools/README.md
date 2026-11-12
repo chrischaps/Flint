@@ -46,6 +46,7 @@ CLAUDE.md asks.
 | **The web player** | | | |
 | `play-site/build.py` | Assembles play.chaps.dev from `play-site/games.toml` (#103) | `flint export web` | flint, a trunk build of the player |
 | `web-touch/ipad.mjs` | Plays a game on an emulated iPad over CDP and reports FROZEN or LIVE (docs/design/web.md) | | Node 22+, Chrome |
+| `web-perf/run.mjs` | The web player's `?perf=1` readout in desktop Chrome, page by page: a JSON and a screenshot per page and a table over them (#381); see its README | `flint export web` (or any site) | Node 22+, Chrome |
 | `phone-perf/` | The web player's frame times on the Pixel 8 Pro (#378); see its README | `flint bundle`, trunk | Node 22+, adb, Chrome on the phone |
 
 ## Fixtures and `flint gen`

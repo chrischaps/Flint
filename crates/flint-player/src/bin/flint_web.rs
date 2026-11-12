@@ -51,6 +51,10 @@
 //!                   the rate they do hold when they don't; `native` draws
 //!                   every refresh unpaced. Default: `auto` where the
 //!                   primary pointer is a finger, `native` elsewhere
+//!   begin=auto      lift the Begin gate as soon as it's ready, with no
+//!                   click (#381): for a measuring driver (tools/web-perf).
+//!                   With no gesture the browser refuses the pointer lock,
+//!                   and sound starts only where autoplay is allowed
 //!   loop=poll       run winit's loop flat out (`ControlFlow::Poll`), as
 //!                   before #121, to compare against; the default draws once
 //!                   per `requestAnimationFrame`
@@ -104,6 +108,8 @@ mod web {
         perf: Option<bool>,
         /// `loop=poll`: the old flat-out loop, for comparison (#121).
         poll: bool,
+        /// `begin=auto`: lift the gate without a click (#381).
+        begin_auto: bool,
         /// `mix=old`: placed sounds on kira spatial tracks and every sound
         /// mixed, heard or not, for comparison (#138).
         old_mix: bool,
@@ -148,6 +154,7 @@ mod web {
                     _ => Some(true),
                 }),
                 poll: get("loop").as_deref() == Some("poll"),
+                begin_auto: get("begin").as_deref() == Some("auto"),
                 old_mix: get("mix").as_deref() == Some("old"),
                 touch: get("touch")
                     .and_then(|v| flint_runtime::TouchControlsMode::parse(&v))
@@ -285,7 +292,7 @@ mod web {
         app.set_event_proxy(event_loop.create_proxy());
         // Returns at once: the browser drives the loop from here on.
         event_loop.spawn_app(app);
-        open_gate(&title, line.as_deref().unwrap_or(""));
+        open_gate(&title, line.as_deref().unwrap_or(""), args.begin_auto);
 
         for (source, parts, base) in late {
             fetch_late_bundles(source, parts, base, title.clone());
@@ -553,7 +560,12 @@ mod web {
     /// pointer and starts the sound (`flint_player::web_begin`), and the
     /// veil lifts. Afterwards a line under the world says how to take the
     /// pointer back whenever Escape has freed it.
-    fn open_gate(title: &str, line: &str) {
+    ///
+    /// `auto` (`?begin=auto`, #381) lifts it at once, as a click would but
+    /// with no gesture behind it: a measuring driver's page, whose clicks
+    /// over CDP never reliably reached the button. The page's full-screen
+    /// switch rides on a real click only, so it stays out of the way.
+    fn open_gate(title: &str, line: &str, auto: bool) {
         use std::cell::Cell;
         use std::rc::Rc;
         use wasm_bindgen::closure::Closure;
@@ -590,6 +602,10 @@ mod web {
             })
         };
         let _ = button.add_event_listener_with_callback("click", on_begin.as_ref().unchecked_ref());
+        if auto {
+            let lift: &js_sys::Function = on_begin.as_ref().unchecked_ref();
+            let _ = lift.call0(&wasm_bindgen::JsValue::NULL);
+        }
         on_begin.forget();
 
         let Some(document) = web_sys::window().and_then(|w| w.document()) else {

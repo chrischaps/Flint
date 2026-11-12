@@ -57,6 +57,7 @@ the query string instead of clap:
 | `perf=1\|cpu` | `--perf` | the perf readout in a corner (#120): frame times, each phase's CPU time, the slowest scripts and each pass's GPU time ([The perf readout](#the-perf-readout-120)) |
 | `mix=old` | | the mix as before #138, to compare: placed sounds on kira spatial tracks, and every sound mixed whether anyone can hear it or not ([A cheaper mix](#a-cheaper-mix-138)) |
 | `fps=30\|60\|auto\|native` | | which refreshes are drawn ([Frame rate on phones](#frame-rate-on-phones-140)). A rate is a whole number of refreshes (30 is every other at 60 Hz, every fourth at 120); `auto` draws every refresh while the frames hold it and drops to a rate they hold when they don't; `native` is every refresh, unpaced. Default `auto` where the primary pointer is a finger (`pointer: coarse`), `native` elsewhere |
+| `begin=auto` | | lift the Begin gate as soon as it is ready, with no click (#381), for a measuring driver (`tools/web-perf/run.mjs`). With no gesture the browser refuses the pointer lock, sound starts only where autoplay is allowed, and the full-screen switch, which rides on a real click, stays off |
 | `loop=poll` | | winit's flat-out `ControlFlow::Poll`, as before #121, to compare against the default of one frame per `requestAnimationFrame` ([Firefox's cadence](#firefoxs-cadence-121)) |
 
 The engine schemas are compiled in (`build.rs` embeds `schemas/components`
@@ -808,6 +809,32 @@ a render scale the chain owns its depth and all of them are kept. Since
 (`RenderContext::depth_target()`, a fresh `new_depth_id()` whenever the
 context makes the texture again) and those groups are kept at scale 1
 too (measured below the table, "Bind groups over the caller's depth").
+
+**Re-read with `tools/web-perf/run.mjs` (#381, 2026-11-12).** The table
+above is now one command over a `flint export web` folder of the same three
+scenes (`tools/web-perf/README.md`), Chrome 157, same machine, two runs of
+two 10 s windows each:
+
+| page | scene | Style mask | ASCII | bind groups a frame | passes |
+|---|---|---|---|---|---|
+| DPR 1, no style | 1920x1080 | | | 0 | 17 |
+| DPR 1, per entity | 1920x1080 | 0.03--0.04 | 0.34--0.60 | 0 | 26 |
+| DPR 1, full screen | 1920x1080 | 0.02--0.19 | 0.52--1.17 | 0 | 26 |
+| DPR 2 (cap 1.5), no style | 1440x810 | | | 0 | 18 |
+| DPR 2, per entity | 1440x810 | 0.02--0.04 | 0.28--0.70 | 0 | 27 |
+| DPR 2, full screen | 1440x810 | 0.02--0.69 | 0.49--0.90 | 0 | 27 |
+
+The scene sizes and the no-style pages' passes match. What moved is the
+style itself: it adds nine passes a frame where it added three, since edges
+(#267) and tone normalisation (#289) came on by default after #270 (the
+desktop's own 0.43 ms with edges, above), and #379's kept bind groups make
+it 0 a frame at scale 1 too. The runs disagree by up to 2x on the ASCII pass, with no-style
+pages steady, so the GPU was shared; take the minimum of several runs. The
+driver asks for the DPR with `--force-device-scale-factor`, one Chrome per
+DPR: CDP's `Emulation.setDeviceMetricsOverride` changes `devicePixelRatio`,
+but the canvas kept the display's 1.5 (2880x1620 at "DPR 1"), since winit
+sizes it from a ResizeObserver's device-pixel box. `?begin=auto` lifts the
+gate, so the screenshots need no hiding.
 
 **Cells are output pixels.** ASCII runs at the display stage, after the
 upscale, so a render scale or the web's DPR cap changes only the scene
