@@ -7,8 +7,8 @@
 //! in the felt experience (the no-gamified-UI rule).
 
 use flint_debug_ui::DebugPanel;
-use flint_music::chart_session::{GuideFrame, GuideWindow};
-use flint_music::VisualFrame;
+use flint_rhythm::chart_session::{GuideFrame, GuideWindow};
+use flint_rhythm::VisualFrame;
 
 pub const MUSIC_GUIDE_PANEL: &str = "Music Guide";
 

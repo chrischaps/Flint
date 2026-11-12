@@ -27,8 +27,8 @@
 //! deterministic — same stream in, same records out, bit for bit.
 
 use crate::chart_eval::{ChannelValue, ChartEval, PulseWindow};
-use crate::conductor::Conductor;
 use crate::input_stream::InputEvent;
+use flint_music::conductor::Conductor;
 
 /// The channel the continuous tracking signal judges. The prototype's base
 /// verb; per-channel expansion is config work, not schema work.
@@ -599,7 +599,7 @@ mod tests {
     use super::*;
     use crate::chart::Chart;
     use crate::input_stream::{LeanSample, PulseEvent};
-    use crate::manifest::SuiteManifest;
+    use flint_music::manifest::SuiteManifest;
 
     // 120 BPM 4/4 at 48 kHz: beat = 24_000 samples; section window 100 ms
     // half-width = 4_800 samples.

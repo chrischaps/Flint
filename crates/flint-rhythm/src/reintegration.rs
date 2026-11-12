@@ -16,13 +16,13 @@
 //! reset — a player still absent after reassembly will fail again, which is
 //! the designed loop; only the debounce restarts.
 
-use crate::conductor::Grid;
 use crate::gradient::GradientOffsets;
 use crate::ladder::{Ladder, LadderDriver, LadderParams};
-use crate::manifest::Reintegration;
-use crate::session::SuiteSession;
-use crate::tempo::ms_to_samples;
-use flint_core::Result;
+use flint_core::{FlintError, Result};
+use flint_music::conductor::Grid;
+use flint_music::manifest::{Reintegration, SuiteManifest};
+use flint_music::session::SuiteSession;
+use flint_music::tempo::ms_to_samples;
 use kira::Tween;
 use std::time::Duration;
 
@@ -120,6 +120,19 @@ pub struct Reintegrator {
 }
 
 impl Reintegrator {
+    /// The sequencer for a rhythm suite's `[reintegration]`; an error for a
+    /// suite without one, which [`crate::validate_manifest`] reports as
+    /// `MissingReintegration`.
+    pub fn for_manifest(manifest: &SuiteManifest) -> Result<Self> {
+        let decl = manifest.reintegration.clone().ok_or_else(|| {
+            FlintError::ValidationError(format!(
+                "suite '{}' has no [reintegration] table, which a rhythm session needs",
+                manifest.id
+            ))
+        })?;
+        Ok(Self::new(decl))
+    }
+
     pub fn new(decl: Reintegration) -> Self {
         Self {
             decl,

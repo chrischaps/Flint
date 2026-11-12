@@ -9,9 +9,9 @@
 
 use flint_music::analysis::{find_tone_transitions, max_step, tone_envelope, TransitionKind};
 use flint_music::event_script::EventScript;
-use flint_music::ladder::{Ladder, LadderConfig, LadderDriver, DROP_DB};
 use flint_music::mixer::LPF_OPEN_HZ;
 use flint_music::offline::{render_offline_with, OfflineRenderConfig};
+use flint_rhythm::ladder::{Ladder, LadderConfig, LadderDriver, DROP_DB};
 
 mod common;
 use common::{tempo_change_manifest, SineStems, BAR, CHUNK, SR, WINDOW};
@@ -60,7 +60,7 @@ fn render() -> Observed {
             let params = ladder.params();
             driver.apply(
                 &params,
-                &flint_music::GradientOffsets::default(),
+                &flint_rhythm::GradientOffsets::default(),
                 pos.seconds,
                 params.ramp_ms,
                 Some((pos.sample, 250.0)),

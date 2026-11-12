@@ -19,12 +19,12 @@
 //! a chart — the milestone evidence and `--synthetic` both use them.
 
 use crate::chart_eval::{ChannelValue, ChartEval};
-use crate::conductor::Conductor;
 use crate::input_stream::{
     InputEvent, LeanSample, PressureSample, PressureSide, PulseEvent, SwaySample,
 };
-use crate::tempo::ms_to_samples;
 use flint_core::{vfs, FlintError, Result};
+use flint_music::conductor::Conductor;
+use flint_music::tempo::ms_to_samples;
 use std::io::{BufRead, Write};
 use std::path::Path;
 
@@ -123,7 +123,7 @@ pub struct SessionWriter {
 
 impl SessionWriter {
     pub fn create(path: &Path, header: &SessionHeader) -> Result<Self> {
-        if header.schema != crate::SCHEMA_VERSION {
+        if header.schema != flint_music::SCHEMA_VERSION {
             return Err(FlintError::ValidationError(format!(
                 "session schema {} not writable by this build",
                 header.schema
@@ -268,7 +268,7 @@ fn read_session_inner(path: &Path) -> Result<(SessionHeader, Vec<(i64, InputEven
     let header_json: serde_json::Value = serde_json::from_str(&header_line)
         .map_err(|e| FlintError::ParseError(format!("session header: {e}")))?;
     let header = SessionHeader::from_json(&header_json)?;
-    if header.schema != crate::SCHEMA_VERSION {
+    if header.schema != flint_music::SCHEMA_VERSION {
         return Err(FlintError::ValidationError(format!(
             "session schema {} unknown to this build",
             header.schema
@@ -504,7 +504,7 @@ pub fn synthesize(
 mod tests {
     use super::*;
     use crate::chart::Chart;
-    use crate::manifest::SuiteManifest;
+    use flint_music::manifest::SuiteManifest;
 
     fn setup() -> (ChartEval, Conductor) {
         let manifest: SuiteManifest = SuiteManifest::parse(

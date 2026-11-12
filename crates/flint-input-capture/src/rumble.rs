@@ -259,14 +259,14 @@ impl RumbleEngine {
 }
 
 /// The standard sink adapter for [`crate::spawn_with_rumble`] callers: maps
-/// flint-music's [`flint_music::HapticEvent`]s (already raw-clock addressed
+/// flint-rhythm's [`flint_rhythm::HapticEvent`]s (already raw-clock addressed
 /// by `ChartSession`) onto the rumble channel. Send failures are ignored —
 /// the capture thread being gone means the session is tearing down, and its
 /// exit path has already silenced the motors.
 pub fn haptic_sink(
     tx: std::sync::mpsc::Sender<RumbleCommand>,
-) -> Box<dyn FnMut(flint_music::HapticEvent) + Send> {
-    use flint_music::HapticEvent;
+) -> Box<dyn FnMut(flint_rhythm::HapticEvent) + Send> {
+    use flint_rhythm::HapticEvent;
     Box::new(move |ev| {
         let _ = match ev {
             HapticEvent::Burst {

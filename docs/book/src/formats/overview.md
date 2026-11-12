@@ -570,11 +570,11 @@ Binding types: `key`, `mouse_button`, `mouse_delta`, `mouse_wheel`, `gamepad_but
 
 ## Music Session Files
 
-The rhythm system ([Music Sessions](../concepts/music-sessions.md)) has its own family of files. All carry `schema_version = 0`. The full grammar lives with the `flint-music` crate; this is the map.
+The rhythm system ([Music Sessions](../concepts/music-sessions.md)) has its own family of files. All carry `schema_version = 0`. The full grammar lives with the `flint-music` crate (suites, event scripts) and `flint-rhythm` (charts, sessions, the rhythm contract); this is the map.
 
 | File | Purpose |
 |------|---------|
-| `*.suite.toml` | Suite manifest: `[suite]` id and title, `[audio] sample_rate`, `[[tempo]]` anchors (`sample`, `bpm`, `time_signature`), `[[sections]]` (`name`, `start_sample`, `pulse_window_ms`), `[reintegration]` (`re_entry_sections`, `lead_bus`, `reassembly_bars`), and one `[buses.<name>]` per fixed bus (`foundation`, `harmony`, `world_voice`, `home_theme`, `child_motif`, `texture`) with `file` or `silent = true`. Optional `[[degraded_alternates]]`. Checked by `flint validate-suite`. |
+| `*.suite.toml` | Suite manifest: `[suite]` id and title, `[audio] sample_rate`, `[[tempo]]` anchors (`sample`, `bpm`, `time_signature`), `[[sections]]` (`name`, `start_sample`, and for a rhythm suite `pulse_window_ms`), and one `[buses.<name>]` per bus, named by the suite and mixed in the order it declares them, with `file` or `silent = true`. Optional `[[degraded_alternates]]`. A rhythm suite adds `[reintegration]` (`re_entry_sections`, `lead_bus`, `reassembly_bars`) and keeps exactly the six buses `foundation`, `harmony`, `world_voice`, `home_theme`, `child_motif`, `texture`. Checked by `flint validate-suite`. |
 | `*.chart.toml` | Beatmap: `suite` id, `[[curves]]` (`channel` ∈ `lean`, `sway`, `pressure_l`, `pressure_r`; `beat`; `value`; `interp` ∈ `linear`, `hold`, `smooth`), `[[pulses]]` (`beat`, `kind` ∈ `pulse`, `press`, `flick`, optional `window_ms`, `strength`, `direction`), `[[cues]]` (`beat`, `cue`, optional `params`), `[[intensity]]` (`beat`, `value`). |
 | `*.events.toml` | Offline event script for `flint render-suite`: `[[events]]` with `at = "bar:N"` or `"beat:N"`, `bus`, `action` ∈ `set_gain` (`db`, `ramp_ms`), `set_lpf` (`hz`, `ramp_ms`), `set_detune` (`semitones`, `ramp_ms`), `marker` (`label`). |
 | `*.session.jsonl` | Recorded input session (`flint play-chart --record`): one JSON object per line, a `header` (suite, chart, sample rate, latency and calibration offsets, config snapshots) followed by `lean` (`sample`, `x`, `y`) and `pulse` (`sample`, `kind`) events stamped in suite samples. Replayed by `flint replay-chart --session`. |

@@ -1,0 +1,22 @@
+[package]
+name = "flint-rhythm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The rhythm-game layer over flint-music: beatmap charts, judgment, coherence, the degradation ladder, reintegration seams, replay and haptics"
+
+[features]
+default = ["device"]
+# Realtime play-through on the sound card (flint-music's `device`). Off, a
+# live chart session fails to start as with no device; replays and offline
+# reactive renders never need it (#221).
+device = ["flint-music/device"]
+
+[dependencies]
+web-time = { workspace = true }
+flint-core = { workspace = true }
+flint-music = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+kira = { workspace = true }
+serde_json = { workspace = true }

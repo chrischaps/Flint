@@ -6,27 +6,25 @@
 //! and the coherence trace come from one invocation (coherence→mixer
 //! coupling is Phase 3; the render here is the plain suite).
 //!
-//! The loop body is [`flint_music::ChartCore`] — the same code the live
+//! The loop body is [`flint_rhythm::ChartCore`] — the same code the live
 //! harness runs (ADR 0016); this command is the offline front end.
 
 use anyhow::{bail, Context, Result};
-use flint_music::chart_eval::ChartEval;
-use flint_music::chart_session::{
+use flint_music::conductor::Conductor;
+use flint_music::session::FileStems;
+use flint_music::{validate_manifest_assets, EventScript, OfflineRenderConfig, SuiteManifest};
+use flint_rhythm::chart_eval::ChartEval;
+use flint_rhythm::chart_session::{
     lean_mode_name, parse_lean_mode, resolve_coherence_config, ChartCore, CoherenceSource,
 };
-use flint_music::coherence::Coherence;
-use flint_music::conductor::Conductor;
-use flint_music::gradient::{GradientConfig, GradientDriver};
-use flint_music::judgment::{JsonlWriter, Judge, JudgmentConfig};
-use flint_music::ladder::{Ladder, LadderConfig};
-use flint_music::reintegration::{ReintegrationEvent, Reintegrator};
-use flint_music::replay::{synthesize, SyntheticProfile};
-use flint_music::session::FileStems;
-use flint_music::status::coherence_meter;
-use flint_music::{
-    validate_chart, validate_manifest, validate_manifest_assets, Chart, EventScript,
-    OfflineRenderConfig, SuiteManifest,
-};
+use flint_rhythm::coherence::Coherence;
+use flint_rhythm::gradient::{GradientConfig, GradientDriver};
+use flint_rhythm::judgment::{JsonlWriter, Judge, JudgmentConfig};
+use flint_rhythm::ladder::{Ladder, LadderConfig};
+use flint_rhythm::reintegration::{ReintegrationEvent, Reintegrator};
+use flint_rhythm::replay::{synthesize, SyntheticProfile};
+use flint_rhythm::status::coherence_meter;
+use flint_rhythm::{validate_chart, validate_manifest, Chart};
 use std::path::{Path, PathBuf};
 
 #[derive(clap::Args)]
@@ -112,7 +110,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     // them through its own timeline (`synthetic_stamps`).
     let (pairs, session_header, synthetic_stamps) = match (&args.session, &args.synthetic) {
         (Some(path), None) => {
-            let (header, pairs) = flint_music::replay::read_session_raw(Path::new(path))
+            let (header, pairs) = flint_rhythm::replay::read_session_raw(Path::new(path))
                 .with_context(|| format!("reading session file {path}"))?;
             if header.suite != manifest.id {
                 bail!(
@@ -139,11 +137,11 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         }
         _ => bail!("exactly one of --session or --synthetic is required"),
     };
-    let events: Vec<flint_music::input_stream::InputEvent> =
+    let events: Vec<flint_rhythm::input_stream::InputEvent> =
         pairs.iter().map(|(_, ev)| ev.clone()).collect();
 
     if let Some(path) = &args.save_session {
-        let header = flint_music::replay::SessionHeader {
+        let header = flint_rhythm::replay::SessionHeader {
             schema: 0,
             suite: manifest.id.clone(),
             chart: args.common.chart.clone(),
@@ -161,7 +159,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
                 .as_ref()
                 .map(|p| serde_json::json!({ "synthetic": p })),
         };
-        let mut w = flint_music::replay::SessionWriter::create(Path::new(path), &header)
+        let mut w = flint_rhythm::replay::SessionWriter::create(Path::new(path), &header)
             .with_context(|| format!("creating session file {path}"))?;
         for ev in &events {
             w.write(ev, manifest.sample_rate)
@@ -243,7 +241,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         .with_context(|| format!("creating judgment log {}", out_path.display()))?;
 
     // --- ladder: with --render, its presence switches to the reactive loop ----
-    let default_ladder_path = base_dir.join(flint_music::chart_session::DEFAULT_LADDER_CONFIG);
+    let default_ladder_path = base_dir.join(flint_rhythm::chart_session::DEFAULT_LADDER_CONFIG);
     let (ladder_cfg, ladder_path) = if let Some(path) = &args.ladder {
         let cfg = LadderConfig::load(Path::new(path))
             .with_context(|| format!("loading ladder config {path}"))?;
@@ -276,7 +274,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     // Gradient config (ADR 0024): explicit path must load, the default file
     // is optional, absent = inert built-ins (byte-identical to pre-gradient
     // renders). Applied only inside the reactive loop.
-    let default_gradient_path = base_dir.join(flint_music::chart_session::DEFAULT_GRADIENT_CONFIG);
+    let default_gradient_path = base_dir.join(flint_rhythm::chart_session::DEFAULT_GRADIENT_CONFIG);
     let (gradient_cfg, gradient_path) = if let Some(path) = &args.gradient {
         let cfg = GradientConfig::load(Path::new(path))
             .with_context(|| format!("loading gradient config {path}"))?;
@@ -306,7 +304,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         coherence,
         log,
         Ladder::new(core_ladder),
-        Reintegrator::new(manifest.reintegration.clone()),
+        Reintegrator::for_manifest(&manifest)?,
         Conductor::new(&manifest, None),
         config_path,
         ladder_path,
@@ -315,7 +313,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         visual_eval,
     );
     core.sync_seam_params();
-    core.set_cues(flint_music::chart_session::resolve_cues(
+    core.set_cues(flint_rhythm::chart_session::resolve_cues(
         &chart,
         &Conductor::new(&manifest, None),
     ));
@@ -407,7 +405,7 @@ fn run_reactive(
     base_dir: &Path,
     wav: &str,
     mut core: ChartCore,
-    pairs: &[(i64, flint_music::input_stream::InputEvent)],
+    pairs: &[(i64, flint_rhythm::input_stream::InputEvent)],
     synthetic_stamps: bool,
     out_path: &Path,
 ) -> Result<()> {

@@ -6,13 +6,13 @@
 
 use anyhow::{bail, Context, Result};
 use flint_music::clock_bridge::ClockBridge;
-use flint_music::input_stream::InputEvent;
 use flint_music::session::RealtimePlayer;
 use flint_music::{validate_manifest, validate_manifest_assets, SuiteManifest};
+use flint_rhythm::input_stream::InputEvent;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use flint_music::chart_session::latest_latency_ms;
+use flint_music::latency::latest_latency_ms;
 
 #[derive(clap::Args)]
 pub struct CalibrateArgs {

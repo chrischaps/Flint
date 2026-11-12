@@ -19,32 +19,22 @@ time_signature = [4, 4]
 [[sections]]
 name = "01_01_plain"
 start_sample = 0
-pulse_window_ms = 100
 
 [[sections]]
 name = "05_05_mask"
 start_sample = 1612800
-pulse_window_ms = 100
 
 [[sections]]
 name = "06_06_story"
 start_sample = 1958400
-pulse_window_ms = 100
 
 [[sections]]
 name = "11_10_looks"
 start_sample = 3686400
-pulse_window_ms = 100
 
 [[sections]]
 name = "tail"
 start_sample = 5529600
-pulse_window_ms = 100
-
-[reintegration]
-re_entry_sections = ["01_01_plain"]
-lead_bus = "home_theme"
-reassembly_bars = 2
 
 [buses.foundation]
 file = "stems/master/foundation.wav"

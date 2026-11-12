@@ -9,7 +9,8 @@
 //! - sections: arrival (start 0, 90 ms) / call (start 1_920_000, 70 ms).
 //! - pulses at beats 4, 6 (120 ms override), 8, 10 (press), 12 (flick).
 
-use flint_music::{ChannelValue, Chart, ChartEval, Conductor, SuiteManifest};
+use flint_music::{Conductor, SuiteManifest};
+use flint_rhythm::{ChannelValue, Chart, ChartEval};
 use std::path::Path;
 
 mod common;

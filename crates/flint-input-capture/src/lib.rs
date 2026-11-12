@@ -6,7 +6,7 @@
 //! via the shared [`ClockBridge`] with a **compensated suite sample**
 //! (bridged clock sample minus the caller's total judgment offset — output
 //! latency plus tap calibration), then sent over an `mpsc` channel as
-//! flint-music [`InputEvent`]s. Downstream code never touches gilrs; the
+//! flint-rhythm [`InputEvent`]s. Downstream code never touches gilrs; the
 //! replay path constructs the identical stream from a file.
 //!
 //! Verb mapping (physical → chart verb space) is a [`VerbMap`] profile:
@@ -48,7 +48,7 @@ pub use flint_runtime::pad;
 pub mod rumble;
 
 use flint_music::clock_bridge::ClockBridge;
-use flint_music::input_stream::{
+use flint_rhythm::input_stream::{
     InputEvent, LeanSample, PressureSample, PressureSide, PulseEvent, SwaySample,
 };
 use pad::{Axis, Button, EventType, Gilrs};
@@ -250,7 +250,7 @@ pub fn spawn_with_rumble(
 /// sink/prefix (CLI bare, player `[music] `-prefixed). Lines never embed
 /// newlines so prefixes apply cleanly.
 pub fn attach_session_input(
-    session: &mut flint_music::chart_session::ChartSession,
+    session: &mut flint_rhythm::chart_session::ChartSession,
     verb_map: VerbMap,
     offset_samples: i64,
 ) -> Vec<String> {

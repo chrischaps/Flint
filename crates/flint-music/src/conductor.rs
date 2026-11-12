@@ -216,20 +216,17 @@ mod tests {
                 Section {
                     name: "one".into(),
                     start_sample: 0,
-                    pulse_window_ms: 120.0,
+                    pulse_window_ms: Some(120.0),
                 },
                 Section {
                     name: "two".into(),
                     start_sample: 960_000,
-                    pulse_window_ms: 100.0,
+                    pulse_window_ms: Some(100.0),
                 },
             ],
-            reintegration: crate::manifest::Reintegration {
-                re_entry_sections: vec!["one".into()],
-                lead_bus: "home_theme".into(),
-                reassembly_bars: 2,
-            },
+            reintegration: None,
             buses: Default::default(),
+            bus_order: vec![],
             degraded_alternates: vec![],
         }
     }

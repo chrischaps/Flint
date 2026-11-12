@@ -21,12 +21,15 @@ flint validate-suite music/prototype.suite.toml --chart music/prototype.chart.to
 | `--chart <path>` | (none) | Chart to cross-check: channels, pulse kinds, interpolation modes, beats inside the suite |
 | `--no-assets` | `false` | Skip the asset pass (stem file existence, sample rate, duration) |
 | `--base-dir <path>` | cwd | Manifest path root |
+| `--rhythm` | `false` | Hold the suite to the rhythm contract even without `[reintegration]` or a chart |
+
+A suite that only plays music (any buses, named as it likes, no `[reintegration]`) is checked against the general contract. One that declares `[reintegration]`, or is given `--chart` or `--rhythm`, is also held to the rhythm contract: the six buses, the seam and a judgment window per section ([The rhythm contract](../concepts/music-sessions.md#the-rhythm-contract)). The `OK` line says which (`, rhythm contract`) and counts the buses.
 
 Validation is shape-tolerant: unknown channels or pulse kinds parse fine and are reported here rather than rejected at load.
 
 ## `flint play-suite`
 
-Play a validated suite's stems on the six fixed buses, sample-locked, with no chart and no judgment. This is the "does the music itself work" check.
+Play a validated suite's stems on its buses, sample-locked, with no chart and no judgment. This is the "does the music itself work" check.
 
 ```bash
 flint play-suite music/prototype.suite.toml --bars 8

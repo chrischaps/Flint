@@ -11,11 +11,11 @@
 
 use flint_music::analysis::max_step;
 use flint_music::event_script::EventScript;
-use flint_music::gradient::{GradientConfig, GradientDriver};
-use flint_music::ladder::{LadderDriver, LadderParams};
 use flint_music::mixer::LPF_OPEN_HZ;
 use flint_music::offline::{render_offline_with, OfflineRenderConfig};
-use flint_music::GradientOffsets;
+use flint_rhythm::gradient::{GradientConfig, GradientDriver};
+use flint_rhythm::ladder::{LadderDriver, LadderParams};
+use flint_rhythm::GradientOffsets;
 
 mod common;
 use common::{tempo_change_manifest, SineStems, BAR, CHUNK};

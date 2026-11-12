@@ -76,7 +76,7 @@ Flint uses an **edit -> validate -> play** loop:
 
 ## Architecture
 
-28-crate Cargo workspace (plus `tools/arch-analyzer`, a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph and the book's crate table, checked in CI; neither is a default member):
+29-crate Cargo workspace (plus `tools/arch-analyzer`, a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph and the book's crate table, checked in CI; neither is a default member):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, serve, preview, play, check,
@@ -88,7 +88,8 @@ flint-cli           CLI binary (clap). Commands: init, entity, scene, query, sch
   └── flint-procgen-ai AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
 flint-android       Android entry point (NativeActivity, APK asset extraction)
 flint-player        Standalone player (game loop, physics, audio, animation, scripting, egui HUD)
-  ├── flint-music    Rhythm sessions: suite manifests, charts, tempo maps, ladder/seam/reintegration, replay, offline render
+  ├── flint-rhythm   The rhythm layer: charts, judgment, coherence, ladder/seam/reintegration, replay, haptics
+  ├── flint-music    Music: suite manifests with manifest-named buses, tempo maps, conductor, scheduler, offline render
   ├── flint-input-capture 1 kHz gamepad capture thread (gilrs XInput) stamped against the audio clock; verb maps
   ├── flint-debug-ui DebugPanel trait + F3/F4 panel roster (Rendering & Effects, ocean, sky, camera, grass, particles, Living Props...); shared `widgets` (drag helpers, CurveEditor, GradientEditor); optional via debug-hud
   ├── flint-script   Rhai scripting with hot-reload

@@ -30,7 +30,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-use flint_music::chart_session::{ChartSession, Tick};
+use flint_rhythm::chart_session::{ChartSession, Tick};
 
 pub fn run_windowed(session: ChartSession) -> Result<()> {
     let event_loop = EventLoop::new().context("creating event loop")?;
@@ -260,7 +260,7 @@ impl Gfx {
 
     fn render(
         &mut self,
-        frame: &flint_music::chart_session::VisualFrame,
+        frame: &flint_rhythm::chart_session::VisualFrame,
         time_s: f32,
     ) -> Result<()> {
         let aspect = self.ctx.aspect_ratio();

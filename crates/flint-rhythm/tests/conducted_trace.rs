@@ -15,16 +15,16 @@
 //! never the game repo's fixtures. The committed real-session replay
 //! belongs to F12's `scene_milestone4`.
 
-use flint_music::chart_eval::ChartEval;
-use flint_music::coherence::{Coherence, CoherenceConfig};
 use flint_music::conductor::Conductor;
 use flint_music::event_script::EventScript;
-use flint_music::judgment::{JsonlWriter, Judge, JudgmentConfig};
-use flint_music::ladder::{Ladder, LadderConfig};
 use flint_music::offline::{render_offline_with, OfflineRenderConfig};
-use flint_music::reintegration::{ReintegrationEvent, Reintegrator};
-use flint_music::replay::{synthesize, SyntheticProfile};
-use flint_music::{Chart, ChartCore, ConductedFrame, PulseKind};
+use flint_rhythm::chart_eval::ChartEval;
+use flint_rhythm::coherence::{Coherence, CoherenceConfig};
+use flint_rhythm::judgment::{JsonlWriter, Judge, JudgmentConfig};
+use flint_rhythm::ladder::{Ladder, LadderConfig};
+use flint_rhythm::reintegration::{ReintegrationEvent, Reintegrator};
+use flint_rhythm::replay::{synthesize, SyntheticProfile};
+use flint_rhythm::{Chart, ChartCore, ConductedFrame, PulseKind};
 use std::path::PathBuf;
 
 mod common;
@@ -137,11 +137,11 @@ fn run(log_tag: &str) -> TraceRun {
         Coherence::new(CoherenceConfig::default()),
         log,
         Ladder::new(LadderConfig::default()),
-        Reintegrator::new(manifest.reintegration.clone()),
+        Reintegrator::for_manifest(&manifest).unwrap(),
         Conductor::new(&manifest, None),
         PathBuf::from("unused-coherence.toml"),
         PathBuf::from("unused-ladder.toml"),
-        flint_music::GradientDriver::new(flint_music::GradientConfig::default()),
+        flint_rhythm::GradientDriver::new(flint_rhythm::GradientConfig::default()),
         PathBuf::from("unused-gradient.toml"),
         visual_eval,
     );

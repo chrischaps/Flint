@@ -14,9 +14,9 @@
 //! goal of the feel prototype; the raw judgment logs exist precisely so
 //! alternatives can be evaluated offline.
 
-use crate::config_toml::{self, VersionPolicy};
 use crate::judgment::JudgmentRecord;
 use flint_core::{vfs, FlintError, Result};
+use flint_music::config_toml::{self, VersionPolicy};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq)]

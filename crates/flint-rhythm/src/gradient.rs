@@ -20,10 +20,10 @@
 //! ([`crate::ladder::LadderDriver::apply`]) — one shadow state, no sibling
 //! fights. Never through Rhai: scripts are read-only toward audio by design.
 
-use crate::config_toml::{self, VersionPolicy};
 use crate::ladder::DEGRADABLE_BUSES;
 use flint_core::toml_util::toml_f64;
 use flint_core::{vfs, FlintError, Result};
+use flint_music::config_toml::{self, VersionPolicy};
 use std::collections::BTreeMap;
 use std::path::Path;
 

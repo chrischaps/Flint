@@ -1,9 +1,10 @@
-//! The six-bus stem mixer: runtime gain, low-pass, and detune per bus.
+//! The stem mixer: runtime gain, low-pass, and detune per bus.
 //!
-//! Every bus in [`crate::BUSES`] gets a kira sub-track and filter — including
-//! silent ones, which simply have no sound playing. Silent buses stay
-//! addressable so later phases (reintegration entries, degraded alternates)
-//! can bring material in without rebuilding the mixer.
+//! Every bus the manifest declares gets a kira sub-track and filter, in the
+//! order it declares them, including silent ones, which simply have no sound
+//! playing. Silent buses stay addressable so a layer over this one (the
+//! rhythm layer's reintegration entries, degraded alternates) can bring
+//! material in without rebuilding the mixer.
 //!
 //! kira handles are write-only, so each bus keeps shadow state of the last
 //! *commanded* values for introspection. During a tween the audible value lags
@@ -46,7 +47,7 @@ impl Default for BusState {
 }
 
 /// Volume floor for the muted half of a bus↔alternate crossfade — matches
-/// the ladder's [`crate::ladder::DROP_DB`] silence convention.
+/// the rhythm layer's ladder silence convention (`flint_rhythm::ladder::DROP_DB`).
 const ALT_MUTED_DB: f32 = -80.0;
 
 /// Linear crossfade weight → dB (floor at [`ALT_MUTED_DB`]).
@@ -257,7 +258,7 @@ impl StemBus {
     }
 }
 
-/// All six buses, in canonical [`crate::BUSES`] order.
+/// Every bus of the suite, in the manifest's declared order.
 pub struct BusMixer {
     buses: Vec<StemBus>,
 }
