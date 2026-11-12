@@ -12,16 +12,41 @@
 //! is one. `FLINT_BLESS=1 cargo test -p flint-cli --test render_goldens`
 //! rewrites the goldens after a deliberate change; look at them before
 //! committing.
+//!
+//! Each run writes its renders, diffs, `report.json` and contact sheet to
+//! its own folder, `$CARGO_TARGET_TMPDIR/stylize-goldens-<pid>` (#421: two
+//! runs sharing one fixed folder read each other's half-written output and
+//! failed on a tree where each passes alone). It is removed when the run
+//! passes and kept, with its path printed, when it fails.
+//! `FLINT_GOLDENS_OUT=<dir>` names the folder instead and always keeps it:
+//! CI's WARP job sets it, so its summary and artifact have one path to read.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const FLINT: &str = env!("CARGO_BIN_EXE_flint");
 
+/// Where this run's goldens output goes, and whether to keep it on a pass.
+fn goldens_out_dir() -> (PathBuf, bool) {
+    match std::env::var_os("FLINT_GOLDENS_OUT") {
+        Some(dir) if !dir.is_empty() => (PathBuf::from(dir), true),
+        _ => (run_dir("stylize-goldens"), false),
+    }
+}
+
+/// `$CARGO_TARGET_TMPDIR/<stem>-<pid>`, emptied first: a pid can come round
+/// again, and a folder kept from a failed run must not mix with this one.
+fn run_dir(stem: &str) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{stem}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
 #[test]
 fn stylize_goldens_hold() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/stylize.goldens.toml");
-    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("stylize-goldens");
+    let (out, keep) = goldens_out_dir();
+    eprintln!("goldens out-dir: {}", out.display());
     let mut cmd = Command::new(FLINT);
     cmd.arg("goldens").arg(&manifest).arg("--out-dir").arg(&out);
     if std::env::var_os("FLINT_BLESS").is_some() {
@@ -34,7 +59,14 @@ fn stylize_goldens_hold() {
         String::from_utf8_lossy(&run.stderr)
     );
     eprintln!("{text}");
-    assert!(run.status.success(), "stylize goldens drifted:\n{text}");
+    assert!(
+        run.status.success(),
+        "stylize goldens drifted:\n{text}\nrenders, diffs and index.html kept in {}",
+        out.display()
+    );
+    if !keep {
+        let _ = std::fs::remove_dir_all(&out);
+    }
 }
 
 fn help(command: &str) -> String {
@@ -128,6 +160,8 @@ fn render_suite_still_runs_a_goldens_manifest() {
 /// warning comes before any GPU work, so it holds without an adapter too.
 #[test]
 fn broken_user_style_prints_where_it_failed() {
+    let dir = run_dir("broken-style");
+    std::fs::create_dir_all(&dir).expect("make the render's folder");
     let run = Command::new(FLINT)
         .args([
             "render",
@@ -145,7 +179,7 @@ fn broken_user_style_prints_where_it_failed() {
             "broken",
             "--output",
         ])
-        .arg(Path::new(env!("CARGO_TARGET_TMPDIR")).join("broken-style.png"))
+        .arg(dir.join("broken-style.png"))
         .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
         .output()
         .expect("run flint");
@@ -156,6 +190,7 @@ fn broken_user_style_prints_where_it_failed() {
     );
     let no_gpu = err.contains("Failed to get adapter");
     assert!(run.status.success() || no_gpu, "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

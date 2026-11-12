@@ -181,6 +181,10 @@ jobs:
       # and the goldens' numbers are the cross-adapter record
       - name: cargo test -p flint-cli --test render_goldens
         if: success() || failure()
+        # A fixed folder, kept on a pass, for the two steps below (#421: a
+        # local run gets its own stylize-goldens-<pid>, removed on a pass)
+        env:
+          FLINT_GOLDENS_OUT: ${{ github.workspace }}/target/tmp/stylize-goldens
         run: cargo test -p flint-cli --test render_goldens
 
       - name: Goldens summary
