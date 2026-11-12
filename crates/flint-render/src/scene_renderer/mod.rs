@@ -5895,7 +5895,7 @@ impl SceneRenderer {
             }
         }
         for failed in failures {
-            if !crate::stylize::is_builtin(failed.name) {
+            if !crate::stylize::is_native(failed.name) {
                 // A user style (ADR 0112) that panicked building is its
                 // author's bug, not a lost device: it stays off and says so
                 crate::stylize::custom::report_build_panic(failed.name);

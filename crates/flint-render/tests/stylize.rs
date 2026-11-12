@@ -380,6 +380,56 @@ fn a_style_registered_from_another_crate_draws_its_two_passes() {
     assert!(drawn[0].abs_diff(188) <= 1, "{:?}", &drawn[..4]);
 }
 
+fn panics_building(
+    _: &flint_render::stylize::StyleDevice,
+) -> Box<dyn flint_render::stylize::StylePass> {
+    panic!("a game's broken create (test)")
+}
+
+static BROKEN_GAME_STYLE: flint_render::stylize::StyleDescriptor =
+    flint_render::stylize::StyleDescriptor::new(
+        "utest_game_broken",
+        "Broken",
+        flint_render::stylize::StyleStage::Display,
+        panics_building,
+    );
+
+/// #419: a game style whose `create` panics is the game's bug. It is
+/// switched off in the config as set (not only in the one drawn, which the
+/// next quality change rebuilds from) and the renderer keeps drawing.
+#[test]
+fn a_game_style_that_panics_building_is_switched_off() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    flint_render::stylize::register(&BROKEN_GAME_STYLE).unwrap();
+    let mut renderer = SceneRenderer::new_headless(
+        gpu.device,
+        gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let world = FlintWorld::new();
+    let plain = gpu.frame(&mut renderer, &world);
+    let mut config = renderer.post_process_config().clone();
+    config.styles.set_enabled("utest_game_broken", true);
+    renderer.set_post_process_config(config);
+    renderer.ensure_style_resources(gpu.device);
+    assert!(!renderer
+        .post_process_config()
+        .styles
+        .is_enabled("utest_game_broken"));
+    assert!(!renderer
+        .effective_post_process_config()
+        .styles
+        .is_enabled("utest_game_broken"));
+    // Not a lost device: the frame still draws, as it did without the style
+    assert_eq!(gpu.frame(&mut renderer, &world), plain);
+}
+
 #[test]
 fn hdr_and_display_styles_chain_in_one_frame() {
     let Some(gpu) = gpu() else {
