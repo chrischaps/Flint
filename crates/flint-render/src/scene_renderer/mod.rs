@@ -5895,11 +5895,26 @@ impl SceneRenderer {
             }
         }
         for failed in failures {
-            if !crate::stylize::is_builtin(failed.name) {
+            if !crate::stylize::is_native(failed.name) {
                 // A user style (ADR 0112) that panicked building is its
                 // author's bug, not a lost device: it stays off and says so
                 crate::stylize::custom::report_build_panic(failed.name);
                 self.postprocess_config
+                    .styles
+                    .set_enabled(failed.name, false);
+                continue;
+            }
+            if crate::stylize::is_game_style(failed.name) {
+                // A game's Rust style (#419) whose `create` panicked is the
+                // game's bug too: off, said once, the device kept
+                tracing::error!(
+                    "game style '{}' panicked building its pipelines; it stays off",
+                    failed.name
+                );
+                self.postprocess_config
+                    .styles
+                    .set_enabled(failed.name, false);
+                self.authored_postprocess
                     .styles
                     .set_enabled(failed.name, false);
                 continue;

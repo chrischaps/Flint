@@ -1120,7 +1120,7 @@ Kuwahara's default is unchanged: off.
 
 ## Writing a style
 
-A style is one module in `crates/flint-render/src/stylize/` plus its name in the `register_styles!` list at the bottom of `stylize/mod.rs`. The module exports a `StyleDescriptor` called `STYLE`, built with `const` constructors (#366) so that a field added to the descriptor, a parameter or an option later gets its default in the constructor and no style has to change (the types are `#[non_exhaustive]`, so a game crate can't write a literal either):
+A style is one module in `crates/flint-render/src/stylize/` plus its name in the `register_styles!` list at the bottom of `stylize/mod.rs`. A game writes one the same way in its own crate and registers it at run time instead (#419): `flint_render::stylize::register(&STYLE)` before the first scene is read, or `PlayerExtension::styles` for a game that embeds the player ([Player Extensions](../guides/player-extensions.md#styles)). Everything below is public, so a game's style is built from the same parts; `--list-styles --json` gives it `"source": "game"`. The module exports a `StyleDescriptor` called `STYLE`, built with `const` constructors (#366) so that a field added to the descriptor, a parameter or an option later gets its default in the constructor and no style has to change (the types are `#[non_exhaustive]`, so a game crate can't write a literal either):
 
 ```rust
 pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
