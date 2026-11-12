@@ -90,28 +90,19 @@ impl PlayerApp {
         self.style_applied(applied);
     }
 
-    /// A script's change to the wooze field. A change that's no good is named and
-    /// changes nothing. A scene with no `[wooze]` table never asked for a field, so
-    /// it doesn't get one; it says so once, since a script may ask every frame.
-    fn change_wooze(
-        &mut self,
-        change: impl FnOnce(&mut flint_core::wooze::WoozeField, f64) -> Result<(), String>,
-    ) {
-        let time = self.living.wooze_time;
-        match &mut self.living.wooze {
-            Some(field) => {
-                if let Err(reason) = change(field, time) {
-                    tracing::warn!("A script's change to the wooze field: {reason}");
-                }
-            }
-            None if !self.living.wooze_missing_warned => {
-                self.living.wooze_missing_warned = true;
+    /// A wooze or living-props command in a scene with neither, which has
+    /// no living subsystem to take it: said once a run, since a script may
+    /// ask every frame.
+    fn no_living(&mut self, command: &'static str) {
+        if self.commands_warned.insert(command) {
+            if command.contains("wooze") {
                 tracing::warn!(
                     "A script tried to change the wooze field, and this scene has none: \
                      give it a [wooze] table, even an empty one, to opt in"
                 );
+            } else {
+                tracing::warn!(target: "script", "{command}: this scene has no living props");
             }
-            None => {}
         }
     }
 
@@ -510,95 +501,57 @@ impl ScriptHost for PlayerApp {
         self.script_requests.cursor_captured = Some(captured);
     }
 
-    fn set_wooze(&mut self, knobs: toml::Value, seconds: f64) {
-        self.change_wooze(|field, time| {
-            let table = table_of(&knobs)?;
-            field.set_global(table, time, seconds)
-        });
+    // The living subsystem takes these (`LivingSubsystem::command`) before
+    // they reach here; a scene without one has no field and no props.
+    fn set_wooze(&mut self, _knobs: toml::Value, _seconds: f64) {
+        self.no_living("set_wooze");
     }
 
-    fn set_wooze_zone(&mut self, name: String, fields: toml::Value, seconds: f64) {
-        self.change_wooze(|field, time| {
-            let table = table_of(&fields)?;
-            field
-                .set_zone(&name, table, time, seconds)
-                .map_err(|e| format!("zone '{name}': {e}"))
-        });
+    fn set_wooze_zone(&mut self, _name: String, _fields: toml::Value, _seconds: f64) {
+        self.no_living("set_wooze_zone");
     }
 
-    fn remove_wooze_zone(&mut self, name: String, seconds: f64) {
-        self.change_wooze(|field, time| {
-            if field.remove_zone(&name, time, seconds) {
-                Ok(())
-            } else {
-                Err(format!("there's no zone named '{name}' to remove"))
-            }
-        });
+    fn remove_wooze_zone(&mut self, _name: String, _seconds: f64) {
+        self.no_living("remove_wooze_zone");
     }
 
-    fn tune_living(&mut self, knobs: toml::Value) {
-        if let Err(problem) = self.tune_living_from_script(knobs) {
-            tracing::warn!(target: "script", "tune_living: {problem}");
-        }
+    fn tune_living(&mut self, _knobs: toml::Value) {
+        self.no_living("tune_living");
     }
 
-    fn clear_living(&mut self, species: String, keys: Vec<String>) {
-        if let Err(problem) = self.clear_living_species(&species, &keys) {
-            tracing::warn!(target: "script", "clear_living: {problem}");
-        }
+    fn clear_living(&mut self, _species: String, _keys: Vec<String>) {
+        self.no_living("clear_living");
     }
 
-    fn freeze_living(&mut self, frozen: bool) {
-        self.living.tune.frozen = frozen;
+    fn freeze_living(&mut self, _frozen: bool) {}
+
+    fn step_living(&mut self) {}
+
+    fn save_living_preset(&mut self, _name: String) {
+        self.no_living("save_living_preset");
     }
 
-    fn step_living(&mut self) {
-        PlayerApp::step_living(self);
-    }
-
-    fn save_living_preset(&mut self, name: String) {
-        match PlayerApp::save_living_preset(self, &name) {
-            Ok(path) => println!("[living] saved {}", path.display()),
-            Err(problem) => {
-                tracing::warn!(target: "script", "save_living_preset: {problem}");
-            }
-        }
-    }
-
-    fn load_living_preset(&mut self, name: String) {
-        if let Err(problem) = PlayerApp::load_living_preset(self, &name) {
-            tracing::warn!(target: "script", "load_living_preset: {problem}");
-        }
+    fn load_living_preset(&mut self, _name: String) {
+        self.no_living("load_living_preset");
     }
 
     fn commit_living(&mut self) {
-        match PlayerApp::commit_living(self) {
-            Ok(said) => println!("[living] {said}"),
-            Err(problem) => tracing::warn!(target: "script", "commit_living: {problem}"),
-        }
+        self.no_living("commit_living");
     }
 
-    fn compare_living(&mut self, a: String, b: String) {
-        if let Err(problem) = PlayerApp::compare_living(self, &a, &b) {
-            tracing::warn!(target: "script", "compare_living: {problem}");
-        }
+    fn compare_living(&mut self, _a: String, _b: String) {
+        self.no_living("compare_living");
     }
 
     fn flip_living(&mut self) {
-        if !PlayerApp::flip_living(self) {
-            tracing::warn!(target: "script", "flip_living: nothing is being compared");
-        }
+        self.no_living("flip_living");
     }
 
-    fn split_living(&mut self, split: bool) {
-        if !PlayerApp::split_living(self, split) {
-            tracing::warn!(target: "script", "split_living: nothing is being compared");
-        }
+    fn split_living(&mut self, _split: bool) {
+        self.no_living("split_living");
     }
 
-    fn stop_comparing_living(&mut self) {
-        PlayerApp::stop_comparing_living(self);
-    }
+    fn stop_comparing_living(&mut self) {}
 
     fn load_scene(&mut self, path: String) {
         if self.transition_phase.is_idle() {
@@ -712,7 +665,7 @@ pub fn apply_camera_overrides(camera: &mut flint_render::Camera, cam: &CameraOve
     }
 }
 
-fn table_of(value: &toml::Value) -> Result<&toml::Table, String> {
+pub(super) fn table_of(value: &toml::Value) -> Result<&toml::Table, String> {
     value
         .as_table()
         .ok_or_else(|| format!("{value} isn't a map of knobs"))

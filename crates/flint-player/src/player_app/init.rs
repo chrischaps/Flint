@@ -93,8 +93,8 @@ impl PlayerApp {
             hud: Default::default(),
             assets: AssetSources::from_working_dir(),
             focus: Default::default(),
-            living: Default::default(),
             script_requests: Default::default(),
+            commands_warned: Default::default(),
             post: Default::default(),
             audio_vfs_generation: flint_core::vfs::generation(),
             capture: CaptureConfig::default(),
@@ -230,8 +230,8 @@ impl PlayerApp {
         }
         self.set_scene_post_process(settled.post_process.clone());
         let living_tables = flint_procgen::LivingTables::or_warn(&settled);
-        self.living.def = living_tables.living;
-        self.living.wooze_def = living_tables.wooze;
+        self.scene.living = living_tables.living;
+        self.scene.wooze = living_tables.wooze;
         self.scene.tables = scene_file.scene_tables();
     }
 

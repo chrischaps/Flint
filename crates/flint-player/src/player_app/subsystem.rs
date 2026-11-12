@@ -20,7 +20,9 @@
 //!
 //! **Lifetimes.** A subsystem lasts for the run (the expression feed, which
 //! the host hands over) or for one scene (shallow wooze). The scene ones are
-//! built when a scene is entered, by the builders in [`FOR_SCENE`], each of
+//! built when a scene is entered, by the `for_scene` builders of the files in
+//! `player_app/subsystems/` (one file a subsystem, listed by `build.rs`, so
+//! adding one edits no other file), each of
 //! which looks at the scene and makes its subsystem only if the scene uses
 //! it, and they are dropped when the scene unloads. Nothing of one scene's
 //! carries into the next.
@@ -31,9 +33,10 @@
 //! declared before `audio` in `PlayerApp`, so whatever one holds of the audio
 //! engine goes before the engine (ADR 0017).
 
+use super::{LaunchOptions, SceneSettings};
 use flint_core::project::Project;
-use flint_core::wooze::WoozeField;
 use flint_ecs::FlintWorld;
+use flint_procgen::ProcGenResolver;
 use flint_render::{Camera, SceneRenderer};
 use flint_runtime::{GameClock, InputState, StateConfig};
 use flint_script::context::ScriptCommand;
@@ -91,30 +94,31 @@ impl Stage {
     ];
 }
 
-// The contexts lend what the clients so far and the next ones (shallow wooze,
-// living props: #724's later steps) need; until those land, some of it is
-// unread.
-
 /// What a subsystem may touch while a scene comes up or goes down.
 #[allow(dead_code)]
 pub(crate) struct SceneCtx<'a> {
     pub world: &'a mut FlintWorld,
     pub scene_path: &'a str,
     /// The scene file's top-level tables as written (`[living]`, `[wooze]`,
-    /// a game's own): what a subsystem reads its settings from. The
-    /// `SceneFile` itself is gone by the time a scene is entered;
-    /// `apply_scene_settings` kept these.
+    /// a game's own). The `SceneFile` itself is gone by the time a scene is
+    /// entered; `apply_scene_settings` kept these, and `scene` what it read.
     pub tables: &'a toml::Table,
+    /// What the scene's file says, as `apply_scene_settings` read it (with a
+    /// `[wooze]` preset filled in, for one).
+    pub scene: &'a SceneSettings,
+    /// What the host asked for. A subsystem may take what is its own: the
+    /// comparison `--compare` asked for, kept across scenes.
+    pub launch: &'a mut LaunchOptions,
     pub project: &'a Project,
     pub script: &'a mut ScriptSystem,
+    /// The procgen resolver, which holds the scene's living props.
+    pub resolver: &'a mut ProcGenResolver,
     /// `None` in a headless test.
     pub renderer: Option<&'a mut SceneRenderer>,
-    /// The scene's wooze field, made from its `[wooze]` table; `None` without
-    /// one. Living props own it (`LivingState`) until they are a subsystem.
-    pub wooze: Option<&'a WoozeField>,
 }
 
-/// What a subsystem may touch at a stage of the frame.
+/// What a subsystem may touch at a stage of the frame, and at a script
+/// command, a key or a click.
 #[allow(dead_code)]
 pub(crate) struct StageCtx<'a> {
     pub world: &'a mut FlintWorld,
@@ -125,26 +129,68 @@ pub(crate) struct StageCtx<'a> {
     pub camera: &'a Camera,
     /// Which systems the game state lets run this frame. `None` at
     /// `Stage::Input`, which runs before the frame reads it (a transition
-    /// may still change the state that frame).
+    /// may still change the state that frame), and outside a stage.
     pub policy: Option<&'a StateConfig>,
     /// `None` in a headless test.
     pub renderer: Option<&'a mut SceneRenderer>,
-    /// The wooze field where its clock stands, with the living clock's step
-    /// this frame. Lent at `Stage::Procgen` only, once living props have
-    /// moved the clock on; `None` elsewhere and in a scene with no field.
-    pub wooze: Option<WoozeNow<'a>>,
+    /// The device and queue, when there is a window.
+    pub gpu: Option<(&'a wgpu::Device, &'a wgpu::Queue)>,
+    /// The procgen resolver, which holds the scene's living props and makes
+    /// their poses on its frame budget.
+    pub resolver: &'a mut ProcGenResolver,
+    pub project: &'a Project,
+    pub scene_path: &'a str,
+    /// Whether the scene file may be written (#364).
+    pub scene_file_writable: bool,
+    /// egui's points per pixel, for a pointer in window pixels.
+    pub pixels_per_point: f32,
+    pub cursor_captured: bool,
+    /// The F3/F4 panels, for a subsystem that has one.
+    #[cfg(feature = "debug-hud")]
+    pub panels: &'a mut Vec<Box<dyn flint_debug_ui::DebugPanel>>,
 }
 
-/// The wooze field as living props left it this frame: what shallow wooze and
-/// woozy grass read, on the same clock (#215, #252).
-#[derive(Clone, Copy)]
-pub(crate) struct WoozeNow<'a> {
-    pub field: &'a WoozeField,
-    /// Seconds on the field's own clock
-    pub time: f64,
-    /// This frame's step of that clock: 0 while animation is paused or the
-    /// grove is frozen
-    pub dt: f64,
+/// A key the debug keys hear (a real press or a scripted one).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct KeyPress {
+    pub code: KeyCode,
+    pub shift: bool,
+}
+
+/// Input a subsystem may take before the game and the player see it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlayerInput {
+    /// A mouse button, real or scripted, before egui's own use of it.
+    Click {
+        state: winit::event::ElementState,
+        button: winit::event::MouseButton,
+    },
+    /// A real Escape, before it releases the cursor or quits.
+    Escape,
+}
+
+/// What a subsystem may touch after the frame's scene is encoded and before
+/// the HUD: a second look at the scene drawn over part of the frame (the
+/// Living Props A/B split, #238).
+pub(crate) struct EncodeCtx<'a> {
+    pub encoder: &'a mut wgpu::CommandEncoder,
+    pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
+    /// The frame's texture, and its size
+    pub output: &'a wgpu::Texture,
+    pub depth_view: &'a wgpu::TextureView,
+    /// The scene's and the HUD's formats of the frame
+    pub formats: (wgpu::TextureFormat, wgpu::TextureFormat),
+    pub renderer: &'a mut SceneRenderer,
+    pub world: &'a FlintWorld,
+    pub camera: &'a Camera,
+    pub resolver: &'a mut ProcGenResolver,
+}
+
+/// What a subsystem may read for the `--exit-after` report.
+pub(crate) struct ReportCtx<'a> {
+    pub resolver: &'a ProcGenResolver,
+    pub renderer: Option<&'a SceneRenderer>,
 }
 
 /// How long a subsystem lasts.
@@ -152,18 +198,19 @@ pub(crate) struct WoozeNow<'a> {
 pub(crate) enum Lasts {
     /// The whole run: the host made it (the expression feed).
     Run,
-    /// One scene: built by its `FOR_SCENE` builder when a scene that uses it
+    /// One scene: built by its `for_scene` builder when a scene that uses it
     /// is entered, dropped when that scene unloads.
     Scene,
 }
 
-/// The builders of scene subsystems, in the order they run. Each looks at the
-/// scene being entered and makes its subsystem only if the scene uses it.
-pub(crate) const FOR_SCENE: &[BuildForScene] =
-    &[super::shallow_wooze::ShallowWoozeSubsystem::for_scene];
+// The scene subsystems' modules, one a file of `player_app/subsystems/`, and
+// `for_scene_builders()`, their builders in file-name order (build.rs). Each
+// builder looks at the scene being entered and makes its subsystem only if
+// the scene uses it.
+include!(concat!(env!("OUT_DIR"), "/subsystems.rs"));
 
 /// A scene subsystem's builder: its subsystem, if the scene uses it.
-pub(crate) type BuildForScene = fn(&SceneCtx) -> Option<Box<dyn Subsystem>>;
+pub(crate) type BuildForScene = fn(&mut SceneCtx) -> Option<Box<dyn Subsystem>>;
 
 /// What a subsystem may touch before the frame is encoded.
 #[allow(dead_code)]
@@ -220,15 +267,27 @@ pub(crate) trait Subsystem: Any {
 
     /// A debug key (a real press or a scripted one). Return `true` to take
     /// it from the player's own debug keys; the game still sees the key.
-    fn on_key(&mut self, _key: KeyCode) -> bool {
+    fn on_key(&mut self, _key: KeyPress, _ctx: &mut StageCtx) -> bool {
+        false
+    }
+
+    /// A click or a real Escape, before anything else hears it. Return `true`
+    /// to take it: then nothing else does.
+    fn on_input(&mut self, _input: PlayerInput, _ctx: &mut StageCtx) -> bool {
         false
     }
 
     /// Before the frame is encoded, with the renderer.
     fn pre_render(&mut self, _ctx: &mut RenderCtx) {}
 
+    /// After the frame's scene is encoded, before the HUD.
+    fn post_encode(&mut self, _ctx: &mut EncodeCtx) {}
+
+    /// The HUD's egui pass, over the game's UI and under the debug panels.
+    fn ui(&mut self, _egui: &egui::Context) {}
+
     /// The end of an `--exit-after` run.
-    fn exit_report(&self, _report: &mut ExitReport) {}
+    fn exit_report(&self, _ctx: &ReportCtx, _report: &mut ExitReport) {}
 }
 
 /// The player's subsystems, in the order they were added, torn down in the
@@ -268,15 +327,15 @@ impl Subsystems {
     }
 
     /// The subsystem of type `T`, if there is one.
+    #[cfg(test)]
     pub(crate) fn find<T: Subsystem>(&self) -> Option<&T> {
         self.list
             .iter()
             .find_map(|s| (s.as_ref() as &dyn Any).downcast_ref::<T>())
     }
 
-    /// The subsystem of type `T`, if there is one, to change. For the few
-    /// places that still reach a subsystem from outside its hooks (the
-    /// Living Props A/B and hand tuning, until living props are one).
+    /// The subsystem of type `T`, if there is one, to change (tests).
+    #[cfg(test)]
     pub(crate) fn find_mut<T: Subsystem>(&mut self) -> Option<&mut T> {
         self.list
             .iter_mut()
@@ -307,8 +366,24 @@ impl Subsystems {
         self.list.iter_mut().any(|s| s.script_command(command, ctx))
     }
 
-    pub(crate) fn on_key(&mut self, key: KeyCode) -> bool {
-        self.list.iter_mut().any(|s| s.on_key(key))
+    pub(crate) fn on_key(&mut self, key: KeyPress, ctx: &mut StageCtx) -> bool {
+        self.list.iter_mut().any(|s| s.on_key(key, ctx))
+    }
+
+    pub(crate) fn on_input(&mut self, input: PlayerInput, ctx: &mut StageCtx) -> bool {
+        self.list.iter_mut().any(|s| s.on_input(input, ctx))
+    }
+
+    pub(crate) fn post_encode(&mut self, ctx: &mut EncodeCtx) {
+        for s in &mut self.list {
+            s.post_encode(ctx);
+        }
+    }
+
+    pub(crate) fn ui(&mut self, egui: &egui::Context) {
+        for s in &mut self.list {
+            s.ui(egui);
+        }
     }
 
     pub(crate) fn pre_render(&mut self, ctx: &mut RenderCtx) {
@@ -317,9 +392,9 @@ impl Subsystems {
         }
     }
 
-    pub(crate) fn exit_report(&self, report: &mut ExitReport) {
+    pub(crate) fn exit_report(&self, ctx: &ReportCtx, report: &mut ExitReport) {
         for s in &self.list {
-            s.exit_report(report);
+            s.exit_report(ctx, report);
         }
     }
 }
@@ -333,13 +408,57 @@ impl Drop for Subsystems {
     }
 }
 
+/// A [`StageCtx`] over `$app`'s fields, borrowed one by one, so the
+/// subsystem list (another field) can be walked while it is lent.
+macro_rules! stage_ctx {
+    ($app:expr, $policy:expr) => {
+        $crate::player_app::subsystem::StageCtx {
+            world: &mut $app.world,
+            clock: &$app.clock,
+            input: &$app.input,
+            script: &mut $app.script,
+            camera: &$app.camera,
+            policy: $policy,
+            renderer: $app.scene_renderer.as_mut(),
+            gpu: $app.render_context.as_ref().map(|c| (&c.device, &c.queue)),
+            resolver: &mut $app.procgen_resolver,
+            project: &$app.project,
+            scene_path: &$app.scene_path,
+            scene_file_writable: $app.launch.scene_file_writable,
+            pixels_per_point: $app.hud.egui_ctx.pixels_per_point(),
+            cursor_captured: $app.focus.cursor_captured,
+            #[cfg(feature = "debug-hud")]
+            panels: &mut $app.debug_panels,
+        }
+    };
+}
+#[allow(unused_imports)]
+pub(crate) use stage_ctx;
+
+/// A [`SceneCtx`] over `$app`'s fields.
+macro_rules! scene_ctx {
+    ($app:expr) => {
+        $crate::player_app::subsystem::SceneCtx {
+            world: &mut $app.world,
+            scene_path: &$app.scene_path,
+            tables: &$app.scene.tables,
+            scene: &$app.scene,
+            launch: &mut $app.launch,
+            project: &$app.project,
+            script: &mut $app.script,
+            resolver: &mut $app.procgen_resolver,
+            renderer: $app.scene_renderer.as_mut(),
+        }
+    };
+}
+
 /// What the player does with its subsystems: building the list for a
 /// scene, and lending each hook its context.
 impl super::PlayerApp {
     /// The subsystems a scene being entered has: those the run brought (the
-    /// expression feed, at `Start`), less those this scene doesn't use; then
-    /// each hears `scene_loaded`. Called last in `enter_scene`, once the
-    /// scene's systems and scripts are up.
+    /// expression feed, at `Start`) and this scene's own, each only if the
+    /// scene uses it; then each hears `scene_loaded`. Called last in
+    /// `enter_scene`, once the scene's systems and scripts are up.
     pub(super) fn subsystems_enter_scene(&mut self, entry: super::scene_entry::SceneEntry) {
         if entry == super::scene_entry::SceneEntry::Start {
             // The feed belongs to the run (#518), so it outlives every scene
@@ -350,18 +469,9 @@ impl super::PlayerApp {
                     )));
             }
         }
-        let mut ctx = SceneCtx {
-            world: &mut self.world,
-            scene_path: &self.scene_path,
-            tables: &self.scene.tables,
-            project: &self.project,
-            script: &mut self.script,
-            renderer: self.scene_renderer.as_mut(),
-            wooze: self.living.wooze.as_ref(),
-        };
-        // This scene's own, each only if the scene uses it
-        for build in FOR_SCENE {
-            if let Some(subsystem) = build(&ctx) {
+        let mut ctx = scene_ctx!(self);
+        for build in for_scene_builders() {
+            if let Some(subsystem) = build(&mut ctx) {
                 self.subsystems.push(subsystem);
             }
         }
@@ -372,61 +482,23 @@ impl super::PlayerApp {
     }
 
     /// The scene is going: each subsystem hears `scene_unloading`, last
-    /// added first, before anything is cleared.
+    /// added first, before anything is cleared, and the scene's own go.
     pub(super) fn subsystems_leave_scene(&mut self) {
         if self.subsystems.is_empty() {
             return;
         }
-        let mut ctx = SceneCtx {
-            world: &mut self.world,
-            scene_path: &self.scene_path,
-            tables: &self.scene.tables,
-            project: &self.project,
-            script: &mut self.script,
-            renderer: self.scene_renderer.as_mut(),
-            wooze: self.living.wooze.as_ref(),
-        };
+        let mut ctx = scene_ctx!(self);
         self.subsystems.scene_unloading(&mut ctx);
-        // ...and the scene's own go with it
         self.subsystems.drop_scene_ones();
     }
 
     /// Run `stage` on every subsystem. Nothing to do, and no context made,
     /// when there are none.
     pub(super) fn run_stage(&mut self, stage: Stage, policy: Option<&StateConfig>) {
-        self.run_stage_with(stage, policy, None);
-    }
-
-    /// [`Self::run_stage`], lending `Stage::Procgen` the living clock's step
-    /// this frame (`living_dt`), so what reads the wooze field moves on with
-    /// living props.
-    pub(super) fn run_stage_with(
-        &mut self,
-        stage: Stage,
-        policy: Option<&StateConfig>,
-        living_dt: Option<f64>,
-    ) {
         if self.subsystems.is_empty() {
             return;
         }
-        let wooze = match (&self.living.wooze, living_dt) {
-            (Some(field), Some(dt)) => Some(WoozeNow {
-                field,
-                time: self.living.wooze_time,
-                dt,
-            }),
-            _ => None,
-        };
-        let mut ctx = StageCtx {
-            world: &mut self.world,
-            clock: &self.clock,
-            input: &self.input,
-            script: &mut self.script,
-            camera: &self.camera,
-            policy,
-            renderer: self.scene_renderer.as_mut(),
-            wooze,
-        };
+        let mut ctx = stage_ctx!(self, policy);
         self.subsystems.update(stage, &mut ctx);
     }
 
@@ -438,25 +510,38 @@ impl super::PlayerApp {
         if self.subsystems.is_empty() || commands.is_empty() {
             return commands;
         }
-        let mut ctx = StageCtx {
-            world: &mut self.world,
-            clock: &self.clock,
-            input: &self.input,
-            script: &mut self.script,
-            camera: &self.camera,
-            policy: None,
-            renderer: self.scene_renderer.as_mut(),
-            wooze: None,
-        };
+        let mut ctx = stage_ctx!(self, None);
         let subsystems = &mut self.subsystems;
         commands.retain(|command| !subsystems.script_command(command, &mut ctx));
         commands
     }
 
+    /// Whether a subsystem took a debug key.
+    pub(super) fn subsystems_take_key(&mut self, key: KeyPress) -> bool {
+        if self.subsystems.is_empty() {
+            return false;
+        }
+        let mut ctx = stage_ctx!(self, None);
+        self.subsystems.on_key(key, &mut ctx)
+    }
+
+    /// Whether a subsystem took a click or an Escape.
+    pub(super) fn subsystems_take_input(&mut self, input: PlayerInput) -> bool {
+        if self.subsystems.is_empty() {
+            return false;
+        }
+        let mut ctx = stage_ctx!(self, None);
+        self.subsystems.on_input(input, &mut ctx)
+    }
+
     /// The subsystems' lines for the `--exit-after` report.
     pub(super) fn subsystem_report(&self) -> Vec<String> {
         let mut report = ExitReport::default();
-        self.subsystems.exit_report(&mut report);
+        let ctx = ReportCtx {
+            resolver: &self.procgen_resolver,
+            renderer: self.scene_renderer.as_ref(),
+        };
+        self.subsystems.exit_report(&ctx, &mut report);
         report.lines
     }
 }

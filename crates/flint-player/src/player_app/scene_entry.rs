@@ -149,13 +149,10 @@ impl PlayerApp {
             self.assets.content_store.as_ref(),
         );
 
-        // Living props and the wooze field, their clocks started over
+        // What the scene says about living props, for the props procgen
+        // adds (their clocks and field are the living subsystem's)
         self.procgen_resolver
-            .set_living_defaults(super::living_props::defaults_of(self.living.def.as_ref()));
-        self.living.wooze = super::living_props::field_of(self.living.wooze_def.as_ref());
-        self.living.wooze_time = 0.0;
-        self.living.boil_clock = Default::default();
-        self.living.tune.for_new_scene();
+            .set_living_defaults(super::living_props::defaults_of(self.scene.living.as_ref()));
 
         // Procgen before the model loader: catalog > procgen > file (#32).
         super::procgen_assets::resolve_scene(

@@ -7,8 +7,7 @@ use super::hud_render::render_draw_commands;
 #[cfg(feature = "debug-hud")]
 use super::music_guide_panel;
 use super::music_session;
-use super::shallow_wooze::{ShallowWooze, ShallowWoozeSubsystem};
-use super::subsystem::{RenderCtx, Stage};
+use super::subsystem::{EncodeCtx, RenderCtx, Stage};
 #[cfg(feature = "debug-hud")]
 use super::timeline_panel;
 use super::PlayerApp;
@@ -95,20 +94,19 @@ impl PlayerApp {
 
         let view = context.frame_view(&output.texture);
 
-        // The shading boil's drawing (#214): the field where the viewer stands. With
-        // no field the amount is 0, and neither pass boils.
-        let boil = self
-            .living
-            .wooze
-            .as_ref()
-            .map(|field| {
-                let sample = field.sample(self.camera.position_array(), self.living.wooze_time);
-                self.living
-                    .boil_clock
-                    .frame(&sample, renderer.post_process_config().boil_on)
-            })
-            .unwrap_or_default();
-        renderer.set_boil(boil);
+        // The shading boil (#214): none, unless a subsystem draws one (the
+        // living subsystem, where the viewer stands in its wooze field)
+        renderer.set_boil(Default::default());
+        if !self.subsystems.is_empty() {
+            let mut ctx = RenderCtx {
+                renderer: &mut *renderer,
+                device: &context.device,
+                queue: &context.queue,
+                camera: &self.camera,
+                clock: &self.clock,
+            };
+            self.subsystems.pre_render(&mut ctx);
+        }
 
         // Apply script-driven post-processing overrides before rendering.
         // The Rendering & Effects panel's freeze switch (ADR 0053) skips the
@@ -626,17 +624,6 @@ impl PlayerApp {
                 }
             }
         }
-        // The subsystems' last word before the frame is encoded
-        if !self.subsystems.is_empty() {
-            let mut ctx = RenderCtx {
-                renderer: &mut *renderer,
-                device: &context.device,
-                queue: &context.queue,
-                camera: &self.camera,
-                clock: &self.clock,
-            };
-            self.subsystems.pre_render(&mut ctx);
-        }
         renderer.encode_to(
             &context.device,
             &context.queue,
@@ -646,52 +633,22 @@ impl PlayerApp {
             &self.camera,
             &view,
         );
-        // A split A/B (#238): this drawing is the side being shown, so it goes
-        // to the GPU now, and the other side draws over its half after it.
-        if let Some(ab) = self
-            .living
-            .tune
-            .ab
-            .as_deref_mut()
-            .filter(|ab| ab.is_split())
-        {
-            // What this side's shallow wooze draws with, or nothing
-            let no_shallow = ShallowWooze::default();
-            let first = std::mem::replace(
-                &mut encoder,
-                context
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Split Frame Encoder"),
-                    }),
-            );
-            context.queue.submit(std::iter::once(first.finish()));
-            let frame_copy = output.texture.create_view(&wgpu::TextureViewDescriptor {
-                format: Some(context.hud_format),
-                ..Default::default()
-            });
-            super::living_ab::draw_other_side(
-                super::living_ab::OtherSide {
-                    ab,
-                    resolver: &mut self.procgen_resolver,
-                    blend: &mut self.living.blend,
-                    world: &self.world,
-                    camera: &self.camera,
-                    own_boil: boil,
-                    own_shallow: self
-                        .subsystems
-                        .find::<ShallowWoozeSubsystem>()
-                        .map_or(&no_shallow, |s| &s.shallow),
-                },
-                renderer,
-                &context.device,
-                &context.queue,
-                &mut encoder,
-                &context.depth_view,
-                &frame_copy,
-                (output.texture.width(), output.texture.height()),
-                (context.view_format, context.hud_format),
-            );
+        // A second look drawn over part of the frame, before the HUD (the
+        // Living Props A/B split, #238)
+        if !self.subsystems.is_empty() {
+            let mut ctx = EncodeCtx {
+                encoder: &mut encoder,
+                device: &context.device,
+                queue: &context.queue,
+                output: &output.texture,
+                depth_view: &context.depth_view,
+                formats: (context.view_format, context.hud_format),
+                renderer: &mut *renderer,
+                world: &self.world,
+                camera: &self.camera,
+                resolver: &mut self.procgen_resolver,
+            };
+            self.subsystems.post_encode(&mut ctx);
         }
         // A field borrow, not `perf_mark`: `context` is still held.
         if let Some(perf) = &mut self.stats.perf {
@@ -807,74 +764,8 @@ impl PlayerApp {
                 );
             }
         }
-        self.print_living_report();
         for line in self.subsystem_report() {
             eprintln!("{line}");
-        }
-    }
-
-    /// Whether the rings stayed full and within budget. Silent with no props.
-    fn print_living_report(&self) {
-        let props = self.procgen_resolver.living_props();
-        if props.is_empty() {
-            return;
-        }
-        let ring = props
-            .props()
-            .iter()
-            .map(|p| p.ring_len())
-            .max()
-            .unwrap_or(0);
-        let lines = super::living_props::report(
-            &props.stats(),
-            props.props().len(),
-            props.lineage_count(),
-            ring,
-            self.procgen_resolver.frame_budget_ms(),
-        );
-        for line in lines {
-            eprintln!("{line}");
-        }
-        if let Some(line) = super::living_props::knobs_report(&props.stats(), props) {
-            eprintln!("{line}");
-        }
-        // The other side of an A/B (#238): its rings, and its own blending.
-        if let (Some(ab), Some(stats)) = (self.living_ab_state(), self.hidden_side_stats()) {
-            let hidden = if ab.showing_b { "A" } else { "B" };
-            eprintln!(
-                "[living] A/B {}split: hidden side {hidden}: {} of {} frames full, {} missing a pose \
-                 in use, {} poses made, {} from cache; blending {:.3} ms/frame over {} frames",
-                if ab.split { "" } else { "not " },
-                stats.frames_full,
-                stats.frames,
-                stats.frames_starved,
-                stats.poses_made,
-                stats.poses_from_cache,
-                stats.blend_total_ms / stats.blend_frames.max(1) as f64,
-                stats.blend_frames,
-            );
-        }
-        if let Some(field) = &self.living.wooze {
-            eprintln!("{}", super::living_props::wooze_report(field, props));
-            let shallow = self.subsystems.find::<ShallowWoozeSubsystem>();
-            eprintln!(
-                "[wooze] shallow: {} entities on {} clocks",
-                shallow.map_or(0, |s| s.shallow.draw_count()),
-                shallow.map_or(0, |s| s.shallow.clock_count())
-            );
-        }
-        if let Some(renderer) = &self.scene_renderer {
-            eprintln!(
-                "[living] {} skinned draws this frame",
-                renderer.collect_stats().skinned_draws
-            );
-            let echoes: usize = props.props().iter().map(|p| p.echo_count()).sum();
-            if echoes > 0 {
-                eprintln!(
-                    "[living] {echoes} echoes, {} echo draws this frame",
-                    renderer.collect_stats().echo_draws
-                );
-            }
         }
     }
 
@@ -1113,15 +1004,8 @@ impl PlayerApp {
 
         // Frame-budgeted procgen queue, then whatever it left to living props,
         // whose clock stops when animation does
-        #[cfg(feature = "debug-hud")]
-        self.drain_living_panel();
-        let living_dt = if config.animation == SystemPolicy::Run && !self.living.tune.frozen {
-            self.clock.delta_time
-        } else {
-            0.0
-        };
-        let living_dt = self.tick_procgen(living_dt);
-        self.run_stage_with(Stage::Procgen, Some(&config), Some(living_dt));
+        self.tick_procgen();
+        self.run_stage(Stage::Procgen, Some(&config));
 
         // Renderer sync: transforms, particle upload, grass/ocean time
         self.sync_renderer();
@@ -1582,10 +1466,10 @@ impl PlayerApp {
     }
 
     #[profiling::function]
-    /// Returns the living clock's step this frame, which shallow wooze and
-    /// woozy grass take at `Stage::Procgen`.
-    pub(super) fn tick_procgen(&mut self, living_dt: f64) -> f64 {
-        let living_dt = living_dt + self.before_living_tick();
+    /// The frame-budgeted procgen queue: what it finished goes to the
+    /// renderer. Living props move on after it, at `Stage::Procgen`, in
+    /// whatever it left of the budget.
+    pub(super) fn tick_procgen(&mut self) {
         // Process procgen generation queue (frame-budgeted)
         {
             let camera_pos = self.camera.position_array();
@@ -1611,60 +1495,7 @@ impl PlayerApp {
                     super::procgen_assets::apply_failures(&failures, &mut sink);
                 }
             }
-            // A scene with a wooze field reads it where each prop now stands.
-            if self.living.wooze.is_some() {
-                self.living.wooze_time += living_dt;
-                let world = &self.world;
-                self.procgen_resolver
-                    .living_props_mut()
-                    .track_positions(|entity| {
-                        world.get_world_position(entity).map(|p| [p.x, p.y, p.z])
-                    });
-            }
-            // So does the shading boil, where the viewer stands (#214).
-            if let Some(field) = &self.living.wooze {
-                let sample = field.sample(self.camera.position_array(), self.living.wooze_time);
-                self.living.boil_clock.tick(living_dt, &sample);
-            }
-            let wooze = self
-                .living
-                .wooze
-                .as_ref()
-                .map(|field| (field, self.living.wooze_time));
-            let lineages = self.procgen_resolver.process_living_in(living_dt, wooze);
-            // Hand-made meshes and woozy grass read the same field on the
-            // same dt: the shallow wooze subsystem, at Stage::Procgen
-            if !lineages.is_empty() {
-                if let (Some(renderer), Some(ctx)) =
-                    (&mut self.scene_renderer, &self.render_context)
-                {
-                    let config = flint_render::model_loader::ModelLoadConfig::in_project(
-                        self.project.clone(),
-                        &self.scene_path,
-                    );
-                    let mut sink = super::procgen_assets::GpuSink {
-                        renderer,
-                        device: &ctx.device,
-                        queue: &ctx.queue,
-                        config: &config,
-                    };
-                    super::living_props::apply_lineages(&lineages, &mut sink);
-                }
-            }
-            // Blend after the rings have slid and any new lineage is up.
-            if let (Some(renderer), Some(ctx)) = (&mut self.scene_renderer, &self.render_context) {
-                super::living_props::upload_blends(
-                    &mut self.procgen_resolver,
-                    &mut self.living.blend,
-                    renderer,
-                    &ctx.device,
-                    &ctx.queue,
-                );
-            }
         }
-        // The other side of an A/B (#238), on the same dt, after the scene's own.
-        self.tick_hidden_side(living_dt);
-        living_dt
     }
 
     #[profiling::function]
@@ -1810,7 +1641,6 @@ impl PlayerApp {
         // Lazy-load any sprite textures referenced by draw commands
         // (must happen before egui_winit borrow)
         self.load_pending_sprites();
-        let ab_state = self.living_ab_state();
 
         let Some(window) = &self.window else { return };
         let Some(context) = &self.render_context else {
@@ -1832,6 +1662,7 @@ impl PlayerApp {
 
         let draw_commands = std::mem::take(&mut self.hud.draw_commands);
         let mut extensions = std::mem::take(&mut self.extensions);
+        let mut subsystems = std::mem::take(&mut self.subsystems);
         #[cfg(feature = "debug-hud")]
         let mut debug_panels = std::mem::take(&mut self.debug_panels);
         #[cfg(feature = "debug-hud")]
@@ -1928,10 +1759,9 @@ impl PlayerApp {
             // On-screen touch controls (#133), over the game's UI.
             super::touch_overlay::paint(ctx, &touch_widgets, touch_opacity);
 
-            // Which preset is where, while two are compared (#238).
-            if let Some(ab) = &ab_state {
-                super::living_ab::paint_labels(ctx, ab);
-            }
+            // The subsystems' own (which preset is where, while two living
+            // props presets are compared, #238)
+            subsystems.ui(ctx);
 
             // The pose overlay (#218) and a picked tree's marks and window
             // (#248), in the world and under every panel.
@@ -1973,6 +1803,7 @@ impl PlayerApp {
 
         self.hud.draw_commands = draw_commands;
         self.extensions = extensions;
+        self.subsystems = subsystems;
         #[cfg(feature = "debug-hud")]
         {
             self.debug_panels = debug_panels;

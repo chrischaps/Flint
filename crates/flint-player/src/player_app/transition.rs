@@ -367,7 +367,6 @@ impl PlayerApp {
         self.animation.clear();
         self.particles.clear();
         self.procgen_resolver.clear_queue();
-        self.procgen_resolver.clear_living_props();
 
         // Clear world
         self.world = FlintWorld::new();

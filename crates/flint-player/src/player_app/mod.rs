@@ -28,6 +28,7 @@ mod input_config;
 pub mod input_script;
 mod living_ab;
 pub mod living_props;
+mod living_subsystem;
 pub(crate) mod living_tuning;
 #[cfg(feature = "debug-hud")]
 mod music_guide_panel;
@@ -317,13 +318,13 @@ pub struct PlayerApp {
     /// The window's focus, the cursor and the keys held
     focus: state::Focus,
 
-    /// Living props and the wooze field
-    pub(crate) living: state::LivingState,
-
     /// What scripts asked of the frame (#697): the camera, post-processing,
     /// distance levers, cursor and touch, held from the command that asked
     /// to the step of the frame that applies each.
     script_requests: flint_script::FrameRequests,
+    /// Script commands no part of this scene takes that have been warned
+    /// about, once a run each (`set_wooze` in a scene with no field).
+    commands_warned: std::collections::HashSet<&'static str>,
     /// The post-processing scripts asked for this frame, stamped over the
     /// renderer's config before it draws
     post: state::PostOverrides,

@@ -91,6 +91,11 @@ pub struct LaunchOptions {
     /// `on_expression` (`--expression-timeline`, `--expression-listen`;
     /// Flint#518). `None` when neither was given.
     pub expression_feed: Option<expression_feed::ExpressionFeed>,
+    /// `--compare A,B` (#238): the Living Props presets to compare, kept
+    /// across scenes and changed by the panel's picks, and whether to start
+    /// comparing (split or not) once a scene has props to compare.
+    pub compare: Option<(String, String)>,
+    pub compare_at_start: Option<bool>,
 }
 
 impl Default for LaunchOptions {
@@ -114,6 +119,8 @@ impl Default for LaunchOptions {
             style_time: None,
             save_dir: None,
             expression_feed: None,
+            compare: None,
+            compare_at_start: None,
         }
     }
 }
@@ -152,6 +159,10 @@ pub struct SceneSettings {
     /// `[scene] input_config`: the scene's own input config, over the
     /// project's.
     pub input_config: Option<String>,
+    /// The scene's `[living]` and `[wooze]` tables (living props, #211-#252),
+    /// with a `[wooze] preset` filled in.
+    pub living: Option<flint_procgen::LivingDef>,
+    pub wooze: Option<flint_procgen::WoozeDef>,
 }
 
 impl Default for SceneSettings {
@@ -169,6 +180,8 @@ impl Default for SceneSettings {
             tables: toml::Table::new(),
             preload_audio: true,
             input_config: None,
+            living: None,
+            wooze: None,
         }
     }
 }
@@ -288,28 +301,6 @@ impl PostOverrides {
             config.mode_params = mp;
         }
     }
-}
-
-/// Living props and the wooze field (#211-#252): the scene's `[living]` and
-/// `[wooze]` tables, the field made from them and the clocks sampling it.
-/// The props themselves live in the procgen resolver.
-#[derive(Default)]
-pub(crate) struct LivingState {
-    /// The scene's `[living]` table
-    pub(crate) def: Option<flint_procgen::LivingDef>,
-    /// Room to blend the props each frame
-    pub(super) blend: flint_procgen::BlendFrame,
-    /// The scene's `[wooze]` table
-    pub(crate) wooze_def: Option<flint_procgen::WoozeDef>,
-    /// The field made from it, sampled on a clock of its own that stops
-    /// when animation does. No table: no field, no samples.
-    pub(super) wooze: Option<flint_core::wooze::WoozeField>,
-    pub(super) wooze_time: f64,
-    pub(super) wooze_missing_warned: bool,
-    /// The shading boil's beats (#214), on the same clock as the field.
-    pub(super) boil_clock: flint_core::wooze::BoilClock,
-    /// What's been done to a running grove by hand (#218).
-    pub(crate) tune: super::living_tuning::LivingTune,
 }
 
 /// The HUD: egui, the script-driven 2D draw commands and world text, and
