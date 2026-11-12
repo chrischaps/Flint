@@ -22,7 +22,7 @@ fn spec(name: &str) -> String {
 
 fn tavern() -> String {
     repo_root()
-        .join("styles/medieval_tavern.style.toml")
+        .join("styles/medieval_tavern.styleguide.toml")
         .to_str()
         .unwrap()
         .to_string()
@@ -137,7 +137,7 @@ fn over_budget_warns_and_strict_fails() {
 #[test]
 fn far_over_budget_fails() {
     let dir = scratch("fail");
-    let style = dir.join("tiny.style.toml");
+    let style = dir.join("tiny.styleguide.toml");
     std::fs::write(
         &style,
         "[style]\nname = \"tiny\"\n[style.geometry]\nmax_triangles = 100\n",
@@ -160,6 +160,36 @@ fn far_over_budget_fails() {
             .any(|l| l.contains("style triangle budget")),
         "{t}"
     );
+    assert!(!t.contains("old suffix"), "{t}");
+}
+
+/// A style guide still named `*.style.toml`, the UI class files' suffix,
+/// loads and applies, and the run says what to rename it to (#420).
+#[test]
+fn a_style_guide_under_the_old_suffix_warns() {
+    let dir = scratch("legacy");
+    let style = dir.join("tiny.style.toml");
+    std::fs::write(
+        &style,
+        "[style]\nname = \"tiny\"\n[style.geometry]\nmax_triangles = 100\n",
+    )
+    .unwrap();
+    let out = dir.join("tree.glb");
+    let o = gen(&[
+        &spec("oak_tree.procgen.toml"),
+        "-o",
+        out.to_str().unwrap(),
+        "--validate",
+        "--style-guide",
+        style.to_str().unwrap(),
+    ]);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("old suffix `.style.toml`") && err.contains("tiny.styleguide.toml"),
+        "{err}"
+    );
+    // The guide was read: its ceiling still fails the run.
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
 }
 
 /// The beetle's ellipsoids used to carry 16 zero-area slivers at each pole.

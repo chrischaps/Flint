@@ -744,7 +744,7 @@ flint gen specs/stone_wall.procgen.toml -o wall.png
 flint gen specs/oak_tree.procgen.toml --dry-run          # cost estimate, no output
 flint gen specs/oak_tree.procgen.toml --seed 7 --register
 flint gen specs/beetle.procgen.toml --batch 5 --seed-start 100
-flint gen specs/oak_tree.procgen.toml --validate --style-guide styles/medieval_tavern.style.toml --strict
+flint gen specs/oak_tree.procgen.toml --validate --style-guide styles/medieval_tavern.styleguide.toml --strict
 ```
 
 | Flag | Description |
@@ -815,7 +815,7 @@ Before anything is generated, `flint gen` checks that the spec's generator is re
 `--report json` is for agents: stdout carries one JSON object per variant (a batch writes one line each, JSON Lines) and every human line, the check lines included, moves to stderr. The exit code is unchanged.
 
 ```bash
-flint gen specs/oak_tree.procgen.toml --validate --style-guide styles/medieval_tavern.style.toml --report json
+flint gen specs/oak_tree.procgen.toml --validate --style-guide styles/medieval_tavern.styleguide.toml --report json
 ```
 
 ```json
@@ -826,7 +826,7 @@ flint gen specs/oak_tree.procgen.toml --validate --style-guide styles/medieval_t
 
 `verdict` is what the exit code sees: `pass`, `fail` (with `--strict`, a warning is a fail) or `skipped` (a `--register` cache hit, which isn't validated; it carries a `reason` and no checks). Each check has `name`, `status` (`pass`/`warn`/`fail`) and `detail`, plus `actual` and `limit` when it measured a number (table above). `limit` is always a ceiling: the check passes while `actual <= limit`, and a triangle budget warns up to twice it. A line deserialises straight into `flint_procgen::ValidationReport` (the extra keys are ignored).
 
-A style guide is the `[style]` TOML that `flint asset` uses, e.g. `styles/medieval_tavern.style.toml`.
+A style guide is the `[style]` TOML that `flint asset` uses, e.g. `styles/medieval_tavern.styleguide.toml`.
 
 ## Previewing
 

@@ -184,7 +184,7 @@ Build, preview and publish commands: `docs/CLAUDE.md`.
 - `crates/` -- All workspace crates
 - `schemas/` -- Engine component, archetype and scene-table TOML definitions; `schemas/examples/` -- the room-builder layer the examples are written in, not part of the engine's set
 - `flint.toml` -- the checkout as a project: `schemas = ["schemas", "schemas/examples"]`, read by everything run from this tree (a game with the engine as a subtree never reads it)
-- `styles/` -- Style guide TOML definitions for AI generation
+- `styles/` -- AI style guides (`*.styleguide.toml`, #420; `*.style.toml` is a UI class file) and looks (`*.look.toml`)
 - `examples/` -- Curated example scenes and their assets (was `demo/`, #763); `examples/index.toml` gives each a topic and purpose, `flint examples` lists them, `flint examples --check` (CI) holds the index to the folder and validates each. Improve them freely: nothing pins their pixels
 - `tests/fixtures/scenes/` -- Frozen copies of the scenes the goldens and CLI tests load, with their assets. No golden may load from `examples/` (`no_golden_case_loads_an_example`); a change here is a change to a test
 - `crates/flint-cli/templates/` -- What `flint init` writes (#707): the game-project scaffold, compiled into the binary; `tests/init_cli.rs` builds and runs each

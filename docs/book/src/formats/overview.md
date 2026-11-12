@@ -331,9 +331,9 @@ prompt = "wooden tavern chair"
 provider = "meshy"
 ```
 
-## Style Guides (`styles/*.style.toml`)
+## Style Guides (`styles/*.styleguide.toml`)
 
-Define visual vocabulary for consistent AI asset generation. Searched in `styles/` then `.flint/styles/`.
+Define visual vocabulary for consistent AI asset generation. Searched in `styles/` then `.flint/styles/`. The old suffix, `.style.toml`, still loads with a warning to rename the file: it is the [UI styles](#ui-styles-uistyletoml) suffix.
 
 ```toml
 [style]
@@ -480,7 +480,7 @@ See [Scripting: Data-Driven UI](../concepts/scripting.md#data-driven-ui-system) 
 
 ## UI Styles (`ui/*.style.toml`)
 
-Named style classes for UI elements. Referenced by `.ui.toml` layout files.
+Named style classes for UI elements. Referenced by `.ui.toml` layout files. Not to be confused with an AI [style guide](#style-guides-stylesstyleguidetoml), which is `*.styleguide.toml`.
 
 ```toml
 [styles.<class-name>]
