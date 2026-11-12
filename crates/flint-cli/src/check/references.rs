@@ -51,12 +51,98 @@ fn is_scanned_toml(path: &str) -> bool {
         || path.ends_with(".particles.toml")
         || path.ends_with(".glyphs.toml")
         || path.ends_with(".chunk.toml")
+        // a music suite's stems (#382: `music_session.manifest` names one)
+        || path.ends_with(".suite.toml")
         || path.ends_with(flint_render::stylize::custom::SUFFIX)
 }
 
-/// Whether this pass reads `path` at all: one of the TOML kinds, or a script.
+/// Whether this pass reads `path` at all: one of the TOML kinds, a script,
+/// or a glTF model (#382: its textures and buffers may be files beside it).
 pub(super) fn is_scanned(path: &str) -> bool {
-    is_scanned_toml(path) || path.ends_with(".rhai")
+    is_scanned_toml(path) || path.ends_with(".rhai") || is_gltf(path)
+}
+
+fn is_gltf(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.ends_with(".glb") || lower.ends_with(".gltf")
+}
+
+/// The files a glTF model names by URI: its external buffers and images,
+/// percent-decoded. A `data:` URI is held inside, and a URL is nobody's to
+/// pack. Bytes that are not a glTF name nothing.
+pub(super) fn gltf_uris(bytes: &[u8]) -> Vec<String> {
+    // A .glb: a 12-byte header, then the JSON chunk's length and type
+    let json = if bytes.starts_with(b"glTF") {
+        let Some(len) = bytes.get(12..16) else {
+            return Vec::new();
+        };
+        let len = u32::from_le_bytes([len[0], len[1], len[2], len[3]]) as usize;
+        match (bytes.get(16..20), bytes.get(20..20 + len)) {
+            (Some(b"JSON"), Some(json)) => json,
+            _ => return Vec::new(),
+        }
+    } else {
+        bytes
+    };
+    let Ok(doc) = serde_json::from_slice::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for list in ["buffers", "images"] {
+        for entry in doc
+            .get(list)
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+        {
+            if let Some(uri) = entry.get("uri").and_then(|u| u.as_str()) {
+                if !uri.starts_with("data:") && !uri.contains("://") {
+                    out.push(percent_decoded(uri));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `%20` as a space, and so on: a glTF URI is a URI.
+fn percent_decoded(uri: &str) -> String {
+    let bytes = uri.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(byte)) => {
+                out.push(byte);
+                i += 3;
+            }
+            (byte, _) => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// `dir/rel` with `.` and `..` folded away, as a key under the root, or
+/// `None` when it climbs above the root.
+pub(super) fn joined(dir: &str, rel: &str) -> Option<String> {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in dir.split('/').chain(rel.split(['/', '\\'])) {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            part => parts.push(part),
+        }
+    }
+    Some(parts.join("/"))
 }
 
 /// Whether a string names a file: a known extension after a non-empty stem,
@@ -265,6 +351,33 @@ pub(super) fn check(subject: &Subject, files: &BTreeSet<String>) -> Vec<Diagnost
                     at: Vec::new(),
                 })
                 .collect()
+        } else if is_gltf(path) {
+            // The importer reads these from beside the model, and fails
+            // the whole model when one isn't there
+            let Ok(bytes) = vfs::read(&shown) else {
+                continue;
+            };
+            let dir = parent_of(path);
+            for uri in gltf_uris(&bytes) {
+                let target = joined(&dir, &uri);
+                if target.as_deref().is_some_and(is_file) {
+                    continue;
+                }
+                let d = Diagnostic::error(
+                    codes::MISSING_FILE,
+                    format!("the model names `{uri}`, which is not there"),
+                )
+                .file(&shown)
+                .hint(
+                    "a glTF loads its textures and buffers from beside it, and without one \
+                     the whole model is skipped: add the file, or embed it (a .glb can hold them)",
+                );
+                found.push(match target {
+                    Some(target) => d.tried([subject.path(&target)]),
+                    None => d,
+                });
+            }
+            continue;
         } else {
             continue;
         };
@@ -454,6 +567,82 @@ mod tests {
             [pair(
                 "scenes/act1/cave/deep.chunk.toml",
                 "textures/lost.png"
+            )]
+        );
+    }
+
+    /// A .glb: the header, then its JSON as the one chunk.
+    fn glb(json: &str) -> Vec<u8> {
+        let mut json = json.as_bytes().to_vec();
+        while !json.len().is_multiple_of(4) {
+            json.push(b' ');
+        }
+        let mut out = b"glTF".to_vec();
+        out.extend(2u32.to_le_bytes());
+        out.extend(((20 + json.len()) as u32).to_le_bytes());
+        out.extend((json.len() as u32).to_le_bytes());
+        out.extend(b"JSON");
+        out.extend(json);
+        out
+    }
+
+    #[test]
+    fn gltf_uris_are_its_files_outside_it() {
+        let json = r#"{"buffers": [{"uri": "data:application/octet-stream;base64,AAAA"},
+            {"uri": "bar.bin"}], "images": [{"uri": "../textures/old%20oak.png"},
+            {"bufferView": 3}, {"uri": "https://x.com/a.png"}]}"#;
+        let want = ["bar.bin", "../textures/old oak.png"];
+        assert_eq!(gltf_uris(json.as_bytes()), want);
+        assert_eq!(gltf_uris(&glb(json)), want);
+        assert!(gltf_uris(b"").is_empty());
+        assert!(gltf_uris(b"glTF").is_empty());
+        assert_eq!(
+            joined("models", "../textures/a.png").as_deref(),
+            Some("textures/a.png")
+        );
+        assert_eq!(joined("", "./a.bin").as_deref(), Some("a.bin"));
+        assert_eq!(joined("models", "../../a.png"), None);
+    }
+
+    /// #382: the tavern's models name their textures in `../textures/`,
+    /// and a model whose image isn't packed is skipped whole by the player.
+    #[test]
+    fn a_model_must_have_the_files_it_names() {
+        let mut source = MemorySource::new();
+        let json = r#"{"images": [{"uri": "../textures/tavern/plank.jpg"},
+            {"uri": "../textures/tavern/iron.jpg"}]}"#;
+        source.insert("examples/models/bar.glb", glb(json));
+        source.insert("examples/textures/tavern/plank.jpg", "jpg");
+        let keys: BTreeSet<String> = ["examples/models/bar.glb".to_string()].into();
+        let subject = Subject::packed(keys.iter().cloned().collect(), Schemas::Listed(Vec::new()));
+        let found = vfs::scoped(Arc::new(source), || check(&subject, &keys));
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].code, codes::MISSING_FILE);
+        assert!(found[0].message.contains("../textures/tavern/iron.jpg"));
+        let tried: Vec<String> = found[0]
+            .tried
+            .iter()
+            .map(|p| flint_core::project::shown(p))
+            .collect();
+        assert_eq!(tried, ["examples/textures/tavern/iron.jpg"]);
+    }
+
+    /// #382: a music suite names its stems, from the project root.
+    #[test]
+    fn a_music_suite_must_have_its_stems() {
+        let found = missing(&[
+            (
+                "examples/music/clock.suite.toml",
+                "[suite]\nid = \"c\"\n[buses.pad]\nfile = \"examples/music/stems/pad.flac\"\n\
+                 [buses.bell]\nfile = \"examples/music/stems/bell.flac\"\n",
+            ),
+            ("examples/music/stems/pad.flac", ""),
+        ]);
+        assert_eq!(
+            found,
+            [pair(
+                "examples/music/clock.suite.toml",
+                "examples/music/stems/bell.flac"
             )]
         );
     }

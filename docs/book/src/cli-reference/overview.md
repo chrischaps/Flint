@@ -36,7 +36,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint goldens <file>.goldens.toml` | Render a list of scenes and gate each against its golden PNG; `--bless` rewrites them ([Golden Suites](../guides/headless-rendering.md#golden-suites)) |
 | `flint gen <spec>` | Run a procedural generation spec to produce meshes or textures |
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
-| `flint bundle <game>` | Pack a game folder into `.flintpack` bundles for the web player, running `flint check`'s file and load checks over the packed files first |
+| `flint bundle <game>` | Pack a game folder into `.flintpack` bundles for the web player, running `flint check`'s file and load checks over the packed files first. Given a `.scene.toml`, it packs that scene alone with only what it reaches ([One scene](../guides/publishing-to-the-web.md#one-scene-flint-bundle-scene)) |
 | `flint export web <game>` | A folder any static server plays the game from: the web player, the bundles and `games.json` ([Publishing to the Web](../guides/publishing-to-the-web.md)) |
 | `flint validate-suite <manifest>` | Validate a musical suite manifest and optional chart ([music commands](music.md)) |
 | `flint play-suite <manifest>` | Play a suite's stems sample-locked, no judgment |
@@ -126,7 +126,7 @@ checked 2 scenes and 3 files: 6 errors, 1 warning
 
 A model or texture name counts as found when the asset catalog holds it, when a procgen spec the scene can see is named that, or when the file search finds it, in that order, as at run time. A `model` with `runtime = true` has no file to find. A script is checked for the files its string literals name, and held to the script API as `flint script check` holds it; a script problem has a line and a column (`error[wrong-arity] 82:9: ...`).
 
-For a folder, every `*.scene.toml` under it is checked, and every prefab, particle effect, glyph set, chunk, user style and script there is read for the files it names. `target/`, `dist/`, dot-folders, `docs/` and an `engine/` subtree are skipped (the folders `flint bundle` never packs); what a game's `bundle.toml` excludes from the web build is still checked, since it is still part of the game on disk. For one scene, the scene and the scripts and prefabs it names are checked.
+For a folder, every `*.scene.toml` under it is checked, and every prefab, particle effect, glyph set, chunk, music suite, user style and script there is read for the files it names, and every glTF model for the textures and buffers it keeps beside it (a model missing one is skipped whole by the player). `target/`, `dist/`, dot-folders, `docs/` and an `engine/` subtree are skipped (the folders `flint bundle` never packs); what a game's `bundle.toml` excludes from the web build is still checked, since it is still part of the game on disk. For one scene, the scene and the scripts and prefabs it names are checked.
 
 | Flag | Description |
 |------|-------------|

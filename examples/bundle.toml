@@ -27,6 +27,7 @@ exclude = [
     "wooze_field.scene.toml",
     "showcase_crucible.scene.toml",
     "showcase_tavern.scene.toml",
+    "music_clock.scene.toml",
     "scripts/showcase_ambience.rhai",
     "scripts/showcase_hud.rhai",
     "scripts/showcase_passage.rhai",
