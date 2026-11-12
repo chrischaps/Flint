@@ -70,8 +70,16 @@ prefix = "lamp"
     write(
         &dir,
         "levels/cellar.scene.toml",
-        "[scene]\nname = \"Cellar\"\n[entities.barrel.model]\nasset = \"barrel\"\n",
+        "[scene]\nname = \"Cellar\"\n[entities.barrel.model]\nasset = \"barrel\"\n\
+         [entities.conductor.music_session]\nmanifest = \"music/cellar.suite.toml\"\n",
     );
+    // A music suite names its stems from the project root
+    write(
+        &dir,
+        "music/cellar.suite.toml",
+        "[suite]\nid = \"cellar\"\n[buses.drone]\nfile = \"music/stems/drone.ogg\"\n",
+    );
+    write(&dir, "music/stems/drone.ogg", "ogg");
     // The prefab names its effect by a bare name the check doesn't follow,
     // so effects go in as the scene's search sees them, with what they name
     write(
@@ -179,6 +187,11 @@ fn a_scene_packs_alone_with_what_it_reaches() {
     }
     // An empty schema directory has nothing to list
     assert!(!main.manifest.schemas.contains(&"schemas".to_string()));
+
+    // A music session checks its stems as the scene loads, before a late
+    // part arrives: they stay in the main bundle
+    assert!(files.contains("music/cellar.suite.toml"), "{files:?}");
+    assert!(files.contains("music/stems/drone.ogg"), "{files:?}");
 
     // The sound the script names, in the late part, and only that one
     let (_, audio) = packed(&dir.join("levels/dist/meadow.audio.flintpack"));

@@ -481,6 +481,8 @@ struct Gathered {
     files: BTreeMap<String, Vec<u8>>,
     rules: Rules,
     out_dir: PathBuf,
+    /// Files that stay in the main bundle whatever `[late]` says.
+    main_only: BTreeSet<String>,
 }
 
 pub fn pack(args: BundleArgs) -> Result<Packed> {
@@ -594,6 +596,7 @@ fn gather_game(args: &BundleArgs) -> Result<Gathered> {
         files,
         rules,
         out_dir: args.out_dir.clone().unwrap_or_else(|| root.join("dist")),
+        main_only: BTreeSet::new(),
     })
 }
 
@@ -873,6 +876,16 @@ fn gather_scene(args: &BundleArgs) -> Result<Gathered> {
         mb(bytes as u64)
     );
 
+    // A music session checks its stems when the scene loads, before a late
+    // part has arrived, and plays nothing if one is missing: a scene pack
+    // has no bundle.toml to say so, so the stems stay in the main bundle
+    let main_only = files
+        .iter()
+        .filter(|(key, _)| key.ends_with(".suite.toml"))
+        .flat_map(|(_, bytes)| suite_stems(bytes))
+        .filter(|key| files.contains_key(key))
+        .collect();
+
     let out_dir = args
         .out_dir
         .clone()
@@ -884,7 +897,23 @@ fn gather_scene(args: &BundleArgs) -> Result<Gathered> {
         files,
         rules,
         out_dir,
+        main_only,
     })
+}
+
+/// The stems a music suite's buses name (`[buses.<name>] file`), as bundle
+/// paths: a suite's paths are from the project root.
+fn suite_stems(text: &[u8]) -> Vec<String> {
+    let Ok(doc) = String::from_utf8_lossy(text).parse::<toml::Value>() else {
+        return Vec::new();
+    };
+    let buses = doc.get("buses").and_then(|b| b.as_table());
+    buses
+        .into_iter()
+        .flat_map(|buses| buses.values())
+        .filter_map(|bus| bus.get("file")?.as_str())
+        .map(|file| normalize(Path::new(file)))
+        .collect()
 }
 
 /// The prefab files a scene's `[prefabs]` name, as the loader finds them
@@ -967,6 +996,7 @@ fn write(gathered: Gathered, list: bool, dry_run: bool) -> Result<Packed> {
         files,
         rules,
         out_dir,
+        main_only,
     } = gathered;
     // Check before writing: a bundle with a hole in it fails here. The
     // checks are `flint check`'s, over the packed files (#687).
@@ -997,7 +1027,10 @@ fn write(gathered: Gathered, list: bool, dry_run: bool) -> Result<Packed> {
     let mut parts: BTreeMap<Option<String>, Vec<(String, Vec<u8>)>> = BTreeMap::new();
     parts.entry(None).or_default();
     for (path, bytes) in files {
-        let part = rules.part_of(&path).map(str::to_string);
+        let part = match main_only.contains(&path) {
+            true => None,
+            false => rules.part_of(&path).map(str::to_string),
+        };
         parts.entry(part).or_default().push((path, bytes));
     }
 

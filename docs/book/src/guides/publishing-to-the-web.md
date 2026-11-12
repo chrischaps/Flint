@@ -90,7 +90,7 @@ What goes in:
 - the small kinds, as the scene's search sees them: what is loaded whole or found by a bare name the check can't follow (animations, sequences, user styles, looks, palettes, glyph sets, fonts, papers, strokes, wooze presets, procgen specs, particle effects) and the `scripts/lib/` modules a script may `import`;
 - then every model, texture, sound, script, prefab, scene and file the scene reaches. The bundle's own check runs over what has been gathered, and each missing file it reports is added from the first path it tried. That check is the player's search, so what it finds missing is what the player would read. A prefab, a script, or a scene a script loads gets checked in the next round, so the chain is followed to its end: scene, script, the scene it loads, that scene's models, their textures.
 
-A project-root `bundle.toml` still applies: its `exclude` keeps a file out even when the scene reaches it, and `[late]` splits the parts. `--scene` is refused, since the argument is the scene already.
+A project-root `bundle.toml` still applies: its `exclude` keeps a file out even when the scene reaches it, and `[late]` splits the parts. A music suite's stems stay in the main bundle, because a music session checks them as the scene loads, before a late part has arrived. `--scene` is refused, since the argument is the scene already.
 
 ## Flags
 
