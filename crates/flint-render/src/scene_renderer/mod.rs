@@ -5878,12 +5878,23 @@ impl SceneRenderer {
             return;
         };
         let surface_format = pp.surface_format;
+        let mut failures = Vec::new();
         for failed in pp.styles.ensure(
             device,
             surface_format,
             &self.postprocess_config,
             &self.style_ids,
         ) {
+            failures.push(failed);
+        }
+        // A style built again from a changed shader file (#418) made new
+        // buffers: the kept bind groups hold the old ones
+        if pp.styles.take_rebuilt() {
+            if let Some(resources) = &self.postprocess_resources {
+                resources.binds.clear();
+            }
+        }
+        for failed in failures {
             if !crate::stylize::is_builtin(failed.name) {
                 // A user style (ADR 0112) that panicked building is its
                 // author's bug, not a lost device: it stays off and says so

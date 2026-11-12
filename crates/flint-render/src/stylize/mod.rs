@@ -93,6 +93,7 @@
 
 pub mod catalog;
 pub mod custom;
+pub mod dev_shader;
 pub mod edges;
 mod fade;
 pub mod images;
@@ -1873,6 +1874,17 @@ pub struct StyleSet {
     /// The ownership pass (#384), built with the first style.
     ownership: Option<ownership::OwnershipPass>,
     ownership_failed: bool,
+    /// The shader files each slot's build read from
+    /// `FLINT_STYLE_SHADER_DIR` (#418, [`dev_shader`]); empty when that's
+    /// off. A slot whose file moves is built again.
+    files: Vec<Vec<std::path::PathBuf>>,
+    /// The same for the shared passes (edges, cross-fade, ownership).
+    shared_files: Vec<std::path::PathBuf>,
+    /// Calls to [`ensure`](Self::ensure) since the files were last looked at.
+    dev_polls: u32,
+    /// Something was built again from changed files since
+    /// [`take_rebuilt`](Self::take_rebuilt) last asked.
+    rebuilt: bool,
 }
 
 /// A descriptor's identity, for [`StyleSet::from`].
@@ -1901,6 +1913,8 @@ impl StyleSet {
         self.built.resize_with(registry.len(), || None);
         self.failed.resize(registry.len(), false);
         self.from.resize(registry.len(), 0);
+        self.files.resize_with(registry.len(), Vec::new);
+        self.reload_changed_shaders();
         let mut failed = Vec::new();
         for (i, descriptor) in registry.iter().enumerate() {
             let id = descriptor_id(descriptor);
@@ -1917,13 +1931,16 @@ impl StyleSet {
                 StyleStage::Hdr => crate::postprocess::HDR_FORMAT,
                 StyleStage::Display => surface_format,
             };
-            let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                (descriptor.create)(&StyleDevice {
-                    device,
-                    descriptor,
-                    format,
-                })
-            }));
+            let (made, files) = dev_shader::build(descriptor.name, || {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    (descriptor.create)(&StyleDevice {
+                        device,
+                        descriptor,
+                        format,
+                    })
+                }))
+            });
+            self.files[i] = files;
             match made {
                 Ok(pass) => {
                     pass.set_text_capture(self.text_capture);
@@ -1939,9 +1956,13 @@ impl StyleSet {
             && !self.ownership_failed
             && self.built.iter().any(Option::is_some)
         {
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                ownership::OwnershipPass::new(device)
-            })) {
+            let (made, files) = dev_shader::build("ownership", || {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    ownership::OwnershipPass::new(device)
+                }))
+            });
+            self.shared_files.extend(files);
+            match made {
                 Ok(pass) => self.ownership = Some(pass),
                 Err(_) => {
                     tracing::warn!(
@@ -1958,9 +1979,13 @@ impl StyleSet {
                 .iter()
                 .any(|d| d.needs_edges() && d.is_on(config, ids))
         {
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                edges::EdgePass::new(device)
-            })) {
+            let (made, files) = dev_shader::build("edges", || {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    edges::EdgePass::new(device)
+                }))
+            });
+            self.shared_files.extend(files);
+            match made {
                 Ok(pass) => self.edges = Some(pass),
                 Err(_) => {
                     tracing::warn!(
@@ -1976,9 +2001,13 @@ impl StyleSet {
                 .iter()
                 .any(|d| d.is_on(config, ids) && d.framework_fades(config, ids))
         {
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                fade::FadePass::new(device)
-            })) {
+            let (made, files) = dev_shader::build("fade", || {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    fade::FadePass::new(device)
+                }))
+            });
+            self.shared_files.extend(files);
+            match made {
                 Ok(pass) => self.fade = Some(pass),
                 Err(_) => {
                     tracing::warn!("style cross-fade unavailable: its shader failed to build");
@@ -1987,6 +2016,61 @@ impl StyleSet {
             }
         }
         failed
+    }
+
+    /// With `FLINT_STYLE_SHADER_DIR` set (#418), every
+    /// [`dev_shader::POLL_FRAMES`] calls: drop each pass that read a
+    /// shader file whose stamp moved, so this [`ensure`](Self::ensure)
+    /// builds it again from the file. A drop sets
+    /// [`take_rebuilt`](Self::take_rebuilt), since the kept bind groups
+    /// hold the old passes' buffers.
+    fn reload_changed_shaders(&mut self) {
+        if !dev_shader::enabled() {
+            return;
+        }
+        self.dev_polls += 1;
+        if self.dev_polls < dev_shader::POLL_FRAMES {
+            return;
+        }
+        self.dev_polls = 0;
+        let changed = dev_shader::changed();
+        if changed.is_empty() {
+            return;
+        }
+        let moved = |files: &[std::path::PathBuf]| files.iter().any(|f| changed.contains(f));
+        for (i, files) in self.files.iter_mut().enumerate() {
+            if moved(files) {
+                self.built[i] = None;
+                self.failed[i] = false;
+                files.clear();
+            }
+        }
+        if moved(&self.shared_files) {
+            self.edges = None;
+            self.edges_failed = false;
+            self.fade = None;
+            self.fade_failed = false;
+            self.ownership = None;
+            self.ownership_failed = false;
+            self.shared_files.clear();
+        }
+        // The blend draw builds lazily, outside a build: always again
+        self.blend = blend::BlendPass::default();
+        let names: Vec<String> = changed
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        tracing::info!(
+            "style shaders changed ({}): building again",
+            names.join(", ")
+        );
+        self.rebuilt = true;
+    }
+
+    /// Whether a pass was dropped for a changed shader file (#418) since
+    /// the last call. The renderer then forgets the kept bind groups.
+    pub fn take_rebuilt(&mut self) -> bool {
+        std::mem::take(&mut self.rebuilt)
     }
 
     /// The shared cross-fade (#396), for [`run_stage`]; `None` until a

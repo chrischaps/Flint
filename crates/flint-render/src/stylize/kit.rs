@@ -3,6 +3,10 @@
 //! buffer and the pass that draws one triangle. With these a style is
 //! mostly its shader and its uniform struct.
 
+use super::dev_shader;
+pub(crate) use super::dev_shader::wgsl;
+pub use super::dev_shader::Wgsl;
+
 /// A fragment-stage uniform buffer at binding 0.
 pub fn uniform_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -193,11 +197,13 @@ fn fullscreen_pipeline_entry_targets(
     })
 }
 
-/// A WGSL module.
-pub fn shader(device: &wgpu::Device, label: &str, source: &'static str) -> wgpu::ShaderModule {
+/// A WGSL module: a [`wgsl!`] (or a bare string). With
+/// `FLINT_STYLE_SHADER_DIR` set, natively, a [`wgsl!`]'s files are read
+/// from that folder instead and hot-reload (#418, [`dev_shader`]).
+pub fn shader(device: &wgpu::Device, label: &str, source: impl Into<Wgsl>) -> wgpu::ShaderModule {
     device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
+        source: wgpu::ShaderSource::Wgsl(dev_shader::source(label, source.into())),
     })
 }
 
@@ -432,10 +438,7 @@ impl Blit {
         input_layout: &wgpu::BindGroupLayout,
         format: wgpu::TextureFormat,
     ) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(label),
-            source: wgpu::ShaderSource::Wgsl(BLIT_SHADER.into()),
-        });
+        let module = shader(device, label, BLIT_SHADER);
         Self {
             pipeline: fullscreen_pipeline(device, label, &module, &[input_layout], format),
         }
@@ -443,7 +446,7 @@ impl Blit {
 }
 
 /// The blit's WGSL.
-pub const BLIT_SHADER: &str = include_str!("blit.wgsl");
+pub const BLIT_SHADER: Wgsl = wgsl!("blit.wgsl");
 
 /// [`fullscreen_pass`] that draws the style only inside `rect` (#385):
 /// the rest of `target` is the input, copied by `blit` with `input` (the
@@ -603,7 +606,7 @@ mod tests {
 
     #[test]
     fn the_blit_shader_validates() {
-        let module = naga::front::wgsl::parse_str(BLIT_SHADER).expect("parses");
+        let module = naga::front::wgsl::parse_str(BLIT_SHADER.text).expect("parses");
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::default(),

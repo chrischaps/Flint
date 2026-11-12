@@ -49,7 +49,7 @@ impl OwnershipPass {
             module: kit::shader(
                 device,
                 "Style Ownership Shader",
-                include_str!("ownership.wgsl"),
+                kit::wgsl!("ownership.wgsl"),
             ),
             uniform_bgl: kit::uniform_layout(device, "Style Ownership Uniform BGL"),
             input_bgl: kit::sampled_layout(device, "Style Ownership Input BGL"),

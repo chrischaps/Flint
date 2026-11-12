@@ -30,7 +30,7 @@ impl BlendPass {
     ) -> (Arc<wgpu::RenderPipeline>, &wgpu::BindGroupLayout) {
         let (module, layout) = self.shared.get_or_init(|| {
             (
-                kit::shader(device, "Style Blend Shader", include_str!("blend.wgsl")),
+                kit::shader(device, "Style Blend Shader", kit::wgsl!("blend.wgsl")),
                 kit::sampled_layout(device, "Style Blend BGL"),
             )
         });
