@@ -4,6 +4,7 @@
 //! for running Flint scenes with physics and first-person controls.
 
 pub mod extension;
+#[cfg(feature = "music")]
 mod music;
 mod player_app;
 pub mod spline_gen;
@@ -33,12 +34,15 @@ pub use player_app::headless_game::{
     apply_look, HeadlessGame, ScriptLook, Skipped, PRESENTATION_ONLY, SCRIPT_SEED,
 };
 pub use player_app::input_script::{Applied, InputScript, PointerEvent, ScriptEvent};
+#[cfg(feature = "living")]
 pub use player_app::living_props::import_of as living_import;
+#[cfg(feature = "living")]
 pub use player_app::living_props::{
     apply_preset as apply_living_preset, boil_at, species_problems, wanted_by as living_wanted,
     wooze_of_scene,
 };
-pub use player_app::procgen_assets::{GpuSink, ProcGenMode};
+#[cfg(feature = "procgen")]
+pub use player_app::procgen_assets::GpuSink;
 pub use player_app::render_scale::{RenderScaleSetting, WEB_DPR_CAP};
 pub use player_app::scene_loading::{
     load_scene_grass_ground, load_user_styles, post_process_config_from_def,
@@ -54,6 +58,7 @@ pub use player_app::web_pacing::coarse_pointer as web_coarse_pointer;
 pub use player_app::web_page::begin as web_begin;
 #[cfg(target_arch = "wasm32")]
 pub use player_app::web_startup::WEB_CANVAS_ID;
+pub use player_app::ProcGenMode;
 pub use player_app::{CaptureConfig, GameCore, LaunchOptions, PlayerApp, SceneSettings};
 pub use window_args::WindowArgs;
 

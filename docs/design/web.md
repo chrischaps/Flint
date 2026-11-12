@@ -1770,6 +1770,10 @@ gzip -9:
 | Whole engine (size probe, below) | 14.9 MB | 10.7 MB | 4.1 MB |
 | `flint-web` running PlayerApp (#99, measured before the vfs merge; file-reading code was still dead) | | 9.4 MB | 3.5 MB |
 | `flint-web` reading game bundles (#98; every engine read live) | | 14.2 MB | 5.1 MB |
+| `flint-web`, `web-release` (#123, #137), main before #754 (`8e3d930f`) | | 12.33 MB | 4.70 MB |
+| the same after #754, default features | | 12.33 MB | 4.70 MB |
+| after #754, without `music`, `rhythm`, `procgen` and `living` | | 11.23 MB | 4.28 MB |
+| after #754, `--no-default-features` | | 10.92 MB | 4.14 MB |
 
 The **size probe** is a throwaway bin, not committed. It builds a
 `PlayerApp` from a `black_box` world and passes opaque bytes to
@@ -1868,14 +1872,39 @@ opt-level = 3` raises one crate without giving back the rest.
 Not trimmed:
 
 - **flint_procgen is reachable on the web.** Scene loading resolves
-  `procgen` components through `ProcGenResolver`
-  (`player_app/scene_loading.rs`) into meshes and textures, so it stays.
-  Float uses none, so a `procgen` cargo feature could drop it for games like
-  Float. That needs a measurement first.
+  `model.asset` and texture names through `ProcGenResolver` into meshes and
+  textures. Since #754 it is flint-player's `procgen` feature, and a game
+  that uses none can leave it out: [Features](#features-754) has the sizes.
 - **exr** was reachable only through image's default formats. It's gone now.
 
 3.1 MB gzipped is in the range of other WebGPU game demos. Float's 10 MB of
 data, most of it music, now costs three times what the engine does.
+
+### Features (#754)
+
+The player's optional parts are Cargo features since #754 (ADR 0117 decision
+6): `music`, `rhythm`, `procgen`, `living`, beside `debug-hud`, `audio` and
+`gamepad`, all on by default. The site keeps the defaults, so its wasm is the
+size it was. A game that leaves parts out ships less. trunk 0.21.14 with its
+`wasm-opt -Oz`, `trunk build --release --cargo-profile web-release` plus the
+feature flags, gzip -9 of the page's `.wasm`, 2026-11-12:
+
+| Build | `.wasm` | gzip -9 | Saved (gzip) |
+|---|---|---|---|
+| main before #754 (`8e3d930f`), default features | 12.33 MB | 4.70 MB | |
+| after #754, default features | 12.33 MB | 4.70 MB | 0.00 MB |
+| `--no-default-features --features audio,gamepad,debug-hud` (no music, rhythm, procgen, living) | 11.23 MB | 4.28 MB | 0.42 MB |
+| `--no-default-features` (and no sound card, pads or debug panels) | 10.92 MB | 4.14 MB | 0.56 MB |
+
+- **The default build is over the 4 MB line again.** #137 shipped 3.64 MB;
+  the engine has grown by 1.06 MB gzipped since, with no new lever. The
+  features don't bring it back under on their own: with every default off
+  it is 4.14 MB.
+- **The music, the rhythm game, procgen and living props are 0.42 MB** of
+  the gzipped wasm together (1.10 MB before gzip). Each alone wasn't
+  measured.
+- `trunk build --no-default-features --features ...` passes the flags to
+  cargo; `index.html` names no features, so the page is the same.
 
 ### Built for speed (#137)
 

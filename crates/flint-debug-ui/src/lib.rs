@@ -1,6 +1,7 @@
 mod camera_panel;
 mod dead_calm_panel;
 mod grass_panel;
+#[cfg(feature = "living")]
 mod living_props_panel;
 mod ocean_panel;
 mod particles_panel;
@@ -17,6 +18,7 @@ pub mod widgets;
 pub use camera_panel::{CameraDebugPanel, CameraPanelConfig};
 pub use dead_calm_panel::DeadCalmDebugPanel;
 pub use grass_panel::GrassDebugPanel;
+#[cfg(feature = "living")]
 pub use living_props_panel::{
     pick_prop, Knob, KnobFlags, KnobSources, LivingAbState, LivingHealth, LivingKnobs,
     LivingPanelAction, LivingPanelState, LivingPickedState, LivingPropRow, LivingPropsDebugPanel,

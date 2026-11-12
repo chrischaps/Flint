@@ -37,6 +37,7 @@ use super::{LaunchOptions, SceneSettings};
 use flint_audio::engine::AudioEngine;
 use flint_core::project::Project;
 use flint_ecs::FlintWorld;
+#[cfg(feature = "procgen")]
 use flint_procgen::ProcGenResolver;
 use flint_render::{Camera, SceneRenderer};
 use flint_runtime::pad::Gilrs;
@@ -122,6 +123,7 @@ pub(crate) struct SceneCtx<'a> {
     pub project: &'a Project,
     pub script: &'a mut ScriptSystem,
     /// The procgen resolver, which holds the scene's living props.
+    #[cfg(feature = "procgen")]
     pub resolver: &'a mut ProcGenResolver,
     /// `None` in a headless test.
     pub renderer: Option<&'a mut SceneRenderer>,
@@ -184,6 +186,7 @@ pub(crate) struct StageCtx<'a> {
     pub gpu: Option<(&'a wgpu::Device, &'a wgpu::Queue)>,
     /// The procgen resolver, which holds the scene's living props and makes
     /// their poses on its frame budget.
+    #[cfg(feature = "procgen")]
     pub resolver: &'a mut ProcGenResolver,
     pub project: &'a Project,
     pub scene_path: &'a str,
@@ -214,6 +217,7 @@ pub(crate) struct StageCtx<'a> {
 impl StageCtx<'_> {
     /// Whether the game state lets the system `name` run this frame (a
     /// subsystem asks by its own `name()`). Outside a stage, it does.
+    #[cfg_attr(not(feature = "living"), allow(dead_code))] // living props' (#754)
     pub(crate) fn runs(&self, name: &str) -> bool {
         self.policy.is_none_or(|policy| policy.runs(name))
     }
@@ -241,6 +245,7 @@ pub(crate) enum PlayerInput {
 /// What a subsystem may touch after the frame's scene is encoded and before
 /// the HUD: a second look at the scene drawn over part of the frame (the
 /// Living Props A/B split, #238).
+#[cfg_attr(not(feature = "living"), allow(dead_code))] // living props' (#754)
 pub(crate) struct EncodeCtx<'a> {
     pub encoder: &'a mut wgpu::CommandEncoder,
     pub device: &'a wgpu::Device,
@@ -253,11 +258,14 @@ pub(crate) struct EncodeCtx<'a> {
     pub renderer: &'a mut SceneRenderer,
     pub world: &'a FlintWorld,
     pub camera: &'a Camera,
+    #[cfg(feature = "procgen")]
     pub resolver: &'a mut ProcGenResolver,
 }
 
 /// What a subsystem may read for the `--exit-after` report.
+#[cfg_attr(not(feature = "living"), allow(dead_code))] // living props' (#754)
 pub(crate) struct ReportCtx<'a> {
+    #[cfg(feature = "procgen")]
     pub resolver: &'a ProcGenResolver,
     pub renderer: Option<&'a SceneRenderer>,
 }
@@ -419,6 +427,7 @@ impl Subsystems {
     }
 
     /// The subsystem of type `T`, if there is one.
+    #[cfg_attr(not(feature = "living"), allow(dead_code))] // living props' (#754)
     pub(crate) fn find<T: Subsystem>(&self) -> Option<&T> {
         self.list
             .iter()
@@ -426,6 +435,7 @@ impl Subsystems {
     }
 
     /// The subsystem of type `T`, if there is one, to change.
+    #[cfg_attr(not(feature = "living"), allow(dead_code))] // living props' (#754)
     pub(crate) fn find_mut<T: Subsystem>(&mut self) -> Option<&mut T> {
         self.list
             .iter_mut()
@@ -524,6 +534,7 @@ macro_rules! stage_ctx {
             policy: $policy,
             renderer: $app.scene_renderer.as_mut(),
             gpu: $app.render_context.as_ref().map(|c| (&c.device, &c.queue)),
+            #[cfg(feature = "procgen")]
             resolver: &mut $app.core.procgen_resolver,
             project: &$app.core.project,
             scene_path: &$app.core.scene_path,
@@ -558,6 +569,7 @@ macro_rules! scene_ctx {
             launch: &mut $app.launch,
             project: &$app.core.project,
             script: &mut $app.core.script,
+            #[cfg(feature = "procgen")]
             resolver: &mut $app.core.procgen_resolver,
             renderer: $app.scene_renderer.as_mut(),
             audio: Some(&mut $app.audio.engine),
@@ -641,6 +653,7 @@ impl super::PlayerApp {
     pub(super) fn subsystem_report(&self) -> Vec<String> {
         let mut report = ExitReport::default();
         let ctx = ReportCtx {
+            #[cfg(feature = "procgen")]
             resolver: &self.core.procgen_resolver,
             renderer: self.scene_renderer.as_ref(),
         };

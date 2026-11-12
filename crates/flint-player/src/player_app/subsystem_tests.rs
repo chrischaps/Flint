@@ -250,6 +250,7 @@ fn the_expression_feed_is_a_subsystem_only_when_the_run_has_one() {
     });
 }
 
+#[cfg(feature = "living")]
 #[test]
 fn a_scene_with_a_wooze_field_gets_living_props_and_the_next_scene_drops_it() {
     vfs::scoped(Arc::new(game()), || {
@@ -272,6 +273,7 @@ fn a_scene_with_a_wooze_field_gets_living_props_and_the_next_scene_drops_it() {
     });
 }
 
+#[cfg(feature = "living")]
 #[test]
 fn a_state_pauses_the_grove_by_its_living_entry_and_not_by_animation() {
     use flint_runtime::{StateConfig, SystemPolicy};

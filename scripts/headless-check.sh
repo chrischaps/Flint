@@ -12,6 +12,11 @@
 #   2. with --build, checks flint-cli headless for this machine, which on a
 #      Linux box with none of those headers is the real proof (CI's job).
 #
+# It holds the smallest player too (#754): `flint-player
+# --no-default-features` links none of the optional parts' crates (the
+# music, the rhythm game, procgen and living props, the debug panels), and
+# with --build it compiles, tests and examples included.
+#
 #   scripts/headless-check.sh           the tree only (seconds, any host)
 #   scripts/headless-check.sh --build   the tree, then cargo check
 set -euo pipefail
@@ -36,6 +41,17 @@ fi
 echo "headless flint-cli tree for Linux: no device crates" \
     "($(printf '%s\n' "$tree" | sort -u | wc -l) crates)"
 
+OPTIONAL='^(flint-music|flint-rhythm|flint-input-capture|flint-procgen|flint-debug-ui) v'
+player=$(cargo tree -p flint-player --no-default-features -e normal --prefix none)
+found=$(printf '%s\n' "$player" | grep -E "$OPTIONAL" | sort -u || true)
+if [ -n "$found" ]; then
+    echo "flint-player with no default features links an optional part's crate:" >&2
+    printf '%s\n' "$found" | sed 's/^/  /' >&2
+    exit 1
+fi
+echo "smallest flint-player: none of music, rhythm, procgen, living, debug-hud"
+
 if [ "${1:-}" = "--build" ]; then
     cargo check -p flint-cli --no-default-features --bins
+    cargo check -p flint-player --no-default-features --all-targets
 fi
