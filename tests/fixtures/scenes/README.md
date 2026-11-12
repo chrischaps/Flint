@@ -27,6 +27,7 @@ two frames on main too, and this copy draws one of them).
 | Scene | Loaded by |
 |---|---|
 | `stylize_props_plain`, `_ascii`, `_pencil`, `stylize_props`, `stylize_blend` | the props goldens: one bench per style (#386) |
+| `stylize_props_scripted` (+ `scripts/story_beat.rhai`) | the scripted-render goldens, `script-beat*` (#371): written here, not copied from an example |
 | `pbr_test` | ASCII and look goldens; `render_goldens.rs`'s flag test |
 | `ascii_edges`, `ascii_entities`, `selection_outline`, `pencil_sketch`, `watercolor`, `user_styles`, `style_terrain`, `style_veil` | their own goldens; `user_styles` also `list_styles_cli.rs` |
 | `mesh_sequence` | `render_mesh_cli.rs` |
