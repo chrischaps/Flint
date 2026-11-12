@@ -766,9 +766,15 @@ impl PlayerApp {
             // GPU time, when the frames were timed (--stats, ADR 0108).
             let gpu_frames = self.capture.perf_gpu_frames;
             if gpu_frames > 0 {
+                let gpu_ms = self.capture.perf_gpu_ms / gpu_frames as f64;
+                // Under vsync an idle GPU clocks down and reads high (#380).
+                let present = self
+                    .render_context
+                    .as_ref()
+                    .map(|c| c.present_mode_in_use());
                 eprintln!(
-                    "[perf] avg GPU {:.2} ms/frame over {gpu_frames} timed frames",
-                    self.capture.perf_gpu_ms / gpu_frames as f64
+                    "[perf] avg GPU {gpu_ms:.2} ms/frame over {gpu_frames} timed frames{}",
+                    super::perf::gpu_vsync_note(present, gpu_ms as f32, avg_ms as f32)
                 );
             }
         }
