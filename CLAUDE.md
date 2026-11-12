@@ -33,7 +33,7 @@ bash scripts/ci.sh --full      #   ...plus what CI's clippy and wasm jobs run (t
 Every agent worktree builds its own `target/`, and parallel worktrees are how this repo is worked, so disk is what runs out (#762):
 
 - **Keep `target/` per worktree; never point several at one `CARGO_TARGET_DIR`.** Cargo names a workspace crate's output by its path inside the workspace, so two worktrees' `flint-render` share one output and a branch can build against the other's (2026-10-30: a branch failed on a method its own source defines). One target dir also has one build lock, so parallel agents queue, and tests that write into it collide (#421). An A/B against another revision gets its own dir.
-- **The dev profile is lean** (`Cargo.toml`): line tables for workspace crates, no debug info for dependencies. A cold `cargo build` plus `cargo test --no-run` measured 6.6 GB and 150 s, down from 17.1 GB and 229 s. Locals in a debugger: `CARGO_PROFILE_DEV_DEBUG=full`. What loads a texture is built at `opt-level = 3` even in debug (#326): the image decoders, glTF, SHA-256 and `flint-pixels`, where the texel loops live so `flint-render` stays unoptimized. A debug render of a scene with a 32 MB model went from 19 s to 2.6 s; a new per-texel loop on load goes in `flint-pixels`.
+- **The dev profile is lean** (`Cargo.toml`): line tables for workspace crates, no debug info for dependencies. A cold `cargo build` plus `cargo test --no-run` measures 6.6 GB and 150 s. Locals in a debugger: `CARGO_PROFILE_DEV_DEBUG=full`. What loads a texture is built at `opt-level = 3` even in debug (#326): the image decoders, glTF, SHA-256 and `flint-pixels`, where the texel loops live so `flint-render` stays unoptimized. A debug render of a scene with a 32 MB model takes about 2.6 s; a new per-texel loop on load goes in `flint-pixels`.
 - **sccache is optional, per machine, not in `.cargo/config.toml`** (a wrapper that isn't installed fails every build). With `RUSTC_WRAPPER=sccache` a cold-cache build measured no slower (96 s); what a warm cache saves the next worktree is unmeasured (the run was stopped for low memory). It can cache only dependencies, since the workspace crates build incrementally.
 - **Disk is guarded** by `scripts/build-space.sh`. A hook refuses `issue.sh claim` under 30 GB free (`FLINT_DISK_FLOOR_GB`), and the SessionStart hook deletes the `target/` of worktrees whose issue is closed (not the worktree, not one built in the last hour). `report` lists every worktree's `target/` by size. A release build adds several GB: before one, check `df -h .`, and delete your own worktree's `target/release` when you're done with it.
 
@@ -79,8 +79,10 @@ Flint uses an **edit -> validate -> play** loop:
 28-crate Cargo workspace (plus `tools/arch-analyzer`, a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph and the book's crate table, checked in CI; neither is a default member):
 
 ```
-flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, edit, play, check, validate, asset, render, gen, prefab,
-  │                 validate-suite, play-suite, calibrate, play-chart, replay-chart, render-suite, goldens, spike-rumble, bundle
+flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, serve, preview, play, check,
+  │                 validate, examples, asset, render, style, gen, gen-preview, prefab, bundle, export, spline-edit,
+  │                 terrain-edit, tex-edit, validate-suite, play-suite, calibrate, play-chart, replay-chart, render-suite,
+  │                 goldens, spike-rumble
   ├── flint-asset-gen AI asset generation: pluggable providers (Flux, Meshy, ElevenLabs, Mock)
   ├── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
   └── flint-procgen-ai AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
@@ -93,6 +95,7 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
   ├── flint-particles Particle sim: effect assets, curves, forces, bursts, sub-emitters, deterministic stepping
   ├── flint-animation Property tween + skeletal animation
   ├── flint-audio    Kira spatial audio
+  ├── flint-audio-worklet Kira mixer for the browser's AudioWorklet (its own wasm, `--profile worklet`)
   ├── flint-terrain  Heightmap terrain with splat-map blending
   ├── flint-physics  Rapier 3D (character controller, static/kinematic/dynamic bodies, impulse joints)
   ├── flint-runtime  GameClock, InputState, InputConfig, EventBus, GameStateMachine, PersistentStore, pad (gilrs), PadRumble
@@ -162,13 +165,13 @@ A bullet below that names a feature in a line or two has its full text in one of
 - CI (`.github/workflows/ci.yml`, #757) runs `rustfmt` (the tree is formatted; an unformatted file fails the PR and `issue.sh land`), `clippy (native)` (`cargo clippy --all-targets`: warnings pass, a deny-level lint or code that doesn't compile fails), the wasm and headless checks, and the GPU tests on WARP, which don't block while they fail on main (`continue-on-error`). No unit tests run in CI yet
 - CI's `wasm32 check` (`.github/workflows/ci.yml`) builds `flint-player` and every crate it links for `wasm32-unknown-unknown` on each PR. Run it locally with `bash scripts/wasm-check.sh` before pushing runtime-crate changes. It also denies `Instant::now`/`SystemTime::now` and their `elapsed()`, which compile on wasm but panic there: runtime code uses the `web-time` crate (a workspace dep: `web-time = { workspace = true }`), which #100 moved every older site to. Desktop-only deps in a runtime crate go under `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`, as in flint-player's Cargo.toml (docs/design/web.md)
 - `FlintWorld::spawn` ids come from a process-wide counter and scenes load from a `HashMap`, so entity ids differ run to run -- derive anything reproducible (seeds) from entity **names**, never ids
-- Lights are `[entities.x.light]` with a `type`, and a directional `direction` points *toward* the light. `flint schema light` lists the fields. No system reads a `directional_light` table and `flint validate` still passes it (the unknown-component diagnostic is #683), so a scene with only that gets `default_scene_lights` and no warning: the frozen fixtures under `tests/fixtures/scenes/` still do, on purpose, and the examples no longer do (#681).
+- Lights are `[entities.x.light]` with a `type`, and a directional `direction` points *toward* the light. `flint schema light` lists the fields. A `directional_light` table is not a light: no system reads it, `flint validate` and `flint check` warn about it as an unknown component (with a hint naming `[light] type`), and a scene with only that gets `default_scene_lights`. The frozen fixtures under `tests/fixtures/scenes/` keep one on purpose (#681).
 
 ## Documentation Pipeline
 
 The changelog is for games that carry the engine as a subtree (#765): a change a game can notice (a scene or schema key, a script function, a CLI flag, a format, a Cargo feature, a change in look or behaviour) gets an entry saying what changed and what to do. Each PR adds its own file, `bash scripts/changelog.sh new <issue> <slug>` (`changelog.d/<issue>-<slug>.md`, about 150 words), never an edit to `CHANGELOG.md` or `changelog/` (#788): after the merge the `Changelog` workflow moves it into `changelog/YYYY-MM.md` and `CHANGELOG.md` stays a short page linking the months. `changelog.sh since <date>` prints what is new. CI's `changelog` job (`scripts/changelog-check.sh`) fails a PR that touches `schemas/`, the script API or the scene format with no fragment; a commit-message line `Changelog: none (reason)` waives it for a change no game can notice.
 
-The book is `docs/book` (mdBook), published to docs.chaps.dev by hand from this machine. There is no drift checker and no CI for the docs: when a change alters a command, flag, key or component the book describes, update the book in the same PR, checking against the code rather than memory.
+The book is `docs/book` (mdBook), published to docs.chaps.dev by hand from this machine. CI checks only its generated parts, the script API (`flint script api --check-book`) and the crate table (`flint-arch-analyzer --check-book`); nothing checks the prose. When a change alters a command, flag, key or component the book describes, update the book in the same PR, checking against the code rather than memory.
 
 Build, preview and publish commands: `docs/CLAUDE.md`.
 

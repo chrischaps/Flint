@@ -403,7 +403,7 @@ impl Subsystem for LivingSubsystem {
                 if key.shift {
                     self.pick_next_living(ctx, true);
                 } else if !self.pick_living_at_centre(ctx) {
-                    tracing::info!("Living Props: no living prop at the view centre");
+                    ctx.note.say("F8", "no living prop at the view centre");
                 }
             }
             #[cfg(feature = "debug-hud")]

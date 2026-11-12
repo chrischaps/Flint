@@ -339,6 +339,9 @@ pub(super) struct Hud {
     /// Whether egui has been given the fonts at least once. Until then
     /// `refresh_project_fonts` always installs them.
     pub(super) fonts_installed: bool,
+    /// What a debug key with nothing to act on said (#367), shown for a
+    /// moment at the top of the window.
+    pub(super) key_note: super::key_note::KeyNote,
 }
 
 impl Default for Hud {
@@ -359,6 +362,7 @@ impl Default for Hud {
             text_halos: Default::default(),
             fonts_root: Default::default(),
             fonts_installed: false,
+            key_note: Default::default(),
         }
     }
 }

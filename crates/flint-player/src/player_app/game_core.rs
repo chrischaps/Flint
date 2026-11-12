@@ -110,6 +110,8 @@ pub(crate) struct Lent<'a> {
     pub cursor_captured: bool,
     /// Whether the scene file may be written (#364).
     pub scene_file_writable: bool,
+    /// What a debug key says when it has nothing to act on (#367).
+    pub note: &'a mut super::key_note::KeyNote,
     #[cfg(feature = "debug-hud")]
     pub panels: &'a mut Vec<Box<dyn flint_debug_ui::DebugPanel>>,
 }
@@ -339,6 +341,7 @@ impl GameCore {
             scene_file_writable: lent.scene_file_writable,
             pixels_per_point: lent.pixels_per_point,
             cursor_captured: lent.cursor_captured,
+            note: lent.note,
             #[cfg(feature = "debug-hud")]
             panels: lent.panels,
         };

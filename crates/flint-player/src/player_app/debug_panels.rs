@@ -400,10 +400,11 @@ impl PlayerApp {
     }
 
     /// Toggle a named debug panel, adjusting cursor capture to match its new
-    /// state; logs `absent_msg` when no such panel is registered (no music
-    /// session running). One body for the Backquote/Backslash key handlers.
+    /// state; when no such panel is registered (no music session running),
+    /// `key` says `absent_msg` on screen and in the console (#367). One body
+    /// for the F4, Backquote and Backslash key handlers.
     #[cfg(feature = "debug-hud")]
-    pub(super) fn toggle_named_panel(&mut self, name: &str, absent_msg: &str) {
+    pub(super) fn toggle_named_panel(&mut self, name: &str, key: &'static str, absent_msg: &str) {
         let mut opened = false;
         let mut exists = false;
         for panel in &mut self.debug_panels {
@@ -420,7 +421,7 @@ impl PlayerApp {
                 self.capture_cursor();
             }
         } else {
-            tracing::info!("{absent_msg}");
+            self.hud.key_note.say(key, absent_msg);
         }
     }
 
