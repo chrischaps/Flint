@@ -226,6 +226,11 @@ impl ScriptEngine {
         new_vars.into_iter().map(|(name, ..)| name).collect()
     }
 
+    /// Whether any loaded script may call `complete_transition()` (#362).
+    pub fn can_complete_transition(&self) -> bool {
+        self.scripts.values().any(|s| s.completes_transition)
+    }
+
     /// Say which entity a script is on, by name, so it runs in its place in
     /// [`Self::in_order`].
     pub fn name_script(&mut self, entity: EntityId, name: &str) {

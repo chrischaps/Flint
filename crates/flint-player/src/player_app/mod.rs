@@ -54,6 +54,8 @@ mod touch_controls_tests;
 mod touch_overlay;
 mod transition;
 #[cfg(test)]
+mod transition_tests;
+#[cfg(test)]
 mod vfs_tests;
 #[cfg(target_arch = "wasm32")]
 pub mod web_pacing;
