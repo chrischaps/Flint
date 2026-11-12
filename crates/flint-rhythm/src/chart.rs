@@ -1,9 +1,9 @@
 //! Beatmap chart parsing. Same shape-tolerant posture as the manifest parser:
 //! unknown channels/kinds parse fine and are reported by the validator.
 
-use crate::config_toml::{self, VersionPolicy};
 use flint_core::toml_util::toml_f64;
 use flint_core::{vfs, FlintError, Result};
+use flint_music::config_toml::{self, VersionPolicy};
 use std::path::Path;
 
 #[derive(Debug, Clone)]

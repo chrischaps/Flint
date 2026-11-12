@@ -27,7 +27,7 @@ path = "src/bin/flint_web_shims.rs"
 default = ["debug-hud", "audio", "gamepad"]
 # The sound card (kira's cpal backend: ALSA on Linux). Off, the player runs
 # silent and a music session won't start, as on a machine without a device.
-audio = ["flint-audio/device", "flint-music/device"]
+audio = ["flint-audio/device", "flint-music/device", "flint-rhythm/device"]
 # Gamepads (gilrs: libudev on Linux). Off, no pad is ever seen; keyboard,
 # mouse, touch and --input-script's pad still work (#221).
 gamepad = ["flint-runtime/gamepad", "flint-input-capture/gamepad"]
@@ -53,6 +53,7 @@ flint-physics = { workspace = true }
 flint-import = { workspace = true }
 flint-audio = { workspace = true }
 flint-music = { workspace = true }
+flint-rhythm = { workspace = true }
 flint-input-capture = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

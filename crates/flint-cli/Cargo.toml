@@ -19,7 +19,7 @@ path = "src/main.rs"
 #   dialogs  the editors' Save As / Export / Browse buttons say so instead
 [features]
 default = ["audio", "gamepad", "dialogs"]
-audio = ["flint-player/audio", "flint-music/device"]
+audio = ["flint-player/audio", "flint-music/device", "flint-rhythm/device"]
 gamepad = ["flint-player/gamepad", "flint-input-capture/gamepad"]
 dialogs = ["dep:rfd"]
 
@@ -50,6 +50,7 @@ flint-procgen-ai = { workspace = true }
 flint-viewer = { workspace = true }
 flint-debug-ui = { workspace = true }
 flint-music = { workspace = true }
+flint-rhythm = { workspace = true }
 flint-input-capture = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
@@ -84,3 +85,5 @@ naga = { version = "23", features = ["wgsl-in"] }
 # A JSON Schema validator, for the test that `flint schema --format json-schema`
 # describes every example scene (#684). Tests only.
 boon = "0.6"
+# Reads the WAV `render-suite` writes, for the music-suite test (#745).
+hound = { workspace = true }

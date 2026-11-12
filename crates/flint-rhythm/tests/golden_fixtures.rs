@@ -8,7 +8,8 @@
 //! - `fixtures/invalid/*` each carry a `# expect-error: <Code>` header naming
 //!   the exact issue code the validator must emit.
 
-use flint_music::{validate_chart, validate_manifest, Chart, SuiteManifest};
+use flint_music::SuiteManifest;
+use flint_rhythm::{validate_chart, validate_manifest, Chart};
 use std::path::Path;
 
 mod common;

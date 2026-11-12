@@ -21,11 +21,11 @@
 //! which fires them early by the feel-tuned `lead_ms` (rumble transport and
 //! actuator spin-up are unmeasurable in software — ADR 0025).
 
-use crate::conductor::{Conductor, Grid};
-use crate::config_toml::{self, VersionPolicy};
 use crate::reintegration::{ReintegrationEvent, SeqPhase};
-use crate::tempo::ms_to_samples;
 use flint_core::{vfs, FlintError, Result};
+use flint_music::conductor::{Conductor, Grid};
+use flint_music::config_toml::{self, VersionPolicy};
+use flint_music::tempo::ms_to_samples;
 use std::path::Path;
 
 /// Which grid the pre-beat tick rides.

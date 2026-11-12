@@ -9,18 +9,19 @@
 //! never the game repo's audio. The real-asset checks live in the CLI
 //! validation + anatomy runs (`logs/tuning/world2-anatomy-*`).
 
-use flint_music::chart_eval::ChartEval;
-use flint_music::coherence::{Coherence, CoherenceConfig};
 use flint_music::conductor::Conductor;
 use flint_music::event_script::EventScript;
-use flint_music::judgment::{JsonlWriter, Judge, JudgmentConfig, JudgmentRecord, LeanMode};
-use flint_music::ladder::{Ladder, LadderConfig};
 use flint_music::manifest::BusDecl;
 use flint_music::offline::{render_offline_with, OfflineRenderConfig};
-use flint_music::reintegration::{ReintegrationEvent, Reintegrator};
-use flint_music::replay::{synthesize, SyntheticProfile};
 use flint_music::session::StemResolver;
-use flint_music::{Chart, ChartCore, ConductedFrame, SuiteManifest};
+use flint_music::SuiteManifest;
+use flint_rhythm::chart_eval::ChartEval;
+use flint_rhythm::coherence::{Coherence, CoherenceConfig};
+use flint_rhythm::judgment::{JsonlWriter, Judge, JudgmentConfig, JudgmentRecord, LeanMode};
+use flint_rhythm::ladder::{Ladder, LadderConfig};
+use flint_rhythm::reintegration::{ReintegrationEvent, Reintegrator};
+use flint_rhythm::replay::{synthesize, SyntheticProfile};
+use flint_rhythm::{Chart, ChartCore, ConductedFrame};
 use kira::sound::static_sound::StaticSoundData;
 use std::path::PathBuf;
 
@@ -237,7 +238,7 @@ impl StemResolver for ToneStems {
     }
 }
 
-fn arrival_judge(coh_weights: bool) -> (Judge, Coherence, Vec<flint_music::InputEvent>, usize) {
+fn arrival_judge(coh_weights: bool) -> (Judge, Coherence, Vec<flint_rhythm::InputEvent>, usize) {
     let manifest = manifest();
     let chart = chart();
     let conductor = Conductor::new(&manifest, None);
@@ -503,16 +504,16 @@ chromatic = 0.35
         Coherence::new(CoherenceConfig::default()),
         log,
         Ladder::new(ladder_cfg),
-        Reintegrator::new(manifest.reintegration.clone()),
+        Reintegrator::for_manifest(&manifest).unwrap(),
         Conductor::new(&manifest, None),
         PathBuf::from("unused-coherence.toml"),
         PathBuf::from("unused-ladder.toml"),
-        flint_music::GradientDriver::new(flint_music::GradientConfig::default()),
+        flint_rhythm::GradientDriver::new(flint_rhythm::GradientConfig::default()),
         PathBuf::from("unused-gradient.toml"),
         visual_eval,
     );
     core.sync_seam_params();
-    core.set_cues(flint_music::chart_session::resolve_cues(
+    core.set_cues(flint_rhythm::chart_session::resolve_cues(
         &chart,
         &Conductor::new(&manifest, None),
     ));

@@ -4,15 +4,16 @@
 //! sit inside live sessions without ever touching the replay/render paths
 //! (which never construct one).
 
-use flint_music::chart_session::PulseKind;
-use flint_music::haptics::{HapticEvent, HapticsConfig, HapticsDriver};
-use flint_music::reintegration::{ReintegrationEvent, SeqPhase};
 use flint_music::{Conductor, Grid, SuiteManifest};
+use flint_rhythm::chart_session::PulseKind;
+use flint_rhythm::haptics::{HapticEvent, HapticsConfig, HapticsDriver};
+use flint_rhythm::reintegration::{ReintegrationEvent, SeqPhase};
 use std::path::Path;
 
 fn conductor() -> Conductor {
     let manifest = SuiteManifest::load(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/tempo_change.suite.toml"),
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../flint-music/tests/data/tempo_change.suite.toml"),
     )
     .expect("fixture manifest");
     Conductor::new(&manifest, None)
@@ -132,7 +133,7 @@ fn ticks_land_on_the_beat_grid_across_the_tempo_change() {
 fn thump_fires_on_hits_only() {
     let c = conductor();
     let mut cfg = active_cfg();
-    cfg.tick_grid = flint_music::TickGrid::Off; // isolate the thump
+    cfg.tick_grid = flint_rhythm::TickGrid::Off; // isolate the thump
     let mut d = HapticsDriver::new(cfg);
     let pulses = vec![
         (1000, 5.0, PulseKind::Hit),
@@ -237,7 +238,7 @@ fn grind_follows_rewind_and_seam_flushes() {
 fn pickup_ticks_land_on_the_beats_before_the_seam() {
     let c = conductor();
     let mut cfg = active_cfg();
-    cfg.tick_grid = flint_music::TickGrid::Off;
+    cfg.tick_grid = flint_rhythm::TickGrid::Off;
     cfg.thump.strong = 0.0;
     cfg.thump.weak = 0.0;
     cfg.grind.strong = 0.0;

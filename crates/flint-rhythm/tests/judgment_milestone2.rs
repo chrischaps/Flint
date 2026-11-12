@@ -13,17 +13,19 @@
 //! (coherence visibly rising with attention, decaying with neglect), which
 //! no test — and no agent — may certify.
 
-use flint_music::chart_eval::ChartEval;
-use flint_music::coherence::{Coherence, CoherenceConfig};
 use flint_music::conductor::Conductor;
-use flint_music::input_stream::InputEvent;
-use flint_music::judgment::{Judge, JudgmentConfig, JudgmentRecord};
-use flint_music::replay::{synthesize, SyntheticProfile};
-use flint_music::{Chart, SuiteManifest};
+use flint_music::SuiteManifest;
+use flint_rhythm::chart_eval::ChartEval;
+use flint_rhythm::coherence::{Coherence, CoherenceConfig};
+use flint_rhythm::input_stream::InputEvent;
+use flint_rhythm::judgment::{Judge, JudgmentConfig, JudgmentRecord};
+use flint_rhythm::replay::{synthesize, SyntheticProfile};
+use flint_rhythm::Chart;
 use std::path::Path;
 
 fn manifest() -> SuiteManifest {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/tempo_change.suite.toml");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../flint-music/tests/data/tempo_change.suite.toml");
     SuiteManifest::load(&path).expect("synthetic manifest")
 }
 

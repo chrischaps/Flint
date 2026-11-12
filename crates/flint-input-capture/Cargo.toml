@@ -16,6 +16,7 @@ gamepad = ["flint-runtime/gamepad", "dep:gilrs-core"]
 web-time = { workspace = true }
 flint-core = { workspace = true }
 flint-music = { workspace = true }
+flint-rhythm = { workspace = true }
 flint-runtime = { workspace = true }
 tracing = { workspace = true }
 

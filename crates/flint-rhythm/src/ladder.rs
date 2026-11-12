@@ -22,12 +22,12 @@
 //! bus, foundation included — filtering the whole world is the woozy intent;
 //! silencing its pulse is not.
 
-use crate::config_toml::{self, VersionPolicy};
 use crate::gradient::GradientOffsets;
-use crate::mixer::{BusMixer, LPF_OPEN_HZ};
 use crate::MOTIF_BUSES;
 use flint_core::toml_util::toml_f64;
 use flint_core::{vfs, FlintError, Result};
+use flint_music::config_toml::{self, VersionPolicy};
+use flint_music::mixer::{BusMixer, LPF_OPEN_HZ};
 use kira::Tween;
 use std::collections::BTreeMap;
 use std::path::Path;

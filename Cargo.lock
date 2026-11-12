@@ -1714,6 +1714,7 @@ dependencies = [
  "flint-procgen-ai",
  "flint-query",
  "flint-render",
+ "flint-rhythm",
  "flint-runtime",
  "flint-scene",
  "flint-schema",
@@ -1722,6 +1723,7 @@ dependencies = [
  "flint-viewer",
  "gif",
  "glam",
+ "hound",
  "image",
  "miniz_oxide",
  "naga",
@@ -1811,6 +1813,7 @@ version = "0.1.0"
 dependencies = [
  "flint-core",
  "flint-music",
+ "flint-rhythm",
  "flint-runtime",
  "gilrs-core",
  "tracing",
@@ -1824,9 +1827,9 @@ dependencies = [
  "flint-core",
  "hound",
  "kira",
- "serde_json",
  "symphonia",
  "toml",
+ "toml_edit 0.22.27",
  "tracing",
  "web-time",
 ]
@@ -1886,6 +1889,7 @@ dependencies = [
  "flint-physics",
  "flint-procgen",
  "flint-render",
+ "flint-rhythm",
  "flint-runtime",
  "flint-scene",
  "flint-schema",
@@ -1988,6 +1992,19 @@ dependencies = [
  "tracing",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "flint-rhythm"
+version = "0.1.0"
+dependencies = [
+ "flint-core",
+ "flint-music",
+ "kira",
+ "serde_json",
+ "toml",
+ "tracing",
+ "web-time",
 ]
 
 [[package]]

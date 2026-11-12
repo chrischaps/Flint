@@ -16,9 +16,9 @@
 //!   enclosing section's value.
 
 use crate::chart::Chart;
-use crate::conductor::Conductor;
-use crate::tempo::ms_to_samples;
 use flint_core::{FlintError, Result};
+use flint_music::conductor::Conductor;
+use flint_music::tempo::ms_to_samples;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -122,17 +122,21 @@ impl ChartEval {
             let center_sample = conductor.sample_at_beat(pulse.beat);
             let half_width_ms = match pulse.window_ms {
                 Some(ms) => ms,
-                None => {
-                    conductor
-                        .section_at_sample(center_sample)
-                        .ok_or_else(|| {
-                            bad(format!(
-                                "pulse at beat {} is outside all sections",
-                                pulse.beat
-                            ))
-                        })?
-                        .pulse_window_ms
-                }
+                None => conductor
+                    .section_at_sample(center_sample)
+                    .ok_or_else(|| {
+                        bad(format!(
+                            "pulse at beat {} is outside all sections",
+                            pulse.beat
+                        ))
+                    })?
+                    .pulse_window_ms
+                    .ok_or_else(|| {
+                        bad(format!(
+                            "pulse at beat {} falls in a section with no pulse_window_ms",
+                            pulse.beat
+                        ))
+                    })?,
             };
             let direction = match &pulse.direction {
                 Some(d) if d.len() == 2 => Some([d[0], d[1]]),
@@ -243,7 +247,7 @@ fn bad(msg: String) -> FlintError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::SuiteManifest;
+    use flint_music::manifest::SuiteManifest;
 
     // 120 BPM 4/4 at 48 kHz: one beat = 24_000 samples.
     fn conductor() -> Conductor {

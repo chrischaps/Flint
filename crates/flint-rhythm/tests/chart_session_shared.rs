@@ -4,11 +4,11 @@
 //! `open_shared` resolves stems from disk; skipped when the game repo's
 //! fixtures aren't present (engine CI), like `prototype_fixture_renders_offline`.
 
-use flint_music::chart_session::{judgment_offset_samples, ChartSession, ChartSessionConfig};
-use flint_music::input_stream::{InputEvent, LeanSample, PulseEvent};
-use flint_music::judgment::LeanMode;
 use flint_music::offline::{OfflineBackend, OfflineBackendSettings};
-use flint_music::Tick;
+use flint_rhythm::chart_session::{judgment_offset_samples, ChartSession, ChartSessionConfig};
+use flint_rhythm::input_stream::{InputEvent, LeanSample, PulseEvent};
+use flint_rhythm::judgment::LeanMode;
+use flint_rhythm::Tick;
 use kira::{AudioManager, AudioManagerSettings};
 use std::path::Path;
 
@@ -133,7 +133,10 @@ fn open_shared_ticks_taps_and_finishes_on_offline_manager() {
         assert_eq!(ts.start_sample, ms.start_sample);
         assert_eq!(
             ts.re_entry,
-            manifest.reintegration.re_entry_sections.contains(&ms.name),
+            manifest
+                .reintegration
+                .as_ref()
+                .is_some_and(|r| r.re_entry_sections.contains(&ms.name)),
             "re-entry flag matches the manifest for '{}'",
             ms.name
         );

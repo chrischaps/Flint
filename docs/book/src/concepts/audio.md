@@ -39,7 +39,7 @@ In the browser, and whenever a late bundle of audio arrives, nothing is decoded 
 ## Mixer Buses
 
 Every ordinary sound routes through one of two buses — `music` and `sfx` — both children
-of Kira's main track. (A running [music session](music-sessions.md) adds its own six-bus stem mixer on the same device; that mixer is owned by `flint-music`, not by `audio_source`, and is described on its own page.)
+of Kira's main track. (A running [music session](music-sessions.md) adds its own stem mixer, one bus per stem the suite names, on the same device; that mixer is owned by `flint-music`, not by `audio_source`, and is described on its own page.)
 
 ```
 main  ──┬── music     (audio_source.bus = "music")
@@ -75,7 +75,7 @@ One-shots (`play_sound`, `play_sound_at`) are always sfx.
 
 ## Music Sessions
 
-A scene that carries a `music_session` component turns the audio engine into the host for a rhythm-driven chart: `flint-music` opens a `ChartSession` on the **same** Kira manager the ordinary buses use ([ADR 0017](https://github.com/chrischaps/Flint/blob/main/docs/adr/0017-one-shared-audio-manager.md), shared audio manager), so the world's sounds and the suite's stems mix together and one master low-pass muffles both. For the length of the session the gamepad is handed to a 1 kHz capture thread that stamps every stick and button event with the audio clock ([ADR 0018](https://github.com/chrischaps/Flint/blob/main/docs/adr/0018-gamepad-handoff-and-inputstate-downsample.md), gamepad handoff).
+A scene that carries a `music_session` component turns the audio engine into the host for a rhythm-driven chart: `flint-rhythm` opens a `ChartSession` on the **same** Kira manager the ordinary buses use ([ADR 0017](https://github.com/chrischaps/Flint/blob/main/docs/adr/0017-one-shared-audio-manager.md), shared audio manager), so the world's sounds and the suite's stems mix together and one master low-pass muffles both. For the length of the session the gamepad is handed to a 1 kHz capture thread that stamps every stick and button event with the audio clock ([ADR 0018](https://github.com/chrischaps/Flint/blob/main/docs/adr/0018-gamepad-handoff-and-inputstate-downsample.md), gamepad handoff).
 
 > **While a session is active, only the lean stick and the pulse button reach `InputState`.** Every other gamepad control is consumed by the capture thread; keyboard input still flows through winit as normal. Scripts that need the pad for anything else during a chart should read the [conducted parameters](scripting.md#conducted-parameters-api) instead.
 

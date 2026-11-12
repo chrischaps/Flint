@@ -22,158 +22,31 @@
 //! structured events instead of writing to stdout.
 
 use crate::chart_eval::ChartEval;
-use crate::clock_bridge::ClockBridge;
 use crate::coherence::{Coherence, CoherenceConfig};
-use crate::conductor::{Conductor, MusicalPosition};
 use crate::gradient::{GradientConfig, GradientDriver};
 use crate::input_stream::InputEvent;
 use crate::judgment::{JsonlWriter, Judge, JudgmentConfig, JudgmentRecord, LeanMode};
 use crate::ladder::{Ladder, LadderConfig, LadderDriver, LadderParams};
 use crate::reintegration::{ReintegrationEvent, Reintegrator, SeqTick};
 use crate::replay::{SessionHeader, SessionWriter};
-use crate::session::{FileStems, SuiteSession};
 use crate::status::status_line_with_coherence;
-use crate::tempo::ms_to_samples;
-use crate::{validate_chart, validate_manifest, validate_manifest_assets, Chart, SuiteManifest};
+use crate::{validate_chart, validate_manifest, Chart};
 use flint_core::{vfs, FlintError, Result};
+use flint_music::clock_bridge::ClockBridge;
+use flint_music::conductor::{Conductor, MusicalPosition};
+use flint_music::session::{FileStems, SuiteSession};
+use flint_music::tempo::ms_to_samples;
+use flint_music::{validate_manifest_assets, SuiteManifest};
 use kira::backend::Backend;
 use kira::{AudioManager, DefaultBackend};
 use std::path::{Path, PathBuf};
 use web_time::Instant;
 
-// --- timing-offset files ----------------------------------------------------
-// Reading the committed logs in `<base_dir>/logs/latency/`: output-latency
-// measurements (`latency-*.toml`, from spikes/latency_harness) and tap-to-beat
-// calibrations (`calibration-*.toml`, from `flint calibrate`). File names
-// embed date/epoch so lexicographic max = newest. Both offsets are echoed
-// into every judgment/session header so runs are reproducible.
-
-/// Newest output-latency measurement: `(file_name, ms)`. Prefers the
-/// loopback mean, falling back to the driver-reported mean.
-pub fn latest_latency_ms(base_dir: &Path) -> Option<(String, f64)> {
-    let (name, value) = newest_toml(base_dir, "latency-")?;
-    let mean = |table: &str| {
-        value
-            .get(table)
-            .and_then(|t| t.get("mean"))
-            .and_then(flint_core::toml_util::toml_f64)
-            .filter(|m| m.is_finite())
-    };
-    let ms = mean("loopback_ms").or_else(|| mean("driver_reported_ms"))?;
-    Some((name, ms))
-}
-
-/// Newest tap-to-beat calibration: `(file_name, median_ms)`. Positive =
-/// the player's taps land late relative to the latency-compensated grid.
-pub fn latest_calibration_ms(base_dir: &Path) -> Option<(String, f64)> {
-    let (name, value) = newest_toml(base_dir, "calibration-")?;
-    let ms = value
-        .get("calibration")
-        .and_then(|t| t.get("median_ms"))
-        .and_then(flint_core::toml_util::toml_f64)
-        .filter(|m| m.is_finite())?;
-    Some((name, ms))
-}
-
-/// Resolved judgment-timing offsets plus the notice lines describing where
-/// they came from. One resolver for every live front end (CLI harness and
-/// player) so their startup diagnostics can never drift apart again; each
-/// front end prints the lines through its own sink/prefix.
-pub struct TimingOffsets {
-    pub latency_ms: Option<f64>,
-    pub calibration_ms: f64,
-    pub notices: Vec<String>,
-}
-
-/// Read the newest committed latency measurement and tap calibration from
-/// `<base_dir>/logs/latency/` (see [`latest_latency_ms`] /
-/// [`latest_calibration_ms`]) and describe the outcome.
-pub fn resolve_timing_offsets(base_dir: &Path) -> TimingOffsets {
-    let mut notices = Vec::new();
-    let latency_ms = match latest_latency_ms(base_dir) {
-        Some((file, ms)) => {
-            notices.push(format!(
-                "measured output latency: {ms:.1} ms (compensating; from {file})"
-            ));
-            Some(ms)
-        }
-        None => {
-            notices.push(
-                "measured output latency: NONE ON RECORD — run spikes/latency_harness \
-                 and commit its log to logs/latency/"
-                    .to_string(),
-            );
-            None
-        }
-    };
-    let calibration_ms = match latest_calibration_ms(base_dir) {
-        Some((file, ms)) => {
-            notices.push(format!("tap calibration: {ms:+.1} ms (from {file})"));
-            ms
-        }
-        None => {
-            notices.push("tap calibration: none on record (run `flint calibrate`)".to_string());
-            0.0
-        }
-    };
-    TimingOffsets {
-        latency_ms,
-        calibration_ms,
-        notices,
-    }
-}
-
-fn newest_toml(base_dir: &Path, prefix: &str) -> Option<(String, toml::Value)> {
-    let dir = base_dir.join("logs/latency");
-    // A missing directory is the legitimate "nothing on record" case; any
-    // other failure must be LOUD — a corrupt calibration file silently
-    // reading as "no calibration" would run the session with a wrong 0 ms
-    // offset, corrupting judgment (and any [H] verdict on top of it).
-    let entries = match vfs::read_dir(&dir) {
-        Ok(e) => e,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(err) => {
-            tracing::warn!(
-                "cannot read {}: {err} — treating as no record",
-                dir.display()
-            );
-            return None;
-        }
-    };
-    let mut names: Vec<String> = entries
-        .iter()
-        .filter_map(|p| p.file_name())
-        .map(|n| n.to_string_lossy().into_owned())
-        .filter(|n| n.starts_with(prefix) && n.ends_with(".toml"))
-        .collect();
-    names.sort();
-    // Newest first; an unreadable/unparseable file is warned about by name
-    // and skipped, falling back to the next-newest record rather than
-    // silently pretending nothing exists.
-    while let Some(name) = names.pop() {
-        let path = dir.join(&name);
-        let text = match vfs::read_to_string(&path) {
-            Ok(t) => t,
-            Err(err) => {
-                tracing::warn!(
-                    "cannot read {}: {err} — skipping, trying next-newest",
-                    path.display()
-                );
-                continue;
-            }
-        };
-        match text.parse::<toml::Value>() {
-            Ok(value) => return Some((name, value)),
-            Err(err) => {
-                tracing::warn!(
-                    "cannot parse {}: {err} — skipping, trying next-newest",
-                    path.display()
-                );
-            }
-        }
-    }
-    None
-}
+// The timing-offset files (`<base_dir>/logs/latency/`) are the general
+// layer's: `flint_music::latency`, re-exported here for the rhythm front ends.
+pub use flint_music::latency::{
+    latest_calibration_ms, latest_latency_ms, resolve_timing_offsets, TimingOffsets,
+};
 
 /// Total judgment offset (measured output latency + tap calibration) in
 /// samples — the number the input capture subtracts at the stamp. One
@@ -754,7 +627,7 @@ impl ChartCore {
     /// `no_input` is live-session context the caller supplies (offline: false).
     pub fn conducted_frame(
         &self,
-        pos: crate::conductor::MusicalPosition,
+        pos: flint_music::conductor::MusicalPosition,
         no_input: bool,
     ) -> ConductedFrame {
         let preroll = pos.sample < 0;
@@ -842,7 +715,7 @@ impl ChartCore {
     /// this to summonable debug overlays, never to the player-facing world.
     pub fn guide_frame(
         &self,
-        pos: crate::conductor::MusicalPosition,
+        pos: flint_music::conductor::MusicalPosition,
         horizon_beats: f64,
     ) -> GuideFrame {
         let windows = self
@@ -1185,7 +1058,7 @@ impl ChartSession {
     /// via [`ChartSession::set_input`].
     pub fn open(cfg: &ChartSessionConfig) -> Result<(Self, Vec<String>)> {
         let (manifest, chart) = Self::validate(cfg)?;
-        let mut manager = crate::session::open_device()?;
+        let mut manager = flint_music::session::open_device()?;
         let session = SuiteSession::start(
             &manifest,
             &mut manager,
@@ -1310,7 +1183,7 @@ impl ChartSession {
             )
         });
         let ladder = Ladder::new(ladder_cfg);
-        let reintegrator = Reintegrator::new(manifest.reintegration.clone());
+        let reintegrator = Reintegrator::for_manifest(manifest)?;
 
         // Gradient config (ADR 0024): same contract again; absent = inert
         // built-ins (so a gradient-free repo renders byte-identically).

@@ -1,16 +1,18 @@
 # Music Sessions
 
-A music session turns a scene into a rhythm-driven space: a fixed set of stems plays sample-locked on the audio clock, a beatmap chart says what the player's controller should be doing on each beat, and the world's audio and visuals come apart or re-gather as one thing depending on how well the two agree. The machinery lives in two engine crates, `flint-music` and `flint-input-capture`, and is switched on per scene by a `music_session` component. It grew out of Starchild but nothing in it is game-specific: any scene with a suite manifest and a chart can run one.
+A music session turns a scene into a rhythm-driven space: a fixed set of stems plays sample-locked on the audio clock, a beatmap chart says what the player's controller should be doing on each beat, and the world's audio and visuals come apart or re-gather as one thing depending on how well the two agree. The machinery lives in three engine crates, `flint-music`, `flint-rhythm` and `flint-input-capture`, and is switched on per scene by a `music_session` component. It grew out of Starchild but nothing in it is game-specific: any scene with a suite manifest and a chart can run one.
 
 The design rule throughout is "linear composition, adaptive playback": the music is authored once as a suite, and the engine adapts *how it is played back*, never what it is.
 
 ## The Crates
 
-**`flint-music`** is the data-contract and judgment layer. It parses suite manifests and charts, validates them against each other and against the stem files, keeps musical time (tempo map, conductor), judges input against the chart, integrates the result into a single coherence value, drives the six-bus stem mixer through the disintegration ladder, sequences reintegration after a full fail, records and replays sessions, and renders a scripted session offline to WAV. It never touches a gamepad.
+**`flint-music`** is music without a game. It parses suite manifests, validates them against the stem files, keeps musical time (tempo map, conductor), plays a suite's stems sample-locked on buses the manifest names, schedules bus events (gain, low-pass, detune) on the musical grid, reads the latency calibration on record, and renders a scripted session offline to WAV. Any game with music can use it: the showcase film's score is mixed by it, with no chart and no judgment.
+
+**`flint-rhythm`** is the rhythm game built on it. It parses and validates beatmap charts, holds a rhythm suite to its contract (below), judges input against the chart, integrates the result into a single coherence value, drives the stem mixer through the disintegration ladder, sequences reintegration after a full fail, records and replays sessions, and drives the rumble motors from the beat. It depends on `flint-music` and never the other way round. Neither crate touches a gamepad.
 
 **`flint-input-capture`** owns the gamepad on a dedicated thread polling at 1 kHz (default), far above frame rate, so pulse timing resolves at millisecond granularity instead of once per frame. Every event is stamped with a *compensated suite sample*: the bridged audio-clock sample minus the total judgment offset (measured output latency plus tap calibration), so the event carries the musical moment the player was responding to. On Windows the crate uses gilrs on the XInput backend rather than the default ([ADR 0011](https://github.com/chrischaps/Flint/blob/main/docs/adr/0011-gilrs-on-the-xinput-backend.md), gilrs XInput backend), because the default backend delivers nothing to console applications.
 
-Neither crate is optional at build time. The player links both; without an audio device or a gamepad the session simply degrades, as described below.
+None of the three is optional at build time yet. The player links them all; without an audio device or a gamepad the session simply degrades, as described below.
 
 ## Verb Space
 
@@ -71,7 +73,28 @@ file = "stems/harmony.wav"
 silent = true
 ```
 
-The bus set is fixed at six: `foundation`, `harmony`, `world_voice`, `home_theme`, `child_motif`, `texture`. `home_theme` and `child_motif` are the *motif* buses and must stay isolated (never share a file with another bus). Optional `[[degraded_alternates]]` entries name a pre-composed degraded take for a bus over a sample range ([ADR 0032](https://github.com/chrischaps/Flint/blob/main/docs/adr/0032-degraded-alternate-playback.md), degraded alternate playback).
+The buses are the manifest's own: as many as the suite has, named as it likes, built and mixed in the order the manifest declares them. Each has a `file` or `silent = true`, and at least one must have a file. Optional `[[degraded_alternates]]` entries name a pre-composed degraded take for a bus over a sample range ([ADR 0032](https://github.com/chrischaps/Flint/blob/main/docs/adr/0032-degraded-alternate-playback.md), degraded alternate playback). A suite that only plays music needs nothing else: no `[reintegration]` and no `pulse_window_ms`, as in this one, which the showcase film's `tools/showcase/music/*.suite.toml` are like:
+
+```toml
+[[sections]]
+name = "a"
+start_sample = 0
+
+[buses.pad]
+file = "stems/pad.wav"
+[buses.drums]
+file = "stems/drums.wav"
+```
+
+### The rhythm contract
+
+A suite a chart is judged against keeps `flint-rhythm`'s contract on top of that (`flint_rhythm::validate_manifest`, which runs the general checks first):
+
+- **Six buses**, exactly: `foundation`, `harmony`, `world_voice`, `home_theme`, `child_motif`, `texture` (`MissingBus`, `UnknownBus`). `home_theme` and `child_motif` are the *motif* buses and must stay isolated, never sharing a file with another bus (`MotifBusShared`).
+- **`[reintegration]`** (`MissingReintegration`): `re_entry_sections` naming declared sections, a `lead_bus` that is a motif bus, `reassembly_bars` of 1 or 2.
+- **A judgment window** on every section, `pulse_window_ms` (`PulseWindowMissing`; a non-positive one is `PulseWindowInvalid` in either layer).
+
+`flint validate-suite` holds a suite to the rhythm contract when it declares `[reintegration]`, when it is given a `--chart`, or with `--rhythm`; otherwise to the general one.
 
 The **chart** (`*.chart.toml`) says what the player should do, in beats:
 
@@ -80,7 +103,7 @@ The **chart** (`*.chart.toml`) says what the player should do, in beats:
 - `[[cues]]`: `beat`, `cue` name, optional `params` table. Cues reach scripts through `conducted_cues()` ([ADR 0033](https://github.com/chrischaps/Flint/blob/main/docs/adr/0033-chart-cues-fire-with-params.md), cue params and conducted cues).
 - `[[intensity]]` keys: `beat`, `value`.
 
-Both parsers are shape-tolerant on purpose. Unknown bus names, channels or kinds parse fine and are reported by `flint validate-suite` as coded issues; only structurally unreadable input fails to parse.
+Both parsers are shape-tolerant on purpose. Unknown channels or kinds, and buses outside a rhythm suite's six, parse fine and are reported by `flint validate-suite` as coded issues; only structurally unreadable input fails to parse.
 
 ## The `music_session` Component
 

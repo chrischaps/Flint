@@ -10,7 +10,7 @@ use flint_music::{validate_manifest, validate_manifest_assets, SuiteManifest};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use flint_music::chart_session::latest_latency_ms;
+use flint_music::latency::latest_latency_ms;
 
 #[derive(clap::Args)]
 pub struct PlaySuiteArgs {

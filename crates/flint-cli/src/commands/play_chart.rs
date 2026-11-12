@@ -1,5 +1,5 @@
 //! Play a suite against its beatmap chart with live input capture: the
-//! Phase 2 dev harness. Thin front end over [`flint_music::ChartSession`]
+//! Phase 2 dev harness. Thin front end over [`flint_rhythm::ChartSession`]
 //! (the reactive loop itself lives in the library — ADR 0016): resolves the
 //! timing offsets, opens the session, spawns the 1 kHz capture thread, and
 //! prints the session's notice lines.
@@ -10,7 +10,7 @@
 //! the wordless visual cues).
 
 use anyhow::{Context, Result};
-use flint_music::chart_session::{
+use flint_rhythm::chart_session::{
     judgment_offset_samples, parse_lean_mode, resolve_timing_offsets, ChartSession,
     ChartSessionConfig, Tick,
 };
@@ -90,7 +90,7 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
 
 /// Resolve offsets, open the library session, and attach live capture —
 /// printing every startup line exactly where it always printed. The shared
-/// bring-up lives in `flint_music::chart_session::resolve_timing_offsets` +
+/// bring-up lives in `flint_rhythm::chart_session::resolve_timing_offsets` +
 /// `flint_input_capture::attach_session_input` (one wording for the CLI and
 /// the player); this front end just prints the lines.
 fn open_session(args: &PlayChartArgs, base_dir: &Path) -> Result<ChartSession> {

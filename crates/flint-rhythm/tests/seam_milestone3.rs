@@ -22,16 +22,16 @@
 use flint_music::analysis::{
     find_tone_transitions, goertzel_power, max_step, peak, tone_envelope, TransitionKind,
 };
-use flint_music::chart_eval::ChartEval;
-use flint_music::coherence::{Coherence, CoherenceConfig};
 use flint_music::conductor::Conductor;
 use flint_music::event_script::EventScript;
-use flint_music::judgment::{Judge, JudgmentConfig, JudgmentRecord};
-use flint_music::ladder::{Ladder, LadderConfig, LadderDriver};
 use flint_music::offline::{render_offline_with, OfflineRenderConfig};
-use flint_music::reintegration::{ReintegrationEvent, Reintegrator};
-use flint_music::replay::{synthesize, SyntheticProfile};
-use flint_music::Chart;
+use flint_rhythm::chart_eval::ChartEval;
+use flint_rhythm::coherence::{Coherence, CoherenceConfig};
+use flint_rhythm::judgment::{Judge, JudgmentConfig, JudgmentRecord};
+use flint_rhythm::ladder::{Ladder, LadderConfig, LadderDriver};
+use flint_rhythm::reintegration::{ReintegrationEvent, Reintegrator};
+use flint_rhythm::replay::{synthesize, SyntheticProfile};
+use flint_rhythm::Chart;
 
 mod common;
 use common::{tempo_change_manifest as manifest, SineStems, BAR as BAR_A, CHUNK, SR, WINDOW};
@@ -129,7 +129,7 @@ fn run_model(fall1_raw: i64, duration: i64) -> M3Run {
     let ff_enter = ladder_cfg.full_fail.enter_below;
     let mut ladder = Ladder::new(ladder_cfg);
     let mut driver = LadderDriver::new();
-    let mut reintegrator = Reintegrator::new(manifest.reintegration.clone());
+    let mut reintegrator = Reintegrator::for_manifest(&manifest).unwrap();
 
     let script = EventScript {
         schema_version: 0,
@@ -212,7 +212,7 @@ fn run_model(fall1_raw: i64, duration: i64) -> M3Run {
                 .map(|a| a.beats_per_bar as f64)
                 .unwrap_or(4.0);
             let reassembling =
-                reintegrator.phase() == flint_music::reintegration::SeqPhase::Reassembling;
+                reintegrator.phase() == flint_rhythm::reintegration::SeqPhase::Reassembling;
             for rec in records.drain(..) {
                 if reassembling {
                     if let JudgmentRecord::Pulse { .. } = rec {
@@ -235,7 +235,7 @@ fn run_model(fall1_raw: i64, duration: i64) -> M3Run {
             let seq = reintegrator
                 .tick(
                     value,
-                    &flint_music::GradientOffsets::default(),
+                    &flint_rhythm::GradientOffsets::default(),
                     &mut ladder,
                     &mut driver,
                     session,
@@ -278,7 +278,7 @@ fn run_model(fall1_raw: i64, duration: i64) -> M3Run {
             }
             if let Some(f) = out.fails.last_mut() {
                 if f.span == 0
-                    && reintegrator.phase() != flint_music::reintegration::SeqPhase::Playing
+                    && reintegrator.phase() != flint_rhythm::reintegration::SeqPhase::Playing
                 {
                     // Span becomes observable once reassembling; recompute from
                     // the manifest instead: 2 bars from the re-entry bar.

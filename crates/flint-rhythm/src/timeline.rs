@@ -6,8 +6,8 @@
 //! — no deterministic path reads them.
 
 use crate::chart_session::PulseKind;
-use crate::conductor::Conductor;
-use crate::manifest::SuiteManifest;
+use flint_music::conductor::Conductor;
+use flint_music::manifest::SuiteManifest;
 
 /// The suite's static structure for the debug timeline map: everything the
 /// manifest pins that a strip-chart overlay wants to draw. Built once at
@@ -77,7 +77,10 @@ impl TimelineMap {
                 name: s.name.clone(),
                 start_sample: s.start_sample,
                 end_sample, // patched below from the next section's start
-                re_entry: manifest.reintegration.re_entry_sections.contains(&s.name),
+                re_entry: manifest
+                    .reintegration
+                    .as_ref()
+                    .is_some_and(|r| r.re_entry_sections.contains(&s.name)),
             })
             .collect();
         for i in 0..sections.len().saturating_sub(1) {

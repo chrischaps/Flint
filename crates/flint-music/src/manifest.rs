@@ -5,6 +5,12 @@
 //! [`Issue`](crate::validate::Issue)s from the validator rather than parse
 //! errors. Only structurally unreadable input (missing tables, wrong types)
 //! fails the parse.
+//!
+//! The buses are the manifest's own: as many as it declares, named as it
+//! likes, mixed and listed in the order it declares them
+//! ([`SuiteManifest::bus_order`]). `[reintegration]` and each section's
+//! `pulse_window_ms` are the rhythm layer's (flint-rhythm requires them);
+//! a suite that only plays music leaves them out.
 
 use crate::config_toml::{self, VersionPolicy};
 use flint_core::{vfs, FlintError, Result};
@@ -23,7 +29,8 @@ pub struct TempoAnchor {
 pub struct Section {
     pub name: String,
     pub start_sample: i64,
-    pub pulse_window_ms: f64,
+    /// The section's judgment window (a half-width), for the rhythm layer.
+    pub pulse_window_ms: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -55,8 +62,13 @@ pub struct SuiteManifest {
     pub sample_rate: u32,
     pub tempo: Vec<TempoAnchor>,
     pub sections: Vec<Section>,
-    pub reintegration: Reintegration,
+    /// The rhythm layer's seam: where a full fail re-enters and which bus
+    /// leads it back. `None` for a suite that only plays music.
+    pub reintegration: Option<Reintegration>,
     pub buses: BTreeMap<String, BusDecl>,
+    /// Every bus name in `buses`, in the order the manifest declares them:
+    /// the order they are built, mixed and listed in.
+    pub bus_order: Vec<String>,
     pub degraded_alternates: Vec<DegradedAlternate>,
 }
 
@@ -110,26 +122,34 @@ impl SuiteManifest {
             sections.push(Section {
                 name: string(t, "name")?,
                 start_sample: int_in(t, "start_sample")?,
-                pulse_window_ms: float_in(t, "pulse_window_ms")?,
+                pulse_window_ms: match t.get("pulse_window_ms") {
+                    None => None,
+                    Some(_) => Some(float_in(t, "pulse_window_ms")?),
+                },
             });
         }
 
-        let reint = table(&root, "reintegration")?;
-        let re_entry_sections = reint
-            .get("re_entry_sections")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| bad("reintegration.re_entry_sections"))?
-            .iter()
-            .map(|v| {
-                v.as_str()
-                    .map(String::from)
-                    .ok_or_else(|| bad("reintegration.re_entry_sections entry"))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let reintegration = Reintegration {
-            re_entry_sections,
-            lead_bus: string(reint, "lead_bus")?,
-            reassembly_bars: int_in(reint, "reassembly_bars")?,
+        let reintegration = match root.get("reintegration") {
+            None => None,
+            Some(_) => {
+                let reint = table(&root, "reintegration")?;
+                let re_entry_sections = reint
+                    .get("re_entry_sections")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| bad("reintegration.re_entry_sections"))?
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .map(String::from)
+                            .ok_or_else(|| bad("reintegration.re_entry_sections entry"))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Some(Reintegration {
+                    re_entry_sections,
+                    lead_bus: string(reint, "lead_bus")?,
+                    reassembly_bars: int_in(reint, "reassembly_bars")?,
+                })
+            }
         };
 
         let mut buses = BTreeMap::new();
@@ -143,6 +163,8 @@ impl SuiteManifest {
                 },
             );
         }
+
+        let bus_order = declared_order(text, &buses);
 
         let mut degraded_alternates = Vec::new();
         if let Some(arr) = root.get("degraded_alternates").and_then(|v| v.as_array()) {
@@ -168,9 +190,46 @@ impl SuiteManifest {
             sections,
             reintegration,
             buses,
+            bus_order,
             degraded_alternates,
         })
     }
+
+    /// The buses in declared order, each with its declaration: `bus_order`,
+    /// then any bus it doesn't name (a manifest built in code), by name.
+    pub fn buses_in_order(&self) -> impl Iterator<Item = (&str, &BusDecl)> {
+        let listed = self
+            .bus_order
+            .iter()
+            .filter_map(|name| self.buses.get_key_value(name));
+        let rest = self
+            .buses
+            .iter()
+            .filter(|(name, _)| !self.bus_order.contains(name));
+        listed.chain(rest).map(|(name, decl)| (name.as_str(), decl))
+    }
+}
+
+/// The bus names in the order `text` declares them. `toml::Value` keeps a
+/// table's keys sorted, so the order comes from `toml_edit`, which keeps the
+/// document's; a name it somehow misses goes after, alphabetically.
+fn declared_order(text: &str, buses: &BTreeMap<String, BusDecl>) -> Vec<String> {
+    let mut order: Vec<String> = text
+        .parse::<toml_edit::DocumentMut>()
+        .ok()
+        .and_then(|doc| {
+            doc.get("buses")
+                .and_then(|b| b.as_table_like())
+                .map(|t| t.iter().map(|(k, _)| k.to_string()).collect())
+        })
+        .unwrap_or_default();
+    order.retain(|name| buses.contains_key(name));
+    for name in buses.keys() {
+        if !order.contains(name) {
+            order.push(name.clone());
+        }
+    }
+    order
 }
 
 // -- small extraction helpers (FlintError::ParseError on shape problems) ------
@@ -199,4 +258,80 @@ fn float_in(t: &toml::value::Table, key: &str) -> Result<f64> {
 
 fn string(t: &toml::value::Table, key: &str) -> Result<String> {
     config_toml::string_in(NAME, t, key, key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TWO_BUSES: &str = r#"
+schema_version = 0
+[suite]
+id = "two"
+title = "Two"
+[audio]
+sample_rate = 48000
+[[tempo]]
+sample = 0
+bpm = 120.0
+time_signature = [4, 4]
+[[sections]]
+name = "a"
+start_sample = 0
+[buses.zither]
+file = "stems/zither.wav"
+[buses.bass]
+file = "stems/bass.wav"
+"#;
+
+    #[test]
+    fn buses_are_the_manifests_own_in_declared_order() {
+        let m = SuiteManifest::parse(TWO_BUSES).unwrap();
+        assert_eq!(m.bus_order, ["zither", "bass"]);
+        let names: Vec<&str> = m.buses_in_order().map(|(n, _)| n).collect();
+        assert_eq!(
+            names,
+            ["zither", "bass"],
+            "not the map's alphabetical order"
+        );
+        assert!(m.reintegration.is_none());
+        assert_eq!(m.sections[0].pulse_window_ms, None);
+        assert!(
+            crate::validate_manifest(&m).is_empty(),
+            "{:?}",
+            crate::validate_manifest(&m)
+        );
+    }
+
+    #[test]
+    fn a_reintegration_table_and_pulse_windows_still_parse() {
+        let text = TWO_BUSES.replace(
+            "start_sample = 0\n",
+            "start_sample = 0\npulse_window_ms = 90\n",
+        ) + "[reintegration]\nre_entry_sections = [\"a\"]\nlead_bus = \"bass\"\nreassembly_bars = 2\n";
+        let m = SuiteManifest::parse(&text).unwrap();
+        assert_eq!(m.sections[0].pulse_window_ms, Some(90.0));
+        let r = m.reintegration.expect("parsed");
+        assert_eq!((r.lead_bus.as_str(), r.reassembly_bars), ("bass", 2));
+    }
+
+    #[test]
+    fn a_manifest_built_in_code_lists_every_bus() {
+        let mut m = SuiteManifest::parse(TWO_BUSES).unwrap();
+        m.bus_order.clear();
+        let names: Vec<&str> = m.buses_in_order().map(|(n, _)| n).collect();
+        assert_eq!(names, ["bass", "zither"]);
+    }
+
+    #[test]
+    fn no_buses_or_only_silent_ones_is_an_issue() {
+        let silent = TWO_BUSES
+            .replace("file = \"stems/zither.wav\"", "silent = true")
+            .replace("file = \"stems/bass.wav\"", "silent = true");
+        let codes: Vec<_> = crate::validate_manifest(&SuiteManifest::parse(&silent).unwrap())
+            .into_iter()
+            .map(|i| i.code)
+            .collect();
+        assert_eq!(codes, ["NoPlayableBus"]);
+    }
 }

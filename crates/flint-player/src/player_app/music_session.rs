@@ -16,10 +16,10 @@
 use anyhow::{anyhow, Result};
 use flint_audio::engine::AudioEngine;
 use flint_core::vfs;
-use flint_music::chart_session::{
+use flint_rhythm::chart_session::{
     judgment_offset_samples, parse_lean_mode, ChartSession, ChartSessionConfig,
 };
-use flint_music::{InputEvent, Tick, VisualFrame};
+use flint_rhythm::{InputEvent, Tick, VisualFrame};
 use flint_runtime::InputState;
 use std::path::Path;
 use web_time::Instant;
@@ -190,11 +190,11 @@ impl DebugKeyInput {
         if lean_dirty {
             let _ = self
                 .tx
-                .send(InputEvent::Lean(flint_music::LeanSample { sample, x, y }));
+                .send(InputEvent::Lean(flint_rhythm::LeanSample { sample, x, y }));
             self.last_lean = (x, y);
         }
         if pulse {
-            let _ = self.tx.send(InputEvent::Pulse(flint_music::PulseEvent {
+            let _ = self.tx.send(InputEvent::Pulse(flint_rhythm::PulseEvent {
                 sample,
                 kind: "pulse".into(),
                 direction: None,
@@ -266,7 +266,7 @@ impl MusicSession {
         // session diagnostics stay on println deliberately — tracing's
         // default level filters info, and the Phase-3 double-failure lesson
         // is that input/timing liveness must be LOUD.
-        let offsets = flint_music::chart_session::resolve_timing_offsets(base_dir);
+        let offsets = flint_rhythm::chart_session::resolve_timing_offsets(base_dir);
         for n in &offsets.notices {
             println!("[music] {n}");
         }
@@ -463,26 +463,26 @@ impl MusicSession {
 
     /// Debug-guide snapshot for the Music Guide panel (ADR 0035).
     #[cfg(feature = "debug-hud")]
-    pub fn guide_frame(&self, horizon_beats: f64) -> flint_music::chart_session::GuideFrame {
+    pub fn guide_frame(&self, horizon_beats: f64) -> flint_rhythm::chart_session::GuideFrame {
         self.session.guide_frame(horizon_beats)
     }
 
     /// Static suite structure for the Manifest Map panel (cloned once at
     /// panel registration).
     #[cfg(feature = "debug-hud")]
-    pub fn timeline_map(&self) -> flint_music::chart_session::TimelineMap {
+    pub fn timeline_map(&self) -> flint_rhythm::chart_session::TimelineMap {
         self.session.timeline_map().clone()
     }
 
     /// Per-frame playhead + this-run history for the Manifest Map panel.
     #[cfg(feature = "debug-hud")]
-    pub fn timeline_frame(&self) -> flint_music::chart_session::TimelineFrame {
+    pub fn timeline_frame(&self) -> flint_rhythm::chart_session::TimelineFrame {
         self.session.timeline_frame()
     }
 
     /// The frame → script-POD conversion (ADR 0020): the only place
-    /// flint-music types meet flint-script types — flint-script never
-    /// depends on flint-music.
+    /// flint-rhythm types meet flint-script types — flint-script never
+    /// depends on flint-rhythm.
     pub fn conducted_snapshot(&self) -> flint_script::ConductedSnapshot {
         let vf = self.session.visual_frame();
         // Next-window telegraph (P5 immediate-feedback pass): the nearest
