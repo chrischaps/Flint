@@ -28,6 +28,7 @@ mod hud_render;
 mod init;
 mod input_config;
 pub mod input_script;
+mod key_note;
 mod living_ab;
 pub mod living_props;
 mod living_subsystem;

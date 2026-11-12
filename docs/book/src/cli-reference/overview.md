@@ -335,8 +335,9 @@ Gamepad controllers are also supported when connected. Bindings for gamepad butt
 
 `F3` opens live tuning panels for whichever systems the current scene actually
 uses. Each panel is created **only when its driving component is present**, so a
-scene with no ocean never sees an ocean panel and a scene with no panels at all
-logs a note instead. Panels are fold-open headers distributed across up to three
+scene with no ocean never sees an ocean panel, and in a scene with no panels at
+all `F3` shows a short note at the top of the window (and prints it to the
+console) instead. Panels are fold-open headers distributed across up to three
 size-balanced columns.
 
 Built-in panels:

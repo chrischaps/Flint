@@ -42,6 +42,29 @@ fn scripted_f2_toggles_the_stats_overlay() {
     assert!(!app.stats.show, "the second tap closes it");
 }
 
+/// A debug key with nothing behind it says so where the person pressing it
+/// will see it (#367): it used to log at `info`, which the player never prints.
+#[cfg(feature = "debug-hud")]
+#[test]
+fn f3_and_f4_with_nothing_to_toggle_say_so_on_screen() {
+    let mut app = with_script("0 tap F3\n0.25 tap F4\n");
+    app.clock.frame_step = Some(0.25);
+    assert!(app.debug_panels.is_empty(), "a scene with no panels");
+    assert!(app.hud.key_note.showing().is_none());
+    app.tick();
+    assert_eq!(
+        app.hud.key_note.showing(),
+        Some(("F3", "no debug panels in this scene"))
+    );
+    app.input.end_frame();
+    app.tick();
+    assert_eq!(
+        app.hud.key_note.showing(),
+        Some(("F4", "no renderer active — nothing to tune")),
+        "the next key's note replaces it"
+    );
+}
+
 #[test]
 fn scripted_game_keys_reach_input_state_as_before() {
     let mut app = with_script("0 down KeyW\n");
