@@ -17,7 +17,9 @@ The loop structure:
 7. **Run scripts** --- execute Rhai scripts (`on_update`, event callbacks), process deferred commands (audio, events)
 8. **Render** --- draw the frame with the current entity positions, HUD overlay (crosshair, interaction prompts)
 
-The `RuntimeSystem` trait provides a standard interface for systems that plug into this loop. Physics, audio, animation, and scripting each implement `RuntimeSystem` with `initialize()`, `fixed_update()`, `update()`, and `shutdown()` methods.
+Scripts, audio, animation and particles implement the `RuntimeSystem` trait: `initialize()` when a scene is entered and `update()` once a frame. Nothing holds a list of them: the player calls each by its type, in the order above, and skips one the game state pauses (see [Game states](scripting.md#game-state-machine-api)). Physics is stepped at the fixed rate instead, by `PhysicsSystem::fixed_update(world, dt, events)`. Optional parts of the player, such as living props, are its subsystems (ADR 0117).
+
+The frame's events live in one `EventBus`, which the player owns. Each fixed physics step pushes its collisions and triggers onto it, and player extensions, style changes and scripts' `fire_event` push their own; the frame hands the whole batch to scripts and audio before `on_update`. Clearing physics at a scene transition doesn't touch it: a script's event fired as it leaves reaches the next scene's scripts, and only the old scene's contacts are dropped.
 
 ## Physics with Rapier 3D
 

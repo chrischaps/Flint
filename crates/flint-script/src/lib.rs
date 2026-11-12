@@ -586,11 +586,6 @@ impl RuntimeSystem for ScriptSystem {
         Ok(())
     }
 
-    fn fixed_update(&mut self, _world: &mut FlintWorld, _dt: f64) -> Result<()> {
-        // Scripts run at variable rate (like animation), not fixed timestep
-        Ok(())
-    }
-
     fn update(&mut self, world: &mut FlintWorld, _dt: f64) -> Result<()> {
         // A perf readout times each step below, and each script's on_update.
         self.engine.clear_update_times();
@@ -645,18 +640,6 @@ impl RuntimeSystem for ScriptSystem {
 
         Ok(())
     }
-
-    fn shutdown(&mut self) -> Result<()> {
-        let count = self.engine.scripts.len();
-        if count > 0 {
-            println!("Script system shut down ({} scripts)", count);
-        }
-        Ok(())
-    }
-
-    fn name(&self) -> &str {
-        "script"
-    }
 }
 
 /// Snapshot which actions are pressed/just-pressed from InputState.
@@ -709,11 +692,6 @@ mod tests {
 
         let result = system.update(&mut world, 0.016);
         assert!(result.is_ok());
-
-        let result = system.shutdown();
-        assert!(result.is_ok());
-
-        assert_eq!(system.name(), "script");
     }
 
     #[test]

@@ -10,9 +10,7 @@ fn on_init() {
         scripts: "pause",
         animation: "pause",
         particles: "pause",
-        audio: "run",
-        rendering: "run",
-        transparent: true
+        audio: "run"
     });
 
     // Crypt is always unlocked

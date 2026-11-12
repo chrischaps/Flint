@@ -63,10 +63,10 @@ impl PlayerApp {
     }
 
     /// Hand a style command's outcome on: its event to scripts' `on_event`
-    /// (next frame, with the physics events), its refusal to the log.
+    /// (next frame, off the frame's bus), its refusal to the log.
     fn style_applied(&mut self, applied: StyleApplied) {
         match applied {
-            StyleApplied::Done(Some(event)) => self.physics.push_event(event),
+            StyleApplied::Done(Some(event)) => self.events.push(event),
             StyleApplied::Done(None) => {}
             StyleApplied::Failed(message) => tracing::warn!(target: "script", "{message}"),
         }
@@ -321,7 +321,7 @@ impl ScriptHost for PlayerApp {
             }
             return;
         }
-        self.physics.push_event(GameEvent::Custom { name, data });
+        self.events.push(GameEvent::Custom { name, data });
     }
 
     fn emit_burst(&mut self, entity: EntityId, count: i64) {

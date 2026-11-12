@@ -11,6 +11,8 @@ mod capture_gate_tests;
 mod debug_key_tests;
 mod debug_panels;
 mod egui_input;
+#[cfg(test)]
+mod event_bus_tests;
 mod events;
 pub mod expression_feed;
 #[cfg(test)]
@@ -81,7 +83,7 @@ use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
 use flint_runtime::pad::Gilrs;
-use flint_runtime::{GameClock, GameStateMachine, InputState};
+use flint_runtime::{EventBus, GameClock, GameStateMachine, InputState};
 use flint_script::ScriptSystem;
 pub use state::{LaunchOptions, SceneSettings};
 use std::collections::HashMap;
@@ -274,6 +276,11 @@ pub struct PlayerApp {
     pub clock: GameClock,
     pub input: InputState,
     pub physics: PhysicsSystem,
+    /// The frame's game events (#727): physics pushes its contacts at each
+    /// fixed step, extensions, style tweens and scripts' `fire_event` their
+    /// own, and the frame drains them before scripts run. Physics' `clear`
+    /// at a transition leaves it alone.
+    events: EventBus,
     /// The optional parts a scene uses (ADR 0117): the expression feed so
     /// far. Declared before `audio`, and torn down last added first, so
     /// whatever one holds of the audio engine goes before the engine.
