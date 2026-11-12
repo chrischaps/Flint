@@ -220,6 +220,20 @@ pub enum ScriptCommand {
         param: String,
         value: toml::Value,
     },
+    /// `tween_post_style_param` (#406): ease a whole-frame style's number
+    /// (`reveal`, `blend`, a `reveal_*` key or a parameter) to `target` over
+    /// `seconds` of game time. The engine writes it each frame and fires
+    /// `post_style_tween_done` at the end; a new tween of the same setting
+    /// replaces the old one, a `set_post_style_param` of it stops it.
+    TweenPostStyleParam {
+        style: String,
+        param: String,
+        target: f64,
+        seconds: f64,
+        /// `linear`, `smooth` (the default), `ease_in`, `ease_out` or
+        /// `ease_in_out`
+        easing: String,
+    },
     /// Put a whole-frame style back to what the scene authored.
     ResetPostStyle {
         style: String,

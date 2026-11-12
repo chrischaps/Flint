@@ -707,6 +707,45 @@ A script ramps it to cross-fade the whole world into a look at a story beat: `se
   ```
 - **Per-entity styles** keep their own `blend` on the component, which rides in the [style mask](#the-entity-style-mask) and mixes per pixel ([Blending in and out](#blending-in-and-out)). The table's `blend` fades the whole stage's result of that style, entities included.
 
+### Revealing a whole-frame style
+
+A blend fades the whole frame at once. A **reveal** (#406) shows the style only inside a region of the screen and leaves the picture it read outside, with a drawn line along the edge between them: the live world on one side of a ragged tear and the sketch on the other. Every style's table takes it, as every style takes `blend`:
+
+```toml
+[post_process.styles.pencil]
+reveal = 0.5              # 0: none of the frame, 1: all of it
+reveal_shape = "tear"     # tear, wipe, iris or panel
+```
+
+```bash
+flint render examples/reveal_tear.scene.toml --style pencil:reveal=0.5
+flint render examples/reveal_tear.scene.toml --sweep pencil.reveal=0.15,0.4,0.65 --sweep pencil.reveal_shape=tear,wipe,iris,panel
+```
+
+![The props clearing under pencil at reveal 0.15, 0.4 and 0.65 (across) for each shape (down): a tear ripping out from the middle with an inked, torn rim; a ragged wipe from the left; an iris; a comic panel the screen's shape](../images/reveal-shapes.png)
+
+*`flint render tests/fixtures/scenes/stylize_props_plain.scene.toml --no-grid --style pencil:reveal=0.5 --sweep pencil.reveal=0.15,0.4,0.65 --sweep pencil.reveal_shape=tear,wipe,iris,panel --style-time 0.6`.*
+
+| Key | Default | What it does |
+|---|---|---|
+| `reveal` | none | How far the region has grown, 0 to 1. With no `reveal` there is no region, whatever the other keys say. |
+| `reveal_shape` | `tear` | `tear`: a ragged hole that rips open from a point. `wipe`: a ragged line that crosses the frame. `iris`: a circle from a point, its rim wobbling a little. `panel`: a straight rectangle the screen's shape, from a point out to every edge (the comic-panel cut). |
+| `reveal_x`, `reveal_y` | 0.5, 0.5 | Where a tear, iris or panel starts, as a share of the frame (y down). |
+| `reveal_angle` | 0 | A wipe's direction of travel in degrees: 0 from the left edge to the right, 90 from the top down. |
+| `reveal_ragged` | by shape | How far the edge strays from the shape, as a share of the frame: tear 0.3, wipe 0.12, iris 0.05, panel 0. |
+| `reveal_scale` | 2.5 | How many lobes the edge has across the frame's height. |
+| `reveal_edge` | 2 | The line's width in points (a pen's, swelling and thinning along it); 0 draws none. |
+| `reveal_ink` | `[0.12, 0.11, 0.1]` | The line's colour, `[r, g, b]` or `"#rrggbb"`, in display values at either stage. |
+| `reveal_boil` | 12 | How many times a second of post time the edge's small teeth are redrawn, so it crawls like a line drawn again each frame; 0 holds it. The big lobes stay put. |
+| `reveal_seed` | 0 | Another tear of the same shape. |
+
+- **One call animates it.** `tween_post_style_param("pencil", "reveal", 1.0, 4.0)` eases the reveal from where it is (0 for a style that has none) to 1 ([Scripting → Whole-frame styles](scripting.md#whole-frame-styles)). `examples/reveal_tear.scene.toml` starts live, tears open into pencil over 4 s, and pulls the live frame back in with a wipe.
+- **Deterministic.** The edge is the render-mode tears' noise (`tear_mask.wgsl`'s `fbm` and `value_noise`, with ridged teeth so it reads as torn paper, not a cut), on screen position and `reveal_boil` steps of post time. The same `--style-time` draws the same edge, byte for byte; the next step redraws its teeth.
+- **The ends are exact.** At `reveal = 0` the style leaves its stage's chain, as at `blend = 0`, so the frame is the live one byte for byte and costs nothing. At 1 the reveal draws nothing, so the frame is the style's own. In between the amount grows the region about with the share of the frame it covers; a tear's last scraps of live picture linger in the corners until the end.
+- **With `blend`.** Inside the region the style shows by its `blend`; outside, not at all. The ink is drawn at the blend too.
+- **How and what it costs.** The stage draws it in place of the [blend](#blending-a-whole-frame-style): after the style, one full-screen draw puts what the style read back outside the region and lays the ink, premultiplied, in the style's own GPU timing scope. Each revealing style takes a 256-byte slot of one uniform buffer (16 a frame), so nothing is allocated per frame. Measured with `--gpu-time 200` at 1080p on an RTX 4070: pencil's pass went from 0.477 to 0.568 ms p50 with `reveal = 0.5`, about 0.09 ms for the reveal, against 0.024 ms for a plain `blend = 0.5`.
+- **Goldens.** `pencil-reveal-tear-half` pins the half-torn frame at post time 0.6, `pencil-reveal-panel` a panel, and `pencil-reveal-zero` compares reveal 0 with the frame without the style.
+
 ### Style blends and render-mode tears
 
 `--render-mode` 1--4 (matrix, blood, drunk, tron) and a style blend can both look like reality tearing into text, but they work at different levels (and a blend can [follow the tear](#a-blend-that-follows-the-tear)):

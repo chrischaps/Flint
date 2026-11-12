@@ -172,6 +172,31 @@ pub(crate) fn register(api: &mut ScriptApi) {
     });
 
     m.func(
+        "tween_post_style_param",
+        "Ease a whole-frame style's number (reveal, blend, a reveal_ key or a param) to a target over game seconds, smoothly.",
+    )
+    .arg("style", Str)
+    .arg("param", Str)
+    .arg("target", Num)
+    .arg("seconds", Num)
+    .run(|call, (style, param, target, seconds)| {
+        post_tween(call, &style, &param, target, seconds, "smooth");
+    });
+
+    m.func(
+        "tween_post_style_param",
+        "Ease a whole-frame style's number to a target over game seconds: linear, smooth, ease_in, ease_out or ease_in_out.",
+    )
+    .arg("style", Str)
+    .arg("param", Str)
+    .arg("target", Num)
+    .arg("seconds", Num)
+    .arg("easing", Str)
+    .run(|call, (style, param, target, seconds, easing)| {
+        post_tween(call, &style, &param, target, seconds, &easing);
+    });
+
+    m.func(
         "reset_post_style",
         "Put a whole-frame style back to what the scene authored.",
     )
@@ -260,6 +285,25 @@ fn tween(
         )),
     };
     call.ctx().commands.push(command);
+}
+
+fn post_tween(
+    call: &mut Call<'_>,
+    style: &str,
+    param: &str,
+    target: f64,
+    seconds: f64,
+    easing: &str,
+) {
+    call.ctx()
+        .commands
+        .push(ScriptCommand::TweenPostStyleParam {
+            style: style.to_string(),
+            param: param.to_string(),
+            target,
+            seconds,
+            easing: easing.to_string(),
+        });
 }
 
 /// Ask the host's style reader about `id`; `None` without a reader.

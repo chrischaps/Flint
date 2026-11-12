@@ -7,7 +7,8 @@
 //! The whole-frame ones (#369), `set_post_style`, `set_post_style_param`
 //! and `reset_post_style`, edit a post-process config through
 //! `flint_render::post_style` instead ([`set_post_style`] and the two after
-//! it).
+//! it). `tween_post_style_param` (#406) eases one of their numbers, a
+//! `reveal` or a `blend`, through [`StyleTweens::tween_post`].
 //!
 //! The game core's dispatcher calls these (`game_core.rs`, #697, #725), for
 //! the player and a headless capture alike, so a style command does the
@@ -177,6 +178,39 @@ fn tween_done(entity: EntityId, param: &str) -> GameEvent {
     }
 }
 
+/// The event a finished whole-frame style tween fires (#406), with
+/// `#{ style, param }`.
+pub const POST_STYLE_TWEEN_DONE: &str = "post_style_tween_done";
+
+fn post_tween_done(style: &str, param: &str) -> GameEvent {
+    let mut data = toml::Table::new();
+    data.insert("style".into(), style.into());
+    data.insert("param".into(), param.into());
+    GameEvent::Custom {
+        name: POST_STYLE_TWEEN_DONE.into(),
+        data: toml::Value::Table(data),
+    }
+}
+
+/// A whole-frame style's number easing (#406): `reveal`, `blend`, a
+/// `reveal_*` key or a parameter.
+#[derive(Debug)]
+struct PostStyleTween {
+    style: String,
+    param: String,
+    from: f64,
+    to: f64,
+    seconds: f64,
+    elapsed: f64,
+    easing: Easing,
+}
+
+impl PostStyleTween {
+    fn value(&self, k: f64) -> toml::Value {
+        toml::Value::Float(self.from + (self.to - self.from) * k)
+    }
+}
+
 /// What one frame of style tweens did.
 #[derive(Debug, Default)]
 pub struct TweenStep {
@@ -200,6 +234,8 @@ pub struct TweenStep {
 #[derive(Debug, Default)]
 pub struct StyleTweens {
     tweens: Vec<StyleTween>,
+    /// Whole-frame styles' numbers easing (#406)
+    post: Vec<PostStyleTween>,
 }
 
 impl StyleTweens {
@@ -222,6 +258,108 @@ impl StyleTweens {
     /// Drop every tween (a new scene).
     pub fn clear(&mut self) {
         self.tweens.clear();
+        self.post.clear();
+    }
+
+    /// Whether whole-frame style `style`'s `param` is easing (#406).
+    pub fn is_tweening_post(&self, style: &str, param: &str) -> bool {
+        self.post
+            .iter()
+            .any(|t| t.style == style && t.param == param)
+    }
+
+    /// How many whole-frame style tweens are running.
+    pub fn post_len(&self) -> usize {
+        self.post.len()
+    }
+
+    /// `tween_post_style_param` (#406): ease whole-frame style `style`'s
+    /// number `param` (`reveal`, `blend`, a `reveal_*` key or a parameter)
+    /// to `target` over `seconds` of game time, from where `config` has
+    /// it (a style with no reveal starts at 0, so a tween of `reveal` from
+    /// there tears the frame open). It moves from the next frame; a new
+    /// tween of the same setting replaces the old one, and no time to ease
+    /// over sets it now.
+    pub fn tween_post(
+        &mut self,
+        config: &mut PostProcessConfig,
+        style: &str,
+        param: &str,
+        target: f64,
+        seconds: f64,
+        easing: &str,
+    ) -> StyleApplied {
+        let Some(easing) = Easing::from_name(easing) else {
+            return StyleApplied::Failed(format!(
+                "tween_post_style_param: no easing `{easing}`; one of {}",
+                Easing::NAMES.join(", ")
+            ));
+        };
+        if !target.is_finite() {
+            return StyleApplied::Failed(format!(
+                "tween_post_style_param: `{param}` can't ease to {target}"
+            ));
+        }
+        let from = match post_style::post_style_number(config, style, param) {
+            Ok(n) => f64::from(n),
+            Err(e) => return StyleApplied::Failed(format!("tween_post_style_param: {e}")),
+        };
+        self.stop_post(style, Some(param));
+        let tween = PostStyleTween {
+            style: style.to_string(),
+            param: param.to_string(),
+            from,
+            to: target,
+            seconds,
+            elapsed: 0.0,
+            easing,
+        };
+        // Written once now, at its start: a reveal the style didn't have
+        // is then 0, so the frame stays live until it moves
+        let k = if seconds > 0.0 { 0.0 } else { 1.0 };
+        if let Err(e) = post_style::set_post_style_param(config, style, param, tween.value(k)) {
+            return StyleApplied::Failed(format!("tween_post_style_param: {e}"));
+        }
+        if seconds.is_nan() || seconds <= 0.0 {
+            return StyleApplied::Done(Some(post_tween_done(style, param)));
+        }
+        self.post.push(tween);
+        StyleApplied::Done(None)
+    }
+
+    /// Stop whole-frame style `style`'s tweens: of `param`, or all of them.
+    pub fn stop_post(&mut self, style: &str, param: Option<&str>) {
+        self.post
+            .retain(|t| !(t.style == style && param.is_none_or(|p| t.param == p)));
+    }
+
+    /// Move every whole-frame style tween on by `dt` seconds of game time
+    /// and write its value into `config` (#406). `false` in the second
+    /// place: nothing was running, so `config` is as it was.
+    pub fn step_post(&mut self, config: &mut PostProcessConfig, dt: f64) -> (TweenStep, bool) {
+        let mut out = TweenStep::default();
+        if self.post.is_empty() {
+            return (out, false);
+        }
+        self.post.retain_mut(|t| {
+            t.elapsed += dt.max(0.0);
+            let done = t.elapsed >= t.seconds * (1.0 - 1e-9);
+            let k = if done {
+                1.0
+            } else {
+                t.easing.apply(t.elapsed / t.seconds)
+            };
+            if let Err(e) = post_style::set_post_style_param(config, &t.style, &t.param, t.value(k))
+            {
+                out.failures.push(format!("tween_post_style_param: {e}"));
+                return false;
+            }
+            if done {
+                out.events.push(post_tween_done(&t.style, &t.param));
+            }
+            !done
+        });
+        (out, true)
     }
 
     /// `set_entity_style`: draw `entity` (and its subtree) in `style`. A
@@ -301,7 +439,7 @@ impl StyleTweens {
             elapsed: 0.0,
             easing,
         };
-        if !(seconds > 0.0) {
+        if seconds.is_nan() || seconds <= 0.0 {
             // No time to ease over: there now, done now
             return match entity_style::set_style_param(world, id, param, tween.value(1.0)) {
                 Ok(_) => StyleApplied::Done(Some(tween_done(id, param))),

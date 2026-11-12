@@ -459,6 +459,28 @@ scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "kuwahara:radius=5,blend=0"]
 matches = ["--no-grid"]
 
+# A reveal (#406): the style shows inside a ragged region and the live frame
+# around it, with a drawn edge between. Half-torn, the clearing is pencil
+# through a hole that rips out from the middle, and the edge's teeth are
+# the boil step at post time 0.6. At reveal 0 the style leaves the chain,
+# so the frame is the live one byte for byte; a panel is a straight frame
+# the screen's shape, the comic-panel cut
+[[case]]
+name = "pencil-reveal-tear-half"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "pencil:reveal=0.5", "--style-time", "0.6"]
+
+[[case]]
+name = "pencil-reveal-panel"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "pencil:reveal=0.4,reveal_shape=panel,reveal_edge=4"]
+
+[[case]]
+name = "pencil-reveal-zero"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "pencil:reveal=0,reveal_shape=wipe"]
+matches = ["--no-grid"]
+
 # Contour (#214; a registered style since #599): ink from depth's second
 # difference and luminance edges, so the flat ground draws no line. Lines
 # are high contrast, so they take the suite's tolerance, not the smooth one

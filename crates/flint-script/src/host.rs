@@ -123,6 +123,16 @@ pub trait ScriptHost {
     fn set_post_style_param(&mut self, style: String, param: String, value: toml::Value) {
         self.unsupported("set_post_style_param");
     }
+    fn tween_post_style_param(
+        &mut self,
+        style: String,
+        param: String,
+        target: f64,
+        seconds: f64,
+        easing: String,
+    ) {
+        self.unsupported("tween_post_style_param");
+    }
     fn reset_post_style(&mut self, style: String) {
         self.unsupported("reset_post_style");
     }
@@ -265,6 +275,13 @@ pub fn apply<H: ScriptHost + ?Sized>(host: &mut H, cmd: ScriptCommand) {
             param,
             value,
         } => host.set_post_style_param(style, param, value),
+        C::TweenPostStyleParam {
+            style,
+            param,
+            target,
+            seconds,
+            easing,
+        } => host.tween_post_style_param(style, param, target, seconds, easing),
         C::ResetPostStyle { style } => host.reset_post_style(style),
         C::ResetStyleHistory => host.reset_style_history(),
         C::SetCameraCutDetection { enabled } => host.set_camera_cut_detection(enabled),

@@ -50,7 +50,8 @@ pub use player_app::scene_loading::{
 pub use player_app::script_commands::apply_camera_overrides;
 pub use player_app::style_commands::{
     reset_post_style, set_post_style, set_post_style_param, Easing, SceneStyles, StyleApplied,
-    StyleTweens, TweenStep, POST_STYLE_CHANGED, STYLE_CHANGED, STYLE_TWEEN_DONE,
+    StyleTweens, TweenStep, POST_STYLE_CHANGED, POST_STYLE_TWEEN_DONE, STYLE_CHANGED,
+    STYLE_TWEEN_DONE,
 };
 #[cfg(target_arch = "wasm32")]
 pub use player_app::web_pacing::coarse_pointer as web_coarse_pointer;

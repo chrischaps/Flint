@@ -127,6 +127,13 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
             param: s("blend"),
             value: 0.5.into(),
         },
+        C::TweenPostStyleParam {
+            style: s("kuwahara"),
+            param: s("reveal"),
+            target: 1.0,
+            seconds: 1.0,
+            easing: s("linear"),
+        },
         C::ResetPostStyle {
             style: s("kuwahara"),
         },

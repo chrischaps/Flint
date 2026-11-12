@@ -15,11 +15,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 const BIND: &str = "style blend input";
 
-/// The blend draw's pipelines, one per target format, made on first use.
+/// The blend draw's pipelines, one per target format, made on first use,
+/// and the reveal's (#406), which draws in its place when the style has one.
 #[derive(Default)]
 pub struct BlendPass {
     shared: OnceLock<(wgpu::ShaderModule, wgpu::BindGroupLayout)>,
     pipelines: Mutex<Vec<(wgpu::TextureFormat, Arc<wgpu::RenderPipeline>)>>,
+    reveal: super::reveal::RevealPass,
 }
 
 impl BlendPass {
@@ -61,6 +63,8 @@ impl BlendPass {
 
     /// Show only `blend` of what was just drawn into `output`: draw
     /// `input` back over it with weight `1 - blend`. Nothing to do at 1.
+    /// A style with a reveal between 0 and 1 (#406) shows only inside its
+    /// region instead, `blend` of it there, with the edge's ink.
     pub fn draw(
         &self,
         frame: &StyleFrame<'_>,
@@ -69,6 +73,16 @@ impl BlendPass {
         output: &wgpu::TextureView,
         blend: f32,
     ) {
+        if let Some(reveal) = frame.config.styles.reveal(frame.descriptor.name) {
+            let amount = reveal.amount.unwrap_or(1.0);
+            if amount < 1.0
+                && self
+                    .reveal
+                    .draw(frame, encoder, input, output, reveal, blend)
+            {
+                return;
+            }
+        }
         if blend >= 1.0 {
             return;
         }

@@ -99,12 +99,14 @@ mod fade;
 pub mod images;
 pub mod kit;
 pub mod ownership;
+pub mod reveal;
 mod spec;
 mod targets;
 pub mod text;
 
 pub use ascii::{edge_view_thresholds, EDGE_VIEW_LEGEND};
 pub use edges::EDGE_FORMAT;
+pub use reveal::{RevealShape, StyleReveal};
 pub use spec::{
     apply_style_spec, apply_style_specs, check_style_specs, style_spec_help, StyleSpec,
 };
@@ -949,6 +951,9 @@ pub fn style_toml(descriptor: &StyleDescriptor, config: &PostProcessConfig) -> S
     if blend < 1.0 {
         out.push_str(&format!("blend = {}\n", toml_float(blend)));
     }
+    if let Some(setting) = config.styles.get(descriptor.name) {
+        out.push_str(&setting.reveal.toml_lines());
+    }
     for o in descriptor.options {
         let value = descriptor.option(config, o.name);
         if value != o.default {
@@ -1520,6 +1525,10 @@ pub struct StyleSetting {
     /// and out by ramping it (the stage draws what the style read back over
     /// its result, [`run_stage`]).
     pub blend: Option<f32>,
+    /// Where on the screen the style shows (#406): `reveal` (0 to 1) and
+    /// the `reveal_*` keys, a ragged region the frame it read shows around.
+    /// Empty is everywhere.
+    pub reveal: reveal::StyleReveal,
     /// Off everywhere (#376): not only the table but every entity whose
     /// component or `style_mask` would switch the style on for its own
     /// pixels. `--style <name>:off` sets it, so a styled scene renders
@@ -1529,8 +1538,25 @@ pub struct StyleSetting {
 }
 
 /// Keys every style's table reads besides its own parameters and options;
-/// no style may name a parameter or option after one.
-pub const RESERVED_KEYS: [&str; 4] = ["enabled", "order", "feeds_bloom", "blend"];
+/// no style may name a parameter or option after one. The `reveal` keys
+/// (#406) are [`reveal::KEYS`].
+pub const RESERVED_KEYS: [&str; 15] = [
+    "enabled",
+    "order",
+    "feeds_bloom",
+    "blend",
+    "reveal",
+    "reveal_shape",
+    "reveal_ink",
+    "reveal_scale",
+    "reveal_ragged",
+    "reveal_edge",
+    "reveal_angle",
+    "reveal_x",
+    "reveal_y",
+    "reveal_boil",
+    "reveal_seed",
+];
 
 /// The generic style settings on [`PostProcessConfig`], by style name.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -1643,6 +1669,59 @@ impl StyleSettings {
         }
     }
 
+    /// Style `name`'s reveal (#406), when its table has one: `None` with
+    /// no `reveal` key, whatever other `reveal_*` keys it sets.
+    pub fn reveal(&self, name: &str) -> Option<&reveal::StyleReveal> {
+        self.styles
+            .get(name)
+            .map(|s| &s.reveal)
+            .filter(|r| r.amount.is_some())
+    }
+
+    /// Set one reveal key of style `name` (#406) from a TOML value:
+    /// `reveal` (0..1), `reveal_shape`, `reveal_ink` or a `reveal_*`
+    /// number. Out of range a number is clamped, or refused with
+    /// `strict`. `Ok(false)`: not a reveal key. Leaves the style on or off
+    /// as it was.
+    pub fn set_reveal(
+        &mut self,
+        name: &str,
+        key: &str,
+        value: &toml::Value,
+        strict: bool,
+    ) -> Result<bool, String> {
+        if !reveal::is_key(key) {
+            return Ok(false);
+        }
+        let mut next = self
+            .styles
+            .get(name)
+            .map(|s| s.reveal.clone())
+            .unwrap_or_default();
+        next.set(key, value, strict)?;
+        self.styles.entry(name.to_string()).or_default().reveal = next;
+        Ok(true)
+    }
+
+    /// Take style `name`'s reveal off (#406): it shows everywhere again.
+    pub fn clear_reveal(&mut self, name: &str) {
+        if let Some(setting) = self.styles.get_mut(name) {
+            setting.reveal = reveal::StyleReveal::default();
+        }
+    }
+
+    /// Whether any of style `name` reaches the frame: a blend above 0
+    /// (#399) and, when it has a reveal (#406), a reveal above 0. A style
+    /// that doesn't is left out of its chain, so the frame is the one
+    /// without it, byte for byte.
+    pub fn shows(&self, name: &str) -> bool {
+        self.blend(name) > 0.0
+            && self
+                .reveal(name)
+                .and_then(|r| r.amount)
+                .is_none_or(|a| a > 0.0)
+    }
+
     /// Style `name`'s settings, if it has any.
     pub fn get(&self, name: &str) -> Option<&StyleSetting> {
         self.styles.get(name)
@@ -1674,6 +1753,7 @@ impl StyleSettings {
             setting.order = None;
             setting.feeds_bloom = None;
             setting.blend = None;
+            setting.reveal = reveal::StyleReveal::default();
         }
     }
 
@@ -1751,6 +1831,13 @@ impl StyleSettings {
                         }
                         None => warnings
                             .push(format!("styles.{name}.blend must be a number from 0 to 1")),
+                    }
+                    continue;
+                }
+                if reveal::is_key(key) {
+                    // Where the style shows (#406)
+                    if let Err(e) = setting.reveal.set(key, value, false) {
+                        warnings.push(format!("styles.{name}.{e}"));
                     }
                     continue;
                 }
@@ -2147,7 +2234,7 @@ impl StyleSet {
     /// The built styles of `stage` that are on this frame (by `config` or
     /// an entity's request in `ids`), in chain order.
     ///
-    /// A style whose table `blend` is 0 (#399) is left out: all of it
+    /// A style whose table `blend` (or `reveal`, #406) is 0 (#399) is left out: all of it
     /// would be drawn back over by its input, so the chain skips it and
     /// the frame is the one without it, byte for byte and at no cost. It
     /// stays built and [`is_on`](StyleDescriptor::is_on), so the mask,
@@ -2170,7 +2257,7 @@ impl StyleSet {
             // A pass built from a descriptor since replaced waits for ensure
             .filter(|(((_, d), _), from)| **from == descriptor_id(d))
             .filter(|(((_, d), _), _)| d.stage == stage && d.is_on(config, ids))
-            .filter(|(((_, d), _), _)| config.styles.blend(d.name) > 0.0)
+            .filter(|(((_, d), _), _)| config.styles.shows(d.name))
             .filter_map(|(((i, d), built), _)| {
                 built
                     .as_deref()
@@ -2386,6 +2473,8 @@ pub(crate) fn run_stage(
         let fade = fade.filter(|_| fade::FadePass::applies(frame, descriptor));
         scope(descriptor.label, encoder, &mut |encoder| {
             pass.encode(frame, encoder, &src, dst_view);
+            // The blend, and where the style shows when it has a reveal
+            // (#406)
             blender.draw(frame, encoder, &src, dst_view, blend);
             // This style's own entities below blend 1 get some of its
             // input back (#396)

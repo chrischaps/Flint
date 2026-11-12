@@ -327,6 +327,11 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     // a tween asked for now starts moving next frame, and a
     // set_style_param this frame overrides (and stops) it.
     host.core().step_style_tweens();
+    // And whole-frame styles' (#406), on the renderer's config
+    {
+        let (core, lent) = host.lend();
+        core.step_post_style_tweens(lent.renderer);
+    }
 
     // What on_update asked (#697): the one dispatcher, so the camera a
     // script set is in place for on_draw_ui and the frame
@@ -559,6 +564,34 @@ impl GameCore {
         }
     }
 
+    /// Move the whole-frame style tweens on by this frame's game time
+    /// (#406), while scripts run, and hand the renderer its config back
+    /// when one moved. Without a renderer there is no frame to style.
+    fn step_post_style_tweens(&mut self, renderer: Option<&mut SceneRenderer>) {
+        if !self.state_machine.active_config().runs(SCRIPTS) {
+            return;
+        }
+        let Some(renderer) = renderer else {
+            return;
+        };
+        if self.style_tweens.post_len() == 0 {
+            return;
+        }
+        let mut config = renderer.post_process_config().clone();
+        let (step, moved) = self
+            .style_tweens
+            .step_post(&mut config, self.clock.delta_time);
+        if moved {
+            renderer.set_post_process_config(config);
+        }
+        for event in step.events {
+            self.events.push(event);
+        }
+        for message in step.failures {
+            tracing::warn!(target: "script", "{message}");
+        }
+    }
+
     /// The camera where the scripts asked this frame, and the scripts told
     /// where it is now. Returns the listener's move for a script-driven
     /// camera (chase cam etc.) that set a position.
@@ -770,6 +803,8 @@ pub(crate) fn reset_post_style(
     authored: &flint_render::PostProcessConfig,
     style: &str,
 ) {
+    // The scene's values win over a tween's (#406)
+    core.style_tweens.stop_post(style, None);
     edit_post_styles(core, renderer, |config| {
         super::style_commands::reset_post_style(config, authored, style)
     });
@@ -937,9 +972,32 @@ impl ScriptHost for CoreCommands<'_> {
     }
 
     fn set_post_style_param(&mut self, style: String, param: String, value: toml::Value) {
+        // The script took over from a tween of it (#406)
+        self.core.style_tweens.stop_post(&style, Some(&param));
         self.edit_post_styles(|config| {
             super::style_commands::set_post_style_param(config, &style, &param, value)
         });
+    }
+
+    fn tween_post_style_param(
+        &mut self,
+        style: String,
+        param: String,
+        target: f64,
+        seconds: f64,
+        easing: String,
+    ) {
+        let core = &mut *self.core;
+        let tweens = &mut core.style_tweens;
+        let Some(renderer) = self.renderer.as_deref_mut() else {
+            return;
+        };
+        let mut config = renderer.post_process_config().clone();
+        let applied = tweens.tween_post(&mut config, &style, &param, target, seconds, &easing);
+        if let StyleApplied::Done(_) = applied {
+            renderer.set_post_process_config(config);
+        }
+        style_applied(core, applied);
     }
 
     fn reset_style_history(&mut self) {
