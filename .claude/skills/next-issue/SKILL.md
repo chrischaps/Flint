@@ -47,13 +47,13 @@ Run the issue's own Verify steps and the tests for what you changed. Tick off ea
 
 ## 5. Land
 
-Commit with `Closes #<n>` in the message, then:
+Commit with `Closes #<n>` on a line of its own in the message body, then:
 
 ```bash
 scripts/issue.sh land <n>
 ```
 
-`land` runs the repo's verify command from `scripts/issue.conf`. In push mode it catches up with the base branch, pushes fast-forward only and releases the claim; exit 3 is a conflict to resolve before landing again. In pr mode it pushes the branch and opens a PR; the claim stays until the PR merges, then `scripts/issue.sh release <n>`.
+`land` runs the repo's verify command from `scripts/issue.conf`. In push mode it catches up with the base branch, pushes fast-forward only and releases the claim; exit 3 is a conflict to resolve before landing again. In pr mode it pushes the branch and opens a PR; the claim stays until the PR merges, and the release-claim workflow releases it then, so there is nothing to run (`release` is for giving up).
 
 Post a closing comment on the issue saying what was built and how it was verified. Then remove your worktree from the main checkout (`git worktree remove ../<repo>-<n>`).
 
