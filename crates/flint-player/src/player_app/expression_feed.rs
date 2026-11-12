@@ -610,6 +610,39 @@ fn log_state(source: &str, now: f64, state: &serde_json::Map<String, Value>) {
     }
 }
 
+/// The feed as one of the player's subsystems (ADR 0117, #724): the first
+/// and simplest. A run has it when its host gave a feed
+/// (`LaunchOptions::expression_feed`), and keeps it across scenes, since the
+/// timeline plays on the game clock and the socket stays open for the whole
+/// run. At [`Stage::Input`] it queues the states due by now for the scripts'
+/// update, which hears them before `on_update`.
+pub(crate) struct ExpressionSubsystem {
+    feed: ExpressionFeed,
+}
+
+impl ExpressionSubsystem {
+    pub(crate) fn new(feed: ExpressionFeed) -> Self {
+        Self { feed }
+    }
+}
+
+impl Subsystem for ExpressionSubsystem {
+    fn name(&self) -> &'static str {
+        "expression feed"
+    }
+
+    fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
+        if stage != Stage::Input {
+            return;
+        }
+        // The timeline on the game clock, then what the socket's reader
+        // threads have parsed
+        for state in self.feed.poll(ctx.clock.total_time) {
+            ctx.script.queue_expression(state);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -703,38 +736,5 @@ mod tests {
     #[test]
     fn a_feed_with_neither_source_is_none() {
         assert!(ExpressionFeed::open(None, None).unwrap().is_none());
-    }
-}
-
-/// The feed as one of the player's subsystems (ADR 0117, #724): the first
-/// and simplest. A run has it when its host gave a feed
-/// (`LaunchOptions::expression_feed`), and keeps it across scenes, since the
-/// timeline plays on the game clock and the socket stays open for the whole
-/// run. At [`Stage::Input`] it queues the states due by now for the scripts'
-/// update, which hears them before `on_update`.
-pub(crate) struct ExpressionSubsystem {
-    feed: ExpressionFeed,
-}
-
-impl ExpressionSubsystem {
-    pub(crate) fn new(feed: ExpressionFeed) -> Self {
-        Self { feed }
-    }
-}
-
-impl Subsystem for ExpressionSubsystem {
-    fn name(&self) -> &'static str {
-        "expression feed"
-    }
-
-    fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
-        if stage != Stage::Input {
-            return;
-        }
-        // The timeline on the game clock, then what the socket's reader
-        // threads have parsed
-        for state in self.feed.poll(ctx.clock.total_time) {
-            ctx.script.queue_expression(state);
-        }
     }
 }
