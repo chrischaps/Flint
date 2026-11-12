@@ -1896,6 +1896,49 @@ mod tests {
         assert!(ids.mentions("ascii"));
     }
 
+    /// #376: `--style ascii:off` turns the style off everywhere, the props
+    /// that switch it on for their own pixels included, and gives their
+    /// pixels to nobody, so a whole-frame style draws over them as scene.
+    /// Switching it back on (a later `--style ascii`) undoes it.
+    #[test]
+    fn style_off_everywhere_silences_per_entity_props() {
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "barrel", "ascii_style", "grid = \"object\"");
+        with_component(&mut world, "lamp", "ascii_style", "cell = 12");
+        let ascii = crate::stylize::find("ascii").unwrap();
+        let mut config = PostProcessConfig::default();
+        crate::stylize::apply_style_spec(&mut config, "pencil").unwrap();
+        let (ids, out) = resolved(&world, &config);
+        let barrel = out[&world.get_id("barrel").unwrap()];
+        assert!(ids.requests("ascii") && ascii.is_on(&config, &ids));
+        let ascii_index = crate::stylize::registry_index(ascii).unwrap() as u32;
+        assert_eq!(
+            crate::stylize::owner_table(&config, &ids)[barrel as usize],
+            ascii_index
+        );
+
+        crate::stylize::apply_style_spec(&mut config, "ascii:off").unwrap();
+        assert!(config.styles.is_off_everywhere("ascii"));
+        assert!(!ascii.is_on(&config, &ids), "the props still asked");
+        assert!(!ascii.reads_mask(&config, &ids));
+        assert_eq!(
+            crate::stylize::owner_table(&config, &ids)[barrel as usize],
+            crate::stylize::ownership::NONE,
+            "pencil yields to a style that isn't drawn"
+        );
+        let pencil = crate::stylize::find("pencil").unwrap();
+        assert!(pencil.foreign_ids(&config, &ids).is_empty());
+
+        crate::stylize::apply_style_spec(&mut config, "ascii").unwrap();
+        assert!(!config.styles.is_off_everywhere("ascii"));
+        assert!(ascii.is_on(&config, &ids), "a later word switches it back");
+
+        // A scene table's `enabled = false` is still only the table's
+        let mut table_off = PostProcessConfig::default();
+        table_off.styles.set_enabled("ascii", false);
+        assert!(ascii.is_on(&table_off, &ids));
+    }
+
     /// #400: an id whose every entity is at blend 0 keeps its number but
     /// asks for nothing, so its style and the mask stay off until one of
     /// them rises again.

@@ -7,7 +7,8 @@
 //! --style ascii:cell=12,ramp=blocks      a parameter (number) and an option (text)
 //! --style invert:strength=0.5
 //! --style kuwahara:radius=6
-//! --style ascii:off                      turn off a style the scene has on
+//! --style ascii:off                      off everywhere: the scene's table and
+//!                                        every entity's ascii_style (#376)
 //! --style invert:order=0                 run first in its stage (#299)
 //! --style kuwahara:feeds_bloom=1         bloom reads the painted image (#300)
 //! --style ascii:color=tint,tint=#4dff73  a colour (#315): #rrggbb, or r/g/b
@@ -133,7 +134,14 @@ impl StyleSpec {
             config.styles.set_feeds_bloom(&self.name, Some(feeds));
         }
         let descriptor = find(&self.name).expect("checked by parse");
-        config.styles.set_enabled(&self.name, self.enabled);
+        if self.enabled {
+            config.styles.set_enabled(&self.name, true);
+        } else {
+            // Off everywhere (#376): the table and every entity that
+            // would switch the style on for its own pixels, so a styled
+            // scene renders unstyled with the rest of its post kept
+            config.styles.set_off_everywhere(&self.name);
+        }
         for (key, value) in &self.settings {
             if key == "order" || key == "blend" {
                 continue;
@@ -289,6 +297,25 @@ mod tests {
         apply_style_spec(&mut config, "ascii").unwrap();
         assert!(config.styles.is_enabled("ascii"));
         assert_eq!(config.styles.param("ascii", "cell"), None);
+    }
+
+    /// #376: `off` (and `enabled=false`) is off everywhere, not only the
+    /// table; `on` or a bare name lifts it, so a later word wins.
+    #[test]
+    fn off_is_off_everywhere_and_a_later_word_lifts_it() {
+        let mut config = PostProcessConfig::default();
+        apply_style_spec(&mut config, "ascii:cell=10").unwrap();
+        apply_style_spec(&mut config, "ascii:off").unwrap();
+        assert!(!config.styles.is_enabled("ascii"));
+        assert!(config.styles.is_off_everywhere("ascii"));
+        assert_eq!(config.styles.param("ascii", "cell"), Some(10.0));
+        apply_style_spec(&mut config, "ascii").unwrap();
+        assert!(config.styles.is_enabled("ascii"));
+        assert!(!config.styles.is_off_everywhere("ascii"));
+        apply_style_spec(&mut config, "ascii:enabled=false").unwrap();
+        assert!(config.styles.is_off_everywhere("ascii"));
+        apply_style_spec(&mut config, "ascii:on").unwrap();
+        assert!(!config.styles.is_off_everywhere("ascii"));
     }
 
     #[test]
