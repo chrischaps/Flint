@@ -50,7 +50,7 @@ Music commands are detailed in [Music Commands](cli-reference/music.md).
 | R | Reload |
 | 1 / 2 | Weapon slots |
 | F2 | Toggle render stats overlay (with the GPU's time per phase, where the device can time) |
-| F3 | Toggle scene debug panels (ocean, day/time, camera, grass, weather… — only those the scene uses; never the F4 menu) and the game's own (ADR 0107) |
+| F3 | Toggle scene debug panels (ocean, day/time, camera, grass, weather… — only those the scene uses; never the F4 menu) and the game's own ([ADR 0107](https://github.com/chrischaps/Flint/blob/main/docs/adr/0107-debug-panels-from-the-game.md)) |
 | F4 | Toggle the **Rendering & Effects** menu (all render/post toggles and parameters, debug shading mode, shadows, lighting levers) |
 | F9 | Force a music-session full-fail (debug builds, session running) |
 | `` ` `` / `\` | Music Guide overlay / Manifest Map strip (debug builds, session running) |
@@ -321,7 +321,7 @@ position = [0, 0, 0]
 | `is_touch_device()` / `safe_area()` | `bool` / `Map` | touch-first device (`pointer: coarse` page, Android) from frame one; `#{ left, top, right, bottom }` insets in points, zeros where none |
 | `mouse_x()` / `mouse_y()` | `f64` | Cursor in logical points; `is_mouse_pressed(b)` / `is_mouse_just_pressed(b)` (0 left, 1 right, 2 middle) |
 | `screen_to_ground(x, y, plane_y)` | `[x, z]`/`()` | Ground point under a screen point (e.g. the cursor); `world_to_screen(x, y, z)` is the inverse |
-| `screen_to_heightfield(x, y)` / `ground_height(x, z)` | `[x, y, z]`/`()`, `f64`/`()` | The host's registered ground field under a screen point, and its height (ADR 0095) |
+| `screen_to_heightfield(x, y)` / `ground_height(x, z)` | `[x, y, z]`/`()`, `f64`/`()` | The host's registered ground field under a screen point, and its height ([ADR 0095](https://github.com/chrischaps/Flint/blob/main/docs/adr/0095-ray-against-placed-height-field.md)) |
 | `draw_world_line(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)` | `()` | World-space line in the 3D frame, hidden behind nearer geometry (unlike `draw_line_3d`, which is HUD) |
 | `draw_world_text(x, y, z, text, size, opts)` | `()` | Text at a world point, hidden behind nearer geometry: a billboard in points, or painted on a plane (`facing`) in world units |
 | `delta_time()` | `f64` | Seconds since last frame |
@@ -336,7 +336,7 @@ position = [0, 0, 0]
 | `fade_anim_layer(id, idx, w, secs)` | --- | Ramp a layer's weight over `secs` |
 | `play_sequence(id, name)` / `stop_sequence(id)` | --- | Drive the animator from `animations/*.sequence.toml` (cues → `on_sequence_cue`) |
 | `raycast(ox,oy,oz, dx,dy,dz, dist)` | `Map`/`()` | Cast a ray, get hit info |
-| `raycast_meshes(ox,oy,oz, dx,dy,dz, dist)` / `screen_to_mesh(x, y)` | `Map`/`()` | The same against the meshes drawn as ray targets, no physics needed: a wall in the camera's way, the roof under the cursor (ADR 0105) |
+| `raycast_meshes(ox,oy,oz, dx,dy,dz, dist)` / `screen_to_mesh(x, y)` | `Map`/`()` | The same against the meshes drawn as ray targets, no physics needed: a wall in the camera's way, the roof under the cursor ([ADR 0105](https://github.com/chrischaps/Flint/blob/main/docs/adr/0105-rays-against-drawn-meshes.md)) |
 | `move_character(id, dx, dy, dz)` | `#{x,y,z,grounded}` | Collision-corrected movement |
 | `spawn_entity(name)` | `i64` | Create a new entity |
 | `load_scene(path)` | --- | Transition to a new scene |

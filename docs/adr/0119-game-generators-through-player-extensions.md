@@ -13,7 +13,7 @@ generator of its own, a `rock_v1` for a cave game, without editing the
 engine, which a subtree pull then fights.
 
 The player already lets a game binary bring Rust in: `PlayerExtension`
-(ADRs 0071-0075), installed with `PlayerApp::add_extension`, with
+(ADRs [0071](0071-player-extensions-in-a-game-binary.md)-[0075](0075-screen-to-ground-picking.md)), installed with `PlayerApp::add_extension`, with
 `register_script_api` as the precedent for a one-time registration.
 
 ## Decision

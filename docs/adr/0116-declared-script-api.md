@@ -90,7 +90,7 @@ found about scripting follows from that:
 5. **Modules.** Each `api.module(name)` is listed as such. A subsystem
    registers its own (`conducted` from the music layer, `living` and `wooze`
    from living props, `debug` for A/B and commit calls), enabled when the
-   subsystem is present (ADR 0117). Calling into a module that isn't enabled
+   subsystem is present ([ADR 0117](0117-player-subsystems-and-one-game-step.md)). Calling into a module that isn't enabled
    is an error that says so. Game extensions use the same builder, so their
    functions are listed too.
 

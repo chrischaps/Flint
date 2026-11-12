@@ -268,7 +268,7 @@ and `MouseForward`. Pointer positions are physical window pixels, the same
 pixels a screenshot has, so a point read off a capture can be clicked in the
 next one. A glide moves the pointer a little every frame, as a hand would.
 
-The mouse takes the path a real one does (ADR 0082): egui first, then game
+The mouse takes the path a real one does ([ADR 0082](https://github.com/chrischaps/Flint/blob/main/docs/adr/0082-input-script-mouse.md)): egui first, then game
 extensions, then `InputState` and scripts. So a scripted click can press an
 egui button, drag between egui widgets or open a tooltip, and a click over a
 panel stays out of the world. The wheel goes the same way: turned over a
@@ -279,7 +279,7 @@ pointer jumped (egui decides who gets a click or a scroll from where the
 pointer was the frame before), and any release in the frame of its press. A
 `click` therefore takes three frames: move, press, release.
 
-Keys take the path a real keyboard does too (ADR 0097). egui gets each one
+Keys take the path a real keyboard does too ([ADR 0097](https://github.com/chrischaps/Flint/blob/main/docs/adr/0097-input-script-keys-reach-egui.md)). egui gets each one
 as egui-winit would have made it, the key and, on a press, the character it
 types on a US layout (`KeyA` with Shift held types `A`; nothing while Ctrl is
 held). Shift, Ctrl, Alt and Super also send a `ModifiersChanged`, so egui
@@ -295,7 +295,7 @@ a real keyboard: extensions' `on_window_event` never sees a scripted key
 to script them, and a scripted Esc doesn't quit the player. The real cursor still moves the pointer if it crosses the window
 during a capture, so keep it outside.
 
-`look` feeds raw mouse motion, what `mouse_delta_x()` / `mouse_delta_y()` read, at once or spread over the seconds given. As a real mouse's motion, it reaches the game only while the cursor is captured and no egui field has focus ([Cursor Capture and Input Gates](../concepts/input-gates.md), ADR 0110). The script's pad plays whether or not the window has focus. A real pad doesn't.
+`look` feeds raw mouse motion, what `mouse_delta_x()` / `mouse_delta_y()` read, at once or spread over the seconds given. As a real mouse's motion, it reaches the game only while the cursor is captured and no egui field has focus ([Cursor Capture and Input Gates](../concepts/input-gates.md), [ADR 0110](https://github.com/chrischaps/Flint/blob/main/docs/adr/0110-capture-and-focus-gates.md)). The script's pad plays whether or not the window has focus. A real pad doesn't.
 
 Times are `GameClock` seconds (what scripts see via `total_time()`), not
 wall-clock seconds since launch, so a capture lands on the same gameplay
@@ -430,10 +430,10 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--show-normals` | `false` | Normal direction arrows |
 | `--no-tonemapping` | `false` | Raw linear output |
 | `--no-shadows` | `false` | Disable shadow mapping |
-| `--shadow-resolution <px>` | `2048` | Shadow map resolution per cascade. A real control since the per-resolution texel upload (ADR 0049); earlier builds silently filtered as if 2048 |
-| `--msaa <n>` | `1` | MSAA sample count for the scene passes: `1` (off) or `4`. Default 1 keeps headless pixel-diff gates single-sample (ADR 0058) |
+| `--shadow-resolution <px>` | `2048` | Shadow map resolution per cascade. A real control since the per-resolution texel upload ([ADR 0049](https://github.com/chrischaps/Flint/blob/main/docs/adr/0049-upload-shadow-texel-size-per-resolution.md)); earlier builds silently filtered as if 2048 |
+| `--msaa <n>` | `1` | MSAA sample count for the scene passes: `1` (off) or `4`. Default 1 keeps headless pixel-diff gates single-sample ([ADR 0058](https://github.com/chrischaps/Flint/blob/main/docs/adr/0058-opt-in-4x-msaa-for-scene-passes.md)) |
 | `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image on each side (0.25–1), upscaled in the composite, as `flint-player --render-scale` (#122) |
-| `--gpu-time <frames>` | (none) | Render the frame this many times with GPU timing on and print each pass's smoothed time (ADR 0108) before writing the image |
+| `--gpu-time <frames>` | (none) | Render the frame this many times with GPU timing on and print each pass's smoothed time ([ADR 0108](https://github.com/chrischaps/Flint/blob/main/docs/adr/0108-gpu-timing-from-timestamp-queries.md)) before writing the image |
 | `--frames <n>` | (none) | Draw a sequence of `n` frames on one renderer, written as `<stem>_0000.png`... beside `--output`; temporal styles see consecutive frames ([Frame sequences](../guides/headless-rendering.md#frame-sequences), #345) |
 | `--frame-dt <s>` | `1/60` | With `--frames`: seconds between frames; post time, grass wind and particles advance by it |
 | `--orbit <deg/s>` / `--camera-path <file>` | (still) | With `--frames`: orbit the camera about its target, or follow a TOML of `[[key]] time/position/target` keys |
@@ -591,7 +591,7 @@ The default matters on dual-GPU laptops: before this, `PowerPreference::None`
 let the backend hand back whichever adapter enumerated first, usually the
 integrated GPU.
 
-## Common Flags
+### Edit Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|

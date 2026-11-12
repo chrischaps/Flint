@@ -18,7 +18,7 @@ GPU: 1.46ms
 
 (SET + DRIFT at 1280x720 on an RTX 4070, Vulkan.)
 
-Each line is a **scope**, a stretch of the frame between two timestamps the GPU writes as it reaches them (ADR 0108). The renderer scopes its own phases:
+Each line is a **scope**, a stretch of the frame between two timestamps the GPU writes as it reaches them ([ADR 0108](https://github.com/chrischaps/Flint/blob/main/docs/adr/0108-gpu-timing-from-timestamp-queries.md)). The renderer scopes its own phases:
 - `Grass`: the compute that scatters blades, when grass is on.
 - `Shadows`: every cascade.
 - `Scene`: the sky, the opaque and transparent draws, and the water.
@@ -86,7 +86,7 @@ With `--exit-after` and `--stats`, the player prints the average GPU frame time 
 
 `flint-player --perf` prints one line every ten seconds: frame p50, p99 and max, the CPU time of each phase of the frame (input, scripts, physics, script ui, anim/fx, sync, render, hud, present; mean and worst), the four scripts with the worst single `on_update` (and the script system's own steps, such as `[hot reload]`), the GPU time of each scope above, draws and triangles. In a browser, `?perf=1` shows the same numbers in a corner of the page and copies them as the same line ([web.md](https://github.com/chrischaps/Flint/blob/main/docs/design/web.md#the-perf-readout-120)).
 
-```
+```text
 flint perf · float · t=24s | native · NVIDIA GeForce RTX 4070 (Vulkan) | 1280x720 DPR 1.5 | frame p50 6.4 p99 11.1 max 25.8 ms (1459 frames/10s) | cpu 6.70 ms: input 0.02/0.2, scripts 1.65/7.0, … | gpu 1.46 ms: Shadows 0.58, Scene 0.23, SSAO 0.45, Bloom 0.16, Composite 0.03, UI 0.00 | 72 draws 50.6K tris
 ```
 
@@ -124,7 +124,7 @@ renderer.finish_gpu_timings(&device, &queue); // after the frame's last timed su
 
 ## The `profile` feature
 
-Build the player with `--features profile` (a game binary passes it on: `profile = ["flint-player/profile"]`) and run [Tracy's viewer](https://github.com/wolfpld/tracy/releases) beside it. The viewer finds the game on this machine and shows each frame as a stack of scopes on a timeline (ADR 0109):
+Build the player with `--features profile` (a game binary passes it on: `profile = ["flint-player/profile"]`) and run [Tracy's viewer](https://github.com/wolfpld/tracy/releases) beside it. The viewer finds the game on this machine and shows each frame as a stack of scopes on a timeline ([ADR 0109](https://github.com/chrischaps/Flint/blob/main/docs/adr/0109-tracy-frame-profiler.md)):
 
 - the frame loop: `tick` and its phases (`run_extension_pre_updates`, `run_scripts`, `tick_fixed_physics`, `tick_av_systems`, `sync_renderer`, ...), then `render` and `render_hud`;
 - the renderer: `update_from_world`, `render_to`, and inside it `render_shadow_pass`, `render_main_pass` and `render_postprocess`;

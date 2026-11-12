@@ -35,7 +35,7 @@ archetype = "room"
 | `version` | yes | Format version (currently "1.0") |
 | `description` | no | Optional description |
 | `input_config` | no | Path of an input config file for this scene, from the scene's directory or any directory above it up to the project root (see [Input System](physics-and-runtime.md#input-system)) |
-| `preload_audio` | no | Default `true`. When `false`, the player skips the blanket preload of every file under `audio/` at scene load, so a scene with a large audio folder starts instantly. Sounds named by `audio_source` components and music-session stems still load through their own paths; only the convenience preload for script-triggered sounds is skipped (ADR 0066, scene audio preload opt-out). See [Audio](audio.md#preloading). |
+| `preload_audio` | no | Default `true`. When `false`, the player skips the blanket preload of every file under `audio/` at scene load, so a scene with a large audio folder starts instantly. Sounds named by `audio_source` components and music-session stems still load through their own paths; only the convenience preload for script-triggered sounds is skipped ([ADR 0066](https://github.com/chrischaps/Flint/blob/main/docs/adr/0066-scene-audio-preload-opt-out.md), scene audio preload opt-out). See [Audio](audio.md#preloading). |
 
 ### Scene-level tables
 

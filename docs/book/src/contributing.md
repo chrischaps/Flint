@@ -1,6 +1,6 @@
 # Contributing
 
-The five numbered engine phases (ECS, constraints, PBR rendering, runtime, AI assets) are long complete. Since then the engine has grown by feature programmes tracked in numbered Architecture Decision Records (ADRs 0001-0067, kept in the Starchild game repo) rather than phases: the ocean and sky pipelines, render modes, the music-session runtime, the clay-look shading levers, the consolidated F4 render menu, animation layers and sequences, and the player-app decomposition. Contributions are welcome in these areas:
+The five numbered engine phases (ECS, constraints, PBR rendering, runtime, AI assets) are long complete. Since then the engine has grown by feature programmes tracked in numbered Architecture Decision Records rather than phases, each a file in [`docs/adr/`](https://github.com/chrischaps/Flint/tree/main/docs/adr) (the early records were written in the Starchild game repo, which is gone; they were rebuilt from the commits that cite them, #374): the ocean and sky pipelines, render modes, the music-session runtime, the clay-look shading levers, the consolidated F4 render menu, animation layers and sequences, and the player-app decomposition. Contributions are welcome in these areas:
 
 - **Bug reports** --- file issues on GitHub
 - **Schema definitions** --- new component and archetype schemas

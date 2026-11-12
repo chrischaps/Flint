@@ -1,0 +1,17 @@
+# What `python scripts/docs-check.py` (#375) lets through: names a page
+# writes that aren't drift.
+#
+#   page: name name ...   allowed on that page (its path under docs/book/src/,
+#                         or from the repo root for a CLAUDE.md)
+#   name                  allowed on every page; keep these rare
+#
+# A name is a style (`greyscale`), a flag (`--foo`) or a command's word
+# (`playtest` for `flint playtest`). Everything else the check reports is
+# a page that says what the code doesn't: fix the page, don't list it here.
+
+# User styles the pages make up to show the .shader.toml format
+concepts/assets.md: glow
+concepts/stylize-passes.md: greyscale darkroom
+
+# A command a plan names before it exists (#714)
+crates/flint-player/CLAUDE.md: playtest

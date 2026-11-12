@@ -24,7 +24,8 @@ cargo test                     # Run all tests
 cargo test -p flint-core       # Test a single crate
 cargo clippy                   # Lint
 cargo fmt --all                # Format (rustfmt.toml pins the edition; `rustfmt <file>` for one file)
-bash scripts/ci.sh             # What a PR must pass: formatting, in seconds. `issue.sh land` runs it.
+bash scripts/ci.sh             # What a PR must pass: formatting and a record for every cited ADR
+                               #   (scripts/adr-check.sh), in seconds. `issue.sh land` runs it.
 bash scripts/ci.sh --full      #   ...plus what CI's clippy and wasm jobs run (two builds)
 ```
 
@@ -172,7 +173,7 @@ A bullet below that names a feature in a line or two has its full text in one of
 
 The changelog is for games that carry the engine as a subtree (#765): a change a game can notice (a scene or schema key, a script function, a CLI flag, a format, a Cargo feature, a change in look or behaviour) gets an entry saying what changed and what to do. Each PR adds its own file, `bash scripts/changelog.sh new <issue> <slug>` (`changelog.d/<issue>-<slug>.md`, about 150 words), never an edit to `CHANGELOG.md` or `changelog/` (#788): after the merge the `Changelog` workflow moves it into `changelog/YYYY-MM.md` and `CHANGELOG.md` stays a short page linking the months. `changelog.sh since <date>` prints what is new. CI's `changelog` job (`scripts/changelog-check.sh`) fails a PR that touches `schemas/`, the script API or the scene format with no fragment; a commit-message line `Changelog: none (reason)` waives it for a change no game can notice.
 
-The book is `docs/book` (mdBook), published to docs.chaps.dev by hand from this machine. CI checks only its generated parts, the script API (`flint script api --check-book`) and the crate table (`flint-arch-analyzer --check-book`); nothing checks the prose. When a change alters a command, flag, key or component the book describes, update the book in the same PR, checking against the code rather than memory.
+The book is `docs/book` (mdBook), published to docs.chaps.dev by hand from this machine. CI checks its generated parts, the script API (`flint script api --check-book`) and the crate table (`flint-arch-analyzer --check-book`), and `python scripts/docs-check.py` (#375) checks what the prose names against a built `flint`: every `--flag` on a `flint` command line (book and CLAUDE.md files), every `[post_process.styles.<name>]`, every image a page links. Nothing checks what the prose says a flag or key does. When a change alters a command, flag, key or component the book describes, update the book in the same PR, checking against the code rather than memory. There is no `tools/docs-check`, `DOCS_SYNC.md` or `.synced-to` (#175, #375): a ticket that names them is wrong.
 
 Build, preview and publish commands: `docs/CLAUDE.md`.
 

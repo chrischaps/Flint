@@ -32,7 +32,7 @@ name = "Silent Corridor"
 preload_audio = false
 ```
 
-With `preload_audio = false` only `audio_source` files load, and [music sessions](music-sessions.md) resolve their stems through their own path. The default is `true` (ADR 0066, scene audio preload opt-out).
+With `preload_audio = false` only `audio_source` files load, and [music sessions](music-sessions.md) resolve their stems through their own path. The default is `true` ([ADR 0066](https://github.com/chrischaps/Flint/blob/main/docs/adr/0066-scene-audio-preload-opt-out.md), scene audio preload opt-out).
 
 In the browser, and whenever a late bundle of audio arrives, nothing is decoded in one go: each sound joins a decode queue that the player works through 2 ms a frame, one packet at a time, autoplay sources above silence first and then the rest smallest first. An `audio_source` starts once its sound is decoded. A script's `play_sound` of a sound still queued decodes it on the spot if the file is 64 KB or less; a bigger one moves to the front of the queue and that play is skipped with a warning. The desktop decodes at scene load, as before.
 
@@ -75,7 +75,7 @@ One-shots (`play_sound`, `play_sound_at`) are always sfx.
 
 ## Music Sessions
 
-A scene that carries a `music_session` component turns the audio engine into the host for a rhythm-driven chart: `flint-rhythm` opens a `ChartSession` on the **same** Kira manager the ordinary buses use (ADR 0017, shared audio manager), so the world's sounds and the suite's stems mix together and one master low-pass muffles both. For the length of the session the gamepad is handed to a 1 kHz capture thread that stamps every stick and button event with the audio clock (ADR 0018, gamepad handoff).
+A scene that carries a `music_session` component turns the audio engine into the host for a rhythm-driven chart: `flint-rhythm` opens a `ChartSession` on the **same** Kira manager the ordinary buses use ([ADR 0017](https://github.com/chrischaps/Flint/blob/main/docs/adr/0017-one-shared-audio-manager.md), shared audio manager), so the world's sounds and the suite's stems mix together and one master low-pass muffles both. For the length of the session the gamepad is handed to a 1 kHz capture thread that stamps every stick and button event with the audio clock ([ADR 0018](https://github.com/chrischaps/Flint/blob/main/docs/adr/0018-gamepad-handoff-and-inputstate-downsample.md), gamepad handoff).
 
 > **While a session is active, only the lean stick and the pulse button reach `InputState`.** Every other gamepad control is consumed by the capture thread; keyboard input still flows through winit as normal. Scripts that need the pad for anything else during a chart should read the [conducted parameters](scripting.md#conducted-parameters-api) instead.
 
@@ -251,7 +251,7 @@ Where the number comes from:
 
 ## From Rust: Player Extensions
 
-A game that wraps the player in its own binary reaches the same engine from Rust through `ExtensionCtx::audio` (ADR 0084). It plays sounds with no script in between, chooses each placed sound's falloff, sets the bus volumes, and loads sounds it makes in memory (samples, or encoded bytes) rather than from files under `audio/`. A sound loaded there can be played by scripts and `audio_source`s by its name. See [Player Extensions: Sound](../guides/player-extensions.md#sound).
+A game that wraps the player in its own binary reaches the same engine from Rust through `ExtensionCtx::audio` ([ADR 0084](https://github.com/chrischaps/Flint/blob/main/docs/adr/0084-extensions-reach-the-audio-engine.md)). It plays sounds with no script in between, chooses each placed sound's falloff, sets the bus volumes, and loads sounds it makes in memory (samples, or encoded bytes) rather than from files under `audio/`. A sound loaded there can be played by scripts and `audio_source`s by its name. See [Player Extensions: Sound](../guides/player-extensions.md#sound).
 
 ## Further Reading
 
