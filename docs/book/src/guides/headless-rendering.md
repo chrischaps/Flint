@@ -100,7 +100,7 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters |
 | `--film-grain <f32>` | `0` | Film grain intensity |
 | `--grain-time <f32>` | `0` | Post time driving grain and mode animation |
-| `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene, e.g. `ascii:cell=12,ramp=blocks`, `invert`, `kuwahara:radius=6`, `ascii:off`; repeatable; `--style help` lists them, `--list-styles [--json]` with stages and ranges ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
+| `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene, e.g. `ascii:cell=12,ramp=blocks`, `invert`, `kuwahara:radius=6`, `ascii:off` (off everywhere, entities' own included, #376); repeatable; `--style help` lists them, `--list-styles [--json]` with stages and ranges ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
 | `--style-time <f32>` | `0` | Post time animated styles read (the same clock as `--grain-time`) |
 | `--look <name\|path>` | (none) | A preset `[post_process]` block merged over the scene's (and over a look the scene names itself with `look = "<name>"`, which goes under its keys): `ascii_noir`, `matrix`, `ink_wash`, `graphite`, `watercolor`, `coloured_pencil`, `blueprint`, `charcoal`, or a `styles/<name>.look.toml`; other flags apply over it; `--look help` lists them ([Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps)) |
 | `--sweep <key=v1,v2,...>` | (none) | One labelled contact sheet of the frame at each value: `ascii.cell=6,8,12`, `post.exposure=0.8,1.2`, `look=a,b`, or `wooze.glide=0,1` ([below](#sweeping-a-knob)); cells default to 640x360, and pixel-identical neighbours are warned about. Give it twice for a grid: the first key across, the second down (#358) |
@@ -406,7 +406,7 @@ flint render examples/ascii_entities.scene.toml --no-grid -o scope.png \
 
 ![The same four at 2x nearest neighbour: the bench, the lantern on its crate and the barrel, glyph for glyph](../images/render-variants-scope-zoom.png)
 
-A per-entity style's props switch it on themselves, so `--style ascii:off` leaves them in glyphs; `ascii:blend=0` takes the style out of the chain, as the first variant does. The warning about pixel-identical neighbours (below) is what showed it.
+A per-entity style's props switch it on themselves, so a scene table's `enabled = false` leaves them in glyphs. `--style ascii:off` is off everywhere, props included (#376), with the rest of the post-processing as authored; `ascii:blend=0`, as the first variant has it, draws the same frame. Before #376 `ascii:off` left the props in glyphs, and the warning about pixel-identical neighbours (below) is what showed it.
 
 Each variant is the whole command line (every flag but `--variant`, `--variants`, `--zoom` and `--output`) with its own flags after it. A flag given in both takes the variant's value, and a repeatable one (`--style`) adds to the base's, so `--width 1280 --look graphite` before the variants applies to all of them. The label is the text before the first `:`; `"label:"` alone is the command as given, and a variant that starts with `-` is labelled with its flags. Each label's flags are written dim under it on the sheet, cut short with `~` when they don't fit the cell (the terminal prints them whole). Without `--no-grid` the editor grid is in every variant, as in a plain `flint render`.
 

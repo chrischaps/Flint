@@ -34,7 +34,7 @@ flint render examples/pbr_test.scene.toml --style ascii
 flint render examples/stylize_props.scene.toml --style ascii:ramp=detailed,color=tint,cell=10
 flint render examples/pbr_test.scene.toml --style invert:strength=0.5 --style kuwahara:radius=6
 flint render examples/stylize_props.scene.toml --style ascii:color=tint,tint=#ffb340   # a colour: #rrggbb or r/g/b
-flint render levels/tavern.scene.toml --style ascii:off       # the scene's table off (entities' ascii_style stay on, #376)
+flint render levels/tavern.scene.toml --style ascii:off       # off everywhere: the table and every entity's ascii_style (#376)
 flint edit examples/models/barrel.glb --render barrel.png --style ascii:cell=6
 flint render examples/pbr_test.scene.toml --style help            # every style and its keys
 ```
@@ -822,7 +822,7 @@ flint render examples/watercolor.scene.toml -o props.png                       #
 flint render examples/stylize_props.scene.toml --look watercolor --sweep watercolor.layers=0,3,5,8 -o glazes.png
 ```
 
-At 1080p on an RTX 4070 the whole-frame pass costs about 0.43 ms (`mesh_meadow`, `--gpu-time 240`). The per-entity demo costs 0.32 ms plus 0.03 ms for the mask: the wash is still blurred over the whole frame, and only the paint pass skips unpainted pixels. `--style watercolor:off` turns off the scene's table, not entities that carry a `watercolor_style` of their own; set `enabled = false` on them, as with ASCII.
+At 1080p on an RTX 4070 the whole-frame pass costs about 0.43 ms (`mesh_meadow`, `--gpu-time 240`). The per-entity demo costs 0.32 ms plus 0.03 ms for the mask: the wash is still blurred over the whole frame, and only the paint pass skips unpainted pixels. `--style watercolor:off` turns the style off everywhere, the entities that carry a `watercolor_style` of their own included (#376), so the props render as the scene does underneath, with bloom, SSAO and the rest kept. In a scene, a table's `enabled = false` is only the table's: an entity's own component still switches the style on for its pixels, so set `enabled = false` on the entities, as with ASCII.
 
 ## Display bloom
 
