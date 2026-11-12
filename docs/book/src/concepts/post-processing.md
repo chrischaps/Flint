@@ -426,7 +426,7 @@ flint render scene.toml --contour --contour-width 1.5 --contour-boil 1 --kuwahar
 flint render scene.toml --grade-lift 0.03,0.02,0.015 --grade-gain 1.04,1,0.94 --film-grain 0.03 --fxaa --msaa 4
 
 # Combine flags
-flint play scene.toml --bloom-intensity 0.1 --exposure 1.2 --volumetric-density 5.0
+flint render scene.toml --bloom-intensity 0.1 --exposure 1.2 --volumetric-density 5.0
 ```
 
 | Flag | Description |

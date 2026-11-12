@@ -132,6 +132,14 @@ jobs:
       - name: flint script api --check-book
         run: cargo run -p flint-cli --no-default-features --bin flint -- script api --check-book
 
+      # The book's prose against the CLI (#375): every `--flag` on a `flint`
+      # command line in the book and the CLAUDE.md files is one that
+      # command's --help lists, every `[post_process.styles.<name>]` is a
+      # registered style, every image a page links exists. Same binary.
+      # Names that aren't drift: docs/book/docs-check-allow.txt.
+      - name: docs-check
+        run: python3 scripts/docs-check.py --flint target/debug/flint
+
   # The GPU tests and render goldens (#314) on WARP, the software DX12
   # adapter every Windows ships. A runner has no GPU, and these tests skip
   # without an adapter, so before this job they passed on every PR without
