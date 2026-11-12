@@ -462,6 +462,14 @@ impl ScriptSystem {
         self.engine.call_scene_enters(world);
     }
 
+    /// Whether any loaded script may call `complete_transition()`: one that
+    /// names it, or imports a module (#362). When none can, nothing will
+    /// end a transition's Exiting or Entering phase, so the player moves on
+    /// by itself.
+    pub fn can_complete_transition(&self) -> bool {
+        self.engine.can_complete_transition()
+    }
+
     /// Tell scripts the renderer's distance scales in force (#56), for
     /// `lod_scale()` and `draw_distance_scale()`.
     pub fn set_lod_state(&mut self, lod_scale: f32, draw_distance_scale: f32) {

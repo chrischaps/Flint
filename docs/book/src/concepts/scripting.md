@@ -1069,6 +1069,8 @@ Load new scenes, manage game state, and persist data across transitions:
 
 Scene transitions follow a lifecycle: Idle -> Exiting -> Loading -> Entering -> Idle. During the Exiting and Entering phases, `on_draw_ui()` still runs so scripts can draw fade effects using `transition_progress()`. Call `complete_transition()` to advance phases --- this gives scripts full control over transition timing and visuals.
 
+Nobody has to draw a transition. When no loaded script can call `complete_transition()` (none names it, and none `import`s a module, which might), the player doesn't wait for one: a `load_scene()` loads its scene on the next frame and goes straight back to Idle, with no Exiting or Entering frames to fade over. Each phase is checked against the scripts loaded at the time, so a scene whose HUD draws fades and a scene without one can lead into each other either way: the HUD's scene waits for its fade, and the other doesn't. A phase that a script could end but doesn't is ended by the player after 10 seconds of game time, with a warning naming the phase. The fades `showcase_hud.rhai` draws take 1.5 seconds out and 2 seconds in.
+
 Two additional callbacks fire during transitions:
 
 | Callback | Signature | When It Fires |

@@ -437,3 +437,88 @@ fn test_top_level_state_reaches_callbacks_not_helpers() {
     );
     assert_eq!(probe.get("helper").unwrap().as_str(), Some("error"));
 }
+
+/// #362: which scripts may end a scene transition. A script that can't is
+/// the one the player stops waiting for.
+#[test]
+fn a_script_completes_transitions_only_if_it_can_call_complete_transition() {
+    let engine = ScriptEngine::new();
+    let completes = |source: &str| {
+        let ast = engine.compile(source).unwrap();
+        ScriptInstance::new(ast, "t.rhai".into()).completes_transition
+    };
+
+    // The issue's repro: a bare load_scene, nobody drawing a fade
+    assert!(!completes(
+        r#"let gone = false;
+        fn on_update() {
+            if gone { return; }
+            if total_time() > 1.0 { gone = true; load_scene("b.scene.toml"); }
+        }"#
+    ));
+    // Reading the phase is not ending it; a comment is not code
+    assert!(!completes(
+        r#"// complete_transition() is the HUD's job
+        fn on_update() { if is_transitioning() || transition_phase() == "exiting" { return; } }"#
+    ));
+
+    // A call anywhere: top level, a callback, a helper, a closure
+    assert!(completes("complete_transition();"));
+    assert!(completes(
+        r#"fn on_update() { if transition_progress() > 0.9 { complete_transition(); } }"#
+    ));
+    assert!(completes(
+        "fn done() { complete_transition() } fn on_update() { done(); }"
+    ));
+    assert!(completes(
+        "fn on_update() { let f = || complete_transition(); f.call(); }"
+    ));
+    // Named in a string, for `call`
+    assert!(completes(
+        r#"fn on_update() { call("complete_transition"); }"#
+    ));
+    // A module is resolved only when it runs: it might make the call
+    assert!(completes(r#"import "fades" as fades; fn on_update() {}"#));
+    assert!(completes(
+        r#"fn on_update() { import "fades" as fades; fades::run(); }"#
+    ));
+
+    // The scripts that draw the examples' fades
+    for (name, source) in [
+        (
+            "showcase_hud.rhai",
+            include_str!("../../../../examples/scripts/showcase_hud.rhai"),
+        ),
+        (
+            "zone_hud.rhai",
+            include_str!("../../../../showcase_game/scripts/zone_hud.rhai"),
+        ),
+    ] {
+        assert!(completes(source), "{name} ends its own fades");
+    }
+}
+
+/// The finder sees a name split across the pieces `Debug` writes, and a
+/// hot reload that takes the call out clears the flag.
+#[test]
+fn completes_transition_follows_a_hot_reload() {
+    use std::fmt::Write;
+    let mut find = super::instance::Finder::new(&["complete_transition", "Import("]);
+    for piece in ["name: \"comp", "lete_tr", "ansition\""] {
+        if write!(find, "{piece}").is_err() {
+            break;
+        }
+    }
+    assert!(find.found, "a needle across three pieces");
+
+    let mut engine = ScriptEngine::new();
+    let id = EntityId::from_raw(1);
+    let fades = engine
+        .compile("fn on_update() { complete_transition(); }")
+        .unwrap();
+    engine.add_script(id, fades, "hud.rhai".into());
+    assert!(engine.can_complete_transition());
+    let plain = engine.compile("fn on_update() {}").unwrap();
+    engine.reload_script(id, plain);
+    assert!(!engine.can_complete_transition());
+}

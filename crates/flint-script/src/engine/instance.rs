@@ -26,6 +26,10 @@ pub struct ScriptInstance {
     pub has_on_event: bool,
     pub has_on_expression: bool,
     pub has_on_persist_migrate: bool,
+    /// Whether the script may call `complete_transition()`: it names the
+    /// function, or imports a module that might (#362). A scene transition
+    /// no loaded script can complete moves on by itself.
+    pub completes_transition: bool,
     pub init_called: bool,
     /// The name of the entity the script is on, which decides the order scripts
     /// run in (empty until [`ScriptEngine::name_script`]). Entity ids differ run
@@ -52,6 +56,7 @@ impl ScriptInstance {
         let has_on_event = has_function(&ast, cb::ON_EVENT);
         let has_on_expression = has_function(&ast, cb::ON_EXPRESSION);
         let has_on_persist_migrate = has_function(&ast, cb::ON_PERSIST_MIGRATE);
+        let completes_transition = may_complete_transition(&ast);
 
         Self {
             ast,
@@ -73,6 +78,7 @@ impl ScriptInstance {
             has_on_event,
             has_on_expression,
             has_on_persist_migrate,
+            completes_transition,
             init_called: false,
             entity_name: String::new(),
         }
@@ -97,6 +103,7 @@ impl ScriptInstance {
         self.has_on_event = has_function(&ast, cb::ON_EVENT);
         self.has_on_expression = has_function(&ast, cb::ON_EXPRESSION);
         self.has_on_persist_migrate = has_function(&ast, cb::ON_PERSIST_MIGRATE);
+        self.completes_transition = may_complete_transition(&ast);
         self.ast = ast;
         // Don't reset init_called — hot-reload preserves state
     }
@@ -105,6 +112,67 @@ impl ScriptInstance {
 /// Check if an AST contains a function definition with the given name
 fn has_function(ast: &AST, name: &str) -> bool {
     ast.iter_functions().any(|f| f.name == name)
+}
+
+/// Whether `ast` may call `complete_transition()` (#362): a call to it, or
+/// the name in a string (`call("complete_transition")`), anywhere in the
+/// script, function bodies and closures included; or an `import`, since a
+/// module is resolved only when the script runs and could make the call.
+///
+/// Rhai walks an AST only under its `internals` feature, which the player
+/// and the web build leave off (`check` turns it on for `flint script
+/// check`), so this reads the AST's `Debug` form, which names every call,
+/// string and statement, and stops at the first match. Once a load or
+/// reload, never a frame. `engine::tests` holds it to the shapes above, so
+/// a Rhai upgrade that changes the form fails there, not in a game.
+pub(crate) fn may_complete_transition(ast: &AST) -> bool {
+    use std::fmt::Write;
+    let mut find = Finder::new(&["complete_transition", "Import("]);
+    // An `Err` here is the finder stopping the walk at a match
+    let _ = write!(find, "{ast:?}");
+    find.found
+}
+
+/// A `fmt::Write` that looks for any of its needles across the pieces it
+/// is handed, and refuses the rest once one is found.
+pub(crate) struct Finder<'a> {
+    needles: &'a [&'a str],
+    /// The end of what came before, long enough to hold a needle split
+    /// across two pieces.
+    tail: String,
+    pub(crate) found: bool,
+}
+
+impl<'a> Finder<'a> {
+    pub(crate) fn new(needles: &'a [&'a str]) -> Self {
+        Self {
+            needles,
+            tail: String::new(),
+            found: false,
+        }
+    }
+}
+
+impl std::fmt::Write for Finder<'_> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        if self.found {
+            return Err(std::fmt::Error);
+        }
+        self.tail.push_str(s);
+        if self.needles.iter().any(|n| self.tail.contains(n)) {
+            self.found = true;
+            return Err(std::fmt::Error);
+        }
+        let keep = self.needles.iter().map(|n| n.len()).max().unwrap_or(1) - 1;
+        if self.tail.len() > keep {
+            let mut cut = self.tail.len() - keep;
+            while !self.tail.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            self.tail.drain(..cut);
+        }
+        Ok(())
+    }
 }
 
 /// Expected parameter counts for engine callbacks.

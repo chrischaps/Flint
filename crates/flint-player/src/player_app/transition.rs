@@ -30,8 +30,23 @@ impl TransitionPhase {
     }
 }
 
+/// How long, in game seconds, an Exiting or Entering phase waits for a
+/// script's `complete_transition()` before the player ends it itself with a
+/// warning (#362). The fades scripts draw take a second or two
+/// (`showcase_hud.rhai`: 1.5 s out, 2 s in); a phase this long is a script
+/// that meant to finish it and didn't, not a fade.
+pub(super) const TRANSITION_PHASE_TIMEOUT: f32 = 10.0;
+
 impl PlayerApp {
     /// Advance the transition phase based on elapsed time and script signals.
+    ///
+    /// A script ends the Exiting and Entering phases with
+    /// `complete_transition()` (`fire_event`'s `TRANSITION_COMPLETE`), once
+    /// its fade is drawn. A phase no loaded script can end (none names
+    /// `complete_transition` or imports a module) moves on here by itself,
+    /// so a bare `load_scene` reaches its scene on the next frame (#362).
+    /// One a script can end but doesn't is ended after
+    /// [`TRANSITION_PHASE_TIMEOUT`], with a warning.
     pub(super) fn advance_transition(&mut self) {
         match &self.transition_phase {
             TransitionPhase::Idle => {}
@@ -39,26 +54,61 @@ impl PlayerApp {
                 target_scene,
                 elapsed,
             } => {
-                let new_elapsed = elapsed + self.clock.delta_time as f32;
                 let target = target_scene.clone();
-                self.transition_phase = TransitionPhase::Exiting {
-                    target_scene: target.clone(),
-                    elapsed: new_elapsed,
+                let elapsed = elapsed + self.clock.delta_time as f32;
+                let over = if !self.script.can_complete_transition() {
+                    println!("[transition] No script completes transitions: loading now");
+                    true
+                } else if elapsed >= TRANSITION_PHASE_TIMEOUT {
+                    tracing::warn!(
+                        "[transition] still exiting after {TRANSITION_PHASE_TIMEOUT} s with no \
+                         complete_transition() from a script: loading {target} now"
+                    );
+                    true
+                } else {
+                    false
                 };
-                // Check if a complete_transition event was fired
-                // (We use a sentinel event name to signal completion)
+                if over {
+                    // Loaded this frame, as a script's complete_transition
+                    // last frame would have it
+                    self.transition_phase = TransitionPhase::Loading {
+                        target_scene: target,
+                    };
+                    self.advance_transition();
+                } else {
+                    self.transition_phase = TransitionPhase::Exiting {
+                        target_scene: target,
+                        elapsed,
+                    };
+                }
             }
             TransitionPhase::Loading { target_scene } => {
                 let target = target_scene.clone();
                 // Either way the scripts fade back in: over the new scene,
                 // or over this one when the next didn't load (#723)
                 self.execute_scene_transition(&target);
-                self.transition_phase = TransitionPhase::Entering { elapsed: 0.0 };
+                // ...if one of them can say when it's done (#362)
+                self.transition_phase = if self.script.can_complete_transition() {
+                    TransitionPhase::Entering { elapsed: 0.0 }
+                } else {
+                    println!("[transition] Transition complete");
+                    TransitionPhase::Idle
+                };
             }
             TransitionPhase::Entering { elapsed } => {
-                let new_elapsed = elapsed + self.clock.delta_time as f32;
-                self.transition_phase = TransitionPhase::Entering {
-                    elapsed: new_elapsed,
+                let elapsed = elapsed + self.clock.delta_time as f32;
+                self.transition_phase = if !self.script.can_complete_transition() {
+                    // A hot reload took the call out
+                    println!("[transition] Transition complete");
+                    TransitionPhase::Idle
+                } else if elapsed >= TRANSITION_PHASE_TIMEOUT {
+                    tracing::warn!(
+                        "[transition] still entering after {TRANSITION_PHASE_TIMEOUT} s with no \
+                         complete_transition() from a script: ending the transition"
+                    );
+                    TransitionPhase::Idle
+                } else {
+                    TransitionPhase::Entering { elapsed }
                 };
             }
         }
