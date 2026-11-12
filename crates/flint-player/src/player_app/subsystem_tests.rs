@@ -17,9 +17,6 @@ const A: &str = "game/scenes/a.scene.toml";
 const SCENE_A: &str = r#"
 [scene]
 name = "A"
-
-[toy]
-wanted = true
 "#;
 
 const SCENE_B: &str = r#"

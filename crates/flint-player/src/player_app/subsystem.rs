@@ -20,7 +20,9 @@
 //!
 //! **Lifetimes.** A subsystem lasts for the run (the expression feed, which
 //! the host hands over) or for one scene (shallow wooze). The scene ones are
-//! built when a scene is entered, by the builders in [`FOR_SCENE`], each of
+//! built when a scene is entered, by the `for_scene` builders of the files in
+//! `player_app/subsystems/` (one file a subsystem, listed by `build.rs`, so
+//! adding one edits no other file), each of
 //! which looks at the scene and makes its subsystem only if the scene uses
 //! it, and they are dropped when the scene unloads. Nothing of one scene's
 //! carries into the next.
@@ -152,15 +154,16 @@ pub(crate) struct WoozeNow<'a> {
 pub(crate) enum Lasts {
     /// The whole run: the host made it (the expression feed).
     Run,
-    /// One scene: built by its `FOR_SCENE` builder when a scene that uses it
+    /// One scene: built by its `for_scene` builder when a scene that uses it
     /// is entered, dropped when that scene unloads.
     Scene,
 }
 
-/// The builders of scene subsystems, in the order they run. Each looks at the
-/// scene being entered and makes its subsystem only if the scene uses it.
-pub(crate) const FOR_SCENE: &[BuildForScene] =
-    &[super::shallow_wooze::ShallowWoozeSubsystem::for_scene];
+// The scene subsystems' modules, one a file of `player_app/subsystems/`, and
+// `for_scene_builders()`, their builders in file-name order (build.rs). Each
+// builder looks at the scene being entered and makes its subsystem only if
+// the scene uses it.
+include!(concat!(env!("OUT_DIR"), "/subsystems.rs"));
 
 /// A scene subsystem's builder: its subsystem, if the scene uses it.
 pub(crate) type BuildForScene = fn(&SceneCtx) -> Option<Box<dyn Subsystem>>;
@@ -360,7 +363,7 @@ impl super::PlayerApp {
             wooze: self.living.wooze.as_ref(),
         };
         // This scene's own, each only if the scene uses it
-        for build in FOR_SCENE {
+        for build in for_scene_builders() {
             if let Some(subsystem) = build(&ctx) {
                 self.subsystems.push(subsystem);
             }
