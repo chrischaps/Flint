@@ -144,6 +144,8 @@ pub struct HeadlessGame {
     look: ScriptLook,
     /// `set_look` / `clear_look` since the stage last asked.
     look_request: Option<Option<String>>,
+    /// What a debug key would say (#367): nobody presses one in a capture.
+    key_note: super::key_note::KeyNote,
     #[cfg(feature = "debug-hud")]
     panels: Vec<Box<dyn flint_debug_ui::DebugPanel>>,
 }
@@ -165,6 +167,7 @@ impl HeadlessGame {
             skipped: BTreeSet::new(),
             look: ScriptLook::default(),
             look_request: None,
+            key_note: Default::default(),
             #[cfg(feature = "debug-hud")]
             panels: Vec::new(),
         }
@@ -452,6 +455,7 @@ impl FrameHost for CaptureFrame<'_> {
                 pixels_per_point,
                 cursor_captured: false,
                 scene_file_writable: false,
+                note: &mut game.key_note,
                 #[cfg(feature = "debug-hud")]
                 panels: &mut game.panels,
             },

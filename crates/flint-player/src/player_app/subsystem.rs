@@ -146,6 +146,9 @@ pub(crate) struct StageCtx<'a> {
     /// egui's points per pixel, for a pointer in window pixels.
     pub pixels_per_point: f32,
     pub cursor_captured: bool,
+    /// What a debug key says when it has nothing to act on (#367): on
+    /// screen for a moment and in the console.
+    pub note: &'a mut super::key_note::KeyNote,
     /// The F3/F4 panels, for a subsystem that has one.
     #[cfg(feature = "debug-hud")]
     pub panels: &'a mut Vec<Box<dyn flint_debug_ui::DebugPanel>>,
@@ -449,6 +452,7 @@ macro_rules! stage_ctx {
             scene_file_writable: $app.launch.scene_file_writable,
             pixels_per_point: $app.hud.egui_ctx.pixels_per_point(),
             cursor_captured: $app.focus.cursor_captured,
+            note: &mut $app.hud.key_note,
             #[cfg(feature = "debug-hud")]
             panels: &mut $app.debug_panels,
         }

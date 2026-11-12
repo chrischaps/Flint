@@ -847,3 +847,35 @@ fn a_style_read_sees_a_change_the_step_after_it_as_the_player_does() {
     let said = stderr(&o);
     assert!(said.contains("the read caught up on frame 31"), "{said}");
 }
+
+#[test]
+fn a_state_that_pauses_living_stills_the_grove_as_in_the_player() {
+    // #727's policies by name, read by the player's living subsystem, which
+    // a capture runs too (#725): a state that pauses `living` holds the
+    // grove's clock, and one that pauses only scripts doesn't.
+    let held = grove(
+        "policy_living",
+        r#"fn on_init() { register_state("still", #{ living: "pause" }); push_state("still"); }"#,
+    );
+    let o = render_grove(&held, "held.gif", &["--scripts"]);
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let frames = gif_frames(&held.join("held.gif"));
+    assert!(frames.len() > 1);
+    assert!(
+        all_alike(&frames),
+        "a state pausing `living` let the grove move"
+    );
+
+    let moving = grove(
+        "policy_scripts",
+        r#"fn on_init() { register_state("quiet", #{ scripts: "pause" }); push_state("quiet"); }"#,
+    );
+    ok(&render_grove(&moving, "moving.gif", &["--scripts"]));
+    assert!(
+        !all_alike(&gif_frames(&moving.join("moving.gif"))),
+        "pausing scripts stilled the grove"
+    );
+}
