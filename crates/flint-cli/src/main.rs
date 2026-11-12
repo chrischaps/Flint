@@ -253,6 +253,7 @@ fn main() -> Result<()> {
             !no_inspector,
             false,
             Default::default(),
+            Default::default(),
         ),
         Commands::Gen(args) => gen::run(args),
         Commands::GenPreview(args) => gen_preview::run(args),
