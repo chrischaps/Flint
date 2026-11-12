@@ -2,6 +2,9 @@
 
     python scripts/goldens-summary.py target/tmp/stylize-goldens/report.json
 
+(the folder CI's FLINT_GOLDENS_OUT names; a local `cargo test` run keeps
+its target/tmp/stylize-goldens-<pid> only when it fails, #421)
+
 Each case's status and how far it sits from its golden, against the
 tolerance it is held to, so a run on a software adapter shows the margin
 and not only the verdict. A case that passes but isn't byte-identical

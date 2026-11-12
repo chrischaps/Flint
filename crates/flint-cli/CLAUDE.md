@@ -228,7 +228,10 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    alone, otherwise every name containing it, #388); a pass that isn't byte-identical with its golden
    prints `DRIFT`, is `"drift": true` in the report, and the run ends naming every drifted case
    or saying none; `--bless-drifted` re-blesses only those, for a catch-up commit (#387); `cargo test -p flint-cli
-   --test render_goldens` runs it. Cases run in one process on one GPU device with glTF
+   --test render_goldens` runs it, writing to its own `target/tmp/stylize-goldens-<pid>` (#421: two runs
+   in one target dir shared a fixed folder and failed each other), removed on a pass and kept, its path
+   printed, on a failure; `FLINT_GOLDENS_OUT=<dir>` names a folder kept either way (CI's WARP job sets
+   `target/tmp/stylize-goldens`, which its summary and artifact read). Cases run in one process on one GPU device with glTF
    decodes and mip chains memoized (`render::RenderHost`, `flint_import::memoize_imports`,
    `flint_render::memoize_mip_chains`; ~2.5x in debug); a panicking case reruns in its own
    process, `--isolate` spawns every case. A new style adds a case. A case's `matches = [flags]` (#417) compares with a second render
