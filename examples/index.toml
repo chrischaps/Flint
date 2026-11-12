@@ -189,6 +189,11 @@ topic = "stylize"
 purpose = "Props fade and dissolve into ASCII and back on a blend a script ramps (#278)"
 
 [[example]]
+scene = "ascii_tear.scene.toml"
+topic = "stylize"
+purpose = "A reality tear passes over a clearing and only the props inside it turn to text (blend_source = \"tear\", #397)"
+
+[[example]]
 scene = "ascii_story.scene.toml"
 topic = "stylize"
 purpose = "A script flips props between smooth and ASCII at story beats (#269)"

@@ -706,6 +706,8 @@ pub struct SceneRenderer {
     style_scissor: bool,
     /// The blend of each styled entity drawn at less than 1 (#278).
     style_blend_by_entity: HashMap<flint_core::EntityId, f32>,
+    /// The styled entities whose blend follows the reality tear (#397).
+    style_torn_entities: std::collections::HashSet<flint_core::EntityId>,
     /// Whether the last style mask drew a veil over its entities (#290):
     /// something unstyled in front, so the mask's blend is below 1 there
     /// even with every entity fully styled (#396 cross-fades by it).
@@ -1086,6 +1088,7 @@ impl SceneRenderer {
             style_by_entity: HashMap::new(),
             style_scissor: crate::stylize::scissor_enabled(),
             style_blend_by_entity: HashMap::new(),
+            style_torn_entities: std::collections::HashSet::new(),
             style_mask_veiled: false,
             mask_view_forced: false,
             ascii_forced: false,
@@ -2643,6 +2646,7 @@ impl SceneRenderer {
             style_by_entity: HashMap::new(),
             style_scissor: crate::stylize::scissor_enabled(),
             style_blend_by_entity: HashMap::new(),
+            style_torn_entities: std::collections::HashSet::new(),
             style_mask_veiled: false,
             mask_view_forced: false,
             ascii_forced: false,
@@ -3975,11 +3979,13 @@ impl SceneRenderer {
                 &mut self.style_ids,
                 &mut self.style_by_entity,
                 &mut self.style_blend_by_entity,
+                &mut self.style_torn_entities,
             );
         } else {
             self.style_ids.set(Vec::new());
             self.style_by_entity.clear();
             self.style_blend_by_entity.clear();
+            self.style_torn_entities.clear();
         }
 
         // Extract lights from scene entities
@@ -5435,6 +5441,9 @@ impl SceneRenderer {
         );
         let ids = &self.style_by_entity;
         let blends = &self.style_blend_by_entity;
+        let torn = &self.style_torn_entities;
+        let torn_of =
+            |e: &Option<flint_core::EntityId>| e.as_ref().is_some_and(|e| torn.contains(e));
         let id_of = |e: &Option<flint_core::EntityId>| e.as_ref().and_then(|e| ids.get(e).copied());
         let blend_of = |e: &Option<flint_core::EntityId>| {
             e.as_ref()
@@ -5447,6 +5456,7 @@ impl SceneRenderer {
             // each fragment's depth test decides who owns a pixel anyway
             if let Some(id) = id_of(&self.terrain_entity) {
                 let blend = blend_of(&self.terrain_entity);
+                let torn = torn_of(&self.terrain_entity);
                 let frustum = self.camera_frustum.as_ref();
                 let visible = |d: &&TerrainDrawCall| {
                     frustum.is_none_or(|f| f.aabb_visible(d.aabb_min, d.aabb_max))
@@ -5460,6 +5470,7 @@ impl SceneRenderer {
                         bones: None,
                         id,
                         blend,
+                        torn,
                     }
                 }));
             }
@@ -5476,6 +5487,7 @@ impl SceneRenderer {
                             bones: None,
                             id: id_of(&d.entity_id)?,
                             blend: blend_of(&d.entity_id),
+                            torn: torn_of(&d.entity_id),
                         })
                     }),
             );
@@ -5488,6 +5500,7 @@ impl SceneRenderer {
                     bones: Some(&d.bone_bind_group),
                     id: id_of(&d.entity_id)?,
                     blend: blend_of(&d.entity_id),
+                    torn: torn_of(&d.entity_id),
                 })
             }));
             // Styled transparents last, back to front as the scene drew
@@ -5509,6 +5522,7 @@ impl SceneRenderer {
                             bones: None,
                             id: id_of(&d.entity_id)?,
                             blend: blend_of(&d.entity_id),
+                            torn: torn_of(&d.entity_id),
                         })
                     }),
             );
@@ -5521,6 +5535,7 @@ impl SceneRenderer {
                     bones: Some(&d.bone_bind_group),
                     id: id_of(&d.entity_id)?,
                     blend: blend_of(&d.entity_id),
+                    torn: torn_of(&d.entity_id),
                 })
             }));
         }
@@ -5568,6 +5583,15 @@ impl SceneRenderer {
                     });
         }
         let veiled = !veil.is_empty();
+        // The tear the composite draws this frame (#397), for the draws
+        // whose blend follows it: the same config and post time
+        let config = &self.postprocess_config;
+        let tear = crate::style_mask::Tear {
+            on: crate::postprocess::tear_active(config),
+            mode_params: config.mode_params,
+            mix: config.mode_mix,
+            time: (self.ocean_time % 100_000.0) as f32,
+        };
         if let Some(pass) = &mut self.style_mask_pass {
             pass.encode(
                 device,
@@ -5581,6 +5605,7 @@ impl SceneRenderer {
                 msaa_depth,
                 &draws,
                 &veil,
+                tear,
             );
         }
         self.style_mask_veiled = veiled;
@@ -5591,7 +5616,10 @@ impl SceneRenderer {
     /// over a styled one (#290). While neither, the framework's
     /// cross-fade is skipped.
     pub fn style_mask_fades(&self) -> bool {
-        !self.style_blend_by_entity.is_empty() || self.style_mask_veiled
+        !self.style_blend_by_entity.is_empty()
+            || self.style_mask_veiled
+            || (!self.style_torn_entities.is_empty()
+                && crate::postprocess::tear_active(&self.postprocess_config))
     }
 
     /// The entity style mask's per-draw uniform bytes and how many styled
@@ -6137,6 +6165,11 @@ impl SceneRenderer {
         // config) is built before the frame that first needs it (#262).
         // When nothing new is on this is a walk over the registry.
         self.sync_debug_styles();
+        // A tear is a script's, set every frame, maybe after the world was
+        // read: a prop whose blend follows it (#397) is off while the
+        // config this frame draws has none
+        self.style_ids
+            .set_tear(crate::postprocess::tear_active(&self.postprocess_config));
         self.ensure_style_resources(device);
         // FXAA likewise (#297): a host that only sets the config (the
         // viewer's hot reload and scene/default toggle, a script's post

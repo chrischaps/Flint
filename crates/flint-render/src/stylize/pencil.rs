@@ -918,8 +918,8 @@ mod tests {
     }
 
     /// The `pencil_style` schema and the descriptor agree: every field is a
-    /// parameter, an option, a 3-array of `_r/_g/_b` parameters or
-    /// `enabled`; every parameter and option can be set from it; and no
+    /// parameter, an option, a 3-array of `_r/_g/_b` parameters, or one
+    /// every style component takes (`enabled`, `blend`, `blend_source`); every parameter and option can be set from it; and no
     /// field has a default, which the loader would fill in over the
     /// scene's table (the #266 gotcha).
     #[test]
@@ -936,7 +936,13 @@ mod tests {
         let mut reached: Vec<String> = Vec::new();
         for (key, field) in fields {
             assert!(field.get("default").is_none(), "{key} has a default");
-            if key == "enabled" {
+            if [
+                "enabled",
+                crate::style_mask::BLEND_FIELD,
+                crate::style_mask::BLEND_SOURCE_FIELD,
+            ]
+            .contains(&key.as_str())
+            {
                 continue;
             }
             if is_param(key) || is_option(key) {
