@@ -95,9 +95,9 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
 }
 
 /// The style's shader: its own code, then the shared matcher.
-pub const SHADER: &str = concat!(
-    include_str!("palette.wgsl"),
-    include_str!("../palette.wgsl")
+pub const SHADER: kit::Wgsl = kit::wgsl!(
+    "palette.wgsl",
+    "../palette.wgsl"
 );
 
 #[repr(C)]
@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn the_shader_validates_and_its_uniforms_match_rust() {
-        let module = naga::front::wgsl::parse_str(SHADER).expect("palette shader parses");
+        let module = naga::front::wgsl::parse_str(SHADER.text).expect("palette shader parses");
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::default(),
@@ -273,8 +273,8 @@ mod tests {
     #[test]
     fn ascii_and_palette_compile_one_matcher() {
         // Not a copy: both shaders hold the same file
-        assert!(SHADER.contains(PALETTE_WGSL));
-        assert!(super::super::ascii::GLYPH_SHADER.contains(PALETTE_WGSL));
+        assert!(SHADER.text.contains(PALETTE_WGSL));
+        assert!(super::super::ascii::GLYPH_SHADER.text.contains(PALETTE_WGSL));
     }
 
     #[test]

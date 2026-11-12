@@ -1212,9 +1212,15 @@ impl PlayerApp {
             None
         };
 
-        // User styles that don't compile (#275): shown until they do
+        // User styles that don't compile (#275), and built-in shaders
+        // read from FLINT_STYLE_SHADER_DIR that don't (#418): shown until
+        // they do
         #[cfg(feature = "debug-hud")]
-        let style_errors = flint_render::stylize::custom::errors();
+        let style_errors = {
+            let mut errors = flint_render::stylize::custom::errors();
+            errors.extend(flint_render::stylize::dev_shader::errors());
+            errors
+        };
 
         let full_output = self.hud.egui_ctx.run(raw_input, |ctx| {
             // Layers, back to front: script UI, game egui, debug panels.

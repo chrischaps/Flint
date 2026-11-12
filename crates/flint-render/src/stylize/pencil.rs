@@ -325,18 +325,18 @@ pub(super) fn image_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-const PREP_SHADER: &str = concat!(
-    include_str!("pencil_common.wgsl"),
-    include_str!("pencil_prep.wgsl")
+const PREP_SHADER: kit::Wgsl = kit::wgsl!(
+    "pencil_common.wgsl",
+    "pencil_prep.wgsl"
 );
-const DRAW_SHADER: &str = concat!(
-    include_str!("pencil_common.wgsl"),
-    include_str!("style_image.wgsl"),
-    include_str!("pencil.wgsl")
+const DRAW_SHADER: kit::Wgsl = kit::wgsl!(
+    "pencil_common.wgsl",
+    "style_image.wgsl",
+    "pencil.wgsl"
 );
-const FLOW_SHADER: &str = concat!(
-    include_str!("pencil_common.wgsl"),
-    include_str!("pencil_flow.wgsl")
+const FLOW_SHADER: kit::Wgsl = kit::wgsl!(
+    "pencil_common.wgsl",
+    "pencil_flow.wgsl"
 );
 
 /// The drawing pass's group 3: the prep target and its sampler, and the
@@ -880,7 +880,7 @@ mod tests {
             (DRAW_SHADER, "draw"),
             (FLOW_SHADER, "flow"),
         ] {
-            let module = validate(source, name);
+            let module = validate(source.text, name);
             let (_, u) = module
                 .global_variables
                 .iter()

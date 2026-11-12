@@ -104,7 +104,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     let module = kit::shader(
         device,
         "Display Bloom Shader",
-        include_str!("display_bloom.wgsl"),
+        kit::wgsl!("display_bloom.wgsl"),
     );
     let chain_layouts = [&uniform_bgl, &sampled_bgl];
     let pipeline = |label: &str, entry: &str, format, blend, layouts: &[_]| {

@@ -682,7 +682,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
             &kit::shader(
                 device,
                 "ASCII Edge Shader",
-                include_str!("ascii_edges.wgsl"),
+                kit::wgsl!("ascii_edges.wgsl"),
             ),
             &[&edge_bgl, &depth_bgl, &mask_bgl],
             EDGE_FORMAT,
@@ -693,7 +693,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
             &kit::shader(
                 device,
                 "ASCII Edge Cell Shader",
-                include_str!("ascii_edge_cells.wgsl"),
+                kit::wgsl!("ascii_edge_cells.wgsl"),
             ),
             // The picture too (#351): the near side's hue
             &[&uniform_bgl, &edges_in_bgl, &stats_in_bgl],
@@ -1193,42 +1193,42 @@ fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType) -> wgpu::Bi
     }
 }
 
-const CELLS_SHADER: &str = concat!(
-    include_str!("ascii_common.wgsl"),
-    include_str!("ascii_cells.wgsl")
+const CELLS_SHADER: kit::Wgsl = kit::wgsl!(
+    "ascii_common.wgsl",
+    "ascii_cells.wgsl"
 );
-pub(crate) const GLYPH_SHADER: &str = concat!(
-    include_str!("ascii_common.wgsl"),
-    include_str!("../palette.wgsl"),
-    include_str!("ascii_dissolve.wgsl"),
-    include_str!("ascii.wgsl"),
-    include_str!("ascii_edge_thin.wgsl")
+pub(crate) const GLYPH_SHADER: kit::Wgsl = kit::wgsl!(
+    "ascii_common.wgsl",
+    "../palette.wgsl",
+    "ascii_dissolve.wgsl",
+    "ascii.wgsl",
+    "ascii_edge_thin.wgsl"
 );
-const EDGE_VIEW_SHADER: &str = concat!(
-    include_str!("ascii_edge_view.wgsl"),
-    include_str!("ascii_edge_thin.wgsl")
+const EDGE_VIEW_SHADER: kit::Wgsl = kit::wgsl!(
+    "ascii_edge_view.wgsl",
+    "ascii_edge_thin.wgsl"
 );
-const DISSOLVE_ORDER_SHADER: &str = concat!(
-    include_str!("ascii_common.wgsl"),
-    include_str!("ascii_dissolve.wgsl"),
-    include_str!("ascii_dissolve_order.wgsl")
+const DISSOLVE_ORDER_SHADER: kit::Wgsl = kit::wgsl!(
+    "ascii_common.wgsl",
+    "ascii_dissolve.wgsl",
+    "ascii_dissolve_order.wgsl"
 );
-const DISSOLVE_RANK_SHADER: &str = concat!(
-    include_str!("ascii_common.wgsl"),
-    include_str!("ascii_dissolve.wgsl"),
-    include_str!("ascii_dissolve_rank.wgsl")
+const DISSOLVE_RANK_SHADER: kit::Wgsl = kit::wgsl!(
+    "ascii_common.wgsl",
+    "ascii_dissolve.wgsl",
+    "ascii_dissolve_rank.wgsl"
 );
-const VARIANT_CELLS_SHADER: &str = concat!(
-    include_str!("ascii_common.wgsl"),
-    include_str!("ascii_variant_cells.wgsl")
+const VARIANT_CELLS_SHADER: kit::Wgsl = kit::wgsl!(
+    "ascii_common.wgsl",
+    "ascii_variant_cells.wgsl"
 );
-const STATS_SHADER: &str = concat!(
-    include_str!("ascii_common.wgsl"),
-    include_str!("ascii_stats.wgsl")
+const STATS_SHADER: kit::Wgsl = kit::wgsl!(
+    "ascii_common.wgsl",
+    "ascii_stats.wgsl"
 );
-const STATS_RESOLVE_SHADER: &str = concat!(
-    include_str!("ascii_common.wgsl"),
-    include_str!("ascii_stats_resolve.wgsl")
+const STATS_RESOLVE_SHADER: kit::Wgsl = kit::wgsl!(
+    "ascii_common.wgsl",
+    "ascii_stats_resolve.wgsl"
 );
 
 /// The variant cell state (#313): two textures, a texel a cell in each,
@@ -3362,7 +3362,7 @@ mod tests {
             ),
             (
                 "ascii_edge_view.wgsl",
-                EDGE_VIEW_SHADER,
+                EDGE_VIEW_SHADER.text,
                 std::mem::size_of::<EdgeViewUniforms>(),
             ),
         ] {
@@ -3700,7 +3700,7 @@ mod tests {
     }
     #[test]
     fn the_shader_validates_and_its_uniforms_match_rust() {
-        let module = naga::front::wgsl::parse_str(GLYPH_SHADER).expect("parse");
+        let module = naga::front::wgsl::parse_str(GLYPH_SHADER.text).expect("parse");
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::default(),
@@ -3726,7 +3726,7 @@ mod tests {
             ("ascii_dissolve_order.wgsl", DISSOLVE_ORDER_SHADER),
             ("ascii_dissolve_rank.wgsl", DISSOLVE_RANK_SHADER),
         ] {
-            let module = naga::front::wgsl::parse_str(src).expect(name);
+            let module = naga::front::wgsl::parse_str(src.text).expect(name);
             naga::valid::Validator::new(
                 naga::valid::ValidationFlags::all(),
                 naga::valid::Capabilities::default(),

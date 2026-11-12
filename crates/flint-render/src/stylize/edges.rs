@@ -85,7 +85,7 @@ impl EdgePass {
         let pipeline = kit::fullscreen_pipeline(
             device,
             "Style Edges Pipeline",
-            &kit::shader(device, "Style Edges Shader", include_str!("edges.wgsl")),
+            &kit::shader(device, "Style Edges Shader", kit::wgsl!("edges.wgsl")),
             &[&uniform_bgl, &depth_bgl],
             EDGE_FORMAT,
         );
