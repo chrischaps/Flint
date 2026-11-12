@@ -3,7 +3,6 @@
 //! files and none of this is in one: a lineage is, but which pose a prop has reached
 //! and what the field told it exist only once it's running.
 
-use flint_player::LivingRun;
 use flint_procgen::{LivingPropId, LivingProps, Resolved, Stagger};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -161,10 +160,9 @@ pub struct WoozeReport {
 /// order and two runs ought to read the same.
 /// `field` is the stage's, where its clock stands.
 pub fn props_report(
-    run: &LivingRun,
+    props: &LivingProps,
     field: Option<(&flint_core::wooze::WoozeField, f64)>,
 ) -> Vec<PropReport> {
-    let props = run.props();
     let mut report: Vec<PropReport> = props
         .props()
         .iter()

@@ -102,6 +102,18 @@ impl GameClock {
         self.advance(raw);
     }
 
+    /// One frame of exactly `dt` game seconds, for a host with no wall
+    /// clock (a capture stepping on its own fixed step, #725): no pacing
+    /// and no clamp, scaled by `time_scale`, and the fixed steps accumulate
+    /// as a tick's do.
+    pub fn advance_by(&mut self, dt: f64) {
+        self.first_tick = false;
+        self.raw_delta_time = dt;
+        self.delta_time = dt * self.time_scale;
+        self.total_time += self.delta_time;
+        self.accumulator += self.delta_time;
+    }
+
     /// One frame of `raw` wall seconds: pace it, clamp it, accumulate it.
     fn advance(&mut self, raw: f64) {
         self.raw_delta_time = raw;

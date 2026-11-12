@@ -18,9 +18,11 @@
 //! them, and does without when there are none.
 
 use super::perf::Phase;
+use super::style_commands::StyleApplied;
 use super::subsystem::{Stage, StageCtx, Subsystems};
 use flint_animation::AnimationSystem;
 use flint_core::project::Project;
+use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
@@ -30,7 +32,8 @@ use flint_runtime::{
     GameClock, GameEvent, GameStateMachine, InputState, PersistentStore, RuntimeSystem,
     StateConfig, SystemPolicy,
 };
-use flint_script::ScriptSystem;
+use flint_script::context::ScriptCommand;
+use flint_script::{CameraOverrides, PostProcessOverrides, ScriptHost, ScriptSystem};
 
 /// The game's state and systems, with no window (ADR 0117 decision 4).
 pub struct GameCore {
@@ -62,6 +65,9 @@ pub struct GameCore {
     /// distance levers, cursor and touch, held from the command that asked
     /// to the step of the frame that applies each.
     pub(crate) script_requests: flint_script::FrameRequests,
+    /// Script commands no part of this scene takes that have been warned
+    /// about, once a run each (`set_wooze` in a scene with no field).
+    pub(crate) commands_warned: std::collections::HashSet<&'static str>,
 }
 
 impl GameCore {
@@ -83,6 +89,7 @@ impl GameCore {
             style_reader_generation: None,
             procgen_resolver: ProcGenResolver::new(),
             script_requests: Default::default(),
+            commands_warned: Default::default(),
         }
     }
 }
@@ -141,8 +148,31 @@ pub(crate) trait FrameHost {
     /// The camera moved the sound's listener.
     fn listener(&mut self, _at: Listener) {}
 
-    /// Carry out what the scripts have asked since the last drain.
-    fn dispatch_script_commands(&mut self) {}
+    /// Whether this host is a capture (`flint render`): it steps no
+    /// physics, and steps its own animation and particles on fixed steps
+    /// (`bones_posed` is where its animation goes), and nothing goes to
+    /// stdout, which may be a report.
+    fn capture(&self) -> bool {
+        false
+    }
+
+    /// A script command this host won't do, before any subsystem or the
+    /// core sees it (a capture's [`PRESENTATION_ONLY`] list). The host says
+    /// why, if it does.
+    ///
+    /// [`PRESENTATION_ONLY`]: super::headless_game::PRESENTATION_ONLY
+    fn refuses(&mut self, _command: &ScriptCommand) -> bool {
+        false
+    }
+
+    /// A command that is the presentation's ([`for_the_host`]): sound, the
+    /// pads, a look, quality, a scene or chunk, quitting. The default
+    /// warns once that this host doesn't do it.
+    fn host_command(&mut self, command: ScriptCommand) {
+        struct Nobody;
+        impl ScriptHost for Nobody {}
+        flint_script::host::apply(&mut Nobody, command);
+    }
 
     /// `on_draw_ui` has run and its commands are done: what it drew (the
     /// HUD's draw lists, world lines and world text) is the host's.
@@ -216,9 +246,16 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
 
     // Fixed-timestep physics + FPS camera/listener follow, against the
     // poses and joint targets the scripts just wrote
+    let steps_physics = !host.capture();
     let moved = {
         let (core, lent) = host.lend();
-        core.tick_fixed_physics(config, has_fps_player, lent.input, lent.camera)
+        core.tick_fixed_physics(
+            config,
+            has_fps_player && steps_physics,
+            steps_physics,
+            lent.input,
+            lent.camera,
+        )
     };
     if let Some(at) = moved {
         host.listener(at);
@@ -242,7 +279,7 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
 
     // What on_update asked (#697): the one dispatcher, so the camera a
     // script set is in place for on_draw_ui and the frame
-    host.dispatch_script_commands();
+    dispatch(host);
 
     // Script camera overrides (chase cam etc.) + roll basis + listener.
     // The camera is final for this frame then: on_draw_ui gets the one the
@@ -263,17 +300,23 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
         let core = host.core();
         core.script.call_draw_uis(&mut core.world);
     }
-    host.dispatch_script_commands();
+    dispatch(host);
     host.script_ui_drawn();
     host.phase_done(Phase::ScriptUi);
     run_stage(host, Stage::ScriptUi, Some(config));
 
     // Sound triggers, animations + sprite-end callbacks, bone matrices,
     // bone probes, IK, particles
+    // A capture keeps its own animation, on a fixed step, in `bones_posed`
+    let capture = host.capture();
     host.sound(config, &game_events);
-    host.core().animate(config);
+    if !capture {
+        host.core().animate(config);
+    }
     host.bones_posed();
-    host.core().after_animation(config);
+    if !capture {
+        host.core().after_animation(config);
+    }
     host.phase_done(Phase::AnimFx);
     run_stage(host, Stage::Animation, Some(config));
 
@@ -399,6 +442,7 @@ impl GameCore {
         &mut self,
         config: &StateConfig,
         has_fps_player: bool,
+        steps: bool,
         input: &InputState,
         camera: &mut Camera,
     ) -> Option<Listener> {
@@ -406,7 +450,7 @@ impl GameCore {
         while self.clock.should_fixed_update() {
             let dt = self.clock.fixed_timestep;
 
-            if config.physics == SystemPolicy::Run {
+            if steps && config.physics == SystemPolicy::Run {
                 if has_fps_player {
                     self.physics.update_character(input, &mut self.world, dt);
                 }
@@ -552,5 +596,415 @@ impl GameCore {
             super::procgen_assets::apply_completed(&completed, &mut sink);
             super::procgen_assets::apply_failures(&failures, &mut sink);
         }
+    }
+}
+
+/// Carry out what the scripts have asked since the last drain (#697), in
+/// the order they asked: what the host refuses is dropped first, then each
+/// subsystem takes its own (living props, the wooze field), then each of the
+/// rest goes through the one dispatcher ([`flint_script::host::apply`]) to
+/// the core, or, if it's the presentation's ([`for_the_host`]), to the
+/// host. The frame drains twice: after the fixed physics steps, for what
+/// `on_update` (and last frame's late callbacks) asked, so a camera a
+/// script set is the one `on_draw_ui` sees and the frame draws; and after
+/// `on_draw_ui`, for what it asked.
+pub(crate) fn dispatch<H: FrameHost + ?Sized>(host: &mut H) {
+    let commands = host.core().script.drain_commands();
+    if !commands.is_empty() {
+        dispatch_commands(host, commands);
+    }
+}
+
+/// [`dispatch`] of `commands`, as if the scripts had just asked for them.
+pub(crate) fn dispatch_commands<H: FrameHost + ?Sized>(
+    host: &mut H,
+    mut commands: Vec<ScriptCommand>,
+) {
+    commands.retain(|command| !host.refuses(command));
+    if !host.core().subsystems.is_empty() && !commands.is_empty() {
+        let (core, lent) = host.lend();
+        core.with_subsystems(lent, None, |subsystems, ctx| {
+            commands.retain(|command| !subsystems.script_command(command, ctx));
+        });
+    }
+    let quiet = host.capture();
+    for command in commands {
+        if for_the_host(&command) {
+            host.host_command(command);
+            continue;
+        }
+        let (core, lent) = host.lend();
+        let mut commands = CoreCommands {
+            core,
+            renderer: lent.renderer,
+            quiet,
+        };
+        flint_script::host::apply(&mut commands, command);
+    }
+}
+
+/// Whether `command` is the presentation's, which the host carries out:
+/// sound and the pads, the camera-cut detector, a look (it re-reads the
+/// scene's post-processing), quality (the renderer's levers), a style's
+/// reset to what the scene authored, another scene or a chunk, quitting,
+/// and the end of a transition. Everything else changes the game and the
+/// core does it, the same for every host.
+pub(crate) fn for_the_host(command: &ScriptCommand) -> bool {
+    use ScriptCommand as C;
+    match command {
+        C::FireEvent { name, .. } => name == flint_core::events::TRANSITION_COMPLETE,
+        C::PlaySound { .. }
+        | C::PlaySoundAt { .. }
+        | C::StopSound { .. }
+        | C::Rumble { .. }
+        | C::SetCameraCutDetection { .. }
+        | C::SetLook { .. }
+        | C::SetQuality { .. }
+        | C::ResetPostStyle { .. }
+        | C::LoadScene { .. }
+        | C::ReloadScene
+        | C::QuitGame
+        | C::LoadChunk { .. }
+        | C::UnloadChunk { .. } => true,
+        _ => false,
+    }
+}
+
+/// Hand a style command's outcome on: its event to scripts' `on_event`
+/// (next frame, with the physics events), its refusal to the log.
+fn style_applied(core: &mut GameCore, applied: StyleApplied) {
+    match applied {
+        StyleApplied::Done(Some(event)) => core.physics.push_event(event),
+        StyleApplied::Done(None) => {}
+        StyleApplied::Failed(message) => tracing::warn!(target: "script", "{message}"),
+    }
+}
+
+/// A whole-frame style command (#369): edit the renderer's config and hand
+/// it back; the next frame builds a style newly switched on. Without a
+/// renderer there is no frame to style.
+fn edit_post_styles(
+    core: &mut GameCore,
+    renderer: Option<&mut SceneRenderer>,
+    edit: impl FnOnce(&mut flint_render::PostProcessConfig) -> StyleApplied,
+) {
+    let Some(renderer) = renderer else {
+        return;
+    };
+    let mut config = renderer.post_process_config().clone();
+    let applied = edit(&mut config);
+    if let StyleApplied::Done(_) = applied {
+        renderer.set_post_process_config(config);
+    }
+    style_applied(core, applied);
+}
+
+/// A script's `reset_post_style`: the style as `authored`, the scene's own
+/// settings, which only the host knows (a host command, [`for_the_host`]).
+pub(crate) fn reset_post_style(
+    core: &mut GameCore,
+    renderer: Option<&mut SceneRenderer>,
+    authored: &flint_render::PostProcessConfig,
+    style: &str,
+) {
+    edit_post_styles(core, renderer, |config| {
+        super::style_commands::reset_post_style(config, authored, style)
+    });
+}
+
+/// The core as a script host: every command that isn't the presentation's,
+/// carried out on the core's state, and on the renderer when the host lent
+/// one (the whole-frame styles and their history).
+struct CoreCommands<'a> {
+    core: &'a mut GameCore,
+    renderer: Option<&'a mut SceneRenderer>,
+    /// A capture's stdout may be a report: state changes go to the log.
+    quiet: bool,
+}
+
+impl CoreCommands<'_> {
+    /// Hand a style command's outcome on: its event to scripts' `on_event`
+    /// (next frame, with the physics events), its refusal to the log.
+    fn style_applied(&mut self, applied: StyleApplied) {
+        style_applied(self.core, applied);
+    }
+
+    /// A whole-frame style command (#369): edit the renderer's config and
+    /// hand it back; the next frame builds a style newly switched on.
+    /// Without a renderer there is no frame to style.
+    fn edit_post_styles(
+        &mut self,
+        edit: impl FnOnce(&mut flint_render::PostProcessConfig) -> StyleApplied,
+    ) {
+        edit_post_styles(self.core, self.renderer.as_deref_mut(), edit);
+    }
+
+    /// A wooze or living-props command in a scene with neither, which has
+    /// no living subsystem to take it: said once a run, since a script may
+    /// ask every frame.
+    fn no_living(&mut self, command: &'static str) {
+        if self.core.commands_warned.insert(command) {
+            if command.contains("wooze") {
+                tracing::warn!(
+                    "A script tried to change the wooze field, and this scene has none: \
+                     give it a [wooze] table, even an empty one, to opt in"
+                );
+            } else {
+                tracing::warn!(target: "script", "{command}: this scene has no living props");
+            }
+        }
+    }
+
+    /// A game state change, said where the player says it.
+    fn said(&self, line: String) {
+        if self.quiet {
+            tracing::info!("{line}");
+        } else {
+            println!("{line}");
+        }
+    }
+}
+
+impl ScriptHost for CoreCommands<'_> {
+    fn host_name(&self) -> &'static str {
+        "the game"
+    }
+
+    fn set_audio_lowpass(&mut self, cutoff_hz: f32) {
+        self.core.script_requests.audio_lowpass = Some(cutoff_hz);
+    }
+
+    fn fire_event(&mut self, name: String, data: toml::Value) {
+        self.core
+            .physics
+            .push_event(GameEvent::Custom { name, data });
+    }
+
+    fn emit_burst(&mut self, entity: EntityId, count: i64) {
+        self.core
+            .particles
+            .sync
+            .queue_burst(entity, count.max(0) as u32);
+    }
+
+    fn play_effect(&mut self, handle: u64, name: String, position: (f64, f64, f64)) {
+        let pos = [position.0 as f32, position.1 as f32, position.2 as f32];
+        let particles = &mut self.core.particles;
+        if !particles.sync.spawn_effect(handle, &name, pos) {
+            tracing::warn!(
+                target: "script",
+                "play_effect: {}",
+                particles.sync.missing_effect_report(&name)
+            );
+        }
+    }
+
+    fn stop_effect(&mut self, handle: u64) {
+        self.core.particles.sync.stop_effect(handle);
+    }
+
+    fn set_effect_param(&mut self, handle: u64, param: String, value: f64) {
+        let particles = &mut self.core.particles;
+        if !particles.sync.set_effect_param(handle, &param, value) {
+            tracing::warn!(
+                target: "script",
+                "set_effect_param: unknown handle {} or param '{}'",
+                handle,
+                param
+            );
+        }
+    }
+
+    fn set_entity_style(&mut self, entity: EntityId, style: String) {
+        let core = &mut *self.core;
+        let applied = core
+            .style_tweens
+            .set_entity_style(&mut core.world, entity, &style);
+        self.style_applied(applied);
+    }
+
+    fn set_style_param(&mut self, entity: EntityId, param: String, value: toml::Value) {
+        let core = &mut *self.core;
+        let applied = core
+            .style_tweens
+            .set_style_param(&mut core.world, entity, &param, value);
+        self.style_applied(applied);
+    }
+
+    fn tween_style_param(
+        &mut self,
+        entity: EntityId,
+        param: String,
+        target: toml::Value,
+        seconds: f64,
+        easing: String,
+    ) {
+        // A tween starts from the scene's style table where an entity has
+        // no value of its own (#370)
+        let applied = {
+            let fallback;
+            let config = match self.renderer.as_deref() {
+                Some(r) => r.post_process_config(),
+                None => {
+                    fallback = flint_render::PostProcessConfig::default();
+                    &fallback
+                }
+            };
+            let core = &mut *self.core;
+            core.style_tweens.tween(
+                &mut core.world,
+                config,
+                entity,
+                &param,
+                &target,
+                seconds,
+                &easing,
+            )
+        };
+        self.style_applied(applied);
+    }
+
+    fn clear_entity_style(&mut self, entity: EntityId) {
+        let core = &mut *self.core;
+        let applied = core
+            .style_tweens
+            .clear_entity_style(&mut core.world, entity);
+        self.style_applied(applied);
+    }
+
+    fn set_post_style(&mut self, style: String, enabled: bool) {
+        self.edit_post_styles(|config| {
+            super::style_commands::set_post_style(config, &style, enabled)
+        });
+    }
+
+    fn set_post_style_param(&mut self, style: String, param: String, value: toml::Value) {
+        self.edit_post_styles(|config| {
+            super::style_commands::set_post_style_param(config, &style, &param, value)
+        });
+    }
+
+    fn reset_style_history(&mut self) {
+        if let Some(renderer) = self.renderer.as_deref_mut() {
+            renderer.reset_style_history();
+        }
+    }
+
+    fn set_camera(&mut self, camera: CameraOverrides) {
+        self.core.script_requests.camera.merge(camera);
+    }
+
+    fn set_post_process(&mut self, post: PostProcessOverrides) {
+        self.core.script_requests.post.merge(post);
+    }
+
+    fn set_fog_color(&mut self, color: [f32; 3]) {
+        self.core.script_requests.fog_color = Some(color);
+    }
+
+    fn set_render_mode(&mut self, mode: Option<(u32, f32)>, params: Option<[f32; 4]>) {
+        let r = &mut self.core.script_requests;
+        r.render_mode = mode.or(r.render_mode);
+        r.mode_params = params.or(r.mode_params);
+    }
+
+    fn set_lod_scales(&mut self, lod_scale: Option<f32>, draw_distance_scale: Option<f32>) {
+        let r = &mut self.core.script_requests;
+        r.lod_scale = lod_scale.or(r.lod_scale);
+        r.draw_distance_scale = draw_distance_scale.or(r.draw_distance_scale);
+    }
+
+    fn set_time_scale(&mut self, scale: f64) {
+        // This frame's clock has ticked, so the new scale starts with the
+        // next frame's
+        self.core.clock.time_scale = scale;
+    }
+
+    fn set_touch_controls(&mut self, enabled: bool) {
+        self.core.script_requests.touch_controls = Some(enabled);
+    }
+
+    fn set_cursor_captured(&mut self, captured: bool) {
+        self.core.script_requests.cursor_captured = Some(captured);
+    }
+
+    // The living subsystem takes these (`LivingSubsystem::command`) before
+    // they reach here; a scene without one has no field and no props.
+    fn set_wooze(&mut self, _knobs: toml::Value, _seconds: f64) {
+        self.no_living("set_wooze");
+    }
+
+    fn set_wooze_zone(&mut self, _name: String, _fields: toml::Value, _seconds: f64) {
+        self.no_living("set_wooze_zone");
+    }
+
+    fn remove_wooze_zone(&mut self, _name: String, _seconds: f64) {
+        self.no_living("remove_wooze_zone");
+    }
+
+    fn tune_living(&mut self, _knobs: toml::Value) {
+        self.no_living("tune_living");
+    }
+
+    fn clear_living(&mut self, _species: String, _keys: Vec<String>) {
+        self.no_living("clear_living");
+    }
+
+    fn freeze_living(&mut self, _frozen: bool) {}
+
+    fn step_living(&mut self) {}
+
+    fn save_living_preset(&mut self, _name: String) {
+        self.no_living("save_living_preset");
+    }
+
+    fn load_living_preset(&mut self, _name: String) {
+        self.no_living("load_living_preset");
+    }
+
+    fn commit_living(&mut self) {
+        self.no_living("commit_living");
+    }
+
+    fn compare_living(&mut self, _a: String, _b: String) {
+        self.no_living("compare_living");
+    }
+
+    fn flip_living(&mut self) {
+        self.no_living("flip_living");
+    }
+
+    fn split_living(&mut self, _split: bool) {
+        self.no_living("split_living");
+    }
+
+    fn stop_comparing_living(&mut self) {}
+
+    fn push_state(&mut self, name: String) {
+        if self.core.state_machine.push_state(&name) {
+            self.said(format!("[state] Pushed '{name}'"));
+        } else {
+            tracing::warn!("Unknown state template: '{}'", name);
+        }
+    }
+
+    fn pop_state(&mut self) {
+        if let Some(popped) = self.core.state_machine.pop_state() {
+            self.said(format!("[state] Popped '{}'", popped.name));
+        }
+    }
+
+    fn replace_state(&mut self, name: String) {
+        if self.core.state_machine.replace_state(&name) {
+            self.said(format!("[state] Replaced top with '{name}'"));
+        } else {
+            tracing::warn!("Unknown state template: '{}'", name);
+        }
+    }
+
+    fn set_velocity_2d(&mut self, entity: EntityId, vx: f64, vy: f64) {
+        self.core
+            .physics
+            .set_velocity_2d(entity, vx as f32, vy as f32);
     }
 }

@@ -229,280 +229,76 @@ pub fn echoes_of(
     }
 }
 
-/// A scene's living props with no window and no frame budget, for `flint render`
-/// (#216): the same load and the same step the player takes each frame, so a
-/// capture at a game time shows what the player shows at it. The wooze field
-/// isn't kept here: as the player's is `PlayerApp::wooze`, a stage's is its
-/// [`WoozeClocks`]', lent to each [`Self::step`] (#581).
-pub struct LivingRun {
-    resolver: ProcGenResolver,
-    blend: BlendFrame,
-    /// The props' clock, in seconds: the stage's, held still while frozen.
-    time: f64,
+/// Whether `world` has a living prop. A capture of a scene with none, and no
+/// `[wooze]` table, draws as `flint render` always has.
+pub fn wanted_by(world: &FlintWorld) -> bool {
+    world.all_entities().iter().any(|entity| {
+        world
+            .get_components(entity.id)
+            .is_some_and(|comps| comps.get(comp::LIVING_PROP).is_some())
+    })
 }
 
-impl LivingRun {
-    /// Whether `world` has anything for this to run. Everything else about a scene
-    /// that doesn't opt in stays as `flint render` has always drawn it.
-    pub fn wanted_by(world: &FlintWorld) -> bool {
-        world.all_entities().iter().any(|entity| {
-            world
-                .get_components(entity.id)
-                .is_some_and(|comps| comps.get(comp::LIVING_PROP).is_some())
+/// Lay a preset file's `[living]` over the scene's, as the player's Load does
+/// (#249): its stagger, echoes and variance set the global layer a field at a
+/// time, and each species it names takes exactly its values. Its `[wooze]`
+/// knobs go to the field, [`wooze_of_scene`]. What can't be used is returned.
+pub fn apply_preset(props: &mut LivingProps, living: &flint_procgen::LivingDef) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut say = |problem: String| problems.push(problem);
+    let stagger = (living.stagger.as_deref()).and_then(|name| checked_stagger(name, &mut say));
+    let echoes = echoes_of(living.echoes.as_ref(), &mut say);
+    let variance = variance_of(living.variance.as_ref(), &mut say);
+    let softness = softness_of(living.softness, &mut say);
+    let species: Vec<(String, SpeciesOverride)> = (living.species.iter())
+        .map(|(name, def)| {
+            let mut say = |problem: String| say(format!("species '{name}': {problem}"));
+            (name.clone(), species_of(def, &mut say))
         })
+        .collect();
+    if let Some(stagger) = stagger {
+        props.tune_stagger(LivingScope::All, stagger);
     }
-
-    /// Resolve the scene's procgen assets as the player does at load, before the
-    /// model loader, with every lineage built and every ring full.
-    pub fn load(
-        scene_path: &str,
-        living: Option<&flint_procgen::LivingDef>,
-        world: &mut FlintWorld,
-        sink: super::procgen_assets::GpuSink<'_>,
-    ) -> Self {
-        let mut resolver = ProcGenResolver::new();
-        resolver.set_living_defaults(defaults_of(living));
-        super::procgen_assets::resolve_scene(
-            scene_path,
-            world,
-            &mut resolver,
-            ProcGenMode::Immediate,
-            sink,
-        );
-        Self {
-            resolver,
-            blend: BlendFrame::default(),
-            time: 0.0,
+    props.tune_echoes(LivingScope::All, echoes);
+    props.tune_variance(LivingScope::All, variance);
+    if let Some(softness) = softness {
+        props.tune_softness(LivingScope::All, softness);
+    }
+    for (name, over) in species {
+        if !props.set_species(&name, over) {
+            problems.push(format!("no living prop grows from '{name}'"));
         }
     }
-
-    /// Lay a preset file's `[living]` over the scene's, as the player's Load does
-    /// (#249): its stagger, echoes and variance set the global layer a field at a
-    /// time, and each species it names takes exactly its values. Its `[wooze]`
-    /// knobs go to the stage's field, [`WoozeClocks::of_scene`]. What can't be used
-    /// is returned.
-    pub fn apply_preset(&mut self, living: &flint_procgen::LivingDef) -> Vec<String> {
-        let mut problems = Vec::new();
-        let mut say = |problem: String| problems.push(problem);
-        let stagger = (living.stagger.as_deref()).and_then(|name| checked_stagger(name, &mut say));
-        let echoes = echoes_of(living.echoes.as_ref(), &mut say);
-        let variance = variance_of(living.variance.as_ref(), &mut say);
-        let softness = softness_of(living.softness, &mut say);
-        let species: Vec<(String, SpeciesOverride)> = (living.species.iter())
-            .map(|(name, def)| {
-                let mut say = |problem: String| say(format!("species '{name}': {problem}"));
-                (name.clone(), species_of(def, &mut say))
-            })
-            .collect();
-        let props = self.resolver.living_props_mut();
-        if let Some(stagger) = stagger {
-            props.tune_stagger(LivingScope::All, stagger);
-        }
-        props.tune_echoes(LivingScope::All, echoes);
-        props.tune_variance(LivingScope::All, variance);
-        if let Some(softness) = softness {
-            props.tune_softness(LivingScope::All, softness);
-        }
-        for (name, over) in species {
-            if !props.set_species(&name, over) {
-                problems.push(format!("no living prop grows from '{name}'"));
-            }
-        }
-        problems
-    }
-
-    /// The props, for a script's tune (#8).
-    pub(crate) fn props_mut(&mut self) -> &mut LivingProps {
-        self.resolver.living_props_mut()
-    }
-
-    /// Move the clocks on by `dt` and make whatever poses that calls for, reading
-    /// `wooze`, the stage's field where its clock now stands
-    /// ([`WoozeClocks::reading`], stepped first). A step of 0, as the player's
-    /// first frame is, reads the field without moving.
-    pub fn step(&mut self, dt: f64, wooze: Option<(&WoozeField, f64)>) {
-        self.time += dt;
-        // Load built every lineage, and no new ones turn up.
-        self.resolver.step_living_now(dt, wooze);
-    }
-
-    /// The clock, in seconds.
-    pub fn time(&self) -> f64 {
-        self.time
-    }
-
-    /// The seconds `beats` whole beats take in a scene with no field, as the
-    /// player's `step_living` counts them: the first prop's own step. With a
-    /// field, [`WoozeClocks::beat_seconds`] is the one to ask.
-    pub fn beat_seconds(&self, beats: f64) -> f64 {
-        let step = (self.props().props().first()).map_or(0.0, |prop| f64::from(prop.clock().step));
-        step * beats
-    }
-
-    /// Move every prop on by `beats` whole beats, however long a beat is where it
-    /// stands, and the props' clock by `seconds`: a script's `step_living`, as the
-    /// player's `before_living_tick` does it (#579). Poses are made by the next
-    /// [`Self::step`].
-    pub fn advance_beats(&mut self, beats: f64, seconds: f64) {
-        self.props_mut().advance_beats(beats, seconds);
-        self.time += seconds;
-    }
-
-    /// The props as they stand.
-    pub fn props(&self) -> &LivingProps {
-        self.resolver.living_props()
-    }
-
-    /// Blend every prop where its clock stands and write what moved, as a frame of
-    /// the player does.
-    pub fn upload(
-        &mut self,
-        renderer: &mut SceneRenderer,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) {
-        upload_blends(&mut self.resolver, &mut self.blend, renderer, device, queue);
-    }
+    problems
 }
 
-/// A render stage's wooze field and what reads it, with no window, for `flint
-/// render`: the shading boil (#214), shallow wooze (#215) if asked, woozy grass
-/// (#252), and living props, which [`Self::reading`] lends it to. The one field a
-/// stage has (#581), as the player's is `PlayerApp::wooze`. It steps as the
-/// player's frame does, so a capture at a game time shows what the player shows.
-pub struct WoozeClocks {
-    field: WoozeField,
+/// A scene's `[wooze]` field with `knobs` laid over it (a sweep's column), or
+/// `None` if the scene has no table and nothing is laid over it.
+pub fn wooze_of_scene(
+    table: Option<&flint_procgen::WoozeDef>,
+    knobs: Option<&toml::Table>,
+) -> Result<Option<WoozeField>, String> {
+    let mut field = field_of(table);
+    if let Some(knobs) = knobs {
+        field
+            .get_or_insert_with(|| WoozeField::new(flint_core::wooze::WoozeSample::NEUTRAL))
+            .set_global(knobs, 0.0, 0.0)?;
+    }
+    Ok(field)
+}
+
+/// The shading boil's drawing at `time` for a viewer at `viewer`, in one tick
+/// at the tempo of that moment, whatever a clock says: `--boil-time`.
+pub fn boil_at(
+    field: &WoozeField,
+    viewer: [f32; 3],
     time: f64,
-    boil: flint_core::wooze::BoilClock,
-    shallow: Option<super::shallow_wooze::ShallowWooze>,
-    grass: super::shallow_wooze::GrassWooze,
-}
-
-impl WoozeClocks {
-    /// The clocks of a scene's `[wooze]` table with `knobs` laid over it, or `None`
-    /// if the scene has no table and nothing is laid over it, so nothing samples.
-    pub fn of_scene(
-        table: Option<&flint_procgen::WoozeDef>,
-        knobs: Option<&toml::Table>,
-        shallow: bool,
-    ) -> Result<Option<Self>, String> {
-        let mut field = field_of(table);
-        if let Some(knobs) = knobs {
-            field
-                .get_or_insert_with(|| WoozeField::new(flint_core::wooze::WoozeSample::NEUTRAL))
-                .set_global(knobs, 0.0, 0.0)?;
-        }
-        Ok(field.map(|field| Self {
-            field,
-            time: 0.0,
-            boil: Default::default(),
-            shallow: shallow.then(Default::default),
-            grass: Default::default(),
-        }))
-    }
-
-    /// The clocks of `field` as it stands at `time`: the field a script gave a
-    /// scene that had none (#8).
-    pub(crate) fn of_field(field: WoozeField, time: f64, shallow: bool) -> Self {
-        Self {
-            field,
-            time,
-            boil: Default::default(),
-            shallow: shallow.then(Default::default),
-            grass: Default::default(),
-        }
-    }
-
-    /// The field.
-    pub fn field(&self) -> &WoozeField {
-        &self.field
-    }
-
-    /// The field and the time its clock has reached, for a script's change to it
-    /// (#8), made where the player makes it.
-    pub(crate) fn field_mut(&mut self) -> (&mut WoozeField, f64) {
-        (&mut self.field, self.time)
-    }
-
-    /// The field where its clock stands: what living props read.
-    pub fn reading(&self) -> (&WoozeField, f64) {
-        (&self.field, self.time)
-    }
-
-    /// Move on by `dt`, with the viewer at `viewer`. Returns what shallow wooze draws
-    /// with now, for `SceneRenderer::set_shallow_wooze`.
-    pub fn step(
-        &mut self,
-        world: &FlintWorld,
-        viewer: [f32; 3],
-        dt: f64,
-    ) -> &[(flint_core::EntityId, flint_render::ShallowWoozeDraw)] {
-        self.time += dt;
-        let sample = self.field.sample(viewer, self.time);
-        self.boil.tick(dt, &sample);
-        match &mut self.shallow {
-            Some(shallow) => shallow.advance(world, &self.field, self.time, dt),
-            None => &[],
-        }
-    }
-
-    /// The field's global step where its clock now stands, in seconds a beat.
-    pub fn beat_seconds(&self, beats: f64) -> f64 {
-        f64::from(self.field.global(self.time).step) * beats
-    }
-
-    /// A script's `step_living` (#579), as the player's `before_living_tick` does
-    /// it: the boil moves on by `beats` whole beats of the field at `viewer`, and
-    /// the field's clock and shallow wooze by `seconds`. Returns what shallow wooze
-    /// draws with now.
-    pub fn advance_beats(
-        &mut self,
-        world: &FlintWorld,
-        viewer: [f32; 3],
-        beats: f64,
-        seconds: f64,
-    ) -> &[(flint_core::EntityId, flint_render::ShallowWoozeDraw)] {
-        let sample = self.field.sample(viewer, self.time);
-        self.boil.tick(f64::from(sample.step) * beats, &sample);
-        self.time += seconds;
-        // Shallow wooze runs its own clocks in seconds, so inside a zone with its
-        // own step this isn't a whole beat of theirs.
-        match &mut self.shallow {
-            Some(shallow) => shallow.advance(world, &self.field, self.time, seconds),
-            None => &[],
-        }
-    }
-
-    /// Move woozy grass (#252) on by the `dt` the last [`Self::step`] took, with the
-    /// viewer at `viewer`. Grass `config` doesn't ask for it stays on the wall clock.
-    pub fn step_grass(
-        &mut self,
-        config: Option<&flint_terrain::GrassConfig>,
-        viewer: [f32; 3],
-        dt: f64,
-    ) {
-        self.grass
-            .advance(config, &self.field, viewer, self.time, dt);
-    }
-
-    /// The grass's clock and comb as of the last [`Self::step_grass`].
-    pub fn grass(&self) -> &super::shallow_wooze::GrassWooze {
-        &self.grass
-    }
-
-    /// The boil's drawing where its clock now stands.
-    pub fn boil(&self, viewer: [f32; 3], on: u32) -> flint_core::wooze::BoilFrame {
-        self.boil.frame(&self.field.sample(viewer, self.time), on)
-    }
-
-    /// The boil's drawing at `time`, in one tick at the tempo of that moment, whatever
-    /// the clock says: `--boil-time`.
-    pub fn boil_at(&self, viewer: [f32; 3], time: f64, on: u32) -> flint_core::wooze::BoilFrame {
-        let sample = self.field.sample(viewer, time);
-        let mut clock = flint_core::wooze::BoilClock::default();
-        clock.tick(time, &sample);
-        clock.frame(&sample, on)
-    }
+    on: u32,
+) -> flint_core::wooze::BoilFrame {
+    let sample = field.sample(viewer, time);
+    let mut clock = flint_core::wooze::BoilClock::default();
+    clock.tick(time, &sample);
+    clock.frame(&sample, on)
 }
 
 /// One frame's blending and upload for every prop, timed for `--exit-after`.

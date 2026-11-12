@@ -1581,8 +1581,8 @@ impl super::game_core::FrameHost for PlayerApp {
         }
     }
 
-    fn dispatch_script_commands(&mut self) {
-        PlayerApp::dispatch_script_commands(self);
+    fn host_command(&mut self, command: flint_script::context::ScriptCommand) {
+        flint_script::host::apply(self, command);
     }
 
     fn script_ui_drawn(&mut self) {

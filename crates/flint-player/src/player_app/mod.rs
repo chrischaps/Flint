@@ -20,7 +20,7 @@ mod frame;
 pub mod frame_rate;
 pub mod game_core;
 pub mod headless_animation;
-pub mod headless_scripts;
+pub mod headless_game;
 #[cfg(test)]
 mod hold_tests;
 mod hud_render;
@@ -307,9 +307,6 @@ pub struct PlayerApp {
     /// The window's focus, the cursor and the keys held
     focus: state::Focus,
 
-    /// Script commands no part of this scene takes that have been warned
-    /// about, once a run each (`set_wooze` in a scene with no field).
-    commands_warned: std::collections::HashSet<&'static str>,
     /// The post-processing scripts asked for this frame, stamped over the
     /// renderer's config before it draws
     post: state::PostOverrides,

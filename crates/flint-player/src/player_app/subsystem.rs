@@ -327,15 +327,13 @@ impl Subsystems {
     }
 
     /// The subsystem of type `T`, if there is one.
-    #[cfg(test)]
     pub(crate) fn find<T: Subsystem>(&self) -> Option<&T> {
         self.list
             .iter()
             .find_map(|s| (s.as_ref() as &dyn Any).downcast_ref::<T>())
     }
 
-    /// The subsystem of type `T`, if there is one, to change (tests).
-    #[cfg(test)]
+    /// The subsystem of type `T`, if there is one, to change.
     pub(crate) fn find_mut<T: Subsystem>(&mut self) -> Option<&mut T> {
         self.list
             .iter_mut()
@@ -489,20 +487,6 @@ impl super::PlayerApp {
         let mut ctx = scene_ctx!(self);
         self.core.subsystems.scene_unloading(&mut ctx);
         self.core.subsystems.drop_scene_ones();
-    }
-
-    /// The script commands no subsystem takes, in the order they came.
-    pub(super) fn commands_for_the_player(
-        &mut self,
-        mut commands: Vec<ScriptCommand>,
-    ) -> Vec<ScriptCommand> {
-        if self.core.subsystems.is_empty() || commands.is_empty() {
-            return commands;
-        }
-        let mut ctx = stage_ctx!(self, None);
-        let subsystems = &mut self.core.subsystems;
-        commands.retain(|command| !subsystems.script_command(command, &mut ctx));
-        commands
     }
 
     /// Whether a subsystem took a debug key.

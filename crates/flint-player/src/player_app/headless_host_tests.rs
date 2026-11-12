@@ -3,7 +3,9 @@
 //! commands the old dispatcher dropped now land.
 
 use super::*;
+use flint_core::EntityId;
 use flint_script::context::LogLevel;
+use flint_script::CameraOverrides;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -223,16 +225,11 @@ fn scene_folder(test: &str, scripts: &[(&str, &str)]) -> (PathBuf, String) {
     (dir, scene.to_string_lossy().to_string())
 }
 
-fn load(scene: &str, world: &mut FlintWorld) -> HeadlessScripts {
+fn load(scene: &str, world: FlintWorld) -> HeadlessGame {
     let project = flint_core::project::Project::for_scene(std::path::Path::new(scene));
-    HeadlessScripts::load(
-        scene,
-        &project,
-        world,
-        None,
-        (320.0, 180.0),
-        &PostProcessConfig::default(),
-    )
+    let mut game = HeadlessGame::new(world, scene, project);
+    game.start_scripts(true, None, (320.0, 180.0), &PostProcessConfig::default());
+    game
 }
 
 #[test]
@@ -240,7 +237,7 @@ fn every_command_is_applied_headless_or_presentation_only() {
     let (dir, scene) = scene_folder("every_command", &[]);
     let mut world = FlintWorld::new();
     let entity = world.spawn("barrel").unwrap();
-    let mut run = load(&scene, &mut world);
+    let mut run = load(&scene, world);
 
     // Each sample alone, so what it skipped is its own
     let mut skipped_by: BTreeMap<String, Vec<&'static str>> = BTreeMap::new();
@@ -248,7 +245,7 @@ fn every_command_is_applied_headless_or_presentation_only() {
     for cmd in samples.iter().cloned() {
         let before = run.skipped();
         let name = variant(&cmd);
-        run.apply(vec![cmd], &mut world, None, &mut None, None, false);
+        run.dispatch_for_test(vec![cmd]);
         let new: Vec<&'static str> = run
             .skipped()
             .into_iter()
@@ -338,12 +335,8 @@ fn a_capture_styles_tweens_and_reads_as_the_player_does() {
     seen.insert("style".into(), "".into());
     world.set_component(director, "seen", seen.into()).unwrap();
 
-    let mut run = load(&scene, &mut world);
-    let view = CameraView {
-        position: [0.0, 0.0, 5.0],
-        forward: [0.0, 0.0, -1.0],
-        view_proj: [[0.0; 4]; 4],
-    };
+    let mut run = load(&scene, world);
+    let mut camera = flint_render::Camera::new();
     let cell = |world: &FlintWorld| {
         let c = world.get_component(barrel, "ascii_style")?;
         let v = c.get("cell")?;
@@ -351,22 +344,21 @@ fn a_capture_styles_tweens_and_reads_as_the_player_does() {
     };
     let dt = 0.25;
     let mut t = 0.0;
-    // The first tick carries on_init's commands: styled, at 8, easing
-    let commands = run.tick(&mut world, t, 0.0, view);
-    run.apply(commands, &mut world, None, &mut None, None, false);
+    // The first step carries on_init's commands: styled, at 8, easing
+    run.step(0.0, &mut camera, None, None);
     assert_eq!(
-        cell(&world),
+        cell(run.world()),
         Some(8.0),
         "set_entity_style and set_style_param land"
     );
     for expect in [10.0, 12.0, 14.0, 16.0] {
         t += dt;
-        let commands = run.tick(&mut world, t, dt, view);
-        run.apply(commands, &mut world, None, &mut None, None, false);
-        assert_eq!(cell(&world), Some(expect), "at {t}");
+        run.step(dt, &mut camera, None, None);
+        assert_eq!(cell(run.world()), Some(expect), "at {t}");
     }
     // get_entity_style reads through the capture's style reader
-    let seen = world
+    let seen = run
+        .world()
         .get_component(director, "seen")
         .and_then(|c| c.get("style").cloned());
     let _ = std::fs::remove_dir_all(dir);
