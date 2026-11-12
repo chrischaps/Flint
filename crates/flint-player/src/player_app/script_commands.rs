@@ -28,7 +28,7 @@ impl PlayerApp {
     /// page has no window to close: it lets go of the pointer and full
     /// screen and goes back to its doorway (`web_page::quit`).
     pub(super) fn quit_game(&mut self) {
-        if self.exit_requested {
+        if self.outcome.exit_requested {
             return;
         }
         #[cfg(target_arch = "wasm32")]
@@ -39,7 +39,7 @@ impl PlayerApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             println!("[quit] a script asked to quit");
-            self.exit_requested = true;
+            self.outcome.exit_requested = true;
             if self.capture.exit_after.is_some() {
                 self.print_exit_report();
             }
@@ -95,15 +95,15 @@ impl PlayerApp {
         &mut self,
         change: impl FnOnce(&mut flint_core::wooze::WoozeField, f64) -> Result<(), String>,
     ) {
-        let time = self.wooze_time;
-        match &mut self.wooze {
+        let time = self.living.wooze_time;
+        match &mut self.living.wooze {
             Some(field) => {
                 if let Err(reason) = change(field, time) {
                     tracing::warn!("A script's change to the wooze field: {reason}");
                 }
             }
-            None if !self.wooze_missing_warned => {
-                self.wooze_missing_warned = true;
+            None if !self.living.wooze_missing_warned => {
+                self.living.wooze_missing_warned = true;
                 tracing::warn!(
                     "A script tried to change the wooze field, and this scene has none: \
                      give it a [wooze] table, even an empty one, to opt in"
@@ -141,7 +141,7 @@ impl PlayerApp {
         if !self.audio.start(&self.world) {
             return false;
         }
-        if !had_sound && self.music_session.is_none() {
+        if !had_sound && self.music.session.is_none() {
             self.start_music_session();
         }
         true
@@ -182,15 +182,16 @@ impl PlayerApp {
                 .root_holding("music_session", manifest.trim(), &self.scene_dir());
         match music_session::MusicSession::start(&base_dir, &comp, &mut self.audio.engine) {
             Ok(Some(session)) => {
-                self.music_session = Some(session);
+                self.music.session = Some(session);
                 // The scene's authored post values are the ladder merge's
                 // base and the post-teardown restore target (ADR 0021).
                 let authored = self
-                    .scene_post_process
+                    .scene
+                    .post_process
                     .as_ref()
                     .map(scene_loading::post_process_config_from_def)
                     .unwrap_or_default();
-                self.music_pp_base = Some(music_session::LadderPostBase {
+                self.music.pp_base = Some(music_session::LadderPostBase {
                     radial_blur: authored.radial_blur,
                     chromatic_aberration: authored.chromatic_aberration,
                     desaturate: authored.desaturate,
@@ -224,7 +225,7 @@ impl PlayerApp {
                         .any(|p| p.name() == timeline_panel::MANIFEST_MAP_PANEL)
                     {
                         let mut panel = timeline_panel::ManifestMapPanel::new();
-                        if let Some(ms) = &self.music_session {
+                        if let Some(ms) = &self.music.session {
                             panel.set_map(ms.timeline_map());
                         }
                         self.debug_panels.push(Box::new(panel));
@@ -241,11 +242,11 @@ impl PlayerApp {
     /// dropped first inside) and give the gamepad back to player polling.
     /// Must run before `audio.clear()` in a scene transition (ADR 0017).
     pub(super) fn stop_music_session(&mut self) {
-        if let Some(session) = self.music_session.take() {
+        if let Some(session) = self.music.session.take() {
             session.stop();
             // Queue the one-shot authored-values restore for the next merge
             // pass (setting overrides here would be wiped by the drain).
-            self.music_pp_restore = self.music_pp_base.take();
+            self.music.pp_restore = self.music.pp_base.take();
             self.gilrs = Gilrs::new().ok();
             println!("[music] session ended — gamepad returned to player polling");
             #[cfg(feature = "debug-hud")]
@@ -362,14 +363,16 @@ impl ScriptHost for PlayerApp {
 
     fn set_entity_style(&mut self, entity: EntityId, style: String) {
         let applied = self
-            .style_tweens
+            .style
+            .tweens
             .set_entity_style(&mut self.world, entity, &style);
         self.style_applied(applied);
     }
 
     fn set_style_param(&mut self, entity: EntityId, param: String, value: toml::Value) {
         let applied = self
-            .style_tweens
+            .style
+            .tweens
             .set_style_param(&mut self.world, entity, &param, value);
         self.style_applied(applied);
     }
@@ -393,7 +396,7 @@ impl ScriptHost for PlayerApp {
                     &fallback
                 }
             };
-            self.style_tweens.tween(
+            self.style.tweens.tween(
                 &mut self.world,
                 config,
                 entity,
@@ -408,7 +411,8 @@ impl ScriptHost for PlayerApp {
 
     fn clear_entity_style(&mut self, entity: EntityId) {
         let applied = self
-            .style_tweens
+            .style
+            .tweens
             .clear_entity_style(&mut self.world, entity);
         self.style_applied(applied);
     }
@@ -436,7 +440,7 @@ impl ScriptHost for PlayerApp {
     }
 
     fn set_camera_cut_detection(&mut self, enabled: bool) {
-        self.camera_cut.enabled = enabled;
+        self.style.camera_cut.enabled = enabled;
     }
 
     fn rumble(&mut self, pad: i64, strength: f64, seconds: f64) {
@@ -487,7 +491,7 @@ impl ScriptHost for PlayerApp {
     }
 
     fn set_quality(&mut self, settings: QualitySettings) {
-        self.script_quality = Some(settings);
+        self.quality.script_request = Some(settings);
     }
 
     fn set_time_scale(&mut self, scale: f64) {
@@ -543,7 +547,7 @@ impl ScriptHost for PlayerApp {
     }
 
     fn freeze_living(&mut self, frozen: bool) {
-        self.living_tune.frozen = frozen;
+        self.living.tune.frozen = frozen;
     }
 
     fn step_living(&mut self) {

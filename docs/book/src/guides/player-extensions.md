@@ -39,9 +39,9 @@ fn main() -> anyhow::Result<()> {
         None,
         scene.scene.input_config.clone(),
     );
-    player.scene_camera = scene.camera.clone();
-    player.scene_post_process = scene.post_process.clone();
-    player.scene_tables = scene.scene_tables(); // what ctx.scene_table reads
+    // The scene's [camera], [environment], [post_process], [living] and its
+    // tables (what ctx.scene_table reads), as flint-player takes them
+    player.apply_scene_settings(&scene);
     player.set_schema_paths(dirs);
     player.add_extension(Box::new(MyGame));
 
@@ -52,7 +52,7 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-`PlayerApp` is a winit `ApplicationHandler`, so it runs directly with no wrapper. Set the same public fields `flint-player`'s `main.rs` sets for the features your scenes use: window size, environment and skybox, and `capture` for `--screenshot`-style runs. Pass the engine's `schemas/` yourself, ahead of the game's.
+`PlayerApp` is a winit `ApplicationHandler`, so it runs directly with no wrapper. Set the same launch options `flint-player`'s `main.rs` sets for the features your scenes use, on `player.launch` (`window_size`, `msaa_sample_count`, `style_specs`, ...), and `capture` for `--screenshot`-style runs. What the scene's file says is `player.scene` (`SceneSettings`), which `apply_scene_settings` fills in. Pass the engine's `schemas/` yourself, ahead of the game's.
 
 ## The Hooks
 

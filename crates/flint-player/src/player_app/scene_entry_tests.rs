@@ -147,7 +147,7 @@ fn a_transition_takes_the_next_scenes_settings_and_bindings() {
             "A's own input config loads at startup"
         );
         assert!(app.camera.orthographic);
-        assert_eq!(app.skybox_path.as_deref(), Some("sky.png"));
+        assert_eq!(app.scene.skybox_path.as_deref(), Some("sky.png"));
 
         assert!(app.execute_scene_transition("b.scene.toml"));
         assert_eq!(
@@ -159,10 +159,10 @@ fn a_transition_takes_the_next_scenes_settings_and_bindings() {
             "a scene reached by a transition loads its input config (none: the project's)"
         );
         assert!(has_action(&app, "project_wide"));
-        assert!(app.skybox_path.is_none());
-        assert!(app.scene_ambient.is_none());
-        assert!(app.scene_diffuse_wrap.is_none());
-        assert!(app.scene_post_process.is_none());
+        assert!(app.scene.skybox_path.is_none());
+        assert!(app.scene.ambient.is_none());
+        assert!(app.scene.diffuse_wrap.is_none());
+        assert!(app.scene.post_process.is_none());
         assert!(!app.camera.orthographic, "B has no [camera]: a fresh one");
         assert_eq!(app.camera.fov, 70.0);
         assert!(app.run_failure().is_none());

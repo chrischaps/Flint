@@ -109,7 +109,7 @@ impl PlayerApp {
         if self.follow_page_sleep() || self.follow_page_hold() {
             return false;
         }
-        if self.frame_pacer.is_none() && self.perf.is_none() {
+        if self.frame_pacer.is_none() && self.stats.perf.is_none() {
             return true;
         }
         let now = now_ms();

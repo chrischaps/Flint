@@ -52,7 +52,7 @@ fn app_with(n: u64, folder: &Path) -> PlayerApp {
             .unwrap();
     }
     app.procgen_resolver.make_living_now();
-    app.wooze = Some(WoozeField::new(WoozeSample::NEUTRAL));
+    app.living.wooze = Some(WoozeField::new(WoozeSample::NEUTRAL));
     app
 }
 
@@ -96,7 +96,10 @@ fn freeze_holds_and_a_step_is_exactly_one_beat_of_the_warped_clock() {
     app.tick_procgen(0.1);
     let before = beats_of(&app);
     let poses = poses_at(&app);
-    let (time, field_time) = (app.procgen_resolver.living_props().time(), app.wooze_time);
+    let (time, field_time) = (
+        app.procgen_resolver.living_props().time(),
+        app.living.wooze_time,
+    );
 
     // Frozen is what the frame loop does with its dt: nothing moves.
     for _ in 0..5 {
@@ -118,7 +121,7 @@ fn freeze_holds_and_a_step_is_exactly_one_beat_of_the_warped_clock() {
     // A step of the field's 0.5 s for the clocks that run in seconds.
     let moved = app.procgen_resolver.living_props().time() - time;
     assert!((moved - 0.5).abs() < 1e-9, "{moved}");
-    assert!((app.wooze_time - field_time - 0.5).abs() < 1e-9);
+    assert!((app.living.wooze_time - field_time - 0.5).abs() < 1e-9);
 
     // And it doesn't keep going.
     app.tick_procgen(0.0);
@@ -140,7 +143,7 @@ step = 3.0
 "#,
     )
     .unwrap();
-    app.wooze.as_mut().unwrap().add_zone(&zone).unwrap();
+    app.living.wooze.as_mut().unwrap().add_zone(&zone).unwrap();
     app.tick_procgen(0.0);
     let steps: Vec<f32> = app
         .procgen_resolver
@@ -224,18 +227,18 @@ variance = { amount = 0.2 }
 fn turning_a_clock_knob_gives_a_scene_with_no_field_one() {
     let folder = Folder::new("nofield");
     let mut app = app_with(1, &folder.0);
-    app.wooze = None;
+    app.living.wooze = None;
     app.tick_procgen(0.0);
     let spec_step = app.procgen_resolver.living_props().props()[0].wooze().step;
 
     // Knobs that aren't the field's don't make one.
     let echoes: WoozePreset = toml::from_str("[living]\nechoes = { count = 1 }\n").unwrap();
     app.tune_living(&echoes).unwrap();
-    assert!(app.wooze.is_none());
+    assert!(app.living.wooze.is_none());
 
     let glide: WoozePreset = toml::from_str("[wooze]\nglide = 0.9\n").unwrap();
     app.tune_living(&glide).unwrap();
-    let field = app.wooze.as_ref().unwrap().global(0.0);
+    let field = app.living.wooze.as_ref().unwrap().global(0.0);
     assert_eq!(field.glide, 0.9);
     assert_eq!(field.step, spec_step, "the rest as it stood");
     app.tick_procgen(0.0);
@@ -349,8 +352,8 @@ fn a_panel_only_appears_in_a_scene_with_living_props_and_drives_them() {
     panel(&mut app).send_for_test(LivingPanelAction::Freeze(true));
     panel(&mut app).send_for_test(LivingPanelAction::Overlay(true));
     app.drain_living_panel();
-    assert!(app.living_tune.frozen);
-    assert!(app.living_tune.overlay);
+    assert!(app.living.tune.frozen);
+    assert!(app.living.tune.overlay);
     let state = panel(&mut app).state().clone();
     assert_eq!(state.knobs.echo_count, 5);
     assert_eq!(state.knobs.glide, 0.8);
@@ -365,7 +368,7 @@ fn a_panel_only_appears_in_a_scene_with_living_props_and_drives_them() {
 
     panel(&mut app).send_for_test(LivingPanelAction::Save("from_panel".to_string()));
     app.drain_living_panel();
-    let status = app.living_tune.status.clone().unwrap();
+    let status = app.living.tune.status.clone().unwrap();
     assert!(status.contains("preset = \"from_panel\""), "{status}");
     assert!(folder.0.join("wooze/from_panel.wooze.toml").is_file());
 }
@@ -437,7 +440,7 @@ fn two_species_from(folder: &Path, field: bool, living: Option<&LivingDef>) -> P
     }
     app.procgen_resolver.make_living_now();
     if !field {
-        app.wooze = None;
+        app.living.wooze = None;
     }
     app.tick_procgen(0.0);
     app
@@ -623,13 +626,13 @@ mod panel_edits {
         // Turning one gives the scene a field, and evens the clocks out.
         move_on_panel(&mut app, |k| k.glide = 0.5);
         app.tick_procgen(0.0);
-        assert!(app.wooze.is_some());
+        assert!(app.living.wooze.is_some());
         let even = clocks(&app);
         assert_eq!(even[0], even[2]);
 
         app.apply_living_action(LivingPanelAction::Reset);
         app.tick_procgen(0.0);
-        assert!(app.wooze.is_none());
+        assert!(app.living.wooze.is_none());
         assert_eq!(clocks(&app), start);
     }
 
@@ -735,7 +738,7 @@ jitter = 0.4
 "#,
     )
     .unwrap();
-    app.wooze = Some(def.field().0);
+    app.living.wooze = Some(def.field().0);
     app
 }
 
@@ -887,10 +890,13 @@ fn both_sides_run_on_the_same_clock() {
     for _ in 0..90 {
         app.tick_procgen(1.0 / 60.0);
     }
-    let (time, field) = (app.procgen_resolver.living_props().time(), app.wooze_time);
+    let (time, field) = (
+        app.procgen_resolver.living_props().time(),
+        app.living.wooze_time,
+    );
     app.flip_living();
     assert_eq!(app.procgen_resolver.living_props().time(), time);
-    assert_eq!(app.wooze_time, field);
+    assert_eq!(app.living.wooze_time, field);
 
     // A step is the same seconds for both: a beat of the side being shown.
     app.step_living();
@@ -1009,7 +1015,7 @@ fn compare_at_start_waits_for_the_props_and_outlives_the_scene_reset() {
     let folder = Folder::new("ab_start");
     let mut app = app_with(1, &folder.0);
     app.compare_living_at_start("", "linklater", true);
-    app.living_tune.for_new_scene();
+    app.living.tune.for_new_scene();
     assert!(app.living_ab_state().is_none());
     app.tick_procgen(0.0);
     let ab = app.living_ab_state().unwrap();
@@ -1259,7 +1265,7 @@ mod scopes {
             app.procgen_resolver.add_living_prop(request).unwrap();
         }
         app.procgen_resolver.make_living_now();
-        app.wooze = super::super::super::living_props::field_of(
+        app.living.wooze = super::super::super::living_props::field_of(
             flint_procgen::LivingTables::of(&scene)
                 .unwrap()
                 .wooze
@@ -1358,7 +1364,11 @@ mod scopes {
         });
         app.tick_procgen(0.0);
         let living = app.procgen_resolver.living_props();
-        let field = app.wooze.as_ref().map(|field| (field, app.wooze_time));
+        let field = app
+            .living
+            .wooze
+            .as_ref()
+            .map(|field| (field, app.living.wooze_time));
         let mut zoned = 0;
         for state in app.living_species_states(&app.living_unsaved()) {
             let props: Vec<_> = (0..living.props().len())
@@ -1748,7 +1758,11 @@ mod picks {
         for (i, name) in names.iter().enumerate() {
             let picked = app.living_picked_state(name).unwrap();
             let living = app.procgen_resolver.living_props();
-            let field = app.wooze.as_ref().map(|field| (field, app.wooze_time));
+            let field = app
+                .living
+                .wooze
+                .as_ref()
+                .map(|field| (field, app.living.wooze_time));
             let resolved = living.resolved(LivingPropId(i), field);
             assert_eq!(
                 shown_of(&picked.knobs, &picked.sources),
@@ -1911,7 +1925,7 @@ archetype = "x"
                 .living
                 .as_ref(),
         );
-        app.wooze = super::super::super::living_props::field_of(
+        app.living.wooze = super::super::super::living_props::field_of(
             flint_procgen::LivingTables::of(&scene)
                 .unwrap()
                 .wooze

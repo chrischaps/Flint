@@ -53,7 +53,7 @@ impl crate::extension::PlayerExtension for Bare {}
 
 /// Run one egui frame on the app's context with a text field focused.
 fn focus_a_field(app: &PlayerApp) {
-    let _ = app.egui_ctx.run(egui::RawInput::default(), |ctx| {
+    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             let mut text = String::new();
             ui.text_edit_singleline(&mut text).request_focus();
@@ -159,17 +159,17 @@ fn pad_axes_read_zero_while_a_field_has_focus() {
     assert_eq!(app.input.action_value("walk"), 0.0);
     app.input.end_frame();
     // The field lets go: the stick reads where it stands.
-    let _ = app.egui_ctx.run(egui::RawInput::default(), |ctx| {
+    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
         ctx.memory_mut(|m| m.stop_text_input());
     });
-    assert!(!app.egui_ctx.wants_keyboard_input());
+    assert!(!app.hud.egui_ctx.wants_keyboard_input());
     app.tick();
     assert!(app.input.action_value("walk") > 0.7);
 }
 
 /// Run one egui frame on the app's context with a button focused.
 fn focus_a_button(app: &PlayerApp) {
-    let _ = app.egui_ctx.run(egui::RawInput::default(), |ctx| {
+    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.button("Buy").request_focus();
         });
@@ -187,7 +187,7 @@ fn a_focused_button_leaves_the_pads_to_the_game() {
     );
     app.add_extension(Box::new(Bare));
     focus_a_button(&app);
-    assert!(app.egui_ctx.wants_keyboard_input());
+    assert!(app.hud.egui_ctx.wants_keyboard_input());
     assert!(!app.text_has_focus());
     app.tick();
     assert!(app.input.action_value("walk") > 0.7);
@@ -198,14 +198,14 @@ fn pad_axes_read_zero_while_the_window_is_unfocused() {
     let mut app = headless_app("");
     // A real pad on slot 0 (gilrs can't be faked headless; its events
     // record the slot as this does).
-    app.real_pad_slots.insert(0);
+    app.focus.real_pad_slots.insert(0);
     app.input.process_gamepad_axis(0, "LeftStickY", 0.8);
     assert!(app.input.action_value("walk") > 0.7);
     app.window_focus_changed(false);
     assert_eq!(app.input.action_value("walk"), 0.0);
-    assert!(!app.window_focused);
+    assert!(!app.focus.window_focused);
     app.window_focus_changed(true);
-    assert!(app.window_focused);
+    assert!(app.focus.window_focused);
 }
 
 #[test]
@@ -347,7 +347,7 @@ fn a_shot_that_never_reached_the_disk_fails_the_run() {
 fn a_player_that_failed_to_start_reports_it() {
     let mut app = headless_app("");
     assert_eq!(app.run_failure(), None);
-    app.init_error = Some("Failed to get adapter".into());
+    app.outcome.init_error = Some("Failed to get adapter".into());
     let why = app.run_failure().expect("failure");
     assert!(why.contains("failed to start"), "{why}");
 }

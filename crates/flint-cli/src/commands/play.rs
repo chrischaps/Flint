@@ -160,10 +160,10 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
         scene_file.scene.input_config.clone(),
     );
 
-    app.save_dir = args.save_dir.clone();
-    app.window_size = args.window.size();
-    app.window_options = args.window.clone();
-    app.expression_feed = expression_feed;
+    app.launch.save_dir = args.save_dir.clone();
+    app.launch.window_size = args.window.size();
+    app.launch.window_options = args.window.clone();
+    app.launch.expression_feed = expression_feed;
 
     // Apply initial mixer bus volumes from CLI
     app.audio
@@ -171,8 +171,8 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
     app.audio
         .set_bus_volume(flint_player::Bus::Sfx, args.sfx_volume);
 
-    app.style_specs = args.style.styles.clone();
-    app.style_time = args.style.style_time;
+    app.launch.style_specs = args.style.styles.clone();
+    app.launch.style_time = args.style.style_time;
 
     // Everything the scene file says (skybox, ambient and shading levers,
     // camera, post-processing with its look, living props, wooze and the

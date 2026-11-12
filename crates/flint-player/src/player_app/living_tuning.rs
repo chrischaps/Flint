@@ -315,7 +315,11 @@ impl PlayerApp {
     /// --report json` reads them.
     fn living_resolved(&self) -> Vec<ResolvedProp> {
         let living = self.procgen_resolver.living_props();
-        let field = self.wooze.as_ref().map(|field| (field, self.wooze_time));
+        let field = self
+            .living
+            .wooze
+            .as_ref()
+            .map(|field| (field, self.living.wooze_time));
         (0..living.props().len())
             .map(|i| living.resolved(LivingPropId(i), field))
             .collect()
@@ -330,8 +334,8 @@ impl PlayerApp {
             props.retain(|prop| prop.species == species);
         }
         let mut view = LivingView::of(&props, species.is_none());
-        if let (None, Some(field)) = (species, &self.wooze) {
-            let global = field.global(self.wooze_time);
+        if let (None, Some(field)) = (species, &self.living.wooze) {
+            let global = field.global(self.living.wooze_time);
             for (knob, value) in [
                 (&mut view.amplitude, global.amplitude),
                 (&mut view.step, global.step),
@@ -442,9 +446,9 @@ impl PlayerApp {
             let (paint, ink) = config.boil_amounts();
             (paint, ink, config.boil_on)
         });
-        let (paint, ink) = self.living_tune.boil_off.unwrap_or((paint, ink));
+        let (paint, ink) = self.living.tune.boil_off.unwrap_or((paint, ink));
         BoilDef {
-            enabled: Some(self.living_tune.boil_off.is_none()),
+            enabled: Some(self.living.tune.boil_off.is_none()),
             kuwahara: Some(paint),
             contour: Some(ink),
             on: Some(on),
@@ -503,7 +507,7 @@ impl PlayerApp {
             .props()
             .first()
             .map_or(WoozeSample::NEUTRAL, |prop| prop.wooze_below());
-        tune_field(&mut self.wooze, start, self.wooze_time, knobs)
+        tune_field(&mut self.living.wooze, start, self.living.wooze_time, knobs)
     }
 
     /// Stagger, echoes and variance. A field that's set goes to every prop, and
@@ -561,11 +565,11 @@ impl PlayerApp {
 
     fn tune_boil(&mut self, boil: BoilDef) {
         let Some(renderer) = &mut self.scene_renderer else {
-            self.living_tune.boil_waiting = Some(boil);
+            self.living.tune.boil_waiting = Some(boil);
             return;
         };
         let mut config = renderer.post_process_config().clone();
-        tune_boil(&mut config, &mut self.living_tune.boil_off, boil);
+        tune_boil(&mut config, &mut self.living.tune.boil_off, boil);
         renderer.set_post_process_config(config);
     }
 
@@ -599,9 +603,9 @@ impl PlayerApp {
     /// a field at a time, each species' own values, and the boil.
     pub(super) fn living_look(&self) -> WoozePreset {
         let props = self.procgen_resolver.living_props();
-        let wooze = match &self.wooze {
+        let wooze = match &self.living.wooze {
             Some(field) => {
-                let global = field.global(self.wooze_time);
+                let global = field.global(self.living.wooze_time);
                 WoozeKnobs {
                     amplitude: Some(global.amplitude),
                     step: Some(global.step),
@@ -634,7 +638,7 @@ impl PlayerApp {
 
     /// The look the scene file gives: as last committed, or as it loaded.
     fn living_base(&self) -> Option<WoozePreset> {
-        let tune = &self.living_tune;
+        let tune = &self.living.tune;
         (tune.committed.clone()).or_else(|| tune.at_load.as_ref().map(|at| at.look.clone()))
     }
 
@@ -659,7 +663,7 @@ impl PlayerApp {
         let now = self.living_look();
         let path = PathBuf::from(&self.scene_path);
         let report = commit_look(&path, &base, &now)?;
-        self.living_tune.committed = Some(now);
+        self.living.tune.committed = Some(now);
         let file = path.file_name().map_or_else(
             || self.scene_path.clone(),
             |name| name.to_string_lossy().into_owned(),
@@ -698,7 +702,7 @@ impl PlayerApp {
     pub(super) fn living_at_load(&self) -> AtLoad {
         let mut knobs = self.living_knobs();
         knobs.living = LivingDef::default();
-        let no_field = self.wooze.is_none();
+        let no_field = self.living.wooze.is_none();
         if no_field {
             knobs.wooze = WoozeKnobs::default();
         }
@@ -714,7 +718,7 @@ impl PlayerApp {
     /// stagger, each lineage's variance, each species' own values, and in a scene
     /// that had no field, each prop's own clock.
     pub(super) fn reset_living_knobs(&mut self) {
-        let Some(at_load) = self.living_tune.at_load.clone() else {
+        let Some(at_load) = self.living.tune.at_load.clone() else {
             return;
         };
         if let Err(problem) = self.tune_living(&at_load.knobs) {
@@ -722,7 +726,7 @@ impl PlayerApp {
         }
         if at_load.no_field {
             // A clock knob may since have given the scene a field it didn't have.
-            self.wooze = None;
+            self.living.wooze = None;
         }
         self.procgen_resolver
             .living_props_mut()
@@ -731,7 +735,7 @@ impl PlayerApp {
 
     /// Queue exactly one beat of the clock.
     pub(super) fn step_living(&mut self) {
-        self.living_tune.steps_queued += 1;
+        self.living.tune.steps_queued += 1;
     }
 
     /// Before the clock is read: hand over a boil that had to wait, note where the
@@ -744,23 +748,23 @@ impl PlayerApp {
     /// sides move on by the same time: a whole beat of the side being shown,
     /// wherever its step is the global one.
     pub(super) fn before_living_tick(&mut self) -> f64 {
-        if let Some(boil) = self.living_tune.boil_waiting {
+        if let Some(boil) = self.living.tune.boil_waiting {
             if self.scene_renderer.is_some() {
-                self.living_tune.boil_waiting = None;
+                self.living.tune.boil_waiting = None;
                 self.tune_boil(boil);
             }
         }
-        if self.living_tune.at_load.is_none() && !self.procgen_resolver.living_props().is_empty() {
-            self.living_tune.at_load = Some(self.living_at_load());
+        if self.living.tune.at_load.is_none() && !self.procgen_resolver.living_props().is_empty() {
+            self.living.tune.at_load = Some(self.living_at_load());
         }
         self.start_asked_comparison();
-        let steps = std::mem::take(&mut self.living_tune.steps_queued);
+        let steps = std::mem::take(&mut self.living.tune.steps_queued);
         if steps == 0 {
             return 0.0;
         }
         let beats = f64::from(steps);
-        let seconds = match &self.wooze {
-            Some(field) => f64::from(field.global(self.wooze_time).step),
+        let seconds = match &self.living.wooze {
+            Some(field) => f64::from(field.global(self.living.wooze_time).step),
             None => self
                 .procgen_resolver
                 .living_props()
@@ -768,21 +772,23 @@ impl PlayerApp {
                 .first()
                 .map_or(0.0, |prop| f64::from(prop.clock().step)),
         } * beats;
-        if self.living_tune.ab.is_some() {
+        if self.living.tune.ab.is_some() {
             return seconds;
         }
         self.procgen_resolver
             .living_props_mut()
             .advance_beats(beats, seconds);
-        if let Some(field) = &self.wooze {
-            let sample = field.sample(self.camera.position_array(), self.wooze_time);
-            self.boil_clock
+        if let Some(field) = &self.living.wooze {
+            let sample = field.sample(self.camera.position_array(), self.living.wooze_time);
+            self.living
+                .boil_clock
                 .tick(f64::from(sample.step) * beats, &sample);
-            self.wooze_time += seconds;
+            self.living.wooze_time += seconds;
             // Shallow wooze runs its own clocks in seconds, so inside a zone with
             // its own step this isn't a whole beat of theirs.
-            self.shallow_wooze
-                .advance(&self.world, field, self.wooze_time, seconds);
+            self.living
+                .shallow_wooze
+                .advance(&self.world, field, self.living.wooze_time, seconds);
         }
         0.0
     }
@@ -1164,7 +1170,11 @@ pub(super) mod panel {
             let living = self.procgen_resolver.living_props();
             let i = (living.props().iter()).position(|prop| prop.entity_name() == name)?;
             let prop = &living.props()[i];
-            let field = self.wooze.as_ref().map(|field| (field, self.wooze_time));
+            let field = self
+                .living
+                .wooze
+                .as_ref()
+                .map(|field| (field, self.living.wooze_time));
             let resolved = living.resolved(LivingPropId(i), field);
             let view = LivingView::of(std::slice::from_ref(&resolved), false);
             let zones = field.map_or_else(Vec::new, |(field, time)| {
@@ -1202,7 +1212,7 @@ pub(super) mod panel {
         /// The screen in egui points, as the overlay projects onto it.
         fn living_screen(&self) -> egui::Rect {
             let (w, h) = self.input.screen_size();
-            let ppp = self.egui_ctx.pixels_per_point();
+            let ppp = self.hud.egui_ctx.pixels_per_point();
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w as f32 / ppp, h as f32 / ppp))
         }
 
@@ -1236,7 +1246,7 @@ pub(super) mod panel {
         /// Whether a click is the Living Props panel's to take (#248): its panel
         /// is open, the cursor is free, and there are props to pick.
         pub(in super::super) fn living_wants_clicks(&self) -> bool {
-            !self.cursor_captured
+            !self.focus.cursor_captured
                 && !self.procgen_resolver.living_props().is_empty()
                 && self.debug_panels.iter().any(|panel| {
                     panel.name() == flint_debug_ui::LIVING_PROPS_DEBUG_PANEL && panel.is_open()
@@ -1259,8 +1269,8 @@ pub(super) mod panel {
             }
             if !showing {
                 // Closing it is what looks in the folder again next time.
-                self.living_tune.preset_names = None;
-                if !self.living_tune.overlay && !picking {
+                self.living.tune.preset_names = None;
+                if !self.living.tune.overlay && !picking {
                     return;
                 }
             }
@@ -1276,23 +1286,23 @@ pub(super) mod panel {
             let mixed = mixed_of(&view);
             let unsaved = self.living_unsaved();
             let species = self.living_species_states(&unsaved);
-            let no_field = self.wooze.is_none();
+            let no_field = self.living.wooze.is_none();
             let rows = self.living_rows();
             let shadows = match self.procgen_resolver.living_props().shadows() {
                 LivingShadows::Blended => "blended",
                 LivingShadows::Drift => "drift",
             };
-            let names = match self.living_tune.preset_names.clone() {
+            let names = match self.living.tune.preset_names.clone() {
                 Some(names) => names,
                 None => {
                     let names = self.living_preset_names();
-                    self.living_tune.preset_names = Some(names.clone());
+                    self.living.tune.preset_names = Some(names.clone());
                     names
                 }
             };
-            let frozen = self.living_tune.frozen;
-            let overlay = self.living_tune.overlay;
-            let status = self.living_tune.status.clone();
+            let frozen = self.living.tune.frozen;
+            let overlay = self.living.tune.overlay;
+            let status = self.living.tune.status.clone();
             let props = self.procgen_resolver.living_props();
             let health = flint_debug_ui::LivingHealth {
                 rings_short: props
@@ -1347,11 +1357,11 @@ pub(super) mod panel {
         }
 
         pub(in super::super) fn apply_living_action(&mut self, action: LivingPanelAction) {
-            let tune = &mut self.living_tune;
+            let tune = &mut self.living.tune;
             match action {
                 LivingPanelAction::Set(PanelScope::Global, moved) => {
                     if let Err(problem) = self.tune_living(&moved) {
-                        self.living_tune.status = Some(problem);
+                        self.living.tune.status = Some(problem);
                     }
                 }
                 // A species' own values (#247), through the layer #246 added:
@@ -1359,7 +1369,7 @@ pub(super) mod panel {
                 LivingPanelAction::Set(PanelScope::Species(name), moved) => {
                     let problems = self.tune_species(&name, &species_def_of(&moved));
                     if !problems.is_empty() {
-                        self.living_tune.status = Some(problems.join("; "));
+                        self.living.tune.status = Some(problems.join("; "));
                     }
                 }
                 LivingPanelAction::Clear(name, knob) => {
@@ -1371,14 +1381,14 @@ pub(super) mod panel {
                         },
                         Err(problem) => problem,
                     };
-                    self.living_tune.status = Some(said);
+                    self.living.tune.status = Some(said);
                 }
                 LivingPanelAction::Freeze(frozen) => tune.frozen = frozen,
                 LivingPanelAction::Step => self.step_living(),
                 LivingPanelAction::Overlay(on) => tune.overlay = on,
                 LivingPanelAction::Reset => {
                     self.reset_living_knobs();
-                    self.living_tune.status = Some("Back as the scene loaded.".to_string());
+                    self.living.tune.status = Some("Back as the scene loaded.".to_string());
                 }
                 LivingPanelAction::Save(name) => {
                     let said = match self.save_living_preset(&name) {
@@ -1386,8 +1396,8 @@ pub(super) mod panel {
                         Err(problem) => format!("Couldn't save: {problem}"),
                     };
                     println!("[living] {said}");
-                    self.living_tune.status = Some(said);
-                    self.living_tune.preset_names = None;
+                    self.living.tune.status = Some(said);
+                    self.living.tune.preset_names = None;
                 }
                 LivingPanelAction::Commit => {
                     let said = match self.commit_living() {
@@ -1395,19 +1405,19 @@ pub(super) mod panel {
                         Err(problem) => format!("Couldn't commit: {problem}"),
                     };
                     println!("[living] {said}");
-                    self.living_tune.status = Some(said);
+                    self.living.tune.status = Some(said);
                 }
                 LivingPanelAction::Load(name) => {
-                    self.living_tune.status = Some(match self.load_living_preset(&name) {
+                    self.living.tune.status = Some(match self.load_living_preset(&name) {
                         Ok(()) => format!("Loaded {name}."),
                         Err(problem) => format!("{name}: {problem}"),
                     });
                 }
                 LivingPanelAction::PickAb(a, b) => tune.ab_picks = Some((a, b)),
                 LivingPanelAction::Compare(a, b) => {
-                    self.living_tune.ab_picks = Some((a.clone(), b.clone()));
+                    self.living.tune.ab_picks = Some((a.clone(), b.clone()));
                     let label = super::super::living_ab::side_label;
-                    self.living_tune.status = Some(match self.compare_living(&a, &b) {
+                    self.living.tune.status = Some(match self.compare_living(&a, &b) {
                         Ok(()) => format!(
                             "Comparing A ({}) with B ({}). F6 flips, F7 splits.",
                             label(&a),

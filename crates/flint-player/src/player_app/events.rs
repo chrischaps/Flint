@@ -119,7 +119,7 @@ impl PlayerApp {
 
     /// Start capture mode for "press next control to bind" remapping.
     pub fn begin_rebind_capture(&mut self, action: impl Into<String>, mode: RebindMode) {
-        self.pending_rebind = Some(PendingRebind {
+        self.input_layers.pending_rebind = Some(PendingRebind {
             action: action.into(),
             mode,
         });
@@ -155,10 +155,10 @@ impl PlayerApp {
 
         for event in events {
             let gamepad = gamepad_id_to_u32(event.id);
-            self.real_pad_slots.insert(gamepad);
+            self.focus.real_pad_slots.insert(gamepad);
             // A real pad is ignored while the window is unfocused (ADR 0110),
             // and by a capture, which hears its script's pad alone.
-            let deaf = !self.window_focused || self.capture.is_capture();
+            let deaf = !self.focus.window_focused || self.capture.is_capture();
             if deaf && event.event != EventType::Disconnected {
                 continue;
             }
@@ -184,7 +184,7 @@ impl PlayerApp {
                 }
                 EventType::AxisChanged(axis, value, _) => {
                     let name = format!("{axis:?}");
-                    if self.pending_rebind.is_some() && value.abs() >= 0.45 {
+                    if self.input_layers.pending_rebind.is_some() && value.abs() >= 0.45 {
                         let direction = if value < 0.0 {
                             Some(flint_runtime::AxisDirection::Negative)
                         } else {
@@ -229,7 +229,7 @@ impl PlayerApp {
     }
 
     fn try_capture_rebind(&mut self, binding: Binding) -> bool {
-        let Some(pending) = self.pending_rebind.take() else {
+        let Some(pending) = self.input_layers.pending_rebind.take() else {
             return false;
         };
 
@@ -242,12 +242,13 @@ impl PlayerApp {
         }
 
         if let Some(action_cfg) = self.input.action_config(&pending.action) {
-            self.user_override_config
+            self.input_layers
+                .user_override
                 .actions
                 .insert(pending.action.clone(), action_cfg);
         }
-        if self.user_override_config.game_id.trim().is_empty() {
-            self.user_override_config.game_id = self.input.config().game_id.clone();
+        if self.input_layers.user_override.game_id.trim().is_empty() {
+            self.input_layers.user_override.game_id = self.input.config().game_id.clone();
         }
 
         if let Err(e) = self.persist_user_overrides() {
@@ -258,7 +259,7 @@ impl PlayerApp {
     }
 
     fn persist_user_overrides(&mut self) -> Result<()> {
-        let Some(paths) = &mut self.input_config_paths else {
+        let Some(paths) = &mut self.input_layers.config_paths else {
             return Ok(());
         };
 
@@ -271,10 +272,10 @@ impl PlayerApp {
             paths.user_override.as_deref(),
         );
 
-        if let Err(err) = write_user_override_file(&target, &self.user_override_config) {
+        if let Err(err) = write_user_override_file(&target, &self.input_layers.user_override) {
             let fallback = fallback_user_override_path(&self.project, scene_path, game_id);
             if fallback != target {
-                write_user_override_file(&fallback, &self.user_override_config)?;
+                write_user_override_file(&fallback, &self.input_layers.user_override)?;
                 target = fallback;
             } else {
                 return Err(err);
@@ -308,11 +309,11 @@ impl PlayerApp {
                 window.set_cursor_visible(false);
             }
         }
-        self.cursor_captured = true;
+        self.focus.cursor_captured = true;
         self.centre_the_cursor();
         // egui stops hearing the pointer, so it mustn't think it's still
         // hovering whatever it was over.
-        if let Some(egui_winit) = &mut self.egui_winit {
+        if let Some(egui_winit) = &mut self.hud.egui_winit {
             egui_winit
                 .egui_input_mut()
                 .events
@@ -340,13 +341,13 @@ impl PlayerApp {
                     window.set_cursor_position(winit::dpi::PhysicalPosition::new(w / 2.0, h / 2.0));
             }
         }
-        self.cursor_captured = false;
+        self.focus.cursor_captured = false;
     }
 
     /// Whether the cursor is captured now (ADR 0110). A script's request
     /// takes effect at the end of the frame it's made in.
     pub fn is_cursor_captured(&self) -> bool {
-        self.cursor_captured
+        self.focus.cursor_captured
     }
 
     /// Put the cursor `InputState` reports at the window centre, without a
@@ -367,7 +368,7 @@ impl PlayerApp {
     /// ADR 0073): keys, pads and raw mouse motion stay out of the game. Only
     /// a `TextEdit` counts, not any focused widget (ADR 0110's amendment).
     pub(super) fn text_has_focus(&self) -> bool {
-        self.egui_sees_input() && super::egui_input::text_field_focused(&self.egui_ctx)
+        self.egui_sees_input() && super::egui_input::text_field_focused(&self.hud.egui_ctx)
     }
 
     /// Hold the pads while a text field has focus (ADR 0110). Called at the
@@ -382,9 +383,9 @@ impl PlayerApp {
     /// read again where they stand. Buttons need a fresh press. The input
     /// script's pad is left alone: captures run unfocused.
     pub(super) fn window_focus_changed(&mut self, focused: bool) {
-        self.window_focused = focused;
+        self.focus.window_focused = focused;
         if !focused {
-            for slot in self.real_pad_slots.iter().copied() {
+            for slot in self.focus.real_pad_slots.iter().copied() {
                 self.input.clear_gamepad(slot);
             }
         }
@@ -398,7 +399,7 @@ impl PlayerApp {
         }
         for (id, pad) in gilrs.gamepads() {
             let slot = gamepad_id_to_u32(id);
-            self.real_pad_slots.insert(slot);
+            self.focus.real_pad_slots.insert(slot);
             for axis in STICKS {
                 let value = pad.value(axis);
                 if value != 0.0 {
@@ -455,7 +456,7 @@ impl ApplicationHandler for PlayerApp {
             // First launch — full initialization
             if let Err(e) = self.initialize(event_loop) {
                 tracing::error!("Failed to initialize player: {e:#}");
-                self.init_error = Some(format!("{e:#}"));
+                self.outcome.init_error = Some(format!("{e:#}"));
                 event_loop.exit();
             }
         } else {
@@ -485,7 +486,7 @@ impl ApplicationHandler for PlayerApp {
                         // suspend; apply them over the resized chain
                         // (FlintKart#55).
                         self.reapply_quality();
-                        self.cursor_captured = true;
+                        self.focus.cursor_captured = true;
                     }
                     Err(e) => {
                         tracing::error!("Failed to recreate window on resume: {e}");
@@ -580,7 +581,7 @@ impl ApplicationHandler for PlayerApp {
                 self.web_frame_end();
                 // The frame's end, for the profiler (ADR 0109).
                 profiling::finish_frame!();
-                if self.music_exit_requested || self.exit_requested {
+                if self.music.exit_requested || self.outcome.exit_requested {
                     event_loop.exit();
                 }
             }
@@ -604,8 +605,8 @@ impl ApplicationHandler for PlayerApp {
         // Raw motion flows while the cursor is captured, the window has
         // focus and no text field has the keyboard (ADR 0110), and never
         // into a capture (`look` is the script's).
-        if !self.cursor_captured
-            || !self.window_focused
+        if !self.focus.cursor_captured
+            || !self.focus.window_focused
             || self.text_has_focus()
             || self.capture.is_capture()
         {
@@ -655,7 +656,7 @@ impl PlayerApp {
             .set_screen_size(new_size.width as f64, new_size.height as f64);
         #[cfg(target_arch = "wasm32")]
         self.measure_touch_scale(new_size);
-        if self.cursor_captured {
+        if self.focus.cursor_captured {
             self.centre_the_cursor();
         }
     }
@@ -716,7 +717,7 @@ impl PlayerApp {
                             return;
                         }
                         let escape = Escape::decide(
-                            self.cursor_captured,
+                            self.focus.cursor_captured,
                             self.input.config().binds_key(KeyCode::Escape),
                         );
                         if escape.release_cursor {
@@ -801,7 +802,7 @@ impl PlayerApp {
     pub(super) fn handle_debug_key(&mut self, key_code: KeyCode) {
         match key_code {
             KeyCode::F2 => {
-                self.show_stats = !self.show_stats;
+                self.stats.show = !self.stats.show;
             }
             #[cfg(feature = "debug-hud")]
             KeyCode::F3 => {
@@ -859,7 +860,7 @@ impl PlayerApp {
             // the arming threshold (ADR 0064 follow-up).
             #[cfg(feature = "debug-hud")]
             KeyCode::F9 => {
-                if let Some(ms) = self.music_session.as_mut() {
+                if let Some(ms) = self.music.session.as_mut() {
                     ms.debug_force_fail();
                     println!("[music] DEBUG: full-fail forced — rewind incoming");
                 } else {
@@ -886,7 +887,7 @@ impl PlayerApp {
             // that missed. A scripted Escape lets go, as a real one does first.
             #[cfg(feature = "debug-hud")]
             KeyCode::F8 => {
-                if self.key_modifiers.shift_key() {
+                if self.focus.key_modifiers.shift_key() {
                     self.pick_next_living(true);
                 } else if !self.pick_living_at_centre() {
                     tracing::info!("Living Props: no living prop at the view centre");
@@ -915,11 +916,11 @@ impl PlayerApp {
     /// and scripts see it.
     fn taken_before_the_game(&mut self, event: &WindowEvent) -> bool {
         if let WindowEvent::ModifiersChanged(modifiers) = event {
-            self.key_modifiers = modifiers.state();
+            self.focus.key_modifiers = modifiers.state();
         }
         // A captured cursor's moves reach no one, real or scripted: it reads
         // as the window centre (ADR 0110).
-        if self.cursor_captured && matches!(event, WindowEvent::CursorMoved { .. }) {
+        if self.focus.cursor_captured && matches!(event, WindowEvent::CursorMoved { .. }) {
             return true;
         }
         // The on-screen touch controls sit above egui and the extensions:
@@ -937,13 +938,14 @@ impl PlayerApp {
         // Input egui wants stops here (see egui_input for the rules). A
         // captured cursor's buttons and wheel skip egui, but for the release
         // of a press egui took before the capture (ADR 0110).
-        let skip_egui = self.cursor_captured && self.egui_input.skips_captured(event);
+        let skip_egui = self.focus.cursor_captured && self.hud.egui_input.skips_captured(event);
         if self.egui_sees_input() && !skip_egui {
-            if let (Some(egui_winit), Some(window)) = (&mut self.egui_winit, &self.window) {
+            if let (Some(egui_winit), Some(window)) = (&mut self.hud.egui_winit, &self.window) {
                 let response = egui_winit.on_window_event(window, event);
-                let wants_keyboard = super::egui_input::text_field_focused(&self.egui_ctx);
+                let wants_keyboard = super::egui_input::text_field_focused(&self.hud.egui_ctx);
                 let routed = super::egui_input::classify(event);
                 if self
+                    .hud
                     .egui_input
                     .consumes(routed, response.consumed, wants_keyboard)
                 {
@@ -954,7 +956,11 @@ impl PlayerApp {
 
         // Game extensions next; they may consume input but never lifecycle
         // events (see PlayerExtension::on_window_event and on_key).
-        crate::extension::dispatch_window_event(&mut self.extensions, event, self.key_modifiers)
+        crate::extension::dispatch_window_event(
+            &mut self.extensions,
+            event,
+            self.focus.key_modifiers,
+        )
     }
 
     /// Whether egui sees input before the game: whenever it can have
@@ -995,13 +1001,13 @@ impl PlayerApp {
                 }
             }
             ScriptEvent::Look(dx, dy) => {
-                if self.cursor_captured && !self.text_has_focus() {
+                if self.focus.cursor_captured && !self.text_has_focus() {
                     self.input.process_mouse_raw_delta(dx, dy);
                 }
             }
             ScriptEvent::Text(text) => {
                 if self.egui_sees_input() {
-                    if let Some(egui_winit) = &mut self.egui_winit {
+                    if let Some(egui_winit) = &mut self.hud.egui_winit {
                         egui_winit
                             .egui_input_mut()
                             .events
@@ -1021,7 +1027,7 @@ impl PlayerApp {
     fn scripted_key(&mut self, key: KeyCode, state: ElementState) {
         let pressed = state == ElementState::Pressed;
         if self.egui_sees_input() {
-            if let Some(egui_winit) = &mut self.egui_winit {
+            if let Some(egui_winit) = &mut self.hud.egui_winit {
                 let raw = egui_winit.egui_input_mut();
                 let events = super::egui_input::scripted_key_events(key, pressed, raw.modifiers);
                 raw.events.extend(events);
@@ -1032,20 +1038,20 @@ impl PlayerApp {
             } else {
                 Routed::Release(held)
             };
-            let wants_keyboard = super::egui_input::text_field_focused(&self.egui_ctx);
-            if self.egui_input.consumes(routed, false, wants_keyboard) {
+            let wants_keyboard = super::egui_input::text_field_focused(&self.hud.egui_ctx);
+            if self.hud.egui_input.consumes(routed, false, wants_keyboard) {
                 return;
             }
         }
         let mut buf = [0; 4];
-        let character = super::egui_input::typed_char(key, self.key_modifiers.shift_key())
+        let character = super::egui_input::typed_char(key, self.focus.key_modifiers.shift_key())
             .map(|c| &*c.encode_utf8(&mut buf));
         let input = crate::extension::KeyInput {
             key,
             state,
             repeat: false,
             character,
-            modifiers: self.key_modifiers,
+            modifiers: self.focus.key_modifiers,
             scripted: true,
         };
         if crate::extension::dispatch_key(&mut self.extensions, &input) {
@@ -1098,13 +1104,13 @@ impl PlayerApp {
                     if !self.living_wants_clicks() {
                         return false;
                     }
-                    let ppp = self.egui_ctx.pixels_per_point();
+                    let ppp = self.hud.egui_ctx.pixels_per_point();
                     let (x, y) = self.input.mouse_position;
                     let took = self.pick_living_at(egui::pos2(x as f32 / ppp, y as f32 / ppp));
-                    self.living_tune.click_held = took;
+                    self.living.tune.click_held = took;
                     took
                 }
-                ElementState::Released => std::mem::take(&mut self.living_tune.click_held),
+                ElementState::Released => std::mem::take(&mut self.living.tune.click_held),
             }
         }
         #[cfg(not(feature = "debug-hud"))]
@@ -1142,7 +1148,7 @@ impl PlayerApp {
             }
         }
 
-        if !self.cursor_captured
+        if !self.focus.cursor_captured
             && self.physics.has_player_entity()
             && state == ElementState::Pressed
             && button == MouseButton::Left

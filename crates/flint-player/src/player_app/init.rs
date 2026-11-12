@@ -7,13 +7,13 @@
 use super::input_config::{read_user_override_file, resolve_input_paths, resolve_user_override};
 use super::scene_loading;
 use super::scene_loading::load_particle_textures_from_world;
+use super::state::{AssetSources, InputLayers};
 #[cfg(target_os = "android")]
 use super::AndroidGamepadTracker;
 use super::TransitionPhase;
-use super::{CaptureConfig, PlayerApp};
+use super::{CaptureConfig, LaunchOptions, PlayerApp, SceneSettings};
 use anyhow::{Context, Result};
 use flint_animation::AnimationSystem;
-use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
 use flint_core::vfs;
 use flint_ecs::FlintWorld;
@@ -21,10 +21,10 @@ use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
 use flint_runtime::pad::Gilrs;
-use flint_runtime::{GameClock, GameStateMachine, InputConfig, InputState, PersistentStore};
+use flint_runtime::{GameClock, GameStateMachine, InputConfig, InputState};
 use flint_script::context::DrawCommand;
 use flint_script::ScriptSystem;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
@@ -38,10 +38,10 @@ impl PlayerApp {
     /// A binary exits non-zero on `Some`, so a capture that left no file
     /// can't pass for one that did.
     pub fn run_failure(&self) -> Option<String> {
-        if let Some(e) = &self.init_error {
+        if let Some(e) = &self.outcome.init_error {
             return Some(format!("the player failed to start: {e}"));
         }
-        if let Some(e) = &self.scene_failure {
+        if let Some(e) = &self.outcome.scene_failure {
             return Some(e.clone());
         }
         self.capture.missing()
@@ -68,128 +68,43 @@ impl PlayerApp {
             clock: GameClock::new(),
             input: InputState::new(),
             physics: PhysicsSystem::new(),
-            music_session: None,
-            music_exit_requested: false,
+            music: Default::default(),
             audio: AudioSystem::new(),
             animation: AnimationSystem::new(),
             particles: ParticleSystem::new(),
             script: ScriptSystem::new(),
+            launch: LaunchOptions {
+                fullscreen,
+                ..Default::default()
+            },
+            scene: SceneSettings {
+                input_config: scene_input_config,
+                ..Default::default()
+            },
             window: None,
             render_context: None,
             scene_renderer: None,
             camera: Camera::new(),
-            skeletal_entity_assets: HashMap::new(),
-            camera_cut: Default::default(),
-            style_tweens: Default::default(),
-            style_reader_generation: None,
-            egui_ctx: egui::Context::default(),
-            egui_winit: None,
-            egui_renderer: None,
-            draw_commands: Vec::new(),
-            world_texts: Vec::new(),
-            world_text_pipeline: None,
-            ui_textures: HashMap::new(),
-            ui_fonts: HashSet::new(),
-            ui_fonts_warned: HashSet::new(),
-            ui_sprites_warned: HashSet::new(),
-            text_halos: Default::default(),
-            ui_fonts_root: Default::default(),
-            ui_fonts_installed: false,
-            egui_fonts_ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            catalog: AssetCatalog::load_from_directory("assets").ok(),
-            content_store: Some(ContentStore::new(".flint/assets")),
-            fullscreen,
-            cursor_captured: false,
-            window_focused: true,
-            real_pad_slots: Default::default(),
-            key_modifiers: Default::default(),
-            skybox_path: None,
-            scene_ambient: None,
-            msaa_sample_count: 1,
-            procgen_disk_cache: cfg!(not(target_arch = "wasm32")),
-            scene_file_writable: cfg!(not(target_arch = "wasm32")),
-            procgen_mode: super::procgen_assets::ProcGenMode::Immediate,
-            render_scale: Default::default(),
-            dynamic_scale: Default::default(),
-            quality_overrides: String::new(),
-            pixels_per_point: None,
-            safe_area: None,
-            touch_device: false,
-            look: None,
+            style: Default::default(),
             quality: Default::default(),
             frame_pacer: None,
-            hold_at: None,
-            scene_diffuse_wrap: None,
-            scene_shadows: true,
-            scene_default_lights: true,
-            scene_oren_nayar: None,
-            scene_sheen: None,
-            scene_camera: None,
-            scene_post_process: None,
-            style_specs: Vec::new(),
-            style_time: None,
-            scene_tables: toml::Table::new(),
-            scene_living: None,
-            living_blend: Default::default(),
-            scene_wooze: None,
-            wooze: None,
-            wooze_time: 0.0,
-            wooze_missing_warned: false,
-            shallow_wooze: Default::default(),
-            boil_clock: Default::default(),
-            grass_wooze: Default::default(),
-            living_tune: Default::default(),
-            pp_vignette_override: None,
-            pp_bloom_override: None,
-            pp_exposure_override: None,
-            pp_chromatic_aberration_override: None,
-            pp_radial_blur_override: None,
-            pp_ssao_intensity_override: None,
-            pp_fog_density_override: None,
-            pp_desaturation_override: None,
-            pp_dof_strength_override: None,
-            pp_dof_focus_distance_override: None,
-            pp_dof_focus_range_override: None,
-            pp_fog_color_override: None,
-            pp_render_mode_override: None,
-            pp_mode_params_override: None,
+            skeletal_entity_assets: HashMap::new(),
+            hud: Default::default(),
+            assets: AssetSources::from_working_dir(),
+            focus: Default::default(),
+            living: Default::default(),
             script_requests: Default::default(),
-            script_quality: None,
-            pp_mode_was_active: false,
-            #[cfg(feature = "debug-hud")]
-            pp_debug_freeze: false,
-            pending_look: None,
-            music_pp_base: None,
-            music_pp_restore: None,
-            scene_preload_audio: true,
+            post: Default::default(),
             audio_vfs_generation: flint_core::vfs::generation(),
-            window_size: (1280, 720),
-            window_options: crate::WindowArgs::default(),
             capture: CaptureConfig::default(),
-            expression_feed: None,
-            exit_requested: false,
-            init_error: None,
-            scene_failure: None,
+            outcome: Default::default(),
             #[cfg(test)]
             test_gpu: None,
-            input_config_override,
-            scene_input_config,
-            input_config_paths: None,
-            user_override_config: InputConfig {
-                version: 1,
-                game_id: String::new(),
-                actions: Default::default(),
-                touch_controls: None,
-            },
-            pending_rebind: None,
+            input_layers: InputLayers::new(input_config_override),
             gilrs: None,
             pad_rumble: flint_runtime::PadRumble::new(),
             state_machine: GameStateMachine::new(),
-            persistent_store: PersistentStore::new(),
-            persist_debounce: flint_runtime::SaveDebounce::default(),
-            persist_save_error: None,
-            save_dir: None,
-            user_config_dir: crate::user_files::config_dir(),
+            saves: Default::default(),
             transition_phase: TransitionPhase::Idle,
             schema_dirs: Default::default(),
             schemas: Default::default(),
@@ -198,10 +113,7 @@ impl PlayerApp {
             #[cfg(feature = "debug-hud")]
             debug_panels: Vec::new(),
             particles_render_enabled: true,
-            show_stats: false,
-            stats_frame_times: std::collections::VecDeque::new(),
-            stats_gpu_timing: false,
-            perf: None,
+            stats: Default::default(),
             procgen_resolver: flint_procgen::ProcGenResolver::new(),
             loaded_chunks: HashMap::new(),
             #[cfg(target_os = "android")]
@@ -209,7 +121,6 @@ impl PlayerApp {
             #[cfg(target_os = "android")]
             android_axis_reader: None,
             extensions: Vec::new(),
-            egui_input: Default::default(),
             #[cfg(target_arch = "wasm32")]
             pending_render: Default::default(),
             #[cfg(target_arch = "wasm32")]
@@ -229,8 +140,8 @@ impl PlayerApp {
         extension.register_generators(self.procgen_resolver.registry_mut());
         self.extensions.push(extension);
         // A late extension still gets its `fonts` hook.
-        if self.ui_fonts_installed {
-            self.ui_fonts_installed = false;
+        if self.hud.fonts_installed {
+            self.hud.fonts_installed = false;
             self.refresh_project_fonts();
         }
         // And its debug panels, before the next scene load builds them again.
@@ -271,17 +182,17 @@ impl PlayerApp {
     /// file, so a block the scene doesn't author means the defaults, never
     /// what the last scene had.
     pub fn apply_scene_settings(&mut self, scene_file: &flint_scene::SceneFile) {
-        self.scene_preload_audio = scene_file.scene.preload_audio;
-        self.scene_input_config = scene_file.scene.input_config.clone();
+        self.scene.preload_audio = scene_file.scene.preload_audio;
+        self.scene.input_config = scene_file.scene.input_config.clone();
 
         // No shadows, no built-in lights (#627)
         let env = scene_file.environment.as_ref();
-        self.scene_shadows = env.is_none_or(|e| e.casts_shadows());
-        self.scene_default_lights = env.is_none_or(|e| e.uses_default_lights());
+        self.scene.shadows = env.is_none_or(|e| e.casts_shadows());
+        self.scene.default_lights = env.is_none_or(|e| e.uses_default_lights());
 
         // Skybox path, ambient and shading levers
-        self.skybox_path = env.and_then(|e| e.skybox.clone());
-        self.scene_ambient = env.and_then(|e| {
+        self.scene.skybox_path = env.and_then(|e| e.skybox.clone());
+        self.scene.ambient = env.and_then(|e| {
             (e.ambient_sky.is_some() || e.ambient_ground.is_some()).then(|| {
                 (
                     e.ambient_sky
@@ -291,14 +202,14 @@ impl PlayerApp {
                 )
             })
         });
-        self.scene_diffuse_wrap = env.and_then(|e| e.diffuse_wrap);
-        self.scene_oren_nayar = env.and_then(|e| e.oren_nayar);
-        self.scene_sheen = env.and_then(|e| {
+        self.scene.diffuse_wrap = env.and_then(|e| e.diffuse_wrap);
+        self.scene.oren_nayar = env.and_then(|e| e.oren_nayar);
+        self.scene.sheen = env.and_then(|e| {
             e.sheen_strength
                 .map(|s| (e.sheen_color.unwrap_or([1.0; 3]), s))
         });
 
-        self.scene_camera = scene_file.camera.clone();
+        self.scene.camera = scene_file.camera.clone();
         // User styles first: the post_process tables are read against the
         // registry, and a table for an unloaded style is dropped
         let scope = self.asset_scope();
@@ -318,9 +229,9 @@ impl PlayerApp {
         }
         self.set_scene_post_process(settled.post_process.clone());
         let living_tables = flint_procgen::LivingTables::or_warn(&settled);
-        self.scene_living = living_tables.living;
-        self.scene_wooze = living_tables.wooze;
-        self.scene_tables = scene_file.scene_tables();
+        self.living.def = living_tables.living;
+        self.living.wooze_def = living_tables.wooze;
+        self.scene.tables = scene_file.scene_tables();
     }
 
     /// Take a scene's `[post_process]` block, with the look it names
@@ -330,8 +241,8 @@ impl PlayerApp {
     /// loaded (a look may name one).
     pub fn set_scene_post_process(&mut self, def: Option<flint_scene::PostProcessDef>) {
         let scope = self.asset_scope();
-        self.scene_post_process = super::scene_loading::scene_post_process_in(
-            self.look.as_deref(),
+        self.scene.post_process = super::scene_loading::scene_post_process_in(
+            self.launch.look.as_deref(),
             &self.scene_path,
             &scope,
             def,
@@ -341,7 +252,7 @@ impl PlayerApp {
     /// The look the scene draws with now: the one it names, or the one a
     /// script or F4 chose since (#356). `None` for the scene's keys alone.
     pub fn current_look(&self) -> Option<&str> {
-        self.scene_post_process.as_ref()?.look.as_deref()
+        self.scene.post_process.as_ref()?.look.as_deref()
     }
 
     /// Lay `look` under the scene's `[post_process]` keys in place of the
@@ -350,13 +261,13 @@ impl PlayerApp {
     /// stamping their fields over it, as they do over the scene's. A scene
     /// with no `[post_process]` block takes the look over the defaults.
     pub fn set_look(&mut self, look: Option<&str>) -> Result<(), String> {
-        let base = match &self.scene_post_process {
+        let base = match &self.scene.post_process {
             Some(def) => def.clone(),
             None => flint_scene::PostProcessDef::from_authored(toml::Table::new())
                 .map_err(|e| e.to_string())?,
         };
         let def = flint_render::look::resolve_in(&base, look, &self.asset_scope())?;
-        self.scene_post_process = Some(def);
+        self.scene.post_process = Some(def);
         let config = self.scene_post_config();
         if let (Some(renderer), Some(context)) =
             (self.scene_renderer.as_mut(), self.render_context.as_ref())
@@ -421,11 +332,12 @@ impl PlayerApp {
     /// from what the last scene left (#723).
     pub fn scene_post_config(&self) -> flint_render::PostProcessConfig {
         let mut config = self
-            .scene_post_process
+            .scene
+            .post_process
             .as_ref()
             .map(scene_loading::post_process_config_from_def)
             .unwrap_or_default();
-        for e in flint_render::stylize::apply_style_specs(&mut config, &self.style_specs) {
+        for e in flint_render::stylize::apply_style_specs(&mut config, &self.launch.style_specs) {
             tracing::warn!("{e}");
         }
         config
@@ -433,7 +345,7 @@ impl PlayerApp {
 
     /// Apply scene-level camera configuration from `CameraDef`
     pub(super) fn apply_camera_def(&mut self) {
-        if let Some(cam) = &self.scene_camera {
+        if let Some(cam) = &self.scene.camera {
             if cam.projection == "orthographic" {
                 self.camera.orthographic = true;
                 if cam.ortho_height > 0.0 {
@@ -504,7 +416,7 @@ impl PlayerApp {
         let scene_renderer = SceneRenderer::new(
             &render_context,
             flint_render::RendererConfig {
-                sample_count: self.msaa_sample_count,
+                sample_count: self.launch.msaa_sample_count,
                 ..Default::default()
             },
         );
@@ -535,11 +447,11 @@ impl PlayerApp {
         let window_attrs = super::web_startup::canvas_attributes(window_attrs);
         #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
         let window_attrs = window_attrs.with_inner_size(PhysicalSize::new(
-            self.window_size.0.max(1),
-            self.window_size.1.max(1),
+            self.launch.window_size.0.max(1),
+            self.launch.window_size.1.max(1),
         ));
         #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
-        let window_attrs = self.window_options.apply(window_attrs);
+        let window_attrs = self.launch.window_options.apply(window_attrs);
 
         let window = Arc::new(
             event_loop
@@ -547,7 +459,7 @@ impl PlayerApp {
                 .context("Failed to create player window")?,
         );
 
-        if self.fullscreen {
+        if self.launch.fullscreen {
             window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
         }
 
@@ -564,6 +476,7 @@ impl PlayerApp {
         }
         let scene_dir = self.scene_dir();
         if let Some(disk) = self
+            .launch
             .procgen_disk_cache
             .then(|| procgen_disk_config(&self.project, &scene_dir))
             .flatten()
@@ -583,10 +496,11 @@ impl PlayerApp {
         // passes egui-winit feeds it and now, since UI sprites load before
         // the first pass.
         let max_texture_side = render_context.device.limits().max_texture_dimension_2d as usize;
-        self.egui_ctx
+        self.hud
+            .egui_ctx
             .input_mut(|i| i.max_texture_side = max_texture_side);
         let egui_winit = egui_winit::State::new(
-            self.egui_ctx.clone(),
+            self.hud.egui_ctx.clone(),
             egui::ViewportId::ROOT,
             window,
             Some(window.scale_factor() as f32),
@@ -600,8 +514,8 @@ impl PlayerApp {
             1,
             false,
         );
-        self.egui_winit = Some(egui_winit);
-        self.egui_renderer = Some(egui_renderer);
+        self.hud.egui_winit = Some(egui_winit);
+        self.hud.egui_renderer = Some(egui_renderer);
     }
 
     /// Update the terrain height callback on the script system.
@@ -650,8 +564,8 @@ impl PlayerApp {
         let mut paths = resolve_input_paths(
             &self.project,
             Path::new(&self.scene_path),
-            self.scene_input_config.as_deref(),
-            self.input_config_override.as_deref(),
+            self.scene.input_config.as_deref(),
+            self.input_layers.config_override.as_deref(),
         );
 
         if let Some(path) = &paths.game_default {
@@ -679,7 +593,7 @@ impl PlayerApp {
                 format!("failed to load user input config '{}'", path.display())
             })?;
             if let Some(cfg) = cfg {
-                self.user_override_config = cfg.clone();
+                self.input_layers.user_override = cfg.clone();
                 self.input
                     .merge_bindings(cfg)
                     .context("failed to merge user input config")?;
@@ -697,14 +611,14 @@ impl PlayerApp {
             }
         }
 
-        if self.user_override_config.version == 0 {
-            self.user_override_config.version = 1;
+        if self.input_layers.user_override.version == 0 {
+            self.input_layers.user_override.version = 1;
         }
-        if self.user_override_config.game_id.trim().is_empty() {
-            self.user_override_config.game_id = self.input.config().game_id.clone();
+        if self.input_layers.user_override.game_id.trim().is_empty() {
+            self.input_layers.user_override.game_id = self.input.config().game_id.clone();
         }
 
-        self.input_config_paths = Some(paths);
+        self.input_layers.config_paths = Some(paths);
         Ok(())
     }
 
@@ -778,18 +692,18 @@ impl PlayerApp {
     pub(super) fn refresh_project_fonts(&mut self) {
         let scope = self.asset_scope();
         let root = super::fonts::ProjectFonts::find(&scope.project, &scope.scene_dir);
-        if self.ui_fonts_installed && self.ui_fonts_root == root {
+        if self.hud.fonts_installed && self.hud.fonts_root == root {
             return; // the same files as the last scan
         }
         let mut defs = super::fonts::font_definitions(&root);
         for ext in self.extensions.iter_mut() {
             ext.fonts(&mut defs);
         }
-        self.ui_fonts = super::fonts::script_families(&defs);
-        self.egui_ctx.set_fonts(defs);
-        self.ui_fonts_warned.clear();
-        self.ui_fonts_root = root;
-        self.ui_fonts_installed = true;
+        self.hud.fonts = super::fonts::script_families(&defs);
+        self.hud.egui_ctx.set_fonts(defs);
+        self.hud.fonts_warned.clear();
+        self.hud.fonts_root = root;
+        self.hud.fonts_installed = true;
     }
 
     /// Give scripts a `measure_text` that lays text out with the same font
@@ -797,8 +711,8 @@ impl PlayerApp {
     /// yet) and for families not installed in the *active* definitions,
     /// the closure degrades gracefully instead of panicking.
     pub(super) fn install_text_measurer(&mut self) {
-        let ctx = self.egui_ctx.clone();
-        let ready = self.egui_fonts_ready.clone();
+        let ctx = self.hud.egui_ctx.clone();
+        let ready = self.hud.egui_fonts_ready.clone();
         self.script.set_text_measurer(Some(Arc::new(
             move |text: &str, size: f32, font: Option<&str>, spacing: f32| {
                 if !ready.load(std::sync::atomic::Ordering::Relaxed) {
@@ -826,7 +740,7 @@ impl PlayerApp {
     /// Load a sprite texture for UI rendering. Called lazily when a draw_sprite
     /// command references a name not yet in ui_textures.
     pub fn load_ui_texture(&mut self, name: &str) -> bool {
-        if self.ui_textures.contains_key(name) {
+        if self.hud.textures.contains_key(name) {
             return true;
         }
 
@@ -845,10 +759,12 @@ impl PlayerApp {
                     let (w, h) = rgba.dimensions();
                     let color_image =
                         egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
-                    let tex_handle =
-                        self.egui_ctx
-                            .load_texture(name, color_image, egui::TextureOptions::LINEAR);
-                    self.ui_textures.insert(name.to_string(), tex_handle);
+                    let tex_handle = self.hud.egui_ctx.load_texture(
+                        name,
+                        color_image,
+                        egui::TextureOptions::LINEAR,
+                    );
+                    self.hud.textures.insert(name.to_string(), tex_handle);
                     println!("Loaded UI sprite: {}", name);
                     return true;
                 }
@@ -858,7 +774,7 @@ impl PlayerApp {
         };
         // A draw command asks again every frame: say it once a scene folder.
         let key = format!("{}|{name}", scene_dir.display());
-        if self.ui_sprites_warned.insert(key) {
+        if self.hud.sprites_warned.insert(key) {
             tracing::warn!("{problem}");
         }
         false
@@ -867,11 +783,12 @@ impl PlayerApp {
     /// Pre-scan draw commands and load any sprite textures that haven't been loaded yet
     pub(super) fn load_pending_sprites(&mut self) {
         let sprite_names: Vec<String> = self
+            .hud
             .draw_commands
             .iter()
             .filter_map(|item| {
                 if let DrawCommand::Sprite { name, .. } = &item.cmd {
-                    if !self.ui_textures.contains_key(name.as_str()) {
+                    if !self.hud.textures.contains_key(name.as_str()) {
                         Some(name.clone())
                     } else {
                         None
@@ -940,7 +857,7 @@ mod style_word_tests {
     #[test]
     fn style_words_win_over_every_scene_they_meet() {
         let mut app = app();
-        app.style_specs = vec!["ascii:cell=12".into()];
+        app.launch.style_specs = vec!["ascii:cell=12".into()];
 
         // A scene with no [post_process] still gets the style
         let config = app.scene_post_config();
@@ -950,7 +867,7 @@ mod style_word_tests {
         // A scene that authors the same style, and keeps its own bloom:
         // the word wins on the style and leaves the rest alone. This is
         // what a transition re-reads (#328)
-        app.scene_post_process = Some(scene(
+        app.scene.post_process = Some(scene(
             "[post_process]\nbloom_intensity = 0.3\n\
              [post_process.styles.ascii]\ncell = 6\nramp = \"blocks\"\n",
         ));
@@ -960,7 +877,7 @@ mod style_word_tests {
         assert!((config.bloom_intensity - 0.3).abs() < 1e-6);
 
         // ascii:off turns off a style the scene has on
-        app.style_specs = vec!["ascii:off".into()];
+        app.launch.style_specs = vec!["ascii:off".into()];
         assert!(!app.scene_post_config().styles.is_enabled("ascii"));
     }
 

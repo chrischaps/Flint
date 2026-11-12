@@ -324,7 +324,7 @@ impl DevProfile {
     fn apply(&self, player: &mut flint_player::PlayerApp) {
         let t = &self.table;
         if let Some(msaa) = t.get("msaa").and_then(|v| v.as_integer()) {
-            player.msaa_sample_count = if msaa >= 4 { 4 } else { 1 };
+            player.launch.msaa_sample_count = if msaa >= 4 { 4 } else { 1 };
         }
         let scale = match t.get("render_scale") {
             Some(toml::Value::String(s)) => Some(s.clone()),
@@ -334,7 +334,7 @@ impl DevProfile {
         };
         if let Some(scale) = scale {
             match flint_player::RenderScaleSetting::default().parse(&scale) {
-                Some(setting) => player.render_scale = setting,
+                Some(setting) => player.launch.render_scale = setting,
                 None => log::warn!("Dev profile render_scale {scale}: a number or auto"),
             }
         }
@@ -351,7 +351,7 @@ impl DevProfile {
             for e in flint_player::QualitySettings::default().apply_str(&quality) {
                 log::warn!("Dev profile quality: {e}");
             }
-            player.quality_overrides = quality;
+            player.launch.quality_overrides = quality;
         }
         if t.get("perf").and_then(|v| v.as_bool()).unwrap_or(false) {
             player.enable_perf(true);

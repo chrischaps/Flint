@@ -51,5 +51,5 @@ pub use player_app::web_pacing::coarse_pointer as web_coarse_pointer;
 pub use player_app::web_page::begin as web_begin;
 #[cfg(target_arch = "wasm32")]
 pub use player_app::web_startup::WEB_CANVAS_ID;
-pub use player_app::{CaptureConfig, PlayerApp};
+pub use player_app::{CaptureConfig, LaunchOptions, PlayerApp, SceneSettings};
 pub use window_args::WindowArgs;

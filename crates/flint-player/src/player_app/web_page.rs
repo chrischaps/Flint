@@ -264,7 +264,7 @@ impl PlayerApp {
             self.pointer_lock.requested_at = None;
             return;
         }
-        if !self.cursor_captured {
+        if !self.focus.cursor_captured {
             return;
         }
         if was_held {

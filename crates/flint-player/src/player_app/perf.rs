@@ -568,13 +568,13 @@ impl super::PlayerApp {
     /// (ADR 0108) where the adapter has timestamps; it adds a few small
     /// submissions a frame, so `?perf=cpu` leaves it off.
     pub fn enable_perf(&mut self, gpu: bool) {
-        self.perf = Some(PerfRecorder::new(gpu));
+        self.stats.perf = Some(PerfRecorder::new(gpu));
         self.script.set_update_timing(true);
     }
 
     /// The end of `phase` in this frame, when recording.
     pub(super) fn perf_mark(&mut self, phase: Phase) {
-        if let Some(perf) = &mut self.perf {
+        if let Some(perf) = &mut self.stats.perf {
             perf.mark(phase);
         }
     }
@@ -582,7 +582,7 @@ impl super::PlayerApp {
     /// Whether the readout is due again: at most once every `every`
     /// seconds. Never while not recording.
     pub(super) fn perf_due(&mut self, every: f64) -> bool {
-        let Some(perf) = &mut self.perf else {
+        let Some(perf) = &mut self.stats.perf else {
             return false;
         };
         let now = Instant::now();
@@ -603,7 +603,7 @@ impl super::PlayerApp {
         browser: String,
         adapter: String,
     ) -> Option<(PerfSummary, PerfContext)> {
-        let perf = self.perf.as_ref()?;
+        let perf = self.stats.perf.as_ref()?;
         let summary = perf.summary()?;
         let renderer = self.scene_renderer.as_ref()?;
         let context = self.render_context.as_ref()?;
