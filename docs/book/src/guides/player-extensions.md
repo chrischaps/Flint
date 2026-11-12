@@ -54,6 +54,28 @@ fn main() -> anyhow::Result<()> {
 
 `PlayerApp` is a winit `ApplicationHandler`, so it runs directly with no wrapper. Set the same launch options `flint-player`'s `main.rs` sets for the features your scenes use, on `player.launch` (`window_size`, `msaa_sample_count`, `style_specs`, ...), and `capture` for `--screenshot`-style runs. What the scene's file says is `player.scene` (`SceneSettings`), which `apply_scene_settings` fills in. Pass the engine's `schemas/` yourself, ahead of the game's. The game itself, with no window, is `player.core` (a `GameCore`, [ADR 0117](https://github.com/chrischaps/Flint/blob/main/docs/adr/0117-player-subsystems-and-one-game-step.md)): the world, its clock, scripts, physics, animation and particles are `player.core.world`, `player.core.clock`, `player.core.script` and so on, and each frame runs the core's one frame order, the one `flint render --scripts` runs too.
 
+### What the player links
+
+`flint-player`'s optional parts are Cargo features, all on by default, so a game that names the crate with no `features` key gets everything `flint play` has. A game that needs less, the web build of a small game say, turns the defaults off and names what its scenes use:
+
+```toml
+[dependencies]
+flint-player = { path = "engine/crates/flint-player", default-features = false, features = ["audio", "gamepad", "music"] }
+```
+
+| Feature | What it brings | Without it |
+|---|---|---|
+| `audio` | The sound card (kira's cpal backend) | The game runs silent |
+| `gamepad` | Pads and `rumble()` (gilrs) | No pad is seen; keyboard, mouse and touch still work |
+| `debug-hud` | The F3/F4 debug panels (`flint-debug-ui`) | No debug surface |
+| `music` | A `music_session`'s suite and `music_beat()` (`flint-music`) | The suite doesn't play and the beat reads -1 |
+| `rhythm` | A charted suite judged (`flint-rhythm`, the 1 kHz pad capture); turns on `music` | A charted suite plays as music |
+| `procgen` | Assets made from `*.procgen.toml` specs, and `register_generators` (`flint-procgen`) | Every model and texture name is a file's |
+| `living` | Living props, `[living]`, `[wooze]`, shallow wooze, woozy grass and the `wooze`, `living` and `debug` script modules; turns on `procgen` | The grove stands still |
+| `profile` | Tracy's frame profiler (off by default) | The scopes compile to nothing |
+
+A scene that uses a part the build left out prints one line when it's entered, naming what won't run, for example ``[living] this player is built without the `living` feature: the scene's living props, [wooze] stand still``. With every default off the player links neither `flint-music` nor `flint-procgen`.
+
 ## The Hooks
 
 | Method | When it runs | Use it for |

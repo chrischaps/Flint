@@ -26,6 +26,7 @@ use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
+#[cfg(feature = "procgen")]
 use flint_procgen::ProcGenResolver;
 use flint_render::{Camera, SceneRenderer};
 use flint_runtime::state::{ANIMATION, AUDIO, PARTICLES, PHYSICS, SCRIPTS};
@@ -68,6 +69,7 @@ pub struct GameCore {
     /// last made from (#372).
     pub(crate) style_reader_generation: Option<u64>,
     /// The procgen resolver, which holds the scene's living props.
+    #[cfg(feature = "procgen")]
     pub(crate) procgen_resolver: ProcGenResolver,
     /// What scripts asked of the frame (#697): the camera, post-processing,
     /// distance levers, cursor and touch, held from the command that asked
@@ -96,6 +98,7 @@ impl GameCore {
             store: PersistentStore::new(),
             style_tweens: Default::default(),
             style_reader_generation: None,
+            #[cfg(feature = "procgen")]
             procgen_resolver: ProcGenResolver::new(),
             script_requests: Default::default(),
             commands_warned: Default::default(),
@@ -351,6 +354,7 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
 
     // The frame-budgeted procgen queue; living props move on after it, in
     // what it left of the budget
+    #[cfg(feature = "procgen")]
     {
         let (core, lent) = host.lend();
         core.tick_procgen(lent);
@@ -396,6 +400,7 @@ impl GameCore {
             policy,
             renderer: lent.renderer,
             gpu: lent.gpu,
+            #[cfg(feature = "procgen")]
             resolver: &mut self.procgen_resolver,
             project: &self.project,
             scene_path: &self.scene_path,
@@ -606,6 +611,7 @@ impl GameCore {
     /// The frame-budgeted procgen queue: what it finished goes to the
     /// renderer, when there is one. Living props move on after it, at
     /// `Stage::Procgen`, in whatever it left of the budget.
+    #[cfg(feature = "procgen")]
     #[profiling::function]
     pub(crate) fn tick_procgen(&mut self, lent: Lent<'_>) {
         let completed = self

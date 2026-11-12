@@ -30,14 +30,21 @@ mod init;
 mod input_config;
 pub mod input_script;
 mod key_note;
+#[cfg(feature = "living")]
 mod living_ab;
+#[cfg(feature = "living")]
 mod living_api;
+#[cfg(feature = "living")]
 pub mod living_props;
+#[cfg(feature = "living")]
 mod living_subsystem;
+#[cfg(feature = "living")]
 pub(crate) mod living_tuning;
+mod missing_features;
 mod pacing;
 mod perf;
 mod persist;
+#[cfg(feature = "procgen")]
 pub mod procgen_assets;
 mod quality;
 pub mod render_scale;
@@ -47,6 +54,7 @@ mod scene_entry_tests;
 pub(crate) mod scene_loading;
 mod schemas;
 pub mod script_commands;
+#[cfg(feature = "living")]
 mod shallow_wooze;
 mod state;
 pub mod style_commands;
@@ -79,7 +87,7 @@ use flint_render::{Camera, RenderContext, SceneRenderer};
 use flint_runtime::pad::Gilrs;
 use flint_runtime::InputState;
 pub use game_core::GameCore;
-pub use state::{LaunchOptions, SceneSettings};
+pub use state::{LaunchOptions, ProcGenMode, SceneSettings};
 use std::collections::HashMap;
 use std::sync::Arc;
 use transition::TransitionPhase;

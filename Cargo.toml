@@ -207,7 +207,7 @@ flint-particles = { path = "crates/flint-particles" }
 flint-terrain = { path = "crates/flint-terrain" }
 flint-procgen = { path = "crates/flint-procgen" }
 flint-procgen-ai = { path = "crates/flint-procgen-ai" }
-flint-debug-ui = { path = "crates/flint-debug-ui" }
+flint-debug-ui = { path = "crates/flint-debug-ui", default-features = false }
 flint-player = { path = "crates/flint-player", default-features = false }
 flint-android = { path = "crates/flint-android" }
 

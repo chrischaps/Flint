@@ -709,7 +709,7 @@ A script ramps it to cross-fade the whole world into a look at a story beat: `se
 
 ### Style blends and render-mode tears
 
-`--render-mode` 1--4 (matrix, blood, drunk, tron) and a style blend can both look like reality tearing into text, but they work at different levels:
+`--render-mode` 1--4 (matrix, blood, drunk, tron) and a style blend can both look like reality tearing into text, but they work at different levels (and a blend can [follow the tear](#a-blend-that-follows-the-tear)):
 
 | | Render-mode tears | Style blend |
 |---|---|---|
@@ -718,7 +718,46 @@ A script ramps it to cross-fade the whole world into a look at a story beat: `se
 | Driven by | `mode_mix` and `mode_params` (a scene-wide value) | `blend` on each entity's component |
 | The look | Fixed per mode (mode 1's glyphs are an 8x12 dot-matrix built into `composite_shader.wgsl`) | Any style's settings: fonts, ramps, palettes, edges, grids |
 
-Neither duplicates the other's job. Tears change how the *world* is seen, and a blend changes how one *thing* is drawn. They compose: an ASCII prop inside a matrix tear is glyphized from the tear's picture, since display styles read the composite's output. Mode 1's glyphs and the ASCII style do overlap as looks, and the `matrix` look (`--look matrix`) is the ASCII style's take on it. Letting a style's blend follow the tear mask, so props turn to text where reality tears, is left for later.
+Neither duplicates the other's job. Tears change how the *world* is seen, and a blend changes how one *thing* is drawn. They compose: an ASCII prop inside a matrix tear is glyphized from the tear's picture, since display styles read the composite's output. Mode 1's glyphs and the ASCII style do overlap as looks, and the `matrix` look (`--look matrix`) is the ASCII style's take on it.
+
+### A blend that follows the tear
+
+`blend_source = "tear"` (#397) makes an entity's blend follow the tear: at each pixel it is the entity's `blend` times the tear's mask there, so the prop turns to text only where reality tears and stays its own shading everywhere else. It goes on the style component or a `style_mask`, like `blend`, and is the root's, inherited by its subtree:
+
+```toml
+[entities.barrel.ascii_style]
+blend_source = "tear"     # "own", the default, is the blend alone
+transition = "dissolve"   # cells turn whole at the tear's frayed rim
+```
+
+Render mode 6 is a tear with no look of its own: the composite draws nothing for it, so the props that follow it are the only thing it shows. Modes 1--4 tear too, and then the props turn inside the mode's own holes (an ASCII prop in a matrix tear is glyphized from the code rain, as above). A script drives it as any mode, every frame it shows, and a scene can't set a render mode:
+
+```rust
+fn on_init() {
+    set_render_mode_params(2.4, 0.0, 6.0, 0.0);   // patch scale 2.4, fbm patches
+}
+
+fn on_update() {
+    set_render_mode(6, 0.5);                      // half the clearing torn
+}
+```
+
+```bash
+flint render examples/ascii_tear.scene.toml --render-mode 6 --mode-mix 0.5 --mode-params 2.4,0,6,0
+```
+
+![The clearing at tear mix 0, 0.3 and 0.55 under render mode 6, and at 0.3 under mode 1: the props turn to green glyphs only inside the tear's patches, which mode 1 shows as code rain, while the grass and ground stay as they were](../images/ascii-tear.png)
+
+*`flint render examples/ascii_tear.scene.toml --render-mode <m> --mode-mix <x> --mode-params 2.4,0,6,0 --no-grid`, cropped.*
+
+- **One mask, two readers.** The tear is `tear_mask_at` in `crates/flint-render/src/tear_mask.wgsl`, which Rust prepends to both the composite and the style mask's shader. The mask pass multiplies it into the blend it writes into the mask's `.g`, so every reader of the blend gets it: ASCII's fade and dissolve, and pencil, watercolor and user styles through the framework's [cross-fade](#blend-for-free). Its uv is the mask pixel's centre over the mask's size, the composite's own at any render scale, so a prop turns exactly where the composite tears.
+- **No tear, no cost.** While the frame draws no tear (`render_mode` not 1--4 or 6, `mode_mix` at most 0.001, or post-processing off), a torn entity counts as blend 0: its id is faded, so with nothing else styled neither the style's pass nor the mask is drawn and the frame is the unstyled one, byte for byte ([At blend 0](#blending-in-and-out)). The renderer checks the config each frame, since a script sets the mode after the world is read. The golden `ascii-tear-calm` holds it.
+- **Settings.** `mode_params` are the tear's ([Render modes](post-processing.md#render-modes)): `x` the patch scale (0 = 3), `y` fbm patches (0) or an iris from the centre (1). The uniform each masked draw has grew from 16 to 48 bytes to carry them, in its existing 256-byte slot.
+- Scripts set it with `set_style_param(id, "blend_source", "tear")` and read it back with `get_style_param`; it is a choice, so it doesn't ease.
+
+`examples/ascii_tear.scene.toml` is a 12-second loop: the tear opens over the clearing, nearly swallows it, and closes. The goldens `ascii-tear` and `ascii-tear-matrix` pin it under modes 6 and 1 on `tests/fixtures/scenes/stylize_props_tear.scene.toml`.
+
+A screen field a game fills itself (a shockwave ring, a flashlight cone, the wooze field) as a blend source is not built yet (#859).
 
 ## Palette
 

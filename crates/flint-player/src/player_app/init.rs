@@ -122,6 +122,7 @@ impl PlayerApp {
     pub fn add_extension(&mut self, mut extension: Box<dyn crate::extension::PlayerExtension>) {
         extension.register_script_api(self.core.script.rhai_engine_mut());
         extension.declare_script_api(&mut self.core.script.script_api());
+        #[cfg(feature = "procgen")]
         extension.register_generators(self.core.procgen_resolver.registry_mut());
         self.extensions.push(extension);
         // A late extension still gets its `fonts` hook.
@@ -137,6 +138,7 @@ impl PlayerApp {
     /// Give the procgen resolver a disk tier (#181). The resolver is
     /// rebuilt around it, and its generators move across, built-ins and the
     /// ones extensions registered alike (#195).
+    #[cfg(feature = "procgen")]
     pub(super) fn use_procgen_disk(&mut self, disk: flint_procgen::DiskCacheConfig) {
         let registry = std::mem::take(self.core.procgen_resolver.registry_mut());
         self.core.procgen_resolver = flint_procgen::ProcGenResolver::with_registry(
@@ -205,17 +207,23 @@ impl PlayerApp {
         // already run `flint_procgen::settle_scene` loses nothing by it,
         // since a preset that has been filled in is no longer named. On a
         // copy of the tables: this takes the scene by reference.
-        let mut settled = flint_scene::SceneFile::new(scene_file.scene.name.clone());
-        settled.tables = scene_file.tables.clone();
-        settled.post_process = scene_file.post_process.clone();
-        let scene_path = std::path::PathBuf::from(&self.core.scene_path);
-        if let Err(problem) = flint_procgen::settle_scene(&mut settled, &scene_path) {
-            tracing::warn!("{problem}");
+        // A build without the `living` feature (#754) reads neither table.
+        #[cfg(feature = "living")]
+        {
+            let mut settled = flint_scene::SceneFile::new(scene_file.scene.name.clone());
+            settled.tables = scene_file.tables.clone();
+            settled.post_process = scene_file.post_process.clone();
+            let scene_path = std::path::PathBuf::from(&self.core.scene_path);
+            if let Err(problem) = flint_procgen::settle_scene(&mut settled, &scene_path) {
+                tracing::warn!("{problem}");
+            }
+            self.set_scene_post_process(settled.post_process.clone());
+            let living_tables = flint_procgen::LivingTables::or_warn(&settled);
+            self.scene.living = living_tables.living;
+            self.scene.wooze = living_tables.wooze;
         }
-        self.set_scene_post_process(settled.post_process.clone());
-        let living_tables = flint_procgen::LivingTables::or_warn(&settled);
-        self.scene.living = living_tables.living;
-        self.scene.wooze = living_tables.wooze;
+        #[cfg(not(feature = "living"))]
+        self.set_scene_post_process(scene_file.post_process.clone());
         self.scene.tables = scene_file.scene_tables();
     }
 
@@ -420,6 +428,7 @@ impl PlayerApp {
         // Which project the scene is in, and the procgen disk tier (#181),
         // set up once, before the first scene's assets are resolved.
         self.refresh_project();
+        #[cfg(feature = "procgen")]
         self.init_procgen_disk_cache();
 
         self.enter_scene(super::scene_entry::SceneEntry::Start)
@@ -455,6 +464,7 @@ impl PlayerApp {
 
     /// The procgen disk tier (#181), once: a resolver made with it is kept
     /// for the run, transitions included.
+    #[cfg(feature = "procgen")]
     fn init_procgen_disk_cache(&mut self) {
         if self.core.procgen_resolver.disk_stats().is_some() {
             return;
@@ -800,6 +810,7 @@ impl PlayerApp {
 /// else `.flint/procgen-cache/` at the scene's project root
 /// (`Project::root_for`, ADR 0114), so every scene of a project shares one
 /// cache and the `.flint/` it makes marks the root that was already in use.
+#[cfg(feature = "procgen")]
 fn procgen_disk_config(
     project: &flint_core::project::Project,
     scene_dir: &Path,

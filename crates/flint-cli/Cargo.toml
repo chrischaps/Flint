@@ -37,7 +37,7 @@ flint-import = { workspace = true }
 flint-animation = { workspace = true }
 flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
-flint-player = { workspace = true, features = ["debug-hud", "rhythm"] }
+flint-player = { workspace = true, features = ["debug-hud", "music", "rhythm", "living"] }
 # `metadata`: `flint script api` lists the functions not yet declared
 # through the builder from Rhai's metadata (ADR 0116); `check` (which has
 # it) is `flint script check` (#694). Both stay on with
@@ -48,7 +48,7 @@ flint-particles = { workspace = true }
 flint-procgen = { workspace = true }
 flint-procgen-ai = { workspace = true }
 flint-viewer = { workspace = true }
-flint-debug-ui = { workspace = true }
+flint-debug-ui = { workspace = true, features = ["living"] }
 flint-music = { workspace = true }
 flint-rhythm = { workspace = true }
 flint-input-capture = { workspace = true }

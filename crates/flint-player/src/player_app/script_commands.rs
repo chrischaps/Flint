@@ -45,7 +45,7 @@ impl PlayerApp {
         // A music session clocks its suite on kira's manager itself, which
         // the browser's worklet mix (#136) keeps on the audio thread; such a
         // scene mixes on the main thread, as before.
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", feature = "music"))]
         if !self.audio.engine.is_available() && crate::music::plays_music(&self.core.world) {
             tracing::info!(
                 "[flint-audio] a music_session needs kira here: mixing on the main thread"
@@ -259,12 +259,6 @@ pub fn apply_camera_overrides(camera: &mut flint_render::Camera, cam: &CameraOve
         }
         None => camera.up = FlintVec3::UP,
     }
-}
-
-pub(super) fn table_of(value: &toml::Value) -> Result<&toml::Table, String> {
-    value
-        .as_table()
-        .ok_or_else(|| format!("{value} isn't a map of knobs"))
 }
 
 /// A script's `rumble()` in the player, with the pads its own (#748).

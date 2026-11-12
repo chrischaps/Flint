@@ -13,6 +13,12 @@ path = "src/lib.rs"
 name = "flint-player"
 path = "src/main.rs"
 
+# A game binary with a procgen generator of its own (#195, ADR 0119).
+[[example]]
+name = "cave_game"
+path = "examples/cave_game/main.rs"
+required-features = ["procgen"]
+
 # The player in a browser (#99): `trunk serve` in this directory.
 [[bin]]
 name = "flint-web"
@@ -24,11 +30,11 @@ name = "flint-web-shims"
 path = "src/bin/flint_web_shims.rs"
 
 [features]
-default = ["debug-hud", "audio", "gamepad", "rhythm"]
+default = ["debug-hud", "audio", "gamepad", "music", "rhythm", "living"]
 # The sound card (kira's cpal backend: ALSA on Linux). Off, the player runs
 # silent and a music session's stems don't play, as on a machine without a
 # device (its beat still counts, on the game clock).
-audio = ["flint-audio/device", "flint-music/device", "flint-rhythm?/device"]
+audio = ["flint-audio/device", "flint-music?/device", "flint-rhythm?/device"]
 # Gamepads (gilrs: libudev on Linux). Off, no pad is ever seen; keyboard,
 # mouse, touch and --input-script's pad still work (#221).
 gamepad = ["flint-runtime/gamepad", "flint-input-capture?/gamepad"]
@@ -36,7 +42,24 @@ gamepad = ["flint-runtime/gamepad", "flint-input-capture?/gamepad"]
 # `chart` is judged by flint-rhythm (coherence, the ladder, reintegration,
 # the 1 kHz pad capture of flint-input-capture). Off, the player links none
 # of it, and a charted suite plays as music, its chart not judged.
-rhythm = ["dep:flint-rhythm", "dep:flint-input-capture"]
+rhythm = ["music", "dep:flint-rhythm", "dep:flint-input-capture"]
+# A scene's music (#745, #754): a `music_session`'s stems on their buses and
+# the beat for `music_beat()` and the rest, through flint-music. Off, a scene
+# with one says so once at its entry and plays silent, its scripts reading
+# the beat as with no music (-1).
+music = ["dep:flint-music"]
+# Procgen at run time (#754): a `model.asset` or texture named by a
+# `*.procgen.toml` spec is generated at load (or on the frame queue), through
+# flint-procgen, and an extension may register generators. Off, every name is
+# the file loader's, and a scene whose names a spec would have made says so
+# once.
+procgen = ["dep:flint-procgen"]
+# Living props and the wooze field (#211-#252): props that hold and glide,
+# the `[living]` / `[wooze]` tables, shallow wooze, woozy grass, the A/B
+# compare, the `wooze`, `living` and `debug` script modules and the Living
+# Props panel. Needs procgen, which makes the props' poses. Off, a scene with
+# any of it says so once and stands still.
+living = ["procgen", "flint-debug-ui?/living"]
 # Summonable debug overlay (Phase 4 F8, ADR 0035). Feature-off builds carry
 # zero debug surface and must still compile.
 debug-hud = ["dep:flint-debug-ui"]
@@ -58,7 +81,7 @@ flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
 flint-import = { workspace = true }
 flint-audio = { workspace = true }
-flint-music = { workspace = true }
+flint-music = { workspace = true, optional = true }
 flint-rhythm = { workspace = true, optional = true }
 flint-input-capture = { workspace = true, optional = true }
 serde = { workspace = true }
@@ -70,7 +93,7 @@ flint-script = { workspace = true }
 rhai = { workspace = true }
 profiling = { workspace = true }
 tracy-client = { workspace = true, optional = true, features = ["only-localhost", "ondemand"] }
-flint-procgen = { workspace = true }
+flint-procgen = { workspace = true, optional = true }
 flint-debug-ui = { workspace = true, optional = true }
 bytemuck = { workspace = true }
 clap = { workspace = true }

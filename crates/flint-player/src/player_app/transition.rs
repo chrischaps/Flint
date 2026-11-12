@@ -371,6 +371,7 @@ impl PlayerApp {
         self.core.events.retain(|event| !event.is_contact());
         self.core.animation.clear();
         self.core.particles.clear();
+        #[cfg(feature = "procgen")]
         self.core.procgen_resolver.clear_queue();
 
         // Clear world
@@ -430,7 +431,10 @@ impl PlayerApp {
         // Living props' tables are checked and their preset filled in, as at
         // the first load (#686): a scene that won't settle doesn't load
         let loaded = flint_scene::load_scene(&path, &registry).and_then(|(world, mut file)| {
+            #[cfg(feature = "living")]
             flint_procgen::settle_scene(&mut file, Path::new(&path))?;
+            #[cfg(not(feature = "living"))]
+            let _ = &mut file;
             Ok((world, file))
         });
         match loaded {

@@ -34,7 +34,8 @@ pub struct LivingTune {
     pub frozen: bool,
     /// Beats to move on by, the next time the clock is read.
     steps_queued: u32,
-    /// Whether the pose overlay is showing.
+    /// Whether the pose overlay is showing (the panel's, debug-hud).
+    #[cfg_attr(not(feature = "debug-hud"), allow(dead_code))]
     pub overlay: bool,
     /// Whether the left button's press picked a tree (#248), so its release
     /// stops there too.

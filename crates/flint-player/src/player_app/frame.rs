@@ -649,6 +649,7 @@ impl PlayerApp {
                 renderer: &mut *renderer,
                 world: &self.core.world,
                 camera: &self.camera,
+                #[cfg(feature = "procgen")]
                 resolver: &mut self.core.procgen_resolver,
             };
             self.core.subsystems.post_encode(&mut ctx);
@@ -1011,7 +1012,7 @@ impl PlayerApp {
     }
 
     /// The frame-budgeted procgen queue, as the frame runs it (tests).
-    #[cfg(test)]
+    #[cfg(all(test, feature = "living"))]
     pub(super) fn tick_procgen(&mut self) {
         use super::game_core::FrameHost;
         let (core, lent) = self.lend();
@@ -1160,7 +1161,7 @@ impl PlayerApp {
         let mut subsystems = std::mem::take(&mut self.core.subsystems);
         #[cfg(feature = "debug-hud")]
         let mut debug_panels = std::mem::take(&mut self.debug_panels);
-        #[cfg(feature = "debug-hud")]
+        #[cfg(all(feature = "debug-hud", feature = "living"))]
         let view_proj = self.camera.view_projection_matrix();
         let ui_textures = &self.hud.textures;
         let ui_fonts = &self.hud.fonts;
@@ -1267,7 +1268,7 @@ impl PlayerApp {
 
             // The pose overlay (#218) and a picked tree's marks and window
             // (#248), in the world and under every panel.
-            #[cfg(feature = "debug-hud")]
+            #[cfg(all(feature = "debug-hud", feature = "living"))]
             for panel in debug_panels.iter_mut() {
                 if let Some(living) = panel
                     .as_any_mut()

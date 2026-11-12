@@ -83,7 +83,10 @@ pub trait PlayerExtension {
     /// registered has already fallen through to a file or a placeholder.
     ///
     /// Only the player sees these: `flint gen`, `flint edit` and
-    /// `flint render` build their registries from the built-ins alone.
+    /// `flint render` build their registries from the built-ins alone. A
+    /// player built without the `procgen` feature (#754) has no registry,
+    /// and no such hook.
+    #[cfg(feature = "procgen")]
     fn register_generators(&mut self, _registry: &mut flint_procgen::GeneratorRegistry) {}
 
     /// Per-frame Rust, run after the clock ticks and before the scripts'
