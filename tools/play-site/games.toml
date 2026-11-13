@@ -55,10 +55,11 @@ repo = "chrischaps/FlintKart"
 # touch stick, DRIFT and ITEM, #134), the glow-up (FlintKart#14-#25), the
 # HUD, title and sky polish (FlintKart#28-#52), and runtime graphics: tiers
 # Low / Medium / High with Auto picking one from the device and frame time,
-# and distance LODs for set dressing (FlintKart#54-#63). Its engine subtree
-# is Flint main's tree as of #409. The poster and film are the Lighthouse
-# Bay retake (#158), now on master (FlintKart#67).
-ref = "bd910be3aa4eeac18e4a6c7a6594e7af7a1cdc08"
+# and distance LODs for set dressing (FlintKart#54-#63). The poster and film
+# are the Lighthouse Bay retake (#158, FlintKart#67). Its engine subtree is
+# Flint main's tree at 78bccb0 (FlintKart#68), the scenes without the
+# audio_listener #799 removed.
+ref = "e927c0406e04376fcf8b08b23180c66fd642052a"
 page = "https://chaps.dev/projects/flint-kart/"
 # Paths, not URLs: build.py copies them from the repo beside the bundle.
 video = "web/kart-race.mp4"
