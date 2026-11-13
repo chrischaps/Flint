@@ -10,6 +10,7 @@
 //! angle = 50.0           # the base angle, degrees
 //! contour = 1.0          # outline strength
 //! grazing = 0.0          # 1 spares planes seen edge-on from depth lines (#404)
+//! tone = "picture"       # picture | light: hatch the darks, or the shadows (#869)
 //! wobble = 1.5           # how far lines wander, points
 //! sketchy = 0.6          # a second, offset outline
 //! grain = 0.5            # paper grain, and how much it breaks strokes
@@ -62,6 +63,18 @@
 //! first entity's that names one; a row naming another draws procedurally
 //! (warned once).
 //!
+//! ## Tone from the light (#869)
+//!
+//! The picture's luminance is albedo times light, so with `tone =
+//! "picture"` (the default) a dark material is hatched as if it were in
+//! shadow. `tone = "light"` divides the picture by the style albedo
+//! ([`StyleFrame::albedo`]: each opaque mesh's own colour, which the
+//! renderer draws after the scene pass only while a row asks for it), both
+//! in display values, so a brown floor in the sun reads as lit and a white
+//! prop in shadow as dark: the hatching follows where the light falls off.
+//! Where no mesh was drawn (the sky, terrain, grass, water) or the paint is
+//! nearly black, the picture's own luminance stands.
+//!
 //! ## Per entity
 //!
 //! As ASCII (#266): an entity with a `pencil_style` component, or a
@@ -101,6 +114,10 @@ pub const SCOPES: &[&str] = &["screen", "entities"];
 /// Where a variant's hatching is anchored: ASCII's two grids, and `world`,
 /// strokes laid on the surfaces themselves (#389).
 pub const GRIDS: &[&str] = &["screen", "object", "world"];
+
+/// Where the tone comes from (#869): the picture's luminance, or the light
+/// alone (the picture over its albedo).
+pub const TONES: &[&str] = &["picture", "light"];
 
 /// Rows one frame's variant table holds, the whole frame's included.
 pub const MAX_VARIANTS: usize = 64;
@@ -177,6 +194,7 @@ const OPTIONS: &[StyleOption] = &[
     StyleOption::new("direction", "surface", DIRECTIONS),
     StyleOption::new("scope", "screen", SCOPES),
     StyleOption::new("grid", "screen", GRIDS),
+    StyleOption::new("tone", "picture", TONES),
     StyleOption::new("paper_image", NO_IMAGE, &[]).discovered(paper_choices),
     StyleOption::new("stroke_image", NO_IMAGE, &[]).discovered(stroke_choices),
 ];
@@ -185,6 +203,7 @@ const HINTS: &[StyleHint] = &[
     StyleHint::new("direction", "Stroke direction", "surface: round the form, along iso-depth lines; screen: all at the angle; tensor: along the picture's edges"),
     StyleHint::new("scope", "Scope", "screen: the table draws the whole frame; entities: it is only the preset for pencil_style entities"),
     StyleHint::new("grid", "Hatch anchor", "screen: hatching fixed to the screen; object: pinned to each entity's origin, so strokes travel with it; world: laid on the surfaces, so they hold as the camera moves"),
+    StyleHint::new("tone", "Tone from", "picture: hatch where the picture is dark, dark paint included; light: hatch where the light falls off (the picture over each mesh's own colour), so a dark floor in the sun stays blank and a white prop in shadow is hatched"),
     StyleHint::new("spacing", "Spacing (pt)", "Hatch line spacing in points"),
     StyleHint::new("thickness", "Stroke width (pt)", "Hatch stroke width in points"),
     StyleHint::new("layers", "Hatch layers", "Up to four; each joins, crossing the last, as the tone darkens").integer(),
@@ -218,7 +237,21 @@ pub(super) static STYLE: StyleDescriptor =
         .params(PARAMS)
         .options(OPTIONS)
         .hints(HINTS)
+        .uses_albedo(super::MaskUse::When(reads_albedo))
         .component("pencil_style");
+
+/// Whether some row this frame takes its tone from the light (#869): the
+/// scene's table over the frame, or an entity's variant, so the renderer
+/// draws the style albedo only then.
+fn reads_albedo(
+    config: &crate::postprocess::PostProcessConfig,
+    ids: &crate::style_mask::StyleIds,
+) -> bool {
+    (STYLE.covers_frame(config) && STYLE.option(config, "tone") == "light")
+        || ids
+            .variants_of(STYLE.name)
+            .any(|(_, v)| !v.off && v.option(&STYLE, config, "tone") == "light")
+}
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     let device = d.device;
@@ -250,6 +283,8 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
             },
             image_entry(2),
             image_entry(3),
+            // The style albedo (#869), or the blank stand-in
+            image_entry(4),
         ],
     });
     // Bound while no entity asks for the style: one unstyled pixel
@@ -268,6 +303,22 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         view_formats: &[],
     });
     let no_mask_view = no_mask.create_view(&Default::default());
+    // Bound while no row reads the light: one texel where no mesh was drawn
+    let no_albedo = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Pencil No Albedo"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: crate::style_albedo::ALBEDO_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let no_albedo_view = no_albedo.create_view(&Default::default());
     let blit = kit::Blit::new(device, "Pencil Blit", &input_bgl, d.format);
     let flow_shader = kit::shader(device, "Pencil Flow Shader", FLOW_SHADER);
     let flow_pipeline = |label: &str, entry: &str| {
@@ -304,6 +355,8 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         geometry_bgl,
         _no_mask: no_mask,
         no_mask_view,
+        _no_albedo: no_albedo,
+        no_albedo_view,
         blit,
         warned: Mutex::new(false),
         images: Mutex::new(Images {
@@ -446,6 +499,12 @@ pub fn direction_mode(name: &str) -> f32 {
     DIRECTIONS.iter().position(|m| *m == name).unwrap_or(0) as f32
 }
 
+/// The tone mode's shader number (#869): 0 picture, 1 light; an unknown
+/// name is `picture`.
+pub fn tone_mode(name: &str) -> f32 {
+    TONES.iter().position(|m| *m == name).unwrap_or(0) as f32
+}
+
 /// The seed a frame draws with: `seed`, moved on `boil` times a second of
 /// post time, so a still drawing (boil 0) never changes and a boiling one
 /// changes in steps, the same steps at the same `--style-time`. The steps
@@ -522,7 +581,12 @@ pub fn row(
                 names_image(&option("paper_image")) as u32 as f32,
                 names_image(&option("stroke_image")) as u32 as f32,
             ],
-            [param("grazing").clamp(0.0, 1.0), 0.0, 0.0, 0.0],
+            [
+                param("grazing").clamp(0.0, 1.0),
+                tone_mode(&option("tone")),
+                0.0,
+                0.0,
+            ],
         ],
     }
 }
@@ -582,6 +646,8 @@ struct Pencil {
     geometry_bgl: wgpu::BindGroupLayout,
     _no_mask: wgpu::Texture,
     no_mask_view: wgpu::TextureView,
+    _no_albedo: wgpu::Texture,
+    no_albedo_view: wgpu::TextureView,
     /// The input through, outside the styled entities' rect (#385).
     blit: kit::Blit,
     /// Whether the too-many-variants warning has been given.
@@ -599,8 +665,10 @@ impl Pencil {
         stroke: &StyleImage,
     ) -> Arc<wgpu::BindGroup> {
         let mask = frame.mask.filter(|_| with_mask);
-        // Keyed by both images' uploads, so a new paper gets a new group
-        let key = mask.is_some() as u64 | paper.generation << 1 | stroke.generation << 32;
+        // Keyed by both images' uploads, so a new paper gets a new group,
+        // and by the albedo's size, which a render-scale step changes
+        let key = (mask.is_some() as u64 | paper.generation << 1 | stroke.generation << 32)
+            ^ frame.albedo_key().wrapping_mul(0x9E37_79B9_7F4A_7C15);
         frame.depth_bind("Pencil Geometry BG", key, || {
             frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Pencil Geometry BG"),
@@ -623,6 +691,15 @@ impl Pencil {
                     wgpu::BindGroupEntry {
                         binding: 3,
                         resource: wgpu::BindingResource::TextureView(&stroke.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(
+                            frame
+                                .albedo
+                                .as_ref()
+                                .map_or(&self.no_albedo_view, |a| &a.view),
+                        ),
                     },
                 ],
             })
@@ -908,6 +985,62 @@ mod tests {
             std::mem::size_of::<PencilUniforms>(),
             64 + 16 + 16 + 16 + 16 + 16 + MAX_VARIANTS * 144 + MAX_IDS * 4
         );
+    }
+
+    /// `tone` rides in the row's ninth vec4 (#869), and the style albedo is
+    /// asked for only while some row reads the light: the whole frame's
+    /// table, or one entity's variant, an opt-out's never.
+    #[test]
+    fn the_albedo_is_drawn_only_while_a_row_takes_its_tone_from_the_light() {
+        use crate::postprocess::PostProcessConfig;
+        use crate::style_mask::{StyleIds, StyleVariant};
+        let row_for = |tone: &str| {
+            let tone = tone.to_string();
+            row(
+                &|n| STYLE.param(&PostProcessConfig::default(), n),
+                &move |n| {
+                    if n == "tone" {
+                        tone.clone()
+                    } else {
+                        String::new()
+                    }
+                },
+                0.0,
+                [0.0, 0.0],
+                0.0,
+            )
+        };
+        assert_eq!(row_for("picture").v[8][1], 0.0);
+        assert_eq!(row_for("light").v[8][1], 1.0);
+        assert_eq!(row_for("lamp").v[8][1], 0.0, "an unknown name is picture");
+
+        let none = StyleIds::default();
+        let mut config = PostProcessConfig::default();
+        config.styles.set_enabled("pencil", true);
+        assert!(!crate::stylize::any_uses_albedo(&config, &none), "picture is the default");
+        config.styles.set_option("pencil", "tone", "light");
+        assert!(crate::stylize::any_uses_albedo(&config, &none));
+        // A preset for entities draws nothing by itself
+        config.styles.set_option("pencil", "scope", "entities");
+        assert!(!crate::stylize::any_uses_albedo(&config, &none));
+
+        // An entity's variant: its own tone, else the preset's
+        let mut ids = StyleIds::default();
+        ids.set(vec![("pencil".to_string(), StyleVariant::plain("pencil"))]);
+        assert!(crate::stylize::any_uses_albedo(&config, &ids), "inherits light");
+        let mut own = StyleVariant::plain("pencil");
+        own.options.insert("tone".into(), "picture".into());
+        ids.set(vec![("pencil{tone=picture}".to_string(), own)]);
+        assert!(!crate::stylize::any_uses_albedo(&config, &ids));
+        let mut off = StyleVariant::plain("pencil");
+        off.off = true;
+        ids.set(vec![("pencil{off}".to_string(), off)]);
+        assert!(!crate::stylize::any_uses_albedo(&config, &ids), "an opt-out");
+        // Post-processing off draws no style at all
+        let mut ids = StyleIds::default();
+        ids.set(vec![("pencil".to_string(), StyleVariant::plain("pencil"))]);
+        config.enabled = false;
+        assert!(!crate::stylize::any_uses_albedo(&config, &ids));
     }
 
     #[test]

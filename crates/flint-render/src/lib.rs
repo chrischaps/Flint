@@ -44,6 +44,7 @@ pub mod sky_pipeline;
 pub mod skybox_pipeline;
 pub mod split_view;
 pub mod sprite2d_pipeline;
+pub mod style_albedo;
 pub mod style_mask;
 pub mod stylize;
 pub mod terrain_pipeline;

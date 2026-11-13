@@ -556,6 +556,12 @@ pub struct StyleDescriptor {
     /// mask each frame and hands it over as [`StyleFrame::mask`]; while
     /// none is, the mask isn't made.
     pub uses_mask: MaskUse,
+    /// Whether the style reads the style albedo (#869): the opaque
+    /// surfaces' own colour before light, drawn after the scene pass while
+    /// any such style is on and [`MaskUse::now`] holds (the same `Never` /
+    /// `Always` / `When` as the mask), handed over as
+    /// [`StyleFrame::albedo`]. The picture divided by it is the light.
+    pub uses_albedo: MaskUse,
     /// Framework-made inputs the style reads (#301). While any style that
     /// asks for one is on, the framework makes it once a frame for all of
     /// them: [`StyleNeed::Edges`] is [`StyleFrame::edges`].
@@ -629,6 +635,7 @@ impl StyleDescriptor {
             params: &[],
             options: &[],
             uses_mask: MaskUse::Never,
+            uses_albedo: MaskUse::Never,
             needs: &[],
             hints: &[],
             component: None,
@@ -654,6 +661,12 @@ impl StyleDescriptor {
     /// Whether and when it reads the style mask.
     pub const fn uses_mask(mut self, uses_mask: MaskUse) -> Self {
         self.uses_mask = uses_mask;
+        self
+    }
+
+    /// Whether and when it reads the style albedo (#869).
+    pub const fn uses_albedo(mut self, uses_albedo: MaskUse) -> Self {
+        self.uses_albedo = uses_albedo;
         self
     }
 
@@ -1089,6 +1102,14 @@ pub struct StyleFrame<'a> {
     /// them once, before the first stage, for every style that reads them.
     /// Bind it with [`edges_bind`](Self::edges_bind).
     pub edges: Option<Arc<StyleTexture>>,
+    /// The style albedo (#869): each opaque mesh's own colour before light
+    /// ([`ALBEDO_FORMAT`](crate::style_albedo::ALBEDO_FORMAT), linear rgb,
+    /// alpha 1 where a mesh was drawn and 0 where none was: the sky,
+    /// terrain, grass, the ocean, particles), at the depth's size, read by
+    /// UV with `textureLoad`. `Some` whenever a style that
+    /// [`uses_albedo`](StyleDescriptor::uses_albedo) is on; key bind groups
+    /// over it with [`albedo_key`](Self::albedo_key).
+    pub albedo: Option<Arc<StyleTexture>>,
     /// The chain's linear, clamped sampler.
     pub linear_sampler: &'a wgpu::Sampler,
     /// Seconds of game time, for animated styles.
@@ -1290,6 +1311,14 @@ impl StyleFrame<'_> {
                 }],
             })
         }))
+    }
+
+    /// A key for bind groups over [`albedo`](Self::albedo): its size, as
+    /// [`edges_key`](Self::edges_key) is the edges'. 0 while there is none.
+    pub fn albedo_key(&self) -> u64 {
+        self.albedo
+            .as_ref()
+            .map_or(0, |a| (u64::from(a.width) << 32) | u64::from(a.height))
     }
 
     /// A key for bind groups over [`edges`](Self::edges): its size, which
@@ -2659,6 +2688,15 @@ pub fn registry() -> &'static [&'static StyleDescriptor] {
 /// Whether `name` is one of the styles compiled into the engine.
 pub fn is_builtin(name: &str) -> bool {
     REGISTRY.iter().any(|d| d.name == name)
+}
+
+/// Whether any style on this frame reads the style albedo (#869), so the
+/// renderer draws it after the scene pass.
+pub fn any_uses_albedo(config: &PostProcessConfig, ids: &StyleIds) -> bool {
+    config.enabled
+        && registry()
+            .iter()
+            .any(|d| d.is_on(config, ids) && d.uses_albedo.now(config, ids))
 }
 
 /// Whether any style on this frame reads the entity style mask: one

@@ -1450,6 +1450,17 @@ impl SceneRenderer {
                 resources.height,
             )
         });
+        // The style albedo (#869), drawn this frame by encode_to while a
+        // style that reads it is on
+        let style_albedo = crate::stylize::any_uses_albedo(config, ids).then(|| {
+            resources.styles.get(
+                device,
+                crate::style_albedo::ALBEDO_TARGET,
+                crate::style_albedo::ALBEDO_FORMAT,
+                resources.width,
+                resources.height,
+            )
+        });
         // Where each id's entities are (#385), for styles' scissors
         let style_bounds = if style_mask.is_some() && self.style_scissor {
             self.style_bounds(&camera.view_projection_matrix())
@@ -1481,6 +1492,7 @@ impl SceneRenderer {
                 style_ids: &self.style_ids,
                 style_bounds: &style_bounds,
                 edges: None,
+                albedo: style_albedo,
                 linear_sampler: &pp.linear_sampler,
                 // held on twos under a whole-frame motion_hold (#405)
                 time: self.post_time(),

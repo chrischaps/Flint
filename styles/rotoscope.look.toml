@@ -23,6 +23,7 @@ tune = [
     "pencil.brightness=0.35,0.5,0.65",
     "pencil.layers=0,1,2",
     "pencil.grazing=0,0.5,1",
+    "pencil.tone=picture,light",
 ]
 notes = """
 Brightness decides what is shaded at all. One hatch layer joins wherever the
@@ -38,6 +39,10 @@ direction = screen, one hand at one angle, read most like a traced frame:
 surface and tensor both swirled round the barrels.
 contour_width 1.5 and wobble 2 are the middle of the sweep: 1 looked like a
 technical pen, 2.2 like a marker, and wobble 3.5 doubled every outline.
+tone = light (#869) takes the tone from the light instead of the picture, so
+dark paint in the sun stays blank and only shadows are hatched; with it,
+brightness 0 suits both stylize_props and the darker ascii_dark_props ground,
+which brightness 0.5 hatches all over under tone = picture.
 boil only moves the picture with a clock (the player, --style-time);
 renders at time 0 are byte-identical run to run.
 """

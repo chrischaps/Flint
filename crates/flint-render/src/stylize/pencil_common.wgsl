@@ -21,7 +21,7 @@ struct PencilRow {
     g: vec4<f32>,
     // paper_scale (pt a texel), stroke_rows, paper image on, stroke image on (#390)
     h: vec4<f32>,
-    // grazing (#404), unused x3
+    // grazing (#404), tone (#869: 0 picture, 1 light), unused x2
     i: vec4<f32>,
 };
 
@@ -126,6 +126,9 @@ fn vnoise(p: vec2<f32>, seed: u32) -> f32 {
 // The paper and stroke images (#390), a blank texel while none is named
 @group(2) @binding(2) var paper_tex: texture_2d<f32>;
 @group(2) @binding(3) var stroke_tex: texture_2d<f32>;
+// The style albedo (#869): each opaque mesh's own colour, alpha 0 where none
+// was drawn; a blank texel while no row reads the light
+@group(2) @binding(4) var albedo_tex: texture_2d<f32>;
 
 fn mask_id(p: vec2<i32>) -> u32 {
     let size = vec2<i32>(textureDimensions(style_mask));

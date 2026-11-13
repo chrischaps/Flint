@@ -20,6 +20,7 @@ contour = { type = "f32", min = 0.0, max = 2.0, description = "Outline strength 
 contour_width = { type = "f32", min = 0.5, max = 4.0, description = "Outline width in points" }
 depth = { type = "f32", min = 0.0, max = 4.0, description = "Sensitivity of outlines to depth steps (silhouettes)" }
 grazing = { type = "f32", min = 0.0, max = 1.0, description = "How much a plane seen edge-on is spared silhouette lines: 1 draws a depth step only where the neighbours lie on another surface, so a floor near the horizon is not inked in a band; 0 (the default) draws every depth step (#404)" }
+tone = { type = "enum", values = ["picture", "light"], description = "Where the hatching's tone comes from (#869): picture (the default) is the picture's luminance, so dark paint is hatched like shadow; light is the picture over each mesh's own colour, so the hatching follows where the light falls off (a dark floor in the sun stays blank). Terrain, grass and water keep the picture's" }
 crease = { type = "f32", min = 0.0, max = 4.0, description = "Sensitivity of outlines to creases, where the surface turns" }
 detail = { type = "f32", min = 0.0, max = 2.0, description = "Outlines from the picture's own luminance edges (texture detail)" }
 wobble = { type = "f32", min = 0.0, max = 8.0, description = "How far lines wander off true, in points" }
