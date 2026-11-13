@@ -103,6 +103,18 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                          `--style edges_view` shows them)
    #   --list-styles [--json] (#303: every registered style, its stage, table, and each
    #                          param's default/range/help; with a scene, its user styles too)
+   #   --watch                (#432, commands/render_watch.rs: run, then write -o again on each save.
+   #                          Watches the scene's folder (recursive), custom::style_dirs, the schema dirs
+   #                          and the files flags name; the render's outputs (`Written`: -o and files named
+   #                          after it, --report, --ascii-text...) and editor scratch are no change, and a
+   #                          batch whose stamps were already drawn for is dropped (one save can be two
+   #                          batches). RenderHost lives for the run. A still or sweep stays in
+   #                          render::render after writing, in Watch::redraws: a batch of only style
+   #                          sources (flint_viewer::watch::StyleSources) -> reload_changed_for, then if no
+   #                          description changed custom::poll_files_now() and the `draw_and_write`
+   #                          closure again (each column's config set, history reset); anything else
+   #                          returns and the outer loop renders from scratch on the same device.
+   #                          Clocked renders, sequences and variants always render from scratch)
    #   --look ascii_noir      (#279: a styles/<name>.look.toml preset merged over the scene's
    #                          [post_process]; built-ins ascii_noir|matrix|ink_wash|graphite|watercolor|
    #                          coloured_pencil|blueprint|charcoal (#391)|rotoscope (#404);

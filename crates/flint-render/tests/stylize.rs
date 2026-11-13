@@ -2261,6 +2261,52 @@ fn a_hundred_user_style_saves_keep_the_bind_cache_level() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// #432: a pass looks at its WGSL every 15 frames, which a window passes
+/// in a quarter of a second; `flint render --watch` draws one frame a
+/// save, so it asks for the look with `poll_files_now` and that frame
+/// draws the saved shader.
+#[test]
+fn a_saved_wgsl_draws_at_the_frame_after_poll_files_now() {
+    let Some(gpu) = gpu_alone() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let grey = |level: f32| {
+        format!(
+            "fn style(p: StylePixel) -> vec4<f32> {{\n    \
+             return vec4<f32>({level:?}, {level:?}, {level:?}, 1.0);\n}}\n"
+        )
+    };
+    let dir = user_styles("poll-432", &["utest_poll"], &grey(0.25));
+    let messages = flint_render::stylize::custom::load_dir(&dir);
+    assert!(messages.is_empty(), "{messages:?}");
+    let world = box_world();
+    let mut renderer = SceneRenderer::new_headless(
+        gpu.device,
+        gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let all = ["utest_poll"];
+    let level = |frame: &[u8]| frame[0];
+    let before = level(&with_styles(&gpu, &mut renderer, &world, &all, &all));
+    assert!((before as f32 - 64.0).abs() < 6.0, "drew {before}");
+
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(dir.join("styles").join("utest_poll.wgsl"), grey(0.75)).unwrap();
+    // Two frames on, the pass hasn't looked yet
+    gpu.frame(&mut renderer, &world);
+    let unasked = level(&gpu.frame(&mut renderer, &world));
+    assert_eq!(unasked, before, "the pass looked before its 15 frames");
+
+    flint_render::stylize::custom::poll_files_now();
+    let asked = level(&gpu.frame(&mut renderer, &world));
+    assert!((asked as f32 - 191.0).abs() < 6.0, "drew {asked} for 0.75");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// #414: a user style that reads the mask is per-entity. Its generated
 /// `<name>_style` component (or a `style_mask` naming it) switches it on
 /// with no `[post_process.styles]` table, and each entity's settings reach
