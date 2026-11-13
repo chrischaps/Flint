@@ -100,11 +100,11 @@ mod tests {
 struct Kuwahara {
     uniform_bgl: wgpu::BindGroupLayout,
     sampled_bgl: wgpu::BindGroupLayout,
-    tensor_pipeline: wgpu::RenderPipeline,
+    tensor_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     tensor_uniforms: wgpu::Buffer,
-    blur_pipeline: wgpu::RenderPipeline,
+    blur_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     blur_uniforms: wgpu::Buffer,
-    pipeline: wgpu::RenderPipeline,
+    pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniforms: wgpu::Buffer,
 }
 

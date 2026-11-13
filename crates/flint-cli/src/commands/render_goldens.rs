@@ -182,6 +182,12 @@ pub struct GoldenArgs {
     /// device, and a case that panics is run again in its own (#329)
     #[arg(long)]
     pub isolate: bool,
+
+    /// Build every case's pipelines anew, as before #911, instead of
+    /// keeping them for the next case on the device: for checking that
+    /// the reuse changes no pixel, in one process
+    #[arg(long)]
+    pub fresh_pipelines: bool,
 }
 
 #[derive(Deserialize)]
@@ -478,6 +484,29 @@ enum Rendered {
     Failed(String),
 }
 
+/// The run's pipeline line (#911): how many the cases built and how many
+/// they took from an earlier case, and ASCII's glyph pipeline's own count,
+/// which was one a case before.
+fn pipeline_summary(kept: bool) -> String {
+    let counts = flint_render::pipeline_cache::counts();
+    let built: u64 = counts.values().map(|c| c.built).sum();
+    let reused: u64 = counts.values().map(|c| c.reused).sum();
+    let glyph = counts
+        .get(ASCII_GLYPH_PIPELINE)
+        .copied()
+        .unwrap_or_default();
+    format!(
+        "pipelines: {built} built, {reused} reused from an earlier case{}; \
+         ASCII glyph pipeline built {}, reused {}",
+        if kept { "" } else { " (--fresh-pipelines)" },
+        glyph.built,
+        glyph.reused
+    )
+}
+
+/// The label of ASCII's glyph pipeline, the one the summary names.
+const ASCII_GLYPH_PIPELINE: &str = "ASCII Pipeline";
+
 /// Every loaded user style's error, a line each, as `flint render` warns
 /// of them: what an in-process case's `error` is checked against.
 fn user_style_errors() -> String {
@@ -682,6 +711,12 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
     // build the two were most of a props case's time
     flint_import::memoize_imports(!args.isolate);
     flint_render::memoize_mip_chains(!args.isolate);
+    // And their pipelines (#911): compiling them again was most of a
+    // case's time. Only what nothing writes is kept, so no case sees
+    // another's state
+    let keep_pipelines = !args.isolate && !args.fresh_pipelines;
+    flint_render::pipeline_cache::set_enabled(keep_pipelines);
+    flint_render::pipeline_cache::reset_counts();
     let _cwd = if args.isolate {
         CwdGuard(None)
     } else {
@@ -1096,6 +1131,10 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         },
         sheet_path.display()
     );
+    if !args.isolate {
+        println!("{}", pipeline_summary(keep_pipelines));
+    }
+    flint_render::pipeline_cache::set_enabled(false);
 
     if failed > 0 && !blessing {
         bail!("{failed} case(s) failed against their goldens");

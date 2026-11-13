@@ -1864,25 +1864,25 @@ struct Fonts {
 const POLL_FRAMES: u32 = 15;
 
 struct Ascii {
-    cells_pipeline: wgpu::RenderPipeline,
+    cells_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     /// Per-entity variant cells (#313): their pass and its two entries.
-    variant_cells_pipeline: wgpu::RenderPipeline,
+    variant_cells_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     variant_cells: Mutex<[Option<Owned>; 2]>,
     /// The dissolve's order and rank state (#398), a band of rows per
     /// dissolving variant.
-    dissolve_order_pipeline: wgpu::RenderPipeline,
-    dissolve_rank_pipeline: wgpu::RenderPipeline,
+    dissolve_order_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    dissolve_rank_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     dissolve: Mutex<[Option<Owned>; 2]>,
-    stats_pipeline: wgpu::RenderPipeline,
-    stats_resolve_pipeline: wgpu::RenderPipeline,
-    stats_rows_pipeline: wgpu::RenderPipeline,
+    stats_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    stats_resolve_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    stats_rows_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     stats_in_bgl: wgpu::BindGroupLayout,
     /// Tone statistics (#289): per (slot, run of a lattice row, #337), per
     /// (slot, row), then per slot.
     stats_runs: Mutex<Option<Owned>>,
     stats_rows: Mutex<Option<Owned>>,
     stats: Mutex<Option<Owned>>,
-    pipeline: wgpu::RenderPipeline,
+    pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
     /// The uniform and the variant table (#336), and the edge pass's.
@@ -1900,13 +1900,13 @@ struct Ascii {
     blit: kit::Blit,
     fonts: Mutex<Fonts>,
     history: Mutex<History>,
-    edge_pipeline: wgpu::RenderPipeline,
-    edge_cell_pipeline: wgpu::RenderPipeline,
+    edge_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    edge_cell_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     edge_uniforms: wgpu::Buffer,
     edge_cell_uniforms: wgpu::Buffer,
     /// The edge debug view (#349), drawn instead of the glyphs under
     /// `DebugMode::StyleEdges`.
-    edge_view_pipeline: wgpu::RenderPipeline,
+    edge_view_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     edge_view_uniforms: wgpu::Buffer,
     edge_view_cells_bgl: wgpu::BindGroupLayout,
     /// Each edge cell's glyph, decided once per cell (#910): the thin pass
@@ -1914,8 +1914,8 @@ struct Ascii {
     /// than the grid on every side), then the corner pass
     /// (`ascii_edge_corners.wgsl`, into `edge_slots`), of which the glyph
     /// pass and the edge view read one texel a cell.
-    edge_thin_pipeline: wgpu::RenderPipeline,
-    edge_corner_pipeline: wgpu::RenderPipeline,
+    edge_thin_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    edge_corner_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     edges_in_bgl: wgpu::BindGroupLayout,
     depth_bgl: wgpu::BindGroupLayout,
     mask_bgl: wgpu::BindGroupLayout,
@@ -1930,7 +1930,7 @@ struct Ascii {
     edge_thin_uniforms: wgpu::Buffer,
     /// The glyph grid as text (#317): `fs_text` in ascii.wgsl, drawn only
     /// while `capture` is on, into `text` and copied to its read-back.
-    text_pipeline: wgpu::RenderPipeline,
+    text_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     capture: AtomicBool,
     text: Mutex<Option<TextCapture>>,
 }

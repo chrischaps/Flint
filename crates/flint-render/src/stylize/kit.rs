@@ -95,59 +95,96 @@ pub fn uint_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout 
 
 /// A pipeline drawing one full-screen triangle with `module`'s `vs_main`
 /// and `fs_main` into `format`, unblended.
-pub fn fullscreen_pipeline(
+///
+/// Returned as the caller's own `wgpu::RenderPipeline`, or as an
+/// `Arc<wgpu::RenderPipeline>` that a style's `create` may share with the
+/// next renderer on the device while [`crate::pipeline_cache`] is on
+/// (#911): the type it is stored as picks which ([`KitPipeline`]). Only a
+/// [`shader`]'s module is shared, since its text is the key.
+pub fn fullscreen_pipeline<P: KitPipeline>(
     device: &wgpu::Device,
     label: &str,
-    module: &wgpu::ShaderModule,
+    module: &impl ShaderText,
     layouts: &[&wgpu::BindGroupLayout],
     format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
+) -> P {
     fullscreen_pipeline_with(device, label, module, "fs_main", layouts, format, None)
 }
 
 /// [`fullscreen_pipeline`] with the fragment entry point `fragment`, for a
 /// module that has more than one.
-pub fn fullscreen_pipeline_entry(
+pub fn fullscreen_pipeline_entry<P: KitPipeline>(
     device: &wgpu::Device,
     label: &str,
-    module: &wgpu::ShaderModule,
+    module: &impl ShaderText,
     fragment: &str,
     layouts: &[&wgpu::BindGroupLayout],
     format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
+) -> P {
     fullscreen_pipeline_entry_targets(device, label, module, fragment, layouts, &[format], None)
 }
 
 /// [`fullscreen_pipeline_entry`] with a blend: a style with several passes
 /// in one module (a bloom chain's threshold, downsample, additive upsample
 /// and composite, #321).
-pub fn fullscreen_pipeline_with(
+pub fn fullscreen_pipeline_with<P: KitPipeline>(
     device: &wgpu::Device,
     label: &str,
-    module: &wgpu::ShaderModule,
+    module: &impl ShaderText,
     fragment: &str,
     layouts: &[&wgpu::BindGroupLayout],
     format: wgpu::TextureFormat,
     blend: Option<wgpu::BlendState>,
-) -> wgpu::RenderPipeline {
+) -> P {
     fullscreen_pipeline_entry_targets(device, label, module, fragment, layouts, &[format], blend)
 }
 
 /// [`fullscreen_pipeline`] writing one target per format, `fs_main`'s
 /// `@location(i)` into the i-th (#313).
-pub fn fullscreen_pipeline_targets(
+pub fn fullscreen_pipeline_targets<P: KitPipeline>(
     device: &wgpu::Device,
     label: &str,
-    module: &wgpu::ShaderModule,
+    module: &impl ShaderText,
     layouts: &[&wgpu::BindGroupLayout],
     formats: &[wgpu::TextureFormat],
-) -> wgpu::RenderPipeline {
+) -> P {
     fullscreen_pipeline_entry_targets(device, label, module, "fs_main", layouts, formats, None)
 }
 
 /// The full-screen pipelines' one maker: entry point `fragment`, a target
 /// per format, each with `blend`.
-fn fullscreen_pipeline_entry_targets(
+fn fullscreen_pipeline_entry_targets<P: KitPipeline>(
+    device: &wgpu::Device,
+    label: &str,
+    module: &impl ShaderText,
+    fragment: &str,
+    layouts: &[&wgpu::BindGroupLayout],
+    formats: &[wgpu::TextureFormat],
+    blend: Option<wgpu::BlendState>,
+) -> P {
+    // Everything but the layouts' entries, which the style's scope stands
+    // for (`pipeline_cache::in_scope`): one create makes the same ones
+    let key = module.text().map(|text| {
+        format!(
+            "{label}|{}|{fragment}|{formats:?}|{blend:?}|{} layouts",
+            crate::pipeline_cache::text_key(text),
+            layouts.len()
+        )
+    });
+    P::make(device, label, key, || {
+        build_fullscreen(
+            device,
+            label,
+            module.module(),
+            fragment,
+            layouts,
+            formats,
+            blend,
+        )
+    })
+}
+
+fn build_fullscreen(
     device: &wgpu::Device,
     label: &str,
     module: &wgpu::ShaderModule,
@@ -197,14 +234,118 @@ fn fullscreen_pipeline_entry_targets(
     })
 }
 
+/// What a kit pipeline function returns (#911): a `wgpu::RenderPipeline`
+/// of the caller's own, always built, or an `Arc<wgpu::RenderPipeline>`,
+/// which a style's `create` keeps for the next renderer on the device
+/// while [`crate::pipeline_cache`] is on. The built-in styles store the
+/// `Arc`; a game's style that stores the pipeline itself builds as before.
+pub trait KitPipeline: Sized {
+    /// Build with `build`, or take the pipeline kept under `key` (the
+    /// module's text and the rest; `None` for a module with no text).
+    #[doc(hidden)]
+    fn make(
+        device: &wgpu::Device,
+        label: &str,
+        key: Option<String>,
+        build: impl FnOnce() -> wgpu::RenderPipeline,
+    ) -> Self;
+}
+
+impl KitPipeline for wgpu::RenderPipeline {
+    fn make(
+        _device: &wgpu::Device,
+        label: &str,
+        _key: Option<String>,
+        build: impl FnOnce() -> wgpu::RenderPipeline,
+    ) -> Self {
+        crate::pipeline_cache::built(label);
+        build()
+    }
+}
+
+impl KitPipeline for std::sync::Arc<wgpu::RenderPipeline> {
+    fn make(
+        device: &wgpu::Device,
+        label: &str,
+        key: Option<String>,
+        build: impl FnOnce() -> wgpu::RenderPipeline,
+    ) -> Self {
+        match key {
+            Some(key) => crate::pipeline_cache::scoped(device, label, key, build),
+            None => {
+                crate::pipeline_cache::built(label);
+                std::sync::Arc::new(build())
+            }
+        }
+    }
+}
+
+/// A shader module and the WGSL it was made from: what [`shader`] returns.
+/// It derefs to the `wgpu::ShaderModule`; the text is what a shared
+/// pipeline is keyed by (#911), so a swapped shader file is a new key.
+pub struct Shader {
+    module: wgpu::ShaderModule,
+    text: std::borrow::Cow<'static, str>,
+}
+
+impl Shader {
+    /// The WGSL the module was made from.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// The module alone, for a field of type `wgpu::ShaderModule`.
+    pub fn into_module(self) -> wgpu::ShaderModule {
+        self.module
+    }
+}
+
+impl std::ops::Deref for Shader {
+    type Target = wgpu::ShaderModule;
+
+    fn deref(&self) -> &wgpu::ShaderModule {
+        &self.module
+    }
+}
+
+/// A module a kit pipeline function takes: a [`Shader`], which a shared
+/// pipeline is keyed by, or a bare `wgpu::ShaderModule`, never shared.
+pub trait ShaderText {
+    fn module(&self) -> &wgpu::ShaderModule;
+    /// The WGSL the module was made from, when it is known.
+    fn text(&self) -> Option<&str>;
+}
+
+impl ShaderText for wgpu::ShaderModule {
+    fn module(&self) -> &wgpu::ShaderModule {
+        self
+    }
+
+    fn text(&self) -> Option<&str> {
+        None
+    }
+}
+
+impl ShaderText for Shader {
+    fn module(&self) -> &wgpu::ShaderModule {
+        &self.module
+    }
+
+    fn text(&self) -> Option<&str> {
+        Some(&self.text)
+    }
+}
+
 /// A WGSL module: a [`wgsl!`] (or a bare string). With
 /// `FLINT_STYLE_SHADER_DIR` set, natively, a [`wgsl!`]'s files are read
 /// from that folder instead and hot-reload (#418, [`dev_shader`]).
-pub fn shader(device: &wgpu::Device, label: &str, source: impl Into<Wgsl>) -> wgpu::ShaderModule {
-    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+pub fn shader(device: &wgpu::Device, label: &str, source: impl Into<Wgsl>) -> Shader {
+    let text = dev_shader::source(label, source.into());
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(dev_shader::source(label, source.into())),
-    })
+        source: wgpu::ShaderSource::Wgsl(text.clone()),
+    });
+    Shader { module, text }
 }
 
 /// A uniform buffer the size of `T`, written with `queue.write_buffer`.
@@ -428,7 +569,7 @@ impl PixelRect {
 /// own input layout (a [`sampled_layout`]), so the style's input bind
 /// group binds it.
 pub struct Blit {
-    pipeline: wgpu::RenderPipeline,
+    pipeline: std::sync::Arc<wgpu::RenderPipeline>,
 }
 
 impl Blit {

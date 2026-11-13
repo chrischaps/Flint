@@ -2098,10 +2098,15 @@ impl StyleSet {
             };
             let (made, files) = dev_shader::build(descriptor.name, || {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    (descriptor.create)(&StyleDevice {
-                        device,
-                        descriptor,
-                        format,
+                    // One descriptor at one format builds the same layouts
+                    // every time: what lets its pipelines be kept (#911)
+                    let scope = (descriptor.name, id, format);
+                    crate::pipeline_cache::in_scope(scope, || {
+                        (descriptor.create)(&StyleDevice {
+                            device,
+                            descriptor,
+                            format,
+                        })
                     })
                 }))
             });
@@ -2146,7 +2151,7 @@ impl StyleSet {
         {
             let (made, files) = dev_shader::build("edges", || {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    edges::EdgePass::new(device)
+                    crate::pipeline_cache::in_scope("Style Edges", || edges::EdgePass::new(device))
                 }))
             });
             self.shared_files.extend(files);

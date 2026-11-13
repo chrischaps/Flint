@@ -123,7 +123,7 @@ impl ContourUniforms {
 }
 
 struct Contour {
-    pipeline: wgpu::RenderPipeline,
+    pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniform_bgl: wgpu::BindGroupLayout,
     scene_bgl: wgpu::BindGroupLayout,
     depth_bgl: wgpu::BindGroupLayout,
