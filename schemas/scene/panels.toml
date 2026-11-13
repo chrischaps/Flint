@@ -1,0 +1,25 @@
+# A scene's `[panels]` table (#880, ADR 0120): the frame laid out as a comic
+# page, each panel a share of it with its own camera and look. Read by
+# `flint_render::panels::PanelLayout`, which checks every key (an unknown
+# one, or a rect outside 0..1, draws the scene as one view, with a warning).
+#
+#   [panels]
+#   gutter = 12
+#   [panels.panel.wide]
+#   rect = [0.0, 0.0, 0.6, 1.0]
+#   [panels.panel.close]
+#   rect = [0.6, 0.0, 0.4, 1.0]
+#   follow = "hero"
+#   position = [1.5, 1.0, 2.9]
+#   target = [0.0, 0.9, 0.0]
+#   look = "rotoscope"
+
+[table.panels]
+description = "A scene's [panels] table: the frame as a comic page of panels, each with its own camera and look."
+
+[table.panels.fields]
+gutter = { type = "f32", min = 0.0, description = "Points between two panels and between a panel and the frame's edge. Unset: 10" }
+gutter_color = { type = "color", description = "The page's colour, [r, g, b] in display values. Unset: warm paper" }
+border = { type = "f32", min = 0.0, description = "Points of ink round each panel, inside its share. Unset: 2.5" }
+border_color = { type = "color", description = "The border's colour, [r, g, b] in display values. Unset: near-black ink" }
+panel = { type = "table", description = "[panels.panel.<name>]: one panel each. rect = [x, y, width, height] as shares of the page, y down (required); order (lower drawn first, ties by name); position, target ([x, y, z]; unset: the frame camera's) and fov (degrees); follow (an entity by name: position and target are then from its world origin, and target defaults to it); look (laid over the scene's [post_process] for this panel alone) and post_process (keys over that). A panel with neither look nor post_process draws with the frame's post-processing" }

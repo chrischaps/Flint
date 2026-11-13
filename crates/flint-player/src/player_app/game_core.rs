@@ -827,6 +827,25 @@ impl CoreCommands<'_> {
         style_applied(self.core, applied);
     }
 
+    /// A script's panel command (#880): the renderer's layout edited, or a
+    /// warning naming the function when the edit doesn't parse. Without a
+    /// renderer there is no page.
+    fn edit_panels(
+        &mut self,
+        function: &str,
+        edit: impl FnOnce(
+            Option<&flint_render::panels::PanelLayout>,
+        ) -> Result<Option<flint_render::panels::PanelLayout>, String>,
+    ) {
+        let Some(renderer) = self.renderer.as_deref_mut() else {
+            return;
+        };
+        match edit(renderer.panel_layout()) {
+            Ok(layout) => renderer.set_panel_layout(layout),
+            Err(e) => tracing::warn!(target: "script", "{function}: [panels] {e}"),
+        }
+    }
+
     /// A whole-frame style command (#369): edit the renderer's config and
     /// hand it back; the next frame builds a style newly switched on.
     /// Without a renderer there is no frame to style.
@@ -1004,6 +1023,34 @@ impl ScriptHost for CoreCommands<'_> {
         if let Some(renderer) = self.renderer.as_deref_mut() {
             renderer.reset_style_history();
         }
+    }
+
+    fn set_panels(&mut self, layout: toml::Table) {
+        self.edit_panels("set_panels", |_| {
+            flint_render::panels::PanelLayout::parse(&layout)
+        });
+    }
+
+    fn set_panel(&mut self, name: String, keys: toml::Table) {
+        self.edit_panels("set_panel", |layout| match layout {
+            Some(layout) => layout.with_panel(&name, &keys).map(Some),
+            None => {
+                let mut table = toml::Table::new();
+                flint_render::panels::merge_panel(&mut table, &name, &keys);
+                flint_render::panels::PanelLayout::parse(&table)
+            }
+        });
+    }
+
+    fn remove_panel(&mut self, name: String) {
+        self.edit_panels("remove_panel", |layout| match layout {
+            Some(layout) => layout.without_panel(&name),
+            None => Ok(None),
+        });
+    }
+
+    fn clear_panels(&mut self) {
+        self.edit_panels("clear_panels", |_| Ok(None));
     }
 
     fn set_camera(&mut self, camera: CameraOverrides) {

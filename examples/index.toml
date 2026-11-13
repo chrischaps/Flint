@@ -219,6 +219,11 @@ topic = "stylize"
 purpose = "Three props drawn into the live clearing stroke by stroke: outlines, then hatching, then paper (#879)"
 
 [[example]]
+scene = "comic_panels.scene.toml"
+topic = "stylize"
+purpose = "A comic page: a live wide shot beside a rotoscoped close-up that follows the dancer, and a script that cuts from one panel to two, three and back (#880)"
+
+[[example]]
 scene = "motion_hold.scene.toml"
 topic = "stylize"
 purpose = "Motion on twos: a pose and a pendulum held at 12 a second with the pencil's boil, beside the same swing drawn smoothly; each bob's lantern light and trail step with it (#405, #873)"
