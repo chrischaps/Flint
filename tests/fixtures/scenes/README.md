@@ -32,3 +32,4 @@ two frames on main too, and this copy draws one of them).
 | `ascii_edges`, `ascii_entities`, `selection_outline`, `pencil_sketch`, `watercolor`, `user_styles`, `style_terrain`, `style_veil` | their own goldens; `user_styles` also `list_styles_cli.rs` |
 | `mesh_sequence` | `render_mesh_cli.rs` |
 | `pencil_meadow` | `look-rotoscope-meadow*` (#883): `examples/reveal_tear`'s clearing and meadow as a still, written here with real `light` tables |
+| `pencil_dark_sky` | `look-rotoscope-dark-sky*` (#890): written here, a YBot under the default dark sky with real lights |
