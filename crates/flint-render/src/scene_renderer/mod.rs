@@ -3,6 +3,7 @@
 mod extract;
 mod grass_ground;
 mod helpers;
+mod msaa;
 mod panels;
 mod particles;
 mod pipelines;
@@ -816,17 +817,9 @@ pub struct SceneRenderer {
     clear_color: [f32; 4],
     // 2D sprites
     sprite2d_batches: Vec<crate::sprite2d_pipeline::Sprite2dBatch>,
-    // MSAA (ADR 0058): 1 = off (default), 4 = on, as `pipelines` was built.
-    // Scene passes render into the MSAA color/depth targets and resolve
-    // color into the HDR buffer; depth resolves (sample 0) into the caller's
-    // depth view so every depth consumer stays single-sample and unchanged.
-    msaa_color: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
-    msaa_depth: Option<(wgpu::Texture, wgpu::TextureView)>,
-    /// A new id each time `msaa_depth` is made, so the style mask can keep
-    /// a bind group over it (#306).
-    msaa_depth_id: u64,
-    depth_resolve_pipeline: Option<wgpu::RenderPipeline>,
-    depth_resolve_layout: Option<wgpu::BindGroupLayout>,
+    /// MSAA's targets and depth resolve (ADR 0058), made the first frame
+    /// that draws at the sample count `pipelines` was built with.
+    msaa: msaa::MsaaTargets,
     // Post-processing
     postprocess_pipeline: Option<PostProcessPipeline>,
     postprocess_resources: Option<PostProcessResources>,
@@ -1144,11 +1137,7 @@ impl SceneRenderer {
             world_line_pipeline: None,
             clear_color: DEFAULT_CLEAR_COLOR,
             sprite2d_batches: Vec::new(),
-            msaa_color: None,
-            msaa_depth: None,
-            msaa_depth_id: 0,
-            depth_resolve_pipeline: None,
-            depth_resolve_layout: None,
+            msaa: Default::default(),
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
             authored_postprocess: postprocess_config.clone(),
@@ -5161,21 +5150,14 @@ impl SceneRenderer {
         // Under MSAA the mask is drawn 4x against the scene's own samples
         // and resolved, so a feature thinner than a pixel keeps the pixels
         // the scene's samples gave it (#306).
-        let msaa_depth = match &self.msaa_depth {
-            Some((texture, view))
-                if self.pipelines.samples() == crate::style_mask::MSAA_SAMPLES
-                    && texture.size().width == resources.width
-                    && texture.size().height == resources.height =>
-            {
+        let msaa_depth = match self.msaa.depth_at(resources.width, resources.height) {
+            Some((view, id)) if self.pipelines.samples() == crate::style_mask::MSAA_SAMPLES => {
                 pass.ensure_msaa(
                     device,
                     &self.layouts.transform_bind_group_layout,
                     &skinned.bone_bind_group_layout,
                 );
-                Some(crate::style_mask::MsaaDepth {
-                    view,
-                    id: self.msaa_depth_id,
-                })
+                Some(crate::style_mask::MsaaDepth { view, id })
             }
             _ => None,
         };
@@ -5392,14 +5374,8 @@ impl SceneRenderer {
             resources.height,
         );
         // The scene's own samples while it drew 4x at this size
-        let (scene_depth, samples) = match &self.msaa_depth {
-            Some((texture, view))
-                if self.pipelines.samples() > 1
-                    && texture.size().width == resources.width
-                    && texture.size().height == resources.height =>
-            {
-                (view, self.pipelines.samples())
-            }
+        let (scene_depth, samples) = match self.msaa.depth_at(resources.width, resources.height) {
+            Some((view, _)) if self.pipelines.samples() > 1 => (view, self.pipelines.samples()),
             _ => (depth_view, 1),
         };
         let mut meshes: Vec<crate::style_albedo::AlbedoMesh<'_>> = self
@@ -5611,8 +5587,7 @@ impl SceneRenderer {
         self.pipelines = self.pipelines.rebuilt(device, samples, &self.layouts);
 
         // The targets are remade at the new count by the next frame.
-        self.msaa_color = None;
-        self.msaa_depth = None;
+        self.msaa.drop_targets();
         tracing::info!("[quality] MSAA {samples}x");
         samples
     }
@@ -5748,150 +5723,6 @@ impl SceneRenderer {
                 1
             }
         }
-    }
-
-    /// Lazily (re)create the MSAA color+depth targets at the given size.
-    fn ensure_msaa_targets(&mut self, device: &wgpu::Device, width: u32, height: u32) {
-        if let Some((_, _, w, h)) = &self.msaa_color {
-            if *w == width && *h == height {
-                return;
-            }
-        }
-        let color = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("MSAA Scene Color"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: self.pipelines.samples(),
-            dimension: wgpu::TextureDimension::D2,
-            format: HDR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
-        let depth = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("MSAA Scene Depth"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: self.pipelines.samples(),
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
-        self.msaa_color = Some((color, color_view, width, height));
-        self.msaa_depth = Some((depth, depth_view));
-        self.msaa_depth_id = crate::bind_cache::gpu_id();
-    }
-
-    /// Lazily create the sample-0 depth-resolve pipeline (ADR 0058).
-    fn ensure_depth_resolve_pipeline(&mut self, device: &wgpu::Device) {
-        if self.depth_resolve_pipeline.is_some() {
-            return;
-        }
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Depth Resolve Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../depth_resolve.wgsl").into()),
-        });
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Depth Resolve Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Depth,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: true,
-                },
-                count: None,
-            }],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Depth Resolve Pipeline Layout"),
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Depth Resolve Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_fullscreen"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_resolve"),
-                targets: &[],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Always,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-        self.depth_resolve_layout = Some(layout);
-        self.depth_resolve_pipeline = Some(pipeline);
-    }
-
-    /// Copy sample 0 of the MSAA depth into a single-sample depth view via
-    /// a fullscreen frag-depth pass, so SSAO/DoF/fog/volumetric/ocean-grab
-    /// consumers stay unchanged (ADR 0058).
-    fn resolve_depth_into(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        target_depth_view: &wgpu::TextureView,
-    ) {
-        let (pipeline, layout) = match (&self.depth_resolve_pipeline, &self.depth_resolve_layout) {
-            (Some(p), Some(l)) => (p, l),
-            _ => return,
-        };
-        let msaa_depth_view = match &self.msaa_depth {
-            Some((_, v)) => v,
-            None => return,
-        };
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Depth Resolve Bind Group"),
-            layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(msaa_depth_view),
-            }],
-        });
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Depth Resolve Pass"),
-            color_attachments: &[],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: target_depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &bind_group, &[]);
-        pass.draw(0..3, 0..1);
     }
 
     // ── Slim render_to: orchestrates shadow → uniforms → main pass → postprocess ──
@@ -6098,16 +5929,15 @@ impl SceneRenderer {
         // MSAA (ADR 0058): scene passes draw into MSAA color/depth and
         // resolve color into the HDR buffer; depth resolves (sample 0) into
         // the caller's depth view after each opaque phase so every existing
-        // depth consumer stays single-sample. Requires the HDR chain (both
-        // constructors always build it).
+        // depth consumer stays single-sample. Requires the HDR chain (`build`
+        // always makes it).
         let msaa_active = self.pipelines.samples() > 1 && has_postprocess;
         if msaa_active {
             let (w, h) = {
                 let res = self.postprocess_resources.as_ref().unwrap();
                 (res.width, res.height)
             };
-            self.ensure_msaa_targets(device, w, h);
-            self.ensure_depth_resolve_pipeline(device);
+            self.msaa.prepare(device, self.pipelines.samples(), w, h);
         }
 
         // Choose render target: HDR buffer or direct to surface
@@ -6121,9 +5951,9 @@ impl SceneRenderer {
         // active, the plain single-sample pair otherwise.
         let (pass_color_view, pass_resolve_target, pass_depth_view) = if msaa_active {
             (
-                &self.msaa_color.as_ref().unwrap().1,
+                self.msaa.color_view().unwrap(),
                 Some(scene_target_view),
-                &self.msaa_depth.as_ref().unwrap().1,
+                self.msaa.depth_view().unwrap(),
             )
         } else {
             (scene_target_view, None, depth_view)
@@ -6163,7 +5993,7 @@ impl SceneRenderer {
             );
             drop(render_pass);
             if msaa_active {
-                self.resolve_depth_into(device, encoder, depth_view);
+                self.msaa.resolve_depth_into(device, encoder, depth_view);
             }
         } else {
             // ── Grab-pass split: opaque scene → snapshot → ocean + rest ──
@@ -6202,7 +6032,7 @@ impl SceneRenderer {
             // With MSAA, the grab blit below reads the caller's single-sample
             // depth view — resolve the opaque depth into it first (ADR 0058).
             if msaa_active {
-                self.resolve_depth_into(device, encoder, depth_view);
+                self.msaa.resolve_depth_into(device, encoder, depth_view);
             }
 
             // Blit: snapshot opaque color + depth into sampleable copies.
@@ -6298,7 +6128,7 @@ impl SceneRenderer {
             // Final depth resolve so postprocess (SSAO/DoF/fog/volumetric)
             // sees the complete frame's depth (ADR 0058).
             if msaa_active {
-                self.resolve_depth_into(device, encoder, depth_view);
+                self.msaa.resolve_depth_into(device, encoder, depth_view);
             }
         }
 
