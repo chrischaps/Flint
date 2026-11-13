@@ -1,0 +1,31 @@
+# Kana (#935): DotGothic16, a Japanese pixel font, in square full-width
+# cells. Katakana by default (the falling-code look), hiragana for a softer
+# one, and kanji counted out by strokes.
+default_ramp = "katakana"
+
+[font]
+file = "ofl/DotGothic16/DotGothic16-Regular.ttf"   # OFL 1.1, subset: beside it, OFL.txt
+size = 16
+
+[ramps.katakana]
+glyphs = " ・ノヘクソシコサオネホヰ"
+map = "coverage"
+
+[ramps.hiragana]
+glyphs = " ・へくしつこいのさもあぬ"
+map = "coverage"
+
+# One stroke, then more, as written: the order they are learned in
+[ramps.strokes]
+glyphs = " 丶一二三川口日目田品画雷鬱"
+
+[ramps.kanji]
+glyphs = " 丶一二三川口日目田品画雷鬱"
+map = "coverage"
+
+[edges]
+horizontal = "─"
+vertical = "│"
+diagonal = "╱"
+antidiagonal = "╲"
+corners = "┌┐└┘├┤┬┴┼"
