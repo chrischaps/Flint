@@ -9,12 +9,13 @@ mod particles;
 mod pipelines;
 mod render_passes;
 mod selection;
+mod sky;
 
 pub use grass_ground::{load_grass_ground_in, load_scene_grass_ground, LoadedGrassGround};
 pub use particles::load_scene_particle_textures;
 use render_passes::RenderPhase;
 
-use helpers::{identity_matrix, mat4_inv_transpose};
+use helpers::mat4_inv_transpose;
 
 use crate::bind_cache::{ArenaSlot, TransformArena};
 use crate::bitmap_font::BitmapFont;
@@ -37,10 +38,9 @@ use crate::postprocess::{
 };
 use crate::primitives::create_grid_mesh;
 use crate::shadow::{ShadowPass, DEFAULT_SHADOW_RESOLUTION};
-use crate::skybox_pipeline::SkyboxUniforms;
 use crate::sprite2d_pipeline::Sprite2dInstanceGpu;
 use crate::terrain_pipeline::{TerrainDrawCall, TerrainUniforms};
-use crate::texture_cache::{open_image, TextureCache};
+use crate::texture_cache::TextureCache;
 use crate::wooze_pipeline::{grow_bounds, ShallowWoozeDraw, ShallowWoozeUniforms};
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f32;
@@ -655,10 +655,8 @@ pub struct SceneRenderer {
     /// The selection outline's pipelines and mask, made the first frame
     /// something is selected (#602)
     selection_outline: Option<crate::selection_outline::SelectionOutline>,
-    // Skybox
-    skybox_uniform_buffer: Option<wgpu::Buffer>,
-    skybox_uniform_bind_group: Option<wgpu::BindGroup>,
-    skybox_texture_bind_group: Option<wgpu::BindGroup>,
+    /// The procedural sky and the texture skybox (ADR 0118, #736).
+    sky: sky::SkyRenderer,
     // Terrain
     terrain_draws: Vec<TerrainDrawCall>,
     terrain_material_bind_group: Option<wgpu::BindGroup>,
@@ -746,11 +744,6 @@ pub struct SceneRenderer {
     /// The grass draw's own view uniforms, so it needs no terrain to borrow them from.
     grass_transform_buffer: Option<wgpu::Buffer>,
     grass_transform_bind_group: Option<wgpu::BindGroup>,
-    // Procedural sky (replaces the texture skybox when a `sky` component exists)
-    sky_uniform_buffer: Option<wgpu::Buffer>,
-    sky_uniform_bind_group: Option<wgpu::BindGroup>,
-    sky_params: crate::sky_pipeline::SkyParams,
-    sky_active: bool,
     // Ocean
     ocean_uniform_buffer: Option<wgpu::Buffer>,
     ocean_uniform_bind_group: Option<wgpu::BindGroup>,
@@ -986,7 +979,7 @@ impl SceneRenderer {
             pipelines.ocean.as_ref(),
             &layouts.transform_bind_group_layout,
         );
-        let sky_resources = Self::create_sky_resources(device, pipelines.sky.as_ref());
+        let sky = sky::SkyRenderer::new(device, pipelines.sky.as_ref());
         let particle_buffers = pipelines
             .particle
             .as_ref()
@@ -1045,9 +1038,7 @@ impl SceneRenderer {
             selected_entity: None,
             entity_children: HashMap::new(),
             selection_outline: None,
-            skybox_uniform_buffer: None,
-            skybox_uniform_bind_group: None,
-            skybox_texture_bind_group: None,
+            sky,
             terrain_draws: Vec::new(),
             terrain_material_bind_group: None,
             terrain_material_buffer: None,
@@ -1098,10 +1089,6 @@ impl SceneRenderer {
             grass_needs_realloc: false,
             grass_transform_buffer: None,
             grass_transform_bind_group: None,
-            sky_uniform_buffer: sky_resources.0,
-            sky_uniform_bind_group: sky_resources.1,
-            sky_params: crate::sky_pipeline::SkyParams::default(),
-            sky_active: false,
             ocean_uniform_buffer: ocean_resources.0,
             ocean_uniform_bind_group: ocean_resources.1,
             ocean_transform_buffer: ocean_resources.2,
@@ -1167,33 +1154,6 @@ impl SceneRenderer {
             grass_wooze: None,
             device_lost: false,
         }
-    }
-
-    /// The procedural sky's uniform buffer and bind group, when its pipeline
-    /// built (`ScenePipelines` leaves it out when its shader fails, and the
-    /// renderer falls back to the texture skybox).
-    fn create_sky_resources(
-        device: &wgpu::Device,
-        pipeline: Option<&crate::sky_pipeline::SkyPipeline>,
-    ) -> (Option<wgpu::Buffer>, Option<wgpu::BindGroup>) {
-        let Some(pipeline) = pipeline else {
-            return (None, None);
-        };
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Sky Uniform Buffer"),
-            size: std::mem::size_of::<crate::sky_pipeline::SkyUniformsGpu>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &pipeline.uniform_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }],
-            label: Some("Sky Uniform Bind Group"),
-        });
-        (Some(buffer), Some(bind_group))
     }
 
     /// The ocean's uniform/transform buffers and bind groups, when its
@@ -3407,120 +3367,18 @@ impl SceneRenderer {
     /// Draw no skybox until the next [`load_skybox`](Self::load_skybox): a
     /// scene that names none starts without the last scene's (#723).
     pub fn clear_skybox(&mut self) {
-        self.skybox_uniform_buffer = None;
-        self.skybox_uniform_bind_group = None;
-        self.skybox_texture_bind_group = None;
+        self.sky.clear_skybox();
     }
 
     /// Whether a skybox is loaded and will be drawn.
     pub fn has_skybox(&self) -> bool {
-        self.skybox_texture_bind_group.is_some()
+        self.sky.has_skybox()
     }
 
     /// Load an equirectangular panorama image as a skybox
     pub fn load_skybox(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, path: &Path) {
-        let skybox_pipeline = match &self.pipelines.skybox {
-            Some(p) => p,
-            None => {
-                tracing::warn!("Skybox pipeline not available");
-                return;
-            }
-        };
-
-        // Load panorama image
-        let img = match open_image(path) {
-            Ok(img) => img.to_rgba8(),
-            Err(e) => {
-                tracing::warn!("Failed to load skybox '{}': {:?}", path.display(), e);
-                return;
-            }
-        };
-        let (width, height) = img.dimensions();
-
-        // Create GPU texture
-        let texture_size = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Skybox Panorama Texture"),
-            size: texture_size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &img,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * width),
-                rows_per_image: Some(height),
-            },
-            texture_size,
-        );
-
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Skybox Sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-
-        // Create uniform buffer
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Skybox Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[SkyboxUniforms {
-                inv_view_proj: identity_matrix(),
-            }]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        // Create bind groups
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &skybox_pipeline.uniform_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
-            label: Some("Skybox Uniform Bind Group"),
-        });
-
-        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &skybox_pipeline.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-            label: Some("Skybox Texture Bind Group"),
-        });
-
-        self.skybox_uniform_buffer = Some(uniform_buffer);
-        self.skybox_uniform_bind_group = Some(uniform_bind_group);
-        self.skybox_texture_bind_group = Some(texture_bind_group);
-
-        println!("Loaded skybox: {} ({}x{})", path.display(), width, height);
+        self.sky
+            .load_skybox(device, queue, self.pipelines.skybox.as_ref(), path);
     }
 
     pub fn toggle_shadows(&mut self) -> bool {
@@ -3739,7 +3597,11 @@ impl SceneRenderer {
         }
 
         // Extract procedural sky params (+ optional ambient override)
-        self.extract_sky_from_world(world);
+        self.sky.extract(
+            world,
+            self.pipelines.sky.is_some(),
+            &mut self.light_uniforms,
+        );
 
         let need_overlay = self.debug_state.mode == DebugMode::WireframeOverlay
             || self.debug_state.mode == DebugMode::WireframeOnly;
@@ -4668,32 +4530,6 @@ impl SceneRenderer {
         if self.ocean_contact.is_none() {
             self.ocean_contact_prev = None;
             self.ocean_contact_vel = [0.0; 3];
-        }
-    }
-
-    // ── Sky extraction ──
-
-    /// Extract the first `sky` component. When present, the procedural sky
-    /// replaces the texture skybox, and its optional ambient fields override
-    /// the hemisphere ambient in the light uniforms (so a time-of-day script
-    /// can darken nights by writing component fields).
-    fn extract_sky_from_world(&mut self, world: &FlintWorld) {
-        self.sky_active = false;
-        for &entity_id in world.entities_with_component(comp::SKY) {
-            let sky_comp = world
-                .get_components(entity_id)
-                .and_then(|components| components.get(comp::SKY).cloned());
-            let Some(sky_comp) = sky_comp else { continue };
-
-            self.sky_params = crate::sky_pipeline::SkyParams::from_component(&sky_comp);
-            if let Some(ambient_sky) = self.sky_params.ambient_sky {
-                self.light_uniforms.ambient_sky = ambient_sky;
-            }
-            if let Some(ambient_ground) = self.sky_params.ambient_ground {
-                self.light_uniforms.ambient_ground = ambient_ground;
-            }
-            self.sky_active = self.pipelines.sky.is_some();
-            break;
         }
     }
 
