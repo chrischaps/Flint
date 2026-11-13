@@ -901,12 +901,14 @@ impl StyleDescriptor {
         keys
     }
 
-    /// Every key a scene's table for this style can hold: `enabled`,
-    /// `order`, `feeds_bloom`, the options, each parameter (colour channels
-    /// one by one) and each colour's own key. A commit to the scene (#364)
-    /// owns these and leaves any other key alone.
+    /// Every key a scene's table for this style can hold: the
+    /// framework's ([`RESERVED_KEYS`]: `enabled`, `order`, `feeds_bloom`,
+    /// `blend` and the reveal's), the options, each parameter (colour
+    /// channels one by one) and each colour's own key. A commit to the
+    /// scene (#364) owns these and leaves any other key alone, so a reveal
+    /// switched off in F4 leaves the file with it (#875).
     pub fn table_keys(&self) -> Vec<&'static str> {
-        let mut keys = vec!["enabled", "order", "feeds_bloom"];
+        let mut keys = RESERVED_KEYS.to_vec();
         keys.extend(self.options.iter().map(|o| o.name));
         keys.extend(self.params.iter().map(|p| p.name));
         keys.extend(self.colors().iter().map(|c| c.base));
@@ -1730,6 +1732,17 @@ impl StyleSettings {
         next.set(key, value, strict)?;
         self.styles.entry(name.to_string()).or_default().reveal = next;
         Ok(true)
+    }
+
+    /// Make style `name`'s reveal exactly `reveal` (F4's Reveal group,
+    /// #875), every key at once; an empty one is [`clear_reveal`](Self::clear_reveal).
+    /// Leaves the style on or off as it was.
+    pub fn replace_reveal(&mut self, name: &str, reveal: reveal::StyleReveal) {
+        if reveal.is_empty() {
+            self.clear_reveal(name);
+        } else {
+            self.styles.entry(name.to_string()).or_default().reveal = reveal;
+        }
     }
 
     /// Take style `name`'s reveal off (#406): it shows everywhere again.
