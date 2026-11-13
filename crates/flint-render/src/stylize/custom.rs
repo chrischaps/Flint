@@ -2195,6 +2195,47 @@ pub fn load_file(path: &Path, messages: &mut Vec<String>) -> Result<(), String> 
     Ok(())
 }
 
+/// Take out of `styles` (a scene's `[post_process.styles]`) each table
+/// naming a user style that `scope` can't see (#426), with a warning each.
+/// The registry is one for the process, so after a transition it still
+/// holds the styles an earlier scene's folders had; without this a scene
+/// would draw one of them in the player and not when it loads first, in
+/// `flint render` or alone. Call it after [`load_for`] of the same scope,
+/// on a copy of the tables each time they are read into a config: a
+/// table of a style the scene sees is kept, and so is one the registry
+/// doesn't know, which the read warns about. Kept in the scene's own
+/// tables, a dropped one comes back when a file the scene can see takes
+/// the name over ([`reload_changed_for`]). It reads no folder: a style is
+/// seen when its file is in one of the scope's [`style_dirs`].
+pub fn drop_unseen(styles: &mut BTreeMap<String, toml::Table>, scope: &AssetScope) -> Vec<String> {
+    let user: Vec<(String, PathBuf)> = styles
+        .keys()
+        .filter_map(|name| loaded(name).map(|l| (name.clone(), l.source.toml_path.clone())))
+        .collect();
+    if user.is_empty() {
+        return Vec::new();
+    }
+    let dirs = style_dirs(scope);
+    let mut warnings = Vec::new();
+    for (name, from) in user {
+        let folder = from.parent().unwrap_or(Path::new(""));
+        let seen = dirs
+            .iter()
+            .any(|dir| flint_core::project::same_path(dir, folder));
+        if !seen {
+            styles.remove(&name);
+            warnings.push(format!(
+                "style '{name}' in [post_process.styles] is a user style from {}, \
+                 which this scene can't see (it was loaded for another scene), so it is \
+                 not drawn; copy it into a styles/ folder this scene searches \
+                 (`flint asset where styles {name} --scene <scene>` lists them)",
+                shown(&from)
+            ));
+        }
+    }
+    warnings
+}
+
 /// A `.shader.toml` that didn't load (#425): it registered nothing, so no
 /// [`Loaded`] holds its error.
 struct Failure {
@@ -5021,6 +5062,77 @@ fn style(p: StylePixel) -> vec4<f32> {
         let reload = reload_changed_for(&cave_scope);
         assert_eq!(reload.replaced, vec!["utest_near".to_string()]);
         assert_eq!(k(), 2.5);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// #426: the registry still holds a style an earlier scene's folder
+    /// had, but a scene that can't see that folder doesn't draw it: its
+    /// table is dropped with a warning, as when the scene loads first.
+    /// The scene that sees it keeps it, and so do built-ins and names
+    /// the registry doesn't know (the read warns about those).
+    #[test]
+    fn a_style_only_an_earlier_scene_saw_is_not_drawn() {
+        let root = std::env::temp_dir().join(format!("flint-unseen-426-{}", std::process::id()));
+        let near = root.join("near");
+        let far = root.join("far");
+        std::fs::create_dir_all(near.join("styles")).unwrap();
+        std::fs::create_dir_all(&far).unwrap();
+        std::fs::write(root.join("flint.toml"), "").unwrap();
+        std::fs::write(
+            near.join("styles/utest_unseen.shader.toml"),
+            "version = 1\nname = \"utest_unseen\"\nshader = \"unseen.wgsl\"\n",
+        )
+        .unwrap();
+        std::fs::write(near.join("styles/unseen.wgsl"), PASSTHROUGH).unwrap();
+        let tables = || -> BTreeMap<String, toml::Table> {
+            ["utest_unseen", "invert", "utest_nobody"]
+                .into_iter()
+                .map(|n| (n.to_string(), toml::Table::new()))
+                .collect()
+        };
+        let names = |t: &BTreeMap<String, toml::Table>| t.keys().cloned().collect::<Vec<_>>();
+
+        let near_scope = AssetScope::for_dir(&near);
+        assert!(load_for(&near_scope).is_empty());
+        let mut seen = tables();
+        assert!(drop_unseen(&mut seen, &near_scope).is_empty());
+        assert_eq!(names(&seen), ["invert", "utest_nobody", "utest_unseen"]);
+
+        // The next scene, in a folder with no styles/
+        let far_scope = AssetScope::for_dir(&far);
+        assert!(load_for(&far_scope).is_empty());
+        assert!(
+            super::super::find("utest_unseen").is_some(),
+            "still registered"
+        );
+        let mut unseen = tables();
+        let warnings = drop_unseen(&mut unseen, &far_scope);
+        assert_eq!(names(&unseen), ["invert", "utest_nobody"]);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("'utest_unseen'"), "{warnings:?}");
+        assert!(warnings[0].contains("can't see"), "{warnings:?}");
+
+        // Back: the first scene draws it again
+        assert!(load_for(&near_scope).is_empty());
+        let mut again = tables();
+        assert!(drop_unseen(&mut again, &near_scope).is_empty());
+        assert!(again.contains_key("utest_unseen"));
+
+        // The far scene gets a copy of its own: the same tables keep it,
+        // and now the near scene is the one that can't see the one loaded
+        std::fs::create_dir_all(far.join("styles")).unwrap();
+        std::fs::copy(
+            near.join("styles/utest_unseen.shader.toml"),
+            far.join("styles/utest_unseen.shader.toml"),
+        )
+        .unwrap();
+        std::fs::write(far.join("styles/unseen.wgsl"), PASSTHROUGH).unwrap();
+        assert!(load_for(&far_scope).is_empty());
+        let mut own = tables();
+        assert!(drop_unseen(&mut own, &far_scope).is_empty());
+        assert!(own.contains_key("utest_unseen"));
+        let mut near_now = tables();
+        assert_eq!(drop_unseen(&mut near_now, &near_scope).len(), 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 

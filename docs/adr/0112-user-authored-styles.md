@@ -519,6 +519,62 @@ Measured: `demo/styles/orton.*` (expose, blur across, blur down at half
 size, screen over the frame) costs 0.032 ms for all four passes at
 1280x720 on an RTX 4070, with 5.3 MB of targets.
 
+## Addendum (#426): which of two styles of one name wins
+
+**Decided: option 2, scope by folder.** A scene draws the user style
+nearest to it, and only one it can see. The registry stays one for the
+process (an append-only snapshot, indices fixed, as in decision 3); what
+is scoped is which of its entries a scene's tables reach.
+
+The question, from #275: `load_dir` searched `<scene>/styles/` and the
+folder above, but filled a registry that is global for the run. So the
+first scene to load a `glow` decided it for every later scene, the
+player warned "already loaded" again at every transition, and a scene
+could draw a style that only an earlier scene's folder had. Three
+options were on the ticket: keep first-wins and warn once a pair, scope
+by folder, or refuse duplicates.
+
+- **The nearest file wins a name** (built in #781, ADR 0114 step 3).
+  `load_for(&scope)` registers `scope.list(AssetKind::Styles)`, the
+  project's one asset search, nearest of a name first. A file whose name
+  is loaded from another file takes over at the same registry index, as
+  a hot reload does (`install(.., replace = true)`), with an `info!`, not
+  a warning: a transition between two folders is not a mistake, and
+  `flint bundle` must not refuse it. Loading the same file again does
+  nothing, so nothing repeats on a transition. In one `styles/` folder a
+  style is its file's name, so there is only one of a name.
+- **A style the scene can't see is not drawn** (#426).
+  `custom::drop_unseen(&mut tables, &scope)` takes out of a scene's
+  `[post_process.styles]` each table naming a registered user style
+  whose file is in none of the scope's `style_dirs`, with a warning
+  naming the file. The player calls it each time it reads the scene's
+  tables into a config (`scene_post_config`), on a copy, so the scene's
+  own tables keep it: a file the scene can see that appears later takes
+  the name over at the next reload poll, and the table is drawn.
+  `flint check` calls it per scene, so a folder's report doesn't depend
+  on the order it meets the scenes in. It reads no folder (a path compare
+  against `search_dirs`), so a reload can call it on the frame thread.
+- **Not chosen.** First-wins with one warning a pair keeps a scene's look
+  dependent on what was played before it. Refusing duplicates would make
+  two folders' `glow` an error although each scene sees only one of
+  them, and would break a game that keeps a style per level folder.
+  Per-scene registries, or names qualified by folder, would change the
+  registry's indices and the `StyleSet` keyed on them for a case no game
+  has yet.
+
+Proof (#426's PR): a project of two folders, `atelier/` with
+`styles/risograph.*` and `cellar/` naming `risograph` with no styles
+folder. Played atelier then cellar in `flint-player --frame-step`, the
+cellar's frame before this change was drawn in the atelier's risograph;
+after it, it is byte-identical to `flint render` of the cellar alone,
+with the warning. Copying the style into `cellar/styles/` while the
+cellar played drew it there at the next poll. `flint check` of the
+project reported nothing before and the cellar's warning after.
+
+Left as it was: the viewer and `flint render` show one scene a process,
+and `flint render --list-styles` and `flint style list` list every
+registered style, which for one scene is the ones it sees.
+
 ## Follow-ups
 
 Filed from this spike (numbers in the PR): the loop guard (naga IR
