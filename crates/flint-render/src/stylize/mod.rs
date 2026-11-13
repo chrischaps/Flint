@@ -1569,7 +1569,7 @@ pub struct StyleSetting {
 /// Keys every style's table reads besides its own parameters and options;
 /// no style may name a parameter or option after one. The `reveal` keys
 /// (#406) are [`reveal::KEYS`].
-pub const RESERVED_KEYS: [&str; 15] = [
+pub const RESERVED_KEYS: [&str; 18] = [
     "enabled",
     "order",
     "feeds_bloom",
@@ -1577,6 +1577,7 @@ pub const RESERVED_KEYS: [&str; 15] = [
     "reveal",
     "reveal_shape",
     "reveal_ink",
+    "reveal_rim_color",
     "reveal_scale",
     "reveal_ragged",
     "reveal_edge",
@@ -1585,6 +1586,8 @@ pub const RESERVED_KEYS: [&str; 15] = [
     "reveal_y",
     "reveal_boil",
     "reveal_seed",
+    "reveal_rim",
+    "reveal_shadow",
 ];
 
 /// The generic style settings on [`PostProcessConfig`], by style name.
