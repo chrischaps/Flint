@@ -177,8 +177,8 @@ flint render examples/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii
 | `silhouette` | `"pixel"` | Per-entity only: `pixel` cuts the glyphs at the entity's exact edge; `cell` draws every edge cell whole, as the entity's glyph or as the scene, by how much of it the entity covers ([Whole-cell silhouettes](#whole-cell-silhouettes), #338) |
 | `cell_share` | `0.5` | Per-entity only, with `silhouette = "cell"`: the share of a cell's 16 colour samples the entity must cover for the cell to be its (1/16--1) |
 | `temporal` | `on` | Temporal stability (#277), below. `off` draws every frame as if it were the first. `reproject` reads each cell's past where its surface was last frame ([Reprojected history](#reprojected-history), #344) |
-| `smoothing` | `0.6` | How much of last frame's colour a cell keeps, per 60 Hz frame (0--0.95): at 120 Hz each frame keeps its square root, at 30 Hz its square, so a change settles in the same game time at any frame rate (#342). A cell whose colour jumps takes the new one at once, so nothing trails |
-| `hysteresis` | `0.35` | How far, in ramp steps, a cell's tone may stray from its glyph's band before the glyph changes (0--1) |
+| `smoothing` | `0.6` | How much of last frame's colour a cell keeps, per 60 Hz frame (0--0.95): at 120 Hz each frame keeps its square root, at 30 Hz its square, so a change settles in the same game time at any frame rate (#342). A cell whose colour jumps takes the new one at once, so nothing trails. Edge cells keep its square root of their edge's length, direction and place ([Edge glyphs in motion](#edge-glyphs-in-motion), #477) |
+| `hysteresis` | `0.35` | How far, in ramp steps, a cell's tone may stray from its glyph's band before the glyph changes (0--1). It also sets how far an edge's length, direction and place may stray before its line glyph changes (#477) |
 | `dither` | `0` | Ordered (4x4 Bayer) dither before the ramp, fixed to the grid: gradients break into a still pattern instead of one hard edge (0--1, `--ascii-dither`) |
 
 ### Temporal stability
@@ -194,9 +194,29 @@ On `examples/ascii_motion.scene.toml`, a slow orbit of the meadow clearing captu
 
 Reversals, where a glyph changes and changes back two frames later, are the shimmer itself, and they are gone. The flips that remain are the scene really moving.
 
-`flint render --frames 181 --orbit 6.8755 --flip-stats` measures the same thing headlessly and exactly, from the style's own grid ([Frame sequences](../guides/headless-rendering.md#frame-sequences), #345). With `edges = 0` it gives 105.1 flips and 0.0 reversals a frame with the history on, against 321.1 and 57.8 with it off. The edge glyphs (#267), which came after this measurement, don't go through the history yet. With them on, the history leaves 30.3 reversals a frame (#477).
+`flint render --frames 181 --orbit 6.8755 --flip-stats` measures the same thing headlessly and exactly, from the style's own grid ([Frame sequences](../guides/headless-rendering.md#frame-sequences), #345). With `edges = 0` it gives 54.6 flips and 0.0 reversals a frame with the history on, against 203.7 and 36.2 with it off (2026-11-13; the scene has changed since #277's numbers above). The edge glyphs (#267) came after #277 and went through no history until #477: with them on, the history left 38.2 reversals a frame, every one of them an edge glyph. They have their own now, below.
 
-The player's capture of the same orbit (`tools/ascii_flips.py`, edges on, at b3448e5) agrees: 3.53% flips and 0.82% reversals a frame with `off`, 1.90% and 0.25% (35.5 a frame) with `on` (#481, the same finding as #477).
+#### Edge glyphs in motion
+
+An edge cell decides several things from its edge pixels each frame: whether it draws a line at all (its edge length against `edge_threshold` and `edge_max`), which line (- | / \ by its direction, the bands meeting at 22.5 degrees from each axis), which of two neighbours a line near their border belongs to, and whether the line turns there into a corner or tee. A line near any of those borders tips across it and back as the camera slides a fraction of a pixel. On the slow orbit, 26 of main's 38 reversals a frame were a line glyph coming and going, and 12 a line swapping for another (- for \, | for /).
+
+So with the history on (the same frames as the tone's: consecutive, same grid and key), the edge passes read last frame's edge cells and glyphs, copied aside before this frame's passes write theirs (#477):
+
+- **Smoothing.** A cell keeps part of last frame's edge length, direction and place across the cell, the square root of `smoothing` (0.6 keeps 0.77): an edge length counts the pixels of one-pixel lines, which flicker with sub-pixel motion far more than a colour averaged over 16 samples. A length that changes by more than half of the larger of the two (a line came into the cell or left it) starts to let go, and one that went from nothing, or to nothing, takes the new one at once, so a whole line moving into an empty cell draws there on its first frame.
+- **Hysteresis**, from `hysteresis` (0.35): a cell that drew a line keeps it down to `edge_threshold` / 1.35 of edge and up to `edge_max` x 1.35, and one that didn't starts at `edge_threshold` x 1.35; its glyph stays while its direction is within 0.35 x 22.5 degrees of the glyph's band; a line near the border between two cells stays with the one that drew it until it is 0.35 of a cell past.
+- **Corners wait a frame.** A cell drawing the same line as last frame changes its corner or tee only when two frames running find the new one. A cell whose line comes, goes or turns takes this frame's at once.
+
+`flint render --frames 181 --orbit 6.8755 --flip-stats`, edges on:
+
+| | flips per frame | reversals per frame |
+|---|---|---|
+| before #477 | 209.7 | 38.2 |
+| #477 | 101.9 | 0.9 |
+| `temporal = "off"` (unchanged) | 319.2 | 58.9 |
+
+The flips that remain are the scene moving. In a fast orbit (`--orbit 68.755`, 1.2 rad/s, 61 frames) reversals go from 126.5 to 41.0 a frame and the frame keeps 94% of main's edge cells: a marginal line waits until it clears the threshold band. `hysteresis = 0` turns the edge hysteresis off and `smoothing = 0` the edge smoothing; with history off (a single render, `temporal = "off"`) the edges are exactly the stateless ones. Edge history is kept in screen space under `temporal = "reproject"` too.
+
+The player's capture of the same orbit before #477 (`tools/ascii_flips.py`, edges on, at b3448e5) agreed with the headless count: 3.53% flips and 0.82% reversals a frame with `off`, 1.90% and 0.25% (35.5 a frame) with `on` (#481).
 
 The state counts as history only when the last frame the renderer drew was the one before, and the grid, ramp and size are unchanged. A single `flint render` therefore draws exactly what the stateless style drew, and a `--frame-step` capture gives the style the same frames every run. Until #341 the player's captures still differed by one level in a few pixels, history on or off: the grass compute's blades came out in a different order each run. Five captures of the motion bench are now byte-identical. The player calls `SceneRenderer::reset_style_history()` when a new scene comes up, and on a [camera cut](#camera-cuts).
 

@@ -52,8 +52,11 @@ fn thin_arms(t: u32) -> u32 {
 // bits 4..7, with all nine in bits 8..11. A font has 0, 4 or 9
 // (`EdgeGlyphs::corner_count`), and a cell's decision differs between
 // them, so the pass makes all three and each pixel takes its font's.
-fn pack_slots(thin: u32, four: u32, nine: u32) -> u32 {
-    return thin | (four << 4u) | (nine << 8u);
+// Above them (#477), what the corner pass found this frame for four and
+// nine corners in bits 12..15 and 16..19, which can differ from what the
+// cell draws while a new corner waits for a second frame to agree.
+fn pack_slots(thin: u32, four: u32, nine: u32, found_four: u32, found_nine: u32) -> u32 {
+    return thin | (four << 4u) | (nine << 8u) | (found_four << 12u) | (found_nine << 16u);
 }
 
 // The slot a font with `corners` corner glyphs draws, from a packed texel
