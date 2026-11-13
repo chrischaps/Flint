@@ -227,6 +227,41 @@ fn frames_step_the_animation() {
     assert!(changed(&dir, "seq_0000.png", "seq_0001.png") > 0);
 }
 
+/// #872: the idle's keys start at 1/30 s (Blender writes frame 1 there), and
+/// the clip used to clamp to its first key until then, so frames 0 and 1 of a
+/// 48 fps span drew one pose while physics moved. A clip starts at its first
+/// key now. Before the fix frame 1 changed 0 pixels here, after it 183.
+#[test]
+fn the_first_step_of_a_span_moves() {
+    let dir = project("first-step");
+    let run = render(
+        &dir,
+        "idle.scene.toml",
+        "span-%04d.png",
+        &["--anim-time", "0", "--time", "0..0.0625", "--fps", "48"],
+    );
+    if no_gpu(&run) {
+        return;
+    }
+    ok(&run);
+    // Frame 0 is the clip at 0, as a still at --anim-time 0 draws it...
+    ok(&render(
+        &dir,
+        "idle.scene.toml",
+        "zero.png",
+        &["--anim-time", "0"],
+    ));
+    assert_eq!(bytes(&dir, "span-0000.png"), bytes(&dir, "zero.png"));
+    // ...and frame 1 has moved on from it, by about as much as frame 2 does
+    // from frame 1.
+    let first = changed(&dir, "span-0000.png", "span-0001.png");
+    let second = changed(&dir, "span-0001.png", "span-0002.png");
+    assert!(
+        first * 2 > second,
+        "frame 1 changed {first} pixels, frame 2 {second}: the first step held"
+    );
+}
+
 #[test]
 fn a_scene_with_nothing_to_animate_is_told() {
     let dir = project("still");
