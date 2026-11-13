@@ -1240,9 +1240,9 @@ impl PlayerApp {
             None
         };
 
-        // User styles that don't compile (#275), and built-in shaders
-        // read from FLINT_STYLE_SHADER_DIR that don't (#418): shown until
-        // they do
+        // User styles that don't compile (#275) or don't load (#425), and
+        // built-in shaders read from FLINT_STYLE_SHADER_DIR that don't
+        // compile (#418): shown until they do
         #[cfg(feature = "debug-hud")]
         let style_errors = {
             let mut errors = flint_render::stylize::custom::errors();
