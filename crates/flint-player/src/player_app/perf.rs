@@ -777,8 +777,8 @@ impl super::PlayerApp {
             .render_context
             .as_ref()
             .map(|c| {
-                let info = c.adapter.get_info();
-                format!("{} ({:?})", info.name, info.backend)
+                // DX12 names its shader compiler (#912): `(Dx12, DXC)`
+                flint_render::gpu_select::adapter_short(&c.adapter.get_info())
             })
             .unwrap_or_default();
         if let Some((summary, context)) = self.perf_snapshot("native".into(), adapter) {

@@ -1216,6 +1216,12 @@ impl PlayerApp {
         let touch_opacity = self.input.touch_controls().opacity();
 
         let show_stats = self.stats.show;
+        // The adapter, and on DX12 its shader compiler (#912)
+        let gpu_label = if show_stats {
+            flint_render::gpu_select::adapter_short(&context.adapter.get_info())
+        } else {
+            String::new()
+        };
         let stats_data = if show_stats {
             self.scene_renderer.as_ref().map(|r| {
                 let mut stats = r.collect_stats();
@@ -1311,7 +1317,7 @@ impl PlayerApp {
             let debug_width = 0.0;
 
             if let Some(ref stats) = stats_data {
-                render_stats_overlay(ctx, stats, debug_width);
+                render_stats_overlay(ctx, stats, &gpu_label, debug_width);
             }
 
             // On the web, above the page's wordmark in the same corner
@@ -1645,7 +1651,12 @@ impl super::game_core::FrameHost for PlayerApp {
 
 /// `right_inset`: width the debug columns take at the right edge, so the
 /// overlay sits beside them rather than over them.
-fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats, right_inset: f32) {
+fn render_stats_overlay(
+    ctx: &egui::Context,
+    stats: &flint_render::RenderStats,
+    gpu: &str,
+    right_inset: f32,
+) {
     use flint_render::format_count;
 
     egui::Area::new(egui::Id::new("render_stats_overlay"))
@@ -1748,6 +1759,10 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats, 
                     ));
 
                     ui.separator();
+
+                    // What draws: the adapter, its backend and, on DX12,
+                    // the shader compiler (#912)
+                    ui.colored_label(egui::Color32::from_gray(170), gpu);
 
                     // GPU time per phase (ADR 0108), where the device can time
                     if !stats.gpu_passes.is_empty() {

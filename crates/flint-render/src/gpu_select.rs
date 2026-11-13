@@ -23,7 +23,44 @@
 //! the discrete GPU renders fast but the screen updates slowly.
 //!
 //! The chosen adapter is logged at `info` level so the pick is visible.
+//!
+//! # DX12's shader compiler (#912)
+//!
+//! On DX12 every shader goes from naga's HLSL to bytecode through one of
+//! two Microsoft compilers. Flint uses **DXC** by default and **FXC** only
+//! as the fallback. FXC is about 10x slower on Flint's style shaders (the
+//! ASCII glyph shader: 25 s with `/Od` in a debug build and 66 s optimized,
+//! against DXC's 2.5 s) and is where Flint's DX12-only miscompiles came from
+//! (#314). With DXC, wgpu also picks the device's shader model, up to 6.7;
+//! FXC stops at 5.1.
+//!
+//! wgpu 23 doesn't link DXC in: it loads `dxcompiler.dll` and `dxil.dll` at
+//! instance creation. [`instance`] passes both by full path from one folder,
+//! [`dxc_dir`]: `FLINT_DXC_DIR` if set, else the running executable's
+//! folder. A full path means a copy elsewhere on `PATH` is never loaded
+//! (with no path, wgpu would take whichever `dxcompiler.dll` Windows' search
+//! order finds). `flint dxc install` puts the pinned release's two DLLs
+//! beside `flint.exe` and the test binaries.
+//!
+//! - `WGPU_DX12_COMPILER=fxc` forces FXC, the escape hatch for a driver or
+//!   DXC bug. `dxc` (or unset) is the default.
+//! - If a DLL isn't in the folder or doesn't load, the instance gets FXC,
+//!   as wgpu itself would fall back, and [`request_adapter`] warns once when
+//!   it picks a DX12 adapter. A shader DXC rejects is not retried with FXC.
+//! - [`dx12_shaders`] says which one, and why: `DXC (<dir>)`,
+//!   `FXC (fallback: dxcompiler.dll not in <dir>)` or
+//!   `FXC (WGPU_DX12_COMPILER=fxc)`. [`adapter_line`] adds it to an adapter
+//!   on DX12, for `flint render`, `flint goldens` and the player's F3 and
+//!   `--perf` lines.
+//!
+//! The check is the one wgpu-hal 23 makes (`DxcLib::new`: load the file,
+//! then look up `DxcCreateInstance`), made first so the report is what the
+//! instance got. It reads the disk with `std::fs`, outside the vfs: a DLL
+//! beside the executable isn't game data, and DX12 is Windows only, so the
+//! code is `cfg(windows)`.
 
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 static GPU_OVERRIDE: Mutex<Option<String>> = Mutex::new(None);
@@ -51,12 +88,200 @@ pub fn backends() -> wgpu::Backends {
     wgpu::util::backend_bits_from_env().unwrap_or(wgpu::Backends::all())
 }
 
-/// Create a wgpu instance over [`backends`].
+/// Create a wgpu instance over [`backends`], with DX12 compiling shaders
+/// through [`dx12_shaders`]' choice (DXC unless it's missing or refused).
 pub fn instance() -> wgpu::Instance {
+    let backends = backends();
     wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: backends(),
+        backends,
+        dx12_shader_compiler: dx12_compiler(backends),
         ..Default::default()
     })
+}
+
+/// The DLLs DXC needs, in the order wgpu-hal 23 loads them.
+pub const DXC_DLLS: [&str; 2] = ["dxcompiler.dll", "dxil.dll"];
+
+/// Which compiler DX12 turns shaders into bytecode with, and why (#912).
+/// Its `Display` is the report: `DXC (<dir>)`, `FXC (WGPU_DX12_COMPILER=fxc)`
+/// or `FXC (fallback: <why>)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Dx12Shaders {
+    /// DXC, both DLLs loaded from `dir`.
+    Dxc { dir: PathBuf },
+    /// FXC, because `WGPU_DX12_COMPILER=fxc` asked for it.
+    FxcAsked,
+    /// FXC, because DXC couldn't be loaded; `why` names the DLL and folder.
+    FxcFallback { why: String },
+}
+
+impl Dx12Shaders {
+    /// One word, for a line with no room for the folder (the `--perf`
+    /// line): `DXC`, `FXC` or `FXC fallback`.
+    pub fn short(&self) -> &'static str {
+        match self {
+            Dx12Shaders::Dxc { .. } => "DXC",
+            Dx12Shaders::FxcAsked => "FXC",
+            Dx12Shaders::FxcFallback { .. } => "FXC fallback",
+        }
+    }
+
+    pub fn is_fallback(&self) -> bool {
+        matches!(self, Dx12Shaders::FxcFallback { .. })
+    }
+}
+
+impl std::fmt::Display for Dx12Shaders {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Dx12Shaders::Dxc { dir } => write!(f, "DXC ({})", dir.display()),
+            Dx12Shaders::FxcAsked => write!(f, "FXC (WGPU_DX12_COMPILER=fxc)"),
+            Dx12Shaders::FxcFallback { why } => write!(f, "FXC (fallback: {why})"),
+        }
+    }
+}
+
+/// The folder DXC's DLLs load from: `FLINT_DXC_DIR` if set, else the
+/// running executable's (for a cargo test, `target/<profile>/deps`).
+pub fn dxc_dir() -> Option<PathBuf> {
+    match std::env::var_os("FLINT_DXC_DIR").filter(|v| !v.is_empty()) {
+        Some(dir) => Some(PathBuf::from(dir)),
+        None => std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(Path::to_path_buf)),
+    }
+}
+
+/// What `WGPU_DX12_COMPILER` and [`dxc_dir`] give, with `load` checking a
+/// folder's DLLs (Err names what's wrong). The decision without the disk.
+fn choose_dx12(
+    compiler: Option<&str>,
+    dir: Option<PathBuf>,
+    load: impl FnOnce(&Path) -> Result<(), String>,
+) -> Dx12Shaders {
+    if compiler.is_some_and(|c| c.trim().eq_ignore_ascii_case("fxc")) {
+        return Dx12Shaders::FxcAsked;
+    }
+    let Some(dir) = dir else {
+        return Dx12Shaders::FxcFallback {
+            why: "the executable's folder is unknown; set FLINT_DXC_DIR".into(),
+        };
+    };
+    match load(&dir) {
+        Ok(()) => Dx12Shaders::Dxc { dir },
+        Err(why) => Dx12Shaders::FxcFallback { why },
+    }
+}
+
+/// Which compiler an instance made now would give DX12, and why.
+pub fn dx12_shaders() -> Dx12Shaders {
+    let compiler = std::env::var("WGPU_DX12_COMPILER").ok();
+    if let Some(c) = compiler.as_deref().map(str::trim) {
+        if !c.is_empty() && !c.eq_ignore_ascii_case("fxc") && !c.eq_ignore_ascii_case("dxc") {
+            warn_once(&UNKNOWN_COMPILER_WARNED, || {
+                format!("WGPU_DX12_COMPILER={c:?} is neither dxc nor fxc; using the default, DXC")
+            });
+        }
+    }
+    choose_dx12(compiler.as_deref(), dxc_dir(), load_dxc)
+}
+
+/// The last choice [`instance`] made for DX12, which is what its adapters
+/// compile with.
+static LAST_DX12: Mutex<Option<Dx12Shaders>> = Mutex::new(None);
+static FALLBACK_WARNED: AtomicBool = AtomicBool::new(false);
+static UNKNOWN_COMPILER_WARNED: AtomicBool = AtomicBool::new(false);
+
+fn warn_once(flag: &AtomicBool, message: impl FnOnce() -> String) {
+    if !flag.swap(true, Ordering::Relaxed) {
+        tracing::warn!("{}", message());
+    }
+}
+
+fn dx12_compiler(backends: wgpu::Backends) -> wgpu::Dx12Compiler {
+    if !backends.contains(wgpu::Backends::DX12) {
+        return wgpu::Dx12Compiler::Fxc;
+    }
+    let shaders = dx12_shaders();
+    *LAST_DX12.lock().unwrap() = Some(shaders.clone());
+    match shaders {
+        Dx12Shaders::Dxc { dir } => wgpu::Dx12Compiler::Dxc {
+            dxc_path: Some(dir.join(DXC_DLLS[0])),
+            dxil_path: Some(dir.join(DXC_DLLS[1])),
+        },
+        // A missing DLL would make wgpu fall back by itself, but only after
+        // a log line from every instance, even one that draws on Vulkan
+        _ => wgpu::Dx12Compiler::Fxc,
+    }
+}
+
+/// What compiles shaders on `backend`: on DX12, the last [`instance`]'s
+/// [`Dx12Shaders`] (or one decided now); `None` on any other backend.
+pub fn shader_compiler(backend: wgpu::Backend) -> Option<Dx12Shaders> {
+    (backend == wgpu::Backend::Dx12).then(|| {
+        LAST_DX12
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(dx12_shaders)
+    })
+}
+
+/// An adapter for a report: `name (DiscreteGpu, Vulkan)`, and on DX12
+/// `name (DiscreteGpu, Dx12, shaders DXC (<dir>))`.
+pub fn adapter_line(info: &wgpu::AdapterInfo) -> String {
+    match shader_compiler(info.backend) {
+        Some(s) => format!(
+            "{} ({:?}, {:?}, shaders {s})",
+            info.name, info.device_type, info.backend
+        ),
+        None => format!("{} ({:?}, {:?})", info.name, info.device_type, info.backend),
+    }
+}
+
+/// [`adapter_line`] for a line with no room: `name (Vulkan)`, and on DX12
+/// `name (Dx12, DXC)` ([`Dx12Shaders::short`]). The player's F3 and
+/// `--perf` lines.
+pub fn adapter_short(info: &wgpu::AdapterInfo) -> String {
+    match shader_compiler(info.backend) {
+        Some(s) => format!("{} ({:?}, {})", info.name, info.backend, s.short()),
+        None => format!("{} ({:?})", info.name, info.backend),
+    }
+}
+
+/// Load `dir`'s two DLLs as wgpu-hal 23 does (`DxcLib::new`, then
+/// `DxcCreateInstance`), and keep them loaded: wgpu loads the same files
+/// next and holds them for the device's life. Checked once per folder.
+#[cfg(windows)]
+fn load_dxc(dir: &Path) -> Result<(), String> {
+    type Checked = Vec<(PathBuf, Result<(), String>)>;
+    static CHECKED: Mutex<Checked> = Mutex::new(Vec::new());
+    let mut checked = CHECKED.lock().unwrap();
+    if let Some((_, result)) = checked.iter().find(|(d, _)| d == dir) {
+        return result.clone();
+    }
+    let result = DXC_DLLS.iter().try_for_each(|name| {
+        let path = dir.join(name);
+        if !path.is_file() {
+            return Err(format!("{name} not in {}", dir.display()));
+        }
+        // SAFETY: loading runs the DLL's initialisers; it's the file
+        // wgpu-hal loads next, by the same full path.
+        let lib = unsafe { libloading::Library::new(&path) }
+            .map_err(|e| format!("{} didn't load: {e}", path.display()))?;
+        // SAFETY: only looked up, never called here.
+        unsafe { lib.get::<unsafe extern "system" fn()>(b"DxcCreateInstance\0") }
+            .map_err(|e| format!("{} has no DxcCreateInstance: {e}", path.display()))?;
+        std::mem::forget(lib);
+        Ok(())
+    });
+    checked.push((dir.to_path_buf(), result.clone()));
+    result
+}
+
+#[cfg(not(windows))]
+fn load_dxc(_dir: &Path) -> Result<(), String> {
+    Err("DX12 is Windows only".into())
 }
 
 fn power_preference() -> wgpu::PowerPreference {
@@ -84,13 +309,20 @@ pub async fn request_adapter(
 
     let info = adapter.get_info();
     tracing::info!(
-        "GPU adapter: {} ({:?}, {:?}, driver: {} {})",
-        info.name,
-        info.device_type,
-        info.backend,
+        "GPU adapter: {}, driver: {} {}",
+        adapter_line(&info),
         info.driver,
         info.driver_info
     );
+    if let Some(shaders) = shader_compiler(info.backend).filter(Dx12Shaders::is_fallback) {
+        warn_once(&FALLBACK_WARNED, || {
+            format!(
+                "DX12 compiles shaders with {shaders}, about 10x slower than DXC. \
+                 `flint dxc install` puts dxcompiler.dll and dxil.dll beside the \
+                 executable, or FLINT_DXC_DIR names a folder holding them"
+            )
+        });
+    }
     Some(adapter)
 }
 
@@ -223,7 +455,68 @@ pub fn list_adapters() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::{choose_dx12, Dx12Shaders};
     use crate::context::RenderError;
+    use std::path::{Path, PathBuf};
+
+    // #912: DXC from the folder unless FXC is asked for or a DLL is
+    // missing, and each says why in the words the adapter line prints
+    #[test]
+    fn dx12_takes_dxc_from_the_folder_and_says_why_when_it_doesnt() {
+        let dir = PathBuf::from("bin");
+        let ok = |_: &Path| Ok(());
+        let missing = |d: &Path| Err(format!("dxcompiler.dll not in {}", d.display()));
+        let dxc = choose_dx12(None, Some(dir.clone()), ok);
+        assert_eq!(dxc, Dx12Shaders::Dxc { dir: dir.clone() });
+        assert_eq!(dxc.to_string(), "DXC (bin)");
+        assert_eq!(choose_dx12(Some("dxc"), Some(dir.clone()), ok), dxc);
+        // Asked for, FXC never looks at the folder
+        let never = |_: &Path| -> Result<(), String> { panic!("looked at the DLLs") };
+        let fxc = choose_dx12(Some(" FXC "), Some(dir.clone()), never);
+        assert_eq!(fxc.to_string(), "FXC (WGPU_DX12_COMPILER=fxc)");
+        assert!(!fxc.is_fallback());
+        let fallback = choose_dx12(None, Some(dir.clone()), missing);
+        assert_eq!(
+            fallback.to_string(),
+            "FXC (fallback: dxcompiler.dll not in bin)"
+        );
+        assert!(fallback.is_fallback());
+        assert_eq!(fallback.short(), "FXC fallback");
+        assert!(choose_dx12(None, None, never).is_fallback());
+    }
+
+    // The report names DX12's compiler, and only on DX12
+    #[test]
+    fn the_adapter_line_names_the_compiler_on_dx12_only() {
+        let info = |backend| wgpu::AdapterInfo {
+            name: "GPU".into(),
+            vendor: 0,
+            device: 0,
+            device_type: wgpu::DeviceType::DiscreteGpu,
+            driver: String::new(),
+            driver_info: String::new(),
+            backend,
+        };
+        assert_eq!(
+            super::adapter_line(&info(wgpu::Backend::Vulkan)),
+            "GPU (DiscreteGpu, Vulkan)"
+        );
+        let dx12 = super::adapter_line(&info(wgpu::Backend::Dx12));
+        assert!(
+            dx12.starts_with("GPU (DiscreteGpu, Dx12, shaders "),
+            "{dx12}"
+        );
+        assert!(dx12.contains("XC ("), "{dx12}");
+        assert_eq!(
+            super::adapter_short(&info(wgpu::Backend::Vulkan)),
+            "GPU (Vulkan)"
+        );
+        let short = super::adapter_short(&info(wgpu::Backend::Dx12));
+        assert!(
+            short.starts_with("GPU (Dx12, ") && short.contains("XC"),
+            "{short}"
+        );
+    }
 
     // `flint goldens` tells "no GPU" from a failed case by these words
     // (`looks_like_no_gpu`), so the hint goes after them

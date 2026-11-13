@@ -7,7 +7,7 @@ mod file_dialog;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, bundle, calibrate, check as check_cmd, edit_router, entity, examples, export, gen,
+    asset, bundle, calibrate, check as check_cmd, dxc, edit_router, entity, examples, export, gen,
     gen_preview, init, play, play_chart, play_suite, prefab, preview, query, render,
     render_goldens, render_suite, replay_chart, scene, schema, script, spike_rumble, spline_edit,
     style, terrain_edit, tex_edit, validate, validate_suite,
@@ -179,6 +179,11 @@ enum Commands {
     /// Render a scene to a PNG image (headless)
     Render(render::RenderArgs),
 
+    /// DX12's fast shader compiler: install dxcompiler.dll and dxil.dll
+    /// beside the binaries, or show what DX12 compiles with here
+    #[command(subcommand)]
+    Dxc(dxc::DxcCommands),
+
     /// User-authored styles: new (from a template), check (no GPU),
     /// prelude (the generated code), list
     #[command(subcommand)]
@@ -227,6 +232,7 @@ fn main() -> Result<()> {
         Commands::Examples(args) => examples::run(args),
         Commands::Bundle(args) => bundle::run(args),
         Commands::Export(cmd) => export::run(cmd),
+        Commands::Dxc(cmd) => dxc::run(cmd),
         Commands::ValidateSuite(args) => validate_suite::run(args),
         Commands::PlaySuite(args) => play_suite::run(args),
         Commands::Calibrate(args) => calibrate::run(args),
