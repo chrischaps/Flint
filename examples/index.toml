@@ -204,6 +204,11 @@ topic = "stylize"
 purpose = "A script cross-fades the whole frame into Kuwahara and back at story beats (#369)"
 
 [[example]]
+scene = "reveal_tear.scene.toml"
+topic = "stylize"
+purpose = "One script call tears the live frame open into a pencil sketch through a ragged, inked edge (#406)"
+
+[[example]]
 scene = "pencil_sketch.scene.toml"
 topic = "stylize"
 purpose = "Pencil on chosen props: hatching, contours and paper (#273)"

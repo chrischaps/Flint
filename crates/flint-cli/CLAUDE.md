@@ -92,6 +92,9 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                          also on `flint edit <model|effect> --render`)
    #   --style pencil:spacing=5,direction=screen   (#273: hatching, contours, paper;
    #                          direction surface|screen|tensor, seed, boil; examples/pencil_sketch)
+   #   --style pencil:reveal=0.5,reveal_shape=tear   (#406: any style shown inside a ragged
+   #                          region with an inked edge; tear|wipe|iris|panel, reveal_* keys in
+   #                          `--style help`'s last line; reveal 0 = the live frame byte for byte)
    #   --style-time 1.5       (post time animated styles read; default 0)
    #                          (#328: --style/--style-time also on flint play, flint-player and
    #                           flint edit scene.toml, kept through transitions and hot reloads;
