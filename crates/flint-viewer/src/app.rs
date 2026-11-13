@@ -1537,8 +1537,9 @@ impl ViewerApp {
         let mut gizmo_edits: Vec<EditAction> = Vec::new();
         let mut gizmo_drag_just_ended = false;
 
-        // User styles that don't compile (#275), and built-in shaders read
-        // from FLINT_STYLE_SHADER_DIR that don't (#418), shown until they do
+        // User styles that don't compile (#275) or don't load (#425), and
+        // built-in shaders read from FLINT_STYLE_SHADER_DIR that don't
+        // compile (#418), shown until they do
         let mut style_errors = flint_render::stylize::custom::errors();
         style_errors.extend(flint_render::stylize::dev_shader::errors());
 
