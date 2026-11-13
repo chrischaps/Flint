@@ -80,7 +80,7 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                           depth-free overlay since #346, never traced, but --no-grid keeps tone clean)
    #                          (#348 corners: a drawn cell whose tensor coherence is under
    #                           ascii:edge_corner=0.9 takes ┌ ├ ┼... from its neighbours' ─ │
-   #                           (ARM_GLYPHS, ascii_edge_thin.wgsl); a set's [edges] corners, else lines;
+   #                           (ARM_GLYPHS, ascii_edge_corners.wgsl); a set's [edges] corners, else lines;
    #                           #637: an unmarked ─/│ that ends beside a perpendicular one turns too,
    #                           and a sub-threshold gap cell between a ─ and a │ ending at it draws
    #                           their corner; staircases refused; edge_corner=0 turns all of it off)
