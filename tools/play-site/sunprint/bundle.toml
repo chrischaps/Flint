@@ -1,0 +1,24 @@
+# Sun Prints, play.chaps.dev's user-style game (#430): a garden printed in
+# sunlight by a cyanotype the game writes itself (styles/cyanotype.*), with
+# no engine code naming it. It lives in the Flint repo, so the site builds
+# it from the same checkout as the player (games.toml's `path`), and every
+# deploy plays the user-style path in the browser at the engine's own
+# commit.
+#
+#   flint export web tools/play-site/sunprint      # tools/play-site/sunprint/dist/web
+#   python -m http.server -d tools/play-site/sunprint/dist/web
+
+name = "sunprint"
+scene = "sun_prints.scene.toml"
+schemas = ["engine/schemas"]
+# The chooser's poster (games.toml copies it beside the bundle), not a game file
+exclude = ["web/**"]
+
+# No engine subtree: the schemas are the repo's.
+[mount]
+"engine/schemas" = "../../../schemas"
+
+[web]
+title = "Sun Prints"
+line = "A garden printed in sunlight, the way Anna Atkins printed her ferns."
+controls = "silent · WASD to walk, mouse to look · E turns the negative over · Esc frees the pointer"

@@ -15,8 +15,14 @@ in games.toml's order. This script then writes built-from.txt (the Flint
 commit and each game's). The domain is a Pages setting, not a CNAME file:
 Actions deploys ignore one.
 
+A game may live in this repo instead (#430): `path` names its folder in
+the Flint checkout the script runs from, with no `repo` or `ref`, and it is
+exported from there, at the engine's own commit. Sun Prints, the site's
+user-style game, is one.
+
 `--games-src DIR` packs from DIR/<id> folders already there instead of
-fetching, for trying a local checkout. docs/design/web.md has the rest.
+fetching, for trying a local checkout, and `--only id,id` builds just those
+games. docs/design/web.md has the rest.
 """
 
 import argparse
@@ -33,6 +39,8 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+# The Flint checkout this script is in: what a game's `path` is relative to.
+FLINT_ROOT = HERE.parent.parent
 ID = re.compile(r"^[a-z0-9_-]+$")
 # What the page shows (games.json, through export's --meta); repo and ref go in built-from.txt.
 PUBLIC = ("id", "title", "line", "controls", "touch", "orientation", "page", "video", "poster", "film")
@@ -40,12 +48,19 @@ PUBLIC = ("id", "title", "line", "controls", "touch", "orientation", "page", "vi
 ORIENTATIONS = ("landscape",)
 
 
+def local_folder(game):
+    """A `path` game's folder in this checkout, or None if it isn't one."""
+    root = FLINT_ROOT.resolve()
+    folder = (root / game["path"]).resolve()
+    return folder if folder.is_relative_to(root) and folder.is_dir() else None
+
+
 def load_games(path):
     with open(path, "rb") as f:
         games = tomllib.load(f).get("game", [])
     seen = set()
     for g in games:
-        for key in ("id", "title", "repo", "ref"):
+        for key in ("id", "title"):
             if not g.get(key):
                 sys.exit(f"{path}: a game has no {key}: {g}")
         if not ID.match(g["id"]):
@@ -54,8 +69,18 @@ def load_games(path):
             sys.exit(f"{path}: two games are called {g['id']!r}")
         if g.get("orientation") is not None and g["orientation"] not in ORIENTATIONS:
             sys.exit(f"{path}: {g['id']}: orientation must be one of {ORIENTATIONS}, not {g['orientation']!r}")
-        if not re.fullmatch(r"[0-9a-f]{40}", g["ref"]):
-            sys.exit(f"{path}: {g['id']}: ref must be a full commit SHA, not {g['ref']!r}")
+        if g.get("path") is not None:
+            # A folder in this checkout, built at the engine's own commit: no pin
+            if g.get("repo") or g.get("ref"):
+                sys.exit(f"{path}: {g['id']}: give `path` (a folder in this repo) or `repo` and `ref`, not both")
+            if local_folder(g) is None:
+                sys.exit(f"{path}: {g['id']}: path {g['path']!r} is not a folder in this repo")
+        else:
+            for key in ("repo", "ref"):
+                if not g.get(key):
+                    sys.exit(f"{path}: {g['id']}: no {key} (or `path`, for a folder in this repo)")
+            if not re.fullmatch(r"[0-9a-f]{40}", g["ref"]):
+                sys.exit(f"{path}: {g['id']}: ref must be a full commit SHA, not {g['ref']!r}")
         seen.add(g["id"])
     return games
 
@@ -116,6 +141,7 @@ def main():
     ap.add_argument("--out", required=True, type=Path, help="the site folder to write (emptied first)")
     ap.add_argument("--games", type=Path, default=HERE / "games.toml")
     ap.add_argument("--games-src", type=Path, help="pack DIR/<id> instead of fetching each repo")
+    ap.add_argument("--only", help="build these games alone (ids, comma-separated), for a local trial")
     args = ap.parse_args()
     # The --meta lines carry games.toml's words (◀ ▶, ·), which a Windows
     # console's code page can't print.
@@ -124,6 +150,12 @@ def main():
     if not (args.player / "index.html").is_file():
         sys.exit(f"{args.player} has no index.html: run `trunk build --release` in crates/flint-player")
     games = load_games(args.games)
+    if args.only:
+        wanted = args.only.split(",")
+        unknown = [i for i in wanted if i not in {g["id"] for g in games}]
+        if unknown:
+            sys.exit(f"--only: {args.games} has no {', '.join(unknown)}")
+        games = [g for g in games if g["id"] in wanted]
     # A path to the CLI, made absolute (a bare name is looked up on PATH).
     flint = str(Path(args.flint).resolve()) if Path(args.flint).is_file() else args.flint
 
@@ -133,16 +165,21 @@ def main():
     work = args.out.parent / (args.out.name + "-src")
     source = [f"flint {flint_commit()}"]
     for game in games:
-        if args.games_src:
+        if game.get("path") is not None:
+            # In this checkout already: packed where it is, at Flint's commit
+            src = local_folder(game)
+            source.append(f"{game['id']} flint:{game['path']}")
+        elif args.games_src:
             src = args.games_src / game["id"]
             if not src.is_dir():
                 sys.exit(f"--games-src: no {src}")
+            source.append(f"{game['id']} {game['repo']}@{game['ref']}")
         else:
             src = work / game["id"]
             fetch(game, src)
+            source.append(f"{game['id']} {game['repo']}@{game['ref']}")
         files = export(flint, game, src, args.player, args.out)
         print(f"{game['id']}: {', '.join(files)}", flush=True)
-        source.append(f"{game['id']} {game['repo']}@{game['ref']}")
     if not args.games_src and work.exists():
         shutil.rmtree(work)
 
