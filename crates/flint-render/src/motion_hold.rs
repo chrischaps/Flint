@@ -215,6 +215,16 @@ impl MotionHold {
         }
     }
 
+    /// Forget what `entity` kept (#871): its next matrix and bones are drawn
+    /// whatever the tick, and held from then on. For an editor whose pose
+    /// changed for a reason other than time (a layer dial, a posed bone, a
+    /// clip switch), which a hold would otherwise keep off screen until the
+    /// next tick, and never while paused.
+    pub fn release(&mut self, entity: EntityId) {
+        self.matrices.remove(&entity);
+        self.bones.remove(&entity);
+    }
+
     /// Forget every kept pose (a scene load): the next frame shows live ones.
     pub fn clear(&mut self) {
         self.rates.clear();
@@ -376,5 +386,28 @@ mod tests {
         hold.set_rates(HashMap::from([(id(1), 8.0)]));
         hold.set_time(1.0 / 60.0);
         assert_eq!(hold.matrix(id(1), m(1.0))[3][0], 1.0);
+    }
+
+    /// #871: an editor that changes a pose by hand within a tick (a layer
+    /// dial while paused) lets that one through, then holds it.
+    #[test]
+    fn a_release_lets_one_pose_through_and_holds_it() {
+        let mut hold = MotionHold::default();
+        hold.set_rates(HashMap::from([(id(1), 12.0), (id(2), 12.0)]));
+        hold.set_time(0.0);
+        assert!(hold.bones_due(id(1)) && hold.bones_due(id(2)));
+        hold.matrix(id(1), m(0.0));
+        hold.matrix(id(2), m(0.0));
+        // Paused: the clock stands still, so nothing is due
+        assert!(!hold.bones_due(id(1)));
+        hold.release(id(1));
+        assert!(hold.bones_due(id(1)), "released: the new pose goes up");
+        assert_eq!(hold.matrix(id(1), m(3.0))[3][0], 3.0);
+        // ...and is held for the rest of the tick
+        assert!(!hold.bones_due(id(1)));
+        assert_eq!(hold.matrix(id(1), m(4.0))[3][0], 3.0);
+        // The other entity was never let go
+        assert!(!hold.bones_due(id(2)));
+        assert_eq!(hold.matrix(id(2), m(3.0))[3][0], 0.0);
     }
 }

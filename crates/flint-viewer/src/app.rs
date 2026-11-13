@@ -55,11 +55,14 @@ struct ViewerState {
 
 /// `flint edit scene.toml --style ... --style-time ...` (#328): style words
 /// written over the scene's post-processing at load and at every hot
-/// reload, and the post time styles see.
+/// reload, and the post time styles see. `--motion-hold` (#871) is the
+/// whole-frame motion on twos rate, written over the scene's `[post_process]
+/// motion_hold` the same way.
 #[derive(Debug, Clone, Default)]
 pub struct ViewerStyle {
     pub specs: Vec<String>,
     pub time: Option<f32>,
+    pub motion_hold: Option<f32>,
 }
 
 /// The viewer window's size in physical pixels and whether it draws the
@@ -242,6 +245,7 @@ pub fn run(
     app.auto_orbit = auto_orbit;
     app.style_specs = style.specs;
     app.style_time = style.time;
+    app.motion_hold = style.motion_hold.map(|rate| rate.max(0.0));
     app.window_opts = window;
     event_loop.run_app(&mut app)?;
 
@@ -463,6 +467,15 @@ pub struct ViewerApp {
     style_specs: Vec<String>,
     /// `--style-time`: the post time animated styles see.
     style_time: Option<f32>,
+    /// `--motion-hold` (#871): the whole-frame motion on twos rate, kept
+    /// over the scene's as `--style` is.
+    motion_hold: Option<f32>,
+    /// The clock motion held on twos ticks by (#871): seconds since the
+    /// viewer opened. The viewer's post time stands still (at 0, or
+    /// `--style-time`), so a hold stamped with it would never turn and a
+    /// dragged held entity would stay where it was first drawn; on its own
+    /// wall clock it steps, `rate` times a second, as it will in the player.
+    motion_clock: Instant,
     /// `--width` / `--height` / `--no-grid` (#423): the window's first size
     /// and whether the renderer draws the editor grid.
     window_opts: ViewerWindow,
@@ -500,10 +513,18 @@ fn load_user_styles(scene_path: &str) {
     }
 }
 
-/// `config` with the `--style` words written over it (#328).
-fn with_styles(mut config: PostProcessConfig, specs: &[String]) -> PostProcessConfig {
+/// `config` with the `--style` words (#328) and `--motion-hold` (#871)
+/// written over it.
+fn with_flags(
+    mut config: PostProcessConfig,
+    specs: &[String],
+    motion_hold: Option<f32>,
+) -> PostProcessConfig {
     for e in flint_render::stylize::apply_style_specs(&mut config, specs) {
         eprintln!("Warning: {e}");
+    }
+    if let Some(rate) = motion_hold {
+        config.motion_hold = rate;
     }
     config
 }
@@ -595,6 +616,8 @@ impl ViewerApp {
             auto_orbit_speed: 0.5,
             style_specs: Vec::new(),
             style_time: None,
+            motion_hold: None,
+            motion_clock: Instant::now(),
             window_opts: ViewerWindow::default(),
             particles: flint_particles::ParticleSystem::new(),
             show_particles: true,
@@ -656,6 +679,8 @@ impl ViewerApp {
             auto_orbit_speed: 0.5,
             style_specs: Vec::new(),
             style_time: None,
+            motion_hold: None,
+            motion_clock: Instant::now(),
             window_opts: ViewerWindow::default(),
             particles: flint_particles::ParticleSystem::new(),
             show_particles: true,
@@ -841,17 +866,25 @@ impl ViewerApp {
         {
             let state = self.state.lock().unwrap();
             if let Some(def) = &state.scene_post {
-                scene_renderer.set_post_process_config(with_styles(
+                scene_renderer.set_post_process_config(with_flags(
                     post_process_config_from_def(def),
                     &self.style_specs,
+                    self.motion_hold,
                 ));
                 println!("Scene [post_process] applied (F4 > Authored post toggles scene/default)");
-            } else if !self.style_specs.is_empty() {
+            } else if !self.style_specs.is_empty() || self.motion_hold.is_some() {
                 let config = scene_renderer.post_process_config().clone();
-                scene_renderer.set_post_process_config(with_styles(config, &self.style_specs));
+                scene_renderer.set_post_process_config(with_flags(
+                    config,
+                    &self.style_specs,
+                    self.motion_hold,
+                ));
             }
             if !self.style_specs.is_empty() {
                 println!("--style applied: {}", self.style_specs.join(" "));
+            }
+            if let Some(rate) = self.motion_hold {
+                println!("--motion-hold applied: the whole frame drawn {rate} times a second");
             }
             if let Some(t) = self.style_time {
                 scene_renderer.ocean_time = t as f64;
@@ -951,6 +984,9 @@ impl ViewerApp {
         // Particles: step, pack, upload (ADR 0068)
         self.tick_particles();
 
+        // Motion on twos: the clock held drawings turn on (#871)
+        self.tick_motion_hold();
+
         // Render the 3D scene
         {
             let context = self.render_context.as_ref().unwrap();
@@ -1017,6 +1053,23 @@ impl ViewerApp {
         }
 
         output.present();
+    }
+
+    /// Stamp the hold's clock (#871), and while anything is drawn on ticks
+    /// re-read the world every frame. The viewer otherwise re-reads it only
+    /// on an edit, so a held entity dragged with the gizmo would be left
+    /// drawn where the last tick of the drag caught it, not where it was
+    /// dropped. A scene with no hold re-reads nothing more than it did.
+    fn tick_motion_hold(&mut self) {
+        let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer)
+        else {
+            return;
+        };
+        renderer.set_motion_time(self.motion_clock.elapsed().as_secs_f64());
+        if renderer.motion_held() {
+            let state = self.state.lock().unwrap();
+            renderer.update_from_world(&state.world, &context.device);
+        }
     }
 
     /// Advance the particle simulation by real time (scaled), then pack and
@@ -1160,17 +1213,21 @@ impl ViewerApp {
         match scene_post {
             None => println!("Scene has no [post_process] block — nothing to toggle"),
             Some(def) if !self.scene_post_enabled => {
-                renderer.set_post_process_config(with_styles(
+                renderer.set_post_process_config(with_flags(
                     post_process_config_from_def(&def),
                     &self.style_specs,
+                    self.motion_hold,
                 ));
                 self.scene_post_enabled = true;
                 println!("Scene post-process: ON (authored)");
             }
             Some(_) => {
                 if let Some(default) = &self.default_post_config {
-                    renderer
-                        .set_post_process_config(with_styles(default.clone(), &self.style_specs));
+                    renderer.set_post_process_config(with_flags(
+                        default.clone(),
+                        &self.style_specs,
+                        self.motion_hold,
+                    ));
                 }
                 self.scene_post_enabled = false;
                 println!("Scene post-process: OFF (viewer default)");
@@ -1237,9 +1294,10 @@ impl ViewerApp {
                     flint_render::look::resolve(&def, rp.look.as_deref(), &state.scene_path)
                 }) {
                     Some(Ok(def)) => {
-                        renderer.set_post_process_config(with_styles(
+                        renderer.set_post_process_config(with_flags(
                             post_process_config_from_def(&def),
                             &self.style_specs,
+                            self.motion_hold,
                         ));
                         renderer.ensure_style_resources(&context.device);
                         renderer.ensure_fxaa_resources(&context.device);
@@ -2298,9 +2356,10 @@ impl ViewerApp {
                         if self.scene_post_enabled {
                             // --style keeps winning over the reloaded file (#328)
                             if let Some(def) = &state.scene_post {
-                                renderer.set_post_process_config(with_styles(
+                                renderer.set_post_process_config(with_flags(
                                     post_process_config_from_def(def),
                                     &self.style_specs,
+                                    self.motion_hold,
                                 ));
                             }
                         }

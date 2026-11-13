@@ -3123,6 +3123,14 @@ impl SceneRenderer {
         self.motion_hold.any()
     }
 
+    /// Let `entity`'s next pose and position through a hold now, and hold
+    /// those (#871): what an editor calls when it changed the pose by hand
+    /// (a layer weight, a posed bone) rather than by time, so the change
+    /// shows within the tick, paused or not.
+    pub fn release_motion_hold(&mut self, entity: flint_core::EntityId) {
+        self.motion_hold.release(entity);
+    }
+
     /// Drop per-entity bone buffers (call when a scene is unloaded).
     pub fn clear_entity_bone_buffers(&mut self) {
         self.motion_hold.clear();
