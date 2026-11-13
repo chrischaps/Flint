@@ -4040,6 +4040,21 @@ impl SceneRenderer {
             self.style_torn_entities.clear();
         }
 
+        // Who is drawn on ticks this frame (#405): empty, and unwalked, in a
+        // scene with no motion_hold and no whole-frame rate. Before the
+        // lights, which a held entity carries on its ticks too (#873)
+        self.motion_hold.set_rates(crate::motion_hold::held_rates(
+            world,
+            self.postprocess_config.motion_hold,
+        ));
+        if self.motion_hold.any() {
+            // Bones went up before the rates were known: a hold that starts
+            // this frame keeps what they show
+            for id in self.entity_bone_buffers.keys() {
+                self.motion_hold.bones_shown(*id);
+            }
+        }
+
         // Extract lights from scene entities
         self.extract_lights_from_world(world);
 
@@ -4074,20 +4089,6 @@ impl SceneRenderer {
         // What `visibility { visible = false }` hides, descendants included
         // (#628): empty and unwalked in a scene that never hides anything.
         let hidden = world.hidden_entities();
-
-        // Who is drawn on ticks this frame (#405): empty, and unwalked, in a
-        // scene with no motion_hold and no whole-frame rate
-        self.motion_hold.set_rates(crate::motion_hold::held_rates(
-            world,
-            self.postprocess_config.motion_hold,
-        ));
-        if self.motion_hold.any() {
-            // Bones went up before the rates were known: a hold that starts
-            // this frame keeps what they show
-            for id in self.entity_bone_buffers.keys() {
-                self.motion_hold.bones_shown(*id);
-            }
-        }
 
         for entity in world.all_entities() {
             if hidden.contains(&entity.id) {
@@ -5203,8 +5204,7 @@ impl SceneRenderer {
                     }
                     "point" => {
                         if (point_count as usize) < MAX_POINT_LIGHTS {
-                            let light_pos =
-                                world.get_world_position(entity_id).unwrap_or(Vec3::ZERO);
+                            let light_pos = self.light_position(world, entity_id);
                             let radius = light
                                 .get("range")
                                 .or_else(|| light.get("radius"))
@@ -5227,8 +5227,7 @@ impl SceneRenderer {
                     }
                     "spot" => {
                         if (spot_count as usize) < MAX_SPOT_LIGHTS {
-                            let light_pos =
-                                world.get_world_position(entity_id).unwrap_or(Vec3::ZERO);
+                            let light_pos = self.light_position(world, entity_id);
                             let direction = Self::extract_light_vec3(&light, "direction")
                                 .unwrap_or([0.0, -1.0, 0.0]);
                             let radius = light
@@ -5283,6 +5282,18 @@ impl SceneRenderer {
             self.light_uniforms.point_count = point_count;
             self.light_uniforms.spot_count = spot_count;
         }
+    }
+
+    /// Where a point or spot light shines from: its world position, or,
+    /// carried by a held entity, where it was when the tick began (#873), so
+    /// the pool of light steps with the drawing that carries it. The held
+    /// matrix is the one the entity's own draw reads later this frame.
+    fn light_position(&mut self, world: &FlintWorld, entity: flint_core::EntityId) -> Vec3 {
+        let Some(live) = world.get_world_matrix(entity) else {
+            return Vec3::ZERO;
+        };
+        let m = self.motion_hold.matrix(entity, live);
+        Vec3::new(m[3][0], m[3][1], m[3][2])
     }
 
     fn extract_light_vec3(table: &toml::Value, key: &str) -> Option<[f32; 3]> {

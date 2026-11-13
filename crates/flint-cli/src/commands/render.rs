@@ -3963,8 +3963,16 @@ impl Stage {
         }
         let wanted = (seconds.max(0.0) / PARTICLE_DT).round() as u32;
         let steps = wanted.saturating_sub(self.particle_steps);
+        let whole = self.renderer.effective_post_process_config().motion_hold;
         let (world, particles) = self.game.world_and_particles();
-        particles.simulate_to(world, steps as f32 * PARTICLE_DT, PARTICLE_DT);
+        // Emitters on held entities (#873) hold on each step's own time, as
+        // the player stamps its frame's before the particles step
+        particles.sync.set_motion_hold(whole);
+        for k in 1..=steps {
+            let at = (self.particle_steps + k) as f64 * PARTICLE_DT as f64;
+            particles.sync.set_motion_time(at);
+            particles.simulate_to(world, PARTICLE_DT, PARTICLE_DT);
+        }
         self.particle_steps += steps;
     }
 
