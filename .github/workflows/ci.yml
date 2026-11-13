@@ -170,9 +170,14 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Saved even when the job fails (#909): rust-cache saves in its post
+      # step, which a failed job skips, so while this job was red every run
+      # built cold. Only dependencies are cached (cache-workspace-crates is
+      # off), and they are the same whether or not the tests pass.
       - uses: Swatinem/rust-cache@v2
         with:
           key: gpu-warp
+          cache-on-failure: true
 
       - name: cargo test -p flint-render --test stylize
         run: cargo test -p flint-render --test stylize
