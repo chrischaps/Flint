@@ -2177,6 +2177,90 @@ fn two_styles_share_one_edge_pass_a_frame() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #427: a user style replaced 100 times (each a `.shader.toml` save, as
+/// the hot reload installs it) leaves the chain's bind cache holding what
+/// it held after the first frame, not one set of groups per save until a
+/// resize; and each frame draws the install it follows.
+#[test]
+fn a_hundred_user_style_saves_keep_the_bind_cache_level() {
+    let Some(gpu) = gpu_alone() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    // Two copies of one style, a level apart, in two folders: loading one
+    // file and then the other replaces the style each time, as a save does
+    let root = std::env::temp_dir().join(format!("flint-saves-427-{}", std::process::id()));
+    let toml_in = |copy: &str, level: f32| {
+        let styles = root.join(copy).join("styles");
+        std::fs::create_dir_all(&styles).unwrap();
+        let toml = styles.join("utest_saves.shader.toml");
+        std::fs::write(
+            &toml,
+            format!(
+                "version = 1\nname = \"utest_saves\"\nshader = \"utest_saves.wgsl\"\n\
+                 [params.level]\ndefault = {level}\nmin = 0.0\nmax = 1.0\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            styles.join("utest_saves.wgsl"),
+            "fn style(p: StylePixel) -> vec4<f32> {\n    \
+             return vec4<f32>(params.level, params.level, params.level, 1.0);\n}\n",
+        )
+        .unwrap();
+        toml
+    };
+    let (dark, light) = (toml_in("a", 0.25), toml_in("b", 0.75));
+    let messages = flint_render::stylize::custom::load_dir(&root.join("a"));
+    assert!(messages.is_empty(), "{messages:?}");
+
+    let world = box_world();
+    let mut renderer = SceneRenderer::new_headless(
+        gpu.device,
+        gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let mut config = renderer.post_process_config().clone();
+    config.styles.set_enabled("utest_saves", true);
+    renderer.set_post_process_config(config);
+    renderer.ensure_style_resources(gpu.device);
+    let level = |frame: &[u8]| frame[0];
+    let first = gpu.frame(&mut renderer, &world);
+    let held = renderer.kept_post_binds();
+    let mut kept = vec![held];
+    for save in 1..=100 {
+        let (toml, grey) = if save % 2 == 1 {
+            (&light, 0.75)
+        } else {
+            (&dark, 0.25)
+        };
+        let mut messages = Vec::new();
+        flint_render::stylize::custom::load_file(toml, &mut messages).unwrap();
+        assert!(messages.is_empty(), "{messages:?}");
+        let frame = gpu.frame(&mut renderer, &world);
+        kept.push(renderer.kept_post_binds());
+        // The frame is the install it follows (#275), in display values
+        let want = grey * 255.0;
+        assert!(
+            (level(&frame) as f32 - want).abs() < 6.0,
+            "save {save} drew {} for level {grey}",
+            level(&frame)
+        );
+    }
+    eprintln!("kept bind groups after saves 0..=100 (every 10th): {:?}", {
+        kept.iter().step_by(10).collect::<Vec<_>>()
+    });
+    assert!(
+        kept.iter().all(|&k| k == held),
+        "the cache grew with the saves: {kept:?}"
+    );
+    assert_eq!(level(&first), level(&gpu.frame(&mut renderer, &world)));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// #414: a user style that reads the mask is per-entity. Its generated
 /// `<name>_style` component (or a `style_mask` naming it) switches it on
 /// with no `[post_process.styles]` table, and each entity's settings reach

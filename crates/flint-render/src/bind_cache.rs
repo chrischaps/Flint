@@ -15,9 +15,17 @@
 //! draw. Slots never move, so a bind group made for one stays good until
 //! the slot is freed.
 //!
+//! A name can outlive what it binds while the cache lives: a user style
+//! replaced by a `.shader.toml` edit (#275) caches its new pass's groups
+//! under new names, and the old ones would wait for the next resize. The
+//! old names are [`retire`]d into a process-wide log, and each cache drops
+//! them at its next [`evict_retired`](BindCache::evict_retired) (#427), so
+//! a long editing session holds one set of groups per style, not one per
+//! save, in the window's chain and in every comic panel's alike.
+//!
 //! [`PostProcessResources`]: crate::postprocess::PostProcessResources
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -86,6 +94,46 @@ impl<'a> From<&'a wgpu::TextureView> for DepthTarget<'a> {
     }
 }
 
+/// Bind group names retired for good (#427), each with its place in the
+/// log, so a cache asks only for what it hasn't dropped yet.
+struct Retired {
+    /// The place the next retired name takes.
+    next: u64,
+    /// The last [`RETIRED_KEPT`] names, oldest first.
+    names: VecDeque<(u64, &'static str)>,
+}
+
+static RETIRED: Mutex<Retired> = Mutex::new(Retired {
+    next: 0,
+    names: VecDeque::new(),
+});
+
+/// [`Retired::next`], read without the lock: a frame with nothing newly
+/// retired costs one atomic load.
+static RETIRED_NEXT: AtomicU64 = AtomicU64::new(0);
+
+/// Names the log keeps. A cache that falls further behind (a comic panel
+/// not drawn through dozens of saves) can't know which names it missed,
+/// so it forgets everything, as a resize would.
+const RETIRED_KEPT: usize = 256;
+
+/// Retire `names` in every cache in the process: what they bound is gone
+/// and nothing will ask for them again (a replaced user style's
+/// per-install names, #427). Each cache drops them at its next
+/// [`BindCache::evict_retired`].
+pub(crate) fn retire(names: impl IntoIterator<Item = &'static str>) {
+    let mut log = RETIRED.lock().unwrap_or_else(|e| e.into_inner());
+    for name in names {
+        let at = log.next;
+        log.names.push_back((at, name));
+        log.next += 1;
+    }
+    while log.names.len() > RETIRED_KEPT {
+        log.names.pop_front();
+    }
+    RETIRED_NEXT.store(log.next, Ordering::Release);
+}
+
 type CallerGroups = (u64, HashMap<(&'static str, u64), Arc<wgpu::BindGroup>>);
 
 /// Bind groups by a name and a variant (which views were chosen, whose
@@ -101,6 +149,8 @@ pub struct BindCache {
     /// Who this cache is to [`first_write`](Self::first_write): a
     /// [`gpu_id`], a new one on [`clear`](Self::clear).
     writer: AtomicU64,
+    /// How far into the [`retire`] log this cache has dropped names.
+    retired_seen: AtomicU64,
 }
 
 impl Default for BindCache {
@@ -110,6 +160,8 @@ impl Default for BindCache {
             caller: Default::default(),
             made: AtomicU64::new(0),
             writer: AtomicU64::new(gpu_id()),
+            // Names retired before it was made were never in it
+            retired_seen: AtomicU64::new(RETIRED_NEXT.load(Ordering::Acquire)),
         }
     }
 }
@@ -200,6 +252,47 @@ impl BindCache {
         drop(caller);
         // A new writer: every first write is due again
         self.writer.store(gpu_id(), Ordering::Relaxed);
+        // Holding nothing, it holds no retired name
+        self.retired_seen
+            .store(RETIRED_NEXT.load(Ordering::Acquire), Ordering::Relaxed);
+    }
+
+    /// Drop the groups whose names were [`retire`]d since this cache last
+    /// asked (#427), returning how many went. Callers ask once a frame,
+    /// before anything binds: with nothing new retired it is one atomic
+    /// load. A cache too far behind for the log forgets everything.
+    pub fn evict_retired(&self) -> usize {
+        let seen = self.retired_seen.load(Ordering::Relaxed);
+        if RETIRED_NEXT.load(Ordering::Acquire) == seen {
+            return 0;
+        }
+        let log = RETIRED.lock().unwrap_or_else(|e| e.into_inner());
+        let next = log.next;
+        let oldest = log.names.front().map_or(next, |&(at, _)| at);
+        if seen < oldest {
+            drop(log);
+            let held = self.len();
+            self.clear();
+            self.retired_seen.store(next, Ordering::Relaxed);
+            return held;
+        }
+        let gone: HashSet<&str> = log
+            .names
+            .iter()
+            .filter(|&&(at, _)| at >= seen)
+            .map(|&(_, name)| name)
+            .collect();
+        drop(log);
+        let mut evicted = 0;
+        let mut drop_gone = |groups: &mut HashMap<(&'static str, u64), Arc<wgpu::BindGroup>>| {
+            let before = groups.len();
+            groups.retain(|&(name, _), _| !gone.contains(name));
+            evicted += before - groups.len();
+        };
+        drop_gone(&mut self.groups.lock().unwrap_or_else(|e| e.into_inner()));
+        drop_gone(&mut self.caller.lock().unwrap_or_else(|e| e.into_inner()).1);
+        self.retired_seen.store(next, Ordering::Relaxed);
+        evicted
     }
 
     /// How many bind groups it holds.
@@ -406,6 +499,81 @@ mod tests {
         assert!(page[at(slots[1].0)..at(slots[1].0) + 16]
             .iter()
             .all(|&b| b == 0));
+    }
+
+    /// A user style's names for one install, as `custom::install` makes
+    /// them: unique per generation, leaked.
+    fn install_names(style: &str, generation: u32) -> [&'static str; 4] {
+        ["input", "depth/mask", "frame", "pass targets"].map(|what| {
+            &*Box::leak(format!("{style} style {what} BG #{generation}").into_boxed_str())
+        })
+    }
+
+    /// #427: 100 `.shader.toml` saves leave a cache holding what it held
+    /// after the first, in the window's chain and in a comic panel's that
+    /// only catches up when it's drawn; another style's groups stay.
+    #[test]
+    fn retired_names_leave_every_cache() {
+        let Some((device, _queue)) = device() else {
+            crate::gpu_select::skip_without_gpu("no GPU adapter");
+            return;
+        };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[],
+        });
+        let group = || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &layout,
+                entries: &[],
+            })
+        };
+        // A frame's binds: a built-in's, then the style's (the depth group
+        // over the caller's depth, as `depth_bind` keeps it)
+        let draw = |cache: &BindCache, names: &[&'static str; 4]| {
+            cache.evict_retired();
+            cache.get("bloom 427", 0, group);
+            for (i, &name) in names.iter().enumerate() {
+                if i == 1 {
+                    cache.get_over(DepthKey::Caller(7), name, 0, group);
+                } else {
+                    cache.get(name, i as u64, group);
+                }
+            }
+        };
+        let (window, panel) = (BindCache::default(), BindCache::default());
+        let mut names = install_names("utest_427", 0);
+        draw(&window, &names);
+        draw(&panel, &names);
+        let held = window.len();
+        assert_eq!(held, 5);
+        let bloom_made = window.made();
+        for save in 1..=100 {
+            retire(names);
+            names = install_names("utest_427", save);
+            draw(&window, &names);
+            assert_eq!(window.len(), held, "after save {save}");
+            if save % 10 == 0 {
+                // The panel is drawn now and then: it drops every save's
+                // names it missed, not only the last
+                draw(&panel, &names);
+                assert_eq!(panel.len(), held, "panel after save {save}");
+            }
+        }
+        // Only the style's groups were made again: bloom's was kept
+        assert_eq!(window.made() - bloom_made, 4 * 100);
+
+        // A cache behind more than the log keeps forgets everything
+        let behind = BindCache::default();
+        draw(&behind, &names);
+        for _ in 0..=RETIRED_KEPT / 4 {
+            retire(names);
+            names = install_names("utest_427", 1000);
+        }
+        assert_eq!(behind.evict_retired(), 5, "cleared, bloom's too");
+        assert!(behind.is_empty());
+        assert_eq!(behind.evict_retired(), 0, "and caught up");
     }
 
     #[test]

@@ -339,13 +339,24 @@ impl PlayerApp {
     /// The post-processing config a scene starts with: its `[post_process]`
     /// with the `--style` words written over it (#328). A scene with no
     /// block starts from the defaults, the config a new renderer has, not
-    /// from what the last scene left (#723).
+    /// from what the last scene left (#723). A user style an earlier scene
+    /// loaded from a folder this one can't see is left out with a warning
+    /// (#426), as it is when the scene loads first; the scene's own tables
+    /// keep it, so a file the scene can see that takes the name over later
+    /// brings it back.
     pub fn scene_post_config(&self) -> flint_render::PostProcessConfig {
         let mut config = self
             .scene
             .post_process
             .as_ref()
-            .map(scene_loading::post_process_config_from_def)
+            .map(|def| {
+                let mut def = def.clone();
+                let scope = self.kept_asset_scope();
+                for warning in flint_render::stylize::custom::drop_unseen(&mut def.styles, &scope) {
+                    tracing::warn!("{warning}");
+                }
+                scene_loading::post_process_config_from_def(&def)
+            })
             .unwrap_or_default();
         for e in flint_render::stylize::apply_style_specs(&mut config, &self.launch.style_specs) {
             tracing::warn!("{e}");
