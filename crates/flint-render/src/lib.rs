@@ -31,6 +31,7 @@ pub mod palette;
 pub mod panels;
 pub mod particle_pipeline;
 mod pipeline;
+pub mod pipeline_cache;
 pub mod post_style;
 pub mod postprocess;
 mod primitives;

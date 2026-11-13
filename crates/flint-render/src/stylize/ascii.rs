@@ -45,8 +45,14 @@
 //! colour (`smoothing`, per 60 Hz frame: [`StyleFrame::dt`] scales it so a
 //! change settles in the same game time at any rate, #342) and last frame's glyph while its tone stays within
 //! `hysteresis` ramp steps of it, and an optional grid-fixed ordered
-//! `dither` breaks gradients into a stable pattern. `temporal = "off"`
-//! draws every frame as if it were the first. History counts only when
+//! `dither` breaks gradients into a stable pattern. The edge glyphs keep
+//! a history of their own (#477): the edge passes read a copy of last
+//! frame's edge cells and slots (`EdgePast`), so a cell's edge length,
+//! direction and place are smoothed (by the square root of `smoothing`)
+//! and its decisions (draw a line or not, which line, which of two cells
+//! a line near their border belongs to) are held by `hysteresis`, and a
+//! cell drawing the same line changes its corner only when two frames
+//! agree. `temporal = "off"` draws every frame as if it were the first. History counts only when
 //! the last frame the renderer drew was the one before and nothing about
 //! the grid, ramp or [`StyleFrame::history_epoch`] changed, so a single
 //! headless render is exactly the stateless style's, and a
@@ -306,12 +312,12 @@ const HINTS: &[StyleHint] = &[
     StyleHint::new(
         "smoothing",
         "Smoothing",
-        "How much of last frame's colour a cell keeps, per 60 Hz frame (the same settling time at any frame rate); a cell whose colour jumps takes the new one at once",
+        "How much of last frame's colour a cell keeps, per 60 Hz frame (the same settling time at any frame rate); a cell whose colour jumps takes the new one at once. Edge cells keep its square root of their line's length, direction and place",
     ),
     StyleHint::new(
         "hysteresis",
         "Hysteresis",
-        "How far, in ramp steps, a cell's tone may stray before its glyph changes",
+        "How far, in ramp steps, a cell's tone may stray before its glyph changes; and how far an edge's length, direction and place may stray before its line glyph changes",
     ),
     StyleHint::new(
         "dither",
@@ -697,14 +703,16 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         device,
         "ASCII Edge Thin Pipeline",
         &kit::shader(device, "ASCII Edge Thin Shader", EDGE_THIN_SHADER),
-        &[&edges_in_bgl],
+        // Its uniform and last frame's edge slots (#477)
+        &[&edges_in_bgl, &uniform_bgl, &cells_bgl],
         EDGE_SLOT_FORMAT,
     );
     let edge_corner_pipeline = kit::fullscreen_pipeline(
         device,
         "ASCII Edge Corner Pipeline",
         &kit::shader(device, "ASCII Edge Corner Shader", EDGE_CORNER_SHADER),
-        &[&cells_bgl, &edges_in_bgl],
+        // The thin pass's uniform and last frame's slots (#477)
+        &[&cells_bgl, &edges_in_bgl, &uniform_bgl, &cells_bgl],
         EDGE_SLOT_FORMAT,
     );
     let blit = kit::Blit::new(device, "ASCII Blit", &input_bgl, d.format);
@@ -728,14 +736,19 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
                 "ASCII Edge Cell Shader",
                 kit::wgsl!("ascii_edge_cells.wgsl"),
             ),
-            // The picture too (#351): the near side's hue
-            &[&uniform_bgl, &edges_in_bgl, &stats_in_bgl],
+            // The picture too (#351): the near side's hue; and last frame's
+            // edge cells (#477)
+            &[&uniform_bgl, &edges_in_bgl, &stats_in_bgl, &edges_in_bgl],
             EDGE_CELL_FORMAT,
         ),
         edge_uniforms: kit::uniform_buffer::<EdgeUniforms>(device, "ASCII Edge Uniforms"),
         edge_cell_uniforms: kit::uniform_buffer::<EdgeCellUniforms>(
             device,
             "ASCII Edge Cell Uniforms",
+        ),
+        edge_thin_uniforms: kit::uniform_buffer::<EdgeThinUniforms>(
+            device,
+            "ASCII Edge Thin Uniforms",
         ),
         edge_view_pipeline,
         edge_view_cells_bgl,
@@ -753,6 +766,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         edge_cells: Mutex::new(None),
         edge_thin: Mutex::new(None),
         edge_slots: Mutex::new(None),
+        edge_past: Mutex::new(EdgePast::default()),
         cells_pipeline,
         variant_cells_pipeline,
         variant_cells: Mutex::new([None, None]),
@@ -980,7 +994,34 @@ struct EdgeCellUniforms {
     srgb: u32,
     /// The coherence under which a cell is marked as a corner (#348; 0 off).
     corner: f32,
+    /// 1 when the past edge cells hold last frame's (#477).
+    history: u32,
+    /// How far an edge's measures may stray before its decisions change:
+    /// the style's `hysteresis`.
+    hold: f32,
+    /// How much of last frame's length and direction a cell keeps: the
+    /// style's `smoothing`, for this frame's length (#342).
+    smoothing: f32,
+    _pad: u32,
 }
+
+/// The edge thin pass's uniforms (#477), `ascii_edge_thin.wgsl`.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct EdgeThinUniforms {
+    /// 1 when the past edge slots hold last frame's.
+    history: u32,
+    /// Cells past the border a line may go and stay with the cell that drew
+    /// it last frame.
+    reach: f32,
+    _pad: [u32; 2],
+}
+
+/// How far past a cell's border, in cells per unit of `hysteresis`, a line
+/// stays with the cell that drew it last frame (#477): the default 0.35
+/// holds it a third of a cell past. Measured on the motion bench (reach
+/// 0.175 left 1.7 reversals a frame, 0.35 left 0.9).
+const EDGE_REACH: f32 = 1.0;
 
 /// The edge debug view's uniforms (#349), `ascii_edge_view.wgsl`.
 #[repr(C)]
@@ -1038,8 +1079,9 @@ const EDGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// as they were.
 const EDGE_CELL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 /// The edge thin and corner passes' texel a cell (#910): slots packed as
-/// `ascii_edge_slot.wgsl` packs them.
-const EDGE_SLOT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Uint;
+/// `ascii_edge_slot.wgsl` packs them, 20 bits since the corner pass keeps
+/// what it found beside what the cell draws (#477).
+const EDGE_SLOT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 /// How many cells bigger than the grid the thin pass's texture is on each
 /// side (`THIN_PAD` in ascii_edge_slot.wgsl).
 const EDGE_THIN_PAD: u32 = 1;
@@ -1155,7 +1197,7 @@ fn load_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
 struct Owned {
     size: [u32; 2],
     generation: u64,
-    _texture: wgpu::Texture,
+    texture: wgpu::Texture,
     view: wgpu::TextureView,
     bind: wgpu::BindGroup,
 }
@@ -1184,8 +1226,12 @@ impl Owned {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
+                // Copied too: the edge cells and slots keep last frame's in
+                // a second texture (#477)
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
             let view = texture.create_view(&Default::default());
@@ -1200,7 +1246,7 @@ impl Owned {
             *slot = Some(Owned {
                 size,
                 generation,
-                _texture: texture,
+                texture,
                 view,
                 bind,
             });
@@ -1646,6 +1692,69 @@ impl History {
     }
 }
 
+/// What the edge passes' history is keyed on (#477): last frame's edge
+/// cells and slots are this frame's past only if the grid, the frame and
+/// the edge pixels' size are unchanged and the same textures hold them.
+#[derive(Clone, PartialEq, Debug)]
+struct EdgeKey {
+    epoch: u64,
+    size: [u32; 2],
+    depth_size: [u32; 2],
+    cell: [u32; 2],
+    origin: [u32; 2],
+    /// The edge cells' and slots' generations, which a resize bumps.
+    textures: [u64; 2],
+}
+
+/// Last frame's edge cells and slots (#477), and the key and frame number
+/// of the frame that wrote them.
+#[derive(Default)]
+struct EdgePast {
+    cells: Option<Owned>,
+    slots: Option<Owned>,
+    last: Option<(EdgeKey, u64)>,
+}
+
+impl EdgePast {
+    /// Whether the frame drawn last wrote this frame's past, and note this
+    /// frame as drawn. The edge passes may skip a frame (edges off, the
+    /// style off) and then nothing in the textures is the last frame's.
+    fn advance(&mut self, key: EdgeKey, frame: u64, temporal: bool) -> bool {
+        let follows = self
+            .last
+            .as_ref()
+            .is_some_and(|(k, f)| *k == key && f.wrapping_add(1) == frame);
+        self.last = Some((key, frame));
+        temporal && follows
+    }
+}
+
+/// How much of last frame's edge length and direction a cell keeps this
+/// frame (#477), for the style's `smoothing` (per 60 Hz frame) and a frame
+/// `dt` seconds long: its square root, so edges keep more than tone does
+/// (0.6 is 0.77). A cell's edge length counts the pixels of one-pixel
+/// lines, which come and go with a sub-pixel move far more than a colour
+/// averaged over 16 samples does; at the tone's weight the motion bench
+/// kept 1.2 reversals a frame, at this 0.9.
+fn edge_smoothing(smoothing: f32, dt: f32) -> f32 {
+    super::per_60hz(smoothing.clamp(0.0, 0.99), dt)
+        .sqrt()
+        .min(SMOOTHING_MAX)
+}
+
+/// Copy `from` into `to`, two textures of one size and format.
+fn copy_whole(encoder: &mut wgpu::CommandEncoder, from: &Owned, to: &Owned) {
+    encoder.copy_texture_to_texture(
+        from.texture.as_image_copy(),
+        to.texture.as_image_copy(),
+        wgpu::Extent3d {
+            width: from.size[0],
+            height: from.size[1],
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
 /// The cell, in output pixels, for a cell `points` wide at
 /// `pixels_per_point`, with a font whose glyphs are `glyph` pixels: whole
 /// pixels, at least 2 wide, the height keeping the glyph's aspect.
@@ -1755,25 +1864,25 @@ struct Fonts {
 const POLL_FRAMES: u32 = 15;
 
 struct Ascii {
-    cells_pipeline: wgpu::RenderPipeline,
+    cells_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     /// Per-entity variant cells (#313): their pass and its two entries.
-    variant_cells_pipeline: wgpu::RenderPipeline,
+    variant_cells_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     variant_cells: Mutex<[Option<Owned>; 2]>,
     /// The dissolve's order and rank state (#398), a band of rows per
     /// dissolving variant.
-    dissolve_order_pipeline: wgpu::RenderPipeline,
-    dissolve_rank_pipeline: wgpu::RenderPipeline,
+    dissolve_order_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    dissolve_rank_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     dissolve: Mutex<[Option<Owned>; 2]>,
-    stats_pipeline: wgpu::RenderPipeline,
-    stats_resolve_pipeline: wgpu::RenderPipeline,
-    stats_rows_pipeline: wgpu::RenderPipeline,
+    stats_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    stats_resolve_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    stats_rows_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     stats_in_bgl: wgpu::BindGroupLayout,
     /// Tone statistics (#289): per (slot, run of a lattice row, #337), per
     /// (slot, row), then per slot.
     stats_runs: Mutex<Option<Owned>>,
     stats_rows: Mutex<Option<Owned>>,
     stats: Mutex<Option<Owned>>,
-    pipeline: wgpu::RenderPipeline,
+    pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
     /// The uniform and the variant table (#336), and the edge pass's.
@@ -1791,13 +1900,13 @@ struct Ascii {
     blit: kit::Blit,
     fonts: Mutex<Fonts>,
     history: Mutex<History>,
-    edge_pipeline: wgpu::RenderPipeline,
-    edge_cell_pipeline: wgpu::RenderPipeline,
+    edge_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    edge_cell_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     edge_uniforms: wgpu::Buffer,
     edge_cell_uniforms: wgpu::Buffer,
     /// The edge debug view (#349), drawn instead of the glyphs under
     /// `DebugMode::StyleEdges`.
-    edge_view_pipeline: wgpu::RenderPipeline,
+    edge_view_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     edge_view_uniforms: wgpu::Buffer,
     edge_view_cells_bgl: wgpu::BindGroupLayout,
     /// Each edge cell's glyph, decided once per cell (#910): the thin pass
@@ -1805,8 +1914,8 @@ struct Ascii {
     /// than the grid on every side), then the corner pass
     /// (`ascii_edge_corners.wgsl`, into `edge_slots`), of which the glyph
     /// pass and the edge view read one texel a cell.
-    edge_thin_pipeline: wgpu::RenderPipeline,
-    edge_corner_pipeline: wgpu::RenderPipeline,
+    edge_thin_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    edge_corner_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     edges_in_bgl: wgpu::BindGroupLayout,
     depth_bgl: wgpu::BindGroupLayout,
     mask_bgl: wgpu::BindGroupLayout,
@@ -1815,9 +1924,13 @@ struct Ascii {
     edge_cells: Mutex<Option<Owned>>,
     edge_thin: Mutex<Option<Owned>>,
     edge_slots: Mutex<Option<Owned>>,
+    /// Last frame's edge cells and slots, copied before this frame's
+    /// passes write theirs, and whether they follow on (#477).
+    edge_past: Mutex<EdgePast>,
+    edge_thin_uniforms: wgpu::Buffer,
     /// The glyph grid as text (#317): `fs_text` in ascii.wgsl, drawn only
     /// while `capture` is on, into `text` and copied to its read-back.
-    text_pipeline: wgpu::RenderPipeline,
+    text_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     capture: AtomicBool,
     text: Mutex<Option<TextCapture>>,
 }
@@ -2554,6 +2667,44 @@ impl Ascii {
             })
         });
         let mask = frame.mask_bind("ASCII Mask BG", &self.mask_bgl);
+
+        // Last frame's edge cells and slots (#477), copied aside before
+        // this frame's passes write over them, when they're its past: the
+        // passes keep last frame's decisions until an edge has clearly
+        // moved on. Screen space under `temporal = "reproject"` too
+        let mut past = self.edge_past.lock().unwrap_or_else(|e| e.into_inner());
+        let key = EdgeKey {
+            epoch: frame.history_epoch,
+            size: [frame.width, frame.height],
+            depth_size: frame.depth_size,
+            cell: cell.map(f32::to_bits),
+            origin: origin.map(f32::to_bits),
+            textures: [edge_cells.generation, edge_slots.generation],
+        };
+        let history = past.advance(key, frame.frame, frame.option("temporal") != "off");
+        let EdgePast { cells, slots, .. } = &mut *past;
+        let past_cells = Owned::ensure(
+            cells,
+            frame.device,
+            "ASCII Past Edge Cells",
+            EDGE_CELL_FORMAT,
+            edge_cells.size,
+            &self.edges_in_bgl,
+        );
+        let past_slots = Owned::ensure(
+            slots,
+            frame.device,
+            "ASCII Past Edge Slots",
+            EDGE_SLOT_FORMAT,
+            edge_slots.size,
+            &self.cells_bgl,
+        );
+        if history {
+            copy_whole(encoder, edge_cells, past_cells);
+            copy_whole(encoder, edge_slots, past_slots);
+        }
+        let hold = frame.param("hysteresis").max(0.0);
+
         kit::fullscreen_pass_in(
             encoder,
             "ASCII Edge Pass",
@@ -2573,11 +2724,26 @@ impl Ascii {
             edge_size: [edges.size[0] as f32, edges.size[1] as f32],
             srgb: frame.srgb() as u32,
             corner: frame.param("edge_corner").clamp(0.0, 1.0),
+            history: history as u32,
+            hold,
+            smoothing: edge_smoothing(frame.param("smoothing"), frame.dt),
+            _pad: 0,
         };
         frame.queue.write_buffer(
             &self.edge_cell_uniforms,
             0,
             bytemuck::bytes_of(&cell_uniforms),
+        );
+        let thin_uniforms = EdgeThinUniforms {
+            history: history as u32,
+            // Under half a cell, so the border never reaches a cell's centre
+            reach: (hold * EDGE_REACH).min(0.45),
+            _pad: [0; 2],
+        };
+        frame.queue.write_buffer(
+            &self.edge_thin_uniforms,
+            0,
+            bytemuck::bytes_of(&thin_uniforms),
         );
         kit::fullscreen_pass_in(
             encoder,
@@ -2593,6 +2759,7 @@ impl Ascii {
                 ),
                 &edges.bind,
                 &self.picture_bind(frame, input, false),
+                &past_cells.bind,
             ],
             regions.map(|r| r.edge_cells),
         );
@@ -2602,6 +2769,11 @@ impl Ascii {
         // outside the regions reads the edge cells as the glyph pass's
         // pixels once did, and the passes cost next to nothing
         let pad = 2 * EDGE_THIN_PAD;
+        let thin_uniform = frame.uniform(
+            "ASCII Edge Thin Uniform BG",
+            &self.uniform_bgl,
+            &self.edge_thin_uniforms,
+        );
         let mut thin_slot = self.edge_thin.lock().unwrap_or_else(|e| e.into_inner());
         let thin = Owned::ensure(
             &mut thin_slot,
@@ -2616,14 +2788,14 @@ impl Ascii {
             "ASCII Edge Thin Pass",
             &thin.view,
             &self.edge_thin_pipeline,
-            &[&edge_cells.bind],
+            &[&edge_cells.bind, &thin_uniform, &past_slots.bind],
         );
         kit::fullscreen_pass(
             encoder,
             "ASCII Edge Corner Pass",
             &edge_slots.view,
             &self.edge_corner_pipeline,
-            &[&thin.bind, &edge_cells.bind],
+            &[&thin.bind, &edge_cells.bind, &thin_uniform, &past_slots.bind],
         );
     }
 
@@ -3480,7 +3652,9 @@ mod tests {
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edges), 128);
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 160);
         assert_eq!(std::mem::size_of::<EdgeUniforms>(), 112);
-        assert_eq!(std::mem::size_of::<EdgeCellUniforms>(), 48);
+        // #477's history, hold and smoothing
+        assert_eq!(std::mem::size_of::<EdgeCellUniforms>(), 64);
+        assert_eq!(std::mem::size_of::<EdgeThinUniforms>(), 16);
     }
 
     #[test]
@@ -3538,6 +3712,17 @@ mod tests {
             )
             .validate(&module)
             .expect(name);
+            // Both read the thin pass's uniform (#477), each declaring it
+            let (_, t) = module
+                .global_variables
+                .iter()
+                .find(|(_, v)| v.name.as_deref() == Some("t"))
+                .expect("uniform t");
+            assert_eq!(
+                module.types[t.ty].inner.size(module.to_ctx()) as usize,
+                std::mem::size_of::<EdgeThinUniforms>(),
+                "{name}"
+            );
         }
         for (name, src) in [
             ("glyph", GLYPH_SHADER.text),
@@ -4007,6 +4192,49 @@ mod tests {
             .flat_map(|g| [bind_key(&[0, 0, 0, g, 7]), bind_key(&[0, 0, g, 0, 7])])
             .collect();
         assert_eq!(keys.len(), 2 * 4096 - 1);
+    }
+
+    fn edge_key(epoch: u64) -> EdgeKey {
+        EdgeKey {
+            epoch,
+            size: [1280, 720],
+            depth_size: [1280, 720],
+            cell: [8.0f32.to_bits(), 16.0f32.to_bits()],
+            origin: [0, 0],
+            textures: [0, 0],
+        }
+    }
+
+    #[test]
+    fn edge_history_follows_only_the_frame_before_with_the_same_key() {
+        let mut past = EdgePast::default();
+        // The first frame has no past; the next one does
+        assert!(!past.advance(edge_key(0), 10, true));
+        assert!(past.advance(edge_key(0), 11, true));
+        // A skipped frame (edges off for a frame) leaves nothing to trust
+        assert!(!past.advance(edge_key(0), 13, true));
+        assert!(past.advance(edge_key(0), 14, true));
+        // A camera cut's new epoch, and a resized texture, start over
+        assert!(!past.advance(edge_key(1), 15, true));
+        let mut resized = edge_key(1);
+        resized.textures = [1, 1];
+        assert!(!past.advance(resized.clone(), 16, true));
+        assert!(past.advance(resized.clone(), 17, true));
+        // temporal = "off" never trusts it, but still notes the frame
+        assert!(!past.advance(resized.clone(), 18, false));
+        assert!(past.advance(resized, 19, true));
+    }
+
+    #[test]
+    fn edge_smoothing_is_the_square_root_of_the_tones() {
+        let at_60 = edge_smoothing(0.6, 1.0 / 60.0);
+        assert!((at_60 - 0.6f32.sqrt()).abs() < 1e-6, "{at_60}");
+        // Per 60 Hz frame, as the tone's: two 120 Hz frames keep as much
+        let at_120 = edge_smoothing(0.6, 1.0 / 120.0);
+        assert!((at_120 * at_120 - at_60).abs() < 1e-6);
+        // No smoothing is none, and the most is capped like the tone's
+        assert_eq!(edge_smoothing(0.0, 1.0 / 60.0), 0.0);
+        assert!(edge_smoothing(0.99, 1.0 / 240.0) <= SMOOTHING_MAX);
     }
 
     #[test]

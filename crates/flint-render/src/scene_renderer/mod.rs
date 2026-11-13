@@ -881,10 +881,10 @@ impl SceneRenderer {
 
         let water = water::WaterRenderer::new(
             device,
-            pipelines.ocean.as_ref(),
+            pipelines.ocean.as_deref(),
             &layouts.transform_bind_group_layout,
         );
-        let sky = sky::SkyRenderer::new(device, pipelines.sky.as_ref());
+        let sky = sky::SkyRenderer::new(device, pipelines.sky.as_deref());
         let particle_buffers = pipelines
             .particle
             .as_ref()
@@ -1041,7 +1041,7 @@ impl SceneRenderer {
         self.terrain.load_terrain(
             device,
             queue,
-            self.pipelines.terrain.as_ref(),
+            self.pipelines.terrain.as_deref(),
             &mut self.texture_cache,
             &self.layouts.transform_bind_group_layout,
             &scope,
@@ -1092,7 +1092,7 @@ impl SceneRenderer {
         self.terrain.load_terrain_from_data(
             device,
             queue,
-            self.pipelines.terrain.as_ref(),
+            self.pipelines.terrain.as_deref(),
             &mut self.texture_cache,
             &self.layouts.transform_bind_group_layout,
             chunks,
@@ -2727,7 +2727,7 @@ impl SceneRenderer {
     /// Load an equirectangular panorama image as a skybox
     pub fn load_skybox(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, path: &Path) {
         self.sky
-            .load_skybox(device, queue, self.pipelines.skybox.as_ref(), path);
+            .load_skybox(device, queue, self.pipelines.skybox.as_deref(), path);
     }
 
     pub fn toggle_shadows(&mut self) -> bool {
@@ -4459,7 +4459,7 @@ impl SceneRenderer {
 
             // Blit: snapshot opaque color + depth into sampleable copies.
             {
-                let op = self.pipelines.ocean.as_ref().unwrap();
+                let op = self.pipelines.ocean.as_deref().unwrap();
                 // The grab runs only into the HDR chain, so the bind group
                 // is the chain's to keep while the depth is its too (#139).
                 let resources = self.postprocess_resources.as_ref().unwrap();

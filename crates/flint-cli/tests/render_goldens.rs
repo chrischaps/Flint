@@ -90,6 +90,7 @@ fn goldens_and_music_each_list_only_their_own_flags() {
         "--out-dir",
         "--require-gpu",
         "--isolate",
+        "--fresh-pipelines",
     ];
     const MUSIC: &[&str] = &[
         "--script",
@@ -211,4 +212,55 @@ fn style_flag_rejects_what_it_cannot_do() {
         err.contains("no key 'colour'") && err.contains("color="),
         "{err}"
     );
+}
+
+/// #911: the cases of one `flint goldens` run share a process, a device and
+/// now their pipelines, but no case sees what an earlier one left. Here the
+/// first case loads a user style from its own folder; the second names the
+/// same style from a folder that has none, and must draw as it would alone,
+/// without it (#426), not with the style the first case registered. The
+/// second case's reference is its scene with the style switched off.
+#[test]
+fn a_case_cannot_see_a_user_style_an_earlier_case_loaded() {
+    let root = std::env::temp_dir().join(format!("flint-911-isolation-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/scenes/styles");
+    let styles = root.join("a/styles");
+    std::fs::create_dir_all(&styles).unwrap();
+    std::fs::create_dir_all(root.join("b")).unwrap();
+    for file in ["template.shader.toml", "template.wgsl"] {
+        std::fs::copy(fixtures.join(file), styles.join(file)).unwrap();
+    }
+    let scene = "[scene]\nname = \"Isolation\"\nversion = \"1.0\"\n\n\
+                 [post_process.styles.template]\nsplit = 0.8\n";
+    std::fs::write(root.join("a/seen.scene.toml"), scene).unwrap();
+    std::fs::write(root.join("b/unseen.scene.toml"), scene).unwrap();
+    std::fs::write(
+        root.join("isolation.goldens.toml"),
+        "[suite]\nname = \"isolation\"\nroot = \".\"\nwidth = 64\nheight = 48\n\n\
+         [[case]]\nname = \"sees-its-style\"\nscene = \"a/seen.scene.toml\"\nmatches = []\n\n\
+         [[case]]\nname = \"cannot-see-the-last-cases-style\"\n\
+         scene = \"b/unseen.scene.toml\"\nmatches = [\"--style\", \"template:off\"]\n",
+    )
+    .unwrap();
+    let run = Command::new(FLINT)
+        .arg("goldens")
+        .arg(root.join("isolation.goldens.toml"))
+        .arg("--out-dir")
+        .arg(root.join("out"))
+        .output()
+        .expect("run flint");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    if !text.contains("no GPU adapter") {
+        assert!(run.status.success(), "{text}");
+        assert!(
+            text.contains("PASS  cannot-see-the-last-cases-style"),
+            "{text}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
 }

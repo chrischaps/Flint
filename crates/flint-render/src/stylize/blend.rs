@@ -19,7 +19,7 @@ const BIND: &str = "style blend input";
 /// and the reveal's (#406), which draws in its place when the style has one.
 #[derive(Default)]
 pub struct BlendPass {
-    shared: OnceLock<(wgpu::ShaderModule, wgpu::BindGroupLayout)>,
+    shared: OnceLock<(kit::Shader, wgpu::BindGroupLayout)>,
     pipelines: Mutex<Vec<(wgpu::TextureFormat, Arc<wgpu::RenderPipeline>)>>,
     reveal: super::reveal::RevealPass,
 }
@@ -45,18 +45,21 @@ impl BlendPass {
             dst_factor: wgpu::BlendFactor::OneMinusConstant,
             operation: wgpu::BlendOperation::Add,
         };
-        let pipeline = Arc::new(kit::fullscreen_pipeline_with(
-            device,
-            "Style Blend Pipeline",
-            module,
-            "fs_main",
-            &[layout],
-            format,
-            Some(wgpu::BlendState {
-                color: component,
-                alpha: component,
-            }),
-        ));
+        let pipeline: Arc<wgpu::RenderPipeline> =
+            crate::pipeline_cache::in_scope(("Style Blend", format), || {
+                kit::fullscreen_pipeline_with(
+                    device,
+                    "Style Blend Pipeline",
+                    module,
+                    "fs_main",
+                    &[layout],
+                    format,
+                    Some(wgpu::BlendState {
+                        color: component,
+                        alpha: component,
+                    }),
+                )
+            });
         pipelines.push((format, pipeline.clone()));
         (pipeline, layout)
     }

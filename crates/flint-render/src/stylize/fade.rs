@@ -42,7 +42,7 @@ struct Owners {
 }
 
 pub(crate) struct FadePass {
-    module: wgpu::ShaderModule,
+    module: super::kit::Shader,
     owners_bgl: wgpu::BindGroupLayout,
     input_bgl: wgpu::BindGroupLayout,
     mask_bgl: wgpu::BindGroupLayout,
@@ -191,27 +191,29 @@ impl FadePass {
         pipelines
             .entry(format)
             .or_insert_with(|| {
-                Arc::new(super::kit::fullscreen_pipeline_with(
-                    device,
-                    "Style Fade Pipeline",
-                    &self.module,
-                    "fs_main",
-                    &[&self.owners_bgl, &self.input_bgl, &self.mask_bgl],
-                    format,
-                    Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::SrcAlpha,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        // The output's alpha stays the style's
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::Zero,
-                            dst_factor: wgpu::BlendFactor::One,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                ))
+                crate::pipeline_cache::in_scope(("Style Fade", format), || {
+                    super::kit::fullscreen_pipeline_with(
+                        device,
+                        "Style Fade Pipeline",
+                        &self.module,
+                        "fs_main",
+                        &[&self.owners_bgl, &self.input_bgl, &self.mask_bgl],
+                        format,
+                        Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::SrcAlpha,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            // The output's alpha stays the style's
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::Zero,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                        }),
+                    )
+                })
             })
             .clone()
     }

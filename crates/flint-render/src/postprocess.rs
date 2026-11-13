@@ -654,8 +654,11 @@ pub struct BloomMip {
 
 /// All render pipelines and bind group layouts for post-processing.
 pub struct PostProcessPipeline {
+    // The eight pipelines are `pipeline_cache::shared` (#911), by surface
+    // format: with the cache on, the next renderer on the device takes
+    // them. Their buffers and textures stay this renderer's
     // Composite (HDR + bloom → tonemapped sRGB surface)
-    pub composite_pipeline: wgpu::RenderPipeline,
+    pub composite_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     pub composite_uniform_bgl: wgpu::BindGroupLayout,
     pub composite_scene_bgl: wgpu::BindGroupLayout,
     pub composite_bloom_bgl: wgpu::BindGroupLayout,
@@ -663,16 +666,16 @@ pub struct PostProcessPipeline {
     // The sampler shared across composite and bloom passes
     pub linear_sampler: wgpu::Sampler,
     // Bloom pipelines
-    pub bloom_threshold_pipeline: wgpu::RenderPipeline,
-    pub bloom_downsample_pipeline: wgpu::RenderPipeline,
-    pub bloom_upsample_pipeline: wgpu::RenderPipeline,
+    pub bloom_threshold_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    pub bloom_downsample_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    pub bloom_upsample_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     pub bloom_uniform_bgl: wgpu::BindGroupLayout,
     pub bloom_texture_bgl: wgpu::BindGroupLayout,
     pub bloom_uniform_buffer: wgpu::Buffer,
     // A 1x1 black texture used when bloom is disabled
     pub black_texture_view: wgpu::TextureView,
     // SSAO pipelines and resources
-    pub ssao_pipeline: wgpu::RenderPipeline,
+    pub ssao_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     pub ssao_uniform_bgl: wgpu::BindGroupLayout,
     pub ssao_depth_bgl: wgpu::BindGroupLayout,
     pub ssao_noise_bgl: wgpu::BindGroupLayout,
@@ -680,7 +683,7 @@ pub struct PostProcessPipeline {
     pub ssao_noise_texture_view: wgpu::TextureView,
     pub ssao_noise_sampler: wgpu::Sampler,
     pub depth_sampler: wgpu::Sampler,
-    pub ssao_blur_pipeline: wgpu::RenderPipeline,
+    pub ssao_blur_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     pub ssao_blur_uniform_bgl: wgpu::BindGroupLayout,
     pub ssao_blur_texture_bgl: wgpu::BindGroupLayout,
     pub ssao_blur_uniform_buffer: wgpu::Buffer,
@@ -693,12 +696,12 @@ pub struct PostProcessPipeline {
     // 1x1 clear map bound when no ground fog is set (ADR 0106)
     pub ground_fog_empty_view: wgpu::TextureView,
     // Volumetric (god rays) pipelines and resources
-    pub volumetric_pipeline: wgpu::RenderPipeline,
+    pub volumetric_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     pub volumetric_uniform_bgl: wgpu::BindGroupLayout,
     pub volumetric_depth_bgl: wgpu::BindGroupLayout,
     pub volumetric_shadow_bgl: wgpu::BindGroupLayout,
     pub volumetric_uniform_buffer: wgpu::Buffer,
-    pub volumetric_blur_pipeline: wgpu::RenderPipeline,
+    pub volumetric_blur_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     pub volumetric_blur_uniform_bgl: wgpu::BindGroupLayout,
     pub volumetric_blur_texture_bgl: wgpu::BindGroupLayout,
     pub volumetric_blur_uniform_buffer: wgpu::Buffer,
@@ -881,34 +884,41 @@ impl PostProcessPipeline {
                 push_constant_ranges: &[],
             });
 
-        let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Composite Pipeline"),
-            layout: Some(&composite_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &composite_shader,
-                entry_point: Some("vs_composite"),
-                buffers: &[],
-                compilation_options: Default::default(),
+        let composite_pipeline = crate::pipeline_cache::shared(
+            device,
+            "post: composite_pipeline",
+            surface_format,
+            || {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Composite Pipeline"),
+                    layout: Some(&composite_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &composite_shader,
+                        entry_point: Some("vs_composite"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &composite_shader,
+                        entry_point: Some("fs_composite"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: surface_format,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                })
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &composite_shader,
-                entry_point: Some("fs_composite"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        );
 
         let composite_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("PostProcess Uniform Buffer"),
@@ -968,107 +978,125 @@ impl PostProcessPipeline {
                 push_constant_ranges: &[],
             });
 
-        let bloom_threshold_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Bloom Threshold Pipeline"),
-                layout: Some(&bloom_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &bloom_shader,
-                    entry_point: Some("vs_bloom"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &bloom_shader,
-                    entry_point: Some("fs_bloom_threshold"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+        let bloom_threshold_pipeline = crate::pipeline_cache::shared(
+            device,
+            "post: bloom_threshold_pipeline",
+            surface_format,
+            || {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Bloom Threshold Pipeline"),
+                    layout: Some(&bloom_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &bloom_shader,
+                        entry_point: Some("vs_bloom"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &bloom_shader,
+                        entry_point: Some("fs_bloom_threshold"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: HDR_FORMAT,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                })
+            },
+        );
 
-        let bloom_downsample_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Bloom Downsample Pipeline"),
-                layout: Some(&bloom_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &bloom_shader,
-                    entry_point: Some("vs_bloom"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &bloom_shader,
-                    entry_point: Some("fs_downsample"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+        let bloom_downsample_pipeline = crate::pipeline_cache::shared(
+            device,
+            "post: bloom_downsample_pipeline",
+            surface_format,
+            || {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Bloom Downsample Pipeline"),
+                    layout: Some(&bloom_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &bloom_shader,
+                        entry_point: Some("vs_bloom"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &bloom_shader,
+                        entry_point: Some("fs_downsample"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: HDR_FORMAT,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                })
+            },
+        );
 
         // Upsample uses additive blending: src + dst
-        let bloom_upsample_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Bloom Upsample Pipeline"),
-                layout: Some(&bloom_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &bloom_shader,
-                    entry_point: Some("vs_bloom"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &bloom_shader,
-                    entry_point: Some("fs_upsample"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_FORMAT,
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::One,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                            alpha: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::One,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                        }),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+        let bloom_upsample_pipeline = crate::pipeline_cache::shared(
+            device,
+            "post: bloom_upsample_pipeline",
+            surface_format,
+            || {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Bloom Upsample Pipeline"),
+                    layout: Some(&bloom_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &bloom_shader,
+                        entry_point: Some("vs_bloom"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &bloom_shader,
+                        entry_point: Some("fs_upsample"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: HDR_FORMAT,
+                            blend: Some(wgpu::BlendState {
+                                color: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::One,
+                                    dst_factor: wgpu::BlendFactor::One,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                                alpha: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::One,
+                                    dst_factor: wgpu::BlendFactor::One,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                            }),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                })
+            },
+        );
 
         // A slot per bloom step (`run_bloom`)
         let bloom_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1265,34 +1293,37 @@ impl PostProcessPipeline {
             push_constant_ranges: &[],
         });
 
-        let ssao_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("SSAO Pipeline"),
-            layout: Some(&ssao_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &ssao_shader,
-                entry_point: Some("vs_ssao"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &ssao_shader,
-                entry_point: Some("fs_ssao"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: SSAO_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let ssao_pipeline =
+            crate::pipeline_cache::shared(device, "post: ssao_pipeline", surface_format, || {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("SSAO Pipeline"),
+                    layout: Some(&ssao_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &ssao_shader,
+                        entry_point: Some("vs_ssao"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &ssao_shader,
+                        entry_point: Some("fs_ssao"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: SSAO_FORMAT,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                })
+            });
 
         let ssao_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("SSAO Uniform Buffer"),
@@ -1354,34 +1385,41 @@ impl PostProcessPipeline {
                 push_constant_ranges: &[],
             });
 
-        let ssao_blur_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("SSAO Blur Pipeline"),
-            layout: Some(&ssao_blur_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &ssao_blur_shader,
-                entry_point: Some("vs_ssao_blur"),
-                buffers: &[],
-                compilation_options: Default::default(),
+        let ssao_blur_pipeline = crate::pipeline_cache::shared(
+            device,
+            "post: ssao_blur_pipeline",
+            surface_format,
+            || {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("SSAO Blur Pipeline"),
+                    layout: Some(&ssao_blur_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &ssao_blur_shader,
+                        entry_point: Some("vs_ssao_blur"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &ssao_blur_shader,
+                        entry_point: Some("fs_ssao_blur"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: SSAO_FORMAT,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                })
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &ssao_blur_shader,
-                entry_point: Some("fs_ssao_blur"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: SSAO_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        );
 
         let ssao_blur_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("SSAO Blur Uniform Buffer"),
@@ -1495,34 +1533,41 @@ impl PostProcessPipeline {
                 push_constant_ranges: &[],
             });
 
-        let volumetric_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Volumetric Pipeline"),
-            layout: Some(&volumetric_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &volumetric_shader,
-                entry_point: Some("vs_volumetric"),
-                buffers: &[],
-                compilation_options: Default::default(),
+        let volumetric_pipeline = crate::pipeline_cache::shared(
+            device,
+            "post: volumetric_pipeline",
+            surface_format,
+            || {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Volumetric Pipeline"),
+                    layout: Some(&volumetric_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &volumetric_shader,
+                        entry_point: Some("vs_volumetric"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &volumetric_shader,
+                        entry_point: Some("fs_volumetric"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: HDR_FORMAT,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                })
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &volumetric_shader,
-                entry_point: Some("fs_volumetric"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: HDR_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        );
 
         let volumetric_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Volumetric Uniform Buffer"),
@@ -1600,35 +1645,41 @@ impl PostProcessPipeline {
                 push_constant_ranges: &[],
             });
 
-        let volumetric_blur_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Volumetric Blur Pipeline"),
-                layout: Some(&volumetric_blur_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &volumetric_blur_shader,
-                    entry_point: Some("vs_volumetric_blur"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &volumetric_blur_shader,
-                    entry_point: Some("fs_volumetric_blur"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+        let volumetric_blur_pipeline = crate::pipeline_cache::shared(
+            device,
+            "post: volumetric_blur_pipeline",
+            surface_format,
+            || {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Volumetric Blur Pipeline"),
+                    layout: Some(&volumetric_blur_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &volumetric_blur_shader,
+                        entry_point: Some("vs_volumetric_blur"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &volumetric_blur_shader,
+                        entry_point: Some("fs_volumetric_blur"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: HDR_FORMAT,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                })
+            },
+        );
 
         let volumetric_blur_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Volumetric Blur Uniform Buffer"),

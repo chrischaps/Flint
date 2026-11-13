@@ -3,6 +3,7 @@
 //! tick (scripts, subsystems, transitions), render, the egui HUD pass,
 //! and the stats overlay.
 
+use super::camera_cut;
 use super::hud_render::render_draw_commands;
 use super::subsystem::{EncodeCtx, RenderCtx};
 use super::PlayerApp;
@@ -1081,8 +1082,7 @@ impl PlayerApp {
         // new shot) means the picture no longer follows on from the last
         // one, so styles that keep history start over (#343)
         let cut = self.style.camera_cut.observe(
-            self.camera.position_array(),
-            self.camera.forward_vector(),
+            camera_cut::Shot::of(&self.camera),
             self.core.clock.delta_time as f32,
         );
         if cut {

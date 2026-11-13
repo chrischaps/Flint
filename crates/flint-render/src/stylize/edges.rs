@@ -60,7 +60,7 @@ struct EdgeUniforms {
 
 /// The pipeline, made the first time a style needs edges.
 pub(crate) struct EdgePass {
-    pipeline: wgpu::RenderPipeline,
+    pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
     depth_bgl: wgpu::BindGroupLayout,

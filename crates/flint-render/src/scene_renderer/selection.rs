@@ -62,7 +62,7 @@ impl SceneRenderer {
                             .skinned
                             .as_ref()
                             .map(|s| &s.bone_bind_group_layout),
-                        billboard: self.pipelines.billboard.as_ref().map(|b| {
+                        billboard: self.pipelines.billboard.as_deref().map(|b| {
                             (&b.billboard_bind_group_layout, &b.texture_bind_group_layout)
                         }),
                     },

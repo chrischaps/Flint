@@ -22,10 +22,49 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return out;
 }
 
+// Temporal stability (#477). Which corner or tee a cell draws is decided
+// from its neighbours' lines a cell or two away, and one of them coming
+// and going for a frame turned a ┌ into a ├ and back. A cell that draws
+// the same line as last frame changes the shape it draws only when two
+// frames running find the new one; a cell whose line comes, goes or
+// turns takes this frame's at once, so an outline moving a cell a frame
+// is never held back. The history flag and last frame's slots are the
+// thin pass's (ascii_edge_thin.wgsl).
+struct ThinUniforms {
+    history: u32,
+    reach: f32,
+    _pad: vec2<u32>,
+};
+
+@group(2) @binding(0) var<uniform> t: ThinUniforms;
+@group(3) @binding(0) var past_slots: texture_2d<u32>;
+
+// The shape to draw: this frame's if it is what the cell drew or what
+// last frame found too, else what the cell drew
+fn settled(found: u32, drawn: u32, found_before: u32) -> u32 {
+    if found == drawn || found == found_before {
+        return found;
+    }
+    return drawn;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) u32 {
     let c = vec2<i32>(floor(in.position.xy));
-    return pack_slots(thinned_slot(c), cornered_slot(c, 4u), cornered_slot(c, 9u));
+    let line = thinned_slot(c);
+    let four = cornered_slot(c, 4u);
+    let nine = cornered_slot(c, 9u);
+    var drawn_four = four;
+    var drawn_nine = nine;
+    // `hysteresis = 0` (reach 0) holds nothing
+    if t.history == 1u && t.reach > 0.0 && line != NO_EDGE {
+        let was = textureLoad(past_slots, c, 0).x;
+        if (was & 15u) == line {
+            drawn_four = settled(four, (was >> 4u) & 15u, (was >> 12u) & 15u);
+            drawn_nine = settled(nine, (was >> 8u) & 15u, (was >> 16u) & 15u);
+        }
+    }
+    return pack_slots(line, drawn_four, drawn_nine, four, nine);
 }
 
 // The thin pass's texel for the edge cell at texel `c`, which may lie a

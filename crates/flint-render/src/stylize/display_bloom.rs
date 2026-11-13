@@ -173,10 +173,10 @@ struct BloomUniforms {
 }
 
 struct DisplayBloom {
-    threshold: wgpu::RenderPipeline,
-    down: wgpu::RenderPipeline,
-    up: wgpu::RenderPipeline,
-    composite: wgpu::RenderPipeline,
+    threshold: std::sync::Arc<wgpu::RenderPipeline>,
+    down: std::sync::Arc<wgpu::RenderPipeline>,
+    up: std::sync::Arc<wgpu::RenderPipeline>,
+    composite: std::sync::Arc<wgpu::RenderPipeline>,
     uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
     sampled_bgl: wgpu::BindGroupLayout,

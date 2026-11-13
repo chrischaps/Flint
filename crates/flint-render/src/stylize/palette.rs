@@ -163,7 +163,7 @@ pub fn block_pixels(pixel: f32, pixels_per_point: f32) -> u32 {
 }
 
 struct PaletteStyle {
-    pipeline: wgpu::RenderPipeline,
+    pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
     input_bgl: wgpu::BindGroupLayout,

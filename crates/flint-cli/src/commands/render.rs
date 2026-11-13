@@ -831,8 +831,9 @@ fn list_styles(args: &RenderArgs) -> Result<()> {
 /// A GPU kept between renders in one process (#329). `flint render` makes
 /// its own; `flint goldens` hands every case the same one, so a suite pays
 /// for one device instead of one a case. Each render still builds its own
-/// `SceneRenderer`, so nothing but the device and its two targets carries
-/// over.
+/// `SceneRenderer`, so its state is its own; with
+/// `flint_render::pipeline_cache` on (`flint goldens`, #911) the pipelines
+/// it builds are the ones an earlier case built on this device.
 #[derive(Default)]
 pub struct RenderHost {
     ctx: Option<HeadlessContext>,
@@ -847,6 +848,8 @@ impl RenderHost {
     /// panic, when the device may be in no state to trust.
     pub fn drop_device(&mut self) {
         self.ctx = None;
+        // What was kept holds the old device; none of it is the next one's
+        flint_render::pipeline_cache::clear();
     }
 
     fn context(
@@ -856,7 +859,7 @@ impl RenderHost {
         gpu: &Option<String>,
     ) -> Result<&HeadlessContext> {
         if self.ctx.is_some() && self.gpu != *gpu {
-            self.ctx = None;
+            self.drop_device();
         }
         match &mut self.ctx {
             Some(ctx) => ctx.resize(width, height),
@@ -1036,7 +1039,15 @@ pub(super) fn render(
     }
 
     // Load scene
-    let (mut world, scene_file) = load_settled(&args.scene, &registry)?;
+    let (mut world, mut scene_file) = load_settled(&args.scene, &registry)?;
+    // A user style an earlier render in this process loaded (a case before
+    // this one in `flint goldens`, #911) from a folder this scene can't
+    // see is left out, as when the scene renders alone (#426)
+    if let Some(post) = scene_file.post_process.as_mut() {
+        for warning in flint_render::stylize::custom::drop_unseen(&mut post.styles, &assets) {
+            eprintln!("warning: {warning}");
+        }
+    }
     say!("Loaded scene: {}", scene_file.scene.name);
     say!("Entities: {}", world.entity_count());
     for binding in &meshes {

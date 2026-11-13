@@ -9,10 +9,14 @@
 #
 #   "script"  the script calls reset_style_history() at each cut
 #   "auto"    the player's own cut detection notices the jump (the default
-#             for any scene: a move over 2 m or a turn over 30 degrees in a
-#             frame, four times faster than the frame before)
+#             for any scene: a move over 2 m, a turn over 30 degrees or a
+#             zoom over 1.25x in a frame, four times faster than the frame
+#             before)
 #   "none"    neither: set_camera_cut_detection(false) and no call, to see
 #             the carry-over
+#
+# Its `zoom` above 1 makes every cut a punch-in from the FOV alone, the view
+# that many times smaller, which the detector catches past 1.25x (#474).
 #
 #   cargo run --bin flint-player -- examples/ascii_cuts.scene.toml #     --frame-step 0.0166667 --screenshot out/cuts.png --screenshot-every 0.0166667 --exit-after 4
 

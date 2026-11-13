@@ -30,7 +30,7 @@ pub const NONE: u32 = u32::MAX;
 pub const MAX_IDS: usize = 256;
 
 pub(crate) struct OwnershipPass {
-    module: wgpu::ShaderModule,
+    module: kit::Shader,
     uniform_bgl: wgpu::BindGroupLayout,
     input_bgl: wgpu::BindGroupLayout,
     mask_bgl: wgpu::BindGroupLayout,
@@ -88,15 +88,18 @@ impl OwnershipPass {
                 operation: wgpu::BlendOperation::Add,
             },
         };
-        let p = std::sync::Arc::new(kit::fullscreen_pipeline_with(
-            device,
-            "Style Ownership Pipeline",
-            &self.module,
-            "fs_main",
-            &[&self.uniform_bgl, &self.input_bgl, &self.mask_bgl],
-            format,
-            Some(blend),
-        ));
+        let p: std::sync::Arc<wgpu::RenderPipeline> =
+            crate::pipeline_cache::in_scope(("Style Ownership", format), || {
+                kit::fullscreen_pipeline_with(
+                    device,
+                    "Style Ownership Pipeline",
+                    &self.module,
+                    "fs_main",
+                    &[&self.uniform_bgl, &self.input_bgl, &self.mask_bgl],
+                    format,
+                    Some(blend),
+                )
+            });
         pipelines.push((format, p.clone()));
         p
     }

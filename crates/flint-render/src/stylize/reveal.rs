@@ -495,7 +495,7 @@ const SLOT: u64 = 256;
 const BIND: &str = "style reveal input";
 
 struct Shared {
-    module: wgpu::ShaderModule,
+    module: kit::Shader,
     input_layout: wgpu::BindGroupLayout,
     uniform: wgpu::Buffer,
     uniform_group: wgpu::BindGroup,
@@ -583,18 +583,21 @@ impl RevealPass {
             dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
             operation: wgpu::BlendOperation::Add,
         };
-        let pipeline = std::sync::Arc::new(kit::fullscreen_pipeline_with(
-            device,
-            "Style Reveal Pipeline",
-            &shared.module,
-            "fs_main",
-            &[&shared.input_layout, &shared.uniform_layout],
-            format,
-            Some(wgpu::BlendState {
-                color: component,
-                alpha: component,
-            }),
-        ));
+        let pipeline: std::sync::Arc<wgpu::RenderPipeline> =
+            crate::pipeline_cache::in_scope(("Style Reveal", format), || {
+                kit::fullscreen_pipeline_with(
+                    device,
+                    "Style Reveal Pipeline",
+                    &shared.module,
+                    "fs_main",
+                    &[&shared.input_layout, &shared.uniform_layout],
+                    format,
+                    Some(wgpu::BlendState {
+                        color: component,
+                        alpha: component,
+                    }),
+                )
+            });
         pipelines.push((format, pipeline.clone()));
         pipeline
     }

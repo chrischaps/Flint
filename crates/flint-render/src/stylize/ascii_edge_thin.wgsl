@@ -7,9 +7,33 @@
 // first; it says how the texel packs. Until #910 the glyph pass and the
 // edge view ran all of this per pixel: under FXC's full inlining the
 // corners were about 45 copies of `thinned_slot`, and the glyph shader
-// took 25-66 s to compile on DX12.
+// took 25-66 s to compile on DX12. With history (#477) the border between
+// two cells moves toward the one that drew the line last frame
+// (`thinned_slot`), and the corner pass reads the same uniform.
 
 @group(0) @binding(0) var edge_cells: texture_2d<f32>;
+
+// Temporal stability (#477): a line near the border between two cells
+// stays with the one that drew it last frame until it is `reach` past the
+// border, so it doesn't hop from one to the other and back
+struct ThinUniforms {
+    // 1: `past_slots` holds last frame's glyphs
+    history: u32,
+    // Cells past the border a line may go and stay with its cell
+    reach: f32,
+    _pad: vec2<u32>,
+};
+
+@group(1) @binding(0) var<uniform> t: ThinUniforms;
+// Last frame's edge slots (the corner pass's texture), grid-sized
+@group(2) @binding(0) var past_slots: texture_2d<u32>;
+
+// Whether the edge cell at texel `c` drew a line last frame: its thinned
+// line, which the slot texel keeps in its lowest bits
+fn drew_line(c: vec2<i32>) -> bool {
+    let cmax = vec2<i32>(textureDimensions(past_slots)) - vec2<i32>(1);
+    return (textureLoad(past_slots, clamp(c, vec2<i32>(0), cmax), 0).x & 15u) != NO_EDGE;
+}
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -96,10 +120,27 @@ fn thinned_slot(c: vec2<i32>) -> u32 {
         && abs(theirs - offset) < 0.75 {
         offset = (e.y * offset + n.y * theirs) / (e.y + n.y);
     }
+    // Where the border is (#477): half a cell out, moved by `reach` toward
+    // the neighbour when only this cell drew a line last frame and away
+    // when only the neighbour did. The neighbour judges the same pair with
+    // the border moved the same way, so exactly one of them draws still
+    var border = 0.5;
+    if t.history == 1u {
+        let mine = drew_line(c);
+        let theirs = drew_line(c + step);
+        if mine && !theirs {
+            border += t.reach;
+        } else if theirs && !mine {
+            border -= t.reach;
+        }
+    }
     // Half open, so a line exactly on the border is one cell's. A line
     // past the border stays here if the cell it leans into draws no line
-    // (it holds a sliver, under the threshold): the outline keeps no gap
-    if (offset > -0.5 && offset <= 0.5) || n.x < 0.5 {
+    // (it holds a sliver, under the threshold): the outline keeps no gap.
+    // Only the border on the neighbour's side moves
+    let lo = select(-0.5, -border, side < 0);
+    let hi = select(0.5, border, side > 0);
+    if (offset > lo && offset <= hi) || n.x < 0.5 {
         return slot;
     }
     return NO_EDGE;

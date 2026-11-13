@@ -252,8 +252,14 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    printed, on a failure; `FLINT_GOLDENS_OUT=<dir>` names a folder kept either way (CI's WARP job sets
    `target/tmp/stylize-goldens`, which its summary and artifact read). Cases run in one process on one GPU device with glTF
    decodes and mip chains memoized (`render::RenderHost`, `flint_import::memoize_imports`,
-   `flint_render::memoize_mip_chains`; ~2.5x in debug); a panicking case reruns in its own
-   process, `--isolate` spawns every case. A new style adds a case. A case's `matches = [flags]` (#417) compares with a second render
+   `flint_render::memoize_mip_chains`; ~2.5x in debug) and pipelines kept (#911,
+   `flint_render::pipeline_cache`, cleared by `RenderHost::drop_device`; the summary's `pipelines:` line
+   counts built and reused and ASCII's glyph pipeline, built once a run; `--fresh-pipelines` builds every
+   case's anew, for an A/B in one process; full suite on the RTX, debug: Vulkan 69 to 27 s, DX12/DXC 320
+   to 45 s); a panicking case reruns in its own process (and drops the kept pipelines with the device),
+   `--isolate` spawns every case. A case never sees an earlier one's state: each builds its own
+   renderer, and `flint render` drops a scene's table for a user style it can't see (#426) that an
+   earlier case registered (`tests/render_goldens.rs::a_case_cannot_see_a_user_style_an_earlier_case_loaded`). A new style adds a case. A case's `matches = [flags]` (#417) compares with a second render
    made with those flags instead of a golden, exact by default, and `error = "<text>"` needs a user
    style's error to hold it (`user-style-broken`: `tests/golden/fixtures/styles/broken.*` must draw a
    passthrough, which runs the prelude's sRGB round trip). A case's `text = "<x>.txt"`
