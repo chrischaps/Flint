@@ -1414,6 +1414,23 @@ One frame holds 15 variants of a style (and mask ids up to 255); any more take t
 - Save the `.shader.toml` and the style is replaced where it stands in the chain, with its new parameters, label, stage, inputs or shader. The scene's `[post_process.styles.<name>]` is read again against them (other F4 edits stay). A description that no longer reads keeps the old style and reports.
 - A new `*.shader.toml` dropped into any `styles/` folder the scene searches is picked up too. One dropped nearer the scene than the style of its name takes over from it, and gives the name back when it is deleted.
 
+**Headless, with `flint render --watch`** (#432). Leave a render running and it writes the same `--output` (or `--sweep` sheet) again after every save, in one process:
+
+```bash
+flint render levels/garden.scene.toml -o print.png --watch
+flint render levels/garden.scene.toml -o sheet.png --sweep cyanotype.exposure=0.8,1.3,2.2 --watch
+```
+
+A save of a style's `.wgsl` is drawn again on the GPU, scene and renderer that drew the last frame, so only the style's own pass is built again. On the Sun Prints garden at 960x540 (debug build, RTX 4070) the PNG was rewritten 0.14 to 0.19 s after the save, where a fresh `flint render` took 1.2 to 1.6 s. The image is the one a fresh render of the same files writes, byte for byte. Any other save loads the scene again on the same GPU (0.75 s there): the scene, a model, a schema, the `--look` file, or a `.shader.toml` whose description changed, since the scene's table for the style must be read against its new parameters. A render with clocks (`--time`, `--scripts`, a `--frames` sequence) always loads again. Each render prints one line, then each style's error as it stands:
+
+```text
+watch: render 2 in 0.04 s (same renderer; styles/cyanotype.wgsl changed)
+watch: render 3 in 0.06 s (same renderer; styles/cyanotype.wgsl changed)
+  style 'cyanotype': styles/cyanotype.wgsl:39:5: expected ';', found 'let'
+```
+
+A broken shader keeps its last good build in the PNG, as in the player. The files the render writes (`-o` and the files named after it, `--report`, `--ascii-text`) aren't changes, so an output inside the scene's folder doesn't loop.
+
 Until a broken style compiles, a card in the bottom-left corner of the player and the viewer shows its error with the line it points at, and the style's F4 header is tagged `error` (hover it for the message; the `user` tag beside it names both files). `flint render` prints the same message and renders the passthrough. The goldens hold both of those to account (#417): `user-style-broken` renders a bench with a fixture style that fails (`crates/flint-cli/tests/golden/fixtures/styles/broken.*`), requires the frame to equal the same bench rendered without the style, and requires the error to name `broken.wgsl:9:9`. Next to it, `user-styles`, `user-style-risograph` and `user-style-contour-map` pin the three demo styles over `examples/user_styles.scene.toml`.
 
 | ![a cyanotype from a game folder, drawn by flint-player](../images/user-style-cyanotype.png) | ![the same style mid-edit: a typo, the card, the last good build](../images/user-style-error-card.png) |
