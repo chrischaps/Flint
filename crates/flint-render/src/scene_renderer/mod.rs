@@ -13,6 +13,7 @@ mod selection;
 mod sky;
 mod style_mask;
 mod terrain;
+mod water;
 
 pub use grass_ground::{load_grass_ground_in, load_scene_grass_ground, LoadedGrassGround};
 pub use particles::load_scene_particle_textures;
@@ -681,39 +682,8 @@ pub struct SceneRenderer {
     /// The grass draw's own view uniforms, so it needs no terrain to borrow them from.
     grass_transform_buffer: Option<wgpu::Buffer>,
     grass_transform_bind_group: Option<wgpu::BindGroup>,
-    // Ocean
-    ocean_uniform_buffer: Option<wgpu::Buffer>,
-    ocean_uniform_bind_group: Option<wgpu::BindGroup>,
-    ocean_transform_buffer: Option<wgpu::Buffer>,
-    ocean_transform_bind_group: Option<wgpu::BindGroup>,
-    /// The sea's own body block (group 1, binding 1): its colours, full
-    /// waves, no flow (ADR 0094).
-    ocean_sea_body_buffer: Option<wgpu::Buffer>,
-    /// Water bodies a game set at run time, by its id (ADR 0094).
-    water_bodies: std::collections::BTreeMap<String, crate::water_body::GpuWaterBody>,
-    /// Water bodies from `water_body` components, by entity name, with the
-    /// component they were built from (rebuilt only when it changes). `None`
-    /// when the component didn't describe a mesh; the warning said why.
-    scene_water_bodies:
-        std::collections::BTreeMap<String, (toml::Value, Option<crate::water_body::GpuWaterBody>)>,
-    ocean_spectrum: Option<flint_geometry::ocean::WaveSpectrum>,
-    ocean_visuals: crate::ocean_pipeline::OceanVisuals,
-    ocean_active: bool,
-    /// Contact-foam hull: ([x, z, cos_yaw, sin_yaw], [half_x, half_z]).
-    /// None when the scene has no `ocean_contact` entity.
-    ocean_contact: Option<([f32; 4], [f32; 2])>,
-    /// (ocean_time, hull position) of the previous frame, for velocity.
-    ocean_contact_prev: Option<(f64, [f32; 3])>,
-    /// Smoothed hull velocity fed to the contact-foam churn term.
-    ocean_contact_vel: [f32; 3],
-    // Grab pass (refraction): opaque scene color+depth snapshots
-    ocean_grab_color: Option<(wgpu::Texture, wgpu::TextureView)>,
-    ocean_grab_depth: Option<(wgpu::Texture, wgpu::TextureView)>,
-    ocean_grab_size: (u32, u32),
-    ocean_grab_bind_group: Option<wgpu::BindGroup>,
-    ocean_grab_dummy_bind_group: Option<wgpu::BindGroup>,
-    ocean_grab_this_frame: bool,
-    ocean_camera_near_far: (f32, f32),
+    /// The sea, water bodies and their refraction grab (ADR 0118, #736).
+    water: water::WaterRenderer,
     /// Time in seconds driving wave phases. Set by the player each frame from
     /// the game clock — the same clock scripts see via total_time(), which is
     /// what keeps script-side ocean_height() queries in sync with the GPU.
@@ -909,7 +879,7 @@ impl SceneRenderer {
 
         let lights = lights::LightState::new(device, &layouts, &shadow_pass);
 
-        let ocean_resources = Self::create_ocean_resources(
+        let water = water::WaterRenderer::new(
             device,
             pipelines.ocean.as_ref(),
             &layouts.transform_bind_group_layout,
@@ -1004,26 +974,7 @@ impl SceneRenderer {
             grass_needs_realloc: false,
             grass_transform_buffer: None,
             grass_transform_bind_group: None,
-            ocean_uniform_buffer: ocean_resources.0,
-            ocean_uniform_bind_group: ocean_resources.1,
-            ocean_transform_buffer: ocean_resources.2,
-            ocean_transform_bind_group: ocean_resources.3,
-            ocean_sea_body_buffer: ocean_resources.4,
-            water_bodies: std::collections::BTreeMap::new(),
-            scene_water_bodies: std::collections::BTreeMap::new(),
-            ocean_spectrum: None,
-            ocean_visuals: crate::ocean_pipeline::OceanVisuals::default(),
-            ocean_active: false,
-            ocean_contact: None,
-            ocean_contact_prev: None,
-            ocean_contact_vel: [0.0; 3],
-            ocean_grab_color: None,
-            ocean_grab_depth: None,
-            ocean_grab_size: (0, 0),
-            ocean_grab_bind_group: None,
-            ocean_grab_dummy_bind_group: None,
-            ocean_grab_this_frame: false,
-            ocean_camera_near_far: (0.1, 1000.0),
+            water,
             ocean_time: 0.0,
             motion_hold: Default::default(),
             style_dt: 1.0 / 60.0,
@@ -1069,167 +1020,6 @@ impl SceneRenderer {
             grass_wooze: None,
             device_lost: false,
         }
-    }
-
-    /// The ocean's uniform/transform buffers and bind groups, when its
-    /// pipeline built (`ScenePipelines` leaves it out when its shader fails:
-    /// no ocean rather than a crashed renderer).
-    #[allow(clippy::type_complexity)]
-    fn create_ocean_resources(
-        device: &wgpu::Device,
-        pipeline: Option<&crate::ocean_pipeline::OceanPipeline>,
-        transform_layout: &wgpu::BindGroupLayout,
-    ) -> (
-        Option<wgpu::Buffer>,
-        Option<wgpu::BindGroup>,
-        Option<wgpu::Buffer>,
-        Option<wgpu::BindGroup>,
-        Option<wgpu::Buffer>,
-    ) {
-        let Some(pipeline) = pipeline else {
-            return (None, None, None, None, None);
-        };
-
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Ocean Uniform Buffer"),
-            size: std::mem::size_of::<crate::ocean_pipeline::OceanUniformsGpu>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let sea_body_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Ocean Sea Body Buffer"),
-            size: std::mem::size_of::<crate::water_body::WaterBodyUniformsGpu>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &pipeline.ocean_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: sea_body_buffer.as_entire_binding(),
-                },
-            ],
-            label: Some("Ocean Uniform Bind Group"),
-        });
-
-        let transform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Ocean Transform Buffer"),
-            size: std::mem::size_of::<TransformUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let transform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: transform_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: transform_buffer.as_entire_binding(),
-            }],
-            label: Some("Ocean Transform Bind Group"),
-        });
-
-        (
-            Some(uniform_buffer),
-            Some(uniform_bind_group),
-            Some(transform_buffer),
-            Some(transform_bind_group),
-            Some(sea_body_buffer),
-        )
-    }
-
-    /// Create the placeholder group-3 bind group (1x1 textures) so the ocean
-    /// can always bind group 3 even when the grab pass didn't run.
-    fn ensure_ocean_grab_dummy(&mut self, device: &wgpu::Device) {
-        if self.ocean_grab_dummy_bind_group.is_some() {
-            return;
-        }
-        let Some(op) = &self.pipelines.ocean else {
-            return;
-        };
-        let dummy_color = crate::ocean_pipeline::create_dummy_grab_texture(
-            device,
-            HDR_FORMAT,
-            "Ocean Grab Dummy Color",
-        );
-        let dummy_depth = crate::ocean_pipeline::create_dummy_grab_texture(
-            device,
-            wgpu::TextureFormat::R32Float,
-            "Ocean Grab Dummy Depth",
-        );
-        let cv = dummy_color.create_view(&Default::default());
-        let dv = dummy_depth.create_view(&Default::default());
-        self.ocean_grab_dummy_bind_group =
-            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &op.grab_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&cv),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&dv),
-                    },
-                ],
-                label: Some("Ocean Grab Dummy Bind Group"),
-            }));
-    }
-
-    /// Ensure grab-pass textures + bind groups exist at the given size.
-    /// Called only on the ocean+postprocess path; cheap when size unchanged.
-    fn ensure_ocean_grab_resources(&mut self, device: &wgpu::Device, width: u32, height: u32) {
-        self.ensure_ocean_grab_dummy(device);
-        let Some(op) = &self.pipelines.ocean else {
-            return;
-        };
-
-        if self.ocean_grab_size == (width, height) && self.ocean_grab_bind_group.is_some() {
-            return;
-        }
-
-        let make = |format: wgpu::TextureFormat, label: &str| {
-            let tex = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            });
-            let view = tex.create_view(&Default::default());
-            (tex, view)
-        };
-        let color = make(HDR_FORMAT, "Ocean Grab Color");
-        let depth = make(wgpu::TextureFormat::R32Float, "Ocean Grab Depth");
-
-        self.ocean_grab_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &op.grab_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&color.1),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&depth.1),
-                },
-            ],
-            label: Some("Ocean Grab Bind Group"),
-        }));
-        self.ocean_grab_color = Some(color);
-        self.ocean_grab_depth = Some(depth);
-        self.ocean_grab_size = (width, height);
     }
 
     /// Load terrain chunks and create GPU resources for terrain rendering.
@@ -3127,13 +2917,16 @@ impl SceneRenderer {
         self.lights.extract(world, &mut self.motion_hold);
 
         // Extract ocean params (regenerates the wave spectrum only on change)
-        self.extract_ocean_from_world(world);
-        self.extract_ocean_contact_from_world(world);
-        self.extract_water_bodies_from_world(world, device);
+        self.water
+            .extract_ocean(world, self.pipelines.ocean.is_some());
+        self.water.extract_contact(world, self.ocean_time);
+        self.water
+            .extract_bodies(world, device, self.pipelines.ocean.as_ref());
         if self.water_active() {
             // Ocean always binds group 3; make sure the placeholder exists
             // even on paths where the grab pass never runs.
-            self.ensure_ocean_grab_dummy(device);
+            self.water
+                .ensure_grab_dummy(device, self.pipelines.ocean.as_ref());
         }
 
         // Extract procedural sky params (+ optional ambient override)
@@ -3782,129 +3575,46 @@ impl SceneRenderer {
         (&default.view, &default.sampler, false)
     }
 
-    // ── Ocean extraction ──
-
-    /// Extract the first `ocean` component from the world. The wave spectrum
-    /// is regenerated only when simulation params change (cheap: N sin/cos
-    /// coefficient sets), so live-tweaking any field takes effect next frame.
-    fn extract_ocean_from_world(&mut self, world: &FlintWorld) {
-        self.ocean_active = false;
-        for &entity_id in world.entities_with_component(flint_geometry::components::OCEAN) {
-            let ocean_comp = world
-                .get_components(entity_id)
-                .and_then(|components| components.get(flint_geometry::components::OCEAN).cloned());
-            let Some(ocean_comp) = ocean_comp else {
-                continue;
-            };
-
-            let params = flint_geometry::ocean::OceanParams::from_component(&ocean_comp);
-            let needs_regen = self
-                .ocean_spectrum
-                .as_ref()
-                .map(|s| s.params != params)
-                .unwrap_or(true);
-            if needs_regen {
-                self.ocean_spectrum = Some(flint_geometry::ocean::WaveSpectrum::generate(&params));
-            }
-            self.ocean_visuals = crate::ocean_pipeline::OceanVisuals::from_component(&ocean_comp);
-            self.ocean_active = self.pipelines.ocean.is_some();
-            break; // one ocean per scene
-        }
-    }
-
-    // ── Water bodies (ADR 0094) ──
+    // ── Water (WaterRenderer, ADR 0118) ──
 
     /// Whether any water draws this frame: the sea, or a body.
     pub(crate) fn water_active(&self) -> bool {
-        self.ocean_active || self.has_water_bodies()
+        self.water.any_active(self.pipelines.ocean.is_some())
     }
 
-    fn has_water_bodies(&self) -> bool {
-        self.pipelines.ocean.is_some()
-            && (!self.water_bodies.is_empty()
-                || self.scene_water_bodies.values().any(|(_, b)| b.is_some()))
-    }
-
-    /// Every body to draw this frame: the scene's, then the game's.
-    pub(crate) fn water_bodies_to_draw(
-        &self,
-    ) -> impl Iterator<Item = &crate::water_body::GpuWaterBody> {
-        self.scene_water_bodies
-            .values()
-            .filter_map(|(_, b)| b.as_ref())
-            .chain(self.water_bodies.values())
-    }
-
-    fn build_water_body(
-        &self,
+    /// Draw water on a game's own mesh (ADR 0094): a lake at its level, a
+    /// river down a valley. It shades as the sea does, with the body's own
+    /// tint, wave scale and flow, and the sea's (or the default ocean's)
+    /// foam, refraction and reflection. Replaces any body set with this
+    /// `id`. Errs when the mesh's indices are bad or it has no triangles.
+    pub fn set_water_body(
+        &mut self,
         device: &wgpu::Device,
-        label: &str,
+        id: &str,
         mesh: &crate::water_body::WaterBodyMesh,
         look: crate::water_body::WaterBodyLook,
-    ) -> Result<crate::water_body::GpuWaterBody, String> {
-        let (Some(op), Some(ocean_buf)) = (&self.pipelines.ocean, &self.ocean_uniform_buffer)
-        else {
-            return Err("this device has no ocean pipeline".into());
-        };
-        mesh.validate()?;
-        if mesh.indices.is_empty() {
-            return Err("water body has no triangles".into());
-        }
-        Ok(crate::water_body::GpuWaterBody::new(
-            device,
-            &op.ocean_bind_group_layout,
-            ocean_buf,
-            label,
-            mesh,
-            look,
-        ))
+    ) -> Result<(), String> {
+        self.water
+            .set_body(device, self.pipelines.ocean.as_ref(), id, mesh, look)
     }
 
-    /// Build the bodies `water_body` components describe. A body is rebuilt
-    /// only when its component changes, and dropped with its entity.
-    fn extract_water_bodies_from_world(&mut self, world: &FlintWorld, device: &wgpu::Device) {
-        let mut seen = std::collections::BTreeSet::new();
-        for &entity_id in world.entities_with_component(flint_geometry::components::WATER_BODY) {
-            let Some(components) = world.get_components(entity_id) else {
-                continue;
-            };
-            let Some(value) = components.get(flint_geometry::components::WATER_BODY) else {
-                continue;
-            };
-            let name = world
-                .get_name(entity_id)
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("{entity_id:?}"));
-            seen.insert(name.clone());
-            if self
-                .scene_water_bodies
-                .get(&name)
-                .is_some_and(|(v, _)| v == value)
-            {
-                continue;
-            }
-            let look = crate::water_body::WaterBodyLook::from_component(value);
-            let body = crate::water_body::mesh_from_component(value)
-                .and_then(|mesh| self.build_water_body(device, &name, &mesh, look));
-            let body = match body {
-                Ok(b) => Some(b),
-                Err(e) => {
-                    tracing::warn!("water_body `{name}`: {e}");
-                    None
-                }
-            };
-            self.scene_water_bodies.insert(name, (value.clone(), body));
-        }
-        self.scene_water_bodies
-            .retain(|name, _| seen.contains(name));
+    /// Change a body's look and keep its mesh. Returns whether it existed.
+    pub fn set_water_body_look(
+        &mut self,
+        id: &str,
+        look: crate::water_body::WaterBodyLook,
+    ) -> bool {
+        self.water.set_body_look(id, look)
+    }
 
-        // Bodies take the sea's look and waves; a scene with bodies and no
-        // ocean gets the default ocean's.
-        if !self.ocean_active && self.has_water_bodies() && self.ocean_spectrum.is_none() {
-            self.ocean_spectrum = Some(flint_geometry::ocean::WaveSpectrum::generate(
-                &flint_geometry::ocean::OceanParams::default(),
-            ));
-        }
+    /// Remove the body set with `id`. Returns whether it existed.
+    pub fn remove_water_body(&mut self, id: &str) -> bool {
+        self.water.remove_body(id)
+    }
+
+    /// Remove every body a game set (the scene's own stay).
+    pub fn clear_water_bodies(&mut self) {
+        self.water.clear_bodies();
     }
 
     /// Lay a ground fog on the floors of `fog`'s map (ADR 0106), replacing
@@ -3931,104 +3641,6 @@ impl SceneRenderer {
     /// Whether a ground fog is set (with fog somewhere on its map).
     pub fn has_ground_fog(&self) -> bool {
         self.ground_fog.is_some()
-    }
-
-    /// Draw water on a game's own mesh (ADR 0094): a lake at its level, a
-    /// river down a valley. It shades as the sea does, with the body's own
-    /// tint, wave scale and flow, and the sea's (or the default ocean's)
-    /// foam, refraction and reflection. Replaces any body set with this
-    /// `id`. Errs when the mesh's indices are bad or it has no triangles.
-    pub fn set_water_body(
-        &mut self,
-        device: &wgpu::Device,
-        id: &str,
-        mesh: &crate::water_body::WaterBodyMesh,
-        look: crate::water_body::WaterBodyLook,
-    ) -> Result<(), String> {
-        let body = self.build_water_body(device, id, mesh, look)?;
-        self.water_bodies.insert(id.to_string(), body);
-        if !self.ocean_active && self.ocean_spectrum.is_none() {
-            self.ocean_spectrum = Some(flint_geometry::ocean::WaveSpectrum::generate(
-                &flint_geometry::ocean::OceanParams::default(),
-            ));
-        }
-        Ok(())
-    }
-
-    /// Change a body's look and keep its mesh. Returns whether it existed.
-    pub fn set_water_body_look(
-        &mut self,
-        id: &str,
-        look: crate::water_body::WaterBodyLook,
-    ) -> bool {
-        match self.water_bodies.get_mut(id) {
-            Some(b) => {
-                b.look = look;
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Remove the body set with `id`. Returns whether it existed.
-    pub fn remove_water_body(&mut self, id: &str) -> bool {
-        self.water_bodies.remove(id).is_some()
-    }
-
-    /// Remove every body a game set (the scene's own stay).
-    pub fn clear_water_bodies(&mut self) {
-        self.water_bodies.clear();
-    }
-
-    // ── Contact foam extraction ──
-
-    /// Extract the first `ocean_contact` entity: hull center/yaw/extents for
-    /// the splash ring, plus hull velocity differentiated across frames
-    /// (drift + heave both count as impact against the moving water).
-    fn extract_ocean_contact_from_world(&mut self, world: &FlintWorld) {
-        use flint_core::toml_util::{toml_f32, toml_vec3};
-        self.ocean_contact = None;
-        for &entity_id in world.entities_with_component(flint_geometry::components::OCEAN_CONTACT) {
-            let Some(components) = world.get_components(entity_id) else {
-                continue;
-            };
-            let Some(contact) = components.get(flint_geometry::components::OCEAN_CONTACT) else {
-                continue;
-            };
-            let Some(tf) = components.get(comp::TRANSFORM) else {
-                continue;
-            };
-
-            let pos = tf.get("position").and_then(toml_vec3).unwrap_or([0.0; 3]);
-            let rot = tf.get("rotation").and_then(toml_vec3).unwrap_or([0.0; 3]);
-            let yaw = rot[1].to_radians(); // engine Euler is degrees; Y = yaw
-            let half_x = contact.get("half_x").and_then(toml_f32).unwrap_or(1.0);
-            let half_z = contact.get("half_z").and_then(toml_f32).unwrap_or(1.0);
-
-            self.ocean_contact = Some((
-                [pos[0], pos[2], yaw.cos(), yaw.sin()],
-                [half_x.max(0.01), half_z.max(0.01)],
-            ));
-
-            // Hull velocity on the same clock as the waves. Clamped against
-            // teleports/scene loads, lightly smoothed against frame jitter.
-            if let Some((prev_t, prev_pos)) = self.ocean_contact_prev {
-                let dt = (self.ocean_time - prev_t) as f32;
-                if dt > 1e-4 {
-                    let k = (10.0 * dt).min(1.0);
-                    for i in 0..3 {
-                        let v = ((pos[i] - prev_pos[i]) / dt).clamp(-5.0, 5.0);
-                        self.ocean_contact_vel[i] += (v - self.ocean_contact_vel[i]) * k;
-                    }
-                }
-            }
-            self.ocean_contact_prev = Some((self.ocean_time, pos));
-            break; // one contact hull per scene
-        }
-        if self.ocean_contact.is_none() {
-            self.ocean_contact_prev = None;
-            self.ocean_contact_vel = [0.0; 3];
-        }
     }
 
     // ── Lighting levers (LightState, ADR 0118) ──
@@ -4709,19 +4321,20 @@ impl SceneRenderer {
         // Grab-pass refraction runs only with an active ocean + postprocess
         // (the HDR buffer is what gets snapshotted) in normal render mode.
         // Water bodies refract through the same grab (ADR 0094).
-        self.ocean_grab_this_frame = self.water_active()
+        self.water.grab_this_frame = self.water_active()
             && has_postprocess
             && !wireframe_only
             && self.pipelines.ocean.is_some();
-        self.ocean_camera_near_far = (camera.near, camera.far);
-        if self.ocean_grab_this_frame {
+        self.water.camera_near_far = (camera.near, camera.far);
+        if self.water.grab_this_frame {
             let (w, h) = {
                 let res = self.postprocess_resources.as_ref().unwrap();
                 (res.width, res.height)
             };
-            self.ensure_ocean_grab_resources(device, w, h);
-            if self.ocean_grab_bind_group.is_none() {
-                self.ocean_grab_this_frame = false;
+            self.water
+                .ensure_grab(device, self.pipelines.ocean.as_ref(), w, h);
+            if self.water.grab.bind_group.is_none() {
+                self.water.grab_this_frame = false;
             }
         }
 
@@ -4770,7 +4383,7 @@ impl SceneRenderer {
 
         let scene_scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Scene"));
 
-        if !self.ocean_grab_this_frame {
+        if !self.water.grab_this_frame {
             // Single-pass path (unchanged for scenes without an ocean).
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -4871,8 +4484,8 @@ impl SceneRenderer {
                                 label: Some("Grab Blit Bind Group"),
                             })
                         });
-                let grab_color_view = &self.ocean_grab_color.as_ref().unwrap().1;
-                let grab_depth_view = &self.ocean_grab_depth.as_ref().unwrap().1;
+                let grab_color_view = &self.water.grab.color.as_ref().unwrap().1;
+                let grab_depth_view = &self.water.grab.depth.as_ref().unwrap().1;
                 let mut blit_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Ocean Grab Blit"),
                     color_attachments: &[

@@ -536,122 +536,19 @@ impl SceneRenderer {
         // Update ocean uniforms (wave phases in f64, grid follows the camera).
         // Water bodies read them too (ADR 0094), sea or no sea.
         if self.water_active() {
-            if let (Some(spectrum), Some(ubuf), Some(tbuf)) = (
-                &self.ocean_spectrum,
-                &self.ocean_uniform_buffer,
-                &self.ocean_transform_buffer,
-            ) {
-                let transform = TransformUniforms {
-                    view_proj,
-                    model: identity_matrix(),
-                    model_inv_transpose: identity_matrix(),
-                    camera_pos,
-                    _pad: 0.0,
-                };
-                queue.write_buffer(tbuf, 0, bytemuck::cast_slice(&[transform]));
-
-                let v = &self.ocean_visuals;
-                // Snap the grid to inner-cell multiples so wave sampling
-                // positions stay world-anchored while the mesh follows us.
-                let q = v.snap_quantum();
-                let grid_offset = [
-                    (camera_pos[0] / q).floor() * q,
-                    (camera_pos[2] / q).floor() * q,
-                ];
-                let uniforms = crate::ocean_pipeline::OceanUniformsGpu {
-                    waves: spectrum.to_gpu(self.ocean_time),
-                    deep_color: v.deep_color,
-                    shallow_color: v.shallow_color,
-                    foam_color: v.foam_color,
-                    sss_color: v.sss_color,
-                    grid_offset,
-                    num_waves: spectrum.waves.len() as u32,
-                    enable_tonemapping: tonemapping_u32,
-                    grid_scale: v.grid_scale,
-                    fade_start: v.fade_start,
-                    fade_end: v.fade_end,
-                    foam_threshold: v.foam_threshold,
-                    foam_noise_scale: v.foam_noise_scale,
-                    ramp_steps: v.ramp_steps,
-                    specular_strength: v.specular_strength,
-                    time: (self.ocean_time % 100_000.0) as f32,
-                    absorption_color: v.absorption_color,
-                    turbidity: v.turbidity,
-                    refraction_strength: v.refraction_strength,
-                    camera_near: self.ocean_camera_near_far.0,
-                    camera_far: self.ocean_camera_near_far.1,
-                    grab_enabled: u32::from(self.ocean_grab_this_frame),
-                    sky_zenith: self.sky.params().zenith_color,
-                    sky_horizon: self.sky.params().horizon_color,
-                    sky_haze: self.sky.params().haze_color,
-                    // Reflections need a procedural sky to reflect; scenes
-                    // with a texture skybox (or none) keep the old look.
-                    sky_reflection_strength: if self.sky.active() {
-                        v.sky_reflection_strength
-                    } else {
-                        0.0
-                    },
-                    // Contact foam is off (strength 0) without a hull.
-                    splash_strength: if self.ocean_contact.is_some() {
-                        v.splash_strength
-                    } else {
-                        0.0
-                    },
-                    splash_width: v.splash_width,
-                    splash_flicker_speed: v.splash_flicker_speed,
-                    hull_a: self
-                        .ocean_contact
-                        .map(|(a, _)| a)
-                        .unwrap_or([0.0, 0.0, 1.0, 0.0]),
-                    hull_b: {
-                        let h = self.ocean_contact.map(|(_, h)| h).unwrap_or([1.0, 1.0]);
-                        [h[0], h[1], v.splash_baseline, v.splash_noise_scale]
-                    },
-                    hull_c: {
-                        let hv = self.ocean_contact_vel;
-                        [hv[0], hv[1], hv[2], v.splash_response]
-                    },
-                    band_wobble: v.band_wobble,
-                    band_dither: v.band_dither,
-                    band_dither_scale: v.band_dither_scale,
-                    rain_ripple: v.rain_ripple,
-                    foam_glow: [
-                        v.foam_glow_color[0],
-                        v.foam_glow_color[1],
-                        v.foam_glow_color[2],
-                        v.foam_glow,
-                    ],
-                    // Reality tear rides the shared post-process fields: the
-                    // remap happens in-shader AFTER the TOD palette lands in
-                    // these uniforms, so it can never race time_of_day.rhai.
-                    mode: self.postprocess_config.render_mode,
+            self.water.upload(
+                queue,
+                view_proj,
+                camera_pos,
+                &super::water::WaterFrame {
+                    time: self.ocean_time,
+                    tonemapping: tonemapping_u32,
+                    sky: self.sky.params(),
+                    sky_active: self.sky.active(),
+                    render_mode: self.postprocess_config.render_mode,
                     mode_mix: self.postprocess_config.mode_mix,
-                    // Shoreline foam reads the grab pass's depth: off
-                    // without it, whatever the component says.
-                    shore_foam_width: if self.ocean_grab_this_frame {
-                        v.shore_foam_width
-                    } else {
-                        0.0
-                    },
-                    shore_foam_strength: v.shore_foam_strength,
-                    shore_foam_color: v.shore_foam_color,
-                    shore_foam_speed: v.shore_foam_speed,
-                    shore_foam_reach: v.shore_foam_reach,
-                    _pad_shore: [0.0; 2],
-                };
-                queue.write_buffer(ubuf, 0, bytemuck::cast_slice(&[uniforms]));
-
-                // Each body's look, its missing colours the sea's as they
-                // stand this frame (so a time-of-day palette tints them too).
-                if let Some(sea_buf) = &self.ocean_sea_body_buffer {
-                    let sea = crate::water_body::WaterBodyUniformsGpu::sea(v);
-                    queue.write_buffer(sea_buf, 0, bytemuck::cast_slice(&[sea]));
-                }
-                for b in self.water_bodies_to_draw() {
-                    let u = b.look.to_gpu(v, b.flowing);
-                    queue.write_buffer(&b.uniform_buffer, 0, bytemuck::cast_slice(&[u]));
-                }
-            }
+                },
+            );
         }
 
         // Update wireframe overlay transforms
@@ -968,44 +865,11 @@ impl SceneRenderer {
         // Ocean rendering (after all opaque — writes depth so fog applies;
         // group 3 holds the grab-pass snapshots, or dummies when disabled)
         if self.water_active() && phase.draws_ocean_and_after() {
-            let grab_bg = if self.ocean_grab_this_frame {
-                self.ocean_grab_bind_group.as_ref()
-            } else {
-                self.ocean_grab_dummy_bind_group.as_ref()
-            };
-            if let (Some(op), Some(ocean_bg), Some(transform_bg), Some(grab_bg)) = (
-                &self.pipelines.ocean,
-                &self.ocean_uniform_bind_group,
-                &self.ocean_transform_bind_group,
-                grab_bg,
-            ) {
-                render_pass.set_bind_group(0, transform_bg, &[]);
-                render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
-                render_pass.set_bind_group(3, grab_bg, &[]);
-                if self.ocean_active {
-                    render_pass.set_pipeline(&op.pipeline);
-                    render_pass.set_bind_group(1, ocean_bg, &[]);
-                    render_pass.set_vertex_buffer(0, op.grid_vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        op.grid_index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    render_pass.draw_indexed(0..op.grid_index_count, 0, 0..1);
-                }
-                // Lakes and rivers (ADR 0094): after the sea, depth-tested,
-                // so one above sea level hides the sea beneath it.
-                let mut bodies = self.water_bodies_to_draw().peekable();
-                if bodies.peek().is_some() {
-                    render_pass.set_pipeline(&op.body_pipeline);
-                    for b in bodies {
-                        render_pass.set_bind_group(1, &b.bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, b.vertex_buffer.slice(..));
-                        render_pass
-                            .set_index_buffer(b.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                        render_pass.draw_indexed(0..b.index_count, 0, 0..1);
-                    }
-                }
-            }
+            self.water.draw(
+                render_pass,
+                self.pipelines.ocean.as_ref(),
+                &self.lights.bind_group,
+            );
         }
 
         if phase.draws_opaque() {

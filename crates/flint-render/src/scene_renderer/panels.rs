@@ -27,10 +27,7 @@ use std::collections::HashMap;
 pub(crate) struct ViewSlot {
     postprocess_resources: Option<PostProcessResources>,
     msaa: super::msaa::MsaaView,
-    ocean_grab_color: Option<(wgpu::Texture, wgpu::TextureView)>,
-    ocean_grab_depth: Option<(wgpu::Texture, wgpu::TextureView)>,
-    ocean_grab_size: (u32, u32),
-    ocean_grab_bind_group: Option<wgpu::BindGroup>,
+    ocean_grab: super::water::OceanGrab,
     scaled_depth: Option<std::sync::Arc<crate::render_scale::ScaledDepth>>,
     depth_upscale: Option<crate::render_scale::DepthUpscale>,
     surface_size: (u32, u32),
@@ -358,13 +355,7 @@ impl SceneRenderer {
             &mut slot.postprocess_resources,
         );
         self.msaa.swap_view(&mut slot.msaa);
-        swap(&mut self.ocean_grab_color, &mut slot.ocean_grab_color);
-        swap(&mut self.ocean_grab_depth, &mut slot.ocean_grab_depth);
-        swap(&mut self.ocean_grab_size, &mut slot.ocean_grab_size);
-        swap(
-            &mut self.ocean_grab_bind_group,
-            &mut slot.ocean_grab_bind_group,
-        );
+        self.water.swap_grab(&mut slot.ocean_grab);
         swap(&mut self.scaled_depth, &mut slot.scaled_depth);
         swap(&mut self.depth_upscale, &mut slot.depth_upscale);
         swap(&mut self.surface_size, &mut slot.surface_size);
