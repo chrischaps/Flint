@@ -780,18 +780,32 @@ flint render examples/reveal_tear.scene.toml --sweep pencil.reveal=0.15,0.4,0.65
 | `reveal_ink` | `[0.12, 0.11, 0.1]` | The line's colour, `[r, g, b]` or `"#rrggbb"`, in display values at either stage. |
 | `reveal_boil` | 12 | How many times a second of post time the edge's small teeth are redrawn, so it crawls like a line drawn again each frame; 0 holds it. The big lobes stay put. |
 | `reveal_seed` | 0 | Another tear of the same shape. |
+| `reveal_rim` | 0 | A band of bare paper on the style's side of the line, in points past the line's inner side; 0 draws none. Wider and narrower along the edge and frayed at its inner side, as a torn sheet's white core is. |
+| `reveal_rim_color` | the style's paper, lifted | The rim's colour, `[r, g, b]` or `"#rrggbb"`, in display values. Unset, it is the style's `paper` colour (pencil, watercolor; else pencil's cream) lifted halfway to white, so the rim shows on a blank sheet too. |
+| `reveal_shadow` | 0 | How dark the shadow the torn edge casts on the live side is, 0 to 1; 0 casts none. It falls about 14 points below and to the right, as from a light at the top left, and hugs the line all round. |
 
 - **Tuned by eye in F4** (#875). Every style's section in **F4 → Styles** (and the player's F3 Styles panel) has a **Reveal** group under its own settings. Its checkbox switches the reveal on at `reveal = 1`, and switching it off takes every reveal key out of the style while keeping them, so the next time it goes on the tuned tear comes back. Under it are the amount, a shape combo, the ink's colour picker and a slider for each number above, with the table's ranges and help. A row the shape doesn't read is greyed out: Angle unless it's a wipe, Start x and y for a wipe. Dragging the amount tears the frame open live; **Copy TOML** and **Commit to scene** write the keys back, and a reveal switched off leaves the file when it is committed.
 
   ![F4 in the player over examples/reveal_tear.scene.toml: the amount dragged to 0.36 has torn the live clearing open into pencil through an inked, ragged edge. The Reveal group lists Amount, Shape, Ink and the eight numbers; Angle is greyed out for a tear, and the dot beside Amount marks it as differing from the scene](../images/f4-reveal.png)
 
   *`flint-player` with `--input-script` driving F4 on a copy of the scene without its director script, so no tween fights the slider.*
+- **Torn paper** (#876). `reveal_rim` and `reveal_shadow` make the tear read as a physical sheet: the drawn side shows its white core along the rip, and the live picture underneath darkens where the torn edge lifts off it. Both default to 0, which draws the reveal exactly as it was, byte for byte. In F4 they are the Rim and Shadow sliders of the Reveal group, with a Rim colour picker after them (greyed out while Rim is 0).
+
+  ```bash
+  flint render examples/reveal_tear.scene.toml --style pencil:reveal=0.5,reveal_rim=3,reveal_shadow=0.4
+  ```
+
+  ![A ragged wipe from pencil into the live clearing, 1:1 at 1080p, four ways: no rim and no shadow; a 4-point paper rim; a shadow of 0.5; both. With both the barrel's torn edge has a white core on the drawn side and a soft shadow down and to the right on the live side](../images/reveal-torn-paper.png)
+
+  *`flint render tests/fixtures/scenes/stylize_props_plain.scene.toml --no-grid --style pencil:reveal=0.5,reveal_shape=wipe,reveal_angle=20 --style-time 0.6 --sweep pencil.reveal_rim=0,4 --sweep pencil.reveal_shadow=0,0.5 --sweep-crop 760,380,440,440`.*
+
+  Each is found by asking the region itself rather than trusting a distance worked out from the field's slope, which holds only right at the edge: a pixel is rim when some point on a ring round it, as wide as the rim, is outside, and the live side is shadowed by how much of the region lies back toward the light within the shadow's reach. So a pinhole casts a pinhole's shadow, and the sheet is not flecked with paper where the noise dips toward the cut without crossing it. They cost more than the line: with `--gpu-time 200` at 1080p on an RTX 4070, pencil at `reveal = 0.5` went from 0.585 ms p50 to 0.776 ms with `reveal_rim = 3`, 0.698 ms with `reveal_shadow = 0.4`, and 0.848 ms with both.
 - **One call animates it.** `tween_post_style_param("pencil", "reveal", 1.0, 4.0)` eases the reveal from where it is (0 for a style that has none) to 1 ([Scripting → Whole-frame styles](scripting.md#whole-frame-styles)). `examples/reveal_tear.scene.toml` starts live, tears open into pencil over 4 s, and pulls the live frame back in with a wipe.
 - **Deterministic.** The edge is the render-mode tears' noise (`tear_mask.wgsl`'s `fbm` and `value_noise`, with ridged teeth so it reads as torn paper, not a cut), on screen position and `reveal_boil` steps of post time. The same `--style-time` draws the same edge, byte for byte; the next step redraws its teeth.
 - **The ends are exact.** At `reveal = 0` the style leaves its stage's chain, as at `blend = 0`, so the frame is the live one byte for byte and costs nothing. At 1 the reveal draws nothing, so the frame is the style's own. In between the amount grows the region about with the share of the frame it covers; a tear's last scraps of live picture linger in the corners until the end.
 - **With `blend`.** Inside the region the style shows by its `blend`; outside, not at all. The ink is drawn at the blend too.
 - **How and what it costs.** The stage draws it in place of the [blend](#blending-a-whole-frame-style): after the style, one full-screen draw puts what the style read back outside the region and lays the ink, premultiplied, in the style's own GPU timing scope. Each revealing style takes a 256-byte slot of one uniform buffer (16 a frame), so nothing is allocated per frame. Measured with `--gpu-time 200` at 1080p on an RTX 4070: pencil's pass went from 0.477 to 0.568 ms p50 with `reveal = 0.5`, about 0.09 ms for the reveal, against 0.024 ms for a plain `blend = 0.5`.
-- **Goldens.** `pencil-reveal-tear-half` pins the half-torn frame at post time 0.6, `pencil-reveal-panel` a panel, and `pencil-reveal-zero` compares reveal 0 with the frame without the style.
+- **Goldens.** `pencil-reveal-tear-half` pins the half-torn frame at post time 0.6, `pencil-reveal-torn-paper` the same tear with `reveal_rim = 3` and `reveal_shadow = 0.4`, `pencil-reveal-panel` a panel, and `pencil-reveal-zero` compares reveal 0 with the frame without the style.
 
 ### Style blends and render-mode tears
 

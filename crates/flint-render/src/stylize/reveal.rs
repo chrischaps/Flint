@@ -146,16 +146,56 @@ pub const NUMBERS: &[RevealNumber] = &[
         max: 1000.0,
         help: "another tear of the same shape",
     },
+    RevealNumber {
+        key: "reveal_rim",
+        default: Some(0.0),
+        min: 0.0,
+        max: 16.0,
+        help: "a band of bare paper on the style's side of the edge, in points, \
+               ragged as torn paper's is; 0 draws none",
+    },
+    RevealNumber {
+        key: "reveal_shadow",
+        default: Some(0.0),
+        min: 0.0,
+        max: 1.0,
+        help: "how dark the shadow the torn edge casts on the live side is; 0 casts none",
+    },
 ];
 
 /// The ink a reveal's edge draws in when the table names none: soft lead.
 pub const DEFAULT_INK: [f32; 3] = [0.12, 0.11, 0.1];
 
+/// The rim's paper when the table names no `reveal_rim_color` and the
+/// style has no `paper` colour of its own: pencil's.
+pub const DEFAULT_PAPER: [f32; 3] = [0.95, 0.93, 0.88];
+
+/// How far an unnamed rim colour is lifted from the paper toward white.
+const RIM_LIFT: f32 = 0.5;
+
+/// The paper a style's rim starts from (#876): its own `paper` colour in
+/// `config` where it has one (pencil, watercolor), else [`DEFAULT_PAPER`].
+/// The renderer and F4 both ask here, so F4's default is what is drawn.
+pub fn style_paper(
+    descriptor: &super::StyleDescriptor,
+    config: &crate::PostProcessConfig,
+) -> [f32; 3] {
+    if descriptor.color_setting("paper").is_some() {
+        descriptor.color(config, "paper")
+    } else {
+        DEFAULT_PAPER
+    }
+}
+
+/// How far the edge's shadow reaches onto the live side, in points (#876).
+const SHADOW_POINTS: f32 = 14.0;
+
 /// Every key the reveal reads, in the order a table writes them.
-pub const KEYS: [&str; 11] = [
+pub const KEYS: [&str; 14] = [
     "reveal",
     "reveal_shape",
     "reveal_ink",
+    "reveal_rim_color",
     "reveal_scale",
     "reveal_ragged",
     "reveal_edge",
@@ -164,6 +204,8 @@ pub const KEYS: [&str; 11] = [
     "reveal_y",
     "reveal_boil",
     "reveal_seed",
+    "reveal_rim",
+    "reveal_shadow",
 ];
 
 /// Whether `key` is one of the reveal's.
@@ -180,6 +222,9 @@ pub struct StyleReveal {
     pub shape: Option<RevealShape>,
     /// `reveal_ink`, in display values.
     pub ink: Option<[f32; 3]>,
+    /// `reveal_rim_color`, in display values (#876); `None` is the
+    /// style's paper.
+    pub rim_color: Option<[f32; 3]>,
     /// The [`NUMBERS`] the table sets, by key.
     pub numbers: std::collections::BTreeMap<&'static str, f32>,
 }
@@ -195,6 +240,14 @@ impl StyleReveal {
 
     pub fn ink(&self) -> [f32; 3] {
         self.ink.unwrap_or(DEFAULT_INK)
+    }
+
+    /// The rim's colour: `reveal_rim_color` as set, else `paper` (the
+    /// style's own) lifted halfway to white, the fresh core a tear shows,
+    /// so the rim reads on a blank sheet too.
+    pub fn rim_color(&self, paper: [f32; 3]) -> [f32; 3] {
+        self.rim_color
+            .unwrap_or_else(|| paper.map(|c| c + (1.0 - c) * RIM_LIFT))
     }
 
     /// Number `key` (one of [`NUMBERS`]) as set, else its default.
@@ -213,7 +266,7 @@ impl StyleReveal {
 
     /// Set `key` from a TOML value: a number for `reveal` (0..1) and the
     /// [`NUMBERS`], a name for `reveal_shape`, a colour (`[r, g, b]` or
-    /// `"#rrggbb"`) for `reveal_ink`. Out of range, a number is clamped
+    /// `"#rrggbb"`) for `reveal_ink` and `reveal_rim_color`. Out of range, a number is clamped
     /// when `strict` is off and refused, naming the range, when it is on
     /// (the command line, #355). `Ok(false)`: not a reveal key.
     pub fn set(&mut self, key: &str, value: &toml::Value, strict: bool) -> Result<bool, String> {
@@ -245,10 +298,15 @@ impl StyleReveal {
                     )
                 })?);
             }
-            "reveal_ink" => {
+            "reveal_ink" | "reveal_rim_color" => {
                 let rgb = super::color_from_toml(value)
-                    .ok_or_else(|| format!("{key} must be a colour: [r, g, b] or \"#rrggbb\""))?;
-                self.ink = Some(rgb.map(|c| c.clamp(0.0, 1.0)));
+                    .ok_or_else(|| format!("{key} must be a colour: [r, g, b] or \"#rrggbb\""))?
+                    .map(|c| c.clamp(0.0, 1.0));
+                if key == "reveal_ink" {
+                    self.ink = Some(rgb);
+                } else {
+                    self.rim_color = Some(rgb);
+                }
             }
             _ => {
                 let Some(spec) = NUMBERS.iter().find(|n| n.key == key) else {
@@ -267,7 +325,7 @@ impl StyleReveal {
     pub fn set_text(&mut self, key: &str, text: &str) -> Result<bool, String> {
         let value = match key {
             "reveal_shape" => toml::Value::String(text.to_string()),
-            "reveal_ink" => match super::color_from_text(text) {
+            "reveal_ink" | "reveal_rim_color" => match super::color_from_text(text) {
                 Some(rgb) => toml::Value::Array(
                     rgb.iter()
                         .map(|c| toml::Value::Float(f64::from(*c)))
@@ -311,6 +369,10 @@ impl StyleReveal {
             let [r, g, b] = ink.map(float);
             out.push_str(&format!("reveal_ink = [{r}, {g}, {b}]\n"));
         }
+        if let Some(rim) = self.rim_color {
+            let [r, g, b] = rim.map(float);
+            out.push_str(&format!("reveal_rim_color = [{r}, {g}, {b}]\n"));
+        }
         for n in NUMBERS {
             if let Some(v) = self.numbers.get(n.key) {
                 out.push_str(&format!("{} = {}\n", n.key, float(*v)));
@@ -322,7 +384,9 @@ impl StyleReveal {
     /// The uniform this reveal draws with into a `width` x `height`
     /// target at post `time`, `blend` and `pixels_per_point`; `linear`
     /// when the target holds linear light (the HDR stage, an sRGB view),
-    /// so the ink is given in display values either way.
+    /// so the ink and rim are given in display values either way. `paper`
+    /// is the style's paper, the rim's colour unless the table names one.
+    #[allow(clippy::too_many_arguments)]
     pub fn uniform(
         &self,
         width: u32,
@@ -331,6 +395,7 @@ impl StyleReveal {
         blend: f32,
         pixels_per_point: f32,
         linear: bool,
+        paper: [f32; 3],
     ) -> RevealUniform {
         let amount = self.amount.unwrap_or(1.0).clamp(0.0, 1.0);
         let ragged = self.number("reveal_ragged");
@@ -345,7 +410,11 @@ impl StyleReveal {
         let ink = self
             .ink()
             .map(|c| if linear { srgb_to_linear(c) } else { c });
-        let half = 0.5 * self.number("reveal_edge") * pixels_per_point.max(0.01);
+        let ppp = pixels_per_point.max(0.01);
+        let half = 0.5 * self.number("reveal_edge") * ppp;
+        let rim = self
+            .rim_color(paper)
+            .map(|c| if linear { srgb_to_linear(c) } else { c });
         RevealUniform {
             shape: [
                 self.shape() as u32 as f32,
@@ -367,6 +436,8 @@ impl StyleReveal {
             ],
             ink: [ink[0], ink[1], ink[2], 0.0],
             size: [width.max(1) as f32, height.max(1) as f32, 0.0, 0.0],
+            rim: [rim[0], rim[1], rim[2], self.number("reveal_rim") * ppp],
+            shadow: [self.number("reveal_shadow"), SHADOW_POINTS * ppp, 0.0, 0.0],
         }
     }
 }
@@ -411,6 +482,10 @@ pub struct RevealUniform {
     pub edge: [f32; 4],
     pub ink: [f32; 4],
     pub size: [f32; 4],
+    /// rim rgb (in the target's space), rim width in pixels (#876)
+    pub rim: [f32; 4],
+    /// shadow strength, reach in pixels, unused
+    pub shadow: [f32; 4],
 }
 
 /// A uniform slot per revealing style in a frame; more than this many in
@@ -561,6 +636,8 @@ impl RevealPass {
             return false;
         };
         let linear = frame.descriptor.stage == StyleStage::Hdr || frame.format.is_srgb();
+        // The rim is bare paper: the style's own, where it has one
+        let paper = style_paper(frame.descriptor, frame.config);
         let uniform = reveal.uniform(
             frame.width,
             frame.height,
@@ -568,6 +645,7 @@ impl RevealPass {
             blend,
             frame.pixels_per_point,
             linear,
+            paper,
         );
         let pipeline = self.pipeline(frame.device, frame.format);
         let shared = self.shared(frame.device);
@@ -687,7 +765,7 @@ mod tests {
             amount: Some(0.5),
             ..Default::default()
         };
-        let at = |t: f32| r.uniform(100, 100, t, 1.0, 1.0, false).edge[2];
+        let at = |t: f32| r.uniform(100, 100, t, 1.0, 1.0, false, DEFAULT_PAPER).edge[2];
         assert_eq!(at(0.0), 0.0);
         assert_eq!(at(0.05), 0.0, "inside the first twelfth of a second");
         assert_eq!(at(0.09), 1.0);
@@ -696,13 +774,52 @@ mod tests {
             numbers: [("reveal_boil", 0.0)].into_iter().collect(),
             ..r.clone()
         };
-        assert_eq!(held.uniform(100, 100, 5.0, 1.0, 1.0, false).edge[2], 0.0);
+        assert_eq!(
+            held.uniform(100, 100, 5.0, 1.0, 1.0, false, DEFAULT_PAPER)
+                .edge[2],
+            0.0
+        );
     }
 
     #[test]
-    fn the_uniform_is_five_vec4s() {
-        assert_eq!(std::mem::size_of::<RevealUniform>(), 80);
+    fn the_uniform_is_seven_vec4s() {
+        assert_eq!(std::mem::size_of::<RevealUniform>(), 112);
         assert!(std::mem::size_of::<RevealUniform>() as u64 <= SLOT);
+    }
+
+    #[test]
+    fn the_rim_is_the_styles_paper_unless_named() {
+        let mut r = StyleReveal {
+            amount: Some(0.5),
+            ..Default::default()
+        };
+        let paper = [0.8, 0.6, 0.4];
+        let u = r.uniform(100, 100, 0.0, 1.0, 2.0, false, paper);
+        for (got, want) in u.rim[..3].iter().zip([0.9, 0.8, 0.7]) {
+            assert!(
+                (got - want).abs() < 1e-6,
+                "the paper lifted halfway to white"
+            );
+        }
+        assert_eq!(u.rim[3], 0.0, "no rim by default");
+        assert_eq!(u.shadow[0], 0.0, "no shadow by default");
+        assert!(r.set_text("reveal_rim_color", "#ffffff").unwrap());
+        assert!(r.set_text("reveal_rim", "3").unwrap());
+        assert!(r.set_text("reveal_shadow", "0.4").unwrap());
+        let u = r.uniform(100, 100, 0.0, 1.0, 2.0, false, paper);
+        assert_eq!(u.rim, [1.0, 1.0, 1.0, 6.0], "points times pixels per point");
+        assert_eq!(u.shadow[..2], [0.4, SHADOW_POINTS * 2.0]);
+        assert!(r.set_text("reveal_shadow", "2").is_err(), "0 to 1");
+    }
+
+    #[test]
+    fn every_reveal_key_is_reserved() {
+        for key in KEYS {
+            assert!(super::super::RESERVED_KEYS.contains(&key), "{key}");
+        }
+        for n in NUMBERS {
+            assert!(KEYS.contains(&n.key), "{}", n.key);
+        }
     }
 
     #[test]
@@ -712,6 +829,9 @@ mod tests {
         r.set("reveal_shape", &"panel".into(), false).unwrap();
         r.set("reveal_edge", &3.0.into(), false).unwrap();
         r.set("reveal_ink", &"#000000".into(), false).unwrap();
+        r.set("reveal_rim", &3.0.into(), false).unwrap();
+        r.set("reveal_shadow", &0.4.into(), false).unwrap();
+        r.set("reveal_rim_color", &"#ffffff".into(), false).unwrap();
         let text = r.toml_lines();
         let table: toml::Table = toml::from_str(&text).unwrap();
         let mut back = StyleReveal::default();
