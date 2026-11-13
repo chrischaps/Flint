@@ -770,8 +770,8 @@ impl SceneRenderer {
                 render_pass,
                 queue,
                 camera,
-                self.pipelines.sky.as_ref(),
-                self.pipelines.skybox.as_ref(),
+                self.pipelines.sky.as_deref(),
+                self.pipelines.skybox.as_deref(),
                 &self.lights.uniforms.directional_lights[0],
                 self.ocean_time,
             );
@@ -1016,7 +1016,7 @@ impl SceneRenderer {
                 } else if let Some(woozy) = draw
                     .wooze
                     .as_ref()
-                    .and(self.pipelines.wooze_standard.as_ref())
+                    .and(self.pipelines.wooze_standard.as_deref())
                 {
                     render_pass.set_pipeline(if draw.double_sided {
                         &woozy.opaque_double_sided
@@ -1046,7 +1046,7 @@ impl SceneRenderer {
                         let woozy = draw
                             .wooze
                             .as_ref()
-                            .and(self.pipelines.wooze_skinned.as_ref());
+                            .and(self.pipelines.wooze_skinned.as_deref());
                         let wants = (woozy.is_some(), draw.double_sided);
                         if bound != Some(wants) {
                             bound = Some(wants);
@@ -1134,7 +1134,7 @@ impl SceneRenderer {
                 let woozy = draw
                     .wooze
                     .as_ref()
-                    .and(self.pipelines.wooze_standard.as_ref());
+                    .and(self.pipelines.wooze_standard.as_deref());
                 render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
                 render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
@@ -1173,7 +1173,7 @@ impl SceneRenderer {
                     let woozy = draw
                         .wooze
                         .as_ref()
-                        .and(self.pipelines.wooze_skinned.as_ref());
+                        .and(self.pipelines.wooze_skinned.as_deref());
                     if draw.soft_edge_only && woozy.is_none() {
                         render_pass.set_pipeline(&sp.soft_edge_pipeline);
                         render_pass.draw_indexed(0..draw.index_count, 0, 0..1);

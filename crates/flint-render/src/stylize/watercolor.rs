@@ -192,8 +192,8 @@ struct PaintUniforms {
 }
 
 struct Watercolor {
-    wash_pipeline: wgpu::RenderPipeline,
-    paint_pipeline: wgpu::RenderPipeline,
+    wash_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    paint_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniform_bgl: wgpu::BindGroupLayout,
     sampled_bgl: wgpu::BindGroupLayout,
     entity_bgl: wgpu::BindGroupLayout,

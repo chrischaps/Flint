@@ -719,14 +719,14 @@ fn prep_reach(rows: &[PencilRow], pixels_per_point: f32) -> u32 {
 }
 
 struct Pencil {
-    prep_pipeline: wgpu::RenderPipeline,
+    prep_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     /// The tensor flow blur along x, from the prep target (#392)
-    flow_across: wgpu::RenderPipeline,
+    flow_across: std::sync::Arc<wgpu::RenderPipeline>,
     /// And along y, from the across pass's result
-    flow_down: wgpu::RenderPipeline,
-    draw_pipeline: wgpu::RenderPipeline,
+    flow_down: std::sync::Arc<wgpu::RenderPipeline>,
+    draw_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     /// The drawing pass while some row draws on (#879, [`DRAW_ON_SHADER`])
-    draw_on_pipeline: wgpu::RenderPipeline,
+    draw_on_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
     input_bgl: wgpu::BindGroupLayout,
