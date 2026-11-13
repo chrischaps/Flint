@@ -1019,6 +1019,10 @@ impl ViewerApp {
             match action {
                 GizmoAction::SnapToView { yaw, pitch } => {
                     self.camera_snap_target = Some((yaw, pitch));
+                    // The turn eases in, but the projection switches at once
+                    if !self.camera.orthographic {
+                        self.reset_style_history();
+                    }
                     self.camera.orthographic = true;
                 }
                 GizmoAction::OrbitDelta { dyaw, dpitch } => {
@@ -1026,6 +1030,9 @@ impl ViewerApp {
                     self.camera.orbit_horizontal(dyaw);
                     self.camera.orbit_vertical(dpitch);
                     self.camera_snap_target = None;
+                    if self.camera.orthographic {
+                        self.reset_style_history();
+                    }
                     self.camera.orthographic = false;
                 }
                 GizmoAction::SwitchToPerspective => {
@@ -2180,6 +2187,18 @@ impl ViewerApp {
     }
 
     /// Refresh renderer from current world state
+    /// A camera jump of the viewer's own (Space back to the authored
+    /// framing, a switch between perspective and orthographic) or a hot
+    /// reload: styles that remember earlier frames (ASCII's steady glyphs,
+    /// #277) start over instead of carrying the old view into the new one
+    /// (#474). The viewer knows each of its jumps, so it runs no detector:
+    /// orbits, wheel zooms and view snaps ease, and keep their history.
+    fn reset_style_history(&mut self) {
+        if let Some(renderer) = &mut self.scene_renderer {
+            renderer.reset_style_history();
+        }
+    }
+
     fn refresh_renderer(&mut self) {
         let st = self.state.lock().unwrap();
         if let (Some(ctx), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
@@ -2274,6 +2293,8 @@ impl ViewerApp {
             match reload_result {
                 Ok((new_world, scene_file)) => {
                     println!("Reloaded scene: {}", scene_file.scene.name);
+                    // The picture no longer follows on from the last one
+                    self.reset_style_history();
 
                     {
                         let mut state = self.state.lock().unwrap();
@@ -2768,6 +2789,7 @@ impl ApplicationHandler for ViewerApp {
                             // the scene has no [camera] block)
                             self.seed_camera_from_scene();
                             self.camera.update_orbit();
+                            self.reset_style_history();
                         }
                         PhysicalKey::Code(KeyCode::KeyO) if !is_editor => {
                             self.auto_orbit = !self.auto_orbit;
