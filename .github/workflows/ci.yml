@@ -170,9 +170,27 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Saved even when the job fails (#909): rust-cache saves in its post
+      # step, which a failed job skips, so while this job was red every run
+      # built cold. Only dependencies are cached (cache-workspace-crates is
+      # off), and they are the same whether or not the tests pass.
       - uses: Swatinem/rust-cache@v2
         with:
           key: gpu-warp
+          cache-on-failure: true
+
+      # DX12 compiles shaders with DXC (#912), loaded only from beside each
+      # executable: `flint dxc install` downloads the pinned release, checks
+      # its SHA-256 and copies the two DLLs into target/debug (flint.exe)
+      # and target/debug/deps (the test binaries). `status` must say DXC,
+      # or the run would test FXC without saying so
+      - name: DXC beside the binaries
+        shell: bash
+        run: |
+          cargo build -p flint-cli --bin flint
+          target/debug/flint.exe dxc install
+          target/debug/flint.exe dxc status | tee target/dxc-status.txt
+          grep -q "^DX12 shaders: DXC (" target/dxc-status.txt
 
       - name: cargo test -p flint-render --test stylize
         run: cargo test -p flint-render --test stylize
@@ -187,10 +205,26 @@ jobs:
           FLINT_GOLDENS_OUT: ${{ github.workspace }}/target/tmp/stylize-goldens
         run: cargo test -p flint-cli --test render_goldens
 
+      # FXC stays the fallback, so a few cases keep it working: edges-view
+      # is #314's FXC-only `switch` miscompile. No ASCII case here: before
+      # #910 one takes FXC about 50 s on WARP, near wgpu 23's 60 s fence wait
+      - name: Goldens on FXC (WGPU_DX12_COMPILER=fxc)
+        if: success() || failure()
+        env:
+          WGPU_DX12_COMPILER: fxc
+        shell: bash
+        run: >
+          target/debug/flint.exe goldens crates/flint-cli/tests/golden/stylize.goldens.toml
+          --case invert --case kuwahara --case edges-view --case pencil-full --case watercolor
+          --require-gpu --out-dir target/tmp/stylize-goldens-fxc
+
       - name: Goldens summary
         if: always()
         shell: bash
-        run: python scripts/goldens-summary.py target/tmp/stylize-goldens/report.json >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          python scripts/goldens-summary.py target/tmp/stylize-goldens/report.json >> "$GITHUB_STEP_SUMMARY"
+          echo "#### The FXC step (WGPU_DX12_COMPILER=fxc)" >> "$GITHUB_STEP_SUMMARY"
+          python scripts/goldens-summary.py target/tmp/stylize-goldens-fxc/report.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload renders and diffs
         if: always()
@@ -198,6 +232,14 @@ jobs:
         with:
           name: stylize-goldens-warp
           path: target/tmp/stylize-goldens/
+          if-no-files-found: warn
+
+      - name: Upload the FXC step's renders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stylize-goldens-warp-fxc
+          path: target/tmp/stylize-goldens-fxc/
           if-no-files-found: warn
 
   # A change a game can notice needs a changelog entry (#765): games carry the

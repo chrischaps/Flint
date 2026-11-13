@@ -26,6 +26,9 @@
 #           or a path in the game's repo, copied beside its bundle
 #   poster  that film's first frame, also the chooser's picture (URL or path)
 #   film    a line under the film, saying what it shows
+#   path    instead of repo and ref: a folder in this repo, packed from the
+#           checkout the site is built from, so it plays at Flint's own
+#           commit and needs no pin (#430). For the engine's own small games
 
 [[game]]
 id = "float"
@@ -87,3 +90,17 @@ repo = "chrischaps/Kandinski"
 ref = "af91369d89308a3cdb26510f8df17a3491678872"
 # A path, not a URL: build.py copies it from the repo beside the bundle.
 poster = "web/afterglow-poster.jpg"
+
+[[game]]
+id = "sunprint"
+title = "Sun Prints"
+line = "A garden printed in sunlight, the way Anna Atkins printed her ferns."
+controls = "silent · WASD to walk, mouse to look · E turns the negative over · Esc frees the pointer"
+touch = "silent · the left thumb walks, the rest of the screen looks · TURN turns the negative over"
+# The site's user-style game (#430): its look is a cyanotype the game writes
+# itself, a .shader.toml and two WGSL functions in styles/, which the
+# browser compiles at load. In this repo, so every deploy plays the
+# user-style path at the engine's commit. No film: a browser without WebGPU
+# sees the poster, a `flint render` of the opening view.
+path = "tools/play-site/sunprint"
+poster = "web/poster.jpg"

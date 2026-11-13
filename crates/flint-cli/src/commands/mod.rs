@@ -6,6 +6,7 @@ pub mod bundle;
 pub mod calibrate;
 pub mod check;
 pub mod common_args;
+pub mod dxc;
 pub mod edit_router;
 pub mod entity;
 pub mod examples;

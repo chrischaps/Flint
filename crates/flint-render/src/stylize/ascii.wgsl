@@ -44,6 +44,9 @@
 // Each dissolving variant's cells' ranks in its dissolve order (#398,
 // ascii_dissolve_rank.wgsl)
 @group(3) @binding(6) var dissolve_ranks: texture_2d<f32>;
+// Each edge cell's glyph, decided once per cell (#910,
+// ascii_edge_corners.wgsl): the slots packed for 0, 4 and 9 corner glyphs
+@group(3) @binding(7) var edge_slots: texture_2d<u32>;
 
 // The tone luminance of a colour in `slot`: stretched over the slot's range
 fn slot_luma(col: vec3<f32>, slot: u32) -> f32 {
@@ -57,12 +60,16 @@ fn slot_luma(col: vec3<f32>, slot: u32) -> f32 {
 // The edge glyph slot of the screen-grid cell `cell`, or NO_EDGE: the
 // edge cell's line, thinned where a line splits between two cells, or the
 // corner its neighbours' lines meet in (#348) when the drawing font has
-// `corners` corner glyphs (ascii_edge_thin.wgsl, which follows this file).
+// `corners` corner glyphs. The edge thin and corner passes decided it for
+// the cell (#910, ascii_edge_corners.wgsl); ascii_edge_slot.wgsl follows
+// this file.
 fn edge_slot(cell: vec2<f32>, corners: u32) -> u32 {
     if u.edge_on == 0u {
         return NO_EDGE;
     }
-    return cornered_slot(vec2<i32>(cell) + vec2<i32>(CELL_OFFSET), corners);
+    let cmax = vec2<i32>(textureDimensions(edge_slots)) - vec2<i32>(1);
+    let c = clamp(vec2<i32>(cell) + vec2<i32>(CELL_OFFSET), vec2<i32>(0), cmax);
+    return slot_for(textureLoad(edge_slots, c, 0).x, corners);
 }
 
 // How many corner glyphs look `v`'s font has (#348): a variant in a font
@@ -428,15 +435,15 @@ fn grid_owner(p: vec2<f32>, cell: vec2<f32>, origin: vec2<f32>) -> Owner {
     var b_blend = 1.0;
     for (var k = 0; k < 16; k++) {
         let m = mask_texel(lattice(cell_min, cell, k));
-        // Most samples are unstyled: no table reads for them
-        if m.x == 0u {
-            continue;
+        // Most samples are unstyled: no table reads for them. No
+        // `continue`: FXC takes a second longer over each copy of a loop
+        // that has one (#910)
+        var s = 0u;
+        if m.x != 0u {
+            s = slot_of(m.x);
         }
-        let s = slot_of(m.x);
         if s == 0u {
-            continue;
-        }
-        if s == a {
+        } else if s == a {
             a_n += 1u;
         } else if s == b {
             b_n += 1u;
@@ -472,6 +479,9 @@ fn grid_owner(p: vec2<f32>, cell: vec2<f32>, origin: vec2<f32>) -> Owner {
 // in the frame (#338) the variant holding the pixel's cell. A pixel of a
 // variant that cuts its silhouette to the pixel keeps its own; the pixel's
 // own variant's grid is asked first, then each snapping grid in turn.
+// `grid_owner` is called from one place, in one loop (g = -1 is the own
+// grid): FXC inlines every call, and each copy cost the glyph shader
+// seconds to compile on DX12 (#910).
 fn resolve(p: vec2<f32>) -> Owner {
     var o: Owner;
     o.slot = 0u;
@@ -491,19 +501,22 @@ fn resolve(p: vec2<f32>) -> Owner {
     if o.slot != 0u {
         own_cell = variants[o.slot].cell;
         own_origin = variants[o.slot].origin;
-        let w = grid_owner(p, own_cell, own_origin);
-        if w.slot != 0u {
-            return w;
-        }
     }
-    for (var g = 0u; g < min(u.variant_meta.w, MAX_SNAP_GRIDS); g++) {
-        let grid = u.snap_grids[g];
-        if all(grid.xy == own_cell) && all(grid.zw == own_origin) {
-            continue;
+    let grids = i32(min(u.variant_meta.w, MAX_SNAP_GRIDS));
+    for (var g = select(0, -1, o.slot != 0u); g < grids; g++) {
+        var cell = own_cell;
+        var origin = own_origin;
+        if g >= 0 {
+            let grid = u.snap_grids[g];
+            cell = grid.xy;
+            origin = grid.zw;
         }
-        let w = grid_owner(p, grid.xy, grid.zw);
-        if w.slot != 0u {
-            return w;
+        // The own grid is asked once, first
+        if g < 0 || !(all(cell == own_cell) && all(origin == own_origin)) {
+            let w = grid_owner(p, cell, origin);
+            if w.slot != 0u {
+                return w;
+            }
         }
     }
     // Nobody holds the cell: the whole frame's, and a dropped pixel of a

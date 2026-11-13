@@ -79,6 +79,10 @@ bytemuck = { workspace = true }
 egui-snarl = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+# `flint dxc install` (#912): the pinned DXC release's download and its
+# SHA-256. Both already in the tree through flint-asset-gen.
+ureq = { workspace = true }
+sha2 = { workspace = true }
 rfd = { workspace = true, optional = true }
 
 [dev-dependencies]

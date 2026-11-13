@@ -661,9 +661,8 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         None,
     ))
     .map(|a| a.get_info());
-    let adapter = info
-        .as_ref()
-        .map(|i| format!("{} ({:?}, {:?})", i.name, i.device_type, i.backend));
+    // On DX12 it names the shader compiler too (#912)
+    let adapter = info.as_ref().map(flint_render::gpu_select::adapter_line);
     let key = info.as_ref().map(adapter_key);
     println!(
         "adapter: {}{}",

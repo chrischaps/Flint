@@ -33,6 +33,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint edit <file>` | Unified interactive editor (auto-detects file type) |
 | `flint play [scene]` | Play a scene with first-person controls and physics; with no scene, the project's default (`flint.toml`'s `[project] scene`) |
 | `flint render <scene>` | Render a scene to PNG (headless) |
+| `flint dxc install` | Put DXC's `dxcompiler.dll` and `dxil.dll` beside the binaries, so DX12 compiles shaders about 5x faster ([DX12's shader compiler](#dx12s-shader-compiler)); `flint dxc status` shows what DX12 would use |
 | `flint goldens <file>.goldens.toml` | Render a list of scenes and gate each against its golden PNG; `--bless` rewrites them ([Golden Suites](../guides/headless-rendering.md#golden-suites)) |
 | `flint gen <spec>` | Run a procedural generation spec to produce meshes or textures |
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
@@ -583,15 +584,81 @@ contexts choose their wgpu adapter through the same chain, first match wins:
 The name is a case-insensitive substring of the adapter name; if nothing
 matches, the engine warns with the available names and falls back to the
 power preference. `--list-gpus` prints every adapter with its type and backend.
-Run with `RUST_LOG=info` to see which adapter was picked:
+`flint render` prints the adapter it drew on as its `GPU:` line, and
+`RUST_LOG=info` logs the pick with its driver:
 
 ```
-INFO flint_render::gpu_select: GPU adapter: NVIDIA GeForce RTX 5070 Laptop GPU (DiscreteGpu, Vulkan, ...)
+GPU: NVIDIA GeForce RTX 4070 (DiscreteGpu, Vulkan)
 ```
 
 The default matters on dual-GPU laptops: before this, `PowerPreference::None`
 let the backend hand back whichever adapter enumerated first, usually the
 integrated GPU.
+
+#### DX12's shader compiler
+
+On DX12, every shader is compiled by one of Microsoft's two compilers before it
+draws. Flint uses **DXC** by default and keeps **FXC** only as the fallback.
+FXC is old and slow. On Flint's ASCII style, a debug `flint render` on an RTX 4070
+took 26-27 s on FXC and 5 s on DXC (1.1 s on Vulkan). FXC is also where Flint's
+DX12-only miscompiles came from.
+
+wgpu loads DXC from two DLLs, `dxcompiler.dll` and `dxil.dll`. Flint loads them
+from **one folder only**: the running executable's folder, or the folder
+`FLINT_DXC_DIR` names. It loads them by full path, so a copy that another program
+left on `PATH` is never picked up. `flint dxc install` puts them there:
+
+```bash
+flint dxc install                 # beside this flint.exe, and its deps/ (cargo test binaries)
+flint dxc install --to dist/win   # beside a game's executable, with the licence files
+flint dxc install --sdk           # the installed Windows SDK's copy instead of the download
+flint dxc status                  # the folder, each DLL, and what DX12 would compile with
+```
+
+Without `--sdk` or `--from <dir>`, the command downloads a pinned
+[DirectXShaderCompiler release](https://github.com/microsoft/DirectXShaderCompiler/releases)
+(v1.9.2609) once, into `%LOCALAPPDATA%\flint\dxc\`. It checks the zip's SHA-256
+and each DLL's against the pinned values before it uses them. The DLLs are not
+in the repository. After a `cargo clean`, run `flint dxc install` again.
+
+Every adapter line says which compiler DX12 uses, and why. These lines come from
+`flint render`'s `GPU:` line, `flint goldens`' `adapter:` line, the player's F3
+overlay and its `--perf` line (which shows only `DXC`, `FXC` or `FXC fallback`):
+
+```
+GPU: NVIDIA GeForce RTX 4070 (DiscreteGpu, Dx12, shaders DXC (C:\Flint\target\debug))
+GPU: NVIDIA GeForce RTX 4070 (DiscreteGpu, Dx12, shaders FXC (fallback: dxcompiler.dll not in C:\Flint\target\debug))
+GPU: NVIDIA GeForce RTX 4070 (DiscreteGpu, Dx12, shaders FXC (WGPU_DX12_COMPILER=fxc))
+```
+
+- **A missing DLL** (or one that won't load) means FXC. The run still draws, and
+  prints one warning that names the folder it looked in.
+- **`WGPU_DX12_COMPILER=fxc`** forces FXC. Use it to work around a driver or DXC
+  bug. `dxc`, or leaving it unset, gives the default.
+- **A shader that DXC rejects** is not retried with FXC. Its pipeline fails, as on
+  any other backend.
+
+**Shipping the DLLs in a game is your choice to make.** They come under
+Microsoft's licence, not Flint's. The release zip has three licence files:
+`LICENSE-MS.txt` (the Microsoft Software License Terms for the DirectX Shader
+Compiler), plus `LICENSE-LLVM.txt` and `LICENCE-MIT.txt` for its open-source
+parts. As read on 2026-11-13, the Microsoft terms:
+
+- allow distributing "the object code form of the software listed in the
+  distributables file list". The zip has no such list.
+- on the condition that your application adds "significant primary
+  functionality" to the code.
+- require your distributors and end users to agree to terms that protect it and
+  Microsoft "at least as much as this agreement".
+- require you to indemnify Microsoft against claims arising from your
+  distribution.
+- forbid using Microsoft's trademarks in a way that suggests endorsement.
+
+`flint export` has no desktop target, so nothing copies the DLLs into a game on
+its own. `flint dxc install --to <your build folder>` does it when you ask, and
+copies the licence files beside them as `dxc-LICENSE-MS.txt`, `dxc-LICENSE-LLVM.txt`
+and `dxc-LICENCE-MIT.txt`. A game shipped without the DLLs still runs on DX12,
+with FXC.
 
 ### Edit Flags
 
