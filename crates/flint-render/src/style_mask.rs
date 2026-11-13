@@ -965,7 +965,9 @@ pub(crate) struct VeilMesh<'a> {
 /// The frame's particles, for the veil: the particle pipeline's shared
 /// bind groups and its sorted draws.
 pub(crate) struct VeilParticles<'a> {
+    /// The layouts the veil's own particle pipelines are made against.
     pub pipeline: &'a crate::particle_pipeline::ParticlePipeline,
+    pub buffers: &'a crate::particle_pipeline::ParticleBuffers,
     pub draws: &'a [crate::particle_pipeline::ParticleDrawCall],
 }
 
@@ -1547,7 +1549,7 @@ impl StyleMaskPass {
             pass.draw_indexed(0..m.index_count, 0, 0..1);
         }
         if let (Some(particles), Some(pipelines)) = (&veil.particles, &self.veil_particles) {
-            let pp = particles.pipeline;
+            let pp = particles.buffers;
             pass.set_index_buffer(pp.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             pass.set_bind_group(0, &pp.uniform_bind_group, &[]);
             pass.set_bind_group(1, pp.instance_bind_group(), &[]);

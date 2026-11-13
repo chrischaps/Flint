@@ -77,12 +77,12 @@ pub use headless::HeadlessContext;
 pub use ocean_pipeline::{OceanPipeline, OceanUniformsGpu, OceanVisuals};
 pub use orbit_controller::OrbitCameraController;
 pub use particle_pipeline::{
-    ParticleBlendMode, ParticleDrawCall, ParticleDrawData, ParticleInstance, ParticlePipeline,
-    ParticleUniforms,
+    ParticleBlendMode, ParticleBuffers, ParticleDrawCall, ParticleDrawData, ParticleInstance,
+    ParticlePipeline, ParticleUniforms,
 };
 pub use pipeline::{
-    DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline, SpotLight,
-    TransformUniforms,
+    DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline, SceneLayouts,
+    SpotLight, TransformUniforms,
 };
 pub use postprocess::{
     post_process_config_from_def, PostProcessConfig, PostProcessPipeline, PostProcessResources,

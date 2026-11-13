@@ -389,7 +389,7 @@ impl SceneRenderer {
                 &mut self.draw_bind_cache,
                 self.extract_frame,
                 device,
-                &self.pipeline,
+                &self.layouts,
                 key,
                 &transform_uniforms,
                 &material_uniforms,
@@ -419,7 +419,7 @@ impl SceneRenderer {
                     &mut self.draw_bind_cache,
                     self.extract_frame,
                     device,
-                    &self.pipeline,
+                    &self.layouts,
                     &uniforms,
                     echo_key,
                     bc_view,
@@ -447,7 +447,8 @@ impl SceneRenderer {
             let entity_bones = self.entity_bone_buffers.get(&entity_id);
             let from_entity = entity_bones.is_some();
             let bone_layout = &self
-                .skinned_pipeline
+                .pipelines
+                .skinned
                 .as_ref()
                 .unwrap()
                 .bone_bind_group_layout;
@@ -484,7 +485,8 @@ impl SceneRenderer {
                         .entry(shadow_key)
                         .or_insert_with(|| {
                             let layout = &self
-                                .skinned_pipeline
+                                .pipelines
+                                .skinned
                                 .as_ref()
                                 .unwrap()
                                 .bone_bind_group_layout;
@@ -748,7 +750,7 @@ impl SceneRenderer {
                 &mut self.draw_bind_cache,
                 self.extract_frame,
                 device,
-                &self.pipeline,
+                &self.layouts,
                 (entity_id, mesh_index as u32),
                 &transform_uniforms,
                 &material_uniforms,
@@ -815,7 +817,7 @@ impl SceneRenderer {
                     };
                     let overlay = Self::create_draw_call(
                         device,
-                        &self.pipeline,
+                        &self.layouts,
                         &wire_mesh,
                         true,
                         wire_transform,
@@ -841,7 +843,7 @@ impl SceneRenderer {
                     };
                     let arrow_draw = Self::create_draw_call(
                         device,
-                        &self.pipeline,
+                        &self.layouts,
                         &arrows,
                         true,
                         arrow_transform,
@@ -1107,7 +1109,7 @@ impl SceneRenderer {
         sprite: &toml::Value,
         world_pos: [f32; 3],
     ) {
-        let bp = match &self.billboard_pipeline {
+        let bp = match &self.pipelines.billboard {
             Some(bp) => bp,
             None => return,
         };
@@ -1450,7 +1452,7 @@ impl SceneRenderer {
                         &mut self.draw_bind_cache,
                         self.extract_frame,
                         device,
-                        &self.pipeline,
+                        &self.layouts,
                         (entity_id, 0),
                         &transform_uniforms,
                         &material_uniforms,
@@ -1487,7 +1489,7 @@ impl SceneRenderer {
                         &mut self.draw_bind_cache,
                         self.extract_frame,
                         device,
-                        &self.pipeline,
+                        &self.layouts,
                         (entity_id, 0),
                         &transform_uniforms,
                         &material_uniforms,
@@ -1543,7 +1545,7 @@ impl SceneRenderer {
                     &mut self.draw_bind_cache,
                     self.extract_frame,
                     device,
-                    &self.pipeline,
+                    &self.layouts,
                     (entity_id, 0),
                     &transform_uniforms,
                     &mat_uniforms,
@@ -1579,7 +1581,7 @@ impl SceneRenderer {
                 &mut self.draw_bind_cache,
                 self.extract_frame,
                 device,
-                &self.pipeline,
+                &self.layouts,
                 (entity_id, 0),
                 &transform_uniforms,
                 &material_uniforms,
@@ -1635,7 +1637,7 @@ impl SceneRenderer {
                 };
                 let overlay = Self::create_draw_call(
                     device,
-                    &self.pipeline,
+                    &self.layouts,
                     &wire_mesh,
                     true,
                     wire_transform,
@@ -1659,7 +1661,7 @@ impl SceneRenderer {
                 };
                 let arrow_draw = Self::create_draw_call(
                     device,
-                    &self.pipeline,
+                    &self.layouts,
                     &arrows,
                     true,
                     arrow_transform,
@@ -1682,7 +1684,7 @@ impl SceneRenderer {
             return;
         }
 
-        let sp = match &self.sprite2d_pipeline {
+        let sp = match &self.pipelines.sprite2d {
             Some(sp) => sp,
             None => return,
         };
