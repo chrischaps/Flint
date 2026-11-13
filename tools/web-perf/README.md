@@ -1,4 +1,4 @@
-# Web perf: the web player's `?perf=1` readout in desktop Chrome over CDP (#381)
+# Web perf: the web player's `?perf=1` readout in desktop Chrome (CDP) or Firefox (BiDi) (#381, #430)
 
 `run.mjs` plays each scene of a bundle in headed Chrome, a page at a time,
 with the canvas fixed at one size in device pixels, and reads the corner
@@ -54,6 +54,8 @@ the URL of a site already up. A scene may carry its own query after `+`:
 | `--begin auto\|click` | `auto` | `auto` adds `?begin=auto`, which lifts the Begin gate with no click; `click` clicks Begin over CDP with a user gesture instead, which also opens the sound |
 | `--port N` | `9381` | Chrome's devtools port; pick another to run two at once |
 | `--chrome <path>` | the usual install, or `CHROME` | |
+| `--browser chrome\|firefox` | `chrome` | `firefox` drives headed Firefox over WebDriver BiDi on `--port` (it has no CDP), on a fresh profile whose `layout.css.devPixelsPerPx` is the DPR, as Chrome's `--force-device-scale-factor` is (#430) |
+| `--firefox <path>` | the usual install, or `FIREFOX` | |
 
 Each page's JSON keeps the readout's text and its copyable line at every read
 (`reads[].text`, `reads[].line`), the line parsed into numbers

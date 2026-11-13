@@ -227,6 +227,16 @@ can't change or break the site between Flint deploys. Moving a game forward
 means changing its `ref`. Float is pinned to its `engine-catchup` branch
 (#102): the engine subtree at Flint `main`, plus its `bundle.toml`.
 
+**A game in this repo** (#430) gives `path`, a folder in the Flint
+checkout, in place of `repo` and `ref`. `build.py` exports it from where it
+is, so it plays at the commit the site is built from and needs no pin:
+every deploy then checks an engine feature in a real browser at the
+engine's own commit. Sun Prints (`tools/play-site/sunprint/`,
+`?game=sunprint`) is the first: a garden whose whole look is a
+user-authored style, a cyanotype in a `.shader.toml` and two WGSL passes,
+which on the web only the browser compiles (#415). `build.py --only
+sunprint` builds just that game for a local trial.
+
 **The doorway.** Before any wasm is fetched, an inline script in
 `index.html` decides whether this visit can play:
 
