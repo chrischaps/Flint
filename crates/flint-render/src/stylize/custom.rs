@@ -66,6 +66,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 
+#[cfg(not(target_arch = "wasm32"))]
+mod bounded;
 mod template;
 pub use template::{template, Template};
 
@@ -1501,8 +1503,13 @@ pub fn table_words(count: usize, rows: &[Vec<f32>], slots: Option<&[u32; MAX_IDS
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Report {
     /// Loops in the user's code: each is guarded ([`LOOP_LIMIT`]) unless
-    /// the guard is off ([`set_loop_guard`]).
+    /// the guard is off ([`set_loop_guard`]) or it is [`bounded`](Self::bounded).
     pub loops: usize,
+    /// Of [`loops`](Self::loops), those whose turns the IR proves to be at
+    /// most [`LOOP_LIMIT`] (#424: a `for` over octaves or kernel taps with a
+    /// constant start, bound and step). They can't hang the GPU, so they
+    /// are left as written, unguarded and unwarned.
+    pub bounded: usize,
     /// Texture reads in the user's code (the helpers' own not counted).
     pub texture_reads: usize,
     pub warnings: Vec<String>,
@@ -1581,7 +1588,8 @@ pub fn check_pass(source: &StyleSource, pass: usize, user: &str) -> Result<Repor
         )
     })?;
     let mut report = inspect(&module, &composed, &file)?;
-    if report.loops > 0 && LOOP_GUARD.with(|g| g.get()) {
+    let unbounded = report.loops - report.bounded;
+    if unbounded > 0 && LOOP_GUARD.with(|g| g.get()) {
         let user = user_range(&composed);
         guard_loops(&mut module, |span| in_range(&user, span));
         // The guard is ours, so a failure here is a framework bug: say so
@@ -1595,12 +1603,11 @@ pub fn check_pass(source: &StyleSource, pass: usize, user: &str) -> Result<Repor
                     format!("{file}: writing the guarded module failed (a Flint bug, #411): {e}")
                 })?;
         report.guarded = Some(text);
-    } else if report.loops > 0 {
+    } else if unbounded > 0 {
         report.warnings.push(format!(
-            "{file}: warning: {} loop{} and the loop guard is off: a loop that never ends hangs \
-             the GPU until the driver resets it (TDR)",
-            report.loops,
-            if report.loops == 1 { "" } else { "s" }
+            "{file}: warning: {unbounded} loop{} without a constant bound and the loop guard is \
+             off: a loop that never ends hangs the GPU until the driver resets it (TDR)",
+            if unbounded == 1 { "" } else { "s" }
         ));
     }
     Ok(report)
@@ -1644,8 +1651,10 @@ fn in_range(range: &std::ops::Range<usize>, span: naga::Span) -> bool {
 /// ```
 ///
 /// `continue` jumps to `continuing`, so every turn counts. A loop that
-/// ends on its own within the limit runs exactly as written. Returns the
-/// number of loops guarded.
+/// ends on its own within the limit runs exactly as written. A loop whose
+/// turns the IR proves to be within it (`bounded`, #424) is left alone: the
+/// guard would never fire, and the plain loop is one the driver can unroll.
+/// Returns the number of loops guarded.
 #[cfg(not(target_arch = "wasm32"))]
 fn guard_loops(module: &mut naga::Module, in_user: impl Fn(naga::Span) -> bool) -> usize {
     let u32_ty = module.types.insert(
@@ -1663,9 +1672,10 @@ fn guard_loops(module: &mut naga::Module, in_user: impl Fn(naga::Span) -> bool) 
         .map(|(h, _)| h)
         .collect();
     for h in handles {
+        let skip = bounded::bounded_loops(module, &module.functions[h], LOOP_LIMIT);
         let f = &mut module.functions[h];
         let mut body = std::mem::take(&mut f.body);
-        guard_block(&mut body, f, u32_ty, &mut guarded);
+        guard_block(&mut body, f, u32_ty, &skip, &mut guarded);
         f.body = body;
     }
     guarded
@@ -1676,6 +1686,7 @@ fn guard_block(
     block: &mut naga::Block,
     f: &mut naga::Function,
     u32_ty: naga::Handle<naga::Type>,
+    skip: &[naga::Span],
     count: &mut usize,
 ) {
     use naga::{BinaryOperator as B, Expression as E, Literal, Statement as S};
@@ -1687,8 +1698,12 @@ fn guard_block(
                 continuing,
                 break_if,
             } => {
-                guard_block(body, f, u32_ty, count);
-                guard_block(continuing, f, u32_ty, count);
+                guard_block(body, f, u32_ty, skip, count);
+                guard_block(continuing, f, u32_ty, skip, count);
+                if skip.contains(&span) {
+                    block.push(statement, span);
+                    continue;
+                }
                 let var = f.local_variables.append(
                     naga::LocalVariable {
                         name: Some(format!("flint_loop_guard_{count}")),
@@ -1751,14 +1766,14 @@ fn guard_block(
                 continuing.push(S::Emit(naga::Range::new_from_bounds(done, last)), span);
                 *break_if = Some(last);
             }
-            S::Block(b) => guard_block(b, f, u32_ty, count),
+            S::Block(b) => guard_block(b, f, u32_ty, skip, count),
             S::If { accept, reject, .. } => {
-                guard_block(accept, f, u32_ty, count);
-                guard_block(reject, f, u32_ty, count);
+                guard_block(accept, f, u32_ty, skip, count);
+                guard_block(reject, f, u32_ty, skip, count);
             }
             S::Switch { cases, .. } => {
                 for case in cases {
-                    guard_block(&mut case.body, f, u32_ty, count);
+                    guard_block(&mut case.body, f, u32_ty, skip, count);
                 }
             }
             _ => {}
@@ -1897,6 +1912,7 @@ fn inspect(module: &naga::Module, composed: &Composed, file: &str) -> Result<Rep
             continue;
         }
         report.loops += count_loops(&f.body);
+        report.bounded += bounded::bounded_loops(module, f, LOOP_LIMIT).len();
         report.texture_reads += f
             .expressions
             .iter()
@@ -2206,6 +2222,7 @@ pub fn check_file(path: &Path) -> Result<Report, String> {
         match check_pass(&source, i, &user) {
             Ok(report) => {
                 total.loops += report.loops;
+                total.bounded += report.bounded;
                 total.texture_reads += report.texture_reads;
                 total.warnings.extend(report.warnings);
             }
@@ -4287,16 +4304,95 @@ fn style(p: StylePixel) -> vec4<f32> {
         let report = check(&s, user).unwrap();
         assert_eq!(report.loops, 2);
         assert_eq!(report.texture_reads, 1, "one call site, written out once");
-        assert!(report.warnings.is_empty(), "guarded: {:?}", report.warnings);
-        assert!(report.guarded.is_some());
+        // #424: both have constant bounds, so neither needs the guard
+        assert_eq!(report.bounded, 2);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(report.guarded, None, "nothing to guard");
+    }
 
-        // With the guard off the loops are only warned about
+    /// #424: with the guard off, a loop whose bound isn't a constant is
+    /// warned about and a three-octave `for` is not; with it on (always,
+    /// outside tests) neither is, and only the first is guarded.
+    #[test]
+    fn only_a_loop_without_a_constant_bound_is_warned_about() {
+        let s = duotone();
+        let octaves = r#"
+fn style(p: StylePixel) -> vec4<f32> {
+    var n = 0.0;
+    var amp = 0.5;
+    var uv = p.uv * 4.0;
+    for (var i = 0; i < 3; i++) {
+        n += amp * flint_sample(uv).r;
+        uv *= 2.0;
+        amp *= 0.5;
+    }
+    return vec4<f32>(p.color.rgb * n * params.mix, p.color.a);
+}
+"#;
+        let until = r#"
+fn style(p: StylePixel) -> vec4<f32> {
+    var x = p.color.r;
+    loop {
+        if x > 1.0 { break; }
+        x += 0.1;
+    }
+    return vec4<f32>(vec3<f32>(x * params.mix), 1.0);
+}
+"#;
         set_loop_guard(false);
-        let report = check(&s, user).unwrap();
+        let off = (check(&s, octaves), check(&s, until));
         set_loop_guard(true);
-        assert_eq!(report.guarded, None);
-        assert_eq!(report.warnings.len(), 1);
-        assert!(report.warnings[0].contains("2 loops"));
+        let (octaves_off, until_off) = (off.0.unwrap(), off.1.unwrap());
+        assert!(
+            octaves_off.warnings.is_empty(),
+            "{:?}",
+            octaves_off.warnings
+        );
+        assert_eq!(until_off.warnings.len(), 1, "{:?}", until_off.warnings);
+        assert!(
+            until_off.warnings[0].contains("1 loop without a constant bound"),
+            "{}",
+            until_off.warnings[0]
+        );
+
+        let octaves_on = check(&s, octaves).unwrap();
+        assert_eq!((octaves_on.loops, octaves_on.bounded), (1, 1));
+        assert!(octaves_on.warnings.is_empty() && octaves_on.guarded.is_none());
+        let until_on = check(&s, until).unwrap();
+        assert_eq!((until_on.loops, until_on.bounded), (1, 0));
+        assert!(until_on.warnings.is_empty(), "{:?}", until_on.warnings);
+        let text = until_on.guarded.expect("guarded");
+        assert_eq!(text.matches(&format!(">= {LOOP_LIMIT}u")).count(), 1);
+    }
+
+    /// #424: the shipped example styles load with no warning, and their
+    /// constant-bound loops (orton's 13-tap blurs) are left as written;
+    /// radial_blur's loop runs to a parameter, so it is still guarded.
+    #[test]
+    fn example_styles_warn_about_nothing() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/styles");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if !path.to_string_lossy().ends_with(".shader.toml") {
+                continue;
+            }
+            let report = check_file(&path).unwrap_or_else(|e| panic!("{e}"));
+            assert!(
+                report.warnings.is_empty(),
+                "{}: {:?}",
+                path.display(),
+                report.warnings
+            );
+            let name = path.file_name().unwrap().to_string_lossy();
+            match &*name {
+                "orton.shader.toml" => assert_eq!((report.loops, report.bounded), (2, 2)),
+                "radial_blur.shader.toml" => assert_eq!((report.loops, report.bounded), (1, 0)),
+                _ => {}
+            }
+            checked += 1;
+        }
+        assert!(checked >= 9, "only {checked} styles in {}", dir.display());
     }
 
     /// #411: every user loop gets a counter of its own (reset where it
@@ -4330,6 +4426,8 @@ fn style(p: StylePixel) -> vec4<f32> {
 "#;
         let report = check(&s, user).unwrap();
         assert_eq!(report.loops, 4);
+        // The `for` over 9 is proven to end (#424) and left as written
+        assert_eq!(report.bounded, 1);
         let text = report.guarded.expect("guarded");
         // It parses and validates as naga wrote it
         let module = naga::front::wgsl::parse_str(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
@@ -4340,8 +4438,8 @@ fn style(p: StylePixel) -> vec4<f32> {
         .validate(&module)
         .unwrap();
         let limit = format!(">= {LOOP_LIMIT}u");
-        assert_eq!(text.matches(&limit).count(), 4, "{text}");
-        assert_eq!(text.matches("break if").count(), 4, "{text}");
+        assert_eq!(text.matches(&limit).count(), 3, "{text}");
+        assert_eq!(text.matches("break if").count(), 3, "{text}");
         // The user's own break_if is kept, or-ed with the guard
         assert!(text.contains("> 2f) || ("), "{text}");
         // The prelude has no loops; the written module none we didn't add
@@ -5110,7 +5208,8 @@ fn style(p: StylePixel) -> vec4<f32> {
         let user = r#"
 fn style(p: StylePixel) -> vec4<f32> {
     var acc = vec3<f32>(0.0);
-    for (var i = 0; i < 4; i++) {
+    // A bound read from a parameter, so the loop is guarded (#424)
+    for (var i = 0; i < 4 + i32(params.grain); i++) {
         acc += flint_image_tiled_paper(p.uv + vec2<f32>(f32(i)) * flint.texel).rgb;
     }
     var c = flint_lut_grade(p.color.rgb) * acc * 0.25;

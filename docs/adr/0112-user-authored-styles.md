@@ -216,6 +216,26 @@ before. What it costs and shows:
 - The limit is per run of a loop, so nested loops multiply (a 64x64
   kernel is fine). A loop that needs more than 4096 turns a pixel is far
   past what a full-screen pass can afford anyway.
+- **A loop the IR proves short is left alone (#424).** Before the
+  rewrite, `custom/bounded.rs` looks for a counter in each loop: started
+  at a constant (a store just before the loop, or the variable's own init
+  when nothing else writes it), compared with a constant (a literal or a
+  module `const`) by a `for`'s leading `if .. else { break }` or by a
+  `break if`, stepped by a constant in `continuing`, and written nowhere
+  else (no store in the body, no pointer handed to a call). It runs the
+  counter forward on the CPU in its own type, wrapping as the GPU does; a
+  loop that ends within `LOOP_LIMIT` turns could never trip the guard, so
+  it isn't guarded (`Report::bounded`), and a style whose loops are all
+  like that builds its composed text with no rewrite. Octaves and kernel
+  taps, the commonest loops, are such loops. A bound read from a
+  parameter stays guarded: params are clamped to their range where they
+  are written, but a guard that trusts every writer is weaker than one
+  that trusts none. Measured at 1080p on the 4070 (`flint render
+  --gpu-time 240`, main and the branch alternated five times, minimums),
+  with pixels byte-identical: an 11x11 constant kernel 0.946-0.951 ms
+  guarded vs 0.881-0.884 ms as written (-7%), three octaves of noise 0.071
+  vs 0.069-0.070 ms, and `radial_blur` (guarded in both) 0.194-0.195 ms
+  in both. With the guard off, only the loops not proven are warned about.
 - Errors still point into the user's file: they come from the first
   parse, before the rewrite. The guard's own failure (re-validation or
   writing) is reported as a Flint bug and the style draws a passthrough;
