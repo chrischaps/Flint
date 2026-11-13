@@ -179,6 +179,8 @@ Scene reload is a full re-parse. When `flint edit --watch` detects a file change
 
 This approach is simple and correct --- there's no incremental diffing that could get out of sync. For the scene sizes Flint targets, re-parsing is fast enough.
 
+A user style's files are the exception (#429). Saving a `.wgsl` or `.shader.toml` in a `styles/` folder the scene searches doesn't reload the scene: the style rebuilds its shader in place, and only a changed description, whose parameters the scene's `[post_process.styles.<name>]` has to be read against again, reloads it ([User-authored styles](stylize-passes.md)).
+
 ## Scene as Source of Truth
 
 A key design decision: **the scene file is the source of truth**, not the in-memory state. This means:

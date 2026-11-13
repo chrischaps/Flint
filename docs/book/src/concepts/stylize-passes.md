@@ -1410,7 +1410,7 @@ One frame holds 15 variants of a style (and mask ids up to 255); any more take t
 
 **Hot reload.** Natively, both files reload while the player or viewer runs, a few times a second:
 
-- Save the `.wgsl` and the next frames draw it. If the edit doesn't compile, the last good build keeps drawing.
+- Save the `.wgsl` and the next frames draw it. If the edit doesn't compile, the last good build keeps drawing. Nothing else is rebuilt: under `flint edit --watch`, which reloads the whole scene for most files under its folder, a style's `.wgsl` and `.shader.toml` are left to the style (#429), so the world, the selection and any unsaved entity edits stay as they were.
 - Save the `.shader.toml` and the style is replaced where it stands in the chain, with its new parameters, label, stage, inputs or shader. The scene's `[post_process.styles.<name>]` is read again against them (other F4 edits stay). A description that no longer reads keeps the old style and reports.
 - A new `*.shader.toml` dropped into any `styles/` folder the scene searches is picked up too. One dropped nearer the scene than the style of its name takes over from it, and gives the name back when it is deleted.
 
