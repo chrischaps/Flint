@@ -26,9 +26,13 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 impl SceneRenderer {
-    /// ECS `material.base_color_r/g/b[/a]` tint for a model entity, checking the
-    /// entity first and then its parent (so expanded GLB child nodes inherit a
-    /// script-set colour). `None` when neither declares one.
+    /// The colour that replaces a model entity's base colour, from its
+    /// `material`: the script-set `base_color_r/g/b[/a]` first, then the
+    /// scene's `color = [r, g, b(, a)]` (#884), the same key a bounds-drawn
+    /// entity takes. The entity first, then its parent, so expanded GLB child
+    /// nodes inherit the root's colour; a parent's `color` only when the
+    /// parent has a `model` too, since on a bounds-drawn parent it is the
+    /// colour of that parent's own box. `None` when nothing declares one.
     ///
     /// Read through the typed view (#685): `base_color_r = 1`, an integer,
     /// used to drop the whole colour, because each channel was read with
@@ -38,7 +42,7 @@ impl SceneRenderer {
         world: &FlintWorld,
         entity_id: EntityId,
     ) -> Option<[f32; 4]> {
-        let extract = |id: EntityId| -> Option<[f32; 4]> {
+        let scalars = |id: EntityId| -> Option<[f32; 4]> {
             let m = world.view(id, comp::MATERIAL);
             let r = m.opt_f32("base_color_r")?;
             let g = m.opt_f32("base_color_g")?;
@@ -46,7 +50,18 @@ impl SceneRenderer {
             let a = m.f32("base_color_a", 1.0);
             Some([r, g, b, a])
         };
-        extract(entity_id).or_else(|| world.get_parent(entity_id).and_then(extract))
+        let color = |id: EntityId| world.view(id, comp::MATERIAL).opt_color("color");
+        let own = |id: EntityId| scalars(id).or_else(|| color(id));
+        own(entity_id).or_else(|| {
+            let parent = world.get_parent(entity_id)?;
+            scalars(parent).or_else(|| {
+                world
+                    .get_components(parent)
+                    .is_some_and(|c| c.has(comp::MODEL))
+                    .then(|| color(parent))
+                    .flatten()
+            })
+        })
     }
 
     /// ECS `material.emissive_scale` for a model entity (ADR 0090), on the
@@ -1796,5 +1811,70 @@ mod tests {
         let (world, id) = world_with_material("roughness = 0.4");
         assert_eq!(SceneRenderer::ecs_base_color_override(&world, id), None);
         assert!(world.read_reports().is_empty());
+    }
+
+    /// #884: `color` on a model entity was ignored in silence, so 15 scenes'
+    /// spheres drew in the GLB's own white.
+    #[test]
+    fn a_models_color_is_its_base_colour() {
+        let (world, id) = world_with_material("color = [0.85, 0.35, 0.22]");
+        assert_eq!(
+            SceneRenderer::ecs_base_color_override(&world, id),
+            Some([0.85, 0.35, 0.22, 1.0])
+        );
+        let (world, id) = world_with_material("color = [0.2, 0.4, 0.8, 0.5]");
+        assert_eq!(
+            SceneRenderer::ecs_base_color_override(&world, id),
+            Some([0.2, 0.4, 0.8, 0.5])
+        );
+        assert!(world.read_reports().is_empty());
+    }
+
+    /// A script's `set_material_color` writes the scalars, and must still
+    /// recolour a model the scene gave a `color`.
+    #[test]
+    fn the_scalars_beat_color() {
+        let (world, id) = world_with_material(
+            "color = [0.85, 0.35, 0.22]\nbase_color_r = 0.1\nbase_color_g = 0.9\nbase_color_b = 0.1",
+        );
+        assert_eq!(
+            SceneRenderer::ecs_base_color_override(&world, id),
+            Some([0.1, 0.9, 0.1, 1.0])
+        );
+    }
+
+    #[test]
+    fn a_color_that_is_not_a_colour_is_no_tint_and_is_reported_once() {
+        let (world, id) = world_with_material("color = \"red\"");
+        for _ in 0..3 {
+            assert_eq!(SceneRenderer::ecs_base_color_override(&world, id), None);
+        }
+        assert_eq!(world.read_reports().snapshot().len(), 1);
+    }
+
+    /// An expanded GLB node takes its model root's `color`; a model under a
+    /// bounds-drawn parent does not take that box's colour.
+    #[test]
+    fn a_parents_color_reaches_a_child_only_from_a_model() {
+        let (mut world, root) = world_with_material("color = [0.86, 0.82, 0.74]");
+        let child = world.spawn("lamp_shade").unwrap();
+        world.set_parent(child, root).unwrap();
+        // Bounds-drawn parent: its colour is its own box's
+        assert_eq!(SceneRenderer::ecs_base_color_override(&world, child), None);
+
+        let model: toml::Value = toml::from_str("asset = \"Sphere\"").unwrap();
+        world.set_component(root, comp::MODEL, model).unwrap();
+        assert_eq!(
+            SceneRenderer::ecs_base_color_override(&world, child),
+            Some([0.86, 0.82, 0.74, 1.0])
+        );
+
+        // The child's own colour wins over the root's
+        let own: toml::Value = toml::from_str("color = [0.1, 0.2, 0.3]").unwrap();
+        world.set_component(child, comp::MATERIAL, own).unwrap();
+        assert_eq!(
+            SceneRenderer::ecs_base_color_override(&world, child),
+            Some([0.1, 0.2, 0.3, 1.0])
+        );
     }
 }
