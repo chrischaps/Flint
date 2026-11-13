@@ -480,7 +480,12 @@ fn styles(
     let Some(mut post) = file.post_process.clone() else {
         return;
     };
-    for warning in flint_render::stylize::StyleSettings::from_tables(&post.style_tables()).1 {
+    // A style an earlier scene of the run loaded, from a folder this one
+    // can't see, is as unknown to it as when it is checked alone (#426)
+    let scope = flint_core::project::AssetScope::for_dir(scene_dir);
+    let mut unseen = flint_render::stylize::custom::drop_unseen(&mut post.styles, &scope);
+    unseen.extend(flint_render::stylize::StyleSettings::from_tables(&post.style_tables()).1);
+    for warning in unseen {
         found.push(
             Diagnostic::warning(codes::BAD_STYLE_SETTING, warning)
                 .file(scene)
