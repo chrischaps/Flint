@@ -5,7 +5,7 @@
 use super::helpers::identity_matrix;
 use super::SceneRenderer;
 use crate::billboard_pipeline::BillboardUniforms;
-use crate::camera::{mat4_inverse, mat4_mul, Camera};
+use crate::camera::Camera;
 use crate::debug::DebugMode;
 use crate::grass_pipeline::{
     grass_cull_padding, grass_cull_planes, grass_dispatch_window, GrassComputeUniforms,
@@ -14,7 +14,6 @@ use crate::grass_pipeline::{
 use crate::particle_pipeline::ParticleUniforms;
 use crate::pipeline::TransformUniforms;
 use crate::shadow::{ShadowDrawUniforms, SHADOW_DRAW_STRIDE};
-use crate::skybox_pipeline::SkyboxUniforms;
 use crate::sprite2d_pipeline::Sprite2dUniforms;
 
 /// Which slice of the main pass to render. `All` is the classic single-pass
@@ -582,12 +581,12 @@ impl SceneRenderer {
                     camera_near: self.ocean_camera_near_far.0,
                     camera_far: self.ocean_camera_near_far.1,
                     grab_enabled: u32::from(self.ocean_grab_this_frame),
-                    sky_zenith: self.sky_params.zenith_color,
-                    sky_horizon: self.sky_params.horizon_color,
-                    sky_haze: self.sky_params.haze_color,
+                    sky_zenith: self.sky.params().zenith_color,
+                    sky_horizon: self.sky.params().horizon_color,
+                    sky_haze: self.sky.params().haze_color,
                     // Reflections need a procedural sky to reflect; scenes
                     // with a texture skybox (or none) keep the old look.
-                    sky_reflection_strength: if self.sky_active {
+                    sky_reflection_strength: if self.sky.active() {
                         v.sky_reflection_strength
                     } else {
                         0.0
@@ -766,88 +765,16 @@ impl SceneRenderer {
 
         // Render sky at the far plane: the procedural sky (driven by the
         // `sky` component) replaces the texture skybox when present.
-        let mut sky_drawn = false;
-        if self.sky_active && phase.draws_opaque() {
-            if let (Some(sp), Some(ub), Some(ubg)) = (
-                &self.pipelines.sky,
-                &self.sky_uniform_buffer,
-                &self.sky_uniform_bind_group,
-            ) {
-                let view = camera.view_matrix();
-                let view_rot_only = [view[0], view[1], view[2], [0.0, 0.0, 0.0, 1.0]];
-                let proj = camera.projection_matrix();
-                let vp = mat4_mul(&proj, &view_rot_only);
-                let inv_vp = mat4_inverse(&vp);
-
-                // Sun disc = the scene's first directional light, so the
-                // drawn sun and the lighting can never disagree.
-                let sun = &self.light_uniforms.directional_lights[0];
-                let p = &self.sky_params;
-                let uniforms = crate::sky_pipeline::SkyUniformsGpu {
-                    inv_view_proj: inv_vp,
-                    sun_dir: sun.direction,
-                    sun_disc_size: p.sun_disc_size,
-                    sun_color: [
-                        sun.color[0] * sun.intensity,
-                        sun.color[1] * sun.intensity,
-                        sun.color[2] * sun.intensity,
-                        1.0,
-                    ],
-                    zenith_color: p.zenith_color,
-                    horizon_color: p.horizon_color,
-                    haze_color: p.haze_color,
-                    cloud_tint: p.cloud_tint,
-                    sun_glow: p.sun_glow,
-                    star_opacity: p.star_opacity,
-                    cloud_coverage: p.cloud_coverage,
-                    cloud_density: p.cloud_density,
-                    cloud_scale: p.cloud_scale,
-                    cloud_drift_x: p.cloud_drift_x,
-                    cloud_drift_y: p.cloud_drift_y,
-                    time: (self.ocean_time % 100_000.0) as f32,
-                };
-                queue.write_buffer(ub, 0, bytemuck::cast_slice(&[uniforms]));
-
-                render_pass.set_pipeline(&sp.pipeline);
-                render_pass.set_bind_group(0, ubg, &[]);
-                render_pass.draw(0..3, 0..1);
-                sky_drawn = true;
-            }
-        }
-
-        // Render texture skybox (before everything else, at the far plane)
-        if !sky_drawn && phase.draws_opaque() {
-            if let (Some(sp), Some(ub), Some(ubg), Some(tbg)) = (
-                &self.pipelines.skybox,
-                &self.skybox_uniform_buffer,
-                &self.skybox_uniform_bind_group,
-                &self.skybox_texture_bind_group,
-            ) {
-                // Build view matrix with translation stripped (rotation only)
-                let view = camera.view_matrix();
-                let view_rot_only = [
-                    view[0],
-                    view[1],
-                    view[2],
-                    [0.0, 0.0, 0.0, 1.0], // zero out translation column
-                ];
-                let proj = camera.projection_matrix();
-                let vp = mat4_mul(&proj, &view_rot_only);
-                let inv_vp = mat4_inverse(&vp);
-
-                queue.write_buffer(
-                    ub,
-                    0,
-                    bytemuck::cast_slice(&[SkyboxUniforms {
-                        inv_view_proj: inv_vp,
-                    }]),
-                );
-
-                render_pass.set_pipeline(&sp.pipeline);
-                render_pass.set_bind_group(0, ubg, &[]);
-                render_pass.set_bind_group(1, tbg, &[]);
-                render_pass.draw(0..3, 0..1);
-            }
+        if phase.draws_opaque() {
+            self.sky.draw(
+                render_pass,
+                queue,
+                camera,
+                self.pipelines.sky.as_ref(),
+                self.pipelines.skybox.as_ref(),
+                &self.light_uniforms.directional_lights[0],
+                self.ocean_time,
+            );
         }
 
         if wireframe_only {
