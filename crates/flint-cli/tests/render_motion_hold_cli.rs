@@ -267,6 +267,95 @@ fn the_whole_frame_hold_holds_every_entity_and_the_post_time() {
     assert_eq!(turned(&whole, false), ticks(), "{whole:?}");
 }
 
+/// #873: two lanterns sway over a floor, each carrying a point light and
+/// nothing drawn, so the only pixels that move are the pools of light. The
+/// left lantern is held on twos; the right one isn't.
+const LANTERNS: &str = r#"
+[scene]
+name = "Lanterns"
+
+[camera]
+position = [0.0, 6.0, 2.5]
+target = [0.0, 0.0, 0.0]
+fov = 60.0
+
+[entities.floor.transform]
+position = [0.0, -0.1, 0.0]
+
+[entities.floor.bounds]
+min = [-5.0, -0.1, -3.0]
+max = [5.0, 0.0, 3.0]
+
+[entities.floor.material]
+color = [0.6, 0.58, 0.55, 1.0]
+roughness = 0.9
+
+[entities.left_lantern.transform]
+position = [-2.4, 0.6, 0.0]
+
+[entities.left_lantern.script]
+source = "sway_left.rhai"
+
+[entities.left_lantern.motion_hold]
+rate = 12.0
+
+[entities.left_light]
+parent = "left_lantern"
+
+[entities.left_light.transform]
+position = [0.0, 0.0, 0.0]
+
+[entities.left_light.light]
+type = "point"
+color = [1.0, 0.75, 0.4]
+intensity = 6.0
+range = 1.0
+
+[entities.right_lantern.transform]
+position = [2.4, 0.6, 0.0]
+
+[entities.right_lantern.script]
+source = "sway_right.rhai"
+
+[entities.right_light]
+parent = "right_lantern"
+
+[entities.right_light.transform]
+position = [0.0, 0.0, 0.0]
+
+[entities.right_light.light]
+type = "point"
+color = [1.0, 0.75, 0.4]
+intensity = 6.0
+range = 1.0
+"#;
+
+fn sway(x: f32) -> String {
+    format!(
+        "fn on_update() {{ set_position(self_entity(), {x:.1} + 0.3 * sin(total_time() * 9.0), 0.6, 0.0); }}\n"
+    )
+}
+
+#[test]
+fn a_held_entitys_point_light_steps_on_its_ticks() {
+    let dir = project("lanterns");
+    std::fs::write(dir.join("scripts/sway_left.rhai"), sway(-2.4)).unwrap();
+    std::fs::write(dir.join("scripts/sway_right.rhai"), sway(2.4)).unwrap();
+    std::fs::write(dir.join("lanterns.scene.toml"), LANTERNS).unwrap();
+    let run = frames(&dir, "lanterns.scene.toml", "lanterns", &[]);
+    if no_gpu(&run) {
+        return;
+    }
+    ok(&run);
+    let pools = changes(&dir, "lanterns");
+    // The held lantern's pool moves only when its tick turns...
+    assert_eq!(turned(&pools, true), ticks(), "the held light: {pools:?}");
+    // ...and the other's glides on every frame
+    let smooth = turned(&pools, false);
+    assert!(smooth.len() >= FRAMES - 3, "the smooth light: {pools:?}");
+    assert!(smooth.iter().any(|i| i % EVERY != 0));
+}
+
 #[test]
 fn a_script_holds_an_entity_with_set_motion_hold() {
     let dir = project("scripted");

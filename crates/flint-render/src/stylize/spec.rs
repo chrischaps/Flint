@@ -181,12 +181,15 @@ fn reveal_value(reveal: &super::StyleReveal, key: &str) -> toml::Value {
     match key {
         "reveal" => toml::Value::Float(f64::from(reveal.amount.unwrap_or(0.0))),
         "reveal_shape" => toml::Value::String(reveal.shape().name().to_string()),
-        "reveal_ink" => toml::Value::Array(
-            reveal
-                .ink()
-                .iter()
-                .map(|c| toml::Value::Float(f64::from(*c)))
-                .collect(),
+        "reveal_ink" | "reveal_rim_color" => toml::Value::Array(
+            if key == "reveal_ink" {
+                reveal.ink()
+            } else {
+                reveal.rim_color(super::reveal::DEFAULT_PAPER)
+            }
+            .iter()
+            .map(|c| toml::Value::Float(f64::from(*c)))
+            .collect(),
         ),
         _ => toml::Value::Float(f64::from(reveal.number(key))),
     }
@@ -243,6 +246,7 @@ fn reveal_help() -> String {
         super::RevealShape::NAMES.join("|")
     )];
     keys.push("reveal_ink=#rrggbb".to_string());
+    keys.push("reveal_rim_color=#rrggbb".to_string());
     keys.extend(
         super::reveal::NUMBERS
             .iter()

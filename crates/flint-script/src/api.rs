@@ -43,6 +43,7 @@ mod opts;
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub mod overhead;
+mod panels;
 mod particle;
 mod persistence;
 mod physics;
@@ -95,6 +96,7 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     camera_2d::register(api);
     touch::register(api);
     style::register(api);
+    panels::register(api);
     particle::register(api);
     spline::register(api);
     ocean::register(api);

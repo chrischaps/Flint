@@ -606,6 +606,7 @@ integrated GPU.
 | `--no-inspector` | `false` | Hide egui inspector (scene) |
 | `--spline` | `false` | Open the spline/track editor instead of the viewer (scene) |
 | `--auto-orbit` | `false` | Start with the turntable auto-orbit on (scene/model/procgen); toggle with **O**, speed with `[` / `]` |
+| `--motion-hold <rate>` | (the scene's) | Motion on twos for the whole frame (#871), as on `flint render`: the scene viewer and the model previewer draw positions and poses on ticks, this many a second (0 = off). See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
 
 ### Model Previewer Flags
 
@@ -627,6 +628,7 @@ integrated GPU.
 | `--show-skeleton` | off | Draw the skeleton over the model, posed joints and everything past them in orange |
 | `--render <path>` | (none) | Render to PNG instead of opening a window |
 | `--style <name[:k=v,...]>` / `--style-time <s>` | (none) | With `--render`: a registered style over the snapshot, as on `flint render` (also for `.particles.toml`) |
+| `--motion-hold <rate>` | off | Hold the pose on ticks of the clip's own time, playing and scrubbing (#871); the Animation panel's **Hold** switch and rate change it live |
 
 ### Particle Editor Flags
 

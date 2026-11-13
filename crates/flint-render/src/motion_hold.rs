@@ -23,83 +23,13 @@
 
 use std::collections::HashMap;
 
-use flint_core::components as comp;
 use flint_core::EntityId;
-use flint_ecs::FlintWorld;
 
-/// A tick lands this far (in ticks) early, so a time that sums to a whole
-/// tick a hair short in floating point (5 steps of 1/60 against 1/12) still
-/// counts as on it. A thousandth of a tick is 83 µs at 12 a second: far below
-/// a frame at any rate a film uses.
-pub const TICK_EARLY: f32 = 1e-3;
-
-/// The default rate of a `motion_hold` component: twelve drawings a second,
-/// on twos at 24 frames a second.
-pub const DEFAULT_RATE: f32 = 12.0;
-
-/// The post time as styles see it: game seconds wrapped at 100,000 s, in f32.
-/// Everything that ticks against the post time goes through this, so a hold
-/// and a boil fed the same seconds agree to the bit.
-pub fn post_time(seconds: f64) -> f32 {
-    (seconds % 100_000.0) as f32
-}
-
-/// Which tick `time` falls in at `rate` ticks a second, or `None` for a rate
-/// of 0 (or below, or not finite): nothing held. Time before 0 is tick 0.
-pub fn tick(time: f32, rate: f32) -> Option<i64> {
-    if !(rate > 0.0 && rate.is_finite() && time.is_finite()) {
-        return None;
-    }
-    Some((time.max(0.0) * rate + TICK_EARLY).floor() as i64)
-}
-
-/// `time` held to the start of its tick: what time-driven styles see under a
-/// whole-frame hold. A rate of 0 gives `time` back.
-pub fn held_time(time: f32, rate: f32) -> f32 {
-    match tick(time, rate) {
-        Some(t) => t as f32 / rate,
-        None => time,
-    }
-}
-
-/// The rate each held entity draws at this frame: its own `motion_hold`, or
-/// its nearest ancestor's, else `whole` (the `[post_process]` rate, 0 for
-/// none). Entities that end up at 0 are left out, so an empty map means
-/// nothing is held, and a scene with no component and no whole-frame rate
-/// walks nothing.
-pub fn held_rates(world: &FlintWorld, whole: f32) -> HashMap<EntityId, f32> {
-    let tagged = world.entities_with_component(comp::MOTION_HOLD);
-    let mut rates = HashMap::new();
-    let whole_holds = whole > 0.0 && whole.is_finite();
-    if tagged.is_empty() && !whole_holds {
-        return rates;
-    }
-    let own = |id: EntityId| -> Option<f32> {
-        tagged
-            .contains(&id)
-            .then(|| world.view(id, comp::MOTION_HOLD).f32("rate", DEFAULT_RATE))
-    };
-    for entity in world.all_entities() {
-        let mut at = entity.id;
-        let mut rate = None;
-        // Depth-capped as `hidden_entities` is: a parent chain never loops
-        for _ in 0..256 {
-            if let Some(r) = own(at) {
-                rate = Some(r);
-                break;
-            }
-            match world.get_parent(at) {
-                Some(parent) => at = parent,
-                None => break,
-            }
-        }
-        let rate = rate.unwrap_or(whole);
-        if rate > 0.0 && rate.is_finite() {
-            rates.insert(entity.id, rate);
-        }
-    }
-    rates
-}
+// The clock and the hierarchy rule live beside the world (#873), so the
+// particle sync, which cannot see the renderer, holds on the same ticks.
+pub use flint_ecs::motion_hold::{
+    held_rate, held_rates, held_time, post_time, tick, DEFAULT_RATE, TICK_EARLY,
+};
 
 /// What a held entity last showed, and on which tick.
 #[derive(Debug, Clone)]
@@ -213,6 +143,16 @@ impl MotionHold {
                 value: (),
             });
         }
+    }
+
+    /// Forget what `entity` kept (#871): its next matrix and bones are drawn
+    /// whatever the tick, and held from then on. For an editor whose pose
+    /// changed for a reason other than time (a layer dial, a posed bone, a
+    /// clip switch), which a hold would otherwise keep off screen until the
+    /// next tick, and never while paused.
+    pub fn release(&mut self, entity: EntityId) {
+        self.matrices.remove(&entity);
+        self.bones.remove(&entity);
     }
 
     /// Forget every kept pose (a scene load): the next frame shows live ones.
@@ -376,5 +316,28 @@ mod tests {
         hold.set_rates(HashMap::from([(id(1), 8.0)]));
         hold.set_time(1.0 / 60.0);
         assert_eq!(hold.matrix(id(1), m(1.0))[3][0], 1.0);
+    }
+
+    /// #871: an editor that changes a pose by hand within a tick (a layer
+    /// dial while paused) lets that one through, then holds it.
+    #[test]
+    fn a_release_lets_one_pose_through_and_holds_it() {
+        let mut hold = MotionHold::default();
+        hold.set_rates(HashMap::from([(id(1), 12.0), (id(2), 12.0)]));
+        hold.set_time(0.0);
+        assert!(hold.bones_due(id(1)) && hold.bones_due(id(2)));
+        hold.matrix(id(1), m(0.0));
+        hold.matrix(id(2), m(0.0));
+        // Paused: the clock stands still, so nothing is due
+        assert!(!hold.bones_due(id(1)));
+        hold.release(id(1));
+        assert!(hold.bones_due(id(1)), "released: the new pose goes up");
+        assert_eq!(hold.matrix(id(1), m(3.0))[3][0], 3.0);
+        // ...and is held for the rest of the tick
+        assert!(!hold.bones_due(id(1)));
+        assert_eq!(hold.matrix(id(1), m(4.0))[3][0], 3.0);
+        // The other entity was never let go
+        assert!(!hold.bones_due(id(2)));
+        assert_eq!(hold.matrix(id(2), m(3.0))[3][0], 0.0);
     }
 }

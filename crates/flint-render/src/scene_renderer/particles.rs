@@ -46,7 +46,7 @@ impl SceneRenderer {
         draws: &[ParticleDrawData<'_>],
     ) {
         self.particle_draws.clear();
-        if self.particle_pipeline.is_none() {
+        if self.pipelines.particle.is_none() || self.particle_buffers.is_none() {
             return;
         }
         self.ensure_soft_disc_texture(device, queue);
@@ -77,9 +77,11 @@ impl SceneRenderer {
             });
         }
 
-        if let Some(pp) = &mut self.particle_pipeline {
-            pp.ensure_capacity(device, scratch.len() as u32);
-            pp.write_instances(queue, &scratch);
+        if let (Some(pipeline), Some(buffers)) =
+            (&self.pipelines.particle, &mut self.particle_buffers)
+        {
+            buffers.ensure_capacity(device, pipeline, scratch.len() as u32);
+            buffers.write_instances(queue, &scratch);
         }
         sort_particle_draws(&mut calls);
         self.particle_draws = calls;
@@ -107,7 +109,8 @@ impl SceneRenderer {
             return bg.clone();
         }
         let pp = self
-            .particle_pipeline
+            .pipelines
+            .particle
             .as_ref()
             .expect("particle pipeline present");
         let tc = self
@@ -174,7 +177,7 @@ impl SceneRenderer {
         let tex_cache = self.texture_cache.as_ref().expect("texture cache");
         let draw: DrawCall = Self::create_draw_call(
             device,
-            &self.pipeline,
+            &self.layouts,
             mesh,
             true,
             TransformUniforms::new(),
@@ -209,7 +212,7 @@ impl SceneRenderer {
     pub fn frame_depth_ready(&self) -> bool {
         let has_postprocess =
             self.postprocess_pipeline.is_some() && self.postprocess_resources.is_some();
-        !self.device_lost && (has_postprocess || self.sample_count == 1)
+        !self.device_lost && (has_postprocess || self.pipelines.samples() == 1)
     }
 
     /// Background colour of the main pass (linear RGBA). Editors use this

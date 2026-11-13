@@ -1239,6 +1239,11 @@ pub fn run_in(mut args: RenderArgs, host: &mut RenderHost) -> Result<()> {
 
     // Post-processing: the first column's (the only one without --sweep)
     renderer.set_post_process_config(configs[0].clone());
+    // A scene laid out as comic panels (#880, ADR 0120)
+    renderer.set_panels(
+        flint_render::panels::PanelLayout::from_scene_tables(&scene_file.tables, &args.scene),
+        scene_file.post_process.as_ref(),
+    );
     renderer.set_style_text_capture(wants_text || wants_flips || args.report.is_some());
     renderer.ensure_style_resources(&ctx.device);
     renderer.ensure_fxaa_resources(&ctx.device);
@@ -1371,7 +1376,7 @@ pub fn run_in(mut args: RenderArgs, host: &mut RenderHost) -> Result<()> {
         return refine_look(&args, look, reference, &mut |table| {
             let def = super::look::overlay(scene_pp, table)?;
             let config = post_process_config(&args, Some(&def))?;
-            draw_frame(ctx, &mut renderer, &camera, Some(config))
+            draw_frame(ctx, &mut renderer, &camera, Some(config), Some(&world))
         });
     }
 
@@ -1379,7 +1384,13 @@ pub fn run_in(mut args: RenderArgs, host: &mut RenderHost) -> Result<()> {
     let mut frames = Vec::with_capacity(configs.len());
     let mut texts = Vec::with_capacity(configs.len());
     for (i, config) in configs.iter().enumerate() {
-        let pixels = draw_pixels(ctx, &mut renderer, &camera, (i > 0).then(|| config.clone()))?;
+        let pixels = draw_pixels(
+            ctx,
+            &mut renderer,
+            &camera,
+            (i > 0).then(|| config.clone()),
+            Some(&world),
+        )?;
         if args.report.is_some() {
             texts.push(renderer.style_text(&ctx.device, "ascii"));
         }
@@ -1712,6 +1723,7 @@ fn draw_pixels(
     renderer: &mut SceneRenderer,
     camera: &Camera,
     config: Option<flint_render::PostProcessConfig>,
+    world: Option<&flint_ecs::FlintWorld>,
 ) -> Result<Vec<u8>> {
     if let Some(config) = config {
         renderer.set_post_process_config(config);
@@ -1719,12 +1731,14 @@ fn draw_pixels(
         renderer.ensure_fxaa_resources(&ctx.device);
     }
     renderer.reset_style_history();
-    renderer.render_to(
+    // A scene's [panels] draw each panel's camera (#880)
+    renderer.render_frame_to(
         &ctx.device,
         &ctx.queue,
         ctx.depth_target(),
         camera,
         &ctx.color_view,
+        world,
     );
     pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")
 }
@@ -1735,8 +1749,9 @@ fn draw_frame(
     renderer: &mut SceneRenderer,
     camera: &Camera,
     config: Option<flint_render::PostProcessConfig>,
+    world: Option<&flint_ecs::FlintWorld>,
 ) -> Result<image::RgbaImage> {
-    let pixels = draw_pixels(ctx, renderer, camera, config)?;
+    let pixels = draw_pixels(ctx, renderer, camera, config, world)?;
     image::RgbaImage::from_raw(ctx.width, ctx.height, pixels)
         .context("Failed to create image from pixel data")
 }
@@ -2068,12 +2083,13 @@ fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) -> Result<(
             // The draw lists hold the meshes they were built with
             renderer.update_from_world(world, &ctx.device);
         }
-        renderer.render_to(
+        renderer.render_frame_to(
             &ctx.device,
             &ctx.queue,
             ctx.depth_target(),
             &camera,
             &ctx.color_view,
+            Some(world),
         );
         if wants_text || wants_flips {
             let text = renderer.style_text(&ctx.device, "ascii");
@@ -3632,6 +3648,12 @@ impl Stage {
             _ => {}
         }
         renderer.set_post_process_config(pp_config);
+        // A scene laid out as comic panels (#880, ADR 0120); its scripts
+        // may cut between layouts as it plays
+        renderer.set_panels(
+            flint_render::panels::PanelLayout::from_scene_tables(&scene_file.tables, &args.scene),
+            scene_file.post_process.as_ref(),
+        );
         // The ASCII grid read back, for text, flips and measures (#596)
         let report_file = args
             .report
@@ -3888,13 +3910,14 @@ impl Stage {
             self.step_particles(args, ctx, seconds)?;
         }
 
-        // Render
-        self.renderer.render_to(
+        // Render, as comic panels when the scene has them (#880)
+        self.renderer.render_frame_to(
             &ctx.device,
             &ctx.queue,
             ctx.depth_target(),
             &self.camera,
             &ctx.color_view,
+            Some(self.game.world()),
         );
 
         // Read back pixels
@@ -3963,8 +3986,16 @@ impl Stage {
         }
         let wanted = (seconds.max(0.0) / PARTICLE_DT).round() as u32;
         let steps = wanted.saturating_sub(self.particle_steps);
+        let whole = self.renderer.effective_post_process_config().motion_hold;
         let (world, particles) = self.game.world_and_particles();
-        particles.simulate_to(world, steps as f32 * PARTICLE_DT, PARTICLE_DT);
+        // Emitters on held entities (#873) hold on each step's own time, as
+        // the player stamps its frame's before the particles step
+        particles.sync.set_motion_hold(whole);
+        for k in 1..=steps {
+            let at = (self.particle_steps + k) as f64 * PARTICLE_DT as f64;
+            particles.sync.set_motion_time(at);
+            particles.simulate_to(world, PARTICLE_DT, PARTICLE_DT);
+        }
         self.particle_steps += steps;
     }
 

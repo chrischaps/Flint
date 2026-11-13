@@ -1,7 +1,8 @@
 // Pencil sketch (#273), pass 1: what the drawing pass needs to know about
 // each pixel, before any stroke is placed.
-//   x: tone, 0 black .. 1 paper (the picture's luminance, its brightness
-//      and contrast applied)
+//   x: tone, 0 black .. 1 paper (the picture's luminance, or with
+//      `tone = "light"` the light's, #869; its brightness and contrast
+//      applied)
 //   y: contour, 0..1: where the scene's depth steps (on its near side),
 //      where its surface creases, where a styled entity's mask ends, and
 //      (by `detail`) where its luminance has an edge
@@ -20,6 +21,25 @@
 fn luma_at(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(u.size);
     return luma(shown(textureLoad(input_texture, clamp(p, vec2<i32>(0), size - 1), 0).rgb));
+}
+
+// The light at a pixel (#869): the picture's luminance over its paint's,
+// both in display values, so a dark floor in the sun reads as lit and a
+// white prop in shadow as dark. Where no mesh was drawn (alpha 0: the sky,
+// terrain, water) the picture's own luminance stands, and so it does,
+// fading in, as the paint nears black, where the ratio says nothing. Under
+// MSAA the albedo is resolved, so its rgb is the covered samples' times the
+// coverage in alpha.
+fn light_luma(uv: vec2<f32>, picture: f32) -> f32 {
+    let size = vec2<i32>(textureDimensions(albedo_tex));
+    let q = clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - 1);
+    let a = textureLoad(albedo_tex, q, 0);
+    if a.a <= 0.0 {
+        return picture;
+    }
+    let paint = luma(to_display(a.rgb / a.a));
+    let lit = picture / max(paint, 1e-3);
+    return mix(picture, lit, a.a * smoothstep(0.02, 0.08, paint));
 }
 
 // One axis's difference for a normal: the shorter of the two sides, so a
@@ -59,10 +79,23 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     let gx = (l[2] + 2.0 * l[5] + l[8]) - (l[0] + 2.0 * l[3] + l[6]);
     let gy = (l[6] + 2.0 * l[7] + l[8]) - (l[0] + 2.0 * l[1] + l[2]);
-    let tone = clamp((l[4] - 0.5) * row.b.y + 0.5 + row.b.x, 0.0, 1.0);
+    var lum = l[4];
+    let q = vec2<i32>(in.uv * vec2<f32>(depth_size()));
+    let from_light = row.i.y > 0.5;
+    if from_light {
+        lum = light_luma(in.uv, lum);
+    }
+    var tone = clamp((lum - 0.5) * row.b.y + 0.5 + row.b.x, 0.0, 1.0);
+    // Nothing drawn reads as paper (#890): under the light's tone the sky
+    // (depth cleared to 1, no surface for light to fall on) is fully lit
+    // whatever its colour, as a traced drawing leaves it blank, whatever
+    // brightness and contrast say. `tone = "picture"` still hatches a dark
+    // sky, for a look that wants one
+    if from_light && textureLoad(scene_depth, clamp(q, vec2<i32>(0), depth_size() - 1), 0) >= 1.0 {
+        tone = 1.0;
+    }
 
     // World positions round the pixel, in depth texels
-    let q = vec2<i32>(in.uv * vec2<f32>(depth_size()));
     let c = world_at(q);
     let l1 = world_at(q + vec2<i32>(-1, 0));
     let r1 = world_at(q + vec2<i32>(1, 0));

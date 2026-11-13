@@ -7,6 +7,11 @@
 #                  at 12 while the bob glides under them, so motion and
 #                  drawing read as two things
 #
+# Each bob carries a lantern: a point light and an emitter (#873). The held
+# lantern's pool of light steps with its drawing and its soot is born only
+# where it was drawn, a bead a drawing; the smooth one's pool glides and its
+# trail is one streak.
+#
 # The two pendulums are the same physics. The hold is the renderer's alone,
 # so the held bob swings at 60 Hz in the world and stays the mirror of the
 # smooth one; only where it is drawn steps.
@@ -141,6 +146,34 @@ type = "hinge"
 anchor = [-1.6, 0, 0]
 axis = [0, 0, 1]
 
+# Each bob is a lantern: a pool of light on the floor and a trail of embers.
+# The held bob's light steps with its drawing, and its embers are born where
+# it was drawn, so the trail comes out as beads, one cluster a drawing (#873)
+[entities.left_lantern]
+parent = "left_bob"
+[entities.left_lantern.transform]
+position = [0, 0, 0]
+[entities.left_lantern.light]
+type = "point"
+color = [1.0, 0.62, 0.3]
+intensity = 14.0
+range = 5.0
+[entities.left_lantern.particle_emitter]
+emission_rate = 90.0
+max_particles = 200
+lifetime_min = 1.1
+lifetime_max = 1.3
+speed_min = 0.0
+speed_max = 0.08
+spread = 180.0
+gravity = [0, 0, 0]
+size_start = 0.11
+size_end = 0.0
+color_start = [0.16, 0.1, 0.06, 1.0]
+color_end = [0.3, 0.12, 0.04, 0.0]
+blend_mode = "alpha"
+autoplay = true
+
 # --- Right pendulum, the same swing, smooth --------------------------------
 
 [entities.right_anchor]
@@ -178,3 +211,28 @@ size = [0.56, 0.56, 0.56]
 type = "hinge"
 anchor = [1.6, 0, 0]
 axis = [0, 0, 1]
+
+[entities.right_lantern]
+parent = "right_bob"
+[entities.right_lantern.transform]
+position = [0, 0, 0]
+[entities.right_lantern.light]
+type = "point"
+color = [1.0, 0.62, 0.3]
+intensity = 14.0
+range = 5.0
+[entities.right_lantern.particle_emitter]
+emission_rate = 90.0
+max_particles = 200
+lifetime_min = 1.1
+lifetime_max = 1.3
+speed_min = 0.0
+speed_max = 0.08
+spread = 180.0
+gravity = [0, 0, 0]
+size_start = 0.11
+size_end = 0.0
+color_start = [0.16, 0.1, 0.06, 1.0]
+color_end = [0.3, 0.12, 0.04, 0.0]
+blend_mode = "alpha"
+autoplay = true

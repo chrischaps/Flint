@@ -192,6 +192,13 @@ pub struct EditArgs {
     /// kept through hot reloads; model and particles with --render)
     #[command(flatten)]
     pub style: crate::commands::common_args::StyleArgs,
+
+    /// Motion on twos for the whole frame (#871): drawn positions and poses
+    /// change only this many times a second (12 = on twos at 24 fps; 0 = off),
+    /// over the scene's `[post_process] motion_hold`. The scene viewer and the
+    /// model previewer
+    #[arg(long, value_name = "RATE")]
+    pub motion_hold: Option<f32>,
 }
 
 pub fn run(args: EditArgs) -> Result<()> {
@@ -207,6 +214,13 @@ pub fn run(args: EditArgs) -> Result<()> {
             "warning: --style / --style-time apply to the scene viewer and to \
              `--render` of a model or a .particles.toml; this editor ignores them \
              (`flint render --style` takes a scene)"
+        );
+    }
+    let holds = scene_viewer || matches!(file_kind, FileKind::Model);
+    if args.motion_hold.is_some() && !holds {
+        eprintln!(
+            "warning: --motion-hold applies to the scene viewer and the model \
+             previewer; this editor ignores it"
         );
     }
 
@@ -232,6 +246,7 @@ pub fn run(args: EditArgs) -> Result<()> {
                     flint_viewer::app::ViewerStyle {
                         specs: args.style.styles.clone(),
                         time: args.style.style_time,
+                        motion_hold: args.motion_hold,
                     },
                     scene_window(&args),
                 )
@@ -316,6 +331,7 @@ pub fn run(args: EditArgs) -> Result<()> {
                 style: args.style,
                 pose_bones: args.pose_bones,
                 show_skeleton: args.show_skeleton,
+                motion_hold: args.motion_hold,
             })
         }
     }

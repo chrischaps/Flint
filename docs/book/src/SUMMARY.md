@@ -35,6 +35,7 @@
 - [Post-Processing](concepts/post-processing.md)
 - [Quality Settings](concepts/quality-settings.md)
 - [Stylize Passes](concepts/stylize-passes.md)
+- [Comic Panels](concepts/comic-panels.md)
 - [Glyph Atlas](concepts/glyph-atlas.md)
 - [Audio](concepts/audio.md)
 - [Music Sessions](concepts/music-sessions.md)

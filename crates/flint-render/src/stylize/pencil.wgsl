@@ -10,7 +10,10 @@
 //     straight within a patch, as hatching by hand does.
 //   - contours: pass 1's lines read through a wobbling offset, twice (the
 //     second at another offset by `sketchy`), so outlines overshoot and
-//     double the way quick sketch lines do.
+//     double the way quick sketch lines do. Where `clutter` asks, a line
+//     fades where pass 1's lines already cover most of the disc round it
+//     (#883): a meadow's blades, each a silhouette, would merge there into
+//     one black fill.
 //   - paper: a tone with grain at three scales; graphite catches on the
 //     paper's tooth, so strokes break up where the paper dips. A paper
 //     image (#390) takes the noise's place, and a stroke image the
@@ -28,6 +31,32 @@
 
 const PI: f32 = 3.14159265;
 const BINS: f32 = 12.0;
+
+// Clutter (#883): how much of a disc round `uv` pass 1 has inked, 0..1.
+// Sixteen bilinear taps on a sunflower spiral out to `radius` pixels, each
+// averaging four texels. One outline through the disc covers about a fifth
+// of it (a corner two fifths); a field of small silhouettes, every blade a
+// depth step against the ground behind it, two thirds and more. Measured on
+// the reveal_tear meadow under rotoscope: the props' lines read 0.17 at the
+// median and 0.39 at the 95th percentile, the meadow 0.65
+const CLUTTER_TAPS: i32 = 16;
+
+fn ink_density(uv: vec2<f32>, radius: f32, texel: vec2<f32>) -> f32 {
+    var sum = 0.0;
+    for (var k = 0; k < CLUTTER_TAPS; k++) {
+        let a = f32(k) * 2.3999632;
+        let r = radius * sqrt((f32(k) + 0.5) / f32(CLUTTER_TAPS));
+        let o = vec2<f32>(cos(a), sin(a)) * r;
+        sum += textureSampleLevel(prep_texture, prep_sampler, uv + o * texel, 0.0).y;
+    }
+    return sum / f32(CLUTTER_TAPS);
+}
+
+// The near disc clutter measures, in pixels: two outline widths, at least
+// three; the wide one is three times it
+fn clutter_radius(row: PencilRow, ppp: f32) -> f32 {
+    return max(2.0 * row.b.w * ppp, 3.0);
+}
 
 // One layer's strokes at angle `ang`: coverage 0..1 at point `p` (points).
 // `grow` (0..1) is how far past its threshold the tone is.
@@ -61,6 +90,36 @@ fn strokes(p: vec2<f32>, ang: f32, layer: u32, seed: u32, row: PencilRow, grow: 
     let width = row.a.y * (0.45 + 0.55 * taper) * sqrt(grow);
     let cov = 1.0 - smoothstep(width * 0.5 - aa, width * 0.5 + aa, abs(off));
     return cov * mix(0.5, 1.0, taper) * (0.7 + 0.3 * hs.y);
+}
+
+// Drawn on (#879): how much of the dash under `p` the hatch front `front`
+// has drawn, 0..1, from its start. The dash's geometry is `strokes`'s, line
+// for line; it is its own function because a cut inside `strokes` changed
+// how the driver compiled it, moving 83 pixels of every pencil frame by one
+// level even with nothing drawing on.
+fn stroke_drawn(p: vec2<f32>, ang: f32, layer: u32, seed: u32, row: PencilRow, aa: f32, front: f32) -> f32 {
+    let spacing = max(row.a.x * (1.0 - 0.08 * f32(layer)), 0.75);
+    let dir = vec2<f32>(cos(ang), sin(ang));
+    let along = dot(p, dir);
+    var across = dot(p, vec2<f32>(-dir.y, dir.x));
+    let bend = vnoise(vec2<f32>(along / (spacing * 9.0), across / (spacing * 5.0)), seed ^ (layer * 7919u));
+    across += (bend - 0.5) * 2.0 * row.c.w * 0.6;
+
+    let r = floor(across / spacing);
+    let ri = i32(r);
+    let h = hash3(ri, i32(layer), seed);
+    let off = across - (r + 0.5 + (h.x - 0.5) * 0.4) * spacing;
+
+    let len = spacing * (8.0 + 16.0 * h.y);
+    let s = (along + h.z * len) / len;
+    let seg = floor(s);
+    let x = s - seg;
+    let hs = hash3(ri, i32(seg), seed + layer * 104729u + 17u);
+    // The dash's turn is the order at its middle
+    let mid = vec2<f32>(along - (x - 0.5) * len, across - off);
+    let at = mid.x * dir + mid.y * vec2<f32>(-dir.y, dir.x);
+    let order = draw_order(at, row.a.x * ORDER_ROWS, u32(row.i.w));
+    return dash_cut(x, dash_progress(front, order, hs.z), aa / len);
 }
 
 // A dash drawn from the stroke image (#390): `x` 0..1 along the dash,
@@ -158,6 +217,33 @@ fn world_strokes(q: vec2<f32>, ang: f32, layer: u32, seed: u32, s: f32, k: i32, 
     return cov * mix(0.5, 1.0, taper) * (0.7 + 0.3 * hs.y);
 }
 
+// Drawn on (#879): `stroke_drawn` for `world_strokes`'s dashes, the order
+// laid out in metres on the plane so it holds to the surface as they do
+fn world_stroke_drawn(q: vec2<f32>, ang: f32, layer: u32, seed: u32, s: f32, k: i32, wob: f32, aa: f32, row: PencilRow, front: f32) -> f32 {
+    let spacing = s * (1.0 - 0.08 * f32(layer));
+    let dir = vec2<f32>(cos(ang), sin(ang));
+    let along = dot(q, dir);
+    var across = dot(q, vec2<f32>(-dir.y, dir.x));
+    let bend = vnoise(vec2<f32>(along / (spacing * 9.0), across / (spacing * 5.0)), seed ^ (layer * 7919u) ^ pcg(bitcast<u32>(k)));
+    across += (bend - 0.5) * 2.0 * wob;
+
+    let r = floor(across / spacing);
+    let id = row_identity(i32(r), k);
+    let salt = pcg(bitcast<u32>(id.y) + 0x9e3779b9u);
+    let h = hash3(id.x, i32(layer), seed ^ salt);
+    let off = across - (r + 0.5 + (h.x - 0.5) * 0.4) * spacing;
+
+    let len = spacing * (8.0 + 16.0 * h.y);
+    let t = (along + h.z * len) / len;
+    let seg = floor(t);
+    let x = t - seg;
+    let hs = hash3(id.x, i32(seg), (seed + layer * 104729u + 17u) ^ salt);
+    let mid = vec2<f32>(along - (x - 0.5) * len, across - off);
+    let at = mid.x * dir + mid.y * vec2<f32>(-dir.y, dir.x);
+    let order = draw_order(at, spacing * ORDER_ROWS, u32(row.i.w));
+    return dash_cut(x, dash_progress(front, order, hs.z), aa / len);
+}
+
 // The plane coordinates of a world point on axis plane `axis`
 fn plane_coords(w: vec3<f32>, axis: u32) -> vec2<f32> {
     if axis == 0u {
@@ -167,6 +253,85 @@ fn plane_coords(w: vec3<f32>, axis: u32) -> vec2<f32> {
         return w.xz;
     }
     return w.xy;
+}
+
+// --- drawn on (#879) ------------------------------------------------------------
+//
+// With `transition = "draw"` a blend between 0 and 1 is a front, not a mix:
+// the outlines are drawn up to it, the hatching follows them a stroke at a
+// time, and the paper's wash comes last. Where the front hasn't reached a
+// line it is absent, not faint. Every mark asks one order field when it is
+// drawn: a smooth noise about a dozen hatch rows across, flattened through
+// its measured distribution so that a front at t has drawn t of each line.
+// Along a line the field rises and falls slowly, so as the front moves the
+// drawn parts grow out along the line from the field's low points, the way
+// a hand traces. The field is keyed by the row's own seed, without the
+// boil's steps, so a boiling drawing grows in one order while its lines
+// redraw.
+
+// Hatch rows the order field's features span
+const ORDER_ROWS: f32 = 14.0;
+
+// The order noise's quantiles (k / 8, k = 0..8), measured over a million
+// samples of 0.65 v(q) + 0.35 v(2.03 q + 17): flattening through them
+// spreads the order evenly over 0..1
+const ORDER_KNOTS = array<f32, 9>(0.0, 0.3105, 0.3864, 0.4464, 0.5015, 0.556, 0.6158, 0.6911, 1.0);
+
+// When in the drawing the point `p` (points, or metres on a world plane)
+// is reached, 0..1; `scale` is the field's feature size in p's units
+fn draw_order(p: vec2<f32>, scale: f32, seed: u32) -> f32 {
+    let q = p / max(scale, 1e-6);
+    let s = pcg(seed ^ 0x6a09e667u);
+    let n = 0.65 * vnoise(q, s) + 0.35 * vnoise(q * 2.03 + 17.0, s + 1u);
+    var knots = ORDER_KNOTS;
+    var lo = 0.0;
+    for (var k = 1; k < 9; k++) {
+        let a = knots[k - 1];
+        let b = knots[k];
+        if n <= b || k == 8 {
+            return clamp((f32(k - 1) + (n - a) / max(b - a, 1e-6)) / 8.0, 0.0, 1.0);
+        }
+    }
+    return lo;
+}
+
+// How much of a mark whose turn is at `order` the front `t` (0..1) has
+// drawn: none at t = 0, all at t = 1, rising over `soft` of the order
+fn drawn(t: f32, order: f32, soft: f32) -> f32 {
+    return clamp((t * (1.0 + soft) - order) / soft, 0.0, 1.0);
+}
+
+// The front's three phases: outlines first, hatching after them, the
+// paper's wash last (each 0..1 of its own run)
+fn contour_front(f: f32) -> f32 {
+    return clamp(f / 0.9, 0.0, 1.0);
+}
+
+fn hatch_front(f: f32) -> f32 {
+    return clamp((f - 0.25) / 0.7, 0.0, 1.0);
+}
+
+fn paper_front(f: f32) -> f32 {
+    return clamp((f - 0.4) / 0.6, 0.0, 1.0);
+}
+
+// How much of its order a dash takes to draw from end to end
+const DASH_DRAW: f32 = 0.15;
+
+// How far along a dash (0..1 from its start) the hatch front `t` has drawn
+// it, the dash's turn `order` jittered by its own hash
+fn dash_progress(t: f32, order: f32, jitter: f32) -> f32 {
+    let o = clamp(order * 0.85 + jitter * 0.15, 0.0, 1.0);
+    return drawn(t, o, DASH_DRAW);
+}
+
+// A dash's coverage cut at `progress`, `x` its position along it (0..1),
+// `ax` how far x moves in a pixel
+fn dash_cut(x: f32, progress: f32, ax: f32) -> f32 {
+    if progress >= 1.0 {
+        return 1.0;
+    }
+    return 1.0 - smoothstep(progress - ax, progress, x);
 }
 
 @fragment
@@ -193,6 +358,24 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let p = (in.pos.xy - row.g.xy) / ppp;
     let pt = in.pos.xy / ppp;
     let aa = 0.7 / ppp;
+
+    // Drawn on (#879): how far the drawing has got here. The whole frame's
+    // front (its table's blend, when the table draws), times the entity's
+    // blend from the mask when its row draws. At 1 nothing below changes:
+    // the drawing is whole, as a fade draws it
+    var front = u.front;
+    if row.i.z > 0.5 && slot != 0u {
+        front *= mask_blend(mask_px(in.uv));
+    }
+    let drawing = DRAW_ON && front < 1.0;
+    // Above 1 tells the strokes to draw whole
+    let hatch_at = select(2.0, hatch_front(front), drawing);
+    let order_scale = row.a.x * ORDER_ROWS;
+    let order_seed = u32(row.i.w);
+    var order_here = 0.0;
+    if drawing {
+        order_here = draw_order(p, order_scale, order_seed);
+    }
 
     // The flow, with the base angle underneath where it is unsure. Surface
     // directions are blurred here over about a stroke's length (they are
@@ -284,19 +467,32 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                 let width = row.a.y * rate;
                 let wob0 = row.c.w * 0.6 / row.a.x * s0;
                 let aa_w = 0.7 * rate / ppp;
-                let c0 = world_strokes(q, ang, i, seed, s0, i32(octave), width, wob0, grow, aa_w, row);
-                let c1 = world_strokes(q, ang, i, seed, s0 * 2.0, i32(octave) + 1, width, wob0 * 2.0, grow, aa_w, row);
+                var c0 = world_strokes(q, ang, i, seed, s0, i32(octave), width, wob0, grow, aa_w, row);
+                var c1 = world_strokes(q, ang, i, seed, s0 * 2.0, i32(octave) + 1, width, wob0 * 2.0, grow, aa_w, row);
+                if drawing {
+                    c0 *= world_stroke_drawn(q, ang, i, seed, s0, i32(octave), wob0, aa_w, row, hatch_at);
+                    c1 *= world_stroke_drawn(q, ang, i, seed, s0 * 2.0, i32(octave) + 1, wob0 * 2.0, aa_w, row, hatch_at);
+                }
                 cov += wt * mix(c0, c1, fade);
             }
         } else {
-            let c0 = strokes(p, a0 + offsets[i], i, seed, row, grow, aa);
-            let c1 = strokes(p, a1 + offsets[i], i, seed, row, grow, aa);
+            var c0 = strokes(p, a0 + offsets[i], i, seed, row, grow, aa);
+            var c1 = strokes(p, a1 + offsets[i], i, seed, row, grow, aa);
+            if drawing {
+                c0 *= stroke_drawn(p, a0 + offsets[i], i, seed, row, aa, hatch_at);
+                c1 *= stroke_drawn(p, a1 + offsets[i], i, seed, row, aa, hatch_at);
+            }
             cov = mix(c0, c1, blend);
         }
         light *= 1.0 - cov * row.g.w * mix(0.6, 1.0, dark);
     }
-    // Rubbed graphite under the strokes: soft tone for the darks
-    light *= 1.0 - row.f.w * dark * dark;
+    // Rubbed graphite under the strokes: soft tone for the darks, rubbed in
+    // with the hatching while it draws on
+    var rubbed = row.f.w;
+    if drawing {
+        rubbed *= drawn(hatch_at, order_here, 0.2);
+    }
+    light *= 1.0 - rubbed * dark * dark;
 
     // Contours, read through a wobble; a second, fainter line beside the
     // first where `sketchy` asks
@@ -316,8 +512,27 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         line1 = max(line1, textureSampleLevel(prep_texture, prep_sampler, in.uv + (w1 * 2.0 * wob + o) * texel, 0.0).y);
         line2 = max(line2, textureSampleLevel(prep_texture, prep_sampler, in.uv + (w2 * 3.0 * wob + o) * texel, 0.0).y);
     }
+    // Drawn on (#879): each line as far as the outline front has reached,
+    // asked where its wobble reads it, so the tip moves with the line
+    if drawing {
+        let at = contour_front(front);
+        line1 *= drawn(at, draw_order(p + w1 * 2.0 * wob / ppp, order_scale, order_seed), 0.02);
+        line2 *= drawn(at, draw_order(p + w2 * 3.0 * wob / ppp, order_scale, order_seed), 0.02);
+    }
     let pressure = 0.65 + 0.35 * vnoise(pt * freq * 2.0, seed + 505u);
-    let contour = max(line1, line2 * row.d.x * 0.7) * pressure * row.b.z;
+    var contour = max(line1, line2 * row.d.x * 0.7) * pressure * row.b.z;
+    // Clutter (#883): where the lines would already merge into a fill, over
+    // a disc two outline widths across and over one three times that, they
+    // fade, so a meadow is a sheet with its near edge and its horizon, not a
+    // black band. Both discs, because a small figure's limbs fill the near
+    // one too, but only a field fills the wide one
+    let clutter = row.j.x;
+    if clutter > 0.0 && contour > 0.0 {
+        let r = clutter_radius(row, ppp);
+        let near = smoothstep(0.35, 0.65, ink_density(in.uv, r, texel));
+        let wide = smoothstep(0.30, 0.55, ink_density(in.uv, 3.0 * r, texel));
+        contour *= 1.0 - clutter * min(near, wide);
+    }
     light *= 1.0 - clamp(contour, 0.0, 1.0) * 0.92;
 
     // Paper: a tone with grain, and tooth the graphite skips over
@@ -348,7 +563,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     // Coloured ground and lead by `color`
     let scene = shown(src.rgb);
-    let ground = mix(paper, scene * mix(1.0, 0.85 + 0.3 * paper_noise, grain), row.d.z);
+    var ground = mix(paper, scene * mix(1.0, 0.85 + 0.3 * paper_noise, grain), row.d.z);
+    // Drawn on (#879): the paper's wash floods in last, over the scene, in
+    // an order three times broader and with a wide soft edge, so it reads
+    // as a wash rather than patches
+    if drawing {
+        let wash_order = draw_order(p, order_scale * 3.0, order_seed + 7u);
+        ground = mix(scene, ground, drawn(paper_front(front), wash_order, 0.8));
+    }
     let lead = mix(row.f.xyz, row.f.xyz * 0.5 + scene * 0.35, row.d.z * 0.5);
     let out = mix(ground, lead, clamp(ink, 0.0, 1.0));
     let encoded = select(out, to_linear(out), u.srgb > 0.5);

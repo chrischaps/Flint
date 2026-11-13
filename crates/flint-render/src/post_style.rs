@@ -43,8 +43,8 @@ pub fn set_post_style(
 /// style's range), an option (a string, one of its choices when the list is
 /// closed), a colour (`tint`: three numbers or `"#rrggbb"`), `enabled`
 /// (true or false), `blend` (0 to 1), `order` (a number), the reveal's
-/// keys (#406: `reveal` 0 to 1, `reveal_shape`, `reveal_ink`, the
-/// `reveal_*` numbers) or, for an HDR style, `feeds_bloom` (true or
+/// keys (#406: `reveal` 0 to 1, `reveal_shape`, `reveal_ink`,
+/// `reveal_rim_color`, the `reveal_*` numbers) or, for an HDR style, `feeds_bloom` (true or
 /// false). Setting a parameter doesn't switch the style on.
 pub fn set_post_style_param(
     config: &mut PostProcessConfig,

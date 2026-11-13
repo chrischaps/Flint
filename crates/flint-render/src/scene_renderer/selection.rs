@@ -51,23 +51,24 @@ impl SceneRenderer {
     ) {
         let surface_format = self.surface_format;
         let size = self.scene_size();
-        let outline = self.selection_outline.get_or_insert_with(|| {
-            SelectionOutline::new(
-                device,
-                &OutlineLayouts {
-                    transform: &self.pipeline.transform_bind_group_layout,
-                    bones: self
-                        .skinned_pipeline
-                        .as_ref()
-                        .map(|s| &s.bone_bind_group_layout),
-                    billboard: self
-                        .billboard_pipeline
-                        .as_ref()
-                        .map(|b| (&b.billboard_bind_group_layout, &b.texture_bind_group_layout)),
-                },
-                surface_format,
-            )
-        });
+        let outline =
+            self.selection_outline.get_or_insert_with(|| {
+                SelectionOutline::new(
+                    device,
+                    &OutlineLayouts {
+                        transform: &self.layouts.transform_bind_group_layout,
+                        bones: self
+                            .pipelines
+                            .skinned
+                            .as_ref()
+                            .map(|s| &s.bone_bind_group_layout),
+                        billboard: self.pipelines.billboard.as_ref().map(|b| {
+                            (&b.billboard_bind_group_layout, &b.texture_bind_group_layout)
+                        }),
+                    },
+                    surface_format,
+                )
+            });
         outline.last_draws.set(0);
         outline.ensure_mask(device, size);
         let outline = &*outline;
@@ -108,7 +109,7 @@ impl SceneRenderer {
                 }
                 let pipeline = if draw.is_wireframe {
                     &p.static_lines
-                } else if draw.wooze.is_some() && self.wooze_standard.is_some() {
+                } else if draw.wooze.is_some() && self.pipelines.wooze_standard.is_some() {
                     &p.woozy_tris
                 } else {
                     &p.static_tris
@@ -150,7 +151,7 @@ impl SceneRenderer {
                     if !mine(draw.entity_id) {
                         continue;
                     }
-                    let woozy = draw.wooze.is_some() && self.wooze_skinned.is_some();
+                    let woozy = draw.wooze.is_some() && self.pipelines.wooze_skinned.is_some();
                     pass.set_pipeline(if woozy { woozy_skinned } else { skinned });
                     pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
                     pass.set_bind_group(1, &depth_bind, &[]);
@@ -163,7 +164,7 @@ impl SceneRenderer {
             }
 
             // Billboards, cut out by their sprite's alpha
-            if let (Some(pipeline), Some(bp)) = (&p.billboard, &self.billboard_pipeline) {
+            if let (Some(pipeline), Some(bp)) = (&p.billboard, &self.pipelines.billboard) {
                 for draw in &self.billboard_draws {
                     if !mine(draw.entity_id) {
                         continue;

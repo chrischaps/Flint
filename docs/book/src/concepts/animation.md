@@ -111,6 +111,8 @@ glTF file (.glb)
 
 The importer handles all three glTF interpolation modes. `CUBICSPLINE` samplers store three outputs per timestamp (`in_tangent`, `value`, `out_tangent`) and are consumed as triples; a sampler with fewer than `3 x timestamps` outputs warns and degrades to `LINEAR`. Rotation tracks are also made hemisphere-continuous at clip load: Blender exports adjacent keys as `q` then `-q` on large joint rotations, and the Hermite curve between them would collapse through zero and snap the joint. Such keys (value and both tangents) are negated so the curve stays on one side of the sphere.
 
+A clip starts at its first key. glTF keys need not begin at 0: Blender writes frame N at N / fps, so an action on frames 1 to 250 (every Mixamo clip that went through Blender) has its first key at 1/30 s. Played from 0, the sampler clamped to that first key, so the first frame of a capture held still while physics moved, and every loop paused for a frame on its seam. At load every track of a clip moves back by the clip's earliest key, as Blender's "slide to zero" export would write it, and `duration` runs from the first key to the last. The tracks keep their places relative to each other, and the joint and node halves of one glTF animation move together. A clip that deliberately waits before its first key loses the wait: key a still pose at 0 to keep one.
+
 ### Skinned Vertices
 
 Skeletal meshes use a separate `SkinnedVertex` type with 6 attributes (vs. 4 for static geometry), avoiding 32 bytes of wasted bone data on every static vertex in the scene:

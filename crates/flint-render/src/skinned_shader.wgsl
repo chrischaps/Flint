@@ -612,6 +612,25 @@ fn fs_veil(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(clamp(alpha * material.opacity * edge_feather(in), 0.0, 1.0));
 }
 
+// The style albedo (#869): the surface's own colour before any light, as
+// shade_skinned builds it; shader.wgsl's fs_albedo says what reads it.
+@fragment
+fn fs_albedo(in: VertexOutput) -> @location(0) vec4<f32> {
+    let scaled_uv = in.uv * material.texture_scale;
+    var albedo = material.base_color.rgb;
+    if (material.use_vertex_color == 1u) {
+        albedo = in.color.rgb * material.vertex_tint.rgb;
+        if (material.vertex_emission == 1u) {
+            let glow = clamp(1.0 - in.color.a, 0.0, 1.0);
+            albedo = albedo * (1.0 - glow * (1.0 - material.glow_surface));
+        }
+    }
+    if (material.has_base_color_tex == 1u) {
+        albedo = textureSample(base_color_texture, material_sampler, scaled_uv).rgb * albedo;
+    }
+    return vec4<f32>(clamp(albedo, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+}
+
 // A soft silhouette (#582: a living prop's `softness`, in `unlit.z`): how
 // much of the surface is left where it turns away from the eye. Facing the
 // eye it's whole; at the outline, where the surface runs along the line of

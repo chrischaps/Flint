@@ -475,11 +475,49 @@ name = "pencil-reveal-panel"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "pencil:reveal=0.4,reveal_shape=panel,reveal_edge=4"]
 
+# Torn paper (#876): the half tear again, with a rim of bare paper on the
+# drawn side of the line and the edge's shadow falling down and to the
+# right on the live side. Without the two keys it is pencil-reveal-tear-half
+# byte for byte
+[[case]]
+name = "pencil-reveal-torn-paper"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "pencil:reveal=0.5,reveal_rim=3,reveal_shadow=0.4", "--style-time", "0.6"]
+
 [[case]]
 name = "pencil-reveal-zero"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "pencil:reveal=0,reveal_shape=wipe"]
 matches = ["--no-grid"]
+
+# Drawn on (#879): under transition = "draw" a blend is a front, not a
+# mix. Half-way, the whole frame has about half of each outline, the
+# hatching a stroke at a time behind it and the paper's wash just begun,
+# over the live clearing, with no faint copy of the rest. At blend 1 the
+# drawing is whole: the same pixels as a pencil frame with no transition
+[[case]]
+name = "pencil-draw-half"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "pencil:transition=draw,blend=0.5"]
+
+[[case]]
+name = "pencil-draw-whole"
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
+args = ["--no-grid", "--style", "pencil:transition=draw"]
+matches = ["--no-grid", "--style", "pencil"]
+
+# Per entity: the cask half drawn by its own blend (the cross-fade passes
+# over it), the crate's blend following the tear, so it draws only where
+# render mode 6 tears
+[[case]]
+name = "pencil-draw-entities-half"
+scene = "tests/fixtures/scenes/stylize_props_pencil_draw.scene.toml"
+args = ["--no-grid"]
+
+[[case]]
+name = "pencil-draw-entities-torn"
+scene = "tests/fixtures/scenes/stylize_props_pencil_draw.scene.toml"
+args = ["--no-grid", "--render-mode", "6", "--mode-mix", "0.5"]
 
 # Contour (#214; a registered style since #599): ink from depth's second
 # difference and luminance edges, so the flat ground draws no line. Lines
@@ -652,8 +690,10 @@ scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--look", "charcoal"]
 
 # Ink-forward pencil on a blank sheet (#404): lines, one horizon (grazing = 1
-# spares the floor's depth steps), hatching only on the dark barrels and in
-# the cast shadows. On the plain bench, so only the look draws
+# spares the floor's depth steps), hatching only where the light falls off
+# (tone = "light", #887: the barrels' and crate's shadow sides, not their
+# dark paint). On the plain bench, so only the look draws. A still at time
+# 0, so the look's motion_hold = 12 holds nothing here
 [[case]]
 name = "look-rotoscope"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
@@ -665,6 +705,54 @@ args = ["--no-grid", "--look", "rotoscope"]
 name = "look-rotoscope-entities"
 scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:scope=entities"]
+
+# Tone from the light (#869): the picture over the style albedo, so the
+# brown floor in the sun is blank at the neutral brightness and only the
+# shadows are hatched: the barrels' undersides, the crate's shaded face and
+# what they cast. Under tone = "picture" brightness 0 hatches the whole floor
+[[case]]
+name = "look-rotoscope-light"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:tone=light,brightness=0"]
+
+# The same per entity, 4x: the variants take tone from the preset, and the
+# albedo is drawn against the scene's samples and resolved
+[[case]]
+name = "look-rotoscope-light-entities-msaa4"
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
+args = ["--no-grid", "--msaa", "4", "--look", "rotoscope", "--style", "pencil:scope=entities,tone=light,brightness=0"]
+
+# A meadow under rotoscope (#883): grass at density 40 out to 70 m, every
+# blade a depth step against the ground behind it. clutter = 1 (the look's)
+# fades a line where the lines round it already cover most of a disc, near
+# and wide, so the meadow is a sheet with its near edge and its horizon
+# line, and the bench, barrel, crate and lantern keep their outlines
+[[case]]
+name = "look-rotoscope-meadow"
+scene = "tests/fixtures/scenes/pencil_meadow.scene.toml"
+args = ["--no-grid", "--look", "rotoscope"]
+
+# The same with clutter off: the band #883 was filed for, every blade inked
+# and merged into one black fill from the near edge to the horizon
+[[case]]
+name = "look-rotoscope-meadow-clutter-off"
+scene = "tests/fixtures/scenes/pencil_meadow.scene.toml"
+args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:clutter=0"]
+# Nothing drawn reads as paper (#890): under a dark sky, tone = "light" (the
+# look's own) leaves the sky blank, as a traced drawing does, while the
+# YBot's shadow side is still hatched. Before #890 the sky kept the
+# picture's dark tone and was hatched all over
+[[case]]
+name = "look-rotoscope-dark-sky"
+scene = "tests/fixtures/scenes/pencil_dark_sky.scene.toml"
+args = ["--no-grid", "--look", "rotoscope"]
+
+# The same under tone = "picture": the sky is hatched, for a look that
+# wants one
+[[case]]
+name = "look-rotoscope-dark-sky-picture"
+scene = "tests/fixtures/scenes/pencil_dark_sky.scene.toml"
+args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:tone=picture"]
 
 # A sweep's contact sheet: the cells, their frames and the glyph labels
 [[case]]

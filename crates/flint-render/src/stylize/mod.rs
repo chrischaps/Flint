@@ -556,6 +556,12 @@ pub struct StyleDescriptor {
     /// mask each frame and hands it over as [`StyleFrame::mask`]; while
     /// none is, the mask isn't made.
     pub uses_mask: MaskUse,
+    /// Whether the style reads the style albedo (#869): the opaque
+    /// surfaces' own colour before light, drawn after the scene pass while
+    /// any such style is on and [`MaskUse::now`] holds (the same `Never` /
+    /// `Always` / `When` as the mask), handed over as
+    /// [`StyleFrame::albedo`]. The picture divided by it is the light.
+    pub uses_albedo: MaskUse,
     /// Framework-made inputs the style reads (#301). While any style that
     /// asks for one is on, the framework makes it once a frame for all of
     /// them: [`StyleNeed::Edges`] is [`StyleFrame::edges`].
@@ -596,6 +602,15 @@ pub struct StyleDescriptor {
     /// [`blends_itself`](StyleDescriptor::blends_itself) and reads `.g`
     /// itself.
     pub blends_itself: bool,
+    /// Whether the style draws a blend itself for some settings (#879):
+    /// asked of the whole frame (`None`: the table's `blend`, which the
+    /// stage would otherwise draw as a mix, [`blend`]) and of each entity
+    /// variant (`Some`: the mask's `.g`, which the framework's cross-fade
+    /// would otherwise mix). Pencil's `transition = "draw"` answers yes, and
+    /// draws the blend as a front lines are drawn up to. `None` (the
+    /// default) leaves every blend to the framework.
+    pub draws_blend:
+        Option<fn(&PostProcessConfig, Option<&crate::style_mask::StyleVariant>) -> bool>,
     /// Build the style's pipelines. May panic on a broken driver; the
     /// framework catches it.
     pub create: fn(&StyleDevice) -> Box<dyn StylePass>,
@@ -629,12 +644,14 @@ impl StyleDescriptor {
             params: &[],
             options: &[],
             uses_mask: MaskUse::Never,
+            uses_albedo: MaskUse::Never,
             needs: &[],
             hints: &[],
             component: None,
             feeds_bloom: false,
             yields: true,
             blends_itself: false,
+            draws_blend: None,
             create,
         }
     }
@@ -654,6 +671,12 @@ impl StyleDescriptor {
     /// Whether and when it reads the style mask.
     pub const fn uses_mask(mut self, uses_mask: MaskUse) -> Self {
         self.uses_mask = uses_mask;
+        self
+    }
+
+    /// Whether and when it reads the style albedo (#869).
+    pub const fn uses_albedo(mut self, uses_albedo: MaskUse) -> Self {
+        self.uses_albedo = uses_albedo;
         self
     }
 
@@ -692,6 +715,17 @@ impl StyleDescriptor {
     /// cross-fade leaves it alone (#396).
     pub const fn blends_itself(mut self) -> Self {
         self.blends_itself = true;
+        self
+    }
+
+    /// It draws the blends `when` says itself (#879), the whole frame's or
+    /// an entity variant's ([`draws_blend`](Self::draws_blend)); the stage's
+    /// mix and the framework's cross-fade leave those alone.
+    pub const fn draws_blend(
+        mut self,
+        when: fn(&PostProcessConfig, Option<&crate::style_mask::StyleVariant>) -> bool,
+    ) -> Self {
+        self.draws_blend = Some(when);
         self
     }
 }
@@ -749,6 +783,18 @@ impl StyleDescriptor {
     /// itself.
     pub fn framework_fades(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
         !self.blends_itself && self.reads_mask(config, ids)
+    }
+
+    /// Whether the style draws this blend itself (#879): the whole frame's
+    /// (`variant` `None`) or an entity variant's. Then the stage draws the
+    /// table's blend as 1 and the cross-fade passes over the variant's
+    /// pixels.
+    pub fn draws_own_blend(
+        &self,
+        config: &PostProcessConfig,
+        variant: Option<&crate::style_mask::StyleVariant>,
+    ) -> bool {
+        self.draws_blend.is_some_and(|when| when(config, variant))
     }
 
     /// Whether the style reads the shared edges ([`StyleNeed::Edges`]).
@@ -888,12 +934,14 @@ impl StyleDescriptor {
         keys
     }
 
-    /// Every key a scene's table for this style can hold: `enabled`,
-    /// `order`, `feeds_bloom`, the options, each parameter (colour channels
-    /// one by one) and each colour's own key. A commit to the scene (#364)
-    /// owns these and leaves any other key alone.
+    /// Every key a scene's table for this style can hold: the
+    /// framework's ([`RESERVED_KEYS`]: `enabled`, `order`, `feeds_bloom`,
+    /// `blend` and the reveal's), the options, each parameter (colour
+    /// channels one by one) and each colour's own key. A commit to the
+    /// scene (#364) owns these and leaves any other key alone, so a reveal
+    /// switched off in F4 leaves the file with it (#875).
     pub fn table_keys(&self) -> Vec<&'static str> {
-        let mut keys = vec!["enabled", "order", "feeds_bloom"];
+        let mut keys = RESERVED_KEYS.to_vec();
         keys.extend(self.options.iter().map(|o| o.name));
         keys.extend(self.params.iter().map(|p| p.name));
         keys.extend(self.colors().iter().map(|c| c.base));
@@ -1089,6 +1137,14 @@ pub struct StyleFrame<'a> {
     /// them once, before the first stage, for every style that reads them.
     /// Bind it with [`edges_bind`](Self::edges_bind).
     pub edges: Option<Arc<StyleTexture>>,
+    /// The style albedo (#869): each opaque mesh's own colour before light
+    /// ([`ALBEDO_FORMAT`](crate::style_albedo::ALBEDO_FORMAT), linear rgb,
+    /// alpha 1 where a mesh was drawn and 0 where none was: the sky,
+    /// terrain, grass, the ocean, particles), at the depth's size, read by
+    /// UV with `textureLoad`. `Some` whenever a style that
+    /// [`uses_albedo`](StyleDescriptor::uses_albedo) is on; key bind groups
+    /// over it with [`albedo_key`](Self::albedo_key).
+    pub albedo: Option<Arc<StyleTexture>>,
     /// The chain's linear, clamped sampler.
     pub linear_sampler: &'a wgpu::Sampler,
     /// Seconds of game time, for animated styles.
@@ -1290,6 +1346,14 @@ impl StyleFrame<'_> {
                 }],
             })
         }))
+    }
+
+    /// A key for bind groups over [`albedo`](Self::albedo): its size, as
+    /// [`edges_key`](Self::edges_key) is the edges'. 0 while there is none.
+    pub fn albedo_key(&self) -> u64 {
+        self.albedo
+            .as_ref()
+            .map_or(0, |a| (u64::from(a.width) << 32) | u64::from(a.height))
     }
 
     /// A key for bind groups over [`edges`](Self::edges): its size, which
@@ -1540,7 +1604,7 @@ pub struct StyleSetting {
 /// Keys every style's table reads besides its own parameters and options;
 /// no style may name a parameter or option after one. The `reveal` keys
 /// (#406) are [`reveal::KEYS`].
-pub const RESERVED_KEYS: [&str; 15] = [
+pub const RESERVED_KEYS: [&str; 18] = [
     "enabled",
     "order",
     "feeds_bloom",
@@ -1548,6 +1612,7 @@ pub const RESERVED_KEYS: [&str; 15] = [
     "reveal",
     "reveal_shape",
     "reveal_ink",
+    "reveal_rim_color",
     "reveal_scale",
     "reveal_ragged",
     "reveal_edge",
@@ -1556,6 +1621,8 @@ pub const RESERVED_KEYS: [&str; 15] = [
     "reveal_y",
     "reveal_boil",
     "reveal_seed",
+    "reveal_rim",
+    "reveal_shadow",
 ];
 
 /// The generic style settings on [`PostProcessConfig`], by style name.
@@ -1701,6 +1768,17 @@ impl StyleSettings {
         next.set(key, value, strict)?;
         self.styles.entry(name.to_string()).or_default().reveal = next;
         Ok(true)
+    }
+
+    /// Make style `name`'s reveal exactly `reveal` (F4's Reveal group,
+    /// #875), every key at once; an empty one is [`clear_reveal`](Self::clear_reveal).
+    /// Leaves the style on or off as it was.
+    pub fn replace_reveal(&mut self, name: &str, reveal: reveal::StyleReveal) {
+        if reveal.is_empty() {
+            self.clear_reveal(name);
+        } else {
+            self.styles.entry(name.to_string()).or_default().reveal = reveal;
+        }
     }
 
     /// Take style `name`'s reveal off (#406): it shows everywhere again.
@@ -2468,7 +2546,13 @@ pub(crate) fn run_stage(
             }
         };
         let frame = &*frame;
-        let blend = frame.config.styles.blend(descriptor.name);
+        // A style that draws its own whole-frame blend (#879, pencil's
+        // `transition = "draw"`) has drawn it already
+        let blend = if descriptor.draws_own_blend(frame.config, None) {
+            1.0
+        } else {
+            frame.config.styles.blend(descriptor.name)
+        };
         // The framework's cross-fade (#396), timed with the style it fades
         let fade = fade.filter(|_| fade::FadePass::applies(frame, descriptor));
         scope(descriptor.label, encoder, &mut |encoder| {
@@ -2659,6 +2743,15 @@ pub fn registry() -> &'static [&'static StyleDescriptor] {
 /// Whether `name` is one of the styles compiled into the engine.
 pub fn is_builtin(name: &str) -> bool {
     REGISTRY.iter().any(|d| d.name == name)
+}
+
+/// Whether any style on this frame reads the style albedo (#869), so the
+/// renderer draws it after the scene pass.
+pub fn any_uses_albedo(config: &PostProcessConfig, ids: &StyleIds) -> bool {
+    config.enabled
+        && registry()
+            .iter()
+            .any(|d| d.is_on(config, ids) && d.uses_albedo.now(config, ids))
 }
 
 /// Whether any style on this frame reads the entity style mask: one

@@ -142,6 +142,19 @@ pub trait ScriptHost {
     fn set_camera_cut_detection(&mut self, enabled: bool) {
         self.unsupported("set_camera_cut_detection");
     }
+    // ── Comic panels (#880) ──
+    fn set_panels(&mut self, layout: toml::Table) {
+        self.unsupported("set_panels");
+    }
+    fn set_panel(&mut self, name: String, keys: toml::Table) {
+        self.unsupported("set_panel");
+    }
+    fn remove_panel(&mut self, name: String) {
+        self.unsupported("remove_panel");
+    }
+    fn clear_panels(&mut self) {
+        self.unsupported("clear_panels");
+    }
     fn rumble(&mut self, pad: i64, strength: f64, seconds: f64) {
         self.unsupported("rumble");
     }
@@ -285,6 +298,10 @@ pub fn apply<H: ScriptHost + ?Sized>(host: &mut H, cmd: ScriptCommand) {
         C::ResetPostStyle { style } => host.reset_post_style(style),
         C::ResetStyleHistory => host.reset_style_history(),
         C::SetCameraCutDetection { enabled } => host.set_camera_cut_detection(enabled),
+        C::SetPanels { layout } => host.set_panels(layout),
+        C::SetPanel { name, keys } => host.set_panel(name, keys),
+        C::RemovePanel { name } => host.remove_panel(name),
+        C::ClearPanels => host.clear_panels(),
         C::Rumble {
             pad,
             strength,

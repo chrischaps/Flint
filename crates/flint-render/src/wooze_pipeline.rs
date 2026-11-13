@@ -201,8 +201,14 @@ fn vertex_module(device: &wgpu::Device) -> wgpu::ShaderModule {
 }
 
 impl WoozePipelineSet {
-    /// The set for standard meshes, over `base`'s fragment stage and layout.
-    pub fn standard(device: &wgpu::Device, base: &RenderPipeline) -> Self {
+    /// The set for standard meshes, over `base`'s fragment stage and layout,
+    /// for targets of `format` at `sample_count` (`ScenePipelines` gives its own).
+    pub fn standard(
+        device: &wgpu::Device,
+        base: &RenderPipeline,
+        format: wgpu::TextureFormat,
+        sample_count: u32,
+    ) -> Self {
         Stages {
             label: "Shallow Wooze Pipeline",
             layout: &base.pipeline_layout,
@@ -211,8 +217,8 @@ impl WoozePipelineSet {
             vertex_layout: Vertex::desc(),
             fragment_module: &base.shader,
             fragment_entry: "fs_main",
-            format: base.format,
-            sample_count: base.sample_count,
+            format,
+            sample_count,
         }
         .set(device)
     }
@@ -220,8 +226,9 @@ impl WoozePipelineSet {
     /// The set for skinned meshes, over `skinned`'s fragment stage and layout.
     pub fn skinned(
         device: &wgpu::Device,
-        base: &RenderPipeline,
         skinned: &SkinnedPipeline,
+        format: wgpu::TextureFormat,
+        sample_count: u32,
     ) -> Self {
         Stages {
             label: "Shallow Wooze Skinned Pipeline",
@@ -231,8 +238,8 @@ impl WoozePipelineSet {
             vertex_layout: SkinnedVertex::desc(),
             fragment_module: &skinned.shader,
             fragment_entry: "fs_skinned",
-            format: base.format,
-            sample_count: base.sample_count,
+            format,
+            sample_count,
         }
         .set(device)
     }

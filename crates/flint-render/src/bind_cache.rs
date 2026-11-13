@@ -90,7 +90,6 @@ type CallerGroups = (u64, HashMap<(&'static str, u64), Arc<wgpu::BindGroup>>);
 
 /// Bind groups by a name and a variant (which views were chosen, whose
 /// objects they bind), made on first use; see the module docs.
-#[derive(Default)]
 pub struct BindCache {
     groups: Mutex<HashMap<(&'static str, u64), Arc<wgpu::BindGroup>>>,
     /// Groups over the caller's depth view, and the depth id they were
@@ -99,10 +98,27 @@ pub struct BindCache {
     /// Bind groups made through it, kept or not: what a frame costs the
     /// web in `createBindGroup`s, for tests.
     made: AtomicU64,
-    /// Uniforms whose contents last as long as the cache (texel sizes),
-    /// written once.
-    written: Mutex<Vec<&'static str>>,
+    /// Who this cache is to [`first_write`](Self::first_write): a
+    /// [`gpu_id`], a new one on [`clear`](Self::clear).
+    writer: AtomicU64,
 }
+
+impl Default for BindCache {
+    fn default() -> Self {
+        Self {
+            groups: Default::default(),
+            caller: Default::default(),
+            made: AtomicU64::new(0),
+            writer: AtomicU64::new(gpu_id()),
+        }
+    }
+}
+
+/// The cache that last wrote each write-once uniform (#880). The buffer is
+/// the pipeline's, shared by every cache that draws through it: the
+/// window's chain and each comic panel's. Process-wide, since a name is one
+/// buffer per renderer and another renderer's write only costs a rewrite.
+static LAST_WRITER: Mutex<Option<HashMap<&'static str, u64>>> = Mutex::new(None);
 
 impl BindCache {
     /// The bind group `name` in `variant`, made with `make` the first time.
@@ -159,16 +175,15 @@ impl BindCache {
         self.made.load(Ordering::Relaxed)
     }
 
-    /// True the first time it's asked about `name`: for an upload whose
-    /// data doesn't change while the cache lives.
+    /// True when `name`'s upload is due: the first time this cache asks,
+    /// and again whenever another cache asked since. For an upload whose
+    /// data doesn't change while the cache lives (a texel size) into a
+    /// buffer the pipeline shares, so a comic panel's chain, which writes
+    /// its own size there, doesn't leave it for the window's (#880).
     pub fn first_write(&self, name: &'static str) -> bool {
-        let mut written = self.written.lock().unwrap_or_else(|e| e.into_inner());
-        if written.contains(&name) {
-            false
-        } else {
-            written.push(name);
-            true
-        }
+        let me = self.writer.load(Ordering::Relaxed);
+        let mut last = LAST_WRITER.lock().unwrap_or_else(|e| e.into_inner());
+        last.get_or_insert_with(HashMap::new).insert(name, me) != Some(me)
     }
 
     /// Forget every group and every first write, as a new cache would
@@ -183,10 +198,8 @@ impl BindCache {
         caller.0 = 0;
         caller.1.clear();
         drop(caller);
-        self.written
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
+        // A new writer: every first write is due again
+        self.writer.store(gpu_id(), Ordering::Relaxed);
     }
 
     /// How many bind groups it holds.

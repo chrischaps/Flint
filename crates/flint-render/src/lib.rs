@@ -28,6 +28,7 @@ pub mod motion_hold;
 pub mod ocean_pipeline;
 pub mod orbit_controller;
 pub mod palette;
+pub mod panels;
 pub mod particle_pipeline;
 mod pipeline;
 pub mod post_style;
@@ -44,6 +45,7 @@ pub mod sky_pipeline;
 pub mod skybox_pipeline;
 pub mod split_view;
 pub mod sprite2d_pipeline;
+pub mod style_albedo;
 pub mod style_mask;
 pub mod stylize;
 pub mod terrain_pipeline;
@@ -76,12 +78,12 @@ pub use headless::HeadlessContext;
 pub use ocean_pipeline::{OceanPipeline, OceanUniformsGpu, OceanVisuals};
 pub use orbit_controller::OrbitCameraController;
 pub use particle_pipeline::{
-    ParticleBlendMode, ParticleDrawCall, ParticleDrawData, ParticleInstance, ParticlePipeline,
-    ParticleUniforms,
+    ParticleBlendMode, ParticleBuffers, ParticleDrawCall, ParticleDrawData, ParticleInstance,
+    ParticlePipeline, ParticleUniforms,
 };
 pub use pipeline::{
-    DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline, SpotLight,
-    TransformUniforms,
+    DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline, SceneLayouts,
+    SpotLight, TransformUniforms,
 };
 pub use postprocess::{
     post_process_config_from_def, PostProcessConfig, PostProcessPipeline, PostProcessResources,
