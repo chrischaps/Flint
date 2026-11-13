@@ -78,6 +78,9 @@ repo = "chrischaps/Kandinski"
 # engine subtree is Flint main as of 9886650. No film yet, so a browser
 # without WebGPU sees the poster alone.
 # Now with touch controls: a stick, BRAKE, DRIFT and BOOST, and menus by tap.
-ref = "167e7e25d287d884aea9805c2c74bcd1afe6ad00"
+# Then a Settings menu (from the title and the pause menu), the
+# pulse (natively; it stays off on the web), and the engine subtree at Flint
+# main 5224a794 plus #899, with the HUD on the ADR 0116 script names.
+ref = "af91369d89308a3cdb26510f8df17a3491678872"
 # A path, not a URL: build.py copies it from the repo beside the bundle.
 poster = "web/afterglow-poster.jpg"
