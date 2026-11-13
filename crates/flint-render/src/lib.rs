@@ -28,6 +28,7 @@ pub mod motion_hold;
 pub mod ocean_pipeline;
 pub mod orbit_controller;
 pub mod palette;
+pub mod panels;
 pub mod particle_pipeline;
 mod pipeline;
 pub mod post_style;

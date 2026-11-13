@@ -626,7 +626,9 @@ impl PlayerApp {
                 }
             }
         }
-        renderer.encode_to(
+        // A scene of comic panels draws each panel's camera, submitting all
+        // but the last itself (#880, ADR 0120); one view is one submission
+        renderer.encode_frame_to(
             &context.device,
             &context.queue,
             &mut encoder,
@@ -634,6 +636,7 @@ impl PlayerApp {
             context.depth_target(),
             &self.camera,
             &view,
+            Some(&self.core.world),
         );
         // A second look drawn over part of the frame, before the HUD (the
         // Living Props A/B split, #238)

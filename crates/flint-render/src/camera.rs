@@ -14,6 +14,7 @@ pub enum CameraMode {
 }
 
 /// A 3D camera supporting orbit and first-person modes
+#[derive(Clone)]
 pub struct Camera {
     /// Camera position
     pub position: Vec3,

@@ -248,6 +248,25 @@ pub enum ScriptCommand {
     SetCameraCutDetection {
         enabled: bool,
     },
+    /// `set_panels(layout)` (#880): lay the frame out as comic panels, a
+    /// `[panels]` table in the scene's form (gutter, border and
+    /// `panel: #{ name: #{ rect, ... } }`), replacing the layout.
+    SetPanels {
+        layout: toml::Table,
+    },
+    /// `set_panel(name, keys)` (#880): merge `keys` into one panel of the
+    /// layout, made if it isn't there (on the default page if there is none).
+    SetPanel {
+        name: String,
+        keys: toml::Table,
+    },
+    /// `remove_panel(name)` (#880): take one panel off the page; the last
+    /// one gone, the frame is one view again.
+    RemovePanel {
+        name: String,
+    },
+    /// `clear_panels()` (#880): the frame as one view again.
+    ClearPanels,
     /// `rumble(pad, strength, seconds)` (#748): both motors of a pad (`pad`
     /// negative: every pad) at `strength` (0..1) for `seconds`; zero of
     /// either stops it. The host clamps both (`flint_runtime::RumbleRequest`).

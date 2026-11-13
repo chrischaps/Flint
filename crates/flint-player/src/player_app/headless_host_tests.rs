@@ -139,6 +139,15 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
         },
         C::ResetStyleHistory,
         C::SetCameraCutDetection { enabled: false },
+        C::SetPanels {
+            layout: "[panel.a]\nrect = [0, 0, 1, 1]\n".parse().unwrap(),
+        },
+        C::SetPanel {
+            name: s("b"),
+            keys: "rect = [0.5, 0, 0.5, 1]\n".parse().unwrap(),
+        },
+        C::RemovePanel { name: s("b") },
+        C::ClearPanels,
         C::Rumble {
             pad: -1,
             strength: 0.5,

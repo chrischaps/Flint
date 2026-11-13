@@ -3,6 +3,7 @@
 mod extract;
 mod grass_ground;
 mod helpers;
+mod panels;
 mod particles;
 mod render_passes;
 mod selection;
@@ -696,6 +697,8 @@ pub struct SceneRenderer {
     gpu_timer: Option<crate::gpu_timer::GpuTimer>,
     /// The entity style mask's pass (#263); `None` until a frame needs it.
     style_mask_pass: Option<crate::style_mask::StyleMaskPass>,
+    /// Comic panels (#880, ADR 0120): the layout and each panel's view
+    panel_state: panels::PanelState,
     /// The style albedo's pass (#869), made the first frame a style reads it.
     style_albedo_pass: Option<crate::style_albedo::StyleAlbedoPass>,
     /// Style names entities ask for, numbered for the mask.
@@ -1089,6 +1092,7 @@ impl SceneRenderer {
             grass_shadow_binds: Vec::new(),
             gpu_timer: None,
             style_mask_pass: None,
+            panel_state: Default::default(),
             style_albedo_pass: None,
             style_ids: Default::default(),
             style_by_entity: HashMap::new(),
@@ -2649,6 +2653,7 @@ impl SceneRenderer {
             grass_shadow_binds: Vec::new(),
             gpu_timer: None,
             style_mask_pass: None,
+            panel_state: Default::default(),
             style_albedo_pass: None,
             style_ids: Default::default(),
             style_by_entity: HashMap::new(),
