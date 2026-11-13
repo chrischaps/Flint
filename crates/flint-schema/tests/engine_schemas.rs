@@ -499,7 +499,7 @@ fn the_four_schemas_say_what_their_readers_take() {
     let set =
         |names: &[&str]| -> BTreeSet<String> { names.iter().map(|n| n.to_string()).collect() };
 
-    // What `SceneRenderer::extract_lights_from_world` reads
+    // What `LightState::extract` (flint-render's scene_renderer/lights.rs) reads
     assert_eq!(
         fields("light"),
         set(&[

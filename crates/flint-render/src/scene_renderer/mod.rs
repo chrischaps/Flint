@@ -3,6 +3,7 @@
 mod extract;
 mod grass_ground;
 mod helpers;
+mod lights;
 mod msaa;
 mod panels;
 mod particles;
@@ -16,6 +17,7 @@ pub use particles::load_scene_particle_textures;
 use render_passes::RenderPhase;
 
 use helpers::mat4_inv_transpose;
+pub use lights::LightingLevers;
 
 use crate::bind_cache::{ArenaSlot, TransformArena};
 use crate::bitmap_font::BitmapFont;
@@ -29,10 +31,7 @@ use crate::grass_pipeline::{
     MAX_GRASS_ENTITIES,
 };
 use crate::particle_pipeline::{ParticleBuffers, ParticleDrawCall};
-use crate::pipeline::{
-    BlendMode, DirectionalLight, LightUniforms, MaterialUniforms, PointLight, SceneLayouts,
-    SpotLight, TransformUniforms, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
-};
+use crate::pipeline::{BlendMode, MaterialUniforms, SceneLayouts, TransformUniforms};
 use crate::postprocess::{
     PostProcessConfig, PostProcessPipeline, PostProcessResources, HDR_FORMAT,
 };
@@ -43,9 +42,8 @@ use crate::terrain_pipeline::{TerrainDrawCall, TerrainUniforms};
 use crate::texture_cache::TextureCache;
 use crate::wooze_pipeline::{grow_bounds, ShallowWoozeDraw, ShallowWoozeUniforms};
 use flint_core::components as comp;
-use flint_core::toml_util::toml_f32;
 use flint_core::vfs;
-use flint_core::{Transform, Vec3};
+use flint_core::Transform;
 use flint_ecs::FlintWorld;
 use flint_import::ImportResult;
 use pipelines::{Present, ScenePipelines};
@@ -568,25 +566,6 @@ impl Default for RendererConfig {
     }
 }
 
-/// Snapshot of the runtime lighting levers (ambient hemisphere, diffuse
-/// wrap, Oren-Nayar blend, sheen). Values are the active overrides when set,
-/// else the built-in neutral defaults — suitable for seeding UI controls.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LightingLevers {
-    /// Hemisphere ambient, sky half (linear RGB)
-    pub ambient_sky: [f32; 3],
-    /// Hemisphere ambient, ground half (linear RGB)
-    pub ambient_ground: [f32; 3],
-    /// Diffuse terminator wrap (0 = physically sharp / legacy)
-    pub diffuse_wrap: f32,
-    /// Lambert → Oren-Nayar blend (0 = exact legacy shading)
-    pub oren_nayar: f32,
-    /// Charlie-sheen rim tint (linear RGB)
-    pub sheen_color: [f32; 3],
-    /// Sheen strength, 0..~0.3 (0 = exact legacy shading)
-    pub sheen_strength: f32,
-}
-
 /// Renders a FlintWorld to the screen
 pub struct SceneRenderer {
     /// The bind group layouts every scene pipeline is made against, made once.
@@ -626,26 +605,9 @@ pub struct SceneRenderer {
     normal_arrow_draws: Vec<DrawCall>,
     skeleton_overlay_draws: Vec<DrawCall>,
     tonemapping_enabled: bool,
-    light_buffer: wgpu::Buffer,
-    light_bind_group: wgpu::BindGroup,
-    light_uniforms: LightUniforms,
-    /// Scene-authored hemisphere ambient override (sky, ground). None keeps
-    /// the built-in default; stored so the zero-light fallback in
-    /// `extract_lights_from_world` cannot stomp it.
-    ambient_override: Option<([f32; 3], [f32; 3])>,
-    /// The scene's `[environment] shadows` (#627): false keeps the shadow
-    /// pass from drawing whatever the quality tier or F4 say. True unless
-    /// a scene says otherwise.
-    scene_shadows: bool,
-    /// The scene's `[environment] default_lights` (#627): false lights a
-    /// scene with no light entities by its ambient alone, instead of the
-    /// built-in key and fill. True unless a scene says otherwise.
-    default_lights: bool,
-    /// Scene-authored diffuse terminator wrap. Rides ambient_sky.w encoded as
-    /// (1 + wrap) so legacy writes of 1.0 decode to wrap = 0 in the shader.
-    diffuse_wrap_override: Option<f32>,
-    oren_nayar_override: Option<f32>,
-    sheen_override: Option<([f32; 3], f32)>,
+    /// The light uniforms, their bind group, and the scene's lighting
+    /// levers (ADR 0118, #736).
+    lights: lights::LightState,
     texture_cache: Option<TextureCache>,
     shadow_pass: Option<ShadowPass>,
     selected_entity: Option<flint_core::EntityId>,
@@ -970,9 +932,7 @@ impl SceneRenderer {
 
         let shadow_pass = ShadowPass::new(device, DEFAULT_SHADOW_RESOLUTION);
 
-        let light_uniforms = LightUniforms::default_scene_lights();
-        let (light_buffer, light_bind_group) =
-            Self::create_light_bind(device, &layouts, &light_uniforms, &shadow_pass);
+        let lights = lights::LightState::new(device, &layouts, &shadow_pass);
 
         let ocean_resources = Self::create_ocean_resources(
             device,
@@ -1024,15 +984,7 @@ impl SceneRenderer {
             normal_arrow_draws: Vec::new(),
             skeleton_overlay_draws: Vec::new(),
             tonemapping_enabled: true,
-            light_buffer,
-            light_bind_group,
-            light_uniforms,
-            ambient_override: None,
-            scene_shadows: true,
-            default_lights: true,
-            diffuse_wrap_override: None,
-            oren_nayar_override: None,
-            sheen_override: None,
+            lights,
             texture_cache: Some(texture_cache),
             shadow_pass: Some(shadow_pass),
             selected_entity: None,
@@ -3357,10 +3309,7 @@ impl SceneRenderer {
         }
 
         // Recreate light bind group with new shadow pass resources
-        let (light_buffer, light_bind_group) =
-            Self::create_light_bind(device, &self.layouts, &self.light_uniforms, &shadow_pass);
-        self.light_buffer = light_buffer;
-        self.light_bind_group = light_bind_group;
+        self.lights.rebind(device, &self.layouts, &shadow_pass);
         self.shadow_pass = Some(shadow_pass);
     }
 
@@ -3399,7 +3348,7 @@ impl SceneRenderer {
     /// pass from drawing at all, over the quality tier and F4,
     /// which keep their own setting for the next scene.
     pub fn set_scene_shadows(&mut self, on: bool) {
-        self.scene_shadows = on;
+        self.lights.set_scene_shadows(on);
     }
 
     /// The scene's `[environment] default_lights` (#627). False lights a
@@ -3407,7 +3356,7 @@ impl SceneRenderer {
     /// instead of the built-in key and fill. Takes effect at the next
     /// `update_from_world`.
     pub fn set_default_lights(&mut self, on: bool) {
-        self.default_lights = on;
+        self.lights.set_default_lights(on);
     }
 
     /// Whether this frame draws the shadow cascades (#627): shadows are on,
@@ -3415,16 +3364,7 @@ impl SceneRenderer {
     /// light or god rays. A sun of intensity 0 contributes nothing the
     /// maps could darken, so its pass is skipped and every caster with it.
     pub fn shadows_drawn(&self) -> bool {
-        self.shadows_enabled() && self.scene_shadows && self.sun_casts()
-    }
-
-    /// The light the cascades follow, directional 0 after the sort that
-    /// puts the strongest first, gives light or god rays.
-    fn sun_casts(&self) -> bool {
-        self.light_uniforms.directional_count > 0 && {
-            let sun = &self.light_uniforms.directional_lights[0];
-            sun.intensity > 0.0 || sun.volumetric_intensity > 0.0
-        }
+        self.shadows_enabled() && self.lights.scene_shadows() && self.lights.sun_casts()
     }
 
     /// Current shadow map resolution per cascade
@@ -3584,7 +3524,7 @@ impl SceneRenderer {
         }
 
         // Extract lights from scene entities
-        self.extract_lights_from_world(world);
+        self.lights.extract(world, &mut self.motion_hold);
 
         // Extract ocean params (regenerates the wave spectrum only on change)
         self.extract_ocean_from_world(world);
@@ -3600,7 +3540,7 @@ impl SceneRenderer {
         self.sky.extract(
             world,
             self.pipelines.sky.is_some(),
-            &mut self.light_uniforms,
+            &mut self.lights.uniforms,
         );
 
         let need_overlay = self.debug_state.mode == DebugMode::WireframeOverlay
@@ -4242,48 +4182,6 @@ impl SceneRenderer {
         (&default.view, &default.sampler, false)
     }
 
-    fn create_light_bind(
-        device: &wgpu::Device,
-        layouts: &SceneLayouts,
-        uniforms: &LightUniforms,
-        shadow_pass: &ShadowPass,
-    ) -> (wgpu::Buffer, wgpu::BindGroup) {
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Light Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[*uniforms]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &layouts.light_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&shadow_pass.shadow_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&shadow_pass.shadow_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: shadow_pass.shadow_uniforms_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Sampler(&layouts.material_sampler),
-                },
-            ],
-            label: Some("Light Bind Group"),
-        });
-
-        (buffer, bind_group)
-    }
-
     // ── Ocean extraction ──
 
     /// Extract the first `ocean` component from the world. The wave spectrum
@@ -4533,15 +4431,13 @@ impl SceneRenderer {
         }
     }
 
-    // ── Light extraction ──
+    // ── Lighting levers (LightState, ADR 0118) ──
 
-    /// Extract light entities from the world and update the light uniform buffer
     /// Override the hemisphere ambient colors (linear RGB). Scenes set this
     /// via `[environment] ambient_sky / ambient_ground`; when never called,
     /// the built-in default ambient is byte-identical to prior behavior.
     pub fn set_ambient(&mut self, sky: [f32; 3], ground: [f32; 3]) {
-        self.ambient_override = Some((sky, ground));
-        self.apply_ambient_override();
+        self.lights.set_ambient(sky, ground);
     }
 
     /// Forget what styles remember of earlier frames (ASCII's temporal
@@ -4556,22 +4452,13 @@ impl SceneRenderer {
     /// default (needed on scene transitions so an old scene's ambient never
     /// leaks into a scene that doesn't author one).
     pub fn reset_ambient(&mut self) {
-        self.ambient_override = None;
-        self.diffuse_wrap_override = None;
-        self.oren_nayar_override = None;
-        self.sheen_override = None;
-        let [sr, sg, sb] = LightUniforms::DEFAULT_AMBIENT_SKY;
-        let [gr, gg, gb] = LightUniforms::DEFAULT_AMBIENT_GROUND;
-        self.light_uniforms.ambient_sky = [sr, sg, sb, 1.0];
-        self.light_uniforms.ambient_ground = [gr, gg, gb, 1.0];
-        self.light_uniforms.sheen_color_strength = [0.0; 4];
+        self.lights.reset_ambient();
     }
 
     /// Soften the diffuse terminator (0 = physically sharp / legacy shading).
     /// Scenes set this via `[environment] diffuse_wrap`.
     pub fn set_diffuse_wrap(&mut self, wrap: f32) {
-        self.diffuse_wrap_override = Some(wrap.max(0.0));
-        self.apply_ambient_override();
+        self.lights.set_diffuse_wrap(wrap);
     }
 
     /// Blend the diffuse term from Lambert toward the Fujii Oren-Nayar
@@ -4579,225 +4466,20 @@ impl SceneRenderer {
     /// comes from material roughness). Scenes set this via
     /// `[environment] oren_nayar` (ADR 0048).
     pub fn set_oren_nayar(&mut self, blend: f32) {
-        self.oren_nayar_override = Some(blend.max(0.0));
-        self.apply_ambient_override();
+        self.lights.set_oren_nayar(blend);
     }
 
     /// Tinted Charlie-sheen rim: `color` is a linear RGB tint, `strength`
     /// 0..~0.3 (0 = exact legacy shading). Scenes set this via
     /// `[environment] sheen_color / sheen_strength` (ADR 0048).
     pub fn set_sheen(&mut self, color: [f32; 3], strength: f32) {
-        self.sheen_override = Some((color, strength.max(0.0)));
-        self.apply_ambient_override();
+        self.lights.set_sheen(color, strength);
     }
 
     /// Snapshot of the current lighting-lever state (overrides if set, else
     /// the built-in neutral defaults). Read by the render debug panel.
     pub fn lighting_levers(&self) -> LightingLevers {
-        let (ambient_sky, ambient_ground) = self.ambient_override.unwrap_or((
-            LightUniforms::DEFAULT_AMBIENT_SKY,
-            LightUniforms::DEFAULT_AMBIENT_GROUND,
-        ));
-        let (sheen_color, sheen_strength) = self.sheen_override.unwrap_or(([0.0; 3], 0.0));
-        LightingLevers {
-            ambient_sky,
-            ambient_ground,
-            diffuse_wrap: self.diffuse_wrap_override.unwrap_or(0.0),
-            oren_nayar: self.oren_nayar_override.unwrap_or(0.0),
-            sheen_color,
-            sheen_strength,
-        }
-    }
-
-    fn apply_ambient_override(&mut self) {
-        if let Some((sky, ground)) = self.ambient_override {
-            self.light_uniforms.ambient_sky = [sky[0], sky[1], sky[2], 1.0];
-            self.light_uniforms.ambient_ground = [ground[0], ground[1], ground[2], 1.0];
-        }
-        if let Some(wrap) = self.diffuse_wrap_override {
-            // Shader decodes wrap = ambient_sky.w - 1.0
-            self.light_uniforms.ambient_sky[3] = 1.0 + wrap;
-        }
-        if let Some(oren) = self.oren_nayar_override {
-            // Shader decodes oren = ambient_ground.w - 1.0
-            self.light_uniforms.ambient_ground[3] = 1.0 + oren;
-        }
-        if let Some((color, strength)) = self.sheen_override {
-            self.light_uniforms.sheen_color_strength = [color[0], color[1], color[2], strength];
-        }
-    }
-
-    fn extract_lights_from_world(&mut self, world: &FlintWorld) {
-        let mut dir_count = 0u32;
-        let mut point_count = 0u32;
-        let mut spot_count = 0u32;
-        let mut directionals = [DirectionalLight::default(); MAX_DIRECTIONAL_LIGHTS];
-        let mut points = [PointLight::default(); MAX_POINT_LIGHTS];
-        let mut spots = [SpotLight::default(); MAX_SPOT_LIGHTS];
-
-        // Deterministic iteration: the component index is a HashSet whose
-        // order changes per process, which silently reassigned the one
-        // shadow-casting directional slot (index 0) between runs. Sort by
-        // entity name (then id) so light order is stable and authored.
-        let mut light_entities: Vec<_> = world
-            .entities_with_component(comp::LIGHT)
-            .iter()
-            .copied()
-            .collect();
-        // A hidden entity's light goes out with it (#628)
-        let hidden = world.hidden_entities();
-        if !hidden.is_empty() {
-            light_entities.retain(|id| !hidden.contains(id));
-        }
-        light_entities.sort_by(|a, b| {
-            world
-                .get_name(*a)
-                .unwrap_or("")
-                .cmp(world.get_name(*b).unwrap_or(""))
-                .then(a.cmp(b))
-        });
-
-        for entity_id in light_entities {
-            let light_component = world
-                .get_components(entity_id)
-                .and_then(|components| components.get(comp::LIGHT).cloned());
-
-            if let Some(light) = light_component {
-                let light_type = light
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("directional");
-
-                let color = Self::extract_light_vec3(&light, "color").unwrap_or([1.0, 1.0, 1.0]);
-                let intensity = light.get("intensity").and_then(toml_f32).unwrap_or(1.0);
-
-                match light_type {
-                    "directional" => {
-                        if (dir_count as usize) < MAX_DIRECTIONAL_LIGHTS {
-                            let direction = Self::extract_light_vec3(&light, "direction")
-                                .unwrap_or([0.0, -1.0, 0.0]);
-                            let volumetric_intensity = light
-                                .get("volumetric_intensity")
-                                .and_then(toml_f32)
-                                .unwrap_or(0.0);
-                            let volumetric_color =
-                                Self::extract_light_vec3(&light, "volumetric_color")
-                                    .unwrap_or(color);
-                            // Apparent source angular size, authored in
-                            // degrees (sun ~0.5, softbox 2-5); drives PCSS
-                            // penumbra (ADR 0056). Stored in radians.
-                            let angular_size = light
-                                .get("angular_size")
-                                .and_then(toml_f32)
-                                .unwrap_or(0.0)
-                                .to_radians();
-                            directionals[dir_count as usize] = DirectionalLight {
-                                direction,
-                                volumetric_intensity,
-                                color,
-                                intensity,
-                                volumetric_color,
-                                angular_size,
-                            };
-                            dir_count += 1;
-                        }
-                    }
-                    "point" => {
-                        if (point_count as usize) < MAX_POINT_LIGHTS {
-                            let light_pos = self.light_position(world, entity_id);
-                            let radius = light
-                                .get("range")
-                                .or_else(|| light.get("radius"))
-                                .and_then(toml_f32)
-                                .unwrap_or(10.0);
-                            let source_radius =
-                                light.get("source_radius").and_then(toml_f32).unwrap_or(0.0);
-                            points[point_count as usize] = PointLight {
-                                position: [light_pos.x, light_pos.y, light_pos.z],
-                                radius,
-                                color,
-                                intensity,
-                                source_radius,
-                                _pad0: 0.0,
-                                _pad1: 0.0,
-                                _pad2: 0.0,
-                            };
-                            point_count += 1;
-                        }
-                    }
-                    "spot" => {
-                        if (spot_count as usize) < MAX_SPOT_LIGHTS {
-                            let light_pos = self.light_position(world, entity_id);
-                            let direction = Self::extract_light_vec3(&light, "direction")
-                                .unwrap_or([0.0, -1.0, 0.0]);
-                            let radius = light
-                                .get("range")
-                                .or_else(|| light.get("radius"))
-                                .and_then(toml_f32)
-                                .unwrap_or(10.0);
-                            let inner_angle =
-                                light.get("inner_angle").and_then(toml_f32).unwrap_or(0.3);
-                            let outer_angle =
-                                light.get("outer_angle").and_then(toml_f32).unwrap_or(0.5);
-                            let source_radius =
-                                light.get("source_radius").and_then(toml_f32).unwrap_or(0.0);
-                            spots[spot_count as usize] = SpotLight {
-                                position: [light_pos.x, light_pos.y, light_pos.z],
-                                radius,
-                                direction,
-                                inner_angle,
-                                color,
-                                outer_angle,
-                                intensity,
-                                source_radius,
-                                _pad1: 0.0,
-                                _pad2: 0.0,
-                            };
-                            spot_count += 1;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // Strongest directional casts the shadows: only index 0 gets CSM, so
-        // put the highest-intensity directional first (sun over fill),
-        // independent of entity naming. Stable sort keeps name order on ties.
-        directionals[..dir_count as usize].sort_by(|a, b| {
-            b.intensity
-                .partial_cmp(&a.intensity)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        // If no lights found in scene, use defaults
-        if dir_count == 0 && point_count == 0 && spot_count == 0 && self.default_lights {
-            self.light_uniforms = LightUniforms::default_scene_lights();
-            self.apply_ambient_override();
-        } else {
-            self.light_uniforms.directional_lights = directionals;
-            self.light_uniforms.point_lights = points;
-            self.light_uniforms.spot_lights = spots;
-            self.light_uniforms.directional_count = dir_count;
-            self.light_uniforms.point_count = point_count;
-            self.light_uniforms.spot_count = spot_count;
-        }
-    }
-
-    /// Where a point or spot light shines from: its world position, or,
-    /// carried by a held entity, where it was when the tick began (#873), so
-    /// the pool of light steps with the drawing that carries it. The held
-    /// matrix is the one the entity's own draw reads later this frame.
-    fn light_position(&mut self, world: &FlintWorld, entity: flint_core::EntityId) -> Vec3 {
-        let Some(live) = world.get_world_matrix(entity) else {
-            return Vec3::ZERO;
-        };
-        let m = self.motion_hold.matrix(entity, live);
-        Vec3::new(m[3][0], m[3][1], m[3][2])
-    }
-
-    fn extract_light_vec3(table: &toml::Value, key: &str) -> Option<[f32; 3]> {
-        flint_core::toml_util::toml_vec3(table.get(key)?)
+        self.lights.levers()
     }
 
     // ── Render entry points ──
@@ -5114,7 +4796,7 @@ impl SceneRenderer {
         // What's in front of them (#290): transparents that aren't styled
         // themselves, and every particle
         let mut veil = crate::style_mask::Veil {
-            light_bind_group: &self.light_bind_group,
+            light_bind_group: &self.lights.bind_group,
             meshes: Vec::new(),
             particles: None,
         };
@@ -5256,7 +4938,7 @@ impl SceneRenderer {
             &target,
             scene_depth,
             samples,
-            &self.light_bind_group,
+            &self.lights.bind_group,
             &meshes,
         );
     }
@@ -5684,11 +5366,7 @@ impl SceneRenderer {
         let wireframe_only = self.debug_state.mode == DebugMode::WireframeOnly;
 
         // Update light uniforms
-        queue.write_buffer(
-            &self.light_buffer,
-            0,
-            bytemuck::cast_slice(&[self.light_uniforms]),
-        );
+        self.lights.upload(queue);
 
         // Grass compute (ADR 0092): scatters this camera's blades, culled to
         // its view, and counts them into the indirect draw arguments. It goes

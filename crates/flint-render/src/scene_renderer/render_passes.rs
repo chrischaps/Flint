@@ -67,7 +67,7 @@ impl SceneRenderer {
         shadow_pass.shadows_written_off = false;
 
         // Use the first directional light for shadows
-        let light = &self.light_uniforms.directional_lights[0];
+        let light = &self.lights.uniforms.directional_lights[0];
 
         // Update cascade matrices. The sun's angular size (radians, 0 =
         // punctual) rides along as tan() for PCSS penumbra math (ADR 0057).
@@ -761,7 +761,7 @@ impl SceneRenderer {
         phase: RenderPhase,
     ) {
         // Bind lights once for the entire pass (group 2 is shared)
-        render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+        render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
 
         // Render sky at the far plane: the procedural sky (driven by the
         // `sky` component) replaces the texture skybox when present.
@@ -772,7 +772,7 @@ impl SceneRenderer {
                 camera,
                 self.pipelines.sky.as_ref(),
                 self.pipelines.skybox.as_ref(),
-                &self.light_uniforms.directional_lights[0],
+                &self.lights.uniforms.directional_lights[0],
                 self.ocean_time,
             );
         }
@@ -803,7 +803,7 @@ impl SceneRenderer {
         // Skeleton overlay pass (bone lines, drawn on top of everything — no depth test)
         if self.debug_state.show_skeleton && phase.draws_ocean_and_after() {
             render_pass.set_pipeline(&self.pipelines.main.skeleton_line_pipeline);
-            render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+            render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
             for draw in &self.skeleton_overlay_draws {
                 render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
                 render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
@@ -819,7 +819,7 @@ impl SceneRenderer {
         if !self.debug_overlay_draws.is_empty() && phase.draws_ocean_and_after() {
             render_pass.set_pipeline(&self.pipelines.main.skeleton_line_pipeline);
             // The particle pass may have left its texture bind group at slot 2.
-            render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+            render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
             for draw in &self.debug_overlay_draws {
                 render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
                 render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
@@ -843,7 +843,7 @@ impl SceneRenderer {
         };
         render_pass.set_pipeline(&self.pipelines.main.overlay_line_pipeline);
         // Billboards may have left their texture group at slot 2.
-        render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+        render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
         render_pass.set_bind_group(0, &*grid.transform_bind_group, &[]);
         render_pass.set_bind_group(1, &*grid.material_bind_group, &[]);
         render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
@@ -918,7 +918,7 @@ impl SceneRenderer {
                 if !self.terrain_draws.is_empty() {
                     render_pass.set_pipeline(&tp.pipeline);
                     render_pass.set_bind_group(1, mat_bg, &[]);
-                    render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+                    render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
 
                     for draw in &self.terrain_draws {
                         if let Some(ref frustum) = self.camera_frustum {
@@ -952,7 +952,7 @@ impl SceneRenderer {
                     }
                     render_pass.set_pipeline(&gp.render_pipeline);
                     render_pass.set_bind_group(1, render_bg, &[]);
-                    render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+                    render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
                     render_pass.set_bind_group(3, instance_bg, &[]);
                     render_pass.set_vertex_buffer(0, gp.blade_vertex_buffer.slice(..));
                     render_pass.set_index_buffer(
@@ -980,7 +980,7 @@ impl SceneRenderer {
                 grab_bg,
             ) {
                 render_pass.set_bind_group(0, transform_bg, &[]);
-                render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+                render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
                 render_pass.set_bind_group(3, grab_bg, &[]);
                 if self.ocean_active {
                     render_pass.set_pipeline(&op.pipeline);
@@ -1114,7 +1114,7 @@ impl SceneRenderer {
         // blend draws back faces then front faces so a mesh cannot blend over itself)
         if !self.transparent_draws.is_empty() {
             // Re-bind lights for group 2 (may have been displaced by billboard binds)
-            render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+            render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
 
             for draw in &self.transparent_draws {
                 if draw.is_wireframe {
@@ -1165,7 +1165,7 @@ impl SceneRenderer {
                     };
                     render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
                     render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
-                    render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+                    render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
                     render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     render_pass
@@ -1201,7 +1201,7 @@ impl SceneRenderer {
         if let Some(sp) = &self.pipelines.skinned {
             if !self.echo_draws.is_empty() {
                 let mut lighten = None;
-                render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+                render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
                 // A tree's echoes share a transform, and an echo's parts its
                 // bones, so a grove rebinds those far less often than it draws.
                 let mut transform = None;
@@ -1258,7 +1258,7 @@ impl SceneRenderer {
                 // pipeline that follows (wireframe overlay, normal arrows,
                 // skeleton, gizmos) expects it there, and wgpu validates the
                 // layout at draw time.
-                render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+                render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
             }
         }
 
@@ -1513,7 +1513,7 @@ impl SceneRenderer {
                                 view: &shadow_pass.shadow_view,
                                 sampler: &shadow_pass.shadow_sampler,
                                 uniforms: &shadow_pass.shadow_uniforms_buffer,
-                                lights: &self.light_buffer,
+                                lights: &self.lights.buffer,
                             },
                         )
                     });
@@ -1719,7 +1719,7 @@ impl SceneRenderer {
         // so nothing that leans or casts into the view is lost at its edges.
         let sun = self
             .shadows_drawn()
-            .then(|| self.light_uniforms.directional_lights[0].direction);
+            .then(|| self.lights.uniforms.directional_lights[0].direction);
         let tallest = config.blade_height * (1.0 + config.height_variation.max(0.0));
         let frustum_planes = grass_cull_planes(
             &camera.view_projection_matrix(),

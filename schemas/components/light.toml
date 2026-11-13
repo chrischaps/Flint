@@ -1,4 +1,4 @@
-# The renderer reads this table every frame (`extract_lights_from_world`).
+# The renderer reads this table every frame (`LightState::extract`).
 # Only `type`, `color` and `intensity` carry a `default`: a default is
 # written into the component at load, and the others either apply to one
 # type only or mean something by being absent (`range` over `radius`,
