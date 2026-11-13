@@ -602,6 +602,15 @@ pub struct StyleDescriptor {
     /// [`blends_itself`](StyleDescriptor::blends_itself) and reads `.g`
     /// itself.
     pub blends_itself: bool,
+    /// Whether the style draws a blend itself for some settings (#879):
+    /// asked of the whole frame (`None`: the table's `blend`, which the
+    /// stage would otherwise draw as a mix, [`blend`]) and of each entity
+    /// variant (`Some`: the mask's `.g`, which the framework's cross-fade
+    /// would otherwise mix). Pencil's `transition = "draw"` answers yes, and
+    /// draws the blend as a front lines are drawn up to. `None` (the
+    /// default) leaves every blend to the framework.
+    pub draws_blend:
+        Option<fn(&PostProcessConfig, Option<&crate::style_mask::StyleVariant>) -> bool>,
     /// Build the style's pipelines. May panic on a broken driver; the
     /// framework catches it.
     pub create: fn(&StyleDevice) -> Box<dyn StylePass>,
@@ -642,6 +651,7 @@ impl StyleDescriptor {
             feeds_bloom: false,
             yields: true,
             blends_itself: false,
+            draws_blend: None,
             create,
         }
     }
@@ -707,6 +717,17 @@ impl StyleDescriptor {
         self.blends_itself = true;
         self
     }
+
+    /// It draws the blends `when` says itself (#879), the whole frame's or
+    /// an entity variant's ([`draws_blend`](Self::draws_blend)); the stage's
+    /// mix and the framework's cross-fade leave those alone.
+    pub const fn draws_blend(
+        mut self,
+        when: fn(&PostProcessConfig, Option<&crate::style_mask::StyleVariant>) -> bool,
+    ) -> Self {
+        self.draws_blend = Some(when);
+        self
+    }
 }
 
 impl StyleDescriptor {
@@ -762,6 +783,18 @@ impl StyleDescriptor {
     /// itself.
     pub fn framework_fades(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
         !self.blends_itself && self.reads_mask(config, ids)
+    }
+
+    /// Whether the style draws this blend itself (#879): the whole frame's
+    /// (`variant` `None`) or an entity variant's. Then the stage draws the
+    /// table's blend as 1 and the cross-fade passes over the variant's
+    /// pixels.
+    pub fn draws_own_blend(
+        &self,
+        config: &PostProcessConfig,
+        variant: Option<&crate::style_mask::StyleVariant>,
+    ) -> bool {
+        self.draws_blend.is_some_and(|when| when(config, variant))
     }
 
     /// Whether the style reads the shared edges ([`StyleNeed::Edges`]).
@@ -2510,7 +2543,13 @@ pub(crate) fn run_stage(
             }
         };
         let frame = &*frame;
-        let blend = frame.config.styles.blend(descriptor.name);
+        // A style that draws its own whole-frame blend (#879, pencil's
+        // `transition = "draw"`) has drawn it already
+        let blend = if descriptor.draws_own_blend(frame.config, None) {
+            1.0
+        } else {
+            frame.config.styles.blend(descriptor.name)
+        };
         // The framework's cross-fade (#396), timed with the style it fades
         let fade = fade.filter(|_| fade::FadePass::applies(frame, descriptor));
         scope(descriptor.label, encoder, &mut |encoder| {

@@ -481,6 +481,35 @@ scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "pencil:reveal=0,reveal_shape=wipe"]
 matches = ["--no-grid"]
 
+# Drawn on (#879): under transition = "draw" a blend is a front, not a
+# mix. Half-way, the whole frame has about half of each outline, the
+# hatching a stroke at a time behind it and the paper's wash just begun,
+# over the live clearing, with no faint copy of the rest. At blend 1 the
+# drawing is whole: the same pixels as a pencil frame with no transition
+[[case]]
+name = "pencil-draw-half"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "pencil:transition=draw,blend=0.5"]
+
+[[case]]
+name = "pencil-draw-whole"
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
+args = ["--no-grid", "--style", "pencil:transition=draw"]
+matches = ["--no-grid", "--style", "pencil"]
+
+# Per entity: the cask half drawn by its own blend (the cross-fade passes
+# over it), the crate's blend following the tear, so it draws only where
+# render mode 6 tears
+[[case]]
+name = "pencil-draw-entities-half"
+scene = "tests/fixtures/scenes/stylize_props_pencil_draw.scene.toml"
+args = ["--no-grid"]
+
+[[case]]
+name = "pencil-draw-entities-torn"
+scene = "tests/fixtures/scenes/stylize_props_pencil_draw.scene.toml"
+args = ["--no-grid", "--render-mode", "6", "--mode-mix", "0.5"]
+
 # Contour (#214; a registered style since #599): ink from depth's second
 # difference and luminance edges, so the flat ground draws no line. Lines
 # are high contrast, so they take the suite's tolerance, not the smooth one
