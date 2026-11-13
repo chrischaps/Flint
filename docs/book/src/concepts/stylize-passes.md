@@ -205,7 +205,8 @@ The state counts as history only when the last frame the renderer drew was the o
 After a cut (a cutscene's new shot, a teleport, a respawn) the history belongs to the old shot. Kept, it blends the old shot's colours into the new one's first frames, and cells whose tone barely changed keep the old glyph through the hysteresis band, for as long as the shot lasts. Two things reset it (#343):
 
 - **Scripts** call `reset_style_history()` on the frame of the cut ([Scripting → Style API](scripting.md#style-api)). The next frame is drawn as if it were the first.
-- **The player watches the camera** and resets by itself when a frame's step is both large and sudden: a move of more than 2 m or a turn of more than 30° in one frame, at more than four times the rate of the frame before. The second test keeps a fast chase camera, or a hitch that stretches one frame, from resetting every frame and losing its stability. A missed cut costs a shot's worth of stale glyphs, a false one costs one frame drawn without history. FOV and orthographic zoom changes aren't watched: a script that cuts by zoom calls `reset_style_history()`. `set_camera_cut_detection(false)` turns the watch off; the thresholds are the constants in `crates/flint-player/src/player_app/camera_cut.rs`.
+- **The player watches the camera** and resets by itself when a frame's step is both large and sudden: a move of more than 2 m, a turn of more than 30°, or a zoom of more than 1.25x either way (#474) in one frame, at more than four times the rate of the frame before, or any switch between perspective and orthographic. A zoom is measured on the view's size, `tan(fov / 2)` for a perspective camera and the half-height for an orthographic one, so 1.25x is a 50° to 40° punch-in or an ortho height from 10 to 8. The second test keeps a fast chase camera, a quick dolly zoom, or a hitch that stretches one frame, from resetting every frame and losing its stability. A missed cut costs a shot's worth of stale glyphs, a false one costs one frame drawn without history. `set_camera_cut_detection(false)` turns the watch off; the thresholds are the constants in `crates/flint-player/src/player_app/camera_cut.rs`.
+- **The scene viewer** (`flint edit`) resets at its own camera jumps, which it knows about, and runs no detector: Space back to the authored `[camera]` framing, a switch between perspective and orthographic (a view-gizmo snap, or orbiting out of one), and a hot reload. Its orbits, wheel zooms and eased view snaps are motion and keep their history (#474). On `examples/ascii_cuts.scene.toml`, orbited away and back with Space, 204 to 233 of the 1,116 viewport cells kept the orbited view's glyphs before, still there three seconds later; now none do, from the first frame.
 
 `examples/ascii_cuts.scene.toml` cuts between two shots of the meadow clearing every second. Its script's `mode` is `"script"` (it resets at each cut), `"auto"` (the player's detection does) or `"none"` (neither). Captured at 1280x720 with `--frame-step 0.0166667` for 2.5 s, cells whose glyph differs from the `"script"` run (of 14,400):
 
@@ -216,6 +217,18 @@ After a cut (a cutscene's new shot, a teleport, a respawn) the history belongs t
 | `"none"` | 0 | 1,006 (7.0%) | 493 (3.4%) | 45,800 |
 
 The carry-over is mostly in mid tones: `-` where the new shot has `=`, `.` and `:` in the grass. Half of it is still there when the shot ends, because cells that clear the hysteresis band have no reason to change.
+
+Set the script's `zoom` above 1 and the camera never jumps: it keeps drifting over the clearing and every other second the FOV alone punches in, the view `zoom` times smaller. The cells that differ from the `"script"` run on the first zoomed frame (of 14,400), and the glyphs that flip from the last wide frame to it:
+
+| Zoom | `"none"`: carried over | `"auto"`: carried over | Flips at the cut, no reset | Flips at the cut, reset | Flips over the next 30 frames, no reset / reset |
+|------|---|---|---|---|---|
+| 1.1x | 1,288 | 1,288 (not a cut) | 1,317 | 2,419 | 3,111 / 2,716 |
+| 1.2x | 1,702 | 1,702 (not a cut) | 2,072 | 3,469 | 3,317 / 2,707 |
+| 1.3x | 2,072 | 0 | 2,761 | 4,447 | 3,666 / 2,959 |
+| 1.5x | 2,343 | 0 | 4,005 | 5,899 | 5,564 / 4,557 |
+| 2.0x | 2,974 | 0 | 6,153 | 8,489 | 6,336 / 4,944 |
+
+Every zoom carries some over, and the amount rises with the zoom with no knee to put a threshold at. A reset never lowers the number of flips: it moves them onto the cut frame, where the picture changes anyway, and leaves the frames after it calm (a steady drift flips about 82 cells a frame; after a missed cut the carried glyphs keep draining at two to three times that). So the line is drawn by intent. Under 1.25x a step is more likely an effect, a sprint's FOV kick or a hit's jolt, which keeps its history and its quieter frame (a reset would nearly double that frame's flips at 1.1x). Over it, a zoom is a new framing, and the detector resets exactly where the script would: 0 cells apart.
 
 #### Reprojected history
 
