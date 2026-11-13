@@ -10,7 +10,10 @@
 //     straight within a patch, as hatching by hand does.
 //   - contours: pass 1's lines read through a wobbling offset, twice (the
 //     second at another offset by `sketchy`), so outlines overshoot and
-//     double the way quick sketch lines do.
+//     double the way quick sketch lines do. Where `clutter` asks, a line
+//     fades where pass 1's lines already cover most of the disc round it
+//     (#883): a meadow's blades, each a silhouette, would merge there into
+//     one black fill.
 //   - paper: a tone with grain at three scales; graphite catches on the
 //     paper's tooth, so strokes break up where the paper dips. A paper
 //     image (#390) takes the noise's place, and a stroke image the
@@ -28,6 +31,32 @@
 
 const PI: f32 = 3.14159265;
 const BINS: f32 = 12.0;
+
+// Clutter (#883): how much of a disc round `uv` pass 1 has inked, 0..1.
+// Sixteen bilinear taps on a sunflower spiral out to `radius` pixels, each
+// averaging four texels. One outline through the disc covers about a fifth
+// of it (a corner two fifths); a field of small silhouettes, every blade a
+// depth step against the ground behind it, two thirds and more. Measured on
+// the reveal_tear meadow under rotoscope: the props' lines read 0.17 at the
+// median and 0.39 at the 95th percentile, the meadow 0.65
+const CLUTTER_TAPS: i32 = 16;
+
+fn ink_density(uv: vec2<f32>, radius: f32, texel: vec2<f32>) -> f32 {
+    var sum = 0.0;
+    for (var k = 0; k < CLUTTER_TAPS; k++) {
+        let a = f32(k) * 2.3999632;
+        let r = radius * sqrt((f32(k) + 0.5) / f32(CLUTTER_TAPS));
+        let o = vec2<f32>(cos(a), sin(a)) * r;
+        sum += textureSampleLevel(prep_texture, prep_sampler, uv + o * texel, 0.0).y;
+    }
+    return sum / f32(CLUTTER_TAPS);
+}
+
+// The near disc clutter measures, in pixels: two outline widths, at least
+// three; the wide one is three times it
+fn clutter_radius(row: PencilRow, ppp: f32) -> f32 {
+    return max(2.0 * row.b.w * ppp, 3.0);
+}
 
 // One layer's strokes at angle `ang`: coverage 0..1 at point `p` (points).
 // `grow` (0..1) is how far past its threshold the tone is.
@@ -317,7 +346,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         line2 = max(line2, textureSampleLevel(prep_texture, prep_sampler, in.uv + (w2 * 3.0 * wob + o) * texel, 0.0).y);
     }
     let pressure = 0.65 + 0.35 * vnoise(pt * freq * 2.0, seed + 505u);
-    let contour = max(line1, line2 * row.d.x * 0.7) * pressure * row.b.z;
+    var contour = max(line1, line2 * row.d.x * 0.7) * pressure * row.b.z;
+    // Clutter (#883): where the lines would already merge into a fill, over
+    // a disc two outline widths across and over one three times that, they
+    // fade, so a meadow is a sheet with its near edge and its horizon, not a
+    // black band. Both discs, because a small figure's limbs fill the near
+    // one too, but only a field fills the wide one
+    let clutter = row.i.z;
+    if clutter > 0.0 && contour > 0.0 {
+        let r = clutter_radius(row, ppp);
+        let near = smoothstep(0.35, 0.65, ink_density(in.uv, r, texel));
+        let wide = smoothstep(0.30, 0.55, ink_density(in.uv, 3.0 * r, texel));
+        contour *= 1.0 - clutter * min(near, wide);
+    }
     light *= 1.0 - clamp(contour, 0.0, 1.0) * 0.92;
 
     // Paper: a tone with grain, and tooth the graphite skips over

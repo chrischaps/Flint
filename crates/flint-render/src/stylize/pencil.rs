@@ -10,6 +10,7 @@
 //! angle = 50.0           # the base angle, degrees
 //! contour = 1.0          # outline strength
 //! grazing = 0.0          # 1 spares planes seen edge-on from depth lines (#404)
+//! clutter = 0.0          # 1 drops lines in a field of small silhouettes (#883)
 //! tone = "picture"       # picture | light: hatch the darks, or the shadows (#869)
 //! wobble = 1.5           # how far lines wander, points
 //! sketchy = 0.6          # a second, offset outline
@@ -147,6 +148,7 @@ const PARAMS: &[StyleParam] = &[
     StyleParam::new("contour_width", 1.25, 0.5..=4.0),
     StyleParam::new("depth", 1.0, 0.0..=4.0),
     StyleParam::new("grazing", 0.0, 0.0..=1.0),
+    StyleParam::new("clutter", 0.0, 0.0..=1.0),
     StyleParam::new("crease", 1.0, 0.0..=4.0),
     StyleParam::new("detail", 0.35, 0.0..=2.0),
     StyleParam::new("wobble", 1.5, 0.0..=8.0),
@@ -216,6 +218,7 @@ const HINTS: &[StyleHint] = &[
     StyleHint::new("contour_width", "Outline width (pt)", "Outline width in points"),
     StyleHint::new("depth", "Silhouettes", "Outline sensitivity to depth steps"),
     StyleHint::new("grazing", "Spare grazing planes", "1 draws a silhouette only at a true step, so a floor seen edge-on doesn't ink the horizon in a band; 0 = every depth step"),
+    StyleHint::new("clutter", "Spare clutter", "1 drops the lines of a field of small silhouettes (a meadow's blades) where they would merge into a black fill, keeping near blades and true outlines; 0 = every line"),
     StyleHint::new("crease", "Creases", "Outline sensitivity to where the surface turns"),
     StyleHint::new("detail", "Texture lines", "Outlines from the picture's own luminance edges"),
     StyleHint::new("wobble", "Wobble (pt)", "How far lines wander off true"),
@@ -584,7 +587,7 @@ pub fn row(
             [
                 param("grazing").clamp(0.0, 1.0),
                 tone_mode(&option("tone")),
-                0.0,
+                param("clutter").clamp(0.0, 1.0),
                 0.0,
             ],
         ],
@@ -616,20 +619,28 @@ pub fn choose_image(names: &[String], rows: &mut [PencilRow], lane: usize) -> (S
 /// (#385), for the rows `rows`: the surface flow's 5x5 taps over
 /// `1.5 * spacing` points, the tensor flow's blur (#392, `pencil_flow.wgsl`)
 /// over `3 * spacing` along each axis, or a contour's wobble
-/// (`1.5 * wobble`) plus half its width; and four pixels for the bilinear
+/// (`1.5 * wobble`) plus half its width, or with `clutter` (#883) the wide
+/// disc it measures (three times `clutter_radius` in `pencil.wgsl`: six
+/// contour widths, at least nine pixels); and four pixels for the bilinear
 /// taps' footprint and the flow's half-resolution texels.
 fn prep_reach(rows: &[PencilRow], pixels_per_point: f32) -> u32 {
-    let points = rows
+    let pixels = rows
         .iter()
         .map(|r| {
             let [spacing, ..] = r.v[0];
             let contour_width = r.v[1][3];
             let wobble = r.v[2][3];
             let flow = if r.v[4][3] == TENSOR { 3.0 } else { 1.5 };
-            (flow * spacing).max(1.5 * wobble + 0.5 * contour_width.max(1.0))
+            let points = (flow * spacing).max(1.5 * wobble + 0.5 * contour_width.max(1.0));
+            let clutter = if r.v[8][2] > 0.0 {
+                3.0 * (2.0 * contour_width * pixels_per_point).max(3.0)
+            } else {
+                0.0
+            };
+            (points * pixels_per_point).max(clutter)
         })
         .fold(0.0f32, f32::max);
-    (points * pixels_per_point).ceil() as u32 + 4
+    pixels.ceil() as u32 + 4
 }
 
 struct Pencil {
@@ -1195,6 +1206,33 @@ mod tests {
         assert_eq!(&r.v[4][..3], &[0.95, 0.93, 0.88], "paper");
         assert_eq!([r.v[6][0], r.v[6][1], r.v[6][2]], [3.0, 4.0, 1.0]);
         assert_eq!(r.v[7], [1.0, 1.0, 0.0, 0.0], "no images by default");
+        assert_eq!(r.v[8][2], 0.0, "no clutter by default");
+    }
+
+    /// `clutter` (#883) rides in the ninth vec4's third lane, clamped to
+    /// 0..1, and the scissor reaches as far as the wide disc it measures:
+    /// six contour widths, wider than a thin line's wobble.
+    #[test]
+    fn clutter_rides_in_the_row_and_widens_the_reach() {
+        let config = crate::postprocess::PostProcessConfig::default();
+        let cfg = &config;
+        let o = |n: &str| STYLE.option(cfg, n).to_string();
+        let with = |clutter: f32| {
+            let p = move |n: &str| match n {
+                "clutter" => clutter,
+                "contour_width" => 4.0,
+                "wobble" => 0.0,
+                "spacing" => 1.0,
+                _ => STYLE.param(cfg, n),
+            };
+            row(&p, &o, 0.0, [0.0, 0.0], 0.0)
+        };
+        assert_eq!(with(1.0).v[8][2], 1.0);
+        assert_eq!(with(3.0).v[8][2], 1.0, "clamped");
+        // 1.5 spacing, or half a 4 pt outline: 2 pt; the wide disc: 24 pt
+        assert_eq!(prep_reach(&[with(0.0)], 1.0), 2 + 4);
+        assert_eq!(prep_reach(&[with(1.0)], 1.0), 24 + 4);
+        assert_eq!(prep_reach(&[with(0.0), with(0.5)], 2.0), 48 + 4);
     }
 
     #[test]

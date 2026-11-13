@@ -682,6 +682,23 @@ name = "look-rotoscope-light-entities-msaa4"
 scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--msaa", "4", "--look", "rotoscope", "--style", "pencil:scope=entities,tone=light,brightness=0"]
 
+# A meadow under rotoscope (#883): grass at density 40 out to 70 m, every
+# blade a depth step against the ground behind it. clutter = 1 (the look's)
+# fades a line where the lines round it already cover most of a disc, near
+# and wide, so the meadow is a sheet with its near edge and its horizon
+# line, and the bench, barrel, crate and lantern keep their outlines
+[[case]]
+name = "look-rotoscope-meadow"
+scene = "tests/fixtures/scenes/pencil_meadow.scene.toml"
+args = ["--no-grid", "--look", "rotoscope"]
+
+# The same with clutter off: the band #883 was filed for, every blade inked
+# and merged into one black fill from the near edge to the horizon
+[[case]]
+name = "look-rotoscope-meadow-clutter-off"
+scene = "tests/fixtures/scenes/pencil_meadow.scene.toml"
+args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:clutter=0"]
+
 # A sweep's contact sheet: the cells, their frames and the glyph labels
 [[case]]
 name = "look-sweep-cell"

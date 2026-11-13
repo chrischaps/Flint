@@ -23,6 +23,7 @@ tune = [
     "pencil.brightness=0.35,0.5,0.65",
     "pencil.layers=0,1,2",
     "pencil.grazing=0,0.5,1",
+    "pencil.clutter=0,0.5,1",
     "pencil.tone=picture,light",
 ]
 notes = """
@@ -35,6 +36,12 @@ cheapest pencil); layers = 2 crosses the barrels' strokes and leaves the
 floor blank. grazing = 1 is what keeps the sheet blank: without it a
 floor seen edge-on steps in depth from row to row like a silhouette and
 inks a thick band along the horizon; at 1 the horizon is one line.
+clutter = 1 (#883) is what keeps a meadow blank: every grass blade is a
+depth step against the ground behind it, and at 1.5 points their lines
+merged into one black band from the near edge to the horizon. At 1 a line
+fades where the lines round it already cover most of a disc two outline
+widths across, so the meadow is a sheet with its near edge's tufts and its
+horizon; the props' outlines, which cover a fifth of that disc, stay.
 direction = screen, one hand at one angle, read most like a traced frame:
 surface and tensor both swirled round the barrels.
 contour_width 1.5 and wobble 2 are the middle of the sweep: 1 looked like a
@@ -60,6 +67,7 @@ angle = 55.0
 brightness = 0.5
 contrast = 1.6
 grazing = 1.0
+clutter = 1.0
 contour = 1.6
 contour_width = 1.5
 wobble = 2.0
