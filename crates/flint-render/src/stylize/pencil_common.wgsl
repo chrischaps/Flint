@@ -24,6 +24,8 @@ struct PencilRow {
     // grazing (#404), tone (#869: 0 picture, 1 light), transition (#879:
     // 0 fade, 1 draw), the seed without the boil's steps (the draw order's)
     i: vec4<f32>,
+    // clutter (#883), unused x3
+    j: vec4<f32>,
 };
 
 struct PencilUniforms {
