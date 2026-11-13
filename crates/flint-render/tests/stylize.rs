@@ -3314,7 +3314,8 @@ fn a_loop_that_never_ends_draws_a_frame() {
 
 /// #411: a loop that ends on its own (a 9x9 blur) draws byte for byte the
 /// same guarded as not, though the guarded module is naga's rewrite of the
-/// composed text.
+/// composed text. Its radius is read from a uniform (always 4), since a
+/// constant one is proven to end and isn't guarded at all (#424).
 #[test]
 fn a_bounded_loop_draws_the_same_guarded() {
     let Some(gpu) = gpu_alone() else {
@@ -3324,8 +3325,9 @@ fn a_bounded_loop_draws_the_same_guarded() {
     use flint_render::stylize::custom;
     let wgsl = "fn style(p: StylePixel) -> vec4<f32> {\n    \
                 var acc = vec4<f32>(0.0);\n    \
-                for (var y = -4; y <= 4; y++) {\n        \
-                for (var x = -4; x <= 4; x++) {\n            \
+                let r = 4 + i32(flint.texel.x * 0.0);\n    \
+                for (var y = -r; y <= r; y++) {\n        \
+                for (var x = -r; x <= r; x++) {\n            \
                 acc += flint_sample(p.uv + vec2<f32>(f32(x), f32(y)) * flint.texel * 2.0);\n        \
                 }\n    }\n    \
                 return vec4<f32>(acc.rgb / 81.0, 1.0);\n}\n";

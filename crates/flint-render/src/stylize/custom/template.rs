@@ -198,8 +198,11 @@ fn wgsl(name: &str, stage: StyleStage, inputs: Inputs) -> String {
 // in the corner of the window, with its line in this file. Check it first
 // with `flint style check {name}.shader.toml`.
 //
-// Loops are allowed, but keep their bounds constant or a clamped param: a
-// loop that never ends hangs the GPU until the driver resets it.
+// Loops are allowed. A `for` with a constant start, bound and step (octaves,
+// kernel taps) builds as written; Flint guards any other loop natively, so
+// one that never ends stops after 4096 turns and draws a wrong pixel
+// instead of hanging the GPU. Keep bounds constant or a clamped param
+// anyway: the web doesn't guard them yet.
 
 fn style(p: StylePixel) -> vec4<f32> {{
     let c = p.color;
