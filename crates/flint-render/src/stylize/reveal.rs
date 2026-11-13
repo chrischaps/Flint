@@ -173,6 +173,20 @@ pub const DEFAULT_PAPER: [f32; 3] = [0.95, 0.93, 0.88];
 /// How far an unnamed rim colour is lifted from the paper toward white.
 const RIM_LIFT: f32 = 0.5;
 
+/// The paper a style's rim starts from (#876): its own `paper` colour in
+/// `config` where it has one (pencil, watercolor), else [`DEFAULT_PAPER`].
+/// The renderer and F4 both ask here, so F4's default is what is drawn.
+pub fn style_paper(
+    descriptor: &super::StyleDescriptor,
+    config: &crate::PostProcessConfig,
+) -> [f32; 3] {
+    if descriptor.color_setting("paper").is_some() {
+        descriptor.color(config, "paper")
+    } else {
+        DEFAULT_PAPER
+    }
+}
+
 /// How far the edge's shadow reaches onto the live side, in points (#876).
 const SHADOW_POINTS: f32 = 14.0;
 
@@ -623,11 +637,7 @@ impl RevealPass {
         };
         let linear = frame.descriptor.stage == StyleStage::Hdr || frame.format.is_srgb();
         // The rim is bare paper: the style's own, where it has one
-        let paper = if frame.descriptor.color_setting("paper").is_some() {
-            frame.color("paper")
-        } else {
-            DEFAULT_PAPER
-        };
+        let paper = style_paper(frame.descriptor, frame.config);
         let uniform = reveal.uniform(
             frame.width,
             frame.height,

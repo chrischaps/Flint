@@ -20,6 +20,10 @@ pub struct EmitterFrame {
     pub prev_position: [f32; 3],
     /// Emitter velocity in world units per second.
     pub velocity: [f32; 3],
+    /// Drawn on ticks (#873): particles are born at `position`, not along
+    /// `prev_position -> position`, which is the jump between two drawings.
+    /// Emission over distance still counts that jump.
+    pub held: bool,
     /// Unit rotation basis (columns); `world = basis · local`.
     pub basis: [[f32; 3]; 3],
     /// Uniform scale from the entity transform.
@@ -38,6 +42,7 @@ impl Default for EmitterFrame {
             position: [0.0; 3],
             prev_position: [0.0; 3],
             velocity: [0.0; 3],
+            held: false,
             basis: IDENTITY,
             transform_scale: 1.0,
             effect_scale: 1.0,
@@ -196,7 +201,11 @@ pub fn spawn_particle(
             };
             let offset = add(offset, scale(rotate(cfg.shape_offset), dist_scale));
 
-            let emitter_pos = lerp3(frame.prev_position, frame.position, frac.clamp(0.0, 1.0));
+            let emitter_pos = if frame.held {
+                frame.position
+            } else {
+                lerp3(frame.prev_position, frame.position, frac.clamp(0.0, 1.0))
+            };
             let position = if cfg.world_space {
                 add(emitter_pos, offset)
             } else {
