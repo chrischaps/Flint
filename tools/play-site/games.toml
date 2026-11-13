@@ -35,8 +35,10 @@ repo = "chrischaps/Float"
 # master, now that engine-catchup is merged into it: the engine subtree at
 # Flint main, bundle.toml (#102), the early ambience bundle (#124), the touch
 # layout (#134), the iPad pointer-lock fix (#153, Float#4), the raft polish
-# (Float#7) and the body playtest pass (Float#8)
-ref = "3e0b75f4f40fb30fde7247d45ee68e91bd43087d"
+# (Float#7), the body playtest pass (Float#8), and the engine sync to Flint
+# main 356f44a (looks that work in play, the vignette at 0.18), whose
+# schemas pass the strict loader (#799)
+ref = "8595f72e8a940a75362ded941a5b89f7f121dcad"
 page = "https://chaps.dev/projects/float/"
 video = "https://chaps.dev/projects/float/a-day-at-sea.mp4"
 poster = "https://chaps.dev/projects/float/poster-day.jpg"
