@@ -12,7 +12,8 @@
 #     --width 1280 --height 720 --frames 181 --orbit 6.8755 --no-images --flip-stats
 #
 # and again with --style ascii:temporal=off. Add --style ascii:edges=0 to
-# leave out the edge glyphs (#267), which the history doesn't hold yet.
+# leave out the edge glyphs (#267), which keep a history of their own
+# (#477): 0.9 reversals a frame with them on, 38.2 before.
 # The player's capture, with the script, is the other way:
 #
 #   cargo run --bin flint-player -- examples/ascii_motion.scene.toml \
