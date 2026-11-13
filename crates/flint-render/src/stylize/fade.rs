@@ -114,7 +114,7 @@ impl FadePass {
             return;
         };
         let me = me as u32 + 1;
-        let table = owner_table(frame.style_ids, registry);
+        let table = owner_table(frame.config, frame.style_ids, registry);
         let owners_bind = {
             let mut owners = self.owners.lock().unwrap_or_else(|e| e.into_inner());
             if owners.capacity < table.len() {
@@ -228,8 +228,11 @@ fn owners_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
 
 /// Each mask id's owner, indexed by id: the registry index + 1 of the
 /// style its variant names, or 0 for no id, an opt-out (`enabled = false`
-/// leaves its pixels alone) or a style that isn't registered.
+/// leaves its pixels alone), a style that isn't registered, or a variant
+/// whose style draws its blend itself (#879, pencil's `transition =
+/// "draw"`), so the cross-fade passes over it.
 pub(crate) fn owner_table(
+    config: &crate::postprocess::PostProcessConfig,
     ids: &crate::style_mask::StyleIds,
     registry: &[&'static StyleDescriptor],
 ) -> Vec<u32> {
@@ -242,7 +245,9 @@ pub(crate) fn owner_table(
             continue;
         }
         if let Some(i) = registry.iter().position(|d| d.name == v.style) {
-            *slot = i as u32 + 1;
+            if !registry[i].draws_own_blend(config, Some(v)) {
+                *slot = i as u32 + 1;
+            }
         }
     }
     table
@@ -268,7 +273,8 @@ mod tests {
         ]);
         let registry = super::super::registry();
         let index = |name: &str| registry.iter().position(|d| d.name == name).unwrap() as u32 + 1;
-        let table = owner_table(&ids, registry);
+        let config = crate::postprocess::PostProcessConfig::default();
+        let table = owner_table(&config, &ids, registry);
         assert_eq!(table.len(), 5);
         assert_eq!(table[0], 0, "id 0 is unstyled");
         assert_eq!(table[ids.id("pencil").unwrap() as usize], index("pencil"));

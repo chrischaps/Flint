@@ -120,6 +120,10 @@ pub const GRIDS: &[&str] = &["screen", "object", "world"];
 /// alone (the picture over its albedo).
 pub const TONES: &[&str] = &["picture", "light"];
 
+/// How a blend below 1 shows the drawing (#879): a cross-fade of every
+/// pixel, or drawn on, outlines first, then hatching, then the paper.
+pub const TRANSITIONS: &[&str] = &["fade", "draw"];
+
 /// Rows one frame's variant table holds, the whole frame's included.
 pub const MAX_VARIANTS: usize = 64;
 
@@ -197,6 +201,7 @@ const OPTIONS: &[StyleOption] = &[
     StyleOption::new("scope", "screen", SCOPES),
     StyleOption::new("grid", "screen", GRIDS),
     StyleOption::new("tone", "picture", TONES),
+    StyleOption::new("transition", "fade", TRANSITIONS),
     StyleOption::new("paper_image", NO_IMAGE, &[]).discovered(paper_choices),
     StyleOption::new("stroke_image", NO_IMAGE, &[]).discovered(stroke_choices),
 ];
@@ -206,6 +211,7 @@ const HINTS: &[StyleHint] = &[
     StyleHint::new("scope", "Scope", "screen: the table draws the whole frame; entities: it is only the preset for pencil_style entities"),
     StyleHint::new("grid", "Hatch anchor", "screen: hatching fixed to the screen; object: pinned to each entity's origin, so strokes travel with it; world: laid on the surfaces, so they hold as the camera moves"),
     StyleHint::new("tone", "Tone from", "picture: hatch where the picture is dark, dark paint included; light: hatch where the light falls off (the picture over each mesh's own colour), so a dark floor in the sun stays blank and a white prop in shadow is hatched"),
+    StyleHint::new("transition", "Transition", "How a blend below 1 shows the drawing: fade cross-fades every pixel, faint all over; draw draws it on, the outlines growing along their length up to the blend, the hatching a stroke at a time after them, the paper's wash last"),
     StyleHint::new("spacing", "Spacing (pt)", "Hatch line spacing in points"),
     StyleHint::new("thickness", "Stroke width (pt)", "Hatch stroke width in points"),
     StyleHint::new("layers", "Hatch layers", "Up to four; each joins, crossing the last, as the tone darkens").integer(),
@@ -241,7 +247,52 @@ pub(super) static STYLE: StyleDescriptor =
         .options(OPTIONS)
         .hints(HINTS)
         .uses_albedo(super::MaskUse::When(reads_albedo))
+        .draws_blend(draws_on)
         .component("pencil_style");
+
+/// Whether pencil draws this blend on itself (#879): the whole frame's
+/// (`None`) when its table says `transition = "draw"`, an entity variant's
+/// when the variant does (its own, else the table's). The stage's mix and
+/// the cross-fade leave those blends to the draw pass.
+fn draws_on(
+    config: &crate::postprocess::PostProcessConfig,
+    variant: Option<&crate::style_mask::StyleVariant>,
+) -> bool {
+    let transition = match variant {
+        None => STYLE.option(config, "transition"),
+        Some(v) => v.option(&STYLE, config, "transition"),
+    };
+    transition == "draw"
+}
+
+/// The transition's shader number (#879): 0 fade, 1 draw; an unknown name
+/// is `fade`.
+pub fn transition_mode(name: &str) -> f32 {
+    TRANSITIONS.iter().position(|m| *m == name).unwrap_or(0) as f32
+}
+
+/// Whether this frame draws with the draw-on pass (#879): the whole frame's
+/// front is below 1, or an entity row draws on while the mask may hold a
+/// blend below 1 (`mask_fades`). Otherwise every pixel is whole and the
+/// plain pass draws it, as it did before the transition existed.
+pub fn draws_on_now(rows: &[PencilRow], front: f32, mask_fades: bool) -> bool {
+    front < 1.0
+        || (mask_fades
+            && rows
+                .iter()
+                .skip(1)
+                .any(|r| r.v[8][2] > 0.5 && (r.v[6][2] as u32) & 1 == 0))
+}
+
+/// The whole frame's draw front (#879): the table's blend while the table
+/// draws on, else 1, when the stage mixes the blend instead.
+pub fn whole_frame_front(config: &crate::postprocess::PostProcessConfig) -> f32 {
+    if draws_on(config, None) {
+        config.styles.blend(STYLE.name)
+    } else {
+        1.0
+    }
+}
 
 /// Whether some row this frame takes its tone from the light (#869): the
 /// scene's table over the frame, or an entity's variant, so the renderer
@@ -351,6 +402,13 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
             &[&uniform_bgl, &input_bgl, &geometry_bgl, &prep_bgl],
             d.format,
         ),
+        draw_on_pipeline: kit::fullscreen_pipeline(
+            device,
+            "Pencil Draw On Pipeline",
+            &kit::shader(device, "Pencil Draw On Shader", DRAW_ON_SHADER),
+            &[&uniform_bgl, &input_bgl, &geometry_bgl, &prep_bgl],
+            d.format,
+        ),
         uniforms: kit::uniform_buffer::<PencilUniforms>(device, "Pencil Uniforms"),
         uniform_bgl,
         input_bgl,
@@ -389,6 +447,17 @@ const PREP_SHADER: kit::Wgsl = kit::wgsl!(
     "pencil_prep.wgsl"
 );
 const DRAW_SHADER: kit::Wgsl = kit::wgsl!(
+    "pencil_fade.wgsl",
+    "pencil_common.wgsl",
+    "style_image.wgsl",
+    "pencil.wgsl"
+);
+/// The drawing pass with the draw-on code in (#879): its own module, so the
+/// one every other frame draws with compiles exactly as before (a draw-on
+/// path in the same function moved pencil-full's pixels by a level, the
+/// driver reassociating the strokes' products round it).
+const DRAW_ON_SHADER: kit::Wgsl = kit::wgsl!(
+    "pencil_draw_on.wgsl",
     "pencil_common.wgsl",
     "style_image.wgsl",
     "pencil.wgsl"
@@ -435,11 +504,11 @@ pub fn any_tensor(rows: &[PencilRow]) -> bool {
     })
 }
 
-/// One variant's settings, nine vec4s (see `PencilRow` in the shader).
+/// One variant's settings, ten vec4s (see `PencilRow` in the shader).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Debug, PartialEq)]
 pub struct PencilRow {
-    pub v: [[f32; 4]; 9],
+    pub v: [[f32; 4]; 10],
 }
 
 /// The paper and stroke images, kept with the style (#390).
@@ -458,7 +527,8 @@ struct PencilUniforms {
     pixels_per_point: f32,
     size: [f32; 2],
     srgb: f32,
-    _pad0: f32,
+    /// The whole frame's draw front (#879, [`whole_frame_front`])
+    front: f32,
     forward: [f32; 3],
     _pad1: f32,
     info: [u32; 4],
@@ -587,9 +657,11 @@ pub fn row(
             [
                 param("grazing").clamp(0.0, 1.0),
                 tone_mode(&option("tone")),
-                param("clutter").clamp(0.0, 1.0),
-                0.0,
+                transition_mode(&option("transition")),
+                // The draw order's seed holds still while the lines boil
+                param("seed").max(0.0).floor(),
             ],
+            [param("clutter").clamp(0.0, 1.0), 0.0, 0.0, 0.0],
         ],
     }
 }
@@ -632,7 +704,7 @@ fn prep_reach(rows: &[PencilRow], pixels_per_point: f32) -> u32 {
             let wobble = r.v[2][3];
             let flow = if r.v[4][3] == TENSOR { 3.0 } else { 1.5 };
             let points = (flow * spacing).max(1.5 * wobble + 0.5 * contour_width.max(1.0));
-            let clutter = if r.v[8][2] > 0.0 {
+            let clutter = if r.v[9][0] > 0.0 {
                 3.0 * (2.0 * contour_width * pixels_per_point).max(3.0)
             } else {
                 0.0
@@ -650,6 +722,8 @@ struct Pencil {
     /// And along y, from the across pass's result
     flow_down: wgpu::RenderPipeline,
     draw_pipeline: wgpu::RenderPipeline,
+    /// The drawing pass while some row draws on (#879, [`DRAW_ON_SHADER`])
+    draw_on_pipeline: wgpu::RenderPipeline,
     uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
     input_bgl: wgpu::BindGroupLayout,
@@ -837,7 +911,7 @@ impl StylePass for Pencil {
             },
             size: [frame.width as f32, frame.height as f32],
             srgb: if frame.srgb() { 1.0 } else { 0.0 },
-            _pad0: 0.0,
+            front: whole_frame_front(frame.config),
             forward: forward_axis(&frame.camera.inv_view_proj),
             _pad1: 0.0,
             info: [
@@ -937,12 +1011,20 @@ impl StylePass for Pencil {
                 ],
             })
         });
+        // Drawing on (#879) takes the other module, only while some front
+        // is below 1: the whole frame's, or a drawing row's entity at a
+        // mask blend under 1
+        let pipeline = if draws_on_now(&rows, uniforms.front, frame.mask_fades && with_mask) {
+            &self.draw_on_pipeline
+        } else {
+            &self.draw_pipeline
+        };
         kit::scissored_pass(
             encoder,
             "Pencil Pass",
             output,
             size,
-            &self.draw_pipeline,
+            pipeline,
             &[&uniform, &input_bind, &geometry, &prep_bind],
             draw_rect,
             &self.blit,
@@ -972,6 +1054,7 @@ mod tests {
         for (source, name) in [
             (PREP_SHADER, "prep"),
             (DRAW_SHADER, "draw"),
+            (DRAW_ON_SHADER, "draw on"),
             (FLOW_SHADER, "flow"),
         ] {
             let module = validate(source.text, name);
@@ -990,11 +1073,11 @@ mod tests {
     }
 
     #[test]
-    fn a_row_is_nine_vec4s() {
-        assert_eq!(std::mem::size_of::<PencilRow>(), 144);
+    fn a_row_is_ten_vec4s() {
+        assert_eq!(std::mem::size_of::<PencilRow>(), 160);
         assert_eq!(
             std::mem::size_of::<PencilUniforms>(),
-            64 + 16 + 16 + 16 + 16 + 16 + MAX_VARIANTS * 144 + MAX_IDS * 4
+            64 + 16 + 16 + 16 + 16 + 16 + MAX_VARIANTS * 160 + MAX_IDS * 4
         );
     }
 
@@ -1052,6 +1135,87 @@ mod tests {
         ids.set(vec![("pencil".to_string(), StyleVariant::plain("pencil"))]);
         config.enabled = false;
         assert!(!crate::stylize::any_uses_albedo(&config, &ids));
+    }
+
+    /// `transition = "draw"` (#879): the row carries it in `i.z` and the
+    /// unboiled seed in `i.w`; pencil draws the whole frame's blend itself
+    /// only while the table draws, and a variant's while the variant does
+    /// (its own, else the table's); the cross-fade's owner table then gives
+    /// that variant to nobody.
+    #[test]
+    fn a_draw_transition_takes_its_blends_from_the_framework() {
+        use crate::postprocess::PostProcessConfig;
+        use crate::style_mask::{StyleIds, StyleVariant};
+        let mut config = PostProcessConfig::default();
+        let p = |c: &PostProcessConfig, n: &str| STYLE.param(c, n);
+        let r = row(
+            &|n| p(&config, n),
+            &|n| match n {
+                "transition" => "draw".into(),
+                o =>STYLE.option(&config, o).to_string(),
+            },
+            1.0,
+            [0.0, 0.0],
+            0.0,
+        );
+        assert_eq!(r.v[8][2], 1.0, "draw");
+        // The draw-on pass is taken only while some front can be below 1
+        let mut fade_row = r;
+        fade_row.v[8][2] = 0.0;
+        let mut opted_out = r;
+        opted_out.v[6][2] = PASS_THROUGH + WORLD_GRID;
+        assert!(!draws_on_now(&[fade_row, r], 1.0, false), "no blend below 1");
+        assert!(draws_on_now(&[fade_row, r], 1.0, true), "an entity drawing on");
+        assert!(!draws_on_now(&[r, fade_row], 1.0, true), "row 0 is the whole frame's");
+        assert!(!draws_on_now(&[fade_row, opted_out], 1.0, true), "an opt-out draws nothing");
+        assert!(draws_on_now(&[fade_row], 0.5, false), "the whole frame's front");
+        assert_eq!(transition_mode("fade"), 0.0);
+        assert_eq!(transition_mode("smear"), 0.0, "an unknown name is fade");
+
+        // Boil moves the hatching's seed, never the order's
+        let boiling = row(
+            &|n| match n {
+                "seed" => 7.0,
+                "boil" => 4.0,
+                n => p(&config, n),
+            },
+            &|n| STYLE.option(&config, n).to_string(),
+            1.0,
+            [0.0, 0.0],
+            0.0,
+        );
+        assert_eq!(boiling.v[3][3], 11.0, "the strokes' seed boils");
+        assert_eq!(boiling.v[8][3], 7.0, "the order's doesn't");
+
+        config.styles.set_enabled("pencil", true);
+        config.styles.set_blend("pencil", Some(0.4));
+        assert!(!STYLE.draws_own_blend(&config, None), "fade is the default");
+        assert_eq!(whole_frame_front(&config), 1.0, "the stage mixes it");
+        config.styles.set_option("pencil", "transition", "draw");
+        assert!(STYLE.draws_own_blend(&config, None));
+        assert_eq!(whole_frame_front(&config), 0.4);
+
+        // A variant inherits the table's draw unless it says otherwise
+        let inherits = StyleVariant::plain("pencil");
+        let mut fades = StyleVariant::plain("pencil");
+        fades.options.insert("transition".into(), "fade".into());
+        assert!(STYLE.draws_own_blend(&config, Some(&inherits)));
+        assert!(!STYLE.draws_own_blend(&config, Some(&fades)));
+
+        let mut ids = StyleIds::default();
+        ids.set(vec![
+            ("pencil".into(), inherits),
+            ("pencil{transition=fade}".into(), fades),
+        ]);
+        let registry = crate::stylize::registry();
+        let table = super::super::fade::owner_table(&config, &ids, registry);
+        let me = registry.iter().position(|d| d.name == "pencil").unwrap() as u32 + 1;
+        assert_eq!(table[ids.id("pencil").unwrap() as usize], 0, "drawn by pencil");
+        assert_eq!(
+            table[ids.id("pencil{transition=fade}").unwrap() as usize],
+            me,
+            "cross-faded by the framework"
+        );
     }
 
     #[test]
@@ -1206,10 +1370,10 @@ mod tests {
         assert_eq!(&r.v[4][..3], &[0.95, 0.93, 0.88], "paper");
         assert_eq!([r.v[6][0], r.v[6][1], r.v[6][2]], [3.0, 4.0, 1.0]);
         assert_eq!(r.v[7], [1.0, 1.0, 0.0, 0.0], "no images by default");
-        assert_eq!(r.v[8][2], 0.0, "no clutter by default");
+        assert_eq!(r.v[9][0], 0.0, "no clutter by default");
     }
 
-    /// `clutter` (#883) rides in the ninth vec4's third lane, clamped to
+    /// `clutter` (#883) rides in the tenth vec4's first lane, clamped to
     /// 0..1, and the scissor reaches as far as the wide disc it measures:
     /// six contour widths, wider than a thin line's wobble.
     #[test]
@@ -1227,8 +1391,8 @@ mod tests {
             };
             row(&p, &o, 0.0, [0.0, 0.0], 0.0)
         };
-        assert_eq!(with(1.0).v[8][2], 1.0);
-        assert_eq!(with(3.0).v[8][2], 1.0, "clamped");
+        assert_eq!(with(1.0).v[9][0], 1.0);
+        assert_eq!(with(3.0).v[9][0], 1.0, "clamped");
         // 1.5 spacing, or half a 4 pt outline: 2 pt; the wide disc: 24 pt
         assert_eq!(prep_reach(&[with(0.0)], 1.0), 2 + 4);
         assert_eq!(prep_reach(&[with(1.0)], 1.0), 24 + 4);

@@ -1,0 +1,50 @@
+# Stylize props, pencil drawn on (#879): tests/fixtures/scenes/stylize_props_pencil.scene.toml's
+# clearing with its pencil props at a blend below 1 under `transition =
+# "draw"` (the scene's preset, scope = "entities"). The cask is half drawn
+# by its own blend (style_mask blend 0.5); the crate's blend follows the
+# reality tear (`blend_source = "tear"`), so with no tear on it is at blend
+# 0 and with render mode 6 it is drawn as far as the tear reaches.
+#
+#   cargo run --bin flint -- render tests/fixtures/scenes/stylize_props_pencil_draw.scene.toml --no-grid --output half.png
+#   cargo run --bin flint -- render tests/fixtures/scenes/stylize_props_pencil_draw.scene.toml --no-grid \
+#     --render-mode 6 --mode-mix 0.5 --output torn.png
+
+[scene]
+name = "Stylize Props (pencil drawn on)"
+version = "1.0"
+description = "The pencil props drawn on part way, by their own blend and by the tear, for the draw-transition goldens (#879)"
+
+[camera]
+position = [3.4, 1.7, 9.0]
+target = [0.7, 0.7, 4.2]
+fov = 50.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.05
+bloom_threshold = 1.2
+exposure = 1.25
+vignette_enabled = true
+vignette_intensity = 0.25
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+
+[post_process.styles.pencil]
+scope = "entities"
+transition = "draw"
+
+[prefabs.props]
+template = "stylize_props"
+prefix = "props"
+
+[prefabs.props.overrides.cask.style_mask]
+style = "pencil"
+blend = 0.5
+[prefabs.props.overrides.crate.style_mask]
+style = "pencil"
+blend_source = "tear"
+
+# Unstyled, against its parent's style
+[prefabs.props.overrides.tag.style_mask]
+enabled = false
