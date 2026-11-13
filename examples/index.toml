@@ -209,6 +209,11 @@ topic = "stylize"
 purpose = "One script call tears the live frame open into a pencil sketch through a ragged, inked edge (#406)"
 
 [[example]]
+scene = "understudy.scene.toml"
+topic = "stylize"
+purpose = "A short film: a wooden mannequin walks out of a live clearing through a torn page into a world drawn in pencil, and back, with comic captions (#407)"
+
+[[example]]
 scene = "pencil_sketch.scene.toml"
 topic = "stylize"
 purpose = "Pencil on chosen props: hatching, contours and paper (#273)"
