@@ -214,9 +214,10 @@ impl Gpu {
 
 /// The frame's camera, at the frame's shape as a host keeps it
 fn frame_camera() -> Camera {
-    let mut camera = Camera::default();
-    camera.aspect = W as f32 / H as f32;
-    camera
+    Camera {
+        aspect: W as f32 / H as f32,
+        ..Camera::default()
+    }
 }
 
 /// `FLINT_PANELS_DUMP=<dir>` writes a frame there, to look at a failure.
