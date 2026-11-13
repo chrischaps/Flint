@@ -2921,12 +2921,12 @@ impl SceneRenderer {
             .extract_ocean(world, self.pipelines.ocean.is_some());
         self.water.extract_contact(world, self.ocean_time);
         self.water
-            .extract_bodies(world, device, self.pipelines.ocean.as_ref());
+            .extract_bodies(world, device, self.pipelines.ocean.as_deref());
         if self.water_active() {
             // Ocean always binds group 3; make sure the placeholder exists
             // even on paths where the grab pass never runs.
             self.water
-                .ensure_grab_dummy(device, self.pipelines.ocean.as_ref());
+                .ensure_grab_dummy(device, self.pipelines.ocean.as_deref());
         }
 
         // Extract procedural sky params (+ optional ambient override)
@@ -3595,7 +3595,7 @@ impl SceneRenderer {
         look: crate::water_body::WaterBodyLook,
     ) -> Result<(), String> {
         self.water
-            .set_body(device, self.pipelines.ocean.as_ref(), id, mesh, look)
+            .set_body(device, self.pipelines.ocean.as_deref(), id, mesh, look)
     }
 
     /// Change a body's look and keep its mesh. Returns whether it existed.
@@ -4332,7 +4332,7 @@ impl SceneRenderer {
                 (res.width, res.height)
             };
             self.water
-                .ensure_grab(device, self.pipelines.ocean.as_ref(), w, h);
+                .ensure_grab(device, self.pipelines.ocean.as_deref(), w, h);
             if self.water.grab.bind_group.is_none() {
                 self.water.grab_this_frame = false;
             }
