@@ -209,7 +209,7 @@ impl SceneRenderer {
         };
         let frame_size = self.surface_size;
         let format = self.surface_format;
-        let msaa = self.sample_count;
+        let msaa = self.pipelines.samples();
         let rects = layout.rects(frame_size.0, frame_size.1, self.pixels_per_point);
         let compositor = match self.panel_state.compositor.take() {
             Some(c) if c.format() == format => c,
@@ -341,7 +341,7 @@ impl SceneRenderer {
         PanelView {
             size,
             format,
-            msaa: self.sample_count,
+            msaa: self.pipelines.samples(),
             scale: self.render_scale,
             _color: color,
             color_view,
