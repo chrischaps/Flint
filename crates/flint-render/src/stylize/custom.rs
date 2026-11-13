@@ -2150,12 +2150,36 @@ pub fn load_for(scope: &AssetScope) -> Vec<String> {
 
 /// Register the style `path` describes (see [`load_for`]): new, or in
 /// place of the style of its name loaded from another file.
+///
+/// A file that doesn't read (a TOML typo, a `name` that isn't the file's,
+/// an unknown input, a default outside its range) registers nothing: its
+/// error is kept by path for [`errors`] until the file loads or goes
+/// (#425), so the host's card shows it as it shows a shader that fails.
 pub fn load_file(path: &Path, messages: &mut Vec<String>) -> Result<(), String> {
     // Loaded from this very file: a changed one is the reload's to read
     if loaded_from(path).is_some() {
         return Ok(());
     }
-    let source = read_source(path)?;
+    // Stamped before the read, so a save during it is read at the next poll
+    #[cfg(not(target_arch = "wasm32"))]
+    let stamp = modified(path);
+    let source = match read_source(path) {
+        Ok(source) => source,
+        Err(e) => {
+            let failure = Failure {
+                name: AssetKind::Styles
+                    .info()
+                    .name_of(path)
+                    .unwrap_or_else(|| shown(path)),
+                message: e.clone(),
+                #[cfg(not(target_arch = "wasm32"))]
+                modified: stamp,
+            };
+            failed().insert(path.to_path_buf(), failure);
+            return Err(e);
+        }
+    };
+    failed().remove(path);
     match loaded(&source.name) {
         Some(existing) => {
             tracing::info!(
@@ -2169,6 +2193,25 @@ pub fn load_file(path: &Path, messages: &mut Vec<String>) -> Result<(), String> 
         None => install(source, messages, false),
     }
     Ok(())
+}
+
+/// A `.shader.toml` that didn't load (#425): it registered nothing, so no
+/// [`Loaded`] holds its error.
+struct Failure {
+    /// The style its file names (`x` for `x.shader.toml`).
+    name: String,
+    message: String,
+    /// The file's modified time when it was read: the reload poll tries it
+    /// again only once that moves, so a broken file reports once.
+    #[cfg(not(target_arch = "wasm32"))]
+    modified: Option<std::time::SystemTime>,
+}
+
+/// The files that didn't load, by path, until they do or are deleted.
+static FAILED: Mutex<BTreeMap<PathBuf, Failure>> = Mutex::new(BTreeMap::new());
+
+fn failed() -> std::sync::MutexGuard<'static, BTreeMap<PathBuf, Failure>> {
+    FAILED.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// The loaded style whose description is the file at `path`.
@@ -2549,10 +2592,11 @@ pub fn reload_changed_for(scope: &AssetScope) -> Reload {
             .iter()
             .map(|l| (l.source.name.clone(), l.source.toml_path.clone()))
             .collect();
+        // A file that didn't load and is gone takes its error with it (#425)
+        failed().retain(|path, _| modified(path).is_some());
         // New files; one that failed is tried again only once it changes,
-        // so a broken new file reports once, not four times a second
-        static REFUSED: Mutex<BTreeMap<PathBuf, Option<std::time::SystemTime>>> =
-            Mutex::new(BTreeMap::new());
+        // so a broken new file reports once, not four times a second (the
+        // load that first refused it, `load_for`'s included, stamped it)
         // The folders in the search's order, the nearest file of a name the
         // one that counts: `Project::list`'s rule, read through
         // `file_watch` so the poll never waits on the disk (#633)
@@ -2570,18 +2614,12 @@ pub fn reload_changed_for(scope: &AssetScope) -> Reload {
                     continue;
                 }
                 let now = modified(&path);
-                let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
-                if refused.get(&path) == Some(&now) {
+                let refused_at = failed().get(&path).map(|f| f.modified);
+                if refused_at == Some(now) {
                     continue;
                 }
-                match load_file(&path, &mut reload.messages) {
-                    Ok(()) => {
-                        refused.remove(&path);
-                    }
-                    Err(e) => {
-                        reload.messages.push(e);
-                        refused.insert(path, now);
-                    }
+                if let Err(e) = load_file(&path, &mut reload.messages) {
+                    reload.messages.push(e);
                 }
             }
         }
@@ -2618,9 +2656,31 @@ pub fn refresh_settings(
     }
 }
 
-/// Every loaded user style with its current error, for a host to show
-/// (a console line, an overlay). Empty when all of them compile.
+/// Every user style with its current error, for a host to show (a console
+/// line, an overlay): `(style, message)`. First each `.shader.toml` that
+/// didn't load (#425: it registered nothing, so the scene's table for it
+/// names an unknown style; the style is the one its file names, and the
+/// message starts with the file's path), then each loaded style whose
+/// shader, images or description fail. Empty when all of them load and
+/// compile.
 pub fn errors() -> Vec<(String, String)> {
+    let mut all = load_errors();
+    all.extend(compile_errors());
+    all
+}
+
+/// The `.shader.toml` files that didn't load, as [`errors`] lists them:
+/// a file's entry stays until it loads or is deleted (the reload poll
+/// notices both), whichever scene's folder it was found in.
+pub fn load_errors() -> Vec<(String, String)> {
+    failed()
+        .values()
+        .map(|f| (f.name.clone(), f.message.clone()))
+        .collect()
+}
+
+/// The loaded styles' errors, as [`errors`] lists them.
+fn compile_errors() -> Vec<(String, String)> {
     LOADED
         .read()
         .unwrap_or_else(|e| e.into_inner())
@@ -5055,6 +5115,94 @@ fn style(p: StylePixel) -> vec4<f32> {
         assert_eq!(reload.added, vec!["utest_added".to_string()]);
         assert!(super::super::find("utest_added").is_some());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #425: a `.shader.toml` that never registers is in [`errors`] by its
+    /// file's style name, from the load that refused it: reported once,
+    /// gone when the file is fixed, back when it breaks, gone when it's
+    /// deleted. The scene's table for it still warns "unknown style".
+    #[test]
+    fn a_style_that_fails_to_load_is_an_error_until_it_loads_or_goes() {
+        let _poll = reload_poll();
+        let dir = std::env::temp_dir().join(format!("flint-user-425-{}", std::process::id()));
+        let styles = dir.join("styles");
+        std::fs::create_dir_all(&styles).unwrap();
+        std::fs::write(styles.join("unloaded.wgsl"), PASSTHROUGH).unwrap();
+        let toml_path = styles.join("utest_unloaded.shader.toml");
+        let write = |stage: &str| {
+            std::fs::write(
+                &toml_path,
+                format!(
+                    "version = 1\nname = \"utest_unloaded\"\nstage = \"{stage}\"\n\
+                     shader = \"unloaded.wgsl\"\n"
+                ),
+            )
+            .unwrap();
+        };
+        let error = || {
+            errors()
+                .into_iter()
+                .find(|(n, _)| n == "utest_unloaded")
+                .map(|(_, e)| e)
+        };
+
+        // The first mistake: a typo in the stage
+        write("hrd");
+        let messages = load_dir(&dir);
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(super::super::find("utest_unloaded").is_none());
+        let shown = error().expect("the load failure is an error");
+        assert!(
+            shown.starts_with(&toml_path.display().to_string()),
+            "{shown}"
+        );
+        assert!(shown.contains("stage = \"hrd\""), "{shown}");
+        assert_eq!(
+            load_errors()
+                .iter()
+                .filter(|(n, _)| n == "utest_unloaded")
+                .count(),
+            1
+        );
+        // The scene's table for it is warned of as before
+        let tables: BTreeMap<String, toml::Table> =
+            toml::from_str("[utest_unloaded]\nblend = 1\n").unwrap();
+        let (_, warnings) = super::super::StyleSettings::from_tables(&tables);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        // The poll doesn't read it again, or say it again, until it changes
+        assert!(reload_changed(&dir).messages.is_empty());
+        assert_eq!(error(), Some(shown.clone()));
+
+        // Fixed: it loads at the next poll and the error goes
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        write("hdr");
+        let reload = reload_changed(&dir);
+        assert_eq!(reload.added, vec!["utest_unloaded".to_string()]);
+        assert_eq!(error(), None);
+        assert!(super::super::find("utest_unloaded").is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // A new file in another folder that never loads, then is deleted
+        let other = std::env::temp_dir().join(format!("flint-user-425b-{}", std::process::id()));
+        let other_styles = other.join("styles");
+        std::fs::create_dir_all(&other_styles).unwrap();
+        let gone = other_styles.join("utest_gone.shader.toml");
+        std::fs::write(
+            &gone,
+            "version = 1\nname = \"utest_went\"\nshader = \"x.wgsl\"\n",
+        )
+        .unwrap();
+        let reload = reload_changed(&other);
+        assert_eq!(reload.messages.len(), 1, "{:?}", reload.messages);
+        let (_, message) = errors()
+            .into_iter()
+            .find(|(n, _)| n == "utest_gone")
+            .unwrap();
+        assert!(message.contains("must match the file name"), "{message}");
+        std::fs::remove_file(&gone).unwrap();
+        assert!(reload_changed(&other).messages.is_empty());
+        assert!(errors().iter().all(|(n, _)| n != "utest_gone"));
+        let _ = std::fs::remove_dir_all(&other);
     }
 
     /// #275: the renderer's [`StyleSet`](super::super::StyleSet) throws a
