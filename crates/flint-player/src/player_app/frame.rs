@@ -663,11 +663,8 @@ impl PlayerApp {
 
         // Render egui HUD overlay on top of the 3D scene
         // HUD draws into a non-sRGB view of the same texture (see
-        // RenderContext::hud_format) so egui blends in display space.
-        let hud_view = output.texture.create_view(&wgpu::TextureViewDescriptor {
-            format: Some(context.hud_format),
-            ..Default::default()
-        });
+        // RenderContext::hud_view) so egui blends in display space.
+        let hud_view = context.hud_view(&output.texture);
         self.render_hud(&hud_view, &mut encoder);
         if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
             renderer.encode_gpu_timings(&context.device, &mut encoder);

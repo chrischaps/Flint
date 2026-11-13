@@ -221,6 +221,21 @@ impl RenderContext {
         })
     }
 
+    /// The view of a swapchain texture that an egui pass draws into, in
+    /// [`Self::hud_format`]. egui-wgpu picks its shader by the target's
+    /// format: into this plain view it writes gamma-encoded colour and the
+    /// blend happens in display space, as egui's colours are authored. Into
+    /// an sRGB view it writes linear colour and the GPU blends in linear
+    /// light, which lifts every translucent dark panel towards grey (#428:
+    /// the style-error card read lighter in the scene viewer than in the
+    /// player). Build the egui renderer for `hud_format` too.
+    pub fn hud_view(&self, texture: &wgpu::Texture) -> wgpu::TextureView {
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(self.hud_format),
+            ..Default::default()
+        })
+    }
+
     /// Read a surface-sized texture back as tightly packed RGBA8 bytes.
     ///
     /// Blocks on the GPU (`Maintain::Wait`). The texture must have been
