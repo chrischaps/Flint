@@ -922,28 +922,55 @@ fn next_post_config_generation() -> u64 {
 }
 
 impl SceneRenderer {
+    /// A renderer for a window: the context's device, queue, surface format
+    /// and size.
     pub fn new(context: &RenderContext, config: RendererConfig) -> Self {
-        let surface_format = context.view_format;
-        // Scene geometry renders to HDR; the composite pass tonemaps to the surface.
+        Self::build(
+            &context.device,
+            &context.queue,
+            context.view_format,
+            (context.config.width, context.config.height),
+            config,
+        )
+    }
+
+    /// Create a renderer for headless (offscreen) use with explicit device and format
+    pub fn new_headless(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+        config: RendererConfig,
+    ) -> Self {
+        Self::build(device, queue, format, (width, height), config)
+    }
+
+    /// The one constructor body (ADR 0118, #736): `surface_format` is what
+    /// the composite pass writes, `size` that surface's size in pixels.
+    fn build(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        size: (u32, u32),
+        config: RendererConfig,
+    ) -> Self {
+        // Scene geometry renders to HDR; the composite pass tonemaps to the
+        // surface (a window's, or the headless readback target).
         let scene_format = HDR_FORMAT;
         let sample_count = Self::resolve_sample_count(config.sample_count);
 
-        let layouts = SceneLayouts::new(&context.device);
-        let pipelines = ScenePipelines::build(
-            &context.device,
-            scene_format,
-            sample_count,
-            &layouts,
-            Present::NEW,
-        );
+        let layouts = SceneLayouts::new(device);
+        let pipelines =
+            ScenePipelines::build(device, scene_format, sample_count, &layouts, Present::NEW);
         let archetype_visuals = Self::default_archetype_visuals();
-        let texture_cache = TextureCache::new(&context.device, &context.queue);
+        let texture_cache = TextureCache::new(device, queue);
 
         // Create grid draw call (only for debug/inspection modes)
         let grid_draw = if config.show_grid {
             let grid = create_grid_mesh(40.0, 40, [0.3, 0.3, 0.3, 0.5]);
             Some(Self::create_draw_call(
-                &context.device,
+                device,
                 &layouts,
                 &grid,
                 true,
@@ -955,29 +982,27 @@ impl SceneRenderer {
             None
         };
 
-        let shadow_pass = ShadowPass::new(&context.device, DEFAULT_SHADOW_RESOLUTION);
+        let shadow_pass = ShadowPass::new(device, DEFAULT_SHADOW_RESOLUTION);
 
         let light_uniforms = LightUniforms::default_scene_lights();
         let (light_buffer, light_bind_group) =
-            Self::create_light_bind(&context.device, &layouts, &light_uniforms, &shadow_pass);
+            Self::create_light_bind(device, &layouts, &light_uniforms, &shadow_pass);
 
         let ocean_resources = Self::create_ocean_resources(
-            &context.device,
+            device,
             pipelines.ocean.as_ref(),
             &layouts.transform_bind_group_layout,
         );
-        let sky_resources = Self::create_sky_resources(&context.device, pipelines.sky.as_ref());
+        let sky_resources = Self::create_sky_resources(device, pipelines.sky.as_ref());
         let particle_buffers = pipelines
             .particle
             .as_ref()
-            .map(|p| ParticleBuffers::new(&context.device, p));
+            .map(|p| ParticleBuffers::new(device, p));
 
         // Create post-processing pipeline and resources
         let postprocess_config = PostProcessConfig::default();
-        let postprocess_pipeline =
-            PostProcessPipeline::new(&context.device, &context.queue, surface_format);
-        let postprocess_resources =
-            PostProcessResources::new(&context.device, context.config.width, context.config.height);
+        let postprocess_pipeline = PostProcessPipeline::new(device, queue, surface_format);
+        let postprocess_resources = PostProcessResources::new(device, size.0, size.1);
 
         Self {
             layouts,
@@ -1107,6 +1132,8 @@ impl SceneRenderer {
             ocean_time: 0.0,
             motion_hold: Default::default(),
             style_dt: 1.0 / 60.0,
+            // Particles (ADR 0068): no instances until a caller steps a
+            // ParticleSystem, so a scene without one draws none.
             particle_buffers,
             particle_draws: Vec::new(),
             particle_texture_bind_groups: HashMap::new(),
@@ -1132,7 +1159,7 @@ impl SceneRenderer {
                 ..Default::default()
             },
             render_scale: 1.0,
-            surface_size: (context.config.width, context.config.height),
+            surface_size: size,
             scaled_depth: None,
             depth_upscale: None,
             ground_fog: None,
@@ -2410,240 +2437,6 @@ impl SceneRenderer {
         self.particle_texture_bind_groups.clear();
         self.bitmap_font_cache.clear();
         self.bitmap_font_scope = None;
-    }
-
-    /// Create a renderer for headless (offscreen) use with explicit device and format
-    pub fn new_headless(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        format: wgpu::TextureFormat,
-        width: u32,
-        height: u32,
-        config: RendererConfig,
-    ) -> Self {
-        let surface_format = format;
-        // Scene geometry renders to HDR; composite tonemaps to the readback surface.
-        let scene_format = HDR_FORMAT;
-        let sample_count = Self::resolve_sample_count(config.sample_count);
-
-        let layouts = SceneLayouts::new(device);
-        let pipelines =
-            ScenePipelines::build(device, scene_format, sample_count, &layouts, Present::NEW);
-        let archetype_visuals = Self::default_archetype_visuals();
-        let texture_cache = TextureCache::new(device, queue);
-
-        // Create grid draw call (only for debug/inspection modes)
-        let grid_draw = if config.show_grid {
-            let grid = create_grid_mesh(40.0, 40, [0.3, 0.3, 0.3, 0.5]);
-            Some(Self::create_draw_call(
-                device,
-                &layouts,
-                &grid,
-                true,
-                TransformUniforms::new(),
-                MaterialUniforms::procedural(),
-                &texture_cache,
-            ))
-        } else {
-            None
-        };
-
-        let shadow_pass = ShadowPass::new(device, DEFAULT_SHADOW_RESOLUTION);
-
-        let light_uniforms = LightUniforms::default_scene_lights();
-        let (light_buffer, light_bind_group) =
-            Self::create_light_bind(device, &layouts, &light_uniforms, &shadow_pass);
-
-        let ocean_resources = Self::create_ocean_resources(
-            device,
-            pipelines.ocean.as_ref(),
-            &layouts.transform_bind_group_layout,
-        );
-        let sky_resources = Self::create_sky_resources(device, pipelines.sky.as_ref());
-        let particle_buffers = pipelines
-            .particle
-            .as_ref()
-            .map(|p| ParticleBuffers::new(device, p));
-
-        // Create post-processing pipeline and resources for headless
-        let postprocess_config = PostProcessConfig::default();
-        let postprocess_pipeline = PostProcessPipeline::new(device, queue, surface_format);
-        let postprocess_resources = PostProcessResources::new(device, width, height);
-
-        Self {
-            layouts,
-            pipelines,
-            shallow_wooze: HashMap::new(),
-            archetype_visuals,
-            mesh_cache: MeshCache::new(),
-            draw_bind_cache: DrawBindCache::default(),
-            box_mesh_cache: HashMap::new(),
-            extract_frame: 0,
-            ray_meshes: HashMap::new(),
-            ray_scene: Arc::default(),
-            entity_bone_buffers: HashMap::new(),
-            entity_bone_matrices: HashMap::new(),
-            asset_bone_matrices: HashMap::new(),
-            entity_shadow_bone_buffers: HashMap::new(),
-            entity_part_tints: HashMap::new(),
-            entity_part_softness: HashMap::new(),
-            entity_echoes: HashMap::new(),
-            entity_echo_lighten: std::collections::HashSet::new(),
-            skinned_bone_binds: HashMap::new(),
-            grid_draw,
-            entity_draws: Vec::new(),
-            skinned_entity_draws: Vec::new(),
-            transparent_draws: Vec::new(),
-            transparent_skinned_draws: Vec::new(),
-            echo_draws: Vec::new(),
-            culled_entity_draws: Vec::new(),
-            culled_transparent_draws: Vec::new(),
-            billboard_draws: Vec::new(),
-            debug_state: DebugState::default(),
-            wireframe_overlay_draws: Vec::new(),
-            normal_arrow_draws: Vec::new(),
-            skeleton_overlay_draws: Vec::new(),
-            tonemapping_enabled: true,
-            light_buffer,
-            light_bind_group,
-            light_uniforms,
-            ambient_override: None,
-            scene_shadows: true,
-            default_lights: true,
-            diffuse_wrap_override: None,
-            oren_nayar_override: None,
-            sheen_override: None,
-            texture_cache: Some(texture_cache),
-            shadow_pass: Some(shadow_pass),
-            selected_entity: None,
-            entity_children: HashMap::new(),
-            selection_outline: None,
-            skybox_uniform_buffer: None,
-            skybox_uniform_bind_group: None,
-            skybox_texture_bind_group: None,
-            terrain_draws: Vec::new(),
-            terrain_material_bind_group: None,
-            terrain_material_buffer: None,
-            terrain_total_chunks: 0,
-            terrain_visible_chunks: 0,
-            terrain_entity: None,
-            camera_frustum: None,
-            lod_settings: LodSettings::from_env(),
-            lod_culled: 0,
-            grass_instance_buffer: None,
-            grass_instance_count: 0,
-            grass_drawing: false,
-            grass_max_instances: 0,
-            grass_draw_args_buffer: None,
-            grass_count_readback: None,
-            grass_readback_due: false,
-            grass_shadow_binds: Vec::new(),
-            gpu_timer: None,
-            style_mask_pass: None,
-            panel_state: Default::default(),
-            style_albedo_pass: None,
-            style_ids: Default::default(),
-            style_by_entity: HashMap::new(),
-            style_scissor: crate::stylize::scissor_enabled(),
-            style_blend_by_entity: HashMap::new(),
-            style_torn_entities: std::collections::HashSet::new(),
-            style_mask_veiled: false,
-            mask_view_forced: false,
-            ascii_forced: false,
-            grass_compute_uniform_buffer: None,
-            grass_compute_uniform_bind_group: None,
-            grass_compute_texture_bind_group: None,
-            grass_compute_storage_bind_group: None,
-            grass_group_slots: None,
-            grass_render_uniform_buffer: None,
-            grass_render_uniform_bind_group: None,
-            grass_render_instance_bind_group: None,
-            grass_entity_buffer: None,
-            grass_entity_count: 0,
-            grass_config: None,
-            grass_terrain_offset: [0.0; 3],
-            grass_terrain_width: 0.0,
-            grass_terrain_depth: 0.0,
-            grass_terrain_height_scale: 0.0,
-            grass_on_ground: false,
-            grass_scale_by_density: false,
-            grass_mask: None,
-            grass_needs_realloc: false,
-            grass_transform_buffer: None,
-            grass_transform_bind_group: None,
-            sky_uniform_buffer: sky_resources.0,
-            sky_uniform_bind_group: sky_resources.1,
-            sky_params: crate::sky_pipeline::SkyParams::default(),
-            sky_active: false,
-            ocean_uniform_buffer: ocean_resources.0,
-            ocean_uniform_bind_group: ocean_resources.1,
-            ocean_transform_buffer: ocean_resources.2,
-            ocean_transform_bind_group: ocean_resources.3,
-            ocean_sea_body_buffer: ocean_resources.4,
-            water_bodies: std::collections::BTreeMap::new(),
-            scene_water_bodies: std::collections::BTreeMap::new(),
-            ocean_spectrum: None,
-            ocean_visuals: crate::ocean_pipeline::OceanVisuals::default(),
-            ocean_active: false,
-            ocean_contact: None,
-            ocean_contact_prev: None,
-            ocean_contact_vel: [0.0; 3],
-            ocean_grab_color: None,
-            ocean_grab_depth: None,
-            ocean_grab_size: (0, 0),
-            ocean_grab_bind_group: None,
-            ocean_grab_dummy_bind_group: None,
-            ocean_grab_this_frame: false,
-            ocean_camera_near_far: (0.1, 1000.0),
-            ocean_time: 0.0,
-            motion_hold: Default::default(),
-            style_dt: 1.0 / 60.0,
-            // Headless particles (ADR 0068): zero instances until a caller
-            // steps a ParticleSystem, so existing pixel gates are unchanged.
-            particle_buffers,
-            particle_draws: Vec::new(),
-            particle_texture_bind_groups: HashMap::new(),
-            particle_upload_scratch: Vec::new(),
-            debug_overlay_draws: Vec::new(),
-            world_lines: Vec::new(),
-            world_line_px_per_point: 1.0,
-            world_line_pipeline: None,
-            clear_color: DEFAULT_CLEAR_COLOR,
-            sprite2d_batches: Vec::new(),
-            msaa_color: None,
-            msaa_depth: None,
-            msaa_depth_id: 0,
-            depth_resolve_pipeline: None,
-            depth_resolve_layout: None,
-            postprocess_pipeline: Some(postprocess_pipeline),
-            postprocess_resources: Some(postprocess_resources),
-            authored_postprocess: postprocess_config.clone(),
-            postprocess_config,
-            post_config_generation: next_post_config_generation(),
-            quality: crate::quality::QualitySettings {
-                msaa: sample_count,
-                ..Default::default()
-            },
-            render_scale: 1.0,
-            surface_size: (width, height),
-            scaled_depth: None,
-            depth_upscale: None,
-            ground_fog: None,
-            surface_format,
-            camera_offset: [0.0, 0.0],
-            ortho_height: 10.0,
-            aspect_ratio: 16.0 / 9.0,
-            bitmap_font_cache: HashMap::new(),
-            bitmap_font_scope: None,
-            scene_dir: None,
-            asset_scope: std::sync::Mutex::new(None),
-            pixels_per_point: 1.0,
-            style_frame_serial: std::sync::atomic::AtomicU64::new(0),
-            style_history_epoch: 0,
-            grass_time: 0.0,
-            grass_wooze: None,
-            device_lost: false,
-        }
     }
 
     /// Load an imported model into the GPU mesh cache
