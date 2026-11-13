@@ -120,7 +120,7 @@ impl SceneRenderer {
                 }
                 draw_uniforms.push(slot(draw.model));
             }
-            for draw in &self.terrain_draws {
+            for draw in &self.terrain.draws {
                 if cascade_frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
                     draw_uniforms.push(slot(draw.model));
                 }
@@ -259,7 +259,7 @@ impl SceneRenderer {
                 }
 
                 // Render terrain chunks into shadow map (frustum cull per cascade)
-                for draw in &self.terrain_draws {
+                for draw in &self.terrain.draws {
                     if !cascade_frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
                         continue;
                     }
@@ -504,7 +504,7 @@ impl SceneRenderer {
         }
 
         // Update terrain chunk transforms
-        for draw in &self.terrain_draws {
+        for draw in &self.terrain.draws {
             let uniforms = TransformUniforms {
                 view_proj,
                 model: draw.model,
@@ -528,7 +528,7 @@ impl SceneRenderer {
         }
 
         // Update terrain material buffer (tonemapping flag)
-        if let Some(buf) = &self.terrain_material_buffer {
+        if let Some(buf) = &self.terrain.material_buffer {
             // enable_tonemapping is at byte offset 12 (texture_tile(4) + metallic(4) + roughness(4))
             queue.write_buffer(buf, 12, bytemuck::cast_slice(&[tonemapping_u32]));
         }
@@ -913,14 +913,14 @@ impl SceneRenderer {
         // Terrain rendering (early in pass — fills depth buffer for occlusion)
         if phase.draws_opaque() {
             if let (Some(tp), Some(mat_bg)) =
-                (&self.pipelines.terrain, &self.terrain_material_bind_group)
+                (&self.pipelines.terrain, &self.terrain.material_bind_group)
             {
-                if !self.terrain_draws.is_empty() {
+                if !self.terrain.draws.is_empty() {
                     render_pass.set_pipeline(&tp.pipeline);
                     render_pass.set_bind_group(1, mat_bg, &[]);
                     render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
 
-                    for draw in &self.terrain_draws {
+                    for draw in &self.terrain.draws {
                         if let Some(ref frustum) = self.camera_frustum {
                             if !frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
                                 continue;
@@ -1297,8 +1297,8 @@ impl SceneRenderer {
             None => IdBounds::Everywhere,
         };
         let id_of = |e: &Option<flint_core::EntityId>| e.as_ref().and_then(|e| ids.get(e).copied());
-        if let Some(id) = id_of(&self.terrain_entity) {
-            for d in &self.terrain_draws {
+        if let Some(id) = id_of(&self.terrain.entity) {
+            for d in &self.terrain.draws {
                 bounds.add(id, of(Some((d.aabb_min, d.aabb_max))));
             }
         }

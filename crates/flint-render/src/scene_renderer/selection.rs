@@ -124,10 +124,10 @@ impl SceneRenderer {
             }
 
             // Terrain, when the terrain's entity is the selection or under it
-            if mine(self.terrain_entity) {
+            if mine(self.terrain.entity) {
                 pass.set_pipeline(&p.static_tris);
                 pass.set_bind_group(1, &depth_bind, &[]);
-                for draw in &self.terrain_draws {
+                for draw in &self.terrain.draws {
                     if let Some(frustum) = &self.camera_frustum {
                         if !frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
                             continue;

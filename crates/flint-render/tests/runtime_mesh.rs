@@ -2122,3 +2122,87 @@ fn a_skinned_model_still_draws_after_a_reload() {
         "the reload drew it as the first load did"
     );
 }
+
+/// The terrain editor's two uploads (`flint terrain-edit`): a full load
+/// from data, then a brush stroke that reloads only the chunks and keeps
+/// the material. The stroke reshapes what's drawn, and the reloaded
+/// terrain draws as a full load of the sculpted heights does.
+#[test]
+fn a_sculpted_terrain_reloads_its_chunks() {
+    use flint_terrain::{apply_height_brush, BrushParams, HeightBrushMode, Heightmap, Terrain};
+    let gpu = gpu_or_skip!();
+    const RES: u32 = 33;
+    let config = flint_terrain::TerrainConfig {
+        heightmap_path: String::new(),
+        width: 20.0,
+        depth: 20.0,
+        height_scale: 6.0,
+        chunk_resolution: 16,
+        texture_tile: 1.0,
+        splat_map_path: String::new(),
+        layer_textures: Default::default(),
+        metallic: 0.0,
+        roughness: 0.8,
+        grass: None,
+    };
+    let chunks = |heights: &[f32]| {
+        Terrain::generate(&Heightmap::from_raw(heights.to_vec(), RES, RES), &config).chunks
+    };
+    let flat = vec![0.0f32; (RES * RES) as usize];
+    let mut sculpted = flat.clone();
+    let brush = BrushParams {
+        radius: 0.3,
+        strength: 1.0,
+        falloff: 1.0,
+    };
+    apply_height_brush(
+        &mut sculpted,
+        RES,
+        0.35,
+        0.5,
+        HeightBrushMode::Raise,
+        &brush,
+        1.0,
+        0,
+    );
+    assert_ne!(flat, sculpted, "the brush raised nothing");
+
+    let world = FlintWorld::new();
+    // The terrain spans 0..20 on x and z; the view's centre is on the
+    // bump's flank, where the stroke tilts the ground.
+    let camera = looking_at([10.0, 0.0, 10.0], true);
+    let transform = flint_core::Transform::default();
+    let full_load = |renderer: &mut SceneRenderer, heights: &[f32]| {
+        renderer.load_terrain_from_data(
+            gpu.device,
+            gpu.queue,
+            &chunks(heights),
+            &transform,
+            config.texture_tile,
+            config.metallic,
+            config.roughness,
+            &[255, 0, 0, 255],
+            1,
+            &config.layer_textures,
+            std::path::Path::new("."),
+        );
+    };
+
+    let mut renderer = gpu.renderer();
+    full_load(&mut renderer, &flat);
+    gpu.frame(&mut renderer, &world, &camera);
+    let before = gpu.centre_pixel();
+    renderer.reload_terrain_geometry(gpu.device, &chunks(&sculpted), &transform);
+    gpu.frame(&mut renderer, &world, &camera);
+    let after = gpu.centre_pixel();
+    assert_ne!(before, after, "the stroke left the terrain as it was");
+
+    let mut fresh = gpu.renderer();
+    full_load(&mut fresh, &sculpted);
+    gpu.frame(&mut fresh, &world, &camera);
+    assert_eq!(
+        after,
+        gpu.centre_pixel(),
+        "a reloaded terrain draws as a full load of the same heights"
+    );
+}
