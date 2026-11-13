@@ -34,8 +34,7 @@ pub(crate) struct ViewSlot {
     scaled_depth: Option<std::sync::Arc<crate::render_scale::ScaledDepth>>,
     depth_upscale: Option<crate::render_scale::DepthUpscale>,
     surface_size: (u32, u32),
-    style_mask_pass: Option<crate::style_mask::StyleMaskPass>,
-    style_albedo_pass: Option<crate::style_albedo::StyleAlbedoPass>,
+    style_passes: super::style_mask::StylePasses,
     selection_outline: Option<crate::selection_outline::SelectionOutline>,
 }
 
@@ -369,8 +368,7 @@ impl SceneRenderer {
         swap(&mut self.scaled_depth, &mut slot.scaled_depth);
         swap(&mut self.depth_upscale, &mut slot.depth_upscale);
         swap(&mut self.surface_size, &mut slot.surface_size);
-        swap(&mut self.style_mask_pass, &mut slot.style_mask_pass);
-        swap(&mut self.style_albedo_pass, &mut slot.style_albedo_pass);
+        self.style_mask.swap_passes(&mut slot.style_passes);
         swap(&mut self.selection_outline, &mut slot.selection_outline);
     }
 }
