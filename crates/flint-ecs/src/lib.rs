@@ -5,6 +5,7 @@
 
 mod component;
 mod entity;
+pub mod motion_hold;
 mod view;
 mod world;
 

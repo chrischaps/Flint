@@ -475,6 +475,15 @@ name = "pencil-reveal-panel"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "pencil:reveal=0.4,reveal_shape=panel,reveal_edge=4"]
 
+# Torn paper (#876): the half tear again, with a rim of bare paper on the
+# drawn side of the line and the edge's shadow falling down and to the
+# right on the live side. Without the two keys it is pencil-reveal-tear-half
+# byte for byte
+[[case]]
+name = "pencil-reveal-torn-paper"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "pencil:reveal=0.5,reveal_rim=3,reveal_shadow=0.4", "--style-time", "0.6"]
+
 [[case]]
 name = "pencil-reveal-zero"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
@@ -652,8 +661,10 @@ scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--look", "charcoal"]
 
 # Ink-forward pencil on a blank sheet (#404): lines, one horizon (grazing = 1
-# spares the floor's depth steps), hatching only on the dark barrels and in
-# the cast shadows. On the plain bench, so only the look draws
+# spares the floor's depth steps), hatching only where the light falls off
+# (tone = "light", #887: the barrels' and crate's shadow sides, not their
+# dark paint). On the plain bench, so only the look draws. A still at time
+# 0, so the look's motion_hold = 12 holds nothing here
 [[case]]
 name = "look-rotoscope"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"

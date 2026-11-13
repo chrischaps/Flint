@@ -1,14 +1,16 @@
 # Rotoscope: the world traced in pencil on blank paper. Mostly line:
 # silhouettes and creases in a soft black lead, one sparse layer of
-# hatching at one angle only where the picture is darkest, and a white
-# sheet where the sky and the ground were. The floor keeps one line, its
-# horizon. In the player the lines boil, redrawn twelve times a second as
-# a traced film is from drawing to drawing.
+# hatching at one angle only where the light falls off, and a white sheet
+# where the sky and the ground were. The floor keeps one line, its
+# horizon. In the player everything moves on twelve drawings a second: the
+# lines boil and the poses hold on the same ticks, as a traced film is
+# drawn frame by frame (#887).
 #
 #   flint render <scene> --look rotoscope -o rotoscope.png
 #   flint render <scene> --look rotoscope --sweep pencil.contour_width=1,1.5,2.2 --sweep pencil.wobble=0.8,2,3.5 -o weight.png
 #   flint render <scene> --look rotoscope --style pencil:layers=0 -o lines-only.png
 #   flint render <scene> --look rotoscope --style-time 0.5 -o boiled.png
+#   flint render <scene> --look rotoscope --time 0..1 --fps 24 -o held.gif   # on twos at 24 fps
 #
 # A look is a [post_process] block in the scene format, merged over the
 # scene's own key by key (#279). `flint render --look help` lists them all.
@@ -16,21 +18,24 @@
 
 [look]
 name = "rotoscope"
-description = "Rotoscope: ink-forward pencil lines on a blank sheet, sparse hatching only in the darks, boiling lines"
+description = "Rotoscope: ink-forward pencil lines on a blank sheet, hatching only in the shadows, motion and lines on twelve drawings a second"
 tune = [
     "pencil.contour_width=1,1.5,2.2",
     "pencil.wobble=0.8,2,3.5",
-    "pencil.brightness=0.35,0.5,0.65",
+    "pencil.brightness=0,0.25,0.5",
     "pencil.layers=0,1,2",
     "pencil.grazing=0,0.5,1",
     "pencil.clutter=0,0.5,1",
-    "pencil.tone=picture,light",
+    "pencil.tone=light,picture",
 ]
 notes = """
-Brightness decides what is shaded at all. One hatch layer joins wherever the
-tone is under 0.88, so on stylize_props brightness 0.35 still hatched the
-whole brown floor; at 0.5 the floor is blank and only the dark barrels and
-the cast shadows keep strokes. Raise it for a darker scene. layers = 0 with
+tone = light (#869) takes the tone from the light, not the paint, so a dark
+floor in the sun stays blank and only the shadows are hatched. Swept against
+brightness 0, 0.25 and 0.5 on stylize_props and the darker ascii_dark_props,
+every light cell kept both floors blank; brightness 0 hatched the cast
+shadows most, so it ships at 0. Under tone = picture the brown floor was
+hatched all over until brightness 0.5, and the dark one even then: that was
+this look's setting before #887. layers = 0 with
 shade = 0 is the line-only drawing (and skips the stroke flow, so it is the
 cheapest pencil); layers = 2 crosses the barrels' strokes and leaves the
 floor blank. grazing = 1 is what keeps the sheet blank: without it a
@@ -46,15 +51,19 @@ direction = screen, one hand at one angle, read most like a traced frame:
 surface and tensor both swirled round the barrels.
 contour_width 1.5 and wobble 2 are the middle of the sweep: 1 looked like a
 technical pen, 2.2 like a marker, and wobble 3.5 doubled every outline.
-tone = light (#869) takes the tone from the light instead of the picture, so
-dark paint in the sun stays blank and only shadows are hatched; with it,
-brightness 0 suits both stylize_props and the darker ascii_dark_props ground,
-which brightness 0.5 hatches all over under tone = picture.
-boil only moves the picture with a clock (the player, --style-time);
-renders at time 0 are byte-identical run to run.
+motion_hold = 12 (#405) draws poses and positions on the same 12 ticks a
+second as boil = 12, so a figure's pose and its lines turn on one frame and
+hold for the next: on twos at 24 fps. Physics and scripts still move
+smoothly; only the drawing is held. On skeletal_test at 24 fps the frames
+came in identical pairs; with motion_hold = 0 every frame differed (the pose
+glides under lines that boil at 12). 8 puts it on threes, lines included: a
+whole-frame hold holds the styles' clock too. Both clocks only move with
+time (the player, --time, --style-time); a still at time 0 is
+byte-identical run to run.
 """
 
 [post_process]
+motion_hold = 12
 bloom_enabled = false
 ssao_enabled = false
 vignette_enabled = false
@@ -62,9 +71,10 @@ vignette_enabled = false
 [post_process.styles.pencil]
 layers = 1
 shade = 0.0
+tone = "light"
 direction = "screen"
 angle = 55.0
-brightness = 0.5
+brightness = 0.0
 contrast = 1.6
 grazing = 1.0
 clutter = 1.0

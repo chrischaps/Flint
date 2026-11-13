@@ -1611,6 +1611,11 @@ impl super::game_core::FrameHost for PlayerApp {
             // go up: the same seconds the post time reads, so a held pose
             // and a style's boil turn on the same frame
             renderer.set_motion_time(self.core.clock.total_time);
+            // ...and the emitters held entities carry (#873), which step
+            // right after this, on the same clock and whole-frame rate
+            let sync = &mut self.core.particles.sync;
+            sync.set_motion_time(self.core.clock.total_time);
+            sync.set_motion_hold(renderer.effective_post_process_config().motion_hold);
             for (entity_id, asset_name) in &self.skeletal_entity_assets {
                 if let Some(matrices) = self.core.animation.bone_matrices(entity_id) {
                     renderer.update_bone_matrices(

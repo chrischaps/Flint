@@ -471,6 +471,8 @@ impl StylesEditor {
         };
         let current = reveal_of(&pp.styles);
         let scene = authored.map(reveal_of);
+        // What an unset rim colour starts from, as the renderer draws it
+        let paper = reveal::style_paper(style, pp);
         let mut next = current.clone();
         let mut on = next.amount.is_some();
         let mut opened = false;
@@ -503,7 +505,8 @@ impl StylesEditor {
                         .num_columns(4)
                         .spacing([8.0, 4.0])
                         .show(ui, |ui| {
-                            self.marked += reveal_rows(ui, style.name, &mut next, scene.as_ref());
+                            self.marked +=
+                                reveal_rows(ui, style.name, &mut next, scene.as_ref(), paper);
                         });
                 });
             });
@@ -833,13 +836,15 @@ fn chain_ui(ui: &mut egui::Ui, pp: &mut PostProcessConfig) -> bool {
 }
 
 /// The rows of a style's Reveal group (#875), editing `next` in place;
-/// `scene` is the scene's reveal for the style, when the host knows it.
+/// `scene` is the scene's reveal for the style, when the host knows it;
+/// `paper` the style's paper, which an unset rim colour starts from (#876).
 /// Returns how many values differ from it (the dots drawn).
 fn reveal_rows(
     ui: &mut egui::Ui,
     style: &str,
     next: &mut StyleReveal,
     scene: Option<&StyleReveal>,
+    paper: [f32; 3],
 ) -> usize {
     let mut marked = 0;
     // A row's label and widget take its help on hover; a row the shape
@@ -984,6 +989,41 @@ fn reveal_rows(
         );
         ui.end_row();
     }
+
+    // The rim's paper (#876), after the numbers that draw it; greyed out
+    // while there is no rim
+    let rim_help = "The colour of the bare paper along the drawn side of the edge; unset, \
+                    the style's paper lifted halfway to white. Scene key: reveal_rim_color";
+    let no_rim = (next.number("reveal_rim") <= 0.0).then_some("No rim: Rim is 0");
+    help(
+        ui.add_enabled(no_rim.is_none(), egui::Label::new("Rim colour")),
+        rim_help,
+        no_rim,
+    );
+    let mut srgb = next.rim_color(paper).map(byte);
+    ui.add_enabled_ui(no_rim.is_none(), |ui| {
+        ui.horizontal(|ui| {
+            if help(ui.color_edit_button_srgb(&mut srgb), rim_help, no_rim).changed() {
+                next.rim_color = Some(srgb.map(|b| b as f32 / 255.0));
+            }
+            let rim = next.rim_color(paper);
+            ui.weak(format!("{:.2} {:.2} {:.2}", rim[0], rim[1], rim[2]));
+        });
+    });
+    if reset_cell(
+        ui,
+        next.rim_color.is_some(),
+        &rgb_text(StyleReveal::default().rim_color(paper)),
+    ) {
+        next.rim_color = None;
+    }
+    marked += dot_cell(
+        ui,
+        scene
+            .filter(|s| s.rim_color != next.rim_color)
+            .map(|s| rgb_text(s.rim_color(paper))),
+    );
+    ui.end_row();
     marked
 }
 
@@ -998,6 +1038,8 @@ fn reveal_label(key: &str) -> &'static str {
         "reveal_y" => "Start y",
         "reveal_boil" => "Boil",
         "reveal_seed" => "Seed",
+        "reveal_rim" => "Rim",
+        "reveal_shadow" => "Shadow",
         _ => "?",
     }
 }
@@ -1482,7 +1524,7 @@ mod tests {
         // Pencil's is open, since it has a reveal: every row, and the
         // header's summary
         assert!(text.contains(&"wipe at 0.5".to_string()), "{text:?}");
-        for label in ["Amount", "Shape", "Ink"]
+        for label in ["Amount", "Shape", "Ink", "Rim colour"]
             .into_iter()
             .chain(reveal::NUMBERS.iter().map(|n| reveal_label(n.key)))
         {
@@ -1491,6 +1533,24 @@ mod tests {
         }
         // Drawing changes nothing by itself
         assert_eq!(pp.styles, shown.styles);
+    }
+
+    #[test]
+    fn the_rim_colour_is_greyed_out_until_there_is_a_rim() {
+        // #876: with no rim there is no paper to colour
+        let mut editor = StylesEditor::default();
+        let mut pp = pencil_wiped(0.5);
+        let none = drawn_strength(&mut editor, &mut pp);
+        assert!(strength_of(&none, "Rim colour") < strength_of(&none, "Ink") * 0.9);
+        pp.styles
+            .set_reveal("pencil", "reveal_rim", &3.0.into(), true)
+            .unwrap();
+        let rim = drawn_strength(&mut editor, &mut pp);
+        assert!(strength_of(&rim, "Rim colour") >= strength_of(&rim, "Ink") * 0.9);
+        // Its default is the renderer's: pencil's paper, lifted
+        let paper = reveal::style_paper(stylize::find("pencil").unwrap(), &pp);
+        let shown = pp.styles.reveal("pencil").unwrap().rim_color(paper);
+        assert!(shown.iter().zip(paper).all(|(r, p)| *r > p), "{shown:?}");
     }
 
     #[test]

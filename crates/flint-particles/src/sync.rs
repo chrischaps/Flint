@@ -67,6 +67,13 @@ pub struct EffectInstance {
     pub fingerprint: u64,
     /// Optional per-effect alive cap.
     pub budget: Option<usize>,
+    /// Drawn on ticks (#873): `position` is where the carrier was drawn
+    /// when its tick began, so particles are born there and not along the
+    /// jump to the next drawing, while `live_position` is where the world
+    /// has it now, which the emitter's velocity is taken from.
+    held: bool,
+    live_position: [f32; 3],
+    live_prev: [f32; 3],
     has_prev: bool,
     spawn_requests: Vec<SpawnRequest>,
     deferred_requests: Vec<SpawnRequest>,
@@ -100,6 +107,9 @@ impl EffectInstance {
             seed,
             fingerprint: 0,
             budget,
+            held: false,
+            live_position: [0.0; 3],
+            live_prev: [0.0; 3],
             has_prev: false,
             spawn_requests: Vec::new(),
             deferred_requests: Vec::new(),
@@ -150,12 +160,40 @@ impl EffectInstance {
 
     /// Move the instance (detached effects, editors).
     pub fn set_transform(&mut self, position: [f32; 3], basis: [[f32; 3]; 3], scale: f32) {
+        self.held = false;
+        self.live_position = position;
         if !self.has_prev {
             self.prev_position = position;
+            self.live_prev = position;
         }
         self.position = position;
         self.basis = basis;
         self.transform_scale = scale;
+    }
+
+    /// Place an instance whose carrier is drawn on ticks (#873): it emits
+    /// from `held` (and `basis`, `scale`, the held drawing's), born at that
+    /// one point rather than along the step between two drawings, and
+    /// moves at the speed `live` (where the world has it) says, so
+    /// `inherit_velocity` sees the smooth motion, not a jump each tick.
+    pub fn set_held_transform(
+        &mut self,
+        held: [f32; 3],
+        live: [f32; 3],
+        basis: [[f32; 3]; 3],
+        scale: f32,
+    ) {
+        self.set_transform(held, basis, scale);
+        self.held = true;
+        self.live_position = live;
+        if !self.has_prev {
+            self.live_prev = live;
+        }
+    }
+
+    /// Whether the last transform was a held one.
+    pub fn is_held(&self) -> bool {
+        self.held
     }
 
     fn frame(&self, time: f32) -> EmitterFrame {
@@ -163,6 +201,7 @@ impl EffectInstance {
             position: self.position,
             prev_position: self.prev_position,
             velocity: self.velocity,
+            held: self.held,
             basis: self.basis,
             transform_scale: self.transform_scale,
             effect_scale: self.effect_scale,
@@ -175,15 +214,17 @@ impl EffectInstance {
     /// Returns the number of particles spawned.
     pub fn step(&mut self, dt: f32, time: f32, global_budget_left: &mut usize) {
         if self.has_prev && dt > 0.0 {
+            // From the live positions: held or not, the world moves smoothly
             self.velocity = [
-                (self.position[0] - self.prev_position[0]) / dt,
-                (self.position[1] - self.prev_position[1]) / dt,
-                (self.position[2] - self.prev_position[2]) / dt,
+                (self.live_position[0] - self.live_prev[0]) / dt,
+                (self.live_position[1] - self.live_prev[1]) / dt,
+                (self.live_position[2] - self.live_prev[2]) / dt,
             ];
         } else {
             self.velocity = [0.0; 3];
             if !self.has_prev {
                 self.prev_position = self.position;
+                self.live_prev = self.live_position;
             }
         }
         let frame = self.frame(time);
@@ -233,6 +274,7 @@ impl EffectInstance {
         *global_budget_left = global_budget_left.saturating_sub(before - budget_left);
 
         self.prev_position = self.position;
+        self.live_prev = self.live_position;
         self.has_prev = true;
     }
 }
@@ -338,6 +380,51 @@ pub struct ParticleSync {
     /// Where effects were searched for, so a missing one can say where
     /// (set by `load_particle_effects_from_world`; ADR 0114).
     search: Option<EffectSearch>,
+    /// Where held emitters emit from (#873).
+    hold: EmitterHold,
+}
+
+/// The emitters carried by entities drawn on ticks (`motion_hold`, #405):
+/// each keeps the world matrix its carrier had when the tick began, as the
+/// renderer keeps the carrier's own, on the same clock. Live particles are
+/// effects, not drawings: once born they move smoothly.
+#[derive(Debug, Default)]
+struct EmitterHold {
+    /// The post time the host stamped (`flint_ecs::motion_hold::post_time`);
+    /// `None` until one does, and then nothing is held.
+    time: Option<f32>,
+    /// `[post_process] motion_hold`: the rate of an emitter whose carriers
+    /// name none.
+    whole: f32,
+    /// Per emitter entity: (tick, rate, the matrix kept on it).
+    kept: HashMap<EntityId, (i64, f32, [[f32; 4]; 4])>,
+}
+
+impl EmitterHold {
+    /// The matrix `id` emits from this step: `live` on the first step of a
+    /// tick (and kept), the kept one for the rest of it; `None` when it
+    /// isn't held.
+    fn matrix(
+        &mut self,
+        world: &FlintWorld,
+        id: EntityId,
+        live: [[f32; 4]; 4],
+    ) -> Option<[[f32; 4]; 4]> {
+        use flint_ecs::motion_hold::{held_rate, tick};
+        let time = self.time?;
+        let Some(rate) = held_rate(world, id, self.whole) else {
+            self.kept.remove(&id);
+            return None;
+        };
+        let now = tick(time, rate)?;
+        match self.kept.get(&id) {
+            Some(&(t, r, m)) if t == now && r == rate => Some(m),
+            _ => {
+                self.kept.insert(id, (now, rate, live));
+                Some(live)
+            }
+        }
+    }
 }
 
 impl Default for ParticleSync {
@@ -359,7 +446,31 @@ impl ParticleSync {
             order_scratch: Vec::new(),
             warned_missing: HashSet::new(),
             search: None,
+            hold: EmitterHold::default(),
         }
+    }
+
+    // ----- Motion on twos (#873) -----
+
+    /// Stamp the game time emitters on held entities hold against: the
+    /// same seconds the host stamps the renderer with
+    /// (`SceneRenderer::set_motion_time`), so an emitter steps on the frames
+    /// its carrier's drawing does. A sync never stamped holds nothing.
+    pub fn set_motion_time(&mut self, seconds: f64) {
+        self.hold.time = Some(flint_ecs::motion_hold::post_time(seconds));
+    }
+
+    /// The whole-frame rate (`[post_process] motion_hold`, 0 for none): an
+    /// emitter whose carriers name no `motion_hold` rate is held at it.
+    pub fn set_motion_hold(&mut self, whole: f32) {
+        self.hold.whole = whole;
+    }
+
+    /// Whether `entity`'s instance emitted from a held transform last sync.
+    pub fn is_held(&self, entity: EntityId) -> bool {
+        self.states
+            .get(&entity)
+            .is_some_and(EffectInstance::is_held)
     }
 
     // ----- Effects registry -----
@@ -446,6 +557,7 @@ impl ParticleSync {
         self.instance_buffer.clear();
         self.ranges.clear();
         self.warned_missing.clear();
+        self.hold.kept.clear();
         self.time = 0.0;
     }
 
@@ -503,7 +615,12 @@ impl ParticleSync {
                 inst.fingerprint = fp;
                 self.states.insert(entity_id, inst);
             }
-            Self::apply_world_transform(world, entity_id, self.states.get_mut(&entity_id).unwrap());
+            Self::apply_world_transform(
+                world,
+                &mut self.hold,
+                entity_id,
+                self.states.get_mut(&entity_id).unwrap(),
+            );
         }
 
         // Effect references.
@@ -589,18 +706,33 @@ impl ParticleSync {
             }
             seen.insert(entity_id);
             if let Some(inst) = self.states.get_mut(&entity_id) {
-                Self::apply_world_transform(world, entity_id, inst);
+                Self::apply_world_transform(world, &mut self.hold, entity_id, inst);
             }
         }
 
         // Remove states for despawned entities
         self.states.retain(|id, _| seen.contains(id));
+        self.hold.kept.retain(|id, _| seen.contains(id));
     }
 
-    fn apply_world_transform(world: &FlintWorld, id: EntityId, inst: &mut EffectInstance) {
+    fn apply_world_transform(
+        world: &FlintWorld,
+        hold: &mut EmitterHold,
+        id: EntityId,
+        inst: &mut EffectInstance,
+    ) {
         if let Some(m) = world.get_world_matrix(id) {
-            let (pos, basis, scale) = decompose(&m);
-            inst.set_transform(pos, basis, scale);
+            match hold.matrix(world, id, m) {
+                Some(held) => {
+                    let (pos, basis, scale) = decompose(&held);
+                    let live = [m[3][0], m[3][1], m[3][2]];
+                    inst.set_held_transform(pos, live, basis, scale);
+                }
+                None => {
+                    let (pos, basis, scale) = decompose(&m);
+                    inst.set_transform(pos, basis, scale);
+                }
+            }
         }
     }
 
@@ -1093,6 +1225,123 @@ mod tests {
         let tf: toml::Value = toml::from_str("position = [1.0, 2.0, 3.0]").unwrap();
         world.set_component(id, comp::TRANSFORM, tf).unwrap();
         (world, id)
+    }
+
+    /// A walker under `motion_hold { rate = 12 }` carrying a torch that
+    /// emits one still particle a step, and a lamp beside it that isn't
+    /// held. Both move 1 m along x a frame.
+    fn walker_and_lamp() -> (FlintWorld, EntityId, EntityId, EntityId) {
+        let mut world = FlintWorld::new();
+        let walker = EntityId(5001);
+        let torch = EntityId(5002);
+        let lamp = EntityId(5003);
+        world.spawn_with_id(walker, "walker").unwrap();
+        world.spawn_with_id(torch, "torch").unwrap();
+        world.spawn_with_id(lamp, "lamp").unwrap();
+        world.set_parent(torch, walker).unwrap();
+        let hold: toml::Value = toml::from_str("rate = 12.0").unwrap();
+        world
+            .set_component(walker, comp::MOTION_HOLD, hold)
+            .unwrap();
+        let flame: toml::Value = toml::from_str(
+            "emission_rate = 60.0\nspeed_min = 0.0\nspeed_max = 0.0\n\
+             gravity = [0.0, 0.0, 0.0]\ninherit_velocity = 1.0\n\
+             lifetime_min = 100.0\nlifetime_max = 100.0\nmax_particles = 256",
+        )
+        .unwrap();
+        for id in [torch, lamp] {
+            world
+                .set_component(id, comp::PARTICLE_EMITTER, flame.clone())
+                .unwrap();
+        }
+        put(&mut world, torch, 0.0);
+        (world, walker, torch, lamp)
+    }
+
+    fn put(world: &mut FlintWorld, id: EntityId, x: f32) {
+        let tf: toml::Value = toml::from_str(&format!("position = [{x}, 0.0, 0.0]")).unwrap();
+        world.set_component(id, comp::TRANSFORM, tf).unwrap();
+    }
+
+    /// #873: an emitter carried by a held entity emits from where the
+    /// carrier was drawn when its tick began (x = 0, 5, 10 at 12 a second
+    /// on 60 Hz frames), never from between two drawings, while one beside
+    /// it emits all along its path. Velocity is the world's, held or not.
+    #[test]
+    fn a_held_emitter_emits_from_its_drawing() {
+        let (mut world, walker, torch, lamp) = walker_and_lamp();
+        let mut sync = ParticleSync::new();
+        let mut drawn = Vec::new();
+        for frame in 0..12 {
+            put(&mut world, walker, frame as f32);
+            put(&mut world, lamp, frame as f32);
+            sync.set_motion_time(frame as f64 / 60.0);
+            sync.sync_from_world(&world);
+            sync.update(1.0 / 60.0);
+            drawn.push(sync.instance(InstanceKey::Entity(torch)).unwrap().position[0]);
+            if frame > 0 {
+                let v = sync.instance(InstanceKey::Entity(torch)).unwrap().velocity;
+                assert!((v[0] - 60.0).abs() < 1e-3, "frame {frame}: {v:?}");
+            }
+        }
+        assert_eq!(
+            drawn,
+            [0.0, 0.0, 0.0, 0.0, 0.0, 5.0, 5.0, 5.0, 5.0, 5.0, 10.0, 10.0]
+        );
+        assert!(sync.is_held(torch) && !sync.is_held(lamp));
+        // Every flame was born on a drawing (and inherited the smooth 60 m/s,
+        // so it has moved on since: subtract that)
+        let born = |id: EntityId| -> Vec<f32> {
+            let inst = sync.instance(InstanceKey::Entity(id)).unwrap();
+            inst.emitters[0]
+                .pool
+                .alive_slice()
+                .iter()
+                .map(|p| p.position[0] - p.velocity[0] * p.age)
+                .collect()
+        };
+        let torch_born = born(torch);
+        assert!(!torch_born.is_empty());
+        for x in &torch_born {
+            let nearest = (x / 5.0).round() * 5.0;
+            assert!((x - nearest).abs() < 1e-2, "born at {x}: {torch_born:?}");
+        }
+        // The lamp's were born all along its way
+        let between = born(lamp)
+            .iter()
+            .filter(|x| ((*x / 5.0).round() * 5.0 - *x).abs() > 0.5)
+            .count();
+        assert!(between > 0, "{:?}", born(lamp));
+    }
+
+    /// A sync no host stamped holds nothing, and a branch at `rate = 0`
+    /// moves smoothly under a held parent.
+    #[test]
+    fn an_unstamped_or_released_emitter_moves_smoothly() {
+        let (mut world, walker, torch, _) = walker_and_lamp();
+        let mut sync = ParticleSync::new();
+        for frame in 0..4 {
+            put(&mut world, walker, frame as f32);
+            sync.sync_from_world(&world);
+            assert_eq!(
+                sync.instance(InstanceKey::Entity(torch)).unwrap().position[0],
+                frame as f32
+            );
+        }
+        let smooth: toml::Value = toml::from_str("rate = 0.0").unwrap();
+        world
+            .set_component(torch, comp::MOTION_HOLD, smooth)
+            .unwrap();
+        for frame in 4..8 {
+            put(&mut world, walker, frame as f32);
+            sync.set_motion_time(frame as f64 / 60.0);
+            sync.sync_from_world(&world);
+            assert!(!sync.is_held(torch));
+            assert_eq!(
+                sync.instance(InstanceKey::Entity(torch)).unwrap().position[0],
+                frame as f32
+            );
+        }
     }
 
     #[test]

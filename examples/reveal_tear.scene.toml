@@ -45,6 +45,10 @@ reveal_shape = "tear"
 reveal_x = 0.56
 reveal_y = 0.46
 reveal_edge = 2.5
+# Torn paper (#876): bare paper along the drawn side of the line, and the
+# torn edge's shadow on the live frame
+reveal_rim = 3
+reveal_shadow = 0.4
 
 [entities.director]
 [entities.director.story]
