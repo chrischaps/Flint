@@ -867,7 +867,7 @@ impl SceneRenderer {
         if self.water_active() && phase.draws_ocean_and_after() {
             self.water.draw(
                 render_pass,
-                self.pipelines.ocean.as_ref(),
+                self.pipelines.ocean.as_deref(),
                 &self.lights.bind_group,
             );
         }
