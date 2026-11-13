@@ -11,6 +11,7 @@ mod pipelines;
 mod render_passes;
 mod selection;
 mod sky;
+mod style_mask;
 mod terrain;
 
 pub use grass_ground::{load_grass_ground_in, load_scene_grass_ground, LoadedGrassGround};
@@ -38,7 +39,6 @@ use crate::postprocess::{
 use crate::primitives::create_grid_mesh;
 use crate::shadow::{ShadowPass, DEFAULT_SHADOW_RESOLUTION};
 use crate::sprite2d_pipeline::Sprite2dInstanceGpu;
-use crate::terrain_pipeline::TerrainDrawCall;
 use crate::texture_cache::TextureCache;
 use crate::wooze_pipeline::{grow_bounds, ShallowWoozeDraw, ShallowWoozeUniforms};
 use flint_core::components as comp;
@@ -643,28 +643,11 @@ pub struct SceneRenderer {
     grass_shadow_binds: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
     /// Times the frame's phases on the GPU, while timing is on (ADR 0108)
     gpu_timer: Option<crate::gpu_timer::GpuTimer>,
-    /// The entity style mask's pass (#263); `None` until a frame needs it.
-    style_mask_pass: Option<crate::style_mask::StyleMaskPass>,
     /// Comic panels (#880, ADR 0120): the layout and each panel's view
     panel_state: panels::PanelState,
-    /// The style albedo's pass (#869), made the first frame a style reads it.
-    style_albedo_pass: Option<crate::style_albedo::StyleAlbedoPass>,
-    /// Style names entities ask for, numbered for the mask.
-    style_ids: crate::style_mask::StyleIds,
-    /// Styled entities -> their mask id, rebuilt each `update_from_world`
-    /// while the mask is wanted (empty otherwise).
-    style_by_entity: HashMap<flint_core::EntityId, u16>,
-    /// Whether per-entity styles scissor their passes to their entities'
-    /// screen bounds (#385); `FLINT_STYLE_SCISSOR=0` starts it off.
-    style_scissor: bool,
-    /// The blend of each styled entity drawn at less than 1 (#278).
-    style_blend_by_entity: HashMap<flint_core::EntityId, f32>,
-    /// The styled entities whose blend follows the reality tear (#397).
-    style_torn_entities: std::collections::HashSet<flint_core::EntityId>,
-    /// Whether the last style mask drew a veil over its entities (#290):
-    /// something unstyled in front, so the mask's blend is below 1 there
-    /// even with every entity fully styled (#396 cross-fades by it).
-    style_mask_veiled: bool,
+    /// Per-entity styles (#263): who is styled, how far, the mask and
+    /// albedo passes (ADR 0118, #736).
+    style_mask: style_mask::StyleMaskState,
     /// The `style` debug view switched `mask_view` on, so it switches it off.
     mask_view_forced: bool,
     /// Whether the `edges` view switched ASCII on itself (#349).
@@ -996,15 +979,8 @@ impl SceneRenderer {
             grass_readback_due: false,
             grass_shadow_binds: Vec::new(),
             gpu_timer: None,
-            style_mask_pass: None,
             panel_state: Default::default(),
-            style_albedo_pass: None,
-            style_ids: Default::default(),
-            style_by_entity: HashMap::new(),
-            style_scissor: crate::stylize::scissor_enabled(),
-            style_blend_by_entity: HashMap::new(),
-            style_torn_entities: std::collections::HashSet::new(),
-            style_mask_veiled: false,
+            style_mask: style_mask::StyleMaskState::new(),
             mask_view_forced: false,
             ascii_forced: false,
             grass_compute_uniform_buffer: None,
@@ -2147,11 +2123,11 @@ impl SceneRenderer {
     /// bounds (#385). On by default (`FLINT_STYLE_SCISSOR=0` starts it
     /// off); the frame is the same either way, only cheaper with it on.
     pub fn set_style_scissor(&mut self, on: bool) {
-        self.style_scissor = on;
+        self.style_mask.scissor = on;
     }
 
     pub fn style_scissor(&self) -> bool {
-        self.style_scissor
+        self.style_mask.scissor
     }
 
     /// Where each style id's entities are on screen under `camera`, from
@@ -3127,19 +3103,9 @@ impl SceneRenderer {
         // Ids for every styled entity: they say which styles are on for
         // entities alone (#266) as well as what the mask holds (#263)
         if self.postprocess_resources.is_some() && self.postprocess_config.enabled {
-            crate::style_mask::resolve_blended(
-                world,
-                &self.postprocess_config,
-                &mut self.style_ids,
-                &mut self.style_by_entity,
-                &mut self.style_blend_by_entity,
-                &mut self.style_torn_entities,
-            );
+            self.style_mask.resolve(world, &self.postprocess_config);
         } else {
-            self.style_ids.set(Vec::new());
-            self.style_by_entity.clear();
-            self.style_blend_by_entity.clear();
-            self.style_torn_entities.clear();
+            self.style_mask.clear();
         }
 
         // Who is drawn on ticks this frame (#405): empty, and unwalked, in a
@@ -4204,7 +4170,7 @@ impl SceneRenderer {
     /// up and a style that reads it is on (#263).
     fn style_mask_wanted(&self) -> bool {
         self.postprocess_resources.is_some()
-            && crate::stylize::any_uses_mask(&self.postprocess_config, &self.style_ids)
+            && crate::stylize::any_uses_mask(&self.postprocess_config, &self.style_mask.ids)
     }
 
     /// Keep the `style` debug view's style (`mask_view`) on while that
@@ -4253,328 +4219,20 @@ impl SceneRenderer {
     /// The style ids the mask uses: which number each `style_mask` style
     /// name has this frame.
     pub fn style_ids(&self) -> &crate::style_mask::StyleIds {
-        &self.style_ids
+        &self.style_mask.ids
     }
 
     /// The style mask id of each styled entity, as of the last
     /// [`update_from_world`](Self::update_from_world) (empty while no
     /// style reads the mask).
     pub fn styled_entities(&self) -> &HashMap<flint_core::EntityId, u16> {
-        &self.style_by_entity
+        &self.style_mask.by_entity
     }
 
     /// How much of its style each styled entity drawn at less than 1 is
     /// drawn with (#278); an entity missing here is fully styled.
     pub fn styled_blends(&self) -> &HashMap<flint_core::EntityId, f32> {
-        &self.style_blend_by_entity
-    }
-
-    /// Record the style mask pass over this frame's visible draws of
-    /// styled entities: terrain chunks, opaque static, procedural and
-    /// skinned draws, then transparents over them (#310). The mask is
-    /// cleared even with none, so a style never reads a stale frame.
-    fn encode_style_mask(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        depth_view: &wgpu::TextureView,
-        depth_key: crate::bind_cache::DepthKey,
-    ) {
-        self.style_mask_veiled = false;
-        let Some(resources) = &self.postprocess_resources else {
-            return;
-        };
-        let Some(skinned) = &self.pipelines.skinned else {
-            return;
-        };
-        let pass = self.style_mask_pass.get_or_insert_with(|| {
-            crate::style_mask::StyleMaskPass::new(
-                device,
-                &crate::style_mask::MaskLayouts {
-                    transform: &self.layouts.transform_bind_group_layout,
-                    material: &self.layouts.material_bind_group_layout,
-                    light: &self.layouts.light_bind_group_layout,
-                    bones: &skinned.bone_bind_group_layout,
-                },
-            )
-        });
-        // Under MSAA the mask is drawn 4x against the scene's own samples
-        // and resolved, so a feature thinner than a pixel keeps the pixels
-        // the scene's samples gave it (#306).
-        let msaa_depth = match self.msaa.depth_at(resources.width, resources.height) {
-            Some((view, id)) if self.pipelines.samples() == crate::style_mask::MSAA_SAMPLES => {
-                pass.ensure_msaa(
-                    device,
-                    &self.layouts.transform_bind_group_layout,
-                    &skinned.bone_bind_group_layout,
-                );
-                Some(crate::style_mask::MsaaDepth { view, id })
-            }
-            _ => None,
-        };
-        let veil_target = resources.styles.get(
-            device,
-            crate::style_mask::VEIL_TARGET,
-            crate::style_mask::VEIL_FORMAT,
-            resources.width,
-            resources.height,
-        );
-        let mask = resources.styles.get(
-            device,
-            crate::style_mask::MASK_TARGET,
-            crate::style_mask::STYLE_MASK_FORMAT,
-            resources.width,
-            resources.height,
-        );
-        let ids = &self.style_by_entity;
-        let blends = &self.style_blend_by_entity;
-        let torn = &self.style_torn_entities;
-        let torn_of =
-            |e: &Option<flint_core::EntityId>| e.as_ref().is_some_and(|e| torn.contains(e));
-        let id_of = |e: &Option<flint_core::EntityId>| e.as_ref().and_then(|e| ids.get(e).copied());
-        let blend_of = |e: &Option<flint_core::EntityId>| {
-            e.as_ref()
-                .and_then(|e| blends.get(e).copied())
-                .unwrap_or(1.0)
-        };
-        let mut draws = Vec::new();
-        if !ids.is_empty() {
-            // Terrain first (#310): the props on it are drawn after, and
-            // each fragment's depth test decides who owns a pixel anyway
-            if let Some(id) = id_of(&self.terrain.entity) {
-                let blend = blend_of(&self.terrain.entity);
-                let torn = torn_of(&self.terrain.entity);
-                let frustum = self.camera_frustum.as_ref();
-                let visible = |d: &&TerrainDrawCall| {
-                    frustum.is_none_or(|f| f.aabb_visible(d.aabb_min, d.aabb_max))
-                };
-                draws.extend(self.terrain.draws.iter().filter(visible).map(|d| {
-                    crate::style_mask::MaskDraw {
-                        vertex_buffer: &d.vertex_buffer,
-                        index_buffer: &d.index_buffer,
-                        index_count: d.index_count,
-                        transform_bind_group: &d.transform_bind_group,
-                        bones: None,
-                        id,
-                        blend,
-                        torn,
-                    }
-                }));
-            }
-            draws.extend(
-                self.entity_draws
-                    .iter()
-                    .filter(|d| !d.is_wireframe)
-                    .filter_map(|d| {
-                        Some(crate::style_mask::MaskDraw {
-                            vertex_buffer: &d.vertex_buffer,
-                            index_buffer: &d.index_buffer,
-                            index_count: d.index_count,
-                            transform_bind_group: &d.transform_bind_group,
-                            bones: None,
-                            id: id_of(&d.entity_id)?,
-                            blend: blend_of(&d.entity_id),
-                            torn: torn_of(&d.entity_id),
-                        })
-                    }),
-            );
-            draws.extend(self.skinned_entity_draws.iter().filter_map(|d| {
-                Some(crate::style_mask::MaskDraw {
-                    vertex_buffer: &d.vertex_buffer,
-                    index_buffer: &d.index_buffer,
-                    index_count: d.index_count,
-                    transform_bind_group: &d.transform_bind_group,
-                    bones: Some(&d.bone_bind_group),
-                    id: id_of(&d.entity_id)?,
-                    blend: blend_of(&d.entity_id),
-                    torn: torn_of(&d.entity_id),
-                })
-            }));
-            // Styled transparents last, back to front as the scene drew
-            // them (#310). They write no depth, so the depth test keeps them
-            // behind the opaques in front of them and nothing else: where
-            // one shows, it is the nearest styled surface and its id
-            // replaces what's behind. A styled glass is a lens, drawing
-            // what's seen through it in its style.
-            draws.extend(
-                self.transparent_draws
-                    .iter()
-                    .filter(|d| !d.is_wireframe)
-                    .filter_map(|d| {
-                        Some(crate::style_mask::MaskDraw {
-                            vertex_buffer: &d.vertex_buffer,
-                            index_buffer: &d.index_buffer,
-                            index_count: d.index_count,
-                            transform_bind_group: &d.transform_bind_group,
-                            bones: None,
-                            id: id_of(&d.entity_id)?,
-                            blend: blend_of(&d.entity_id),
-                            torn: torn_of(&d.entity_id),
-                        })
-                    }),
-            );
-            draws.extend(self.transparent_skinned_draws.iter().filter_map(|d| {
-                Some(crate::style_mask::MaskDraw {
-                    vertex_buffer: &d.vertex_buffer,
-                    index_buffer: &d.index_buffer,
-                    index_count: d.index_count,
-                    transform_bind_group: &d.transform_bind_group,
-                    bones: Some(&d.bone_bind_group),
-                    id: id_of(&d.entity_id)?,
-                    blend: blend_of(&d.entity_id),
-                    torn: torn_of(&d.entity_id),
-                })
-            }));
-        }
-        // What's in front of them (#290): transparents that aren't styled
-        // themselves, and every particle
-        let mut veil = crate::style_mask::Veil {
-            light_bind_group: &self.lights.bind_group,
-            meshes: Vec::new(),
-            particles: None,
-        };
-        if !draws.is_empty() {
-            let unstyled = |e: &Option<flint_core::EntityId>| id_of(e).is_none();
-            veil.meshes.extend(
-                self.transparent_draws
-                    .iter()
-                    .filter(|d| !d.is_wireframe && unstyled(&d.entity_id))
-                    .map(|d| crate::style_mask::VeilMesh {
-                        vertex_buffer: &d.vertex_buffer,
-                        index_buffer: &d.index_buffer,
-                        index_count: d.index_count,
-                        transform_bind_group: &d.transform_bind_group,
-                        material_bind_group: &d.material_bind_group,
-                        bones: None,
-                    }),
-            );
-            veil.meshes.extend(
-                self.transparent_skinned_draws
-                    .iter()
-                    .filter(|d| unstyled(&d.entity_id))
-                    .map(|d| crate::style_mask::VeilMesh {
-                        vertex_buffer: &d.vertex_buffer,
-                        index_buffer: &d.index_buffer,
-                        index_count: d.index_count,
-                        transform_bind_group: &d.transform_bind_group,
-                        material_bind_group: &d.material_bind_group,
-                        bones: Some(&d.bone_bind_group),
-                    }),
-            );
-            veil.particles = match (&self.pipelines.particle, &self.particle_buffers) {
-                (Some(pipeline), Some(buffers)) => Some(crate::style_mask::VeilParticles {
-                    pipeline,
-                    buffers,
-                    draws: &self.particle_draws,
-                }),
-                _ => None,
-            };
-        }
-        let veiled = !veil.is_empty();
-        // The tear the composite draws this frame (#397), for the draws
-        // whose blend follows it: the same config and post time
-        let config = &self.postprocess_config;
-        let tear = crate::style_mask::Tear {
-            on: crate::postprocess::tear_active(config),
-            mode_params: config.mode_params,
-            mix: config.mode_mix,
-            time: self.post_time(),
-        };
-        if let Some(pass) = &mut self.style_mask_pass {
-            pass.encode(
-                device,
-                queue,
-                encoder,
-                &resources.binds,
-                &mask,
-                &veil_target.view,
-                depth_view,
-                depth_key,
-                msaa_depth,
-                &draws,
-                &veil,
-                tear,
-            );
-        }
-        self.style_mask_veiled = veiled;
-    }
-
-    /// Record the style albedo (#869): the frame's opaque static,
-    /// procedural and skinned draws once more, base colour only, against
-    /// the depth the scene drew (its samples under MSAA, resolved), for the
-    /// styles that divide the picture by it. Woozy draws (#215) move their
-    /// vertices in a stage of their own and are left out, as are terrain,
-    /// grass and the ocean: their pixels read as no mesh.
-    fn encode_style_albedo(
-        &mut self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        depth_view: &wgpu::TextureView,
-    ) {
-        let Some(resources) = &self.postprocess_resources else {
-            return;
-        };
-        let Some(skinned) = &self.pipelines.skinned else {
-            return;
-        };
-        let target = resources.styles.get(
-            device,
-            crate::style_albedo::ALBEDO_TARGET,
-            crate::style_albedo::ALBEDO_FORMAT,
-            resources.width,
-            resources.height,
-        );
-        // The scene's own samples while it drew 4x at this size
-        let (scene_depth, samples) = match self.msaa.depth_at(resources.width, resources.height) {
-            Some((view, _)) if self.pipelines.samples() > 1 => (view, self.pipelines.samples()),
-            _ => (depth_view, 1),
-        };
-        let mut meshes: Vec<crate::style_albedo::AlbedoMesh<'_>> = self
-            .entity_draws
-            .iter()
-            .filter(|d| !d.is_wireframe && d.wooze.is_none())
-            .map(|d| crate::style_albedo::AlbedoMesh {
-                vertex_buffer: &d.vertex_buffer,
-                index_buffer: &d.index_buffer,
-                index_count: d.index_count,
-                transform_bind_group: &d.transform_bind_group,
-                material_bind_group: &d.material_bind_group,
-                bones: None,
-            })
-            .collect();
-        meshes.extend(
-            self.skinned_entity_draws
-                .iter()
-                .filter(|d| d.wooze.is_none())
-                .map(|d| crate::style_albedo::AlbedoMesh {
-                    vertex_buffer: &d.vertex_buffer,
-                    index_buffer: &d.index_buffer,
-                    index_count: d.index_count,
-                    transform_bind_group: &d.transform_bind_group,
-                    material_bind_group: &d.material_bind_group,
-                    bones: Some(&d.bone_bind_group),
-                }),
-        );
-        let layouts = crate::style_albedo::AlbedoLayouts {
-            transform: &self.layouts.transform_bind_group_layout,
-            material: &self.layouts.material_bind_group_layout,
-            light: &self.layouts.light_bind_group_layout,
-            bones: &skinned.bone_bind_group_layout,
-        };
-        let pass = self
-            .style_albedo_pass
-            .get_or_insert_with(|| crate::style_albedo::StyleAlbedoPass::new(device));
-        pass.encode(
-            device,
-            encoder,
-            &layouts,
-            &target,
-            scene_depth,
-            samples,
-            &self.lights.bind_group,
-            &meshes,
-        );
+        &self.style_mask.blend_by_entity
     }
 
     /// Whether some pixel of the last style mask may hold a blend below 1
@@ -4582,19 +4240,14 @@ impl SceneRenderer {
     /// over a styled one (#290). While neither, the framework's
     /// cross-fade is skipped.
     pub fn style_mask_fades(&self) -> bool {
-        !self.style_blend_by_entity.is_empty()
-            || self.style_mask_veiled
-            || (!self.style_torn_entities.is_empty()
-                && crate::postprocess::tear_active(&self.postprocess_config))
+        self.style_mask.fades(&self.postprocess_config)
     }
 
     /// The entity style mask's per-draw uniform bytes and how many styled
     /// draws the last frame masked (#311); `None` before a frame needed
     /// the mask.
     pub fn style_mask_draws(&self) -> Option<(u64, usize)> {
-        self.style_mask_pass
-            .as_ref()
-            .map(|p| (p.draw_buffer_bytes(), p.last_draws()))
+        self.style_mask.draw_stats()
     }
 
     /// The render scale [`set_render_scale`](Self::set_render_scale) set.
@@ -4763,7 +4416,7 @@ impl SceneRenderer {
             device,
             surface_format,
             &self.postprocess_config,
-            &self.style_ids,
+            &self.style_mask.ids,
         ) {
             failures.push(failed);
         }
@@ -4940,7 +4593,8 @@ impl SceneRenderer {
         // A tear is a script's, set every frame, maybe after the world was
         // read: a prop whose blend follows it (#397) is off while the
         // config this frame draws has none
-        self.style_ids
+        self.style_mask
+            .ids
             .set_tear(crate::postprocess::tear_active(&self.postprocess_config));
         self.ensure_style_resources(device);
         // FXAA likewise (#297): a host that only sets the config (the
@@ -5304,7 +4958,7 @@ impl SceneRenderer {
         // The style albedo (#869): the opaque meshes' own colour, while a
         // style divides the picture by it
         if has_postprocess
-            && crate::stylize::any_uses_albedo(&self.postprocess_config, &self.style_ids)
+            && crate::stylize::any_uses_albedo(&self.postprocess_config, &self.style_mask.ids)
         {
             let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Style albedo"));
             self.encode_style_albedo(device, encoder, depth_view);

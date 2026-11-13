@@ -1284,7 +1284,7 @@ impl SceneRenderer {
     pub(super) fn style_bounds(&self, view_proj: &[[f32; 4]; 4]) -> crate::style_mask::StyleBounds {
         use crate::style_mask::IdBounds;
         let mut bounds = crate::style_mask::StyleBounds::known();
-        let ids = &self.style_by_entity;
+        let ids = &self.style_mask.by_entity;
         if ids.is_empty() {
             return bounds;
         }
@@ -1364,7 +1364,7 @@ impl SceneRenderer {
 
         // Stylize passes (#262). The frame every style reads; each stage
         // sets its own size and format.
-        let ids = &self.style_ids;
+        let ids = &self.style_mask.ids;
         // The `style` debug view shows the mask over the plain scene (#334):
         // mask_view runs alone, so no other style's output speckles its hues
         let solo = (self.debug_state.mode == DebugMode::StyleMask).then_some("mask_view");
@@ -1404,7 +1404,7 @@ impl SceneRenderer {
             )
         });
         // Where each id's entities are (#385), for styles' scissors
-        let style_bounds = if style_mask.is_some() && self.style_scissor {
+        let style_bounds = if style_mask.is_some() && self.style_mask.scissor {
             self.style_bounds(&camera.view_projection_matrix())
         } else {
             crate::style_mask::StyleBounds::default()
@@ -1431,7 +1431,7 @@ impl SceneRenderer {
                 },
                 mask: style_mask.as_ref().map(|m| &m.view),
                 mask_fades: self.style_mask_fades(),
-                style_ids: &self.style_ids,
+                style_ids: &self.style_mask.ids,
                 style_bounds: &style_bounds,
                 edges: None,
                 albedo: style_albedo,
