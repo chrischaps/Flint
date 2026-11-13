@@ -795,9 +795,10 @@ impl ViewerApp {
             None,
         );
 
+        // For the plain view egui draws into (RenderContext::hud_view, #428)
         let egui_renderer = egui_wgpu::Renderer::new(
             &render_context.device,
-            render_context.config.format,
+            render_context.hud_format,
             None,
             1,
             false,
@@ -959,9 +960,17 @@ impl ViewerApp {
             }
         };
 
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        // The scene into the sRGB view, egui into the plain one, as the
+        // player does: egui's translucent panels blend in display space
+        // there, so the style-error card and the F4 panels look the same in
+        // both hosts (#428).
+        let (view, hud_view) = {
+            let context = self.render_context.as_ref().unwrap();
+            (
+                context.frame_view(&output.texture),
+                context.hud_view(&output.texture),
+            )
+        };
 
         self.render_stats.record_frame();
 
@@ -1000,7 +1009,7 @@ impl ViewerApp {
         }
 
         // Always render egui overlay (gizmo is always visible, panels are conditional)
-        let (gizmo_action, menu_actions) = self.render_egui(&view);
+        let (gizmo_action, menu_actions) = self.render_egui(&hud_view);
 
         // Rendering & Effects menu actions that need &mut self (deferred out
         // of the egui closure's disjoint field borrows)
