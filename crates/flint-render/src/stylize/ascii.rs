@@ -92,6 +92,12 @@
 //! it over the tone glyph in the one cell the line passes within half a
 //! cell of (#352: the cell pass records where the line crosses the cell's
 //! centre column or row; `ascii_edge_thin.wgsl` keeps it there).
+//! Which glyph each edge cell draws, its thinned line or the corner its
+//! neighbours' lines meet in (#348, #637), is decided once per cell in two
+//! more passes, `ascii_edge_thin.wgsl` and `ascii_edge_corners.wgsl`
+//! (#910): the glyph pass reads one texel of it. Decided per pixel, it
+//! inlined under FXC into a glyph shader that took up to a minute to
+//! compile on DX12.
 //! A mask outline fires wherever the id changes and either side is one of
 //! this style's ids (the plain `ascii` id or any per-entity variant's), so
 //! it is what separates one styled entity from another, and it is always
@@ -530,6 +536,8 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
                 },
                 count: None,
             },
+            // Each edge cell's glyph, decided once per cell (#910), likewise
+            texture_entry(7, wgpu::TextureSampleType::Uint),
         ],
     });
     // The tone statistics' inputs (#289): the picture and the mask
@@ -666,13 +674,38 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         None,
     );
     let glyph_module = kit::shader(device, "ASCII Shader", GLYPH_SHADER);
+    // The edge view's last group (#349, #910): the edge cells and their
+    // decided slots
+    let edge_view_cells_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ASCII Edge View Cells BGL"),
+        entries: &[
+            texture_entry(0, wgpu::TextureSampleType::Float { filterable: false }),
+            texture_entry(1, wgpu::TextureSampleType::Uint),
+        ],
+    });
     // The edge debug view (#349): the edge pixels and the edge cells in
     let edge_view_pipeline = kit::fullscreen_pipeline(
         device,
         "ASCII Edge View Pipeline",
         &kit::shader(device, "ASCII Edge View Shader", EDGE_VIEW_SHADER),
-        &[&uniform_bgl, &input_bgl, &edges_in_bgl, &edges_in_bgl],
+        &[&uniform_bgl, &input_bgl, &edges_in_bgl, &edge_view_cells_bgl],
         d.format,
+    );
+    // Each edge cell's glyph, once per cell (#910): thinned lines and
+    // marked corners' arms, then the glyph every cell draws
+    let edge_thin_pipeline = kit::fullscreen_pipeline(
+        device,
+        "ASCII Edge Thin Pipeline",
+        &kit::shader(device, "ASCII Edge Thin Shader", EDGE_THIN_SHADER),
+        &[&edges_in_bgl],
+        EDGE_SLOT_FORMAT,
+    );
+    let edge_corner_pipeline = kit::fullscreen_pipeline(
+        device,
+        "ASCII Edge Corner Pipeline",
+        &kit::shader(device, "ASCII Edge Corner Shader", EDGE_CORNER_SHADER),
+        &[&cells_bgl, &edges_in_bgl],
+        EDGE_SLOT_FORMAT,
     );
     let blit = kit::Blit::new(device, "ASCII Blit", &input_bgl, d.format);
     Box::new(Ascii {
@@ -705,6 +738,9 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
             "ASCII Edge Cell Uniforms",
         ),
         edge_view_pipeline,
+        edge_view_cells_bgl,
+        edge_thin_pipeline,
+        edge_corner_pipeline,
         edge_view_uniforms: kit::uniform_buffer::<EdgeViewUniforms>(
             device,
             "ASCII Edge View Uniforms",
@@ -715,6 +751,8 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         no_mask_bind,
         edges: Mutex::new(None),
         edge_cells: Mutex::new(None),
+        edge_thin: Mutex::new(None),
+        edge_slots: Mutex::new(None),
         cells_pipeline,
         variant_cells_pipeline,
         variant_cells: Mutex::new([None, None]),
@@ -908,7 +946,7 @@ const NO_EDGE_START: u32 = u32::MAX;
 
 /// The most glyphs an edge cell can draw (#348): four lines, four corners,
 /// four tees and the cross, numbered so in the shaders
-/// (`ascii_edge_thin.wgsl`).
+/// (`ascii_edge_slot.wgsl`).
 const EDGE_SLOTS: usize = 13;
 
 /// The edge pass's uniforms (#267), `ascii_edges.wgsl`.
@@ -999,6 +1037,12 @@ const EDGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// them as an exact integer (#351); x, y and w are kept at f16 precision,
 /// as they were.
 const EDGE_CELL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+/// The edge thin and corner passes' texel a cell (#910): slots packed as
+/// `ascii_edge_slot.wgsl` packs them.
+const EDGE_SLOT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Uint;
+/// How many cells bigger than the grid the thin pass's texture is on each
+/// side (`THIN_PAD` in ascii_edge_slot.wgsl).
+const EDGE_THIN_PAD: u32 = 1;
 
 /// How many entries a variant table buffer holds to fit `needed`: what it
 /// holds already when that's enough, else the next power of two (#336).
@@ -1202,11 +1246,19 @@ pub(crate) const GLYPH_SHADER: kit::Wgsl = kit::wgsl!(
     "../palette.wgsl",
     "ascii_dissolve.wgsl",
     "ascii.wgsl",
-    "ascii_edge_thin.wgsl"
+    "ascii_edge_slot.wgsl"
 );
 const EDGE_VIEW_SHADER: kit::Wgsl = kit::wgsl!(
     "ascii_edge_view.wgsl",
+    "ascii_edge_slot.wgsl"
+);
+const EDGE_THIN_SHADER: kit::Wgsl = kit::wgsl!(
+    "ascii_edge_slot.wgsl",
     "ascii_edge_thin.wgsl"
+);
+const EDGE_CORNER_SHADER: kit::Wgsl = kit::wgsl!(
+    "ascii_edge_slot.wgsl",
+    "ascii_edge_corners.wgsl"
 );
 const DISSOLVE_ORDER_SHADER: kit::Wgsl = kit::wgsl!(
     "ascii_common.wgsl",
@@ -1747,12 +1799,22 @@ struct Ascii {
     /// `DebugMode::StyleEdges`.
     edge_view_pipeline: wgpu::RenderPipeline,
     edge_view_uniforms: wgpu::Buffer,
+    edge_view_cells_bgl: wgpu::BindGroupLayout,
+    /// Each edge cell's glyph, decided once per cell (#910): the thin pass
+    /// (`ascii_edge_thin.wgsl`, into `edge_thin`, [`EDGE_THIN_PAD`] bigger
+    /// than the grid on every side), then the corner pass
+    /// (`ascii_edge_corners.wgsl`, into `edge_slots`), of which the glyph
+    /// pass and the edge view read one texel a cell.
+    edge_thin_pipeline: wgpu::RenderPipeline,
+    edge_corner_pipeline: wgpu::RenderPipeline,
     edges_in_bgl: wgpu::BindGroupLayout,
     depth_bgl: wgpu::BindGroupLayout,
     mask_bgl: wgpu::BindGroupLayout,
     no_mask_bind: wgpu::BindGroup,
     edges: Mutex<Option<Owned>>,
     edge_cells: Mutex<Option<Owned>>,
+    edge_thin: Mutex<Option<Owned>>,
+    edge_slots: Mutex<Option<Owned>>,
     /// The glyph grid as text (#317): `fs_text` in ascii.wgsl, drawn only
     /// while `capture` is on, into `text` and copied to its read-back.
     text_pipeline: wgpu::RenderPipeline,
@@ -2148,6 +2210,7 @@ impl Ascii {
         input: &StyleInput<'_>,
         with_mask: bool,
         edge_cells: &Owned,
+        edge_slots: &Owned,
         stats: &Owned,
         variant_cells: [&Owned; 2],
         dissolve_ranks: &Owned,
@@ -2186,6 +2249,10 @@ impl Ascii {
                         binding: 6,
                         resource: wgpu::BindingResource::TextureView(&dissolve_ranks.view),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::TextureView(&edge_slots.view),
+                    },
                 ],
             })
         };
@@ -2196,6 +2263,7 @@ impl Ascii {
         // dissolves toggled on and off)
         let key = bind_key(&[
             edge_cells.generation,
+            edge_slots.generation,
             stats.generation,
             variant_cells[0].generation,
             dissolve_ranks.generation,
@@ -2425,14 +2493,15 @@ impl Ascii {
     }
 
     /// Edge pixels from depth, normals and the mask, then each cell's line
-    /// glyph from them (#267).
+    /// glyph from them (#267), then the glyph each cell draws, thinned and
+    /// cornered, into `edge_slots` (#910).
     #[allow(clippy::too_many_arguments)]
     fn encode_edges(
         &self,
         frame: &StyleFrame<'_>,
         encoder: &mut wgpu::CommandEncoder,
         input: &StyleInput<'_>,
-        edge_cells: &Owned,
+        [edge_cells, edge_slots]: [&Owned; 2],
         cell: [f32; 2],
         table: &wgpu::BindGroup,
         glyph_rect: Option<kit::PixelRect>,
@@ -2527,6 +2596,35 @@ impl Ascii {
             ],
             regions.map(|r| r.edge_cells),
         );
+
+        // The glyph each cell draws (#910), decided here once a cell
+        // rather than by every pixel of it. Over the whole grid: a cell
+        // outside the regions reads the edge cells as the glyph pass's
+        // pixels once did, and the passes cost next to nothing
+        let pad = 2 * EDGE_THIN_PAD;
+        let mut thin_slot = self.edge_thin.lock().unwrap_or_else(|e| e.into_inner());
+        let thin = Owned::ensure(
+            &mut thin_slot,
+            frame.device,
+            "ASCII Edge Thin",
+            EDGE_SLOT_FORMAT,
+            [edge_cells.size[0] + pad, edge_cells.size[1] + pad],
+            &self.cells_bgl,
+        );
+        kit::fullscreen_pass(
+            encoder,
+            "ASCII Edge Thin Pass",
+            &thin.view,
+            &self.edge_thin_pipeline,
+            &[&edge_cells.bind],
+        );
+        kit::fullscreen_pass(
+            encoder,
+            "ASCII Edge Corner Pass",
+            &edge_slots.view,
+            &self.edge_corner_pipeline,
+            &[&thin.bind, &edge_cells.bind],
+        );
     }
 
     /// The edge debug view (#349): the edge pixels by source and each
@@ -2538,7 +2636,7 @@ impl Ascii {
         encoder: &mut wgpu::CommandEncoder,
         input: &StyleInput<'_>,
         output: &wgpu::TextureView,
-        edge_cells: &Owned,
+        [edge_cells, edge_slots]: [&Owned; 2],
         cell: [f32; 2],
         origin: [f32; 2],
         corners: u32,
@@ -2563,6 +2661,26 @@ impl Ascii {
         frame
             .queue
             .write_buffer(&self.edge_view_uniforms, 0, bytemuck::bytes_of(&uniforms));
+        let cells = frame.bind(
+            "ASCII Edge View Cells BG",
+            bind_key(&[edge_cells.generation, edge_slots.generation]),
+            || {
+                frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("ASCII Edge View Cells BG"),
+                    layout: &self.edge_view_cells_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&edge_cells.view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&edge_slots.view),
+                        },
+                    ],
+                })
+            },
+        );
         kit::fullscreen_pass(
             encoder,
             "ASCII Edge View Pass",
@@ -2576,7 +2694,7 @@ impl Ascii {
                 ),
                 &frame.sampled_input("ASCII Edge View Input BG", &self.input_bgl, input),
                 &edges.bind,
-                &edge_cells.bind,
+                &cells,
             ],
         );
     }
@@ -2844,6 +2962,16 @@ impl StylePass for Ascii {
             grid,
             &self.edges_in_bgl,
         );
+        // Each edge cell's glyph (#910), bound even with the edges off
+        let mut edge_slots_slot = self.edge_slots.lock().unwrap_or_else(|e| e.into_inner());
+        let edge_slots = Owned::ensure(
+            &mut edge_slots_slot,
+            frame.device,
+            "ASCII Edge Slots",
+            EDGE_SLOT_FORMAT,
+            grid,
+            &self.cells_bgl,
+        );
         // The variant table (#336), written before any pass reads it
         let (uniform, edge_table, stats_width) = self.upload_table(frame, &variants, &mut slots);
         // The edge debug view (#349) runs the edge passes even with the
@@ -2854,7 +2982,7 @@ impl StylePass for Ascii {
                 frame,
                 encoder,
                 input,
-                edge_cells,
+                [edge_cells, edge_slots],
                 cell,
                 &edge_table,
                 glyph_rect,
@@ -2863,7 +2991,14 @@ impl StylePass for Ascii {
         if edge_view {
             let corners = corner_glyphs(frame, &set);
             self.encode_edge_view(
-                frame, encoder, input, output, edge_cells, cell, origin, corners,
+                frame,
+                encoder,
+                input,
+                output,
+                [edge_cells, edge_slots],
+                cell,
+                origin,
+                corners,
             );
             return;
         }
@@ -3131,6 +3266,7 @@ impl StylePass for Ascii {
             input,
             with_mask,
             edge_cells,
+            edge_slots,
             stats,
             variant_cells,
             dissolve_ranks,
@@ -3383,6 +3519,33 @@ mod tests {
                 size,
                 "{name}"
             );
+        }
+    }
+
+    /// The edge thin and corner passes (#910) validate, and the glyph and
+    /// edge view shaders no longer carry the per-pixel decision: inlined
+    /// by FXC, it made the glyph shader take up to a minute on DX12.
+    #[test]
+    fn edge_glyphs_are_decided_once_per_cell() {
+        for (name, src) in [
+            ("ascii_edge_thin.wgsl", EDGE_THIN_SHADER.text),
+            ("ascii_edge_corners.wgsl", EDGE_CORNER_SHADER.text),
+        ] {
+            let module = naga::front::wgsl::parse_str(src).expect(name);
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::default(),
+            )
+            .validate(&module)
+            .expect(name);
+        }
+        for (name, src) in [
+            ("glyph", GLYPH_SHADER.text),
+            ("edge view", EDGE_VIEW_SHADER.text),
+        ] {
+            for decision in ["fn thinned_slot", "fn cornered_slot"] {
+                assert!(!src.contains(decision), "the {name} shader has {decision}");
+            }
         }
     }
 
@@ -3965,7 +4128,7 @@ mod tests {
                 .filter(|t| !t.is_empty())
                 .collect()
         };
-        let arms = table(include_str!("ascii_edge_thin.wgsl"), "ARM_GLYPHS");
+        let arms = table(include_str!("ascii_edge_corners.wgsl"), "ARM_GLYPHS");
         assert_eq!(arms.len(), 16);
         let edges = GlyphSet::builtin().edges();
         let slots = edges.slots();

@@ -350,7 +350,7 @@ fn corners_are_picked_by_the_arms_that_meet() {
         "─│╱╲┌┐└┘├┤┬┴┼",
         "lines, then corners, tees and the cross: the shader's slot order"
     );
-    // (right, left, down, up), as ascii_edge_thin.wgsl's ARM_GLYPHS
+    // (right, left, down, up), as ascii_edge_corners.wgsl's ARM_GLYPHS
     assert_eq!(e.for_arms(true, false, true, false), Some('┌'));
     assert_eq!(e.for_arms(false, true, true, false), Some('┐'));
     assert_eq!(e.for_arms(true, false, false, true), Some('└'));

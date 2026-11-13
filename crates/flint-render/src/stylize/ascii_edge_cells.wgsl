@@ -43,7 +43,7 @@
 // (l1 + l2), is under `corner`. Two arms of a corner at right angles give
 // (a - b) / (a + b) for arm lengths a and b, 0 when the corner sits in the
 // cell's middle; a straight line gives nearly 1. The glyph pass picks which
-// corner from the neighbours' line glyphs (ascii_edge_thin.wgsl).
+// corner from the neighbours' line glyphs (ascii_edge_corners.wgsl).
 
 struct CellUniforms {
     cell: vec2<f32>,

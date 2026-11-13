@@ -3,8 +3,10 @@
 // Edges") draw this in place of the glyphs, over the scene in dim grey:
 //   - each edge pixel (ascii_edges.wgsl) in its source's colour: cyan a
 //     depth step, amber a crease, magenta a styled entity's outline;
-//   - each glyph cell's decision (ascii_edge_cells.wgsl, then the glyph
-//     pass's thinning in ascii_edge_thin.wgsl): a green line in the
+//   - each glyph cell's decision (ascii_edge_cells.wgsl, then the
+//     thinning and corners of ascii_edge_thin.wgsl and
+//     ascii_edge_corners.wgsl, #910, the texel the glyph pass reads): a
+//     green line in the
 //     glyph's direction where it draws one, a dim dashed one where it
 //     yields the line to a neighbour, a red wash where the cell holds more
 //     than `edge_max` (texture, keeps its tone glyph), nothing where it
@@ -37,6 +39,8 @@ struct EdgeViewUniforms {
 @group(1) @binding(1) var input_sampler: sampler;
 @group(2) @binding(0) var edges: texture_2d<f32>;
 @group(3) @binding(0) var edge_cells: texture_2d<f32>;
+// The edge slot pass's packed decision per cell (#910)
+@group(3) @binding(1) var edge_slots: texture_2d<u32>;
 
 // The edge cells are offset by one, so the part cell at the top left is
 // texel 0, 0 (ascii_common.wgsl's CELL_OFFSET)
@@ -52,7 +56,7 @@ const TEXTURE_COLOR: vec3<f32> = vec3<f32>(1.0, 0.25, 0.2);
 const CORNER_COLOR: vec3<f32> = vec3<f32>(1.0, 0.9, 0.3);
 
 // A corner glyph slot's arms (#348), right 1, left 2, down 4, up 8: the
-// inverse of ascii_edge_thin.wgsl's ARM_GLYPHS, slots 4..12
+// inverse of ascii_edge_corners.wgsl's ARM_GLYPHS, slots 4..12
 const SLOT_ARMS = array<u32, 9>(5u, 6u, 9u, 10u, 13u, 14u, 7u, 11u, 15u);
 
 struct VertexOutput {
@@ -140,8 +144,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let e = edge_cell_at(c);
     let len = e.y;
     let has_line = e.x > 0.5;
-    let drawn = has_line && thinned_slot(c) != NO_EDGE;
-    let shape = cornered_slot(c, u.corners);
+    let cmax = vec2<i32>(textureDimensions(edge_slots)) - vec2<i32>(1);
+    let slots = textureLoad(edge_slots, clamp(c, vec2<i32>(0), cmax), 0).x;
+    let drawn = has_line && slot_for(slots, 0u) != NO_EDGE;
+    let shape = slot_for(slots, u.corners);
     // A corner in a gap (#637) draws no line of its own, so it isn't `drawn`
     let corner = shape >= 4u && shape != NO_EDGE;
     var decision = SHORT_COLOR;
