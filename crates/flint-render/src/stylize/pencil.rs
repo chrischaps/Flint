@@ -73,8 +73,11 @@
 //! renderer draws after the scene pass only while a row asks for it), both
 //! in display values, so a brown floor in the sun reads as lit and a white
 //! prop in shadow as dark: the hatching follows where the light falls off.
-//! Where no mesh was drawn (the sky, terrain, grass, water) or the paint is
-//! nearly black, the picture's own luminance stands.
+//! Where no mesh was drawn (terrain, grass, water) or the paint is nearly
+//! black, the picture's own luminance stands. The sky (depth cleared to 1)
+//! is paper (#890): nothing there for the light to fall on, so a dark sky
+//! is left blank as a traced drawing leaves it; `tone = "picture"` still
+//! hatches one.
 //!
 //! ## Per entity
 //!

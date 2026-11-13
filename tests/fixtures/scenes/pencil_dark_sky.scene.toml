@@ -1,0 +1,51 @@
+# Pencil under a dark sky (#890): what examples/skeletal_test draws, frozen
+# for the goldens. The ground is dark slate and nothing sets a sky, so the
+# renderer's default clear is dark; under pencil's tone = "light" that sky
+# must come out as blank paper, under tone = "picture" it is hatched.
+# Written here (not copied from the example, whose player, physics and
+# animator a still doesn't need); a real sun and fill, so the YBot's shadow
+# side and the ground's shadow are what the light hatches.
+
+[scene]
+name = "Pencil Dark Sky"
+version = "4.0"
+description = "A YBot on dark ground under the default dark sky, for pencil's tone = light goldens (#890)"
+
+[entities.sun.light]
+type = "directional"
+direction = [0.3, 0.7, 0.4]
+color = [1.0, 0.95, 0.85]
+intensity = 2.5
+
+[entities.fill_light.transform]
+position = [-5, 3, 3]
+
+[entities.fill_light.light]
+type = "point"
+color = [0.6, 0.7, 1.0]
+intensity = 8.0
+radius = 15.0
+
+[entities.ground]
+archetype = "floor"
+
+[entities.ground.transform]
+position = [0, -0.1, 0]
+
+[entities.ground.bounds]
+min = [-10, -0.1, -10]
+max = [10, 0.0, 10]
+
+[entities.ground.material]
+color = [0.3, 0.3, 0.35, 1.0]
+roughness = 0.8
+
+[entities.ybot]
+archetype = "character"
+
+[entities.ybot.transform]
+position = [0, 0, 0]
+scale = [2.0, 2.0, 2.0]
+
+[entities.ybot.model]
+asset = "YBotWithIdle"
