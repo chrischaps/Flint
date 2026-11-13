@@ -2809,6 +2809,9 @@ struct Build {
     /// Frames since the file was last looked at.
     #[cfg(not(target_arch = "wasm32"))]
     since_poll: u32,
+    /// The [`poll_files_now`] count at that look.
+    #[cfg(not(target_arch = "wasm32"))]
+    polled_at: u32,
 }
 
 /// A pipeline made but not yet trusted: it draws once both of the GPU's
@@ -3012,6 +3015,8 @@ fn build(d: &StyleDevice) -> CustomPass {
                     modified: None,
                     #[cfg(not(target_arch = "wasm32"))]
                     since_poll: 0,
+                    #[cfg(not(target_arch = "wasm32"))]
+                    polled_at: polls_asked(),
                 }),
                 error: Mutex::new(None),
             }
@@ -3135,6 +3140,26 @@ fn pipeline(
 #[cfg(not(target_arch = "wasm32"))]
 const POLL_FRAMES: u32 = 15;
 
+/// How many times [`poll_files_now`] was called.
+#[cfg(not(target_arch = "wasm32"))]
+static POLLS_ASKED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+#[cfg(not(target_arch = "wasm32"))]
+fn polls_asked() -> u32 {
+    POLLS_ASKED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Have every user style's pass look at its WGSL and image files at its
+/// next draw, whatever its frame count (#432). A window draws sixty frames
+/// a second and a pass looks every [`POLL_FRAMES`]; a host that draws one
+/// frame a change (`flint render --watch`) calls this before the frame, so
+/// the save it was woken for is the one it draws. Natively; on the web the
+/// files never change and this does nothing.
+pub fn poll_files_now() {
+    #[cfg(not(target_arch = "wasm32"))]
+    POLLS_ASKED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
 // ---------------------------------------------------------------------------
 // Images (#413)
 // ---------------------------------------------------------------------------
@@ -3167,6 +3192,9 @@ struct ImageSet {
     generation: u64,
     #[cfg(not(target_arch = "wasm32"))]
     since_poll: u32,
+    /// The [`poll_files_now`] count at the last look.
+    #[cfg(not(target_arch = "wasm32"))]
+    polled_at: u32,
 }
 
 /// What one [`ImageSet::update`] did.
@@ -3221,6 +3249,8 @@ impl ImageSet {
             generation: 0,
             #[cfg(not(target_arch = "wasm32"))]
             since_poll: 0,
+            #[cfg(not(target_arch = "wasm32"))]
+            polled_at: polls_asked(),
         })
     }
 
@@ -3543,9 +3573,11 @@ impl CustomPass {
         #[cfg(not(target_arch = "wasm32"))]
         let poll = {
             images.since_poll += 1;
-            let due = images.since_poll >= POLL_FRAMES;
+            let asked = polls_asked();
+            let due = images.since_poll >= POLL_FRAMES || images.polled_at != asked;
             if due {
                 images.since_poll = 0;
+                images.polled_at = asked;
             }
             due
         };
@@ -3586,10 +3618,12 @@ impl CustomPass {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
                 build.since_poll += 1;
-                if build.since_poll < POLL_FRAMES {
+                let asked = polls_asked();
+                if build.since_poll < POLL_FRAMES && build.polled_at == asked {
                     continue;
                 }
                 build.since_poll = 0;
+                build.polled_at = asked;
                 let now = modified(&pass.wgsl_path);
                 now.is_some() && now != build.modified
             };
