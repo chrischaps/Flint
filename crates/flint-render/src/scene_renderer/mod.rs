@@ -696,6 +696,8 @@ pub struct SceneRenderer {
     gpu_timer: Option<crate::gpu_timer::GpuTimer>,
     /// The entity style mask's pass (#263); `None` until a frame needs it.
     style_mask_pass: Option<crate::style_mask::StyleMaskPass>,
+    /// The style albedo's pass (#869), made the first frame a style reads it.
+    style_albedo_pass: Option<crate::style_albedo::StyleAlbedoPass>,
     /// Style names entities ask for, numbered for the mask.
     style_ids: crate::style_mask::StyleIds,
     /// Styled entities -> their mask id, rebuilt each `update_from_world`
@@ -1084,6 +1086,7 @@ impl SceneRenderer {
             grass_shadow_binds: Vec::new(),
             gpu_timer: None,
             style_mask_pass: None,
+            style_albedo_pass: None,
             style_ids: Default::default(),
             style_by_entity: HashMap::new(),
             style_scissor: crate::stylize::scissor_enabled(),
@@ -2642,6 +2645,7 @@ impl SceneRenderer {
             grass_shadow_binds: Vec::new(),
             gpu_timer: None,
             style_mask_pass: None,
+            style_albedo_pass: None,
             style_ids: Default::default(),
             style_by_entity: HashMap::new(),
             style_scissor: crate::stylize::scissor_enabled(),
@@ -5615,6 +5619,89 @@ impl SceneRenderer {
         self.style_mask_veiled = veiled;
     }
 
+    /// Record the style albedo (#869): the frame's opaque static,
+    /// procedural and skinned draws once more, base colour only, against
+    /// the depth the scene drew (its samples under MSAA, resolved), for the
+    /// styles that divide the picture by it. Woozy draws (#215) move their
+    /// vertices in a stage of their own and are left out, as are terrain,
+    /// grass and the ocean: their pixels read as no mesh.
+    fn encode_style_albedo(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        depth_view: &wgpu::TextureView,
+    ) {
+        let Some(resources) = &self.postprocess_resources else {
+            return;
+        };
+        let Some(skinned) = &self.skinned_pipeline else {
+            return;
+        };
+        let target = resources.styles.get(
+            device,
+            crate::style_albedo::ALBEDO_TARGET,
+            crate::style_albedo::ALBEDO_FORMAT,
+            resources.width,
+            resources.height,
+        );
+        // The scene's own samples while it drew 4x at this size
+        let (scene_depth, samples) = match &self.msaa_depth {
+            Some((texture, view))
+                if self.sample_count > 1
+                    && texture.size().width == resources.width
+                    && texture.size().height == resources.height =>
+            {
+                (view, self.sample_count)
+            }
+            _ => (depth_view, 1),
+        };
+        let mut meshes: Vec<crate::style_albedo::AlbedoMesh<'_>> = self
+            .entity_draws
+            .iter()
+            .filter(|d| !d.is_wireframe && d.wooze.is_none())
+            .map(|d| crate::style_albedo::AlbedoMesh {
+                vertex_buffer: &d.vertex_buffer,
+                index_buffer: &d.index_buffer,
+                index_count: d.index_count,
+                transform_bind_group: &d.transform_bind_group,
+                material_bind_group: &d.material_bind_group,
+                bones: None,
+            })
+            .collect();
+        meshes.extend(
+            self.skinned_entity_draws
+                .iter()
+                .filter(|d| d.wooze.is_none())
+                .map(|d| crate::style_albedo::AlbedoMesh {
+                    vertex_buffer: &d.vertex_buffer,
+                    index_buffer: &d.index_buffer,
+                    index_count: d.index_count,
+                    transform_bind_group: &d.transform_bind_group,
+                    material_bind_group: &d.material_bind_group,
+                    bones: Some(&d.bone_bind_group),
+                }),
+        );
+        let layouts = crate::style_albedo::AlbedoLayouts {
+            transform: &self.pipeline.transform_bind_group_layout,
+            material: &self.pipeline.material_bind_group_layout,
+            light: &self.pipeline.light_bind_group_layout,
+            bones: &skinned.bone_bind_group_layout,
+        };
+        let pass = self
+            .style_albedo_pass
+            .get_or_insert_with(|| crate::style_albedo::StyleAlbedoPass::new(device));
+        pass.encode(
+            device,
+            encoder,
+            &layouts,
+            &target,
+            scene_depth,
+            samples,
+            &self.light_bind_group,
+            &meshes,
+        );
+    }
+
     /// Whether some pixel of the last style mask may hold a blend below 1
     /// (#396): an entity drawn part-way into its style (#278), or a veil
     /// over a styled one (#290). While neither, the framework's
@@ -6558,6 +6645,18 @@ impl SceneRenderer {
         if has_postprocess && self.style_mask_wanted() {
             let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Style mask"));
             self.encode_style_mask(device, queue, encoder, depth_view, depth_key);
+            if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
+                timer.end(encoder, scope);
+            }
+        }
+
+        // The style albedo (#869): the opaque meshes' own colour, while a
+        // style divides the picture by it
+        if has_postprocess
+            && crate::stylize::any_uses_albedo(&self.postprocess_config, &self.style_ids)
+        {
+            let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Style albedo"));
+            self.encode_style_albedo(device, encoder, depth_view);
             if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
                 timer.end(encoder, scope);
             }

@@ -644,6 +644,22 @@ name = "look-rotoscope-entities"
 scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:scope=entities"]
 
+# Tone from the light (#869): the picture over the style albedo, so the
+# brown floor in the sun is blank at the neutral brightness and only the
+# shadows are hatched: the barrels' undersides, the crate's shaded face and
+# what they cast. Under tone = "picture" brightness 0 hatches the whole floor
+[[case]]
+name = "look-rotoscope-light"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:tone=light,brightness=0"]
+
+# The same per entity, 4x: the variants take tone from the preset, and the
+# albedo is drawn against the scene's samples and resolved
+[[case]]
+name = "look-rotoscope-light-entities-msaa4"
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
+args = ["--no-grid", "--msaa", "4", "--look", "rotoscope", "--style", "pencil:scope=entities,tone=light,brightness=0"]
+
 # A sweep's contact sheet: the cells, their frames and the glyph labels
 [[case]]
 name = "look-sweep-cell"
