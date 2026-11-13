@@ -216,7 +216,7 @@ purpose = "Pencil on chosen props: hatching, contours and paper (#273)"
 [[example]]
 scene = "motion_hold.scene.toml"
 topic = "stylize"
-purpose = "Motion on twos: a pose and a pendulum held at 12 a second with the pencil's boil, beside the same swing drawn smoothly (#405)"
+purpose = "Motion on twos: a pose and a pendulum held at 12 a second with the pencil's boil, beside the same swing drawn smoothly; each bob's lantern light and trail step with it (#405, #873)"
 
 [[example]]
 scene = "watercolor.scene.toml"
