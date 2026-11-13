@@ -80,13 +80,22 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let gx = (l[2] + 2.0 * l[5] + l[8]) - (l[0] + 2.0 * l[3] + l[6]);
     let gy = (l[6] + 2.0 * l[7] + l[8]) - (l[0] + 2.0 * l[1] + l[2]);
     var lum = l[4];
-    if row.i.y > 0.5 {
+    let q = vec2<i32>(in.uv * vec2<f32>(depth_size()));
+    let from_light = row.i.y > 0.5;
+    if from_light {
         lum = light_luma(in.uv, lum);
     }
-    let tone = clamp((lum - 0.5) * row.b.y + 0.5 + row.b.x, 0.0, 1.0);
+    var tone = clamp((lum - 0.5) * row.b.y + 0.5 + row.b.x, 0.0, 1.0);
+    // Nothing drawn reads as paper (#890): under the light's tone the sky
+    // (depth cleared to 1, no surface for light to fall on) is fully lit
+    // whatever its colour, as a traced drawing leaves it blank, whatever
+    // brightness and contrast say. `tone = "picture"` still hatches a dark
+    // sky, for a look that wants one
+    if from_light && textureLoad(scene_depth, clamp(q, vec2<i32>(0), depth_size() - 1), 0) >= 1.0 {
+        tone = 1.0;
+    }
 
     // World positions round the pixel, in depth texels
-    let q = vec2<i32>(in.uv * vec2<f32>(depth_size()));
     let c = world_at(q);
     let l1 = world_at(q + vec2<i32>(-1, 0));
     let r1 = world_at(q + vec2<i32>(1, 0));

@@ -693,6 +693,22 @@ name = "look-rotoscope-light-entities-msaa4"
 scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--msaa", "4", "--look", "rotoscope", "--style", "pencil:scope=entities,tone=light,brightness=0"]
 
+# Nothing drawn reads as paper (#890): under a dark sky, tone = "light" (the
+# look's own) leaves the sky blank, as a traced drawing does, while the
+# YBot's shadow side is still hatched. Before #890 the sky kept the
+# picture's dark tone and was hatched all over
+[[case]]
+name = "look-rotoscope-dark-sky"
+scene = "tests/fixtures/scenes/pencil_dark_sky.scene.toml"
+args = ["--no-grid", "--look", "rotoscope"]
+
+# The same under tone = "picture": the sky is hatched, for a look that
+# wants one
+[[case]]
+name = "look-rotoscope-dark-sky-picture"
+scene = "tests/fixtures/scenes/pencil_dark_sky.scene.toml"
+args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:tone=picture"]
+
 # A sweep's contact sheet: the cells, their frames and the glyph labels
 [[case]]
 name = "look-sweep-cell"
