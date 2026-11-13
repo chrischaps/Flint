@@ -42,3 +42,9 @@ image = { workspace = true, features = ["default"] }
 # web relies on the browser's compiler instead. `wgsl-out` writes the
 # module back out with every user loop guarded (#411).
 naga = { version = "23", features = ["wgsl-in", "wgsl-out"] }
+
+# DX12's shader compiler (#912): `gpu_select` loads dxcompiler.dll and
+# dxil.dll by full path from the executable's folder, as wgpu-hal does, so
+# what it reports is what wgpu gets. Already in the tree through wgpu-hal.
+[target.'cfg(windows)'.dependencies]
+libloading = "0.8"

@@ -73,7 +73,8 @@ pub fn device() -> Option<&'static SharedGpu> {
                 .await
                 .ok()?;
             Some(SharedGpu {
-                adapter: format!("{} ({:?})", info.name, info.backend),
+                // On DX12 it names the shader compiler (#912)
+                adapter: flint_render::gpu_select::adapter_line(&info),
                 instance,
                 device,
                 queue,

@@ -853,6 +853,12 @@ impl RenderHost {
             None => {
                 let ctx = pollster::block_on(HeadlessContext::new(width, height))
                     .context("Failed to create headless render context")?;
+                // What draws, once a device: WGPU_BACKEND is otherwise
+                // invisible, and on DX12 so is the shader compiler (#912)
+                say!(
+                    "GPU: {}",
+                    flint_render::gpu_select::adapter_line(&ctx.adapter_info)
+                );
                 self.ctx = Some(ctx);
                 self.gpu = gpu.clone();
                 self.devices_made += 1;
