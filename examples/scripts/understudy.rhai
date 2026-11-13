@@ -1,10 +1,11 @@
 // Understudy (#407): the director. Twenty-eight seconds, looping, on game
 // time, so `flint-player --frame-step` (or `flint render --scripts --time T`)
-// draws the same film every run. Captions and panel borders are the HUD's
+// draws the same film every run. Captions and the panels' ink are the HUD's
 // (understudy_hud.rhai), which keeps the same clock.
 //
-//    0.0  live. The mannequin waits by the easel
-//    3.4  it walks to the page (2 s) and turns to it
+//    0.0  live, as a comic page of three panels (#880): the clearing,
+//         the blank page, the mannequin's face as it looks round
+//    3.4  one panel; it walks to the page (2 s) and turns to it
 //    5.8  it reaches out; at 6.0 the picture tears open at the page
 //    6.6  the figure is drawn on twos from here (motion_hold 12)
 //         (the tear bursts open and spreads, eased out over 5 s)
@@ -12,8 +13,9 @@
 //   11.0  the tear has taken the whole frame: the rotoscope pencil
 //   18.6  a wipe pulls the live frame back from the right (3 s)
 //   21.6  live; the hold is off
-//   23.0  the page is left drawn: a panel reveal, small, at the page
-//   28.0  the page is cleared and it starts over
+//   23.0  mostly: an inset panel of the mannequin in the rotoscope look,
+//         drawn on stroke by stroke (pencil transition = "draw", #879)
+//   28.0  it starts over
 //
 // Each beat is one call made on the frame it starts; the engine eases the
 // reveal from there. The beat is kept on the director's `story`
@@ -161,6 +163,60 @@ fn pow_pos(x, k) {
     if x <= 0.0 { 0.0 } else { x ** k }
 }
 
+// --- The pages (#880) ------------------------------------------------------------
+// Gutters are the page's paper; the ink round each panel is the HUD's, drawn
+// again on each tick (understudy_hud.rhai keeps the same rects), so border 0.
+
+fn paper() { [0.97, 0.96, 0.93] }
+
+// The opening: the wide shot beside the blank page over the mannequin's face
+fn opening_page(page) {
+    #{
+        gutter: 18.0, border: 0.0, gutter_color: paper(),
+        panel: #{
+            wide: #{ rect: [0.0, 0.0, 0.62, 1.0] },
+            page: #{
+                rect: [0.62, 0.0, 0.38, 0.5],
+                position: [page.x + 0.28, page.y + 0.06, page.z + 1.5],
+                target: [page.x, page.y - 0.02, page.z],
+                fov: 30.0,
+            },
+            face: #{
+                rect: [0.62, 0.5, 0.38, 0.5],
+                follow: "mq",
+                position: [0.85, 1.78, 1.55],
+                target: [0.0, 1.6, 0.0],
+                fov: 28.0,
+            },
+        },
+    }
+}
+
+// The inset's pencil, drawn on up to `b`
+fn inset_post(b) {
+    #{ styles: #{ pencil: #{ reveal: 1.0, transition: "draw", blend: b } } }
+}
+
+// The close: the live clearing, and an inset where the mannequin is drawn
+fn closing_page() {
+    #{
+        gutter: 18.0, border: 0.0, gutter_color: paper(),
+        panel: #{
+            wide: #{ rect: [0.0, 0.0, 1.0, 1.0] },
+            inset: #{
+                rect: [0.63, 0.5, 0.34, 0.46],
+                order: 1,
+                follow: "mq",
+                position: [0.75, 1.62, 1.75],
+                target: [0.0, 1.42, 0.0],
+                fov: 32.0,
+                look: "rotoscope",
+                post_process: inset_post(0.0),
+            },
+        },
+    }
+}
+
 // --- Each frame ---------------------------------------------------------------------
 
 let period = 28.0;
@@ -237,19 +293,32 @@ fn on_update() {
     set_camera_position(cam[0], cam[1], cam[2]);
     set_camera_target(lerp(page.x - 0.35, x, follow * 0.7), lerp(1.0, 0.95, follow), lerp(page.z, z, follow * 0.7));
 
+    // The drawing draws itself on in the last inset (#879): its pencil's
+    // blend is a front the strokes grow up to, eased over 1.6 s
+    // (from the frame after the beat below lays the inset out)
+    if t >= 23.0 && get_field(me, "story", "beat") == 6 {
+        let b = smooth(23.2, 24.8, t);
+        set_panel("inset", #{ post_process: inset_post(b) });
+    }
+
     // --- The beats: one call each, on the frame the beat starts ---
-    let beat = if t < 6.0 { 0 } else if t < 6.6 { 1 } else if t < 18.6 { 2 }
-        else if t < 21.6 { 3 } else if t < 23.0 { 4 } else { 5 };
+    let beat = if t < 3.4 { 0 } else if t < 6.0 { 1 } else if t < 6.6 { 2 }
+        else if t < 18.6 { 3 } else if t < 21.6 { 4 } else if t < 23.0 { 5 } else { 6 };
     if beat == get_field(me, "story", "beat") {
         return;
     }
     set_field(me, "story", "beat", beat);
     if beat == 0 {
-        // The top of the loop: no drawing anywhere
+        // The top of the loop: no drawing anywhere, and the page opens as
+        // three panels: the clearing, the blank page, the mannequin's face
         clear_motion_hold(mq);
         set_post_style_param("pencil", "reveal", 0.0);
         set_post_style_param("pencil", "reveal_shape", "tear");
+        set_panels(opening_page(page));
     } else if beat == 1 {
+        // One panel: the walk to the page (the HUD draws its border)
+        clear_panels();
+    } else if beat == 2 {
         // The touch. The tear starts where the page is on screen
         let s = world_to_screen(page.x, page.y, page.z);
         set_post_style_param("pencil", "reveal_shape", "tear");
@@ -257,22 +326,19 @@ fn on_update() {
         set_post_style_param("pencil", "reveal_y", s.y / screen_height());
         // ease_out: a rip bursts, then spreads
         tween_post_style_param("pencil", "reveal", 1.0, 5.0, "ease_out");
-    } else if beat == 2 {
+    } else if beat == 3 {
         // Inside the drawing it is drawn as the lines are: on twos
         set_motion_hold(mq, 12.0);
-    } else if beat == 3 {
+    } else if beat == 4 {
         // Pulled back to life from the right
         set_post_style_param("pencil", "reveal_shape", "wipe");
         set_post_style_param("pencil", "reveal_angle", 0.0);
         tween_post_style_param("pencil", "reveal", 0.0, 3.0, "ease_in_out");
-    } else if beat == 4 {
-        clear_motion_hold(mq);
     } else if beat == 5 {
-        // Mostly: the page keeps a little of the drawing
-        let s = world_to_screen(page.x, page.y, page.z);
-        set_post_style_param("pencil", "reveal_shape", "panel");
-        set_post_style_param("pencil", "reveal_x", s.x / screen_width());
-        set_post_style_param("pencil", "reveal_y", s.y / screen_height());
-        tween_post_style_param("pencil", "reveal", 0.06, 1.6, "ease_out");
+        clear_motion_hold(mq);
+    } else if beat == 6 {
+        // Mostly: an inset of the mannequin, drawn on stroke by stroke
+        set_panels(closing_page());
     }
 }
+

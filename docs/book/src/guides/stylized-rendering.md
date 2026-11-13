@@ -94,7 +94,7 @@ Today the mask covers static glTF meshes, procedural boxes and skinned meshes. T
 
 ## A style in a story
 
-A whole-frame style can arrive partway through a scene rather than be there from the start: torn open at a point, wiped across, held to a panel. [A Live Scene Pulled into a Drawing](a-live-scene-pulled-into-a-drawing.md) is a 28-second film built that way (`examples/understudy.scene.toml`). A mannequin walks out of a live clearing through a torn page into the `rotoscope` look, is drawn on twos while it's there, and is wiped back to life, with comic captions drawn by the HUD.
+A whole-frame style can arrive partway through a scene rather than be there from the start: torn open at a point, wiped across, held to a panel. [A Live Scene Pulled into a Drawing](a-live-scene-pulled-into-a-drawing.md) is a 28-second film built that way (`examples/understudy.scene.toml`). A mannequin walks out of a live clearing through a torn page into the `rotoscope` look, is drawn on twos while it's there, and is wiped back to life. It opens on a page of [comic panels](../concepts/comic-panels.md) and ends on an inset drawn on stroke by stroke, with captions drawn by the HUD.
 
 ## Tuning a look
 
