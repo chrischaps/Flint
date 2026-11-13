@@ -5622,6 +5622,12 @@ impl SceneRenderer {
                 resources.binds.clear();
             }
         }
+        // A user style replaced by an edit (#275) left its old groups under
+        // names nothing asks for again (#427). Asked of whichever view is
+        // swapped in, so each comic panel's cache drops them at its draw
+        if let Some(resources) = &self.postprocess_resources {
+            resources.binds.evict_retired();
+        }
         for failed in failures {
             if !crate::stylize::is_native(failed.name) {
                 // A user style (ADR 0112) that panicked building is its

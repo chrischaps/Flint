@@ -2084,6 +2084,16 @@ struct BindNames {
     targets: Vec<[&'static str; 2]>,
 }
 
+impl BindNames {
+    /// Every name the chain's bind cache keeps a group under. The pass
+    /// labels and target textures aren't cache keys.
+    fn bind_groups(&self) -> impl Iterator<Item = &'static str> + '_ {
+        [self.input, self.extra]
+            .into_iter()
+            .chain(self.passes.iter().flat_map(|p| [p.frame, p.targets]))
+    }
+}
+
 #[derive(Clone, Copy)]
 struct PassNames {
     frame: &'static str,
@@ -2541,9 +2551,13 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
         .find(|l| replace && l.source.name == loaded.source.name)
     {
         Some(slot) => {
-            *slot = loaded;
+            let old = std::mem::replace(slot, loaded);
             drop(all);
             super::replace_runtime(descriptor);
+            // The old install's groups bind the old pass's buffers and no
+            // one asks for its names again: every cache drops them at its
+            // next frame, not at the next resize (#427)
+            crate::bind_cache::retire(old.names.bind_groups());
         }
         None => {
             all.push(loaded);
