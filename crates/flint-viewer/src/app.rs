@@ -9,6 +9,7 @@ use crate::panels::{
 use crate::picking::{build_pick_targets, pick_entity};
 use crate::spline_editor::{DragMode, SplineEditor, SplineEditorConfig};
 use crate::undo::{EditAction, UndoCommand, UndoStack};
+use crate::watch::StyleSources;
 use anyhow::{Context, Result};
 use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_core::components as comp;
@@ -20,8 +21,9 @@ use flint_render::{
 };
 use flint_scene::{load_scene, CameraDef, PostProcessDef, SceneDocument};
 use flint_schema::{SchemaDirs, SchemaRegistry};
-use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
-use std::path::Path;
+use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
+use notify_debouncer_mini::{new_debouncer, Debouncer};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -197,43 +199,9 @@ pub fn run(
     }));
 
     let _watcher = if watch {
-        let state_clone = Arc::clone(&state);
-        let (tx, rx) = mpsc::channel();
-
-        let mut debouncer = new_debouncer(Duration::from_millis(500), tx)?;
-        let scene_file = Path::new(scene_path);
-        let scene_dir = scene_file.parent().unwrap_or_else(|| Path::new("."));
-
-        debouncer
-            .watcher()
-            .watch(scene_file, RecursiveMode::NonRecursive)?;
-        debouncer
-            .watcher()
-            .watch(scene_dir, RecursiveMode::Recursive)?;
-
-        for schemas_dir in &schema_dirs.dirs {
-            debouncer
-                .watcher()
-                .watch(schemas_dir, RecursiveMode::Recursive)?;
-        }
-
-        std::thread::spawn(move || {
-            for result in rx {
-                match result {
-                    Ok(_events) => {
-                        if let Ok(mut state) = state_clone.lock() {
-                            state.needs_reload = true;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Watch error: {:?}", e);
-                    }
-                }
-            }
-        });
-
+        let watcher = watch_scene(scene_path, &schema_dirs.dirs, &state)?;
         println!("Watching for changes in scene and related assets...");
-        Some(debouncer)
+        Some(watcher)
     } else {
         None
     };
@@ -320,43 +288,9 @@ pub fn run_editor(
     }));
 
     let _watcher = if watch {
-        let state_clone = Arc::clone(&state);
-        let (tx, rx) = mpsc::channel();
-
-        let mut debouncer = new_debouncer(Duration::from_millis(500), tx)?;
-        let scene_file_path = Path::new(scene_path);
-        let scene_dir = scene_file_path.parent().unwrap_or_else(|| Path::new("."));
-
-        debouncer
-            .watcher()
-            .watch(scene_file_path, RecursiveMode::NonRecursive)?;
-        debouncer
-            .watcher()
-            .watch(scene_dir, RecursiveMode::Recursive)?;
-
-        for schemas_dir in &schema_dirs.dirs {
-            debouncer
-                .watcher()
-                .watch(schemas_dir, RecursiveMode::Recursive)?;
-        }
-
-        std::thread::spawn(move || {
-            for result in rx {
-                match result {
-                    Ok(_events) => {
-                        if let Ok(mut state) = state_clone.lock() {
-                            state.needs_reload = true;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Watch error: {:?}", e);
-                    }
-                }
-            }
-        });
-
+        let watcher = watch_scene(scene_path, &schema_dirs.dirs, &state)?;
         println!("Watching for changes...");
-        Some(debouncer)
+        Some(watcher)
     } else {
         None
     };
@@ -502,6 +436,54 @@ fn scene_dir_of(scene_path: &str) -> &Path {
     Path::new(scene_path)
         .parent()
         .unwrap_or_else(|| Path::new("."))
+}
+
+/// `--watch`: the scene file, its folder (recursively) and the schema
+/// folders, marking the scene for a reload on a change. A batch that is
+/// only user styles' WGSL and descriptions marks nothing (#429): the
+/// style's pass rebuilds its shader in place, and `check_reload`'s poll
+/// of the descriptions reloads the scene only when one changed.
+fn watch_scene(
+    scene_path: &str,
+    schema_dirs: &[PathBuf],
+    state: &Arc<Mutex<ViewerState>>,
+) -> Result<Debouncer<RecommendedWatcher>> {
+    let state = Arc::clone(state);
+    let (tx, rx) = mpsc::channel();
+    let mut debouncer = new_debouncer(Duration::from_millis(500), tx)?;
+    let scene_file = Path::new(scene_path);
+    let scene_dir = scene_dir_of(scene_path);
+    debouncer
+        .watcher()
+        .watch(scene_file, RecursiveMode::NonRecursive)?;
+    debouncer
+        .watcher()
+        .watch(scene_dir, RecursiveMode::Recursive)?;
+    for dir in schema_dirs {
+        debouncer.watcher().watch(dir, RecursiveMode::Recursive)?;
+    }
+    let style_sources = StyleSources::for_scene_dir(scene_dir);
+
+    std::thread::spawn(move || {
+        for result in rx {
+            match result {
+                Ok(events) => {
+                    let paths = events.iter().map(|e| e.path.as_path());
+                    if !style_sources.wants_scene_reload(paths) {
+                        tracing::debug!("style sources changed; left to the style's own reload");
+                        continue;
+                    }
+                    if let Ok(mut state) = state.lock() {
+                        state.needs_reload = true;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Watch error: {:?}", e);
+                }
+            }
+        }
+    });
+    Ok(debouncer)
 }
 
 /// Register the user-authored styles (`styles/*.shader.toml`, ADR 0112)
