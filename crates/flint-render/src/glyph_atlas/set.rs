@@ -38,8 +38,9 @@
 //! ```
 //!
 //! A set whose file names no `[ramps]` gets the built-in ones (those its font
-//! can draw). A TTF atlas holds printable ASCII plus every glyph the set's
-//! ramps and edges name; a missing one is an error naming it.
+//! can draw). A TTF atlas holds the printable ASCII its font has (#935: an
+//! emoji or cuneiform font may have none) plus every glyph the set's ramps
+//! and edges name; a missing one of those is an error naming it.
 
 use super::{printable_ascii, GlyphAtlas, GlyphError};
 use crate::file_watch::FileStamps;
@@ -639,15 +640,21 @@ fn build_atlas(
         "ttf" | "otf" => {
             let bytes = vfs::read(&path)
                 .map_err(|e| GlyphError::Read(format!("{}: {e}", path.display())))?;
-            let mut chars: BTreeSet<char> = printable_ascii().collect();
+            let font_ref = ab_glyph::FontRef::try_from_slice(&bytes)
+                .map_err(|e| GlyphError::Font(e.to_string()))?;
+            // Printable ASCII where the font has it (#935): a font of
+            // another script, or of emoji, may have no letters at all, and
+            // the style draws only what the ramps and edges name, which
+            // must all be there.
+            let mut chars: BTreeSet<char> = printable_ascii()
+                .filter(|c| ab_glyph::Font::glyph_id(&font_ref, *c).0 != 0)
+                .collect();
             for ramp in file.ramps.values() {
                 chars.extend(ramp.glyphs.chars());
             }
             chars.extend(edges.slots());
             if file.ramps.is_empty() {
                 // The built-in ramps it may inherit, where the font has them.
-                let font_ref = ab_glyph::FontRef::try_from_slice(&bytes)
-                    .map_err(|e| GlyphError::Font(e.to_string()))?;
                 for ramp in GlyphSet::builtin().ramps() {
                     chars.extend(
                         ramp.glyphs()

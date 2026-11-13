@@ -91,7 +91,7 @@ corners = "┌┐└┘├┤┬┴┼"       # optional (#348): 4 glyphs (the c
 
 - `corners` lists the glyphs where edge lines meet, in this order: `┌ ┐ └ ┘` (corners), `├ ┤ ┬ ┴` (tees), `┼`. Without it, ASCII edges keep their line glyphs at corners ([corners](stylize-passes.md#corners)).
 
-- A TTF atlas holds printable ASCII plus every glyph the set's ramps and edges name. A glyph the font lacks is an error that names it (`the font has no glyph for '漢'`).
+- A TTF atlas holds the printable ASCII its font has plus every glyph the set's ramps and edges name. A ramp or edge glyph the font lacks is an error that names it (`the font has no glyph for '漢'`); ASCII it lacks is left out (#935), so a font of emoji, cuneiform or any other script loads with no Latin letters at all, as long as its ramps and `[edges]` name only its own glyphs.
 - A set with no `[ramps]` gets the built-in ramps that its font can draw, re-sorted by coverage in that font.
 - Unknown keys are errors, so a misspelled `glyph =` fails loudly rather than being ignored.
 - A ramp in a project's set that steps backwards in ink in its font (a later glyph with less than the one before) is logged when the set loads, naming the pairs: `ramp `x` gives a brighter input less ink in its font at ':' > '-'`. The built-in `classic` is left as written on purpose and isn't reported.
@@ -114,6 +114,36 @@ On the GPU the ASCII style packs each step's band start beside its glyph in the 
 ![The same sphere in Hack, detailed ramp](../images/glyph-atlas-specimen-hack.png)
 
 *A set loading Hack at 16 px (9x16 cells), drawn through the coverage-sorted `detailed` ramp. The ASCII edge glyphs don't fill their cells, so the outline reads as strokes, not a line.*
+
+## Sets in the examples
+
+Eleven sets beside the scenes in `examples/fonts/` give the look other characters (#935). Each draws a bundled font under the SIL Open Font License, with the licence beside the font in `examples/fonts/ofl/<Family>/OFL.txt`; `examples/fonts/ofl/README.md` lists where each came from and how it was cut down to the glyphs its set uses. Name one as any set: `ascii.font = "kana"` in a scene, `--style ascii:font=kana` on a command line.
+
+![The lantern scene in every set](../images/ascii-lantern-glyph-sets.png)
+
+*`flint render examples/ascii_lantern.scene.toml --style "ascii:ramp=,cell=14" --sweep ascii.font=builtin,phosphor,typewriter,poster,geometric,stars,kana,brush,hangul,cuneiform,moon,runes --width 1920 --height 1080 --sweep-crop 700,380,480,270`: each cell 1:1 from a 1080p frame. `ramp=` gives each set its own default ramp in place of the scene's `classic`.*
+
+| Set | Font | Cell | Ramps (default first) | What it does to the look |
+|---|---|---|---|---|
+| `phosphor` | VT323 | 8x20 | `listing`, `classic` | A DEC terminal's letters in cells two and a half times as tall as wide: the frame splits into rows with dark lines between them, a green-screen listing. Corners are `+`. |
+| `typewriter` | Cutive Mono | 10x18 | `ink` | Thin slab serifs. Its densest glyph inks 0.15 of a cell, so the frame reads pale and printed. Corners are `+`. |
+| `poster` | Rubik Mono One | 11x16 | `shout`, `letters` | Heavy capitals, inked up to 0.43 of a cell: tone climbs in big loud steps. |
+| `geometric` | Major Mono Display | 12x16 | `drafting` | Circles and rules, its lowercase drawn as small capitals: a blueprint. |
+| `stars` | Noto Sans Symbols 2 | 11x16 | `night`, `chess`, `rings` | Dots, stars and sparks; a chessboard from white pawn to black king; rings that fill. |
+| `kana` | DotGothic16 | 12x16 | `katakana`, `hiragana`, `strokes`, `kanji` | A Japanese pixel font: falling-code katakana, softer hiragana, kanji by stroke count. Box-drawing edges and corners. |
+| `brush` | Yuji Syuku | 14x20 | `kanji`, `strokes`, `hiragana` | The same kanji in a brush hand: sumi ink, the darkest cells a blot of 鬱. |
+| `hangul` | Gowun Batang | 13x18 | `syllables` | A Korean serif: a dot, a stroke, a circle, then syllable blocks of two to four jamo. |
+| `cuneiform` | Noto Sans Cuneiform | 11x16 | `count`, `clay` | One wedge, two, then the numerals three to nine; the edges are wedges too (𒀸 𒁹 𒀹). Rows of small signs, like a tablet. |
+| `moon` | Noto Emoji | 18x16 | `phases`, `weather` | No letters at all: tone is the moon's phase (the heaviest ramp here, up to half a cell of ink), or the weather from cloud to sun. Outlines are ✨. |
+| `runes` | Noto Sans Runic | 11x16 | `futhark` | The Elder Futhark. Runes were cut across the grain of wood and have no horizontal staves, so the level edges stay `-`. |
+
+What the comparison showed:
+
+- **Cell size decides whether a script reads.** At the default `cell = 8` every set but the Latin ones is texture, a tone in a grain of its own; kana, kanji, Hangul, cuneiform and the moons read as themselves from about 14 points, and are fully legible at 16. The cell is in points at any resolution, so a 960x540 frame doesn't draw smaller glyphs than a 1080p one: it draws half as many, and a prop gets half as many columns of them. At 960x540 and `cell = 8` the sets differ mostly in brightness (how much ink their ramp reaches) and grain; `phosphor`'s tall cells stripe the frame, and `moon` is much the brightest.
+- **Ink falls in two ramps written in a meaningful order**, which are kept as written so you can see it: `brush`'s `strokes` (13-stroke 雷 inks less than 8-stroke 画 in a brush hand, where in DotGothic16 the same ramp rises cleanly) and `cuneiform`'s `count` (four wedges stacked in two rows ink less than three in one). Each has a twin with `map = "coverage"` (`kanji`, `clay`), which the other ramps use too, so every default ramp is monotone; `flint gen` on the set shows the fall.
+- **Per-script Noto fonts keep Latin's line metrics**, so a cuneiform sign fills less than half its cell's height. The cell is the line height by the widest advance of what the set holds; a CJK or Hangul font gives a squarer cell than a Latin one, and an emoji font a wider one.
+- **Box drawing joins in CJK and Hangul fonts** (they carry `─ │ ┌ ┐ ...` from their national character sets), so `kana`, `brush` and `hangul` outline with closed lines and corners as the built-in set does. A Latin font's `- | / \` leave gaps between cells.
+- **Dropped: handwriting.** Caveat, a handwritten script, was tried: it is proportional, so each glyph sits in a cell as wide as its widest letter, and its strokes are thin (a densest glyph of 0.15). At ASCII cell sizes the hand disappears into a field of `#` and `@`. A hand-drawn look is better drawn as pixel text, as `halftone` is.
 
 ## Naming a set
 

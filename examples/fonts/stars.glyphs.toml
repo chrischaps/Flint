@@ -1,0 +1,19 @@
+# Stars (#935): Noto Sans Symbols 2, dingbats. A night sky of stars, a
+# chessboard and a field of rings, each a ramp from empty to full.
+default_ramp = "night"
+
+[font]
+file = "ofl/NotoSansSymbols2/NotoSansSymbols2-Regular.ttf"   # OFL 1.1, subset: beside it, OFL.txt
+size = 16
+
+[ramps.night]
+glyphs = " ·⋆✧✦★✶✷✸✹✺❂"
+map = "coverage"
+
+[ramps.chess]
+glyphs = " ♙♘♗♖♕♔♟♞♝♜♛♚"
+map = "coverage"
+
+[ramps.rings]
+glyphs = " ·◦○◌◍◎●"
+map = "coverage"
