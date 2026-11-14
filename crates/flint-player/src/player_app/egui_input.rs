@@ -324,8 +324,13 @@ mod tests {
         assert_eq!(egui_key(KeyCode::BracketLeft), Some(egui::Key::OpenBracket));
         assert_eq!(egui_key(KeyCode::Backspace), Some(egui::Key::Backspace));
         assert_eq!(egui_key(KeyCode::F12), Some(egui::Key::F12));
-        // Modifiers are egui's modifiers, not keys.
-        assert_eq!(egui_key(KeyCode::ShiftLeft), None);
+        // egui 0.36 names each side's modifier key too, and egui-winit sends
+        // them as key presses (#946); egui's Modifiers still carry the state.
+        assert_eq!(egui_key(KeyCode::ShiftLeft), Some(egui::Key::ShiftLeft));
+        assert_eq!(
+            egui_key(KeyCode::ControlRight),
+            Some(egui::Key::ControlRight)
+        );
     }
 
     const E: Held = Held::Key(PhysicalKey::Code(KeyCode::KeyE));

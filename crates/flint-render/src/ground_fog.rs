@@ -198,14 +198,14 @@ impl GroundFogGpu {
                 .flat_map(|t| t.iter().flat_map(|&v| f16_bits(v).to_le_bytes()))
                 .collect();
             queue.write_texture(
-                wgpu::ImageCopyTexture {
+                wgpu::TexelCopyTextureInfo {
                     texture: &texture,
                     mip_level: level as u32,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
                 &bytes,
-                wgpu::ImageDataLayout {
+                wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(w * 4),
                     rows_per_image: Some(*d),

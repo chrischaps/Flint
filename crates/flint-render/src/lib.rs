@@ -19,6 +19,7 @@ pub mod glyph_atlas;
 mod gpu_mesh;
 pub mod gpu_select;
 pub mod gpu_timer;
+mod gpu_wait;
 pub mod grass_pipeline;
 pub mod ground_fog;
 mod headless;
@@ -49,8 +50,10 @@ pub mod sprite2d_pipeline;
 pub mod style_albedo;
 pub mod style_mask;
 pub mod stylize;
+mod surface_frame;
 pub mod terrain_pipeline;
 mod texture_cache;
+mod trusted_shader;
 pub mod water_body;
 mod wooze_pipeline;
 pub mod world_line_pipeline;
@@ -69,6 +72,7 @@ pub use glyph_atlas::{
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
 pub use gpu_select::{list_adapters, no_adapter_hint, set_gpu_override};
 pub use gpu_timer::{GpuPassTime, GpuScope, GpuSpread, GpuTimer, GpuTimings, PassSpread};
+pub use gpu_wait::{gpu_wait_timeout, wait_for_gpu};
 pub use grass_pipeline::{
     check_grass_mask_patch, grass_dispatch_window, GrassComputeUniforms, GrassEntityPosition,
     GrassGround, GrassHeight, GrassInstanceGpu, GrassPipeline, GrassRenderUniforms, GrassVertex,
@@ -111,8 +115,10 @@ pub use sprite2d_pipeline::{
     Sprite2dBatch, Sprite2dInstanceGpu, Sprite2dPipeline, Sprite2dUniforms,
 };
 pub use style_mask::{StyleIds, STYLE_MASK_FORMAT};
+pub use surface_frame::{AcquireFrame, SurfaceError};
 pub use terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 pub use texture_cache::{memoize_mip_chains, open_image, TextureCache};
+pub use trusted_shader::TrustedShader;
 pub use water_body::{river_points, RiverPoint, WaterBodyLook, WaterBodyMesh, WaterVertex};
 pub use wooze_pipeline::{ShallowWoozeDraw, WAVELENGTH_MIN};
 

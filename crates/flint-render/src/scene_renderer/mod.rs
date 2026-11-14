@@ -90,8 +90,9 @@ impl Default for ArchetypeVisual {
 #[allow(dead_code)]
 pub(super) struct DrawCall {
     // GPU handles are `Arc`s so the per-entity caches below can hand the
-    // same buffers and bind groups to every frame's draw list (wgpu 23
-    // resources are not `Clone`).
+    // same buffers and bind groups to every frame's draw list. wgpu 23's
+    // resources weren't `Clone`; since wgpu 24 every handle is, so these
+    // `Arc`s could go (#948 left them).
     vertex_buffer: Arc<wgpu::Buffer>,
     index_buffer: Arc<wgpu::Buffer>,
     index_count: u32,
@@ -1588,7 +1589,7 @@ impl SceneRenderer {
         context: &RenderContext,
         camera: &Camera,
         view: &wgpu::TextureView,
-    ) -> Result<(), wgpu::SurfaceError> {
+    ) -> Result<(), crate::SurfaceError> {
         if self.device_lost {
             return Ok(());
         }
@@ -1844,6 +1845,7 @@ impl SceneRenderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: pass_color_view,
                     resolve_target: pass_resolve_target,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(clear_color),
                         store: wgpu::StoreOp::Store,
@@ -1859,6 +1861,7 @@ impl SceneRenderer {
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             self.render_main_pass(
                 &mut render_pass,
@@ -1880,6 +1883,7 @@ impl SceneRenderer {
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: pass_color_view,
                         resolve_target: pass_resolve_target,
+                        depth_slice: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(clear_color),
                             store: wgpu::StoreOp::Store,
@@ -1895,6 +1899,7 @@ impl SceneRenderer {
                     }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 self.render_main_pass(
                     &mut pass_a,
@@ -1946,6 +1951,7 @@ impl SceneRenderer {
                         Some(wgpu::RenderPassColorAttachment {
                             view: grab_color_view,
                             resolve_target: None,
+                            depth_slice: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                                 store: wgpu::StoreOp::Store,
@@ -1954,6 +1960,7 @@ impl SceneRenderer {
                         Some(wgpu::RenderPassColorAttachment {
                             view: grab_depth_view,
                             resolve_target: None,
+                            depth_slice: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
                                 store: wgpu::StoreOp::Store,
@@ -1963,6 +1970,7 @@ impl SceneRenderer {
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 blit_pass.set_pipeline(&op.blit_pipeline);
                 blit_pass.set_bind_group(0, &*blit_bind_group, &[]);
@@ -1976,6 +1984,7 @@ impl SceneRenderer {
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: pass_color_view,
                         resolve_target: pass_resolve_target,
+                        depth_slice: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Store,
@@ -1991,6 +2000,7 @@ impl SceneRenderer {
                     }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 self.render_main_pass(
                     &mut pass_b,

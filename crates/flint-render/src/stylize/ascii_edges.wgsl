@@ -87,6 +87,28 @@ fn id_at(q: vec2<i32>, size: vec2<i32>) -> u32 {
     return textureLoad(mask, m, 0).x;
 }
 
+// The surface normal at patch index `at`, from one neighbour on each axis:
+// the one nearer the centre's view distance (#484). A central difference
+// spans a step whenever one sits beside the pixel, and the normal it makes
+// belongs to neither surface. Where the step is too shallow for the depth
+// Sobel (a pillar's foot, with the ground just behind it), those normals
+// marked a crease band 4 px wide, and its cells were dropped as texture. A
+// one-sided tangent stays on the pixel's own surface, so a normal changes
+// only where the surface does and the Sobel marks the two pixels astride
+// it. On one surface either side gives the same plane, and a fold's own
+// pixel takes one face's normal.
+fn normal_at(pos: ptr<function, array<vec3<f32>, 25>>, rel: ptr<function, array<f32, 25>>, at: i32) -> vec3<f32> {
+    let p = (*pos)[at];
+    let r = (*rel)[at];
+    let left = abs((*rel)[at - 1] - r) < abs((*rel)[at + 1] - r);
+    let up = abs((*rel)[at - 5] - r) < abs((*rel)[at + 5] - r);
+    // Each tangent points the same way (+x, +y in the patch) whichever
+    // side it was taken from, so the cross keeps the central form's sign
+    let tx = select((*pos)[at + 1] - p, p - (*pos)[at - 1], left);
+    let ty = select((*pos)[at + 5] - p, p - (*pos)[at - 5], up);
+    return normalize(cross(tx, ty) + vec3<f32>(1e-9));
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // The target is the depth's size (smaller than the output under a
@@ -133,7 +155,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let at = (j + 1) * 5 + (i + 1);
             let k = j * 3 + i;
             let dist = rel[at];
-            let n = normalize(cross(pos[at + 1] - pos[at - 1], pos[at + 5] - pos[at - 5]) + vec3<f32>(1e-9));
+            let n = normal_at(&pos, &rel, at);
             dgx += kx[k] * dist;
             dgy += ky[k] * dist;
             ngx += kx[k] * n;

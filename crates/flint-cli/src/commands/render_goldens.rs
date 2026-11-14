@@ -1464,12 +1464,7 @@ mod tests {
     fn variants_are_keyed_by_backend_and_software_adapters_by_name() {
         let info = |name: &str, device_type, backend| wgpu::AdapterInfo {
             name: name.into(),
-            vendor: 0,
-            device: 0,
-            device_type,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend,
+            ..wgpu::AdapterInfo::new(device_type, backend)
         };
         use wgpu::{Backend, DeviceType};
         let warp = info(

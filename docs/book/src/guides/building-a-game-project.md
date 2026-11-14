@@ -353,6 +353,8 @@ bash engine/scripts/changelog.sh since 2026-11-02   # newest first
 
 The entries live one file a month in `engine/changelog/` (`engine/CHANGELOG.md` links them), and `since` also reads the ones not yet gathered into a month, in `engine/changelog.d/`. It prints every entry dated that day or later, so a pull made the same day may show an entry you already had. Then run your scenes through `flint validate` and play the game once, watching the log: several entries are new warnings for mistakes that used to pass in silence.
 
+A pull that moves a dependency your own Rust uses too (wgpu and egui, in November 2026) has a port on [Upgrading the Engine](upgrading-the-engine.md).
+
 ## Further Reading
 
 - [Schemas](../concepts/schemas.md) --- component and archetype schema system

@@ -552,7 +552,7 @@ pub(super) fn show_debug_panels(
     use flint_debug_ui::PanelLayout;
 
     // Logical points (screen_rect), never config.width (physical px).
-    let screen = ctx.screen_rect();
+    let screen = ctx.content_rect();
 
     // Bottom strips draw their own compact labels (a heading would eat the
     // vertical budget).
@@ -709,6 +709,7 @@ pub(super) fn styled_entity_rows(
 #[cfg(all(test, feature = "debug-hud"))]
 mod tests {
     use super::*;
+    use flint_debug_ui::run_headless_frame;
 
     fn app() -> PlayerApp {
         PlayerApp::new(
@@ -810,7 +811,8 @@ mod tests {
             ..Default::default()
         };
         let mut width = 0.0;
-        let _ = ctx.run(input, |ctx| {
+        let _ = run_headless_frame(ctx, input, |ui| {
+            let ctx = &ui.ctx().clone();
             width = show_debug_panels(ctx, panels, &mut |panel, ui| panel.ui(ui))
         });
         width

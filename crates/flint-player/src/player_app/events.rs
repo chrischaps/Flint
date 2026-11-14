@@ -1012,9 +1012,12 @@ impl PlayerApp {
     fn scripted_key(&mut self, key: KeyCode, state: ElementState) {
         let pressed = state == ElementState::Pressed;
         if self.egui_sees_input() {
+            // RawInput lost its modifiers in egui 0.36; egui's own copy is
+            // last frame's, which is what the old field held too
+            let modifiers = self.hud.egui_ctx.input(|i| i.modifiers);
             if let Some(egui_winit) = &mut self.hud.egui_winit {
                 let raw = egui_winit.egui_input_mut();
-                let events = super::egui_input::scripted_key_events(key, pressed, raw.modifiers);
+                let events = super::egui_input::scripted_key_events(key, pressed, modifiers);
                 raw.events.extend(events);
             }
             let held = Held::Key(PhysicalKey::Code(key));

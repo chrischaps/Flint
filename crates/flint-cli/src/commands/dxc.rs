@@ -8,8 +8,9 @@
 //! flint dxc status                  # what DX12 would compile with here, and why
 //! ```
 //!
-//! wgpu 23 loads `dxcompiler.dll` and `dxil.dll` at run time, and
-//! `flint_render::gpu_select` loads them only from the executable's folder
+//! wgpu loads DXC at run time (`Dx12Compiler::DynamicDxc`, by
+//! `dxcompiler.dll`'s path; `dxil.dll` signs what it compiles), and
+//! `flint_render::gpu_select` loads both only from the executable's folder
 //! (or `FLINT_DXC_DIR`). Without them DX12 falls back to FXC, about 10x
 //! slower. This command puts them there:
 //!

@@ -72,6 +72,13 @@ struct TexelUniforms {
     _pad: [f32; 2],
 }
 
+/// The largest radius the filter takes, in pixels (#945). A scene's radius
+/// is kept as written past its tuned 1..8, but the shader's sector loops run
+/// `-radius..=radius` with loop bounding off (built-in WGSL is trusted), so
+/// it is capped here: a radius near `i32::MAX` would wrap and never end. At
+/// 32 a pixel already reads 65 x 65 x 8 taps.
+const MAX_RADIUS: f32 = 32.0;
+
 /// The filter pass's uniforms.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -223,8 +230,9 @@ impl StylePass for Kuwahara {
         // Pass 3: the filter, oriented by the blurred tensor
         let uniforms = KuwaharaUniforms {
             texel_size,
-            // Whole pixels, as the old `kuwahara_radius: u32` was
-            radius: frame.param("radius").round().max(1.0),
+            // Whole pixels, as the old `kuwahara_radius: u32` was, and at
+            // most MAX_RADIUS so the shader's `y <= radius` loops end
+            radius: frame.param("radius").round().max(1.0).min(MAX_RADIUS),
             sharpness: frame.param("sharpness"),
             hardness: frame.param("hardness"),
             anisotropy: frame.param("anisotropy"),

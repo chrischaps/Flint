@@ -92,6 +92,7 @@ fn stick_pad(ui: &mut egui::Ui, label: &str, actual: [f32; 2], target: Option<[f
             rect.shrink(1.0),
             2.0,
             egui::Stroke::new(1.0f32, egui::Color32::from_gray(90)),
+            egui::StrokeKind::Middle,
         );
         let cross = egui::Stroke::new(0.5f32, egui::Color32::from_gray(60));
         painter.line_segment(
@@ -133,6 +134,7 @@ fn trigger_bar(ui: &mut egui::Ui, label: &str, actual: f32, target: Option<f64>)
             rect,
             2.0,
             egui::Stroke::new(1.0f32, egui::Color32::from_gray(90)),
+            egui::StrokeKind::Middle,
         );
         let fill = egui::Rect::from_min_size(
             rect.min,

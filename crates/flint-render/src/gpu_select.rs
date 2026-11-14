@@ -10,8 +10,8 @@
 //!    back to the power preference, except under `FLINT_REQUIRE_GPU`
 //!    ([`gpu_required`]), where it finds no adapter: CI asks for WARP by
 //!    name, and a run on anything else would test the wrong adapter (#314).
-//!    wgpu 23 hides WARP on a machine with a GPU; it appears on a runner
-//!    with none.
+//!    wgpu 23 hid WARP on a machine with a GPU; wgpu 30 lists it there too,
+//!    so the same name runs CI's adapter locally.
 //! 3. `WGPU_POWER_PREF` — `high`, `low`, or `none`.
 //! 4. Default: `PowerPreference::HighPerformance`, so dual-GPU laptops pick
 //!    the discrete card rather than whichever adapter enumerates first.
@@ -34,13 +34,16 @@
 //! (#314). With DXC, wgpu also picks the device's shader model, up to 6.7;
 //! FXC stops at 5.1.
 //!
-//! wgpu 23 doesn't link DXC in: it loads `dxcompiler.dll` and `dxil.dll` at
-//! instance creation. [`instance`] passes both by full path from one folder,
-//! [`dxc_dir`]: `FLINT_DXC_DIR` if set, else the running executable's
-//! folder. A full path means a copy elsewhere on `PATH` is never loaded
-//! (with no path, wgpu would take whichever `dxcompiler.dll` Windows' search
-//! order finds). `flint dxc install` puts the pinned release's two DLLs
-//! beside `flint.exe` and the test binaries.
+//! wgpu doesn't link DXC in (static DXC is #947): it loads `dxcompiler.dll`
+//! at instance creation, by the path [`instance`] passes
+//! (`Dx12Compiler::DynamicDxc`), from one folder, [`dxc_dir`]:
+//! `FLINT_DXC_DIR` if set, else the running executable's folder. A full
+//! path means a copy elsewhere on `PATH` is never loaded. wgpu 30 never
+//! loads `dxil.dll` itself (wgpu 23 did): `dxcompiler.dll` loads it by name
+//! to sign what it compiles, and Windows hands back the copy [`load_dxc`]
+//! loaded first from the same folder, so the pair always matches.
+//! `flint dxc install` puts the pinned release's two DLLs beside `flint.exe`
+//! and the test binaries.
 //!
 //! - `WGPU_DX12_COMPILER=fxc` forces FXC, the escape hatch for a driver or
 //!   DXC bug. `dxc` (or unset) is the default.
@@ -53,9 +56,10 @@
 //!   on DX12, for `flint render`, `flint goldens` and the player's F3 and
 //!   `--perf` lines.
 //!
-//! The check is the one wgpu-hal 23 makes (`DxcLib::new`: load the file,
-//! then look up `DxcCreateInstance`), made first so the report is what the
-//! instance got. It reads the disk with `std::fs`, outside the vfs: a DLL
+//! The check is the one wgpu-hal makes (load the file, then look up
+//! `DxcCreateInstance`), made first so the report is what the instance got:
+//! in wgpu 30 a `DynamicDxc` that fails to load is an instance error, not a
+//! quiet FXC fallback. It reads the disk with `std::fs`, outside the vfs: a DLL
 //! beside the executable isn't game data, and DX12 is Windows only, so the
 //! code is `cfg(windows)`.
 
@@ -85,7 +89,7 @@ fn name_filter() -> Option<String> {
 
 /// Backends to enumerate: `WGPU_BACKEND` env var, else all.
 pub fn backends() -> wgpu::Backends {
-    wgpu::util::backend_bits_from_env().unwrap_or(wgpu::Backends::all())
+    wgpu::Backends::from_env().unwrap_or(wgpu::Backends::all())
 }
 
 /// Create a wgpu instance over [`backends`], with DX12 compiling shaders
@@ -94,12 +98,18 @@ pub fn instance() -> wgpu::Instance {
     let backends = backends();
     wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends,
-        dx12_shader_compiler: dx12_compiler(backends),
-        ..Default::default()
+        backend_options: wgpu::BackendOptions {
+            dx12: wgpu::Dx12BackendOptions {
+                shader_compiler: dx12_compiler(backends),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
     })
 }
 
-/// The DLLs DXC needs, in the order wgpu-hal 23 loads them.
+/// The DLLs DXC needs: the compiler, then the signer it loads by name.
 pub const DXC_DLLS: [&str; 2] = ["dxcompiler.dll", "dxil.dll"];
 
 /// Which compiler DX12 turns shaders into bytecode with, and why (#912).
@@ -205,9 +215,12 @@ fn dx12_compiler(backends: wgpu::Backends) -> wgpu::Dx12Compiler {
     let shaders = dx12_shaders();
     *LAST_DX12.lock().unwrap() = Some(shaders.clone());
     match shaders {
-        Dx12Shaders::Dxc { dir } => wgpu::Dx12Compiler::Dxc {
-            dxc_path: Some(dir.join(DXC_DLLS[0])),
-            dxil_path: Some(dir.join(DXC_DLLS[1])),
+        // wgpu 30 takes only dxcompiler.dll's path (`load_dxc` still checks
+        // both DLLs are there). A DynamicDxc that fails to load is an
+        // instance error in wgpu 30, not a quiet FXC fallback, so that check
+        // decides first (#945).
+        Dx12Shaders::Dxc { dir } => wgpu::Dx12Compiler::DynamicDxc {
+            dxc_path: dir.join(DXC_DLLS[0]).to_string_lossy().into_owned(),
         },
         // A missing DLL would make wgpu fall back by itself, but only after
         // a log line from every instance, even one that draws on Vulkan
@@ -249,9 +262,10 @@ pub fn adapter_short(info: &wgpu::AdapterInfo) -> String {
     }
 }
 
-/// Load `dir`'s two DLLs as wgpu-hal 23 does (`DxcLib::new`, then
-/// `DxcCreateInstance`), and keep them loaded: wgpu loads the same files
-/// next and holds them for the device's life. Checked once per folder.
+/// Load `dir`'s two DLLs and look up `DxcCreateInstance`, as wgpu-hal does
+/// for `dxcompiler.dll`, and keep them loaded: wgpu loads the compiler
+/// again by the same path, and the compiler finds this `dxil.dll` already
+/// loaded when it asks for it by name. Checked once per folder.
 #[cfg(windows)]
 fn load_dxc(dir: &Path) -> Result<(), String> {
     type Checked = Vec<(PathBuf, Result<(), String>)>;
@@ -285,7 +299,7 @@ fn load_dxc(_dir: &Path) -> Result<(), String> {
 }
 
 fn power_preference() -> wgpu::PowerPreference {
-    wgpu::util::power_preference_from_env().unwrap_or(wgpu::PowerPreference::HighPerformance)
+    wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::HighPerformance)
 }
 
 /// Pick an adapter honouring the override/env/default chain described in
@@ -296,15 +310,15 @@ pub async fn request_adapter(
 ) -> Option<wgpu::Adapter> {
     let adapter = match name_filter() {
         Some(filter) => select_by_name(instance, compatible_surface, &filter).await,
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: power_preference(),
-                    compatible_surface,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
+        None => instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: power_preference(),
+                compatible_surface,
+                force_fallback_adapter: false,
+                apply_limit_buckets: false,
+            })
+            .await
+            .ok(),
     }?;
 
     let info = adapter.get_info();
@@ -335,7 +349,7 @@ async fn select_by_name(
     // A browser hands out one adapter through `requestAdapter`; with no list
     // to filter, the web falls back to the power preference below.
     #[cfg(not(target_arch = "wasm32"))]
-    let adapters = instance.enumerate_adapters(backends());
+    let adapters = instance.enumerate_adapters(backends()).await;
     #[cfg(target_arch = "wasm32")]
     let adapters: Vec<wgpu::Adapter> = Vec::new();
     let available: Vec<String> = adapters.iter().map(|a| a.get_info().name).collect();
@@ -366,8 +380,10 @@ async fn select_by_name(
                 power_preference: power_preference(),
                 compatible_surface,
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
             })
-            .await;
+            .await
+            .ok();
     }
     matched
 }
@@ -441,7 +457,7 @@ fn software_adapter_hint() -> &'static str {
 /// List available adapters as `(name, device type, backend)` strings.
 pub fn list_adapters() -> Vec<String> {
     #[cfg(not(target_arch = "wasm32"))]
-    let adapters = instance().enumerate_adapters(backends());
+    let adapters = pollster::block_on(instance().enumerate_adapters(backends()));
     #[cfg(target_arch = "wasm32")]
     let adapters: Vec<wgpu::Adapter> = Vec::new();
     adapters
@@ -490,12 +506,7 @@ mod tests {
     fn the_adapter_line_names_the_compiler_on_dx12_only() {
         let info = |backend| wgpu::AdapterInfo {
             name: "GPU".into(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::DiscreteGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend,
+            ..wgpu::AdapterInfo::new(wgpu::DeviceType::DiscreteGpu, backend)
         };
         assert_eq!(
             super::adapter_line(&info(wgpu::Backend::Vulkan)),

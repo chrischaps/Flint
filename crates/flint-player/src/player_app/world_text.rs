@@ -19,6 +19,7 @@ use super::text_halo::{stamp_offsets, wants_halo, HaloSpec, TextHalos};
 use bytemuck::{Pod, Zeroable};
 use flint_core::world_text::WorldText;
 use flint_render::world_line_pipeline::DEPTH_SLACK;
+use flint_render::TrustedShader;
 use std::collections::HashSet;
 use std::ops::Range;
 
@@ -128,7 +129,7 @@ pub(super) fn lay_out(
         };
         let font_id = resolve_font_id(points, t.font.as_deref(), fonts, warned);
         let galley = |color: egui::Color32| {
-            ctx.fonts(|f| {
+            ctx.fonts_mut(|f| {
                 f.layout_job(text_layout_job(
                     &t.text,
                     font_id.clone(),
@@ -356,7 +357,7 @@ impl WorldTextPipeline {
     /// `format` is the HUD's (non-sRGB) view of the surface; the pass is
     /// single sample against a `Depth32Float` depth view.
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("World Text Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("world_text_shader.wgsl").into()),
         });
@@ -385,8 +386,8 @@ impl WorldTextPipeline {
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("World Text Pipeline Layout"),
-            bind_group_layouts: &[&texture_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&texture_layout)],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("World Text Pipeline"),
@@ -394,7 +395,7 @@ impl WorldTextPipeline {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_world_text"),
-                buffers: &[GlyphVertex::desc()],
+                buffers: &[Some(GlyphVertex::desc())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -426,13 +427,13 @@ impl WorldTextPipeline {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         Self {
@@ -477,6 +478,7 @@ impl WorldTextPipeline {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -492,6 +494,7 @@ impl WorldTextPipeline {
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_vertex_buffer(0, vertices.slice(..));
@@ -537,6 +540,7 @@ fn upload<'a>(
 mod tests {
     use super::*;
     use flint_core::world_text::TextPlane;
+    use flint_debug_ui::run_headless_frame;
 
     /// A camera at the origin looking down -z: 90° vertical fov, square
     /// 200-point screen, near 1, far 100. Column-major.
@@ -581,14 +585,15 @@ mod tests {
 
     fn context() -> egui::Context {
         let ctx = egui::Context::default();
-        let _ = ctx.run(Default::default(), |_| {});
+        let _ = run_headless_frame(&ctx, Default::default(), |_| {});
         ctx
     }
 
     fn build(texts: &[WorldText], v: &TextView) -> GlyphMesh {
         let ctx = context();
         let mut laid = Vec::new();
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = run_headless_frame(&ctx, Default::default(), |ui| {
+            let ctx = &ui.ctx().clone();
             laid = lay_out(
                 ctx,
                 texts,
@@ -652,7 +657,9 @@ mod tests {
         assert!(!mesh.is_empty());
         let (lo, hi) = bounds(&mesh);
         let tall = hi[1] - lo[1];
-        assert!((0.2..0.6).contains(&tall), "{tall}");
+        // 0.21 on egui 0.30, 0.19 on 0.36, whose rasteriser (skrifa and
+        // vello_cpu) bounds each glyph's quad more tightly (#945)
+        assert!((0.15..0.6).contains(&tall), "{tall}");
         // Twice as far, half as big, give or take the glyphs' pixel of
         // empty padding and the em's rounding to whole pixels.
         let far = build(&[text([0.0, 0.0, -8.0], 1.0, facing_camera())], &v);

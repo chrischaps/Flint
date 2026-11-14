@@ -565,7 +565,7 @@ impl DebugPanel for OceanDebugPanel {
             }
             if ui.button("Copy TOML").clicked() {
                 let snippet = self.format_toml();
-                ui.output_mut(|o| o.copied_text = snippet);
+                ui.ctx().copy_text(snippet);
             }
             if ui.button("Commit to File").clicked() {
                 if let Err(e) = self.commit_to_file() {

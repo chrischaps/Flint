@@ -86,9 +86,14 @@ sha2 = { workspace = true }
 rfd = { workspace = true, optional = true }
 
 [dev-dependencies]
-naga = { version = "23", features = ["wgsl-in"] }
+naga = { version = "30.0.2", features = ["wgsl-in"] }
 # A JSON Schema validator, for the test that `flint schema --format json-schema`
 # describes every example scene (#684). Tests only.
 boon = "0.6"
 # Reads the WAV `render-suite` writes, for the music-suite test (#745).
 hound = { workspace = true }
+
+# Built-in shader modules and frame acquisition go through flint-render's
+# seams; the list is the workspace clippy.toml (#944).
+[lints.clippy]
+disallowed_methods = "deny"

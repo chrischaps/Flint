@@ -1651,7 +1651,7 @@ fn time_gpu(
         renderer.encode_gpu_timings(&ctx.device, &mut encoder);
         ctx.queue.submit(std::iter::once(encoder.finish()));
         renderer.frame_submitted();
-        ctx.device.poll(wgpu::Maintain::Wait);
+        let _ = flint_render::wait_for_gpu(&ctx.device);
     }
     let spread = match renderer.gpu_timer_mut() {
         Some(timer) => {

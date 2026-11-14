@@ -26,10 +26,10 @@ fn alpha(a: f32, opacity: f32) -> u8 {
     (a * opacity * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
-/// White at that alpha, premultiplied here. The HUD blends in display
-/// space, but egui's own constructors (`from_white_alpha`,
-/// `from_rgba_unmultiplied`) premultiply in linear light, so a 13% white
-/// read as nearly 70% over the scene.
+/// White at that alpha, premultiplied here, in display values as the HUD
+/// blends. egui 0.30's own constructors (`from_white_alpha`,
+/// `from_rgba_unmultiplied`) premultiplied in linear light, so a 13% white
+/// read as nearly 70% over the scene (0.31+ match this).
 fn light(a: f32, opacity: f32) -> Color32 {
     let a = alpha(a, opacity);
     Color32::from_rgba_premultiplied(a, a, a, a)

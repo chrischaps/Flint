@@ -23,3 +23,8 @@ flint-procgen = { workspace = true, optional = true }
 egui = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
+
+# egui frames go through run_headless_frame in tests; the list is the
+# workspace clippy.toml (#944).
+[lints.clippy]
+disallowed_methods = "deny"

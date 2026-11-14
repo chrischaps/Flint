@@ -1560,15 +1560,16 @@ pub fn check_pass(source: &StyleSource, pass: usize, user: &str) -> Result<Repor
             &file,
             e.location(&composed.text)
                 .map(|l| (l.line_number, l.line_position)),
+            e.labels()
+                .next()
+                .and_then(|(span, _)| span_text(&composed, span)),
             e.message(),
             source,
             pass,
         )
     })?;
-    let mut validator = naga::valid::Validator::new(
-        naga::valid::ValidationFlags::all(),
-        naga::valid::Capabilities::default(),
-    );
+    let mut validator =
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), style_capabilities());
     validator.validate(&module).map_err(|e| {
         let mut message = e.as_inner().to_string();
         let mut source_err: Option<&dyn std::error::Error> =
@@ -1582,6 +1583,9 @@ pub fn check_pass(source: &StyleSource, pass: usize, user: &str) -> Result<Repor
             &file,
             e.location(&composed.text)
                 .map(|l| (l.line_number, l.line_position)),
+            e.spans()
+                .next()
+                .and_then(|(span, _)| span_text(&composed, *span)),
             &message,
             source,
             pass,
@@ -1611,6 +1615,25 @@ pub fn check_pass(source: &StyleSource, pass: usize, user: &str) -> Result<Repor
         ));
     }
     Ok(report)
+}
+
+/// What Flint's WGSL validators grant a shader (#946): naga's defaults and
+/// `SHADER_FLOAT16_IN_FLOAT32`, which naga 30 asks of `pack2x16float`,
+/// `unpack2x16float` and `quantizeToF16`. They are core WGSL, naga 23 took
+/// them with no capability, and wgpu grants this one wherever the adapter has
+/// `DownlevelFlags::SHADER_F16_IN_F32`: every backend Flint runs on except
+/// Vulkan on Mesa's llvmpipe without `SHADER_F16`, where the style's build
+/// reports the error instead. The browser's WebGPU always takes them.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn style_capabilities() -> naga::valid::Capabilities {
+    naga::valid::Capabilities::default() | naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32
+}
+
+/// The composed text under an error's primary span: for an unknown
+/// identifier, naga's label covers the identifier itself.
+#[cfg(not(target_arch = "wasm32"))]
+fn span_text(composed: &Composed, span: naga::Span) -> Option<&str> {
+    composed.text.get(span.to_range()?)
 }
 
 /// The byte range of the user's code in the composed text.
@@ -1782,20 +1805,45 @@ fn guard_block(
     }
 }
 
+/// The identifiers an error is about, read from its structure rather than
+/// its wording (#946): the source text under its span when that is one
+/// identifier, and every identifier its message names, however the compiler
+/// quotes them (naga 23 wrote `'x'`, naga 30 writes `` `x` ``, the browser's
+/// compilers have their own).
+fn named<'a>(message: &'a str, subject: Option<&'a str>) -> Vec<&'a str> {
+    let ident = |t: &&str| t.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_');
+    let subject = subject
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        .filter(ident);
+    subject
+        .into_iter()
+        .chain(
+            message
+                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .filter(ident),
+        )
+        .collect()
+}
+
 /// `file:line:col: message`, with the line remapped into the user's file
 /// and the offending line quoted; a hint when the user called a helper of
 /// an input they didn't declare.
 ///
-/// `at` is the composed module's 1-based (line, column): naga's natively,
-/// the browser compiler's on the web (#415).
+/// `at` is the composed module's 1-based (line, column) and `subject` the
+/// composed text under the error's span: naga's natively, the browser
+/// compiler's on the web (#415). The hints go by the identifiers these
+/// name ([`named`]), not by the message's wording.
 fn locate(
     composed: &Composed,
     file: &str,
     at: Option<(u32, u32)>,
+    subject: Option<&str>,
     message: &str,
     source: &StyleSource,
     pass: usize,
 ) -> String {
+    let names = named(message, subject);
     let mut out = match at {
         Some((line_number, line_position)) => match composed.user_line(line_number as usize) {
             Some(line) => {
@@ -1809,7 +1857,7 @@ fn locate(
                     text.trim_end()
                 )
             }
-            None if message.contains("'style'") => format!(
+            None if names.contains(&"style") => format!(
                 "{file}: no `fn style(p: StylePixel) -> vec4<f32>`; the style draws what it returns"
             ),
             None => format!(
@@ -1818,7 +1866,11 @@ fn locate(
         },
         None => format!("{file}: {message}"),
     };
-    let missing = |helpers: &[&str]| helpers.iter().any(|h| message.contains(h));
+    let missing = |helpers: &[&str]| {
+        names
+            .iter()
+            .any(|n| helpers.iter().any(|h| n.starts_with(h)))
+    };
     if !source.inputs.depth && missing(&["flint_depth", "flint_view_depth", "flint_world_pos"]) {
         out.push_str("\n    hint: add \"depth\" to inputs in the .shader.toml");
     }
@@ -1828,7 +1880,7 @@ fn locate(
     if !source.inputs.edges && missing(&["flint_edges", "flint_edge"]) {
         out.push_str("\n    hint: add \"edges\" to inputs in the .shader.toml");
     }
-    if missing(&["'flint_image_", "'flint_lut_"]) {
+    if missing(&["flint_image_", "flint_lut_"]) {
         let names: Vec<&str> = source.images.iter().map(|i| i.name.as_str()).collect();
         out.push_str(&format!(
             "\n    hint: an image is declared as [images.<name>] or an option with \
@@ -1841,16 +1893,11 @@ fn locate(
         ));
     }
     // A helper of a target this pass doesn't read (#412)
-    if let Some(at) = message.find("flint_target_") {
-        let rest = &message[at + "flint_target_".len()..];
-        let name: String = rest
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-            .collect();
+    if let Some(name) = names.iter().find_map(|n| n.strip_prefix("flint_target_")) {
         let name = ["_size", "_load"]
             .iter()
             .find_map(|s| name.strip_suffix(s))
-            .unwrap_or(&name);
+            .unwrap_or(name);
         let reads = &source.passes[pass].reads;
         if !reads.iter().any(|r| source.targets[r.target].name == name) {
             let pass_name = &source.passes[pass].name;
@@ -2046,7 +2093,19 @@ pub fn compiler_error_pass(
         .location
         .map(|l| (l.line_number, l.line_position))
         .filter(|(line, _)| *line > 0);
-    let mut out = locate(composed, &file, at, first.message.trim(), source, pass);
+    let subject = first.location.and_then(|l| {
+        let start = l.offset as usize;
+        composed.text.get(start..start + l.length as usize)
+    });
+    let mut out = locate(
+        composed,
+        &file,
+        at,
+        subject,
+        first.message.trim(),
+        source,
+        pass,
+    );
     if errors.len() > 1 {
         out.push_str(&format!("\n    (and {} more)", errors.len() - 1));
     }
@@ -2998,8 +3057,8 @@ fn build(d: &StyleDevice) -> CustomPass {
             }
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("User Style Layout"),
-                bind_group_layouts: &layouts,
-                push_constant_ranges: &[],
+                bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
+                immediate_size: 0,
             });
             PassGpu {
                 format: p
@@ -3038,8 +3097,8 @@ fn build(d: &StyleDevice) -> CustomPass {
     };
     let passthrough_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("User Style Passthrough Layout"),
-        bind_group_layouts: &[&frame_bgl, &input_bgl],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&frame_bgl), Some(&input_bgl)],
+        immediate_size: 0,
     });
     let (_, passthrough) = pipeline(
         device,
@@ -3103,6 +3162,10 @@ fn pipeline(
     text: &str,
     format: wgpu::TextureFormat,
 ) -> (wgpu::ShaderModule, wgpu::RenderPipeline) {
+    // User WGSL, so it keeps every runtime check wgpu has (loop bounding
+    // included, after #945) and never goes through `TrustedShader` (#944).
+    // The passthrough is composed from the user's source too.
+    #[allow(clippy::disallowed_methods)]
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("User Style Shader"),
         source: wgpu::ShaderSource::Wgsl(text.into()),
@@ -3129,7 +3192,7 @@ fn pipeline(
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
     (module, pipeline)
@@ -3398,14 +3461,14 @@ fn upload_image(
         view_formats: &[],
     });
     queue.write_texture(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: &texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
         &image,
-        wgpu::ImageDataLayout {
+        wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(width * 4),
             rows_per_image: Some(height),
@@ -3423,6 +3486,7 @@ fn clear(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view,
             resolve_target: None,
+            depth_slice: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                 store: wgpu::StoreOp::Store,
@@ -3431,6 +3495,7 @@ fn clear(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         depth_stencil_attachment: None,
         timestamp_writes: None,
         occlusion_query_set: None,
+        multiview_mask: None,
     });
 }
 
@@ -3512,9 +3577,9 @@ impl CustomPass {
             },
             None => compose_pass(source, i, &user),
         };
-        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let guard = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let (module, made) = pipeline(device, &gpu.layout, &composed.text, gpu.format);
-        let scope = Settling::new(device.pop_error_scope());
+        let scope = Settling::new(guard.pop());
         let info = Settling::new(module.get_compilation_info());
         build.pending = Some(Pending {
             pipeline: made,
@@ -4612,7 +4677,7 @@ fn style(p: StylePixel) -> vec4<f32> {
             let instance = crate::gpu_select::instance();
             let adapter = crate::gpu_select::request_adapter(&instance, None).await?;
             adapter
-                .request_device(&wgpu::DeviceDescriptor::default(), None)
+                .request_device(&wgpu::DeviceDescriptor::default())
                 .await
                 .ok()
         })
@@ -5598,6 +5663,76 @@ fn style(p: StylePixel) -> vec4<f32> {
             e.contains("[images.<name>]") && e.contains("grade, paper"),
             "{e}"
         );
+    }
+
+    /// #946: the hints go by the identifier an error is about, not its
+    /// words. naga 23 quoted it 'like this', naga 30 `like this`, and a
+    /// browser compiler may only point its span at it: each gets the
+    /// `[images.<name>]` hint, and an error about another name doesn't.
+    #[test]
+    fn hints_follow_the_identifier_not_the_wording() {
+        let s = printed();
+        let user = "fn style(p: StylePixel) -> vec4<f32> {
+                        return flint_image_brush(p.uv);
+}
+";
+        let c = compose(&s, user);
+        let offset = c.text.find("flint_image_brush").unwrap() as u32;
+        let line = c.prelude_lines as u32 + 2;
+        let report = |text: &str| {
+            let info = wgpu::CompilationInfo {
+                messages: vec![wgpu::CompilationMessage {
+                    message: text.to_string(),
+                    message_type: wgpu::CompilationMessageType::Error,
+                    location: Some(wgpu::SourceLocation {
+                        line_number: line,
+                        line_position: 12,
+                        offset,
+                        length: "flint_image_brush".len() as u32,
+                    }),
+                }],
+            };
+            compiler_error(&s, &c, &info).unwrap()
+        };
+        for text in [
+            "no definition in scope for identifier: 'flint_image_brush'",
+            "no definition in scope for identifier: `flint_image_brush`",
+            "unresolved call target \"flint_image_brush\"",
+            "unknown identifier",
+        ] {
+            let e = report(text);
+            assert!(
+                e.contains("[images.<name>]") && e.contains("grade, paper"),
+                "{text}: {e}"
+            );
+        }
+        // Named only in passing, inside a longer identifier: no hint
+        assert_eq!(named("not_flint_image_x", None), ["not_flint_image_x"]);
+        let e = check(
+            &s,
+            "fn style(p: StylePixel) -> vec4<f32> {
+    return p.color * glow;
+}
+",
+        )
+        .unwrap_err();
+        assert!(!e.contains("hint"), "{e}");
+    }
+
+    /// #946: `pack2x16float`, `unpack2x16float` and `quantizeToF16` are
+    /// core WGSL; naga 30 asks for `SHADER_FLOAT16_IN_FLOAT32`, which wgpu
+    /// grants from `DownlevelFlags::SHADER_F16_IN_F32`, so `flint style
+    /// check` takes them as the device will.
+    #[test]
+    fn half_float_packing_validates() {
+        let s = duotone();
+        let user = "fn style(p: StylePixel) -> vec4<f32> {
+                        let packed = pack2x16float(p.color.rg);
+                        let rg = unpack2x16float(packed);
+                        return vec4<f32>(rg, quantizeToF16(p.color.b), p.color.a);
+}
+";
+        check(&s, user).unwrap_or_else(|e| panic!("{e}"));
     }
 
     /// #413: an image option with no list offers its default's folder; the

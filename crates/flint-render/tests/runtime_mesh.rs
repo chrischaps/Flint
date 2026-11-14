@@ -28,14 +28,13 @@ struct Gpu {
     _lease: shared_gpu::Lease,
 }
 
-/// The shared device (#598), for this test's turn (#913).
+/// The shared device (#598), alongside the other tests holding it.
 fn gpu() -> Option<Gpu> {
     shared_gpu::lease().map(frame_for)
 }
 
 /// The shared device with no other test on it: for a test that counts
-/// the device's objects or catches its errors in a scope (wgpu 23 keeps
-/// those per device, not per thread).
+/// the whole device's objects (`generate_report`).
 fn gpu_alone() -> Option<Gpu> {
     shared_gpu::lease_alone().map(frame_for)
 }
@@ -118,7 +117,7 @@ impl Gpu {
             camera,
             &self.color_view,
         );
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = flint_render::wait_for_gpu(&self.device);
     }
 
     /// Buffers the application holds, and bytes the allocator holds where
@@ -149,9 +148,9 @@ impl Gpu {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_texture_to_buffer(
             self.color.as_image_copy(),
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(row),
                     rows_per_image: None,
@@ -167,8 +166,11 @@ impl Gpu {
         buffer
             .slice(..)
             .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-        self.device.poll(wgpu::Maintain::Wait);
-        let data = buffer.slice(..).get_mapped_range();
+        let _ = flint_render::wait_for_gpu(&self.device);
+        let data = buffer
+            .slice(..)
+            .get_mapped_range()
+            .expect("mapped buffer range");
         let at = (row * (SIZE / 2) + (SIZE / 2) * 4) as usize;
         [data[at], data[at + 1], data[at + 2], data[at + 3]]
     }
@@ -1709,8 +1711,8 @@ fn a_ground_fog_lies_on_its_floors() {
 #[test]
 fn thousands_of_distinct_looks_draw() {
     const LOOKS: usize = 3000;
-    // Alone: its error scopes are the device's, not this thread's
-    let gpu = gpu_or_skip!(alone);
+    // Its error scopes are this thread's (wgpu 28+), so it shares the device
+    let gpu = gpu_or_skip!();
     let mut renderer = gpu.renderer();
     renderer.set_tonemapping(false);
     let mut world = FlintWorld::new();
@@ -1737,11 +1739,11 @@ fn thousands_of_distinct_looks_draw() {
             .unwrap();
     }
 
-    gpu.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
-    gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let oom_scope = gpu.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    let validation_scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     gpu.frame(&mut renderer, &world, &camera);
-    let validation = pollster::block_on(gpu.device.pop_error_scope());
-    let out_of_memory = pollster::block_on(gpu.device.pop_error_scope());
+    let validation = pollster::block_on(validation_scope.pop());
+    let out_of_memory = pollster::block_on(oom_scope.pop());
     assert!(validation.is_none(), "{LOOKS} looks: {validation:?}");
     assert!(out_of_memory.is_none(), "{LOOKS} looks: {out_of_memory:?}");
     let stats = renderer.collect_stats();

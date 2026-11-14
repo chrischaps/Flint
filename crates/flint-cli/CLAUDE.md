@@ -279,12 +279,15 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    (`gpu_select::skip_without_gpu`; a new GPU test calls it). flint-render's GPU test binaries
    share one device (`tests/shared_gpu`, #598: a device per test deadlocked NVIDIA's Vulkan
    driver against the loader lock as test threads exited, hanging a run for hours): `lease()`
-   alongside other tests, `lease_alone()` to count device-wide objects or use error scopes
-   (per device in wgpu 23); a watchdog aborts, naming the test, past `FLINT_GPU_TEST_TIMEOUT`
-   (300 s). A new GPU test file uses it, not its own `request_device`. A golden (image or text) may have
-   a per-adapter variant `<stem>.<warp|lavapipe|vulkan|dx12>.<ext>` (`--bless-variant`); wgpu
-   hides WARP on a machine with a GPU, so WARP variants come from the job's `stylize-goldens-warp`
-   artifact. Two traps it caught (DX12/FXC only): a `switch` miscompiled, and
+   alongside other tests (`FLINT_GPU_TEST_PARALLEL=0`: one at a time, #948), `lease_alone()` only
+   to count device-wide objects or switch process-wide state (error scopes are per thread since
+   wgpu 28); a watchdog aborts, naming the test, past `FLINT_GPU_TEST_TIMEOUT` (300 s), and the job
+   sets `FLINT_GPU_WAIT_TIMEOUT=120` so a hung wait outside a test panics (`flint_render::wait_for_gpu`).
+   A new GPU test file uses it, not its own `request_device`. A golden (image or text) may have
+   a per-adapter variant `<stem>.<warp|lavapipe|vulkan|dx12>.<ext>` (`--bless-variant`); wgpu 30
+   lists WARP on a machine with a GPU too (`WGPU_ADAPTER_NAME="Microsoft Basic Render Driver"`), but a
+   local WARP render isn't always the runner's bytes (#948: kuwahara matched, invert 20 px off), so WARP
+   variants still come from the job's `stylize-goldens-warp` artifact. Two traps it caught (DX12/FXC only): a `switch` miscompiled, and
    `fract(theta - base)` on a ±ε knife edge. **Its own command since #327** (`Commands::Goldens(render_goldens::GoldensArgs)`, the manifest plus the flattened `GoldenArgs`): `flint render-suite` is music to WAV only, with `--output` required by clap, and each command's `--help` lists only its flags (`tests/render_goldens.rs::goldens_and_music_each_list_only_their_own_flags`). The old spelling `render-suite <x>.goldens.toml ...` still works: `main` passes argv through `render_goldens::route_render_suite_goldens` before clap, which renames the subcommand word to `goldens` when any later word ends in `.goldens.toml`. Keep it on the words, not a flattened `GoldenArgs` in `RenderSuiteArgs`, or the music help grows the golden flags again.
 
 ## `flint init`

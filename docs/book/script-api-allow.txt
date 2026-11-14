@@ -25,7 +25,8 @@ concepts/scripting.md: update layer_painter    # the RuntimeSystem phase; the ar
 concepts/terrain.md: register_static_trimesh
 concepts/touch-input.md: TouchStart TouchMove TouchEnd binding_value   # the touch pipeline diagram
 guides/android.md: AAssetDir_getNextFileName android_main resumed suspended
-guides/player-extensions.md: Some bool color exists f32 fonts i64 is_available pressed raw remove_mesh set_ground str ui update upload_mesh_with vec3 vec4 view
+guides/player-extensions.md: Some bool color exists f32 fonts i64 is_available pressed raw remove_mesh root_ui set_ground str ui update upload_mesh_with vec3 vec4 view
+guides/upgrading-the-engine.md: get_current_texture show_animated
 guides/profiling.md: present set_gpu_timing
 # Rust and WGSL: a stylize pass's context and shader helpers
 concepts/stylize-passes.md: bind color color_of color_setting depth_bind edges_bind first_write mask_bind option palette_ink palette_ink_lab param pub resize_postprocess sampled sampled_input srgb style_id target texel_size uniform

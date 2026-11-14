@@ -78,11 +78,11 @@ All crates use `thiserror` for error types. Each crate defines its own error enu
 |-----------|------------|-----------|
 | Language | Rust | Performance, safety, game ecosystem |
 | ECS | hecs | Lightweight, standalone, well-tested |
-| Rendering | wgpu 23 | Cross-platform, modern GPU API |
+| Rendering | wgpu 30 | Cross-platform, modern GPU API |
 | Windowing | winit 0.30 | `ApplicationHandler` trait pattern |
 | Physics | Rapier 3D 0.22 | Mature Rust physics, character controller |
 | Audio | Kira 0.11 | Rust-native, game-focused, spatial audio |
-| GUI | egui 0.30 | Immediate-mode, easy integration with wgpu; also drives the debug panels and player HUD |
+| GUI | egui 0.36 | Immediate-mode, easy integration with wgpu; also drives the debug panels and player HUD |
 | Gamepads | gilrs + gilrs-core | Frame-rate polling and a script's `rumble()` through `flint-runtime`'s `pad`; direct 1 kHz polling and clock-stamped rumble in `flint-input-capture` |
 | Audio decoding | symphonia, hound | Stem decoding and WAV output for offline suite renders in `flint-music` |
 | Noise / RNG | noise, rand, rand_chacha | Deterministic procgen and terrain generation |
@@ -196,7 +196,7 @@ The loops that touch every texel of a texture on its way to the GPU: widening a 
 
 ### flint-render
 
-wgpu 23 PBR renderer with:
+wgpu 30 PBR renderer with:
 - **Cook-Torrance shading** --- physically-based BRDF with roughness/metallic workflow
 - **Cascaded shadow mapping** --- directional light shadows across multiple distance ranges
 - **glTF mesh rendering** --- imported models rendered with full material support

@@ -129,6 +129,7 @@ impl DebugPanel for ManifestMapPanel {
                     band.shrink(0.5),
                     0.0,
                     egui::Stroke::new(1.0f32, egui::Color32::from_rgb(255, 200, 120)),
+                    egui::StrokeKind::Middle,
                 );
                 let c = egui::pos2(x0 + 5.0, sec_top + SECTION_H * 0.5);
                 let r = 3.5;
