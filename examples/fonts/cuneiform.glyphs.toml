@@ -1,0 +1,20 @@
+# Cuneiform (#935): Noto Sans Cuneiform. The ramp counts: one wedge (DIŠ),
+# two (MIN), then the numerals three to nine, each one more wedge pressed
+# into the clay. The outlines are wedges too.
+default_ramp = "count"
+
+[font]
+file = "ofl/NotoSansCuneiform/NotoSansCuneiform-Regular.ttf"   # OFL 1.1, subset: beside it, OFL.txt
+size = 16
+
+[ramps.count]
+glyphs = " 𒁹𒈫𒐈𒐉𒐊𒐋𒐌𒐍𒐎"
+
+[ramps.clay]
+glyphs = " 𒁹𒈫𒐈𒐉𒐊𒐋𒐌𒐍𒐎"
+map = "coverage"
+
+[edges]
+horizontal = "𒀸"
+vertical = "𒁹"
+antidiagonal = "𒀹"   # AŠ.ZIDA.TENU, the slanted wedge, runs down to the right

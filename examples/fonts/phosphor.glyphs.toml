@@ -1,0 +1,19 @@
+# Phosphor (#935): VT323, a font drawn from the DEC VT320 terminal's
+# characters. Tall cells, so a frame reads as the lines of a green-screen
+# listing. ASCII-art corners: `+` wherever two lines meet.
+default_ramp = "listing"
+
+[font]
+file = "ofl/VT323/VT323-Regular.ttf"   # OFL 1.1: ofl/VT323/OFL.txt
+size = 20
+
+[ramps.listing]
+glyphs = " .,:;=+*#%@"   # no `~`: VT323 draws it as a heavy `N`-like squiggle
+map = "coverage"
+
+[ramps.classic]
+glyphs = " .:-=+*#%@"
+map = "coverage"
+
+[edges]
+corners = "+++++++++"

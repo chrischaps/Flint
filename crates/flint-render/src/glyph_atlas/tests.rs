@@ -628,6 +628,31 @@ fn a_grid_png_loads_from_toml() {
 }
 
 #[test]
+fn a_ttf_with_no_letters_loads_with_the_ascii_it_has() {
+    // Noto Emoji has digits and a few signs but no letters (#935): the set
+    // takes the ASCII it has, and its own ramps and edges must be there.
+    let emoji = epaint_default_fonts::NOTO_EMOJI_REGULAR;
+    let font = ab_glyph::FontRef::try_from_slice(emoji).unwrap();
+    assert_eq!(ab_glyph::Font::glyph_id(&font, 'A').0, 0, "no letters");
+    let mut src = MemorySource::new();
+    src.insert("fonts/emoji.ttf", emoji.to_vec());
+    let toml = "[font]\nfile = \"emoji.ttf\"\n[ramps.moon]\nglyphs = \" 🌕🌓🌑\"\nsort = \"coverage\"\n\
+                [edges]\nhorizontal = \"↔\"\nvertical = \"↕\"\ndiagonal = \"↗\"\nantidiagonal = \"↘\"\n";
+    let set = vfs::scoped(Arc::new(src.clone()), || {
+        GlyphSet::from_toml("emoji", toml, Path::new("fonts"))
+    })
+    .unwrap();
+    assert!(!set.atlas().contains('A'));
+    assert!(set.atlas().contains('1'), "the digits it has are kept");
+    assert_eq!(set.ramp("moon").unwrap().len(), 4);
+    // A glyph a ramp names still has to be in the font
+    let lacking = vfs::scoped(Arc::new(src), || {
+        GlyphSet::from_toml("emoji", &toml.replace("🌑", "A"), Path::new("fonts"))
+    });
+    assert_eq!(lacking.unwrap_err(), GlyphError::Missing(vec!['A']));
+}
+
+#[test]
 fn a_set_can_be_drawn_by_hand_in_pixel_text() {
     let mut src = MemorySource::new();
     src.insert(
