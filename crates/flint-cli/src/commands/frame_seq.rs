@@ -112,8 +112,9 @@ pub fn numbered(output: &str, index: u32, frames: u32) -> PathBuf {
     path.with_file_name(format!("{stem}_{index:0digits$}.{ext}"))
 }
 
-/// What a sequence's glyphs did, frame to frame.
-#[derive(Serialize, Clone, Debug, Default, PartialEq)]
+/// What a sequence's glyphs did, frame to frame. `flint goldens` reads it
+/// back from `--flip-json` (#478).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct FlipStats {
     pub frames: u32,
     /// Cells in the grid (columns x rows).

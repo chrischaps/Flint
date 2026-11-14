@@ -216,6 +216,7 @@ flint render examples/ascii_motion.scene.toml --no-grid \
 | `--flip-stats` | `false` | Count the ASCII style's glyph flips and reversals, per frame and in sum |
 | `--flip-json <file>` | (none) | Write the counts as JSON (per-frame arrays and the means) |
 | `--no-images` | `false` | Skip the PNGs, for a measurement |
+| `--last-frame` | `false` | Write only the last frame, to `--output` itself (not numbered): where the sequence ends, the history settled |
 
 A camera path is a TOML list of keys, in seconds from the first frame:
 
@@ -253,7 +254,7 @@ flint render examples/ascii_motion.scene.toml --no-grid \
 
 The history removes the tone glyphs' shimmer completely, as the player capture in #277 found (0.1 reversals a frame). The edge glyphs, added after that measurement, are still picked fresh every frame, and they are what's left (#477). The scene's `[camera]` is the first pose of its orbit script, so `--orbit 6.8755` (the script's 0.12 rad/s) follows the same path as the player's capture.
 
-A sequence is byte-identical run to run: the same flags give the same PNGs, which the player's `--frame-step` captures don't quite manage (#341). A debug build draws this bench at about a second a frame; `--no-images` and `--ssao-samples 16` are the cheap ways to make it quicker. A `flint goldens` gate on a reversal budget is #478.
+A sequence is byte-identical run to run: the same flags give the same PNGs, which the player's `--frame-step` captures don't quite manage (#341). A debug build draws this bench at about a second a frame; `--no-images` and `--ssao-samples 16` are the cheap ways to make it quicker. At the goldens' 640 x 360 it takes about a twentieth of a second a frame, and `flint goldens` holds it to a reversal budget ([sequence cases](#sequence-cases-a-shimmer-budget)).
 
 ### Mesh sequences
 
@@ -589,11 +590,46 @@ error = "broken.wgsl:9:9"                   # and say where it failed
 
 The stylize suite's broken-style case is stricter than it looks. A display-stage user style reads its input through the prelude's sRGB-to-display curve and writes through the inverse, and the passthrough does too. So the frame equals the unstyled one only while the two curves undo each other. With `flint_to_linear`'s exponent changed from 2.4 to 2.2, 98% of the pixels move (mean 7 levels), and the case fails.
 
+### Sequence cases: a shimmer budget
+
+A golden image pins a frame, and shimmer isn't in any one frame: it is a glyph that changes and changes back. A case with `frames` is a sequence instead (#478). It has no golden file. It draws that many frames on one renderer, as [`flint render --frames`](#frame-sequences) does, with the camera moving by `orbit` (degrees a second) or along `camera_path` (a camera path file, from the suite's root), `frame_dt` apart (default 1/60 s). Then it counts the ASCII style's glyph flips and [reversals](#measuring-shimmer) from its own grid, and fails when the mean reversals a frame pass `max_reversals`, or the mean flips pass `max_flips` when it gives one:
+
+```toml
+[[case]]
+name = "ascii-motion-tone"
+scene = "tests/fixtures/scenes/ascii_motion.scene.toml"
+args = ["--no-grid", "--style", "ascii:edges=0"]   # any flint render flags but the sequence's own
+frames = 60
+orbit = 6.8755                  # or camera_path = "path/to/cam.toml"
+max_reversals = 0.5             # A-B-A reversals a frame, the mean; required
+max_flips = 15.0                # glyph changes a frame, the mean; optional
+```
+
+```text
+  PASS  ascii-motion-tone   0.00 reversals/frame (limit 0.50), 9.4 flips/frame (limit 15.0), 60 frames, orbit 6.8755 deg/s, 3152 ms
+  PASS  ascii-motion-edges  0.16 reversals/frame (limit 1.00), 19.1 flips/frame (limit 30.0), 60 frames, orbit 6.8755 deg/s, 1153 ms
+```
+
+The stylize suite has two, on a frozen copy of `examples/ascii_motion` under the #277 bench's slow orbit: `ascii-motion-tone` (the tone glyphs alone, `edges=0`) and `ascii-motion-edges` (the default look, whose line glyphs keep a history of their own since #477). Each budget sits well under what a broken history measures. These are the numbers at 640 x 360 on an RTX 4070, with DX12 within 0.1:
+
+| `ascii_motion`, 60 frames | tone: reversals | tone: flips | edges: reversals | edges: flips |
+|---|---|---|---|---|
+| history on (the cases) | 0.0 | 9.4 | 0.16 | 19.1 |
+| `hysteresis = 0` | 2.2 | 24.1 | 3.5 | 41.7 |
+| `temporal = "off"` | 10.5 | 39.9 | 18.8 | 76.7 |
+| the budget | 0.5 | 15 | 1.0 | 30 |
+
+Each case catches its own regression. With the tone glyphs' hold taken out of `ascii_cells.wgsl`, both cases fail (2.21 and 1.84 reversals a frame). With the edge cells' history taken out of `ascii_edge_cells.wgsl`, `ascii-motion-tone` still passes at 0.00 and `ascii-motion-edges` fails at 10.0. `tests/render_goldens.rs` runs the tone case again with `hysteresis=0` and requires it to fail, so a budget loosened past that regression fails the test.
+
+A sequence case takes no `golden`, `text`, `matches`, `error` or `tolerance`, and its `args` can't repeat what its keys say (`--frames`, `--orbit`, `--camera-path`, `--frame-dt`, `--flip-json`, `--output`...): the manifest is refused with the case's name. Its frames are drawn with `--flip-json <case>.flips.json --last-frame`, so the out dir has the per-frame counts and `<case>.png`, the last frame. Its `report.json` entry has a `sequence` object (`reversals_per_frame`, `flips_per_frame`, the budget, and the per-frame `flips` and `reversals`), and it never drifts or blesses: a budget changes only by editing the manifest, with the measurement that justifies it. Sequences are deterministic, so the counts are the same run to run on one adapter.
+
 ### The contact sheet
 
 Every run writes `index.html` to the out dir (#329): one card a case with the golden, the render and the diff side by side, then a meter for each number against its limit (the tick is the limit), the case's scene and flags, and the text diff when its grid moved. Cases that failed come first, then the ones where any pixel moved, then the identical ones, each group in manifest order; the buttons at the top filter by group. **blink** flips a render with its golden in place, which shows a one-pixel shift that a side-by-side hides. The page reads its images beside itself (`<case>.png`, `<case>.diff.png`, and `golden/<case>.png`, a copy of the golden as it was before the run), so the out dir can be zipped or uploaded whole.
 
 A `--bless` still compares before it writes. Its sheet shows each case's old golden as **was** and the diff as what the bless changes: review that page, not the folder.
+
+A [sequence case](#sequence-cases-a-shimmer-budget) has no golden or diff. Its card charts every frame instead: the reversals as bars against the dashed budget and the solid mean, red when the case is over, and the flips as a faint line on a scale of its own behind them. Beside the chart is the sequence's last frame, and under it are meters for the two means against their limits. The **sequences** filter shows only these cases.
 
 ### Drift
 

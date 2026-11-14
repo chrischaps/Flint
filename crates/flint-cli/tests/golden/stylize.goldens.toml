@@ -183,6 +183,48 @@ name = "ascii-entities-normalize"
 scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-normalize", "1", "--ascii-exposure", "0.5"]
 
+# --- ASCII in motion: the shimmer gate (#478) -------------------------------
+#
+# Sequence cases: no golden, a budget. Each draws 60 frames of the
+# ascii_motion clearing on one renderer under the #277 bench's slow orbit
+# and counts, from the style's own grid, the glyphs that flip and the ones
+# that flip back (A-B-A reversals, which is what shimmer is). It fails when
+# the mean a frame passes its budget. Measured 2026-11-13 at 640x360, RTX
+# 4070 under Vulkan (DX12 within 0.1):
+#
+#                      reversals/frame  flips/frame
+#   tone, history on        0.0             9.4      (ascii-motion-tone)
+#   tone, hysteresis = 0    2.2            24.1
+#   tone, temporal = off   10.5            39.9
+#   edges, history on       0.2            19.1      (ascii-motion-edges)
+#   edges, hysteresis = 0   3.5            41.7
+#   edges, temporal = off  18.8            76.7
+#
+# So a history that stops holding fails both cases on reversals and flips.
+# A budget is a deliberate number: raise one only with the reason, and the
+# new measurement, here.
+
+# The tone glyphs alone (#277): the history removes their shimmer completely
+[[case]]
+name = "ascii-motion-tone"
+scene = "tests/fixtures/scenes/ascii_motion.scene.toml"
+args = ["--no-grid", "--style", "ascii:edges=0"]
+frames = 60
+orbit = 6.8755
+max_reversals = 0.5
+max_flips = 15.0
+
+# With the edge glyphs, which keep a history of their own since #477
+# (38.2 reversals a frame before it, at 1280x720)
+[[case]]
+name = "ascii-motion-edges"
+scene = "tests/fixtures/scenes/ascii_motion.scene.toml"
+args = ["--no-grid"]
+frames = 60
+orbit = 6.8755
+max_reversals = 1.0
+max_flips = 30.0
+
 # --- per-entity ASCII -----------------------------------------------------
 
 # The entity style mask (#263) the per-entity styles read: one hue a style

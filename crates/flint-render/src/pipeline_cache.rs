@@ -31,15 +31,18 @@
 //!
 //! Off by default, so a host that doesn't ask (the player, the viewer,
 //! `flint render`) builds as it always did. [`counts`] is kept either way:
-//! how many of each label were built and how many reused.
+//! how many of each label were built and how many reused, and so is
+//! [`thread_build_time`], how long this thread spent building (the GPU
+//! tests report it per test, #913).
 
 use std::any::{Any, TypeId};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
@@ -160,7 +163,7 @@ pub fn shared_some<T: Send + Sync + 'static>(
     build: impl FnOnce() -> Option<T>,
 ) -> Option<Arc<T>> {
     if !enabled() {
-        let made = build().map(Arc::new);
+        let made = timed(build).map(Arc::new);
         if made.is_some() {
             count(label, false);
         }
@@ -181,12 +184,52 @@ pub fn shared_some<T: Send + Sync + 'static>(
         return Some(kept);
     }
     // Built with the lock released: a build may ask for what it uses
-    let made = Arc::new(build()?);
+    let made = Arc::new(timed(build)?);
     count(label, false);
     let mut guard = cache();
     let cache = guard.get_or_insert_with(Cache::default);
     cache.kept.entry(key).or_insert_with(|| made.clone());
     Some(made)
+}
+
+thread_local! {
+    /// How deep in builds this thread is, and how long its outermost
+    /// builds have taken altogether.
+    static BUILDING: Cell<(u32, Duration)> = const { Cell::new((0, Duration::ZERO)) };
+}
+
+/// Run `build`, adding its time to [`thread_build_time`]. A build inside a
+/// build (one that asks for what it uses) counts once, as the outer one's.
+pub(crate) fn timed<R>(build: impl FnOnce() -> R) -> R {
+    struct Leave(web_time::Instant);
+    impl Drop for Leave {
+        fn drop(&mut self) {
+            BUILDING.with(|b| {
+                let (depth, total) = b.get();
+                let total = if depth == 1 {
+                    total + self.0.elapsed()
+                } else {
+                    total
+                };
+                b.set((depth - 1, total));
+            });
+        }
+    }
+    BUILDING.with(|b| {
+        let (depth, total) = b.get();
+        b.set((depth + 1, total));
+    });
+    let _leave = Leave(web_time::Instant::now());
+    build()
+}
+
+/// How long this thread has spent building pipelines (and the rest of
+/// what [`shared`] makes, whether the cache is on or not) since it
+/// started. Builds the cache answers take none. Each GPU test runs on its
+/// own thread, so the test harness reads it as that test's build time
+/// (#913).
+pub fn thread_build_time() -> Duration {
+    BUILDING.with(|b| b.get().1)
 }
 
 thread_local! {
@@ -231,7 +274,7 @@ pub(crate) fn scoped<T: Send + Sync + 'static>(
         Some(place) => shared(device, label, (place, parts), build),
         None => {
             count(label, false);
-            Arc::new(build())
+            Arc::new(timed(build))
         }
     }
 }

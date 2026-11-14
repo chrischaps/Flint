@@ -22,7 +22,7 @@ struct Gpu {
     _lease: shared_gpu::Lease,
 }
 
-/// The shared device (#598), alongside the other tests.
+/// The shared device (#598), for this test's turn (#913).
 fn gpu() -> Option<Gpu> {
     shared_gpu::lease().map(frame_for)
 }

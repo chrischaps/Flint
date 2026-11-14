@@ -259,7 +259,7 @@ impl KitPipeline for wgpu::RenderPipeline {
         build: impl FnOnce() -> wgpu::RenderPipeline,
     ) -> Self {
         crate::pipeline_cache::built(label);
-        build()
+        crate::pipeline_cache::timed(build)
     }
 }
 
@@ -274,7 +274,7 @@ impl KitPipeline for std::sync::Arc<wgpu::RenderPipeline> {
             Some(key) => crate::pipeline_cache::scoped(device, label, key, build),
             None => {
                 crate::pipeline_cache::built(label);
-                std::sync::Arc::new(build())
+                std::sync::Arc::new(crate::pipeline_cache::timed(build))
             }
         }
     }

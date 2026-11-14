@@ -165,6 +165,9 @@ jobs:
       WGPU_ADAPTER_NAME: Microsoft Basic Render Driver
       FLINT_REQUIRE_GPU: "1"
       CARGO_INCREMENTAL: "0"
+      # A line per GPU test in the log (#913): how long it held the device
+      # and how much of that went on building pipelines
+      FLINT_GPU_TEST_TIMES: "1"
     steps:
       - uses: actions/checkout@v4
 

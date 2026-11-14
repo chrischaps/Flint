@@ -8,8 +8,12 @@
 //! pixel moved) and `golden/<case>.png` (the golden as it was before the
 //! run, so a bless still shows what it replaced). The whole out dir can
 //! be zipped, attached or uploaded as it is.
+//!
+//! A sequence case (#478) has no golden: its card shows a chart of every
+//! frame's glyph reversals and flips against its budget, beside its last
+//! frame.
 
-use super::render_goldens::CaseReport;
+use super::render_goldens::{CaseReport, SequenceReport};
 
 pub struct Sheet<'a> {
     pub suite: &'a str,
@@ -67,8 +71,76 @@ fn group(r: &CaseReport) -> &'static str {
         0 | 1 => "failed",
         2 => "moved",
         _ if r.status == "skip" => "skipped",
+        _ if r.sequence.is_some() => "sequence",
         _ => "identical",
     }
+}
+
+/// A sequence case's frames as one chart (#478): each frame's reversals as
+/// a bar against the budget (dashed) and their mean (solid), each frame's
+/// flips as a faint line on a scale of its own behind them.
+fn sequence_chart(seq: &SequenceReport) -> String {
+    let (w, h, pad) = (640.0_f64, 180.0_f64, 22.0_f64);
+    let n = (seq.frames.max(2) - 1) as f64; // flips start at frame 1
+    let x = |frame: f64| pad + (frame - 1.0) / (n - 1.0).max(1.0) * (w - 2.0 * pad);
+    let peak_rev = seq.reversals.iter().copied().max().unwrap_or(0) as f64;
+    let top = (seq.max_reversals * 2.0).max(peak_rev).max(1.0);
+    let y = |v: f64| h - pad - v / top * (h - 2.0 * pad);
+    let peak_flips = seq.flips.iter().copied().max().unwrap_or(0).max(1) as f64;
+    let flips: Vec<String> = seq
+        .flips
+        .iter()
+        .enumerate()
+        .map(|(i, &f)| {
+            format!(
+                "{:.1},{:.1}",
+                x(i as f64 + 1.0),
+                h - pad - f as f64 / peak_flips * (h - 2.0 * pad)
+            )
+        })
+        .collect();
+    let bar = ((w - 2.0 * pad) / n).clamp(1.0, 8.0) * 0.7;
+    let bars: String = seq
+        .reversals
+        .iter()
+        .enumerate()
+        .filter(|(_, &r)| r > 0)
+        .map(|(i, &r)| {
+            let cx = x(i as f64 + 2.0); // reversals start at frame 2
+            let top_y = y(r as f64);
+            format!(
+                r#"<rect class="rev" x="{:.1}" y="{top_y:.1}" width="{bar:.1}" height="{:.1}"/>"#,
+                cx - bar / 2.0,
+                h - pad - top_y
+            )
+        })
+        .collect();
+    let budget = y(seq.max_reversals);
+    let mean = y(seq.reversals_per_frame);
+    let over = if seq.passes() { "" } else { " over" };
+    format!(
+        r#"<figure class="frame chart{over}"><svg viewBox="0 0 {w} {h}" role="img" aria-label="glyph reversals and flips per frame">
+<line class="axis" x1="{pad}" y1="{base:.1}" x2="{right:.1}" y2="{base:.1}"/>
+<polyline class="flips" points="{flips}"/>
+{bars}
+<line class="budget" x1="{pad}" y1="{budget:.1}" x2="{right:.1}" y2="{budget:.1}"/>
+<line class="mean" x1="{pad}" y1="{mean:.1}" x2="{right:.1}" y2="{mean:.1}"/>
+<text x="{right:.1}" y="{budget_label:.1}" text-anchor="end">budget {max:.2} reversals/frame</text>
+<text x="{pad}" y="14">reversals a frame (bars), mean {avg:.2}; flips (line, peak {peak_flips})</text>
+<text x="{pad}" y="{foot:.1}">frame 1</text><text x="{right:.1}" y="{foot:.1}" text-anchor="end">frame {last}</text>
+</svg><figcaption>{frames} frames, {motion}, {cells} cells</figcaption></figure>"#,
+        base = h - pad,
+        right = w - pad,
+        budget_label = budget - 4.0,
+        max = seq.max_reversals,
+        avg = seq.reversals_per_frame,
+        foot = h - 6.0,
+        last = seq.frames.saturating_sub(1),
+        flips = flips.join(" "),
+        frames = seq.frames,
+        motion = esc(&seq.motion),
+        cells = seq.cells,
+    )
 }
 
 /// A meter: `value` against `limit`, the fill capped at twice the limit so
@@ -108,6 +180,9 @@ fn frame(kind: &str, src: Option<String>, empty: &str, name: &str) -> String {
 }
 
 fn case_html(r: &CaseReport, bless: bool) -> String {
+    if let Some(seq) = &r.sequence {
+        return sequence_html(r, seq);
+    }
     let name = esc(&r.name);
     let rendered = r.status != "skip" && r.status != "error";
     // A --bless-drifted blesses some cases: only theirs is "was"
@@ -225,16 +300,80 @@ fn case_html(r: &CaseReport, bless: bool) -> String {
     )
 }
 
+/// A sequence case's card (#478): its chart and last frame, and meters for
+/// its means against the budget.
+fn sequence_html(r: &CaseReport, seq: &SequenceReport) -> String {
+    let name = esc(&r.name);
+    let render = frame(
+        "last frame",
+        Some(format!("{}.png", r.name)),
+        "no render",
+        &r.name,
+    );
+    let mut metrics = meter(
+        "reversals",
+        seq.reversals_per_frame,
+        seq.max_reversals,
+        &format!("{:.2}/frame", seq.reversals_per_frame),
+        &format!("{:.2}", seq.max_reversals),
+    );
+    match seq.max_flips {
+        Some(limit) => metrics.push_str(&meter(
+            "flips",
+            seq.flips_per_frame,
+            limit,
+            &format!("{:.1}/frame", seq.flips_per_frame),
+            &format!("{limit:.1}"),
+        )),
+        None => metrics.push_str(&format!(
+            r#"<div class="facts"><span><b>{:.1}</b> flips/frame (no limit)</span></div>"#,
+            seq.flips_per_frame
+        )),
+    }
+    metrics.push_str(&format!(
+        r#"<div class="facts"><span><b>{}</b> frames</span><span><b>{:.4}</b> s apart</span><span><b>{}</b> ms</span></div>"#,
+        seq.frames, seq.frame_dt, r.ms
+    ));
+    let args = if r.args.is_empty() {
+        String::new()
+    } else {
+        format!(" <code>{}</code>", esc(&r.args.join(" ")))
+    };
+    let message = r
+        .message
+        .as_ref()
+        .map(|m| format!(r#"<pre class="message">{}</pre>"#, esc(&strip_ansi(m))))
+        .unwrap_or_default();
+    format!(
+        r##"<article class="case {group} st-{st}" id="{name}" data-group="{group}">
+  <header><h2><a href="#{name}">{name}</a></h2><span class="chip">{status}</span></header>
+  <p class="what"><span class="scene">{scene}</span>{args}</p>
+  <div class="strip">{chart}{render}</div>
+  <div class="metrics">{metrics}</div>{message}
+</article>"##,
+        group = group(r),
+        st = r.status,
+        status = match r.status {
+            "pass" => "within budget",
+            "fail" => "over budget",
+            s => s,
+        },
+        scene = esc(&r.scene),
+        chart = sequence_chart(seq),
+    )
+}
+
 /// The page for `reports`.
 pub fn html(sheet: &Sheet, reports: &[CaseReport]) -> String {
     let mut order: Vec<&CaseReport> = reports.iter().collect();
     order.sort_by_key(|r| rank(r)); // stable: manifest order within a rank
     let count = |g: &str| reports.iter().filter(|r| group(r) == g).count();
-    let (failed, moved_n, identical, skipped) = (
+    let (failed, moved_n, identical, skipped, sequences) = (
         count("failed"),
         count("moved"),
         count("identical"),
         count("skipped"),
+        count("sequence"),
     );
     let verdict = if sheet.no_gpu {
         "skipped: no GPU adapter".to_string()
@@ -316,7 +455,17 @@ nav button:disabled {{ opacity: .4; cursor: default; }}
   border: 1px solid var(--line); color: var(--dim); }}
 .failed .chip {{ color: var(--fail); border-color: var(--fail); }}
 .moved .chip {{ color: var(--safe); border-color: var(--safe); }}
-.identical .chip {{ color: var(--ok); border-color: color-mix(in srgb, var(--ok) 60%, var(--line)); }}
+.identical .chip, .sequence .chip {{ color: var(--ok); border-color: color-mix(in srgb, var(--ok) 60%, var(--line)); }}
+.frame.chart {{ grid-column: span 2; }}
+.frame.chart svg {{ display: block; width: 100%; height: auto; background: var(--bg); border-radius: 2px; }}
+.chart text {{ fill: var(--dim); font: 11px ui-monospace, monospace; }}
+.chart .axis {{ stroke: var(--line); }}
+.chart .flips {{ fill: none; stroke: var(--dim); stroke-width: 1; opacity: .55; }}
+.chart .rev {{ fill: var(--safe); }}
+.chart.over .rev {{ fill: var(--fail); }}
+.chart .budget {{ stroke: var(--ink); stroke-dasharray: 4 4; opacity: .7; }}
+.chart .mean {{ stroke: var(--safe); stroke-width: 1.5; }}
+.chart.over .mean {{ stroke: var(--fail); }}
 .blink {{ margin-left: auto; }}
 .blink[aria-pressed="true"] {{ border-color: var(--safe); color: var(--safe); }}
 .what {{ margin: 6px 0 12px; color: var(--dim); font-size: 13px; overflow-wrap: anywhere; }}
@@ -354,6 +503,7 @@ pre {{ font: 12px/1.35 ui-monospace, monospace; overflow-x: auto; background: va
 footer {{ color: var(--dim); font-size: 12px; margin-top: 30px; }}
 @media (max-width: 720px) {{
   .strip {{ grid-template-columns: 1fr; }}
+  .frame.chart {{ grid-column: auto; }}
   .meter {{ grid-template-columns: 70px 1fr auto; }}
 }}
 </style>
@@ -367,7 +517,7 @@ footer {{ color: var(--dim); font-size: 12px; margin-top: 30px; }}
   {bless_note}
 </section>
 <nav>
-  {f_all}{f_failed}{f_moved}{f_identical}{f_skipped}
+  {f_all}{f_failed}{f_moved}{f_identical}{f_sequence}{f_skipped}
 </nav>
 {cases}
 <footer>Diff: the golden dimmed to grey where a pixel holds, amber where it moved, red past the case's level. A meter's tick is its limit. <b>blink</b> flips a render with its golden; click a frame for full size.</footer>
@@ -417,6 +567,11 @@ footer {{ color: var(--dim); font-size: 12px; margin-top: 30px; }}
         f_failed = filter("failed", "failed", failed),
         f_moved = filter("moved", "drifted", moved_n),
         f_identical = filter("identical", "identical", identical),
+        f_sequence = if sequences > 0 {
+            filter("sequence", "sequences", sequences)
+        } else {
+            String::new()
+        },
         f_skipped = if skipped > 0 {
             filter("skipped", "skipped", skipped)
         } else {
@@ -450,12 +605,51 @@ mod tests {
             adapter: None,
             diff: (changed > 0).then(String::new),
             text: None,
+            sequence: None,
             text_cells: 0,
             text_diff: None,
             message: None,
             ms: 12,
             had_golden: true,
         }
+    }
+
+    /// #478: a sequence case's card charts its frames against the budget
+    /// and shows its last frame, with no golden or diff.
+    #[test]
+    fn a_sequence_case_charts_its_frames_against_its_budget() {
+        let mut over = case("shimmer", "fail", 0);
+        over.comparison = None;
+        over.had_golden = false;
+        over.sequence = Some(SequenceReport {
+            frames: 5,
+            motion: "orbit 6.8755 deg/s".into(),
+            frame_dt: 1.0 / 60.0,
+            cells: 3600,
+            flips_per_frame: 120.0,
+            reversals_per_frame: 4.0,
+            max_reversals: 1.0,
+            max_flips: None,
+            flips: vec![100, 130, 120, 130],
+            reversals: vec![3, 5, 4],
+        });
+        let page = html(
+            &Sheet {
+                suite: "stylize",
+                manifest: "m.goldens.toml",
+                bless: false,
+                isolate: false,
+                seconds: 1.0,
+                no_gpu: false,
+            },
+            &[case("still", "pass", 0), over],
+        );
+        assert!(page.contains("over budget"), "the chip names the budget");
+        assert!(page.contains(r#"class="frame chart over""#));
+        assert_eq!(page.matches(r#"class="rev""#).count(), 3, "a bar a frame");
+        assert!(page.contains(r#"src="shimmer.png""#));
+        assert!(!page.contains("golden/shimmer.png") && !page.contains("shimmer.diff.png"));
+        assert!(page.find("id=\"shimmer\"").unwrap() < page.find("id=\"still\"").unwrap());
     }
 
     #[test]
