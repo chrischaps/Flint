@@ -263,13 +263,13 @@ impl SceneRenderer {
         let mut echo_transform: Option<Arc<wgpu::BindGroup>> = None;
         // Debug views are for the geometry itself, and return an alpha of 1.
         let echoes = match self.debug_state.mode {
-            crate::debug::DebugMode::Pbr => self.entity_echoes.get(&entity_id),
+            crate::debug::DebugMode::Pbr => self.skinning.echoes.get(&entity_id),
             _ => None,
         };
-        let echoes_lighten = self.entity_echo_lighten.contains(&entity_id);
+        let echoes_lighten = self.skinning.echo_lighten.contains(&entity_id);
         // A soft silhouette (#582). Debug views are of the geometry, opaque.
         let part_softness = match self.debug_state.mode {
-            crate::debug::DebugMode::Pbr => self.entity_part_softness.get(&entity_id),
+            crate::debug::DebugMode::Pbr => self.skinning.part_softness.get(&entity_id),
             _ => None,
         };
 
@@ -339,7 +339,8 @@ impl SceneRenderer {
             material_uniforms.glow_surface = Self::ecs_glow_surface(world, entity_id);
             material_uniforms.vertex_tint = Self::ecs_vertex_tint(world, entity_id);
             if let Some(tint) = self
-                .entity_part_tints
+                .skinning
+                .part_tints
                 .get(&entity_id)
                 .and_then(|tints| tints.get(mesh_index))
             {
@@ -444,7 +445,7 @@ impl SceneRenderer {
                 });
             }
 
-            let entity_bones = self.entity_bone_buffers.get(&entity_id);
+            let entity_bones = self.skinning.bone_buffers.get(&entity_id);
             let from_entity = entity_bones.is_some();
             let bone_layout = &self
                 .pipelines
@@ -453,7 +454,8 @@ impl SceneRenderer {
                 .unwrap()
                 .bone_bind_group_layout;
             let stale = self
-                .skinned_bone_binds
+                .skinning
+                .bone_binds
                 .get(&key)
                 .is_none_or(|b| b.from_entity != from_entity);
             if stale {
@@ -462,7 +464,7 @@ impl SceneRenderer {
                     bone_layout,
                     entity_bones.unwrap_or(&gpu_mesh.bone_buffer),
                 );
-                self.skinned_bone_binds.insert(
+                self.skinning.bone_binds.insert(
                     key,
                     CachedBoneBind {
                         from_entity,
@@ -471,17 +473,18 @@ impl SceneRenderer {
                     },
                 );
             }
-            let bone = self.skinned_bone_binds.get_mut(&key).unwrap();
+            let bone = self.skinning.bone_binds.get_mut(&key).unwrap();
             bone.touched = self.extract_frame;
             let bone_bind_group = bone.bind_group.clone();
 
             // Most draws' shadows follow the bones they're drawn with.
-            let shadow_bone_bind_group = match self.entity_shadow_bone_buffers.get(&entity_id) {
+            let shadow_bone_bind_group = match self.skinning.shadow_bone_buffers.get(&entity_id) {
                 None => bone_bind_group.clone(),
                 Some(bones) => {
                     let shadow_key = (entity_id, key.1 | SHADOW_BONE_KEY);
                     let shadow = self
-                        .skinned_bone_binds
+                        .skinning
+                        .bone_binds
                         .entry(shadow_key)
                         .or_insert_with(|| {
                             let layout = &self
@@ -572,9 +575,10 @@ impl SceneRenderer {
                 casts_shadow: Self::ecs_casts_shadow(world, entity_id),
                 world_aabb: {
                     let bones = self
-                        .entity_bone_matrices
+                        .skinning
+                        .bone_matrices
                         .get(&entity_id)
-                        .or_else(|| self.asset_bone_matrices.get(asset_name))
+                        .or_else(|| self.skinning.asset_bone_matrices.get(asset_name))
                         .map_or(&[][..], Vec::as_slice);
                     let (lo, hi) = super::posed_aabb(bones, gpu_mesh.aabb_min, gpu_mesh.aabb_max);
                     Some(transform_aabb(&model_matrix, lo, hi))
