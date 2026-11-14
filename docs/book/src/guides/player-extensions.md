@@ -90,7 +90,8 @@ A scene that uses a part the build left out prints one line when it's entered, n
 | `script_command(&ScriptCommand, &mut ExtensionCtx) -> bool` | Each script command, after the scene's subsystems pass on it | Carrying out what the module's functions queued |
 | `on_window_event(&WindowEvent) -> bool` | Every window event that egui didn't take | Game input the scene's input config can't express |
 | `on_key(&KeyInput) -> bool` | Every key egui didn't take, real or from `--input-script` | Keys a capture should be able to press |
-| `ui(&egui::Context)` | Every frame, inside the player's egui pass | The game's own panels and windows |
+| `ui(&egui::Context)` | Every frame, inside the player's egui pass, from `root_ui` | The game's own windows and areas |
+| `root_ui(&mut egui::Ui)` | Every frame, inside the player's egui pass; by default it calls `ui` | The game's own side and top panels, on the frame's root `Ui` (egui 0.36) |
 | `fonts(&mut egui::FontDefinitions)` | Whenever the player installs egui's fonts | Fonts the project's `fonts/` folder can't give |
 | `debug_panels() -> Vec<String>` | When the player builds its debug panels: each scene load, and at `add_extension` | Naming the game's own [debug panels](debug-panels.md#adding-a-panel-from-a-game) ([ADR 0107](https://github.com/chrischaps/Flint/blob/main/docs/adr/0107-debug-panels-from-the-game.md)) |
 | `debug_panel_ui(name, &mut egui::Ui)` | Every frame one of them is open, after `ui` | Drawing that panel's contents from the game's state |
@@ -431,13 +432,24 @@ An upload without the option, or `remove_mesh`, stops it being a target. The tri
 `ui()` draws into the same egui pass as the script HUD and the debug panels. Back to front, the order is:
 
 1. script UI (`on_draw_ui`)
-2. each extension's `ui()`
+2. each extension's `root_ui()` (by default, its `ui()`)
 3. script UI drawn between `push_over_ui()` and `pop_over_ui()` ([Scripting: Over the UI](../concepts/scripting.md#over-the-ui))
 4. the [debug panels](debug-panels.md)
 
 Egui popups and tooltips draw over the first three.
 
-Use `egui::Window`, `egui::Area`, or side and top panels. Don't use a `CentralPanel`: it covers the whole window and takes every click away from the game.
+Use `egui::Window` and `egui::Area` from `ui()`. Side and top panels go in `root_ui()`, which gets the frame's root `egui::Ui`: egui 0.36 shows an `egui::Panel` on a `Ui`, not a `Context`. The player calls `root_ui()` at the same point of the pass, and its default calls `ui()`, so override one or the other:
+
+```rust
+fn root_ui(&mut self, ui: &mut egui::Ui) {
+    egui::Panel::left("inventory").default_size(220.0).show(ui, |ui| {
+        ui.heading("Inventory");
+    });
+    egui::Window::new("Quests").show(ui.ctx(), |ui| ui.label("none yet"));
+}
+```
+
+Don't use a `CentralPanel`: it covers the whole window and takes every click away from the game. Coming from egui 0.30: [Upgrading the Engine](upgrading-the-engine.md#egui-030-to-036).
 
 ### Who gets an input event
 
