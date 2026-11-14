@@ -13,6 +13,24 @@ Styles, the style mask and user styles: `src/stylize/CLAUDE.md`. Flags: `crates/
 - HDR format `Rgba16Float` -- all pipelines must use this when post-processing active; `resize_postprocess()` on window resize
 - **Comic panels** (#880, ADR 0120) -- a scene's `[panels]` (`schemas/scene/panels.toml`; `[panels.panel.<name>]` with `rect` shares, `order`, `position`/`target`/`fov`, `follow`, `look`, `post_process`) is parsed by `flint_render::panels::PanelLayout` (`parse`, `from_scene_tables`, `with_panel` / `without_panel` / `merge_panel` for scripts' edits, `rects`, `panel_camera`); the drawing is `scene_renderer/panels.rs`. Each panel is a `ViewSlot` (the size-keyed fields: `postprocess_resources`, the `MsaaView`, the water's `OceanGrab`, `scaled_depth`/`depth_upscale`, `surface_size`, the `StylePasses` (mask and albedo), `selection_outline`) swapped in around the unchanged `encode_to` with the panel's camera and, if it has its own look, its config (masked by quality, on the frame's boil); made once by `resize_postprocess` on an empty slot, kept by panel name for the scene (`set_panels(layout, base_def)` at scene load forgets them; `set_panel_layout` is a script's cut and keeps them), remade on a size, format, MSAA or render-scale change. **A new size-keyed field on `SceneRenderer` goes into `ViewSlot` and `swap_view`**, or a panel thrashes or shares it. Each panel but the last is its own encoder and submission (its uniforms land first); the last and `PanelCompositor`'s page (clear to the gutter, `textureLoad` the picture inside, the border's ink round it, scissored per panel, 16 dynamic slots) go in the caller's. Hosts call `encode_frame_to` / `render_frame_to` (world for `follow`): the player's frame, `flint render`'s stills, `--frames` and the Stage. A whole-frame panel with no gutter is byte-identical to the frame. `BindCache::first_write` is per writer now (a process-wide last writer per name), since panels' caches write their texel sizes into the pipeline's shared buffers. Tests `tests/panels.rs`; demo `examples/comic_panels.scene.toml`; book concepts/comic-panels.md
 
+## Where scene_renderer code goes (ADR 0118, #736)
+
+`SceneRenderer` is one struct whose methods are spread by concern over `scene_renderer/`. Each file is an `impl SceneRenderer` block or a subsystem the renderer holds as one field. A new feature's state goes in its subsystem's struct, never as a loose `SceneRenderer` field, and its code goes in the file below that owns its concern:
+
+| File | What lives there |
+|---|---|
+| `mod.rs` | the `SceneRenderer` struct and the draw types (`DrawCall`, `SkinnedDrawCall`, `EchoDrawCall`, the bind-cache types); `build` behind `new`/`new_headless`; `update_from_world`; the public forwards to the subsystems (terrain, skinning, lights, shadows, sky, water, ground fog); and, until PR 11 of #736, `render`/`render_to`/`encode_to`/`frame_submitted` |
+| `pipelines.rs` | `ScenePipelines` (every sample-count-baked pipeline) and `SceneLayouts` |
+| `extract.rs` | per-entity extraction into the draw lists (static, skinned, echoes, billboards, sprites, UI text) |
+| `draws.rs` | the bind cache, shared materials, procedural boxes, LOD and frustum culls, building a draw call's bind groups, shallow wooze's per-draw drift |
+| `render_passes.rs` | the passes: shadows, per-frame uniforms, main pass, wireframe, post chain, style bounds |
+| `post.rs` | post-process and quality config: HDR chain size and render scale, drawn vs authored config, `set_quality`/`set_msaa`, building style and FXAA resources, style text/edge read-outs, `post_time` |
+| `assets.rs` | loading: models and their textures, procedural meshes, textures, `ui_text` fonts, ray targets, the asset scope |
+| `stats.rs` | `collect_stats`, the GPU timer, debug mode and overlays, tonemapping, archetype visuals |
+| `msaa.rs`, `sky.rs`, `lights.rs`, `terrain.rs`, `style_mask.rs`, `water.rs`, `skinning.rs`, `grass.rs` | the subsystems below, each with its state and its extract and draw hooks |
+| `panels.rs`, `selection.rs`, `particles.rs`, `grass_ground.rs`, `helpers.rs` | comic panels' view swap, the selection outline's draw walk, the particle upload bridge, a scene's `grass_ground`, free helpers |
+| `tests.rs` | the module's unit tests (GPU tests are `crates/flint-render/tests/`) |
+
 ## Pipelines
 
 - One constructor body (ADR 0118, #736): `SceneRenderer::new` (a window's `RenderContext`) and `new_headless` (a device, queue, format and size) both call the private `SceneRenderer::build(device, queue, surface_format, size, config)`, so a new `SceneRenderer` field is initialised in one place
