@@ -7,10 +7,6 @@ use super::SceneRenderer;
 use crate::billboard_pipeline::BillboardUniforms;
 use crate::camera::Camera;
 use crate::debug::DebugMode;
-use crate::grass_pipeline::{
-    grass_cull_padding, grass_cull_planes, grass_dispatch_window, GrassComputeUniforms,
-    GrassDrawArgs, GrassRenderUniforms,
-};
 use crate::particle_pipeline::ParticleUniforms;
 use crate::pipeline::TransformUniforms;
 use crate::shadow::{ShadowDrawUniforms, SHADOW_DRAW_STRIDE};
@@ -147,9 +143,9 @@ impl SceneRenderer {
         // Grass casts into the nearest two cascades, each through a view
         // buffer and bind group kept across frames (#139; they were made
         // per cascade per frame).
-        let grass_casts = self.grass_drawing && self.pipelines.grass.is_some();
+        let grass_casts = self.grass.drawing && self.pipelines.grass.is_some();
         if grass_casts {
-            while self.grass_shadow_binds.len() < GRASS_SHADOW_CASCADES {
+            while self.grass.shadow_binds.len() < GRASS_SHADOW_CASCADES {
                 let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("Grass Shadow Transform"),
                     size: std::mem::size_of::<TransformUniforms>() as u64,
@@ -164,10 +160,11 @@ impl SceneRenderer {
                     }],
                     label: Some("Grass Shadow Transform Bind Group"),
                 });
-                self.grass_shadow_binds.push((buffer, bind));
+                self.grass.shadow_binds.push((buffer, bind));
             }
             for (cascade, (buffer, _)) in self
-                .grass_shadow_binds
+                .grass
+                .shadow_binds
                 .iter()
                 .enumerate()
                 .take(GRASS_SHADOW_CASCADES)
@@ -273,12 +270,12 @@ impl SceneRenderer {
                 if grass_casts && cascade < GRASS_SHADOW_CASCADES {
                     if let (Some(gp), Some(render_bg), Some(instance_bg), Some(args)) = (
                         &self.pipelines.grass,
-                        &self.grass_render_uniform_bind_group,
-                        &self.grass_render_instance_bind_group,
-                        &self.grass_draw_args_buffer,
+                        &self.grass.render_uniform_bind_group,
+                        &self.grass.render_instance_bind_group,
+                        &self.grass.draw_args_buffer,
                     ) {
                         {
-                            let grass_shadow_bind = &self.grass_shadow_binds[cascade].1;
+                            let grass_shadow_bind = &self.grass.shadow_binds[cascade].1;
                             pass.set_pipeline(&gp.shadow_pipeline);
                             pass.set_bind_group(0, grass_shadow_bind, &[]);
                             pass.set_bind_group(1, render_bg, &[]);
@@ -516,7 +513,7 @@ impl SceneRenderer {
         }
 
         // Grass view uniforms (its vertex shader reads only view_proj and camera_pos)
-        if let Some(buf) = &self.grass_transform_buffer {
+        if let Some(buf) = &self.grass.transform_buffer {
             let uniforms = TransformUniforms {
                 view_proj,
                 model: identity_matrix(),
@@ -837,14 +834,14 @@ impl SceneRenderer {
             // Grass rendering (after terrain -- also writes depth)
             if let (Some(gp), Some(render_bg), Some(instance_bg), Some(args)) = (
                 &self.pipelines.grass,
-                &self.grass_render_uniform_bind_group,
-                &self.grass_render_instance_bind_group,
-                &self.grass_draw_args_buffer,
+                &self.grass.render_uniform_bind_group,
+                &self.grass.render_instance_bind_group,
+                &self.grass.draw_args_buffer,
             ) {
-                if self.grass_drawing {
+                if self.grass.drawing {
                     // Bind group 0 (transform): the grass's own view uniforms,
                     // so grass on a game's ground draws with no terrain loaded
-                    if let Some(transform_bg) = &self.grass_transform_bind_group {
+                    if let Some(transform_bg) = &self.grass.transform_bind_group {
                         render_pass.set_bind_group(0, transform_bg, &[]);
                     }
                     render_pass.set_pipeline(&gp.render_pipeline);
@@ -1509,187 +1506,5 @@ impl SceneRenderer {
         if fxaa_active {
             pp.run_fxaa(queue, encoder, device, resources, target_view, timer);
         }
-    }
-
-    /// Dispatch the grass compute shader to scatter this camera's blades,
-    /// culled to its view, and count them into the indirect draw arguments
-    /// (ADR 0092). Call before the shadow and main passes, and call
-    /// [`GrassCountReadback::start_map`] after submitting `encoder`.
-    ///
-    /// [`GrassCountReadback::start_map`]: crate::grass_pipeline::GrassCountReadback::start_map
-    pub fn dispatch_grass_compute(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        camera: &Camera,
-        time: f32,
-    ) {
-        let config = match &self.grass_config {
-            Some(c) if c.enabled => c.clone(),
-            _ => return,
-        };
-
-        // The last count that has come back, for stats
-        if let Some(count) = self
-            .grass_count_readback
-            .as_mut()
-            .and_then(|readback| readback.poll(device))
-        {
-            self.grass_instance_count = count.min(self.grass_max_instances);
-        }
-
-        // Only the cells within reach of the camera are dispatched (ADR 0089)
-        let spacing = 1.0 / config.density.sqrt();
-        let window = grass_dispatch_window(
-            [self.grass_terrain_offset[0], self.grass_terrain_offset[2]],
-            [self.grass_terrain_width, self.grass_terrain_depth],
-            spacing,
-            [camera.position.x, camera.position.z],
-            config.max_distance,
-        );
-        let ([start_x, start_z], [count_x, count_z]) = window.unwrap_or(([0, 0], [0, 0]));
-        let workgroups_x = count_x.div_ceil(8);
-        let workgroups_z = count_z.div_ceil(8);
-        let group_count = workgroups_x * workgroups_z;
-        self.ensure_grass_group_slots(device, group_count);
-
-        let grass_pipeline = match &self.pipelines.grass {
-            Some(p) => p,
-            None => return,
-        };
-
-        let compute_uniform_bg = match &self.grass_compute_uniform_bind_group {
-            Some(bg) => bg,
-            None => return,
-        };
-        let compute_texture_bg = match &self.grass_compute_texture_bind_group {
-            Some(bg) => bg,
-            None => return,
-        };
-        let compute_storage_bg = match &self.grass_compute_storage_bind_group {
-            Some(bg) => bg,
-            None => return,
-        };
-
-        // Reset the draw arguments to no blades; the scan pass counts them in
-        let Some(draw_args) = &self.grass_draw_args_buffer else {
-            return;
-        };
-        queue.write_buffer(draw_args, 0, bytemuck::bytes_of(&GrassDrawArgs::RESET));
-
-        // Only the blades in view are drawn. The planes are pushed out by the
-        // tallest blade, and with shadows on by how far its shadow reaches,
-        // so nothing that leans or casts into the view is lost at its edges.
-        let sun = self
-            .shadows_drawn()
-            .then(|| self.lights.uniforms.directional_lights[0].direction);
-        let tallest = config.blade_height * (1.0 + config.height_variation.max(0.0));
-        let frustum_planes = grass_cull_planes(
-            &camera.view_projection_matrix(),
-            grass_cull_padding(tallest, sun),
-        );
-
-        // Update compute uniforms
-        let uniforms = GrassComputeUniforms {
-            camera_pos: [camera.position.x, camera.position.y, camera.position.z],
-            time,
-            terrain_offset: self.grass_terrain_offset,
-            density: config.density,
-            terrain_width: self.grass_terrain_width,
-            terrain_depth: self.grass_terrain_depth,
-            height_scale: self.grass_terrain_height_scale,
-            max_distance: config.max_distance,
-            fade_start: config.fade_start,
-            density_threshold: config.density_threshold,
-            // A ground's mask is a single channel
-            density_layer: if self.grass_on_ground {
-                0
-            } else {
-                config.density_layer
-            },
-            blade_height: config.blade_height,
-            height_variation: config.height_variation,
-            scale_by_density: self.grass_scale_by_density as u32,
-            grid_start_x: start_x,
-            grid_start_z: start_z,
-            // A terrain's samples sit on its mesh's vertices; a game's
-            // ground map's in its cells (ADR 0098)
-            height_at_corners: !self.grass_on_ground as u32,
-            group_count,
-            _pad1: 0,
-            _pad2: 0,
-            frustum_planes,
-        };
-
-        if let Some(buf) = &self.grass_compute_uniform_buffer {
-            queue.write_buffer(buf, 0, bytemuck::cast_slice(&[uniforms]));
-        }
-
-        // Update render uniforms (wind, colors, etc.)
-        let wind_dir = {
-            let d = config.wind_direction;
-            let len = (d[0] * d[0] + d[2] * d[2]).sqrt().max(0.001);
-            [d[0] / len, d[1], d[2] / len]
-        };
-
-        // A comb with no swing is none at all, and the shader skips it.
-        let wooze = self
-            .grass_wooze
-            .filter(|draw| draw.amplitude > 0.0)
-            .map(|draw| draw.uniforms())
-            .unwrap_or_else(bytemuck::Zeroable::zeroed);
-        let render_uniforms = GrassRenderUniforms {
-            wind_direction: wind_dir,
-            wind_speed: config.wind_speed,
-            wind_strength: config.wind_strength,
-            time,
-            bend_radius: config.bend_radius,
-            bend_strength: config.bend_strength,
-            color_base: config.color_base,
-            blade_width: config.blade_width,
-            color_tip: config.color_tip,
-            blade_height: config.blade_height,
-            color_dry: config.color_dry,
-            dry_amount: config.dry_amount,
-            entity_count: self.grass_entity_count,
-            _pad0: 0.0,
-            _pad1: 0.0,
-            _pad2: 0.0,
-            wooze_leaving: wooze.leaving,
-            wooze_arriving: wooze.arriving,
-            wooze_params: wooze.params,
-        };
-
-        if let Some(buf) = &self.grass_render_uniform_buffer {
-            queue.write_buffer(buf, 0, bytemuck::cast_slice(&[render_uniforms]));
-        }
-
-        // Compute dispatch over the window (none when the camera is out of reach;
-        // the counter, reset above, then reads zero). Three passes put the
-        // blades in grid order, the same every run (#341): an atomic append
-        // ordered them by which GPU thread got there first, and the blade
-        // drawn first wins a depth tie, so captures moved by a level.
-        if group_count > 0 {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Grass Compute Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_bind_group(0, compute_uniform_bg, &[]);
-            pass.set_bind_group(1, compute_texture_bg, &[]);
-            pass.set_bind_group(2, compute_storage_bg, &[]);
-            pass.set_pipeline(&grass_pipeline.count_pipeline);
-            pass.dispatch_workgroups(workgroups_x, workgroups_z, 1);
-            pass.set_pipeline(&grass_pipeline.scan_pipeline);
-            pass.dispatch_workgroups(1, 1, 1);
-            pass.set_pipeline(&grass_pipeline.emit_pipeline);
-            pass.dispatch_workgroups(workgroups_x, workgroups_z, 1);
-        }
-
-        // Copy the count out for stats, unless the last copy is still coming back
-        if let Some(readback) = &mut self.grass_count_readback {
-            readback.record_copy(encoder, draw_args);
-        }
-        self.grass_drawing = true;
     }
 }
