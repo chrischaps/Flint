@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 const DIRS: &[&str] = &[
     "examples/models",
     "showcase_game/models",
-    "testModels",
+    "tests/fixtures/models",
     "tests/fixtures/scenes/models",
 ];
 

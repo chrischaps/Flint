@@ -980,7 +980,7 @@ mod tests {
     fn double_sided_is_read() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../testModels/DoubleSidedCard.glb"
+            "/../../tests/fixtures/models/DoubleSidedCard.glb"
         );
         let model = import_gltf(path).unwrap();
         let sides: Vec<_> = model

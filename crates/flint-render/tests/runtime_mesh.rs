@@ -1423,7 +1423,7 @@ fn set_sun(world: &mut FlintWorld, direction: [f64; 3], intensity: f64) {
     world.set_component(sun, "light", light.into()).unwrap();
 }
 
-/// glTF `doubleSided` (#623): `testModels/DoubleSidedCard.glb` holds two
+/// glTF `doubleSided` (#623): `tests/fixtures/models/DoubleSidedCard.glb` holds two
 /// cards wound once with their normals up, one `doubleSided`. From above
 /// both draw; from below only the double-sided one does, where before the
 /// fix both were culled.
@@ -1434,7 +1434,7 @@ fn a_double_sided_glb_card_draws_from_behind() {
     renderer.set_debug_mode(DebugMode::Unlit);
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../testModels/DoubleSidedCard.glb"
+        "/../../tests/fixtures/models/DoubleSidedCard.glb"
     );
     let model = flint_import::import_gltf(path).unwrap();
     renderer.load_model(gpu.device, gpu.queue, "cards", &model);

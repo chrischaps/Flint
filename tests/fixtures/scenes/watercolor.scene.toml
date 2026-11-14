@@ -86,7 +86,7 @@ metallic = 0.0
 [entities.meadow.transform]
 position = [-48, 0, -48]
 [entities.meadow.grass_ground]
-mask = "mesh_meadow/mask.png"
+mask = "../../../examples/mesh_meadow/mask.png"
 width = 96.0
 depth = 96.0
 scale_by_mask = true
@@ -114,7 +114,7 @@ position = [0.4, 0.48, 3.4]
 rotation = [0, 70, 0]
 scale = [0.5, 0.5, 0.5]
 [entities.cask.model]
-asset = "barrel"
+asset = "../../../examples/models/barrel.glb"
 [entities.cask.watercolor_style]
 
 # No animator: at rest the skinned mesh renders at the same size in
@@ -125,7 +125,7 @@ archetype = "character"
 position = [-0.9, 0, 4.4]
 rotation = [0, 25, 0]
 [entities.ybot.model]
-asset = "YBotWithIdle"
+asset = "../../../examples/models/YBotWithIdle.glb"
 [entities.ybot.skeleton]
 skin = "Armature"
 [entities.ybot.style_mask]
@@ -137,7 +137,7 @@ archetype = "furniture"
 position = [2.4, 0.48, 5.4]
 scale = [0.5, 0.5, 0.5]
 [entities.barrel.model]
-asset = "barrel"
+asset = "../../../examples/models/barrel.glb"
 [entities.barrel.watercolor_style]
 edge = 2.5
 edge_depth = 1.6

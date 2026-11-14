@@ -324,8 +324,10 @@ packs the engine's. Book: guides/publishing-to-the-web.md.
 | `/?scene=pencil_sketch.scene.toml` | `&game=demo` added; Pencil Sketch (11 entities) drawn from the same bundle |
 | `build.py` (Float `3e0b75f`, FlintKart `bd910be`) through export | float 16.03 MB in 3 bundles, kart 91.88 MB in 2 plus its film and poster; `games.json` holds the keys and values the old script wrote |
 
-The demo bundle is large because the tavern's `wooden_bench.glb` (31 MB) and
-`wood_planks.png` (27 MB) are. The packer doesn't drop files no scene reads.
+The demo bundle was large because the tavern's `wooden_bench.glb` (31 MB) and
+`wood_planks.png` (27 MB) were; #759 capped both at 2048 texels a side
+(3.6 MB and a 1.9 MB `wood_planks.jpg`). The packer doesn't drop files no
+scene reads.
 
 ## Flint Kart (#104)
 

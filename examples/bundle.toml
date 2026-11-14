@@ -34,12 +34,10 @@ exclude = [
     "scripts/showcase_ambience.rhai",
     "scripts/showcase_hud.rhai",
     "scripts/showcase_passage.rhai",
-    # the showcase film's capture sets (tools/showcase), and source art no
-    # scene reads
+    # the showcase film's capture sets (tools/showcase), and a preview
+    # still no scene reads
     "film/**",
     "luminarium_preview.png",
-    "textures/worn_planks_diff_4k.jpg",
-    "**/*.tiff",
 ]
 
 # examples/ has no engine subtree: its schemas are the repo's.

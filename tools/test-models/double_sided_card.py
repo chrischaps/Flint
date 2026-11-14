@@ -1,4 +1,4 @@
-"""Writes testModels/DoubleSidedCard.glb, the fixture for glTF doubleSided (#623).
+"""Writes tests/fixtures/models/DoubleSidedCard.glb, the fixture for glTF doubleSided (#623).
 
 Two flat 2 m cards side by side in the XZ plane, each wound once with its
 normal up (+Y):
@@ -88,7 +88,7 @@ def main() -> None:
     js = pad4(json.dumps(gltf, separators=(",", ":")).encode(), b" ")
     bin_chunk = pad4(bytes(blob))
     total = 12 + 8 + len(js) + 8 + len(bin_chunk)
-    out = Path(__file__).resolve().parents[2] / "testModels" / "DoubleSidedCard.glb"
+    out = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "models" / "DoubleSidedCard.glb"
     out.write_bytes(
         struct.pack("<4sII", b"glTF", 2, total)
         + struct.pack("<I4s", len(js), b"JSON") + js

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # What a change must pass before it lands (#757).
 #
-#   scripts/ci.sh          formatting, and every cited ADR has a record
-#                          (scripts/adr-check.sh): seconds, no build. `scripts/issue.sh
+#   scripts/ci.sh          formatting, every cited ADR has a record
+#                          (scripts/adr-check.sh), and the tree's size
+#                          budget (scripts/size-check.py, ADR 0121):
+#                          seconds, no build. `scripts/issue.sh
 #                          land` runs this (verify= in scripts/issue.conf), and
 #                          so does CI's rustfmt job.
 #   scripts/ci.sh --full   also what CI's clippy and wasm jobs run: native
@@ -32,6 +34,12 @@ fi
 echo "ci: scripts/adr-check.sh"
 bash scripts/adr-check.sh
 
+echo "ci: scripts/size-check.py"
+# python3 where it runs (Windows' may be a stub); standard library only
+py=python3
+"$py" --version >/dev/null 2>&1 || py=python
+"$py" scripts/size-check.py
+
 if [ "${1:-}" = "--full" ]; then
     echo "ci: cargo clippy --all-targets"
     cargo clippy --all-targets --keep-going
@@ -40,9 +48,7 @@ if [ "${1:-}" = "--full" ]; then
     echo "ci: flint script api --check-book"
     cargo run --locked -q -p flint-cli --bin flint -- script api --check-book
     echo "ci: scripts/docs-check.py"
-    # The flint just built; python3 where it runs (Windows' may be a stub)
-    py=python3
-    "$py" --version >/dev/null 2>&1 || py=python
+    # The flint just built
     "$py" scripts/docs-check.py
     echo "ci: scripts/wasm-check.sh"
     bash scripts/wasm-check.sh
