@@ -92,3 +92,8 @@ naga = { version = "23", features = ["wgsl-in"] }
 boon = "0.6"
 # Reads the WAV `render-suite` writes, for the music-suite test (#745).
 hound = { workspace = true }
+
+# Built-in shader modules and frame acquisition go through flint-render's
+# seams; the list is the workspace clippy.toml (#944).
+[lints.clippy]
+disallowed_methods = "deny"

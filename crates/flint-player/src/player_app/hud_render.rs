@@ -359,6 +359,7 @@ pub(super) fn render_draw_commands(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flint_debug_ui::run_headless_frame;
     use flint_script::context::DrawCommand;
 
     const MARK: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
@@ -390,7 +391,7 @@ mod tests {
             ..Default::default()
         };
         let items = [dot(over_ui)];
-        let out = ctx.run(input, |ctx| {
+        let out = run_headless_frame(&ctx, input, |ctx| {
             render_draw_commands(
                 ctx,
                 &items,

@@ -115,6 +115,11 @@ image = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+[dev-dependencies]
+# run_headless_frame: every test's egui frame clears its texture updates
+# (#944), whatever features the tests build with.
+flint-debug-ui = { workspace = true }
+
 [target.'cfg(target_os = "android")'.dependencies]
 log = { workspace = true }
 
@@ -148,3 +153,8 @@ egui-winit = { workspace = true }
 # User input overrides live under the OS config directory; on the web they go
 # to localStorage instead (player_app/user_files.rs).
 dirs = { workspace = true }
+
+# Built-in shader modules and frame acquisition go through flint-render's
+# seams; the list is the workspace clippy.toml (#944).
+[lints.clippy]
+disallowed_methods = "deny"

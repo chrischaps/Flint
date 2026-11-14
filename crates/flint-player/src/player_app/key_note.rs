@@ -119,6 +119,7 @@ impl KeyNote {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flint_debug_ui::run_headless_frame;
 
     /// One egui pass at time `t` with the note painted; whether it drew.
     fn frame_at(note: &mut KeyNote, ctx: &egui::Context, t: f64) -> bool {
@@ -130,7 +131,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let out = ctx.run(input, |ctx| note.paint(ctx, 24.0));
+        let out = run_headless_frame(ctx, input, |ctx| note.paint(ctx, 24.0));
         !out.shapes.is_empty()
     }
 

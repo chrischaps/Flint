@@ -21,6 +21,7 @@
 //!
 //! [`StyleDescriptor::uses_albedo`]: crate::stylize::StyleDescriptor::uses_albedo
 
+use crate::TrustedShader;
 /// The albedo's name in the post chain's style targets.
 pub(crate) const ALBEDO_TARGET: &str = "style albedo";
 
@@ -127,11 +128,11 @@ fn pipeline(
 
 impl StyleAlbedoPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let pbr = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let pbr = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Albedo PBR Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
-        let skinned = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let skinned = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Albedo Skinned Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("skinned_shader.wgsl").into()),
         });

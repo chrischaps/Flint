@@ -726,7 +726,7 @@ impl SceneRenderer {
     }
 
     /// The editor grid, as an overlay (#346): depth-tested against what is
-    /// already drawn, with the line bias, but never writing depth. Drawn
+    /// already drawn (LessEqual, no bias), but never writing depth. Drawn
     /// after the opaque geometry, so the grid still shows on a floor at
     /// y = 0 and hides behind anything standing on it, while the depth that
     /// styles, SSAO, fog and the edge passes read holds only the scene. With
@@ -771,7 +771,7 @@ impl SceneRenderer {
     /// Wireframe-only mode rendering: wireframe lines. The selection is
     /// outlined over the finished image (#602).
     fn render_wireframe_only_pass<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
-        // Wireframe lines: the overlay pipeline (LessEqual + bias)
+        // Wireframe lines: the overlay pipeline (LessEqual, unbiased since #944)
         render_pass.set_pipeline(&self.pipelines.main.overlay_line_pipeline);
         for draw in &self.wireframe_overlay_draws {
             render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);

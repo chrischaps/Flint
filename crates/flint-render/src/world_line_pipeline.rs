@@ -12,6 +12,7 @@
 //! FXAA. Colours are display-space (sRGB), as the HUD's are, so a ring keeps
 //! the colour it had as a HUD line. Fog, bloom and tonemapping don't touch it.
 
+use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 use flint_core::world_line::WorldLine;
 
@@ -196,7 +197,7 @@ impl WorldLinePipeline {
     /// `format` is the final target's (the surface's); the pass is single
     /// sample against a `Depth32Float` depth view.
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("World Line Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("world_line_shader.wgsl").into()),
         });

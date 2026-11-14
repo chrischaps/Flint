@@ -2900,7 +2900,7 @@ impl SceneRenderer {
         context: &RenderContext,
         camera: &Camera,
         view: &wgpu::TextureView,
-    ) -> Result<(), wgpu::SurfaceError> {
+    ) -> Result<(), crate::SurfaceError> {
         if self.device_lost {
             return Ok(());
         }

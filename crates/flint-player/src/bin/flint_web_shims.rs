@@ -48,6 +48,7 @@ fn main() {
 #[cfg(target_arch = "wasm32")]
 mod web {
     use flint_player::user_files;
+    use flint_render::AcquireFrame;
     use flint_runtime::pad::{Axis, EventType, Gilrs};
     use flint_runtime::{
         ActionConfig, ActionKind, Binding, GamepadSelector, InputConfig, InputState, RebindMode,
@@ -461,9 +462,9 @@ mod web {
         }
 
         fn draw(&mut self, phase: f64) {
-            let frame = match self.surface.get_current_texture() {
+            let frame = match self.surface.acquire() {
                 Ok(frame) => frame,
-                Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => {
                     self.surface.configure(&self.device, &self.config);
                     return;
                 }

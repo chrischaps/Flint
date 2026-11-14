@@ -3103,6 +3103,10 @@ fn pipeline(
     text: &str,
     format: wgpu::TextureFormat,
 ) -> (wgpu::ShaderModule, wgpu::RenderPipeline) {
+    // User WGSL, so it keeps every runtime check wgpu has (loop bounding
+    // included, after #945) and never goes through `TrustedShader` (#944).
+    // The passthrough is composed from the user's source too.
+    #[allow(clippy::disallowed_methods)]
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("User Style Shader"),
         source: wgpu::ShaderSource::Wgsl(text.into()),

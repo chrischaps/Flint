@@ -8,6 +8,7 @@
 //! volumetric, the ocean's grab) stays single-sample and unchanged.
 
 use crate::postprocess::HDR_FORMAT;
+use crate::TrustedShader;
 
 /// The renderer's MSAA state: the targets at the frame's size, and the
 /// depth resolve's pipeline, made the first frame that draws 4x.
@@ -125,7 +126,7 @@ impl MsaaTargets {
         if self.resolve.is_some() {
             return;
         }
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Depth Resolve Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../depth_resolve.wgsl").into()),
         });

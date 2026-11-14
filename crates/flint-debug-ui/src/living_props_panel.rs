@@ -2136,6 +2136,7 @@ impl Label {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::run_headless_frame;
 
     fn row(name: &str, position: [f32; 3]) -> LivingPropRow {
         LivingPropRow {
@@ -2173,7 +2174,7 @@ mod tests {
             events,
             ..Default::default()
         };
-        let _ = ctx.run(input, |ctx| {
+        let _ = run_headless_frame(ctx, input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
         });
     }
@@ -2348,10 +2349,10 @@ mod tests {
                 ..Default::default()
             };
             // Collapsing headers open on the second frame.
-            let _ = ctx.run(input.clone(), |ctx| {
+            let _ = run_headless_frame(&ctx, input.clone(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
             });
-            let output = ctx.run(input, |ctx| {
+            let output = run_headless_frame(&ctx, input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
             });
             texts(&output)
@@ -2454,7 +2455,7 @@ mod tests {
                 overlay: true,
                 ..Default::default()
             });
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ctx| {
                 panel.paint_overlay(ctx, &view_proj);
             });
             output.shapes.len()
@@ -2483,7 +2484,7 @@ mod tests {
         with_prop.rows = vec![row("oak_1", [0.0, 0.0, -20.0])];
         panel.refresh(with_prop.clone());
         let shapes = |ctx: &egui::Context, panel: &mut LivingPropsDebugPanel| {
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let output = run_headless_frame(ctx, egui::RawInput::default(), |ctx| {
                 panel.paint_overlay(ctx, &view_proj);
             });
             output.shapes.len()
@@ -2558,7 +2559,7 @@ mod tests {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(420.0, 1400.0))),
             ..Default::default()
         };
-        let output = ctx.run(input, |ctx| {
+        let output = run_headless_frame(ctx, input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
         });
         output
@@ -2717,7 +2718,7 @@ mod tests {
         on.overlay = true;
         panel.refresh(on);
         let labels = |panel: &mut LivingPropsDebugPanel| {
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ctx| {
                 panel.paint_overlay(ctx, &view_proj);
             });
             texts(&output)
@@ -2906,7 +2907,7 @@ mod tests {
             events,
             ..Default::default()
         };
-        ctx.run(input, |ctx| panel.paint_overlay(ctx, view))
+        run_headless_frame(ctx, input, |ctx| panel.paint_overlay(ctx, view))
     }
 
     /// Two frames of it, since a new window is laid out unseen on its first.

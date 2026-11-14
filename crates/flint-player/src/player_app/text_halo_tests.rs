@@ -1,13 +1,14 @@
 #![allow(clippy::needless_range_loop)] // pixel loops index several images at once
 
 use super::*;
+use flint_debug_ui::run_headless_frame;
 use std::path::PathBuf;
 
 /// A context whose fonts exist, at `ppp` pixels per point.
 fn context(ppp: f32) -> egui::Context {
     let ctx = egui::Context::default();
     ctx.set_pixels_per_point(ppp);
-    let _ = ctx.run(Default::default(), |_| {});
+    let _ = run_headless_frame(&ctx, Default::default(), |_| {});
     ctx
 }
 
@@ -30,7 +31,7 @@ fn halo_within(
     max_side: usize,
 ) -> (Arc<egui::Galley>, HaloImage) {
     let mut out = None;
-    let _ = ctx.run(Default::default(), |ctx| {
+    let _ = run_headless_frame(ctx, Default::default(), |ctx| {
         let galley = ctx.fonts(|f| {
             f.layout_no_wrap(
                 text.to_owned(),
@@ -256,7 +257,7 @@ fn a_still_label_makes_one_texture_and_a_dropped_one_frees_it() {
         glow: Some(([1.0; 4], 8.0)),
     };
     let frame = |halos: &mut TextHalos, text: Option<&str>| {
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = run_headless_frame(&ctx, Default::default(), |ctx| {
             halos.begin_frame();
             if let Some(text) = text {
                 let font = egui::FontId::proportional(40.0);
@@ -334,7 +335,7 @@ fn a_halo_past_the_texture_limit_is_drawn_smaller_in_the_same_place() {
         max_texture_side: Some(limit),
         ..Default::default()
     };
-    let _ = ctx.run(input, |ctx| {
+    let _ = run_headless_frame(&ctx, input, |ctx| {
         halos.begin_frame();
         let font = egui::FontId::proportional(300.0);
         let galley =

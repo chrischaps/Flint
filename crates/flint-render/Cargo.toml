@@ -49,3 +49,8 @@ naga = { version = "23", features = ["wgsl-in", "wgsl-out"] }
 # what it reports is what wgpu gets. Already in the tree through wgpu-hal.
 [target.'cfg(windows)'.dependencies]
 libloading = "0.8"
+
+# Built-in shader modules and frame acquisition go through flint-render's
+# seams; the list is the workspace clippy.toml (#944).
+[lints.clippy]
+disallowed_methods = "deny"

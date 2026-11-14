@@ -5,6 +5,7 @@
 //! - Center: egui-snarl node graph canvas
 //! - Right: output texture preview with channel browser
 
+use flint_render::AcquireFrame;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -1168,7 +1169,7 @@ impl TexEditApp {
             .take_egui_input(window.as_ref());
         self.egui_ctx.begin_pass(raw_input);
         self.draw_ui();
-        let full_output = self.egui_ctx.end_pass();
+        let mut full_output = self.egui_ctx.end_pass();
 
         self.egui_winit
             .as_mut()
@@ -1181,9 +1182,9 @@ impl TexEditApp {
 
         let ctx = self.render_context.as_ref().unwrap();
 
-        let surface_texture = match ctx.surface.get_current_texture() {
+        let surface_texture = match ctx.surface.acquire() {
             Ok(t) => t,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => {
                 ctx.surface.configure(&ctx.device, &ctx.config);
                 return;
             }
@@ -1254,6 +1255,8 @@ impl TexEditApp {
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);
         }
+        // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
+        full_output.textures_delta.clear();
 
         self.egui_renderer = Some(egui_renderer);
     }

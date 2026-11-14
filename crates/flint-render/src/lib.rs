@@ -49,8 +49,10 @@ pub mod sprite2d_pipeline;
 pub mod style_albedo;
 pub mod style_mask;
 pub mod stylize;
+mod surface_frame;
 pub mod terrain_pipeline;
 mod texture_cache;
+mod trusted_shader;
 pub mod water_body;
 mod wooze_pipeline;
 pub mod world_line_pipeline;
@@ -111,8 +113,10 @@ pub use sprite2d_pipeline::{
     Sprite2dBatch, Sprite2dInstanceGpu, Sprite2dPipeline, Sprite2dUniforms,
 };
 pub use style_mask::{StyleIds, STYLE_MASK_FORMAT};
+pub use surface_frame::{AcquireFrame, SurfaceError};
 pub use terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 pub use texture_cache::{memoize_mip_chains, open_image, TextureCache};
+pub use trusted_shader::TrustedShader;
 pub use water_body::{river_points, RiverPoint, WaterBodyLook, WaterBodyMesh, WaterVertex};
 pub use wooze_pipeline::{ShallowWoozeDraw, WAVELENGTH_MIN};
 

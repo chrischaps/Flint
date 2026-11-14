@@ -5,6 +5,7 @@
 //! sRGB surface with exposure, ACES tonemapping, gamma, and vignette.
 
 use crate::camera::Camera;
+use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 
 /// Maximum number of bloom mip levels in the downsample/upsample chain.
@@ -523,7 +524,7 @@ pub struct FxaaPipeline {
 
 impl FxaaPipeline {
     pub fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("FXAA Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("fxaa_shader.wgsl").into()),
         });
@@ -736,7 +737,7 @@ impl PostProcessPipeline {
         });
 
         // --- Composite pipeline ---
-        let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let composite_shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Composite Shader"),
             source: wgpu::ShaderSource::Wgsl(COMPOSITE_WGSL.into()),
         });
@@ -928,7 +929,7 @@ impl PostProcessPipeline {
         });
 
         // --- Bloom pipelines ---
-        let bloom_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let bloom_shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Bloom Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("bloom_shader.wgsl").into()),
         });
@@ -1221,7 +1222,7 @@ impl PostProcessPipeline {
         let white_texture_view = white_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // SSAO shader
-        let ssao_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let ssao_shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("SSAO Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("ssao_shader.wgsl").into()),
         });
@@ -1333,7 +1334,7 @@ impl PostProcessPipeline {
         });
 
         // SSAO blur shader
-        let ssao_blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let ssao_blur_shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("SSAO Blur Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("ssao_blur_shader.wgsl").into()),
         });
@@ -1429,7 +1430,7 @@ impl PostProcessPipeline {
         });
 
         // --- Volumetric (god rays) pipelines ---
-        let volumetric_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let volumetric_shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Volumetric Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("volumetric_shader.wgsl").into()),
         });
@@ -1577,10 +1578,13 @@ impl PostProcessPipeline {
         });
 
         // Volumetric blur shader
-        let volumetric_blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Volumetric Blur Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("volumetric_blur_shader.wgsl").into()),
-        });
+        let volumetric_blur_shader =
+            device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Volumetric Blur Shader"),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("volumetric_blur_shader.wgsl").into(),
+                ),
+            });
 
         // Volumetric blur Group 0: VolumetricBlurUniforms
         let volumetric_blur_uniform_bgl =

@@ -28,6 +28,7 @@
 //! With nothing selected nothing here runs, and the frame is the frame
 //! without it, byte for byte.
 
+use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 
 /// The selection colour, in display (sRGB) values: what you see on screen.
@@ -117,7 +118,7 @@ struct MaskTarget {
 }
 
 fn module(device: &wgpu::Device, label: &str, source: &str) -> wgpu::ShaderModule {
-    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
         source: wgpu::ShaderSource::Wgsl(source.into()),
     })

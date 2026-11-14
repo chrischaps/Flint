@@ -17,6 +17,7 @@ mod save;
 mod sim;
 mod ui;
 
+use flint_render::AcquireFrame;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -999,16 +1000,18 @@ impl ApplicationHandler for ParticleEditApp {
                 let Some(context) = &self.render_context else {
                     return;
                 };
-                let output = match context.surface.get_current_texture() {
+                let output = match context.surface.acquire() {
                     Ok(o) => o,
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                    Err(
+                        flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated,
+                    ) => {
                         let size = context.size;
                         if let Some(ctx) = &mut self.render_context {
                             ctx.resize(size);
                         }
                         return;
                     }
-                    Err(wgpu::SurfaceError::OutOfMemory) => {
+                    Err(flint_render::SurfaceError::OutOfMemory) => {
                         tracing::error!("Out of GPU memory");
                         event_loop.exit();
                         return;

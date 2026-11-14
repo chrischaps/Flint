@@ -10,6 +10,7 @@
 //! - Storage buffer instancing for efficient batched rendering
 //! - Layer-based Z-offset for draw ordering (depth write disabled)
 
+use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
@@ -57,7 +58,7 @@ pub struct Sprite2dPipeline {
 
 impl Sprite2dPipeline {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, sample_count: u32) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Sprite2D Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("sprite2d_shader.wgsl").into()),
         });

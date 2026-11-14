@@ -1,22 +1,8 @@
 //! Render pipeline setup
 
 use crate::primitives::Vertex;
+use crate::TrustedShader;
 
-/// Depth bias for the line-list overlays (wireframe, skeleton), pulling
-/// them in front of the surface they trace. WebGPU forbids any depth bias
-/// on line topologies and rejects the pipeline, so the web draws them
-/// unbiased.
-pub(crate) fn line_depth_bias() -> wgpu::DepthBiasState {
-    if cfg!(target_arch = "wasm32") {
-        wgpu::DepthBiasState::default()
-    } else {
-        wgpu::DepthBiasState {
-            constant: -2,
-            slope_scale: -1.0,
-            clamp: 0.0,
-        }
-    }
-}
 use bytemuck::{Pod, Zeroable};
 
 /// Additive blending: src*SrcAlpha + dst*One.
@@ -652,7 +638,7 @@ impl RenderPipeline {
         sample_count: u32,
         layouts: &SceneLayouts,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("PBR Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
@@ -759,7 +745,9 @@ impl RenderPipeline {
             cache: None,
         });
 
-        // Overlay line pipeline — renders lines on top of solid geometry with depth bias
+        // Overlay line pipeline: lines over solid geometry, LessEqual and no
+        // depth bias. WebGPU and wgpu 29+ reject a bias on line topologies,
+        // and Vulkan never applied one to lines (#944).
         let overlay_line_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("Overlay Line Pipeline"),
@@ -794,7 +782,7 @@ impl RenderPipeline {
                     depth_write_enabled: false,
                     depth_compare: wgpu::CompareFunction::LessEqual,
                     stencil: wgpu::StencilState::default(),
-                    bias: line_depth_bias(),
+                    bias: wgpu::DepthBiasState::default(),
                 }),
                 multisample: wgpu::MultisampleState {
                     count: sample_count,
@@ -804,7 +792,7 @@ impl RenderPipeline {
                 cache: None,
             });
 
-        // Overlay line pipeline — renders lines on top of solid geometry with depth bias
+        // Skeleton line pipeline: as the overlay's, unbiased (#944)
         let skeleton_line_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("Skeleton Line Pipeline"),
@@ -839,7 +827,7 @@ impl RenderPipeline {
                     depth_write_enabled: false,
                     depth_compare: wgpu::CompareFunction::Always,
                     stencil: wgpu::StencilState::default(),
-                    bias: line_depth_bias(),
+                    bias: wgpu::DepthBiasState::default(),
                 }),
                 multisample: wgpu::MultisampleState {
                     count: sample_count,

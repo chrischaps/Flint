@@ -8,6 +8,7 @@
 //! [`DepthUpscale`] copies it into the caller's surface-sized depth view,
 //! nearest texel, so the overlays drawn against it still are.
 
+use crate::TrustedShader;
 /// The smallest scale [`SceneRenderer::set_render_scale`] accepts.
 ///
 /// [`SceneRenderer::set_render_scale`]: crate::SceneRenderer::set_render_scale
@@ -75,7 +76,7 @@ pub(crate) struct DepthUpscale {
 
 impl DepthUpscale {
     pub fn new(device: &wgpu::Device, source: &ScaledDepth) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Depth Upscale Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("depth_upscale.wgsl").into()),
         });
