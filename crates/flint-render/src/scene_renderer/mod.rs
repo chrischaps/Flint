@@ -1,6 +1,7 @@
 //! Scene renderer - converts FlintWorld entities to GPU meshes
 
 mod extract;
+mod grass;
 mod grass_ground;
 mod helpers;
 mod lights;
@@ -30,9 +31,7 @@ use crate::context::RenderContext;
 use crate::debug::{DebugMode, DebugState};
 use crate::gpu_mesh::MeshCache;
 use crate::grass_pipeline::{
-    check_grass_mask_patch, GrassComputeUniforms, GrassCountReadback, GrassDrawArgs,
-    GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu, GrassRenderUniforms,
-    MAX_GRASS_ENTITIES,
+    GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu, MAX_GRASS_ENTITIES,
 };
 use crate::particle_pipeline::{ParticleBuffers, ParticleDrawCall};
 use crate::pipeline::{BlendMode, MaterialUniforms, SceneLayouts, TransformUniforms};
@@ -588,22 +587,9 @@ pub struct SceneRenderer {
     lod_settings: LodSettings,
     /// Draws the last `render_to` set aside by level of detail
     lod_culled: u32,
-    // Grass
-    grass_instance_buffer: Option<wgpu::Buffer>,
-    /// Blades drawn, for stats: read back without waiting, so a frame or
-    /// more behind (ADR 0092). The draws themselves read the GPU's count.
-    grass_instance_count: u32,
-    /// The grass compute ran for this render_to, so the draws have arguments
-    grass_drawing: bool,
-    grass_max_instances: u32,
-    grass_draw_args_buffer: Option<wgpu::Buffer>,
-    grass_count_readback: Option<GrassCountReadback>,
-    /// The frame being encoded dispatched the grass: read its count back
-    /// once it is submitted (`frame_submitted`).
-    grass_readback_due: bool,
-    /// The grass's view of each shadow cascade it casts into: a buffer and
-    /// its bind group, kept across frames (#139).
-    grass_shadow_binds: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
+    /// Grass (ADR 0089, 0092): the compute scatter's and the draw's
+    /// resources and the ground it grows on (ADR 0118, #736).
+    grass: grass::GrassRenderer,
     /// Times the frame's phases on the GPU, while timing is on (ADR 0108)
     gpu_timer: Option<crate::gpu_timer::GpuTimer>,
     /// Comic panels (#880, ADR 0120): the layout and each panel's view
@@ -615,35 +601,6 @@ pub struct SceneRenderer {
     mask_view_forced: bool,
     /// Whether the `edges` view switched ASCII on itself (#349).
     ascii_forced: bool,
-    grass_compute_uniform_buffer: Option<wgpu::Buffer>,
-    grass_compute_uniform_bind_group: Option<wgpu::BindGroup>,
-    grass_compute_texture_bind_group: Option<wgpu::BindGroup>,
-    grass_compute_storage_bind_group: Option<wgpu::BindGroup>,
-    /// Each placement workgroup's blade count, then its first slot, and how
-    /// many workgroups it holds (#341). Grown by the dispatch that needs more.
-    grass_group_slots: Option<(wgpu::Buffer, u32)>,
-    grass_render_uniform_buffer: Option<wgpu::Buffer>,
-    grass_render_uniform_bind_group: Option<wgpu::BindGroup>,
-    grass_render_instance_bind_group: Option<wgpu::BindGroup>,
-    grass_entity_buffer: Option<wgpu::Buffer>,
-    grass_entity_count: u32,
-    grass_config: Option<flint_terrain::GrassConfig>,
-    grass_terrain_offset: [f32; 3],
-    grass_terrain_width: f32,
-    grass_terrain_depth: f32,
-    grass_terrain_height_scale: f32,
-    /// Grass grows on a game's ground (ADR 0089), not a terrain's splat map.
-    grass_on_ground: bool,
-    /// A mask weight thins the field in proportion (ground only).
-    grass_scale_by_density: bool,
-    /// The ground's mask and its size in texels, kept so part of it can be
-    /// repainted in place (ADR 0093). `None` for a terrain's grass.
-    grass_mask: Option<(wgpu::Texture, u32, u32)>,
-    /// The config grew past the instance buffer; reallocate before the next dispatch.
-    grass_needs_realloc: bool,
-    /// The grass draw's own view uniforms, so it needs no terrain to borrow them from.
-    grass_transform_buffer: Option<wgpu::Buffer>,
-    grass_transform_bind_group: Option<wgpu::BindGroup>,
     /// The sea, water bodies and their refraction grab (ADR 0118, #736).
     water: water::WaterRenderer,
     /// Time in seconds driving wave phases. Set by the player each frame from
@@ -875,40 +832,11 @@ impl SceneRenderer {
             camera_frustum: None,
             lod_settings: LodSettings::from_env(),
             lod_culled: 0,
-            grass_instance_buffer: None,
-            grass_instance_count: 0,
-            grass_drawing: false,
-            grass_max_instances: 0,
-            grass_draw_args_buffer: None,
-            grass_count_readback: None,
-            grass_readback_due: false,
-            grass_shadow_binds: Vec::new(),
             gpu_timer: None,
             panel_state: Default::default(),
             style_mask: style_mask::StyleMaskState::new(),
             mask_view_forced: false,
             ascii_forced: false,
-            grass_compute_uniform_buffer: None,
-            grass_compute_uniform_bind_group: None,
-            grass_compute_texture_bind_group: None,
-            grass_compute_storage_bind_group: None,
-            grass_group_slots: None,
-            grass_render_uniform_buffer: None,
-            grass_render_uniform_bind_group: None,
-            grass_render_instance_bind_group: None,
-            grass_entity_buffer: None,
-            grass_entity_count: 0,
-            grass_config: None,
-            grass_terrain_offset: [0.0; 3],
-            grass_terrain_width: 0.0,
-            grass_terrain_depth: 0.0,
-            grass_terrain_height_scale: 0.0,
-            grass_on_ground: false,
-            grass_scale_by_density: false,
-            grass_mask: None,
-            grass_needs_realloc: false,
-            grass_transform_buffer: None,
-            grass_transform_bind_group: None,
             water,
             ocean_time: 0.0,
             motion_hold: Default::default(),
@@ -951,6 +879,7 @@ impl SceneRenderer {
             pixels_per_point: 1.0,
             style_frame_serial: std::sync::atomic::AtomicU64::new(0),
             style_history_epoch: 0,
+            grass: Default::default(),
             grass_time: 0.0,
             grass_wooze: None,
             device_lost: false,
@@ -1054,591 +983,6 @@ impl SceneRenderer {
     /// Clear terrain draw calls (for scene transitions)
     pub fn clear_terrain(&mut self) {
         self.terrain.clear();
-    }
-
-    /// Initialize grass GPU resources for the loaded terrain.
-    /// Call after load_terrain() when grass is enabled.
-    #[allow(clippy::too_many_arguments)]
-    pub fn load_grass(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        config: &flint_terrain::GrassConfig,
-        heightmap_data: &[f32],
-        heightmap_width: u32,
-        heightmap_depth: u32,
-        splat_data: &[u8],
-        splat_width: u32,
-        splat_height: u32,
-        terrain_offset: [f32; 3],
-        terrain_width: f32,
-        terrain_depth: f32,
-        height_scale: f32,
-    ) {
-        if self.pipelines.grass.is_none() {
-            return;
-        }
-        let (_, hm_view) = upload_grass_texture(
-            device,
-            queue,
-            "Grass Heightmap Texture",
-            wgpu::TextureFormat::R32Float,
-            bytemuck::cast_slice(heightmap_data),
-            4,
-            heightmap_width,
-            heightmap_depth,
-        );
-        let (_, splat_view) = upload_grass_texture(
-            device,
-            queue,
-            "Grass Splat Texture",
-            wgpu::TextureFormat::Rgba8Unorm,
-            splat_data,
-            4,
-            splat_width,
-            splat_height,
-        );
-        self.install_grass(
-            device,
-            config,
-            &hm_view,
-            &splat_view,
-            terrain_offset,
-            terrain_width,
-            terrain_depth,
-            height_scale,
-            None,
-        );
-    }
-
-    /// Grow grass on a game's own ground instead of a Flint terrain
-    /// (ADR 0089): a density mask and a height over a world rectangle.
-    ///
-    /// Replaces whatever grass is loaded, a terrain's included, and can be
-    /// called again whenever the ground changes. `config` is used as for a
-    /// terrain, except that `density_layer` and `density_source` don't
-    /// apply: the mask is the density. Does nothing, and returns `Ok`, when
-    /// the device has no compute grass (see `has_grass_pipeline`).
-    pub fn set_grass_ground(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        config: &flint_terrain::GrassConfig,
-        ground: &GrassGround,
-    ) -> Result<(), String> {
-        ground.validate()?;
-        if self.pipelines.grass.is_none() {
-            return Ok(());
-        }
-        let flat;
-        let (heights, hm_w, hm_d) = match ground.height {
-            GrassHeight::Flat(y) => {
-                flat = [y];
-                (&flat[..], 1, 1)
-            }
-            GrassHeight::Map {
-                heights,
-                width,
-                depth,
-            } => (heights, width, depth),
-        };
-        let (_, hm_view) = upload_grass_texture(
-            device,
-            queue,
-            "Grass Ground Height Texture",
-            wgpu::TextureFormat::R32Float,
-            bytemuck::cast_slice(heights),
-            4,
-            hm_w,
-            hm_d,
-        );
-        let (mask, mask_view) = upload_grass_texture(
-            device,
-            queue,
-            "Grass Ground Mask Texture",
-            wgpu::TextureFormat::R8Unorm,
-            ground.mask,
-            1,
-            ground.mask_width,
-            ground.mask_height,
-        );
-        // The heights are world y: offset 0, scale 1.
-        self.install_grass(
-            device,
-            config,
-            &hm_view,
-            &mask_view,
-            [ground.origin[0], 0.0, ground.origin[1]],
-            ground.size[0],
-            ground.size[1],
-            1.0,
-            Some(ground.scale_by_mask),
-        );
-        self.grass_mask = Some((mask, ground.mask_width, ground.mask_height));
-        Ok(())
-    }
-
-    /// Repaint part of the grass ground's mask in place (ADR 0093): the
-    /// `width × height` texels at (`x`, `y`), from `bytes` (one a texel,
-    /// row by row toward +Z). The buffers and bind groups stay as they
-    /// are, so a small clearing costs a small upload, not a reinstall.
-    ///
-    /// Errs when no ground was set with `set_grass_ground` (a terrain's
-    /// grass has no mask to repaint), or when the rectangle runs off the
-    /// mask or `bytes` is the wrong length. On a device with no compute
-    /// grass it does nothing, as `set_grass_ground` does.
-    pub fn update_grass_mask(
-        &mut self,
-        queue: &wgpu::Queue,
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
-        bytes: &[u8],
-    ) -> Result<(), String> {
-        if self.pipelines.grass.is_none() {
-            return Ok(());
-        }
-        let Some((mask, mask_width, mask_height)) = &self.grass_mask else {
-            return Err("no grass ground to repaint: set one with set_grass_ground".into());
-        };
-        check_grass_mask_patch(*mask_width, *mask_height, x, y, width, height, bytes.len())?;
-        if width == 0 || height == 0 {
-            return Ok(());
-        }
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: mask,
-                mip_level: 0,
-                origin: wgpu::Origin3d { x, y, z: 0 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytes,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(width),
-                rows_per_image: Some(height),
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-        Ok(())
-    }
-
-    /// Whether this device runs the compute grass at all.
-    pub fn has_grass_pipeline(&self) -> bool {
-        self.pipelines.grass.is_some()
-    }
-
-    /// Build the grass buffers and bind groups over ground textures already
-    /// uploaded. `ground` is `None` for a terrain (its splat layer is the
-    /// density), or `Some(scale_by_mask)` for a game's R8 mask.
-    #[allow(clippy::too_many_arguments)]
-    fn install_grass(
-        &mut self,
-        device: &wgpu::Device,
-        config: &flint_terrain::GrassConfig,
-        hm_view: &wgpu::TextureView,
-        splat_view: &wgpu::TextureView,
-        terrain_offset: [f32; 3],
-        terrain_width: f32,
-        terrain_depth: f32,
-        height_scale: f32,
-        ground: Option<bool>,
-    ) {
-        let grass_pipeline = match &self.pipelines.grass {
-            Some(p) => p,
-            None => return,
-        };
-
-        let max_instances = config.instance_capacity(terrain_width, terrain_depth);
-        let instance_buffer_size =
-            (max_instances as u64) * std::mem::size_of::<GrassInstanceGpu>() as u64;
-
-        // Instance storage buffer (compute writes, render reads)
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Grass Instance Buffer"),
-            size: instance_buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        // Indirect draw arguments; the compute pass counts blades into them (ADR 0092)
-        let counter_buffer = create_grass_draw_args_buffer(device);
-
-        // Compute uniform buffer
-        let compute_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Grass Compute Uniform Buffer"),
-            size: std::mem::size_of::<GrassComputeUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let compute_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &grass_pipeline.compute_uniform_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: compute_uniform_buffer.as_entire_binding(),
-            }],
-            label: Some("Grass Compute Uniform Bind Group"),
-        });
-
-        // Heightmap uses nearest (non-filtering) sampler since R32Float is not filterable
-        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Grass Nearest Sampler"),
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
-        let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Grass Linear Sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-
-        let compute_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &grass_pipeline.compute_texture_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(hm_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&nearest_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(splat_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&linear_sampler),
-                },
-            ],
-            label: Some("Grass Compute Texture Bind Group"),
-        });
-
-        // Render uniform buffer
-        let render_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Grass Render Uniform Buffer"),
-            size: std::mem::size_of::<GrassRenderUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let render_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &grass_pipeline.render_grass_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: render_uniform_buffer.as_entire_binding(),
-            }],
-            label: Some("Grass Render Uniform Bind Group"),
-        });
-
-        // Entity positions buffer
-        let entity_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Grass Entity Buffer"),
-            size: (MAX_GRASS_ENTITIES * std::mem::size_of::<GrassEntityPosition>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let render_instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &grass_pipeline.render_instance_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: instance_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: entity_buffer.as_entire_binding(),
-                },
-            ],
-            label: Some("Grass Render Instance Bind Group"),
-        });
-
-        // Store everything
-        self.grass_instance_buffer = Some(instance_buffer);
-        self.grass_instance_count = 0;
-        self.grass_max_instances = max_instances;
-        self.grass_draw_args_buffer = Some(counter_buffer);
-        self.grass_count_readback = Some(GrassCountReadback::new(device));
-        self.grass_compute_uniform_buffer = Some(compute_uniform_buffer);
-        self.grass_compute_uniform_bind_group = Some(compute_uniform_bind_group);
-        self.grass_compute_texture_bind_group = Some(compute_texture_bind_group);
-        // Made by the first dispatch, which knows how many workgroups it runs
-        self.grass_compute_storage_bind_group = None;
-        self.grass_group_slots = None;
-        self.grass_render_uniform_buffer = Some(render_uniform_buffer);
-        self.grass_render_uniform_bind_group = Some(render_uniform_bind_group);
-        self.grass_render_instance_bind_group = Some(render_instance_bind_group);
-        self.grass_entity_buffer = Some(entity_buffer);
-        self.grass_config = Some(config.clone());
-        self.grass_terrain_offset = terrain_offset;
-        self.grass_terrain_width = terrain_width;
-        self.grass_terrain_depth = terrain_depth;
-        self.grass_terrain_height_scale = height_scale;
-        self.grass_on_ground = ground.is_some();
-        self.grass_scale_by_density = ground.unwrap_or(false);
-        self.grass_mask = None;
-        self.grass_needs_realloc = false;
-        if self.grass_transform_bind_group.is_none() {
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Grass Transform Buffer"),
-                size: std::mem::size_of::<TransformUniforms>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &self.layouts.transform_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding(),
-                }],
-                label: Some("Grass Transform Bind Group"),
-            });
-            self.grass_transform_buffer = Some(buffer);
-            self.grass_transform_bind_group = Some(bind_group);
-        }
-
-        tracing::info!(
-            "Grass loaded: max {} instances, {:.1}MB buffer",
-            max_instances,
-            instance_buffer_size as f64 / (1024.0 * 1024.0)
-        );
-    }
-
-    /// Clear all grass GPU resources.
-    pub fn unload_grass(&mut self) {
-        self.grass_instance_buffer = None;
-        self.grass_instance_count = 0;
-        self.grass_max_instances = 0;
-        self.grass_draw_args_buffer = None;
-        self.grass_count_readback = None;
-        self.grass_compute_uniform_buffer = None;
-        self.grass_compute_uniform_bind_group = None;
-        self.grass_compute_texture_bind_group = None;
-        self.grass_compute_storage_bind_group = None;
-        self.grass_group_slots = None;
-        self.grass_render_uniform_buffer = None;
-        self.grass_render_uniform_bind_group = None;
-        self.grass_render_instance_bind_group = None;
-        self.grass_entity_buffer = None;
-        self.grass_entity_count = 0;
-        self.grass_config = None;
-        self.grass_on_ground = false;
-        self.grass_scale_by_density = false;
-        self.grass_mask = None;
-        self.grass_needs_realloc = false;
-    }
-
-    /// The blades the grass's last compute pass kept, read back from the
-    /// GPU (ADR 0098). It waits for the GPU, so it's for tests and tools,
-    /// never for a frame. Empty with no grass loaded.
-    pub fn read_grass_blades(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) -> Vec<GrassInstanceGpu> {
-        let (Some(instances), Some(args)) =
-            (&self.grass_instance_buffer, &self.grass_draw_args_buffer)
-        else {
-            return Vec::new();
-        };
-        let read = |buffer: &wgpu::Buffer, offset: u64, size: u64| -> Vec<u8> {
-            let staging = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Grass Blade Read-back"),
-                size,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let mut encoder = device.create_command_encoder(&Default::default());
-            encoder.copy_buffer_to_buffer(buffer, offset, &staging, 0, size);
-            queue.submit([encoder.finish()]);
-            staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-            device.poll(wgpu::Maintain::Wait);
-            let bytes = staging.slice(..).get_mapped_range().to_vec();
-            staging.unmap();
-            bytes
-        };
-        let count = read(args, GrassDrawArgs::INSTANCE_COUNT_OFFSET, 4);
-        let count = u32::from_le_bytes([count[0], count[1], count[2], count[3]])
-            .min(self.grass_max_instances);
-        if count == 0 {
-            return Vec::new();
-        }
-        let stride = std::mem::size_of::<GrassInstanceGpu>();
-        read(instances, 0, count as u64 * stride as u64)
-            .chunks_exact(stride)
-            .map(bytemuck::pod_read_unaligned)
-            .collect()
-    }
-
-    /// Update grass config without buffer reallocation.
-    /// Compute and render passes read `grass_config` fresh each frame to build
-    /// uniforms, so changes take effect on the next `render()` call.
-    /// If the new config needs more instances than the buffer holds (a
-    /// higher density or a longer `max_distance`), the buffer is
-    /// reallocated before the next dispatch.
-    pub fn set_grass_config(&mut self, config: flint_terrain::GrassConfig) {
-        let capacity = config.instance_capacity(self.grass_terrain_width, self.grass_terrain_depth);
-        if self.grass_instance_buffer.is_some() && capacity > self.grass_max_instances {
-            self.grass_needs_realloc = true;
-        }
-        self.grass_config = Some(config);
-    }
-
-    /// Reallocate the grass instance buffer for a new density value,
-    /// reusing existing heightmap/splat GPU textures.
-    /// Call this when `GrassConfig.density` changes (affects buffer capacity).
-    pub fn reload_grass_config(
-        &mut self,
-        device: &wgpu::Device,
-        config: flint_terrain::GrassConfig,
-    ) {
-        let grass_pipeline = match &self.pipelines.grass {
-            Some(p) => p,
-            None => return,
-        };
-
-        let max_instances =
-            config.instance_capacity(self.grass_terrain_width, self.grass_terrain_depth);
-        let instance_buffer_size =
-            (max_instances as u64) * std::mem::size_of::<GrassInstanceGpu>() as u64;
-
-        // Reallocate instance buffer
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Grass Instance Buffer"),
-            size: instance_buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        // Indirect draw arguments; the compute pass counts blades into them (ADR 0092)
-        let counter_buffer = create_grass_draw_args_buffer(device);
-
-        // Recreate render instance bind group (binds instance buffer at binding 0)
-        let entity_buffer = self
-            .grass_entity_buffer
-            .as_ref()
-            .expect("grass entity buffer");
-        let render_instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &grass_pipeline.render_instance_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: instance_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: entity_buffer.as_entire_binding(),
-                },
-            ],
-            label: Some("Grass Render Instance Bind Group"),
-        });
-
-        // Update stored state
-        // Note: grass_compute_texture_bind_group, compute_uniform_bind_group,
-        // render_uniform_bind_group, and entity_buffer are intentionally NOT
-        // recreated — they don't reference the instance buffer.
-        self.grass_instance_buffer = Some(instance_buffer);
-        self.grass_instance_count = 0;
-        self.grass_max_instances = max_instances;
-        self.grass_draw_args_buffer = Some(counter_buffer);
-        self.grass_count_readback = Some(GrassCountReadback::new(device));
-        // The next dispatch binds the new buffers
-        self.grass_compute_storage_bind_group = None;
-        self.grass_render_instance_bind_group = Some(render_instance_bind_group);
-        self.grass_config = Some(config);
-        self.grass_needs_realloc = false;
-
-        tracing::info!(
-            "Grass reloaded: max {} instances, {:.1}MB buffer",
-            max_instances,
-            instance_buffer_size as f64 / (1024.0 * 1024.0)
-        );
-    }
-
-    /// Make sure the grass compute's storage bind group exists and its
-    /// per-workgroup slots hold `groups` workgroups (#341). The slots grow
-    /// to the next power of two, so a window that changes size as the
-    /// camera nears the ground's edge rebuilds them a few times at most.
-    fn ensure_grass_group_slots(&mut self, device: &wgpu::Device, groups: u32) {
-        let groups = groups.max(1);
-        let fits = self
-            .grass_group_slots
-            .as_ref()
-            .is_some_and(|(_, capacity)| *capacity >= groups);
-        if fits && self.grass_compute_storage_bind_group.is_some() {
-            return;
-        }
-        let (Some(grass_pipeline), Some(instances), Some(draw_args)) = (
-            &self.pipelines.grass,
-            &self.grass_instance_buffer,
-            &self.grass_draw_args_buffer,
-        ) else {
-            return;
-        };
-        if !fits {
-            let capacity = groups.next_power_of_two();
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Grass Group Slots"),
-                size: capacity as u64 * 4,
-                usage: wgpu::BufferUsages::STORAGE,
-                mapped_at_creation: false,
-            });
-            self.grass_group_slots = Some((buffer, capacity));
-        }
-        let (slots, _) = self.grass_group_slots.as_ref().expect("grass group slots");
-        self.grass_compute_storage_bind_group =
-            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &grass_pipeline.compute_storage_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: instances.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: draw_args.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: slots.as_entire_binding(),
-                    },
-                ],
-                label: Some("Grass Compute Storage Bind Group"),
-            }));
-    }
-
-    /// Read-only access to the current grass config (if loaded).
-    pub fn grass_config(&self) -> Option<&flint_terrain::GrassConfig> {
-        self.grass_config.as_ref()
-    }
-
-    /// Update entity positions for grass bend-on-contact.
-    /// Also updates entity_count in the render uniform buffer.
-    pub fn update_grass_entities(
-        &mut self,
-        queue: &wgpu::Queue,
-        positions: &[GrassEntityPosition],
-    ) {
-        let count = positions.len().min(MAX_GRASS_ENTITIES);
-        self.grass_entity_count = count as u32;
-        if let Some(buf) = &self.grass_entity_buffer {
-            if count > 0 {
-                queue.write_buffer(buf, 0, bytemuck::cast_slice(&positions[..count]));
-            }
-        }
-        // Note: entity_count is written to the render uniform buffer in dispatch_grass_compute,
-        // which uses self.grass_entity_count to preserve the value set here.
     }
 
     /// Get an immutable reference to the texture cache.
@@ -2282,7 +1626,7 @@ impl SceneRenderer {
         let billboard_draws = self.billboard_draws.len() as u32;
         let particle_draws = self.particle_draws.len() as u32;
         let sprite_batches = self.sprite2d_batches.len() as u32;
-        let grass_draw_calls = if self.grass_drawing { 1u32 } else { 0 };
+        let grass_draw_calls = if self.grass.drawing { 1u32 } else { 0 };
 
         let draw_calls = entity_draws
             + skinned_draws
@@ -2322,7 +1666,7 @@ impl SceneRenderer {
         let sprite_instances: u32 = self.sprite2d_batches.iter().map(|b| b.instance_count).sum();
         triangles += sprite_instances * 2;
         // Grass: BLADE_INDEX_COUNT indices per instance
-        triangles += self.grass_instance_count * BLADE_INDEX_COUNT / 3;
+        triangles += self.grass.instance_count * BLADE_INDEX_COUNT / 3;
 
         // Shadow stats: estimate as main pass × the cascades drawn, counting
         // only the draws that cast (ADR 0100)
@@ -2371,7 +1715,7 @@ impl SceneRenderer {
             particle_draws,
             particle_instances,
             sprite_batches,
-            grass_instances: self.grass_instance_count,
+            grass_instances: self.grass.instance_count,
             grass_draw_calls,
             shadow_draw_calls,
             shadow_triangles,
@@ -4128,13 +3472,13 @@ impl SceneRenderer {
         // before the shadow pass so the cascades cast this frame's blades.
         // Nothing waits on it: the draws read the count on the GPU, and the
         // stats get it a frame or so late.
-        self.grass_drawing = false;
-        if self.grass_needs_realloc {
-            if let Some(config) = self.grass_config.clone() {
+        self.grass.drawing = false;
+        if self.grass.needs_realloc {
+            if let Some(config) = self.grass.config.clone() {
                 self.reload_grass_config(device, config);
             }
         }
-        if self.grass_config.as_ref().is_some_and(|c| c.enabled) {
+        if self.grass.config.as_ref().is_some_and(|c| c.enabled) {
             let grass_time = self.grass_time;
             let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Grass"));
             self.dispatch_grass_compute(device, queue, encoder, camera, grass_time);
@@ -4142,9 +3486,9 @@ impl SceneRenderer {
                 timer.end(encoder, scope);
             }
             // Its count is read back once the frame is submitted
-            self.grass_readback_due = true;
+            self.grass.readback_due = true;
         } else {
-            self.grass_instance_count = 0;
+            self.grass.instance_count = 0;
         }
 
         // Shadow pass: render depth from light perspective. It sees every
@@ -4524,8 +3868,8 @@ impl SceneRenderer {
     /// [`encode_gpu_timings`](Self::encode_gpu_timings) resolved them, the
     /// GPU timer's. Call once that frame is submitted.
     pub fn frame_submitted(&mut self) {
-        if std::mem::take(&mut self.grass_readback_due) {
-            if let Some(readback) = &mut self.grass_count_readback {
+        if std::mem::take(&mut self.grass.readback_due) {
+            if let Some(readback) = &mut self.grass.count_readback {
                 readback.start_map();
             }
         }
@@ -4731,65 +4075,4 @@ mod tests {
         renderer.resize_postprocess(&ctx.device, 128, 64);
         assert!(!std::sync::Arc::ptr_eq(&before, &probe(&renderer)));
     }
-}
-
-/// The grass draw's indirect arguments (ADR 0092): the compute pass writes
-/// the instance count, and the draws read the buffer as `INDIRECT`.
-fn create_grass_draw_args_buffer(device: &wgpu::Device) -> wgpu::Buffer {
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Grass Draw Args"),
-        contents: bytemuck::bytes_of(&GrassDrawArgs::RESET),
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::INDIRECT
-            | wgpu::BufferUsages::COPY_SRC
-            | wgpu::BufferUsages::COPY_DST,
-    })
-}
-
-/// Upload one grass ground texture (heightmap, splat map or mask) and
-/// return it with its view. `bytes_per_texel` is 4 for R32Float and
-/// Rgba8Unorm, 1 for R8Unorm.
-#[allow(clippy::too_many_arguments)]
-fn upload_grass_texture(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    label: &str,
-    format: wgpu::TextureFormat,
-    data: &[u8],
-    bytes_per_texel: u32,
-    width: u32,
-    height: u32,
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let size = wgpu::Extent3d {
-        width,
-        height,
-        depth_or_array_layers: 1,
-    };
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(label),
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    queue.write_texture(
-        wgpu::ImageCopyTexture {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        data,
-        wgpu::ImageDataLayout {
-            offset: 0,
-            bytes_per_row: Some(width * bytes_per_texel),
-            rows_per_image: Some(height),
-        },
-        size,
-    );
-    let view = texture.create_view(&Default::default());
-    (texture, view)
 }
