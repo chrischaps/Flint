@@ -1774,12 +1774,10 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
- "sha2",
  "toml",
  "toml_edit 0.22.27",
  "tracing",
  "tracing-subscriber",
- "ureq",
  "wgpu",
  "winit",
 ]
@@ -2042,6 +2040,7 @@ dependencies = [
  "flint-wooze",
  "image",
  "libloading",
+ "mach-dxcompiler-rs",
  "naga",
  "pollster",
  "profiling",
@@ -3234,6 +3233,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fae87c125b03c1d2c0150c90365d7d6bcc53fb73a9acaef207d2d065860f062"
 dependencies = [
  "imgref",
+]
+
+[[package]]
+name = "mach-dxcompiler-rs"
+version = "0.1.7+flint.dxc-static-v1.9.2609-1"
+dependencies = [
+ "cc",
+ "sha2",
 ]
 
 [[package]]
@@ -6358,6 +6365,7 @@ dependencies = [
  "libc",
  "libloading",
  "log",
+ "mach-dxcompiler-rs",
  "naga",
  "naga-types",
  "ndk-sys",
