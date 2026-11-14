@@ -185,16 +185,21 @@ flint render examples/mesh_meadow.scene.toml --ascii --ascii-ramp blocks --ascii
 
 In motion, a cell whose tone sits on a ramp boundary tips to the neighbouring glyph and back at the slightest change, and the whole picture crawls. So the style draws in two passes: a cell pass writes each cell's colour and glyph into a small state texture (one texel a cell), and the glyph pass draws from it. The state is kept for the next frame. A cell blends in part of last frame's colour (`smoothing`, scaled by the frame's length in game time: the player's clock, so the fixed step under `--frame-step`) and keeps last frame's glyph until its tone has clearly moved on (`hysteresis`).
 
-On `examples/ascii_motion.scene.toml`, a slow orbit of the meadow clearing captured at 1280x720 with `--frame-step 0.0166667` for 3 s (181 frames, 14,400 cells), `python tools/ascii_flips.py` counted:
+On `examples/ascii_motion.scene.toml`, a slow orbit of the meadow clearing captured at 1280x720 with `--frame-step 0.0166667` for 3 s (181 frames, 14,400 cells), `python tools/ascii_flips.py` counts glyph flips and reversals (A, B, A) per frame. Each column is a player built from that commit (re-measured 2026-11-13, #481):
 
-| | glyph flips per frame | reversals per frame (A, B, A) |
-|---|---|---|
-| `temporal = "off"` | 408.3 (2.84% of cells) | 100.6 (0.70%) |
-| `temporal = "on"` | 118.3 (0.82%) | 0.1 (0.00%) |
+| | #277 (266f1803) | edge glyphs, #267 (bbd0fc34) | edge history, #477 (4fc9606d) |
+|---|---|---|---|
+| `off`: flips | 408.3 (2.84% of cells) | 508.8 (3.53%) | 384.3 (2.67%) |
+| `off`: reversals | 100.6 (0.70%) | 118.3 (0.82%) | 84.1 (0.58%) |
+| `on`: flips | 122.7 (0.85%) | 272.8 (1.89%) | 121.3 (0.84%) |
+| `on`: reversals | **0.1** (0.00%) | **35.4** (0.25%) | **1.6** (0.01%) |
+| `on`, `edges = 0`: reversals | (no edges yet) | 0.1 | 0.0 |
 
-Reversals, where a glyph changes and changes back two frames later, are the shimmer itself, and they are gone. The flips that remain are the scene really moving.
+Reversals, where a glyph changes and changes back two frames later, are the shimmer itself. #277's history took them from 100.6 a frame to 0.1. The flips that remain are the scene really moving.
 
-`flint render --frames 181 --orbit 6.8755 --flip-stats` measures the same thing headlessly and exactly, from the style's own grid ([Frame sequences](../guides/headless-rendering.md#frame-sequences), #345). With `edges = 0` it gives 54.6 flips and 0.0 reversals a frame with the history on, against 203.7 and 36.2 with it off (2026-11-13; the scene has changed since #277's numbers above). The edge glyphs (#267) came after #277 and went through no history until #477: with them on, the history left 38.2 reversals a frame, every one of them an edge glyph. They have their own now, below.
+The edge glyphs that came next (#267) brought 35 a frame back: they were picked fresh every frame, outside the history. Bisecting between the two found no other cause (#481). The commit before #267 gives #277's numbers, and #267 with `edges = 0` gives them too, to the decimal (118.3 flips, 0.1 reversals). #267 with edges on gives what main still measured months later at b3448e5 (273.2 and 35.5), so nothing in between moved them: not tone normalisation (#289), the palette matcher (#320, #324) or the variant table (#336). #477 gave the edge glyphs a history of their own ([below](#edge-glyphs-in-motion)). The tone glyphs alone now reverse 0.0 times a frame. Of the 1.6 left with edges on, nearly all are a line glyph showing in one cell for a single frame (or missing for one): a thin line grazes a cell that had none, and a line entering an empty cell is drawn on its first frame. The headless count below shows it on the grid itself: 158 of its 164 reversals are a line glyph and a tone glyph trading places, most often `│` with `:` or `.`, in 156 different cells. No cell shimmers. The scene and the renderer changed between the columns, so compare within a column.
+
+`flint render --frames 181 --orbit 6.8755 --flip-stats` measures the same thing headlessly and exactly, from the style's own grid ([Frame sequences](../guides/headless-rendering.md#frame-sequences), #345). With `edges = 0` it gives 54.6 flips and 0.0 reversals a frame with the history on, against 203.7 and 36.2 with it off; with edges on, 101.9 and 0.9 against 319.2 and 58.9 (2026-11-13). Before #477 the edge glyphs went through no history, and with them on the history left 38.2 reversals a frame, every one of them an edge glyph.
 
 #### Edge glyphs in motion
 
@@ -216,7 +221,7 @@ So with the history on (the same frames as the tone's: consecutive, same grid an
 
 The flips that remain are the scene moving. In a fast orbit (`--orbit 68.755`, 1.2 rad/s, 61 frames) reversals go from 126.5 to 41.0 a frame and the frame keeps 94% of main's edge cells: a marginal line waits until it clears the threshold band. `hysteresis = 0` turns the edge hysteresis off and `smoothing = 0` the edge smoothing; with history off (a single render, `temporal = "off"`) the edges are exactly the stateless ones. Edge history is kept in screen space under `temporal = "reproject"` too.
 
-The player's capture of the same orbit before #477 (`tools/ascii_flips.py`, edges on, at b3448e5) agreed with the headless count: 3.53% flips and 0.82% reversals a frame with `off`, 1.90% and 0.25% (35.5 a frame) with `on` (#481).
+The player's capture of the same orbit ([the table above](#temporal-stability), #481) agrees: 0.84% flips and 0.01% reversals a frame with `on`, against 1.89% and 0.25% before #477. It counts a few more reversals than the headless grid (1.6 to 0.9 a frame). They aren't the same frames: the player's camera is the orbit script's, through the player's own frame loop, while `--orbit` places the camera directly.
 
 The state counts as history only when the last frame the renderer drew was the one before, and the grid, ramp and size are unchanged. A single `flint render` therefore draws exactly what the stateless style drew, and a `--frame-step` capture gives the style the same frames every run. Until #341 the player's captures still differed by one level in a few pixels, history on or off: the grass compute's blades came out in a different order each run. Five captures of the motion bench are now byte-identical. The player calls `SceneRenderer::reset_style_history()` when a new scene comes up, and on a [camera cut](#camera-cuts).
 
@@ -260,17 +265,19 @@ On the meadow it doesn't help, so it is an option and `on` stays the default. Se
 
 | fast pan (1.2 rad/s) | flips | reversals | tracked flips | tracked reversals | travel |
 |---|---|---|---|---|---|
-| `off` | 16.34% | 4.20% | 10.23% | 1.67% | 1.10 |
-| `on` | 7.19% | 1.09% | 6.28% | 0.91% | 0.30 |
-| `reproject` | 15.75% | 3.56% | 8.80% | 1.61% | 1.19 |
+| `off` | 16.77% | 4.22% | 10.72% | 1.89% | 1.18 |
+| `on` | 5.37% | 0.48% | 4.68% | 0.50% | 0.29 |
+| `reproject` | 13.74% | 3.52% | 7.89% | 1.56% | 1.06 |
 
 | slow orbit (0.12 rad/s) | flips | reversals |
 |---|---|---|
-| `off` | 3.53% | 0.82% |
-| `on` | 1.90% | 0.25% |
-| `reproject` | 2.12% | 0.29% |
+| `off` | 2.67% | 0.58% |
+| `on` | 0.84% | 0.01% |
+| `reproject` | 0.99% | 0.03% |
 
-Reprojected glyphs do travel with the world (1.19 cells a frame, the same as the stateless style's 1.10). But flips along the motion fall only from 10.2% to 8.8%. The grid can't move, so a surface that slides 2.3 cells lands at a new place inside its cells. Each cell then averages a different patch of it, and the grass and ground really do change from one patch to the next. Screen-space history wins on every count because it does something else: it holds glyphs to the screen (0.30 cells a frame of travel) while the colours slide underneath. That doesn't read as lag. Each frame's cell colours are closer to the stateless frame's with `on` (3.01 levels in 255) than with `reproject` (3.54).
+Both tables were re-measured with the edge glyphs' history (#477; 2026-11-13, #481). Before it, `on` gave 1.09% reversals on the fast pan and 0.25% on the slow orbit.
+
+Reprojected glyphs do travel with the world (1.06 cells a frame, close to the stateless style's 1.18). But flips along the motion fall only from 10.7% to 7.9%. The grid can't move, so a surface that slides 2.3 cells lands at a new place inside its cells. Each cell then averages a different patch of it, and the grass and ground really do change from one patch to the next. Screen-space history wins on every count because it does something else: it holds glyphs to the screen (0.29 cells a frame of travel) while the colours slide underneath. That doesn't read as lag. Each frame's cell colours are closer to the stateless frame's with `on` (3.01 levels in 255) than with `reproject` (3.54; measured in #344, before the edge history).
 
 Reach for `reproject` when a scene has large flat surfaces whose colours differ in hue but not brightness. Smoothing lets go only on a jump in luminance, so screen-space history smears one such surface's colour into the next under a pan, as in the test above. It costs about 0.05 ms more than `on` at 1080p (0.46 against 0.41 ms for the whole style, `--gpu-time 240`).
 
