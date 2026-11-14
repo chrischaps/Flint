@@ -75,7 +75,7 @@ pub(crate) struct DepthUpscale {
 
 impl DepthUpscale {
     pub fn new(device: &wgpu::Device, source: &ScaledDepth) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Depth Upscale Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("depth_upscale.wgsl").into()),
         });
@@ -188,3 +188,5 @@ mod tests {
         assert_eq!(scaled_size(3, 3, 0.01), (1, 1));
     }
 }
+
+use crate::trusted_shader::TrustedShader as _;

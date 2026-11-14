@@ -3,6 +3,7 @@
 //!
 //! Two-pass system: compute shader places instances, render pass draws cross-quads.
 
+use crate::trusted_shader::TrustedShader as _;
 use bytemuck::{Pod, Zeroable};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -537,13 +538,13 @@ impl GrassPipeline {
         sample_count: u32,
     ) -> Option<Self> {
         // Compute shader
-        let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let compute_shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Grass Compute Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("grass_compute.wgsl").into()),
         });
 
         // Render shader
-        let render_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let render_shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Grass Render Shader"),
             // The comb (#252) is shallow wooze's noise, so grass and a bench
             // standing in it are moved by one field.

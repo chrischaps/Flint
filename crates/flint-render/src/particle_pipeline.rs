@@ -6,6 +6,7 @@
 //! is grown on demand and written once per frame (ADR 0068). Instance data
 //! is the same `#[repr(C)]` type the simulation packs — no per-crate copy.
 
+use crate::trusted_shader::TrustedShader as _;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -70,7 +71,7 @@ const INITIAL_INSTANCE_CAPACITY: u32 = 1024;
 
 impl ParticlePipeline {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, sample_count: u32) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Particle Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("particle_shader.wgsl").into()),
         });

@@ -110,6 +110,7 @@
 
 use crate::postprocess::PostProcessConfig;
 use crate::stylize::StyleDescriptor;
+use crate::trusted_shader::TrustedShader as _;
 use bytemuck::{Pod, Zeroable};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -1243,7 +1244,7 @@ impl MsaaMask {
             &[transform_bgl, &draw_bgl, bone_bgl],
             crate::primitives::SkinnedVertex::desc(),
         );
-        let resolve_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let resolve_shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Mask Resolve Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("style_mask_resolve.wgsl").into()),
         });
@@ -1335,7 +1336,7 @@ impl MsaaMask {
 impl StyleMaskPass {
     pub(crate) fn new(device: &wgpu::Device, layouts: &MaskLayouts<'_>) -> Self {
         let (transform_bgl, bone_bgl) = (layouts.transform, layouts.bones);
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Mask Shader"),
             source: wgpu::ShaderSource::Wgsl(STYLE_MASK_WGSL.into()),
         });
@@ -1363,11 +1364,11 @@ impl StyleMaskPass {
             &[transform_bgl, &draw_bgl, bone_bgl],
             crate::primitives::SkinnedVertex::desc(),
         );
-        let pbr = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let pbr = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Veil PBR Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
-        let skinned = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let skinned = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Veil Skinned Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("skinned_shader.wgsl").into()),
         });
@@ -1486,7 +1487,7 @@ impl StyleMaskPass {
             .filter(|p| !p.draws.is_empty() && self.veil_particles.is_none())
             .map(|p| p.pipeline)
         {
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            let shader = device.create_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Style Veil Particle Shader"),
                 source: wgpu::ShaderSource::Wgsl(include_str!("particle_shader.wgsl").into()),
             });

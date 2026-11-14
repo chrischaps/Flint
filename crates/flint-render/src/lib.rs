@@ -52,6 +52,7 @@ pub mod stylize;
 mod surface_frame;
 pub mod terrain_pipeline;
 mod texture_cache;
+mod trusted_shader;
 pub mod water_body;
 mod wooze_pipeline;
 pub mod world_line_pipeline;

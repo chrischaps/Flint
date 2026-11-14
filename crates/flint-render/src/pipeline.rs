@@ -1,6 +1,7 @@
 //! Render pipeline setup
 
 use crate::primitives::Vertex;
+use crate::trusted_shader::TrustedShader as _;
 
 /// Depth bias for the line-list overlays (wireframe, skeleton): none.
 /// WebGPU forbids any depth bias on line topologies, and since wgpu 30
@@ -645,7 +646,7 @@ impl RenderPipeline {
         sample_count: u32,
         layouts: &SceneLayouts,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("PBR Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });

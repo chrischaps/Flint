@@ -14,6 +14,7 @@
 //! Normals aren't bent: at a few centimetres over a metre, it's about a degree or
 //! two of shading for three times the noise.
 
+use crate::trusted_shader::TrustedShader as _;
 use bytemuck::{Pod, Zeroable};
 
 use crate::pipeline::{BlendMode, RenderPipeline, ADDITIVE_BLEND, MULTIPLY_BLEND};
@@ -194,7 +195,7 @@ impl Stages<'_> {
 }
 
 fn vertex_module(device: &wgpu::Device) -> wgpu::ShaderModule {
-    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    device.create_module(wgpu::ShaderModuleDescriptor {
         label: Some("Shallow Wooze Vertex Shader"),
         source: wgpu::ShaderSource::Wgsl(VERTEX_SOURCE.into()),
     })

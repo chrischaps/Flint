@@ -1,6 +1,7 @@
 //! Render pipeline for skinned meshes with bone matrix storage buffer
 
 use crate::primitives::SkinnedVertex;
+use crate::trusted_shader::TrustedShader as _;
 
 /// Maximum bone count per skeleton (determines storage buffer size)
 pub const MAX_BONES: usize = 256;
@@ -43,7 +44,7 @@ impl SkinnedPipeline {
         light_bind_group_layout: &wgpu::BindGroupLayout,
         sample_count: u32,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Skinned PBR Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("skinned_shader.wgsl").into()),
         });
@@ -124,7 +125,7 @@ impl SkinnedPipeline {
 
         // The skinned wireframe's vertex and fragment stages (#602: what is
         // left of the old outline shader)
-        let wire_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let wire_shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Skinned Wire Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("skinned_wire_shader.wgsl").into()),
         });

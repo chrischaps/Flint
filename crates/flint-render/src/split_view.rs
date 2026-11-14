@@ -44,7 +44,7 @@ impl SplitView {
                 count: None,
             }],
         });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Split View Copy"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
@@ -227,3 +227,5 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     return textureLoad(drawn, vec2<i32>(position.xy), 0);
 }
 "#;
+
+use crate::trusted_shader::TrustedShader as _;

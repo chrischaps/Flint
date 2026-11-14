@@ -5,6 +5,7 @@
 //! this texture to compute shadow factors.
 
 use crate::primitives::{SkinnedVertex, Vertex};
+use crate::trusted_shader::TrustedShader as _;
 use crate::wooze_pipeline::ShallowWoozeUniforms;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
@@ -127,7 +128,7 @@ const WOOZY_SHADOW_BINDING: u64 = (std::mem::size_of::<ShadowDrawUniforms>()
 
 impl ShadowPass {
     pub fn new(device: &wgpu::Device, resolution: u32) -> Self {
-        let shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shadow_shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shadow Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shadow_shader.wgsl").into()),
         });
@@ -401,7 +402,7 @@ impl ShadowPass {
         if self.wooze.is_some() {
             return;
         }
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shallow Wooze Shadow Shader"),
             source: wgpu::ShaderSource::Wgsl(crate::wooze_pipeline::SHADOW_SOURCE.into()),
         });

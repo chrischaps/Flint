@@ -6,6 +6,7 @@
 //! game-side time-of-day controller — sunrise blends to noon to starfield
 //! continuously.
 
+use crate::trusted_shader::TrustedShader as _;
 use bytemuck::{Pod, Zeroable};
 use flint_core::toml_util::{toml_color, toml_f32};
 
@@ -105,7 +106,7 @@ pub struct SkyPipeline {
 
 impl SkyPipeline {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, sample_count: u32) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Sky Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("sky_shader.wgsl").into()),
         });

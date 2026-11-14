@@ -32,6 +32,7 @@
 //! (`scene_renderer/panels.rs`).
 
 use crate::camera::Camera;
+use crate::trusted_shader::TrustedShader as _;
 use flint_core::Vec3;
 
 /// The most panels a page draws; more are left out with a warning.
@@ -490,7 +491,7 @@ impl PanelCompositor {
                 }),
             }],
         });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Panel Compositor"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
