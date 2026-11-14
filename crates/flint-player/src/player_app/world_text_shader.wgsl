@@ -1,8 +1,12 @@
 // Depth-tested world text (ADR 0104).
 //
 // Glyph quads from egui's tessellator, already in clip space, sampling
-// egui's font atlas. The colour maths is egui-wgpu's for a gamma
-// framebuffer (the HUD's non-sRGB view), so the text matches HUD text.
+// egui's font atlas (and a halo's picture). The colour maths is egui-wgpu's
+// for a gamma framebuffer (the HUD's non-sRGB view), so the text matches HUD
+// text. Since egui 0.31 egui-wgpu's textures are Rgba8Unorm, not sRGB, so a
+// sample is already gamma: decoding it again (as 0.30's sRGB textures
+// needed) paled every glow and stroke picture and fattened glyph edges in
+// world text (#949).
 
 struct VsIn {
     @location(0) position: vec4<f32>,
@@ -29,14 +33,6 @@ fn unpack_color(color: u32) -> vec4<f32> {
     ) / 255.0;
 }
 
-// 0-1 sRGB gamma from 0-1 linear
-fn gamma_from_linear_rgb(rgb: vec3<f32>) -> vec3<f32> {
-    let cutoff = rgb < vec3<f32>(0.0031308);
-    let lower = rgb * vec3<f32>(12.92);
-    let higher = vec3<f32>(1.055) * pow(rgb, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
-    return select(higher, lower, cutoff);
-}
-
 @vertex
 fn vs_world_text(v: VsIn) -> VsOut {
     var out: VsOut;
@@ -48,8 +44,7 @@ fn vs_world_text(v: VsIn) -> VsOut {
 
 @fragment
 fn fs_world_text(in: VsOut) -> @location(0) vec4<f32> {
-    // The atlas is an sRGB texture, so the sample comes back linear.
-    let tex_linear = textureSample(r_tex_color, r_tex_sampler, in.uv);
-    let tex_gamma = vec4<f32>(gamma_from_linear_rgb(tex_linear.rgb), tex_linear.a);
-    return in.color * tex_gamma;
+    // egui-wgpu's fs_main_gamma_framebuffer, less its dither: the texture
+    // is Rgba8Unorm, premultiplied gamma, as the vertex colour is.
+    return in.color * textureSample(r_tex_color, r_tex_sampler, in.uv);
 }

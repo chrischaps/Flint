@@ -549,8 +549,11 @@ the page's `#perf` panel):
 - **worst**: the longest gap between the player's frames, and how much of
   it was the player's own work. A long frame with little work in it is the
   browser's, not ours.
-- canvas pixels and DPR, the adapter as the browser names it (wgpu 23's
-  WebGPU backend leaves `AdapterInfo` empty, so the page asks
+- canvas pixels and DPR, the adapter as the browser names it (wgpu's
+  WebGPU backend fills only `AdapterInfo::name`, and wgpu 30 takes that from
+  the browser's `GPUAdapterInfo.description`, which Chrome 157 and Firefox
+  159 leave empty: #949 found the player's log line still says
+  `GPU adapter:  (Other, BrowserWebGpu)` in both. So the page asks
   `navigator.gpu` itself), draw calls and triangles, late audio buffers and
   the mean time to mix one (`AudioEngine::buffer_stats`).
 - **voices**: the sounds and spatial tracks kira holds, and how many of
