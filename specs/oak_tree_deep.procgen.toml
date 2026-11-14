@@ -1,8 +1,8 @@
 generator = "tree_v1"
 
 [meta]
-name = "oak_tree_01"
-description = "A sturdy oak tree with spreading branches and dense foliage"
+name = "oak_tree_deep"
+description = "The oak at five L-system iterations (27 segments): the deep tree the living-props and variance tests measure"
 version = "1.0.0"
 tags = [
     "tree",
@@ -21,11 +21,9 @@ bark_roughness = 0.92
 branch_angle_max = 45.0
 branch_angle_min = 25.0
 branch_length_falloff = 0.65
-branch_levels = 3
 branch_method = "lsystem"
 branch_radius_falloff = 0.55
 crown_radius = 3.5
-crown_shape = "sphere"
 leaf_along_branch_density = 0.3
 leaf_along_branch_min_depth = 2
 leaf_color_base = "#2D8C0D"

@@ -5,7 +5,7 @@
 //! hit cost before outputs were shared), and the bytes the cache charges.
 //!
 //! ```bash
-//! cargo run --release -p flint-procgen --example cache_report -- showcase_game/specs/*.procgen.toml
+//! cargo run --release -p flint-procgen --example cache_report -- <game>/specs/*.procgen.toml
 //! ```
 
 use std::path::Path;

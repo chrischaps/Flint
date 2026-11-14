@@ -29,6 +29,18 @@ nul
 # Test screenshots and render output
 screenshots/
 renders/
+# What a `flint render` with no --output writes to the working directory,
+# one frame or a sequence (#760)
+render.png
+render_[0-9][0-9][0-9][0-9].png
+/test.png
+
+# Coverage runs (LLVM writes default_*.profraw beside each test process) and
+# Git Bash crash dumps (#760)
+*.profraw
+*.profdata
+lcov.info
+*.stackdump
 
 # Raw/source assets (untracked)
 raw_assets/

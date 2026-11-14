@@ -569,6 +569,21 @@ base = 0.75
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
     }
 
+    /// The `specs/` of each game kept in the checkout: a top-level
+    /// directory with a `flint.toml` (#760). Found by its manifest, so the
+    /// engine names no game.
+    fn game_spec_dirs(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut dirs: Vec<_> = std::fs::read_dir(root)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|d| d.join("flint.toml").is_file() && d.join("specs").is_dir())
+            .map(|d| d.join("specs"))
+            .collect();
+        dirs.sort();
+        dirs
+    }
+
     fn registry() -> crate::GeneratorRegistry {
         let mut reg = crate::GeneratorRegistry::new();
         crate::register_built_in_generators(&mut reg);
@@ -811,13 +826,16 @@ type = "derive_normal"
         let root = repo_root();
         let mut checked = 0;
         let mut problems = Vec::new();
+        let games = game_spec_dirs(&root);
+        assert!(!games.is_empty(), "no game kept in {}", root.display());
         for dir in [
-            root.clone(),
             root.join("specs"),
             root.join("specs/examples"),
-            root.join("showcase_game/specs"),
             root.join("crates/flint-procgen-ai/templates"),
-        ] {
+        ]
+        .into_iter()
+        .chain(games)
+        {
             for entry in std::fs::read_dir(&dir).unwrap() {
                 let path = entry.unwrap().path();
                 if !path.to_string_lossy().ends_with(".procgen.toml") {
@@ -986,11 +1004,7 @@ type = \"{op}\"
     fn estimate_cost_calibration() {
         let root = repo_root();
         let mut paths = Vec::new();
-        for dir in [
-            root.clone(),
-            root.join("specs"),
-            root.join("showcase_game/specs"),
-        ] {
+        for dir in std::iter::once(root.join("specs")).chain(game_spec_dirs(&root)) {
             for entry in std::fs::read_dir(&dir).unwrap() {
                 let path = entry.unwrap().path();
                 if path.to_string_lossy().ends_with(".procgen.toml") {
