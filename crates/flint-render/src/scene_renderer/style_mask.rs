@@ -10,6 +10,7 @@
 //! step 5 (#737) can hand both one list of draw items instead.
 
 use super::SceneRenderer;
+use crate::camera::Camera;
 use crate::postprocess::PostProcessConfig;
 use crate::style_albedo::StyleAlbedoPass;
 use crate::style_mask::{StyleIds, StyleMaskPass};
@@ -416,5 +417,64 @@ impl SceneRenderer {
             &self.lights.bind_group,
             &meshes,
         );
+    }
+
+    /// The style ids the mask uses: which number each `style_mask` style
+    /// name has this frame.
+    pub fn style_ids(&self) -> &crate::style_mask::StyleIds {
+        &self.style_mask.ids
+    }
+
+    /// The style mask id of each styled entity, as of the last
+    /// [`update_from_world`](Self::update_from_world) (empty while no
+    /// style reads the mask).
+    pub fn styled_entities(&self) -> &HashMap<flint_core::EntityId, u16> {
+        &self.style_mask.by_entity
+    }
+
+    /// How much of its style each styled entity drawn at less than 1 is
+    /// drawn with (#278); an entity missing here is fully styled.
+    pub fn styled_blends(&self) -> &HashMap<flint_core::EntityId, f32> {
+        &self.style_mask.blend_by_entity
+    }
+
+    /// Whether some pixel of the last style mask may hold a blend below 1
+    /// (#396): an entity drawn part-way into its style (#278), or a veil
+    /// over a styled one (#290). While neither, the framework's
+    /// cross-fade is skipped.
+    pub fn style_mask_fades(&self) -> bool {
+        self.style_mask.fades(&self.postprocess_config)
+    }
+
+    /// The entity style mask's per-draw uniform bytes and how many styled
+    /// draws the last frame masked (#311); `None` before a frame needed
+    /// the mask.
+    pub fn style_mask_draws(&self) -> Option<(u64, usize)> {
+        self.style_mask.draw_stats()
+    }
+
+    /// Whether per-entity styles draw only inside their entities' screen
+    /// bounds (#385). On by default (`FLINT_STYLE_SCISSOR=0` starts it
+    /// off); the frame is the same either way, only cheaper with it on.
+    pub fn set_style_scissor(&mut self, on: bool) {
+        self.style_mask.scissor = on;
+    }
+
+    pub fn style_scissor(&self) -> bool {
+        self.style_mask.scissor
+    }
+
+    /// Where each style id's entities are on screen under `camera`, from
+    /// the draws of the last [`update_from_world`](Self::update_from_world)
+    /// (#385): what the per-entity style scissor reads.
+    pub fn style_screen_bounds(&self, camera: &Camera) -> crate::style_mask::StyleBounds {
+        self.style_bounds(&camera.view_projection_matrix())
+    }
+
+    /// Whether this frame draws the entity style mask: post-processing is
+    /// up and a style that reads it is on (#263).
+    pub(super) fn style_mask_wanted(&self) -> bool {
+        self.postprocess_resources.is_some()
+            && crate::stylize::any_uses_mask(&self.postprocess_config, &self.style_mask.ids)
     }
 }
