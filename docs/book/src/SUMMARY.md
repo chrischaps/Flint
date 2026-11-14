@@ -62,6 +62,7 @@
 - [Filming a Showcase](guides/filming-a-showcase.md)
 - [AI Agent Workflow](guides/ai-agent-workflow.md)
 - [Building a Game Project](guides/building-a-game-project.md)
+  - [Upgrading the Engine](guides/upgrading-the-engine.md)
 - [Deploying to Android](guides/android.md)
 - [Playing on Mobile](guides/playing-on-mobile.md)
 - [Publishing to the Web](guides/publishing-to-the-web.md)

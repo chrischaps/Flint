@@ -1288,11 +1288,12 @@ impl PlayerApp {
                 );
             }
 
-            // The game's own egui (PlayerExtension::ui). Its panels sit on
-            // the background layer and its windows on Middle, both below
-            // the debug panels, which float on Foreground.
+            // The game's own egui (PlayerExtension::root_ui, which calls
+            // ui unless the game overrides it). Its panels sit on the
+            // background layer and its windows on Middle, both below the
+            // debug panels, which float on Foreground.
             for ext in extensions.iter_mut() {
-                ext.ui(ctx);
+                ext.root_ui(ui);
             }
 
             // On-screen touch controls (#133), over the game's UI.

@@ -237,9 +237,24 @@ pub trait PlayerExtension {
     /// field rather than quitting), and clicks and the wheel over an egui
     /// area. Clicks on empty space still reach the game.
     ///
-    /// Use windows and areas, or side and top panels. A `CentralPanel`
-    /// covers the whole window, so it takes every click from the game.
+    /// Use windows and areas here (`egui::Window::new(..).show(ctx, ..)`).
+    /// Side and top panels need the frame's root `Ui`: draw them in
+    /// [`root_ui`](Self::root_ui) instead. A `CentralPanel` covers the
+    /// whole window, so it takes every click from the game.
     fn ui(&mut self, _ctx: &egui::Context) {}
+
+    /// Draw the game's own egui UI on the frame's root `egui::Ui` (#946).
+    /// egui 0.36 shows a panel on a `Ui`, not a `Context`
+    /// (`egui::Panel::left("inventory").show(ui, |ui| ..)`, where 0.30 had
+    /// `SidePanel::left(..).show(ctx, ..)`), and a panel on the root takes
+    /// its room from the whole window. Called in `ui`'s place, at the same
+    /// point of the pass; the default calls [`ui`](Self::ui) with
+    /// `ui.ctx()`, so override one or the other. Windows and areas can be
+    /// shown from here too, with `ui.ctx()`.
+    fn root_ui(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        self.ui(&ctx);
+    }
 
     /// Add to or change egui's fonts before the player installs them
     /// (ADR 0081). `defs` already holds the project's `fonts/` (each file

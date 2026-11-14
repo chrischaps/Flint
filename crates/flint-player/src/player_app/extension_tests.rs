@@ -533,7 +533,7 @@ fn a_game_names_debug_panels_that_f3_opens_and_it_draws() {
     let _ = run_headless_frame(&ctx, input, |ui| {
         let ctx = &ui.ctx().clone();
         for ext in extensions.iter_mut() {
-            ext.ui(ctx);
+            ext.root_ui(ui);
         }
         super::debug_panels::show_debug_panels(ctx, &mut app.debug_panels, &mut |panel, ui| {
             super::debug_panels::draw_panel(panel, &mut extensions, ui)
@@ -819,4 +819,70 @@ mod game_styles {
             .count();
         assert_eq!(entries, 1);
     }
+}
+
+/// A game's side panel on egui 0.36 (#946): shown on the root `Ui` from
+/// `root_ui`, where a game that only overrides `ui` is still called.
+struct SidePanelGame {
+    log: Log,
+}
+
+impl PlayerExtension for SidePanelGame {
+    fn root_ui(&mut self, ui: &mut egui::Ui) {
+        let panel = egui::Panel::left("inventory")
+            .exact_size(200.0)
+            .show(ui, |ui| ui.label("Inventory"));
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("panel {}", panel.response.rect.width()));
+        // What the panel leaves is what's left of the window
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("left {}", ui.available_rect_before_wrap().left()));
+    }
+}
+
+/// Overrides only `ui`, as every extension written before #946 does.
+struct WindowGame {
+    log: Log,
+}
+
+impl PlayerExtension for WindowGame {
+    fn ui(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Quests").show(ctx, |ui| ui.label("none yet"));
+        self.log.lock().unwrap().push("window".into());
+    }
+}
+
+#[test]
+fn a_games_panel_is_shown_on_the_root_ui_and_ui_still_runs() {
+    let log = Log::default();
+    let mut extensions: Vec<Box<dyn PlayerExtension>> = vec![
+        Box::new(SidePanelGame { log: log.clone() }),
+        Box::new(WindowGame { log: log.clone() }),
+    ];
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(800.0, 600.0),
+        )),
+        ..Default::default()
+    };
+    let out = run_headless_frame(&egui::Context::default(), input, |ui| {
+        for ext in extensions.iter_mut() {
+            ext.root_ui(ui);
+        }
+    });
+    assert_eq!(*log.lock().unwrap(), ["panel 200", "left 200", "window"]);
+    let texts: Vec<&str> = out
+        .shapes
+        .iter()
+        .filter_map(|c| match &c.shape {
+            egui::Shape::Text(t) => Some(t.galley.text()),
+            _ => None,
+        })
+        .collect();
+    assert!(texts.contains(&"Inventory"), "{texts:?}");
 }
