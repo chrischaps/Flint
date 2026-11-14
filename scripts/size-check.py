@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import struct
 import subprocess
@@ -100,11 +101,14 @@ BORROWERS = ("tests/fixtures/", "crates/flint-cli/tests/golden/stylize.goldens.t
 NAMED = re.compile(r"(?:\.\./)+(examples/[A-Za-z0-9_./-]+)")
 
 
-def tracked() -> list[Path]:
+def tracked() -> tuple[list[Path], set[str]]:
+    """The tracked files on disk, and every tracked path (a sparse checkout
+    writes out only some)."""
     out = subprocess.run(
         ["git", "ls-files", "-z"], capture_output=True, check=True
     ).stdout.decode("utf-8")
-    return [Path(p) for p in out.split("\0") if p and Path(p).is_file()]
+    names = {p for p in out.split("\0") if p}
+    return [Path(p) for p in sorted(names) if Path(p).is_file()], names
 
 
 def png_size(b: bytes):
@@ -164,7 +168,7 @@ def area_of(path: str) -> str:
     return "engine"
 
 
-def check(files: list[Path], report: bool) -> list[str]:
+def check(files: list[Path], names: set[str], report: bool) -> list[str]:
     problems: list[str] = []
     by_hash: dict[str, list[str]] = defaultdict(list)
     sizes: dict[str, int] = defaultdict(int)
@@ -206,11 +210,13 @@ def check(files: list[Path], report: bool) -> list[str]:
                 "the same bytes are tracked " + str(len(paths)) + " times: " + ", ".join(sorted(paths))
                 + " (keep one and point the others' users at it)"
             )
-    for missing in sorted(set(FILE_EXCEPTIONS) - {f.as_posix() for f in files}):
+    on_disk = {f.as_posix() for f in files}
+    for missing in sorted(set(FILE_EXCEPTIONS) - names):
         problems.append(f"FILE_EXCEPTIONS names {missing}, which isn't tracked: drop it")
     groups = {frozenset(paths) for paths in by_hash.values()}
     for group in DUPLICATE_EXCEPTIONS:
-        if group not in groups:
+        # a sparse checkout may write out only one of the pair
+        if group not in groups and group <= on_disk:
             problems.append(f"DUPLICATE_EXCEPTIONS names {', '.join(sorted(group))}, no longer one file twice: drop it")
     if total > TREE_BYTES:
         problems.append(f"the tree is {total / MB:.1f} MB, over its {TREE_BYTES // MB} MB budget (ADR 0122)")
@@ -224,14 +230,18 @@ def check(files: list[Path], report: bool) -> list[str]:
     return problems
 
 
-def check_borrowed(files: list[Path]) -> list[str]:
+def check_borrowed(files: list[Path], names: set[str]) -> list[str]:
     problems: list[str] = []
+    if not BORROWED.is_file():
+        return problems  # a sparse checkout without tests/ (a game's engine/)
     pins = tomllib.loads(BORROWED.read_text(encoding="utf-8")).get("borrow", [])
     pinned = {}
     for pin in pins:
         path, want = pin["path"], pin["sha256"]
         pinned[path] = pin
         f = Path(path)
+        if path in names and not f.is_file():
+            continue  # tracked, not written out (a sparse checkout)
         if not f.is_file():
             problems.append(f"{BORROWED.as_posix()}: {path} is gone, and a fixture loads it")
         elif hashlib.sha256(f.read_bytes()).hexdigest() != want:
@@ -263,9 +273,12 @@ def check_borrowed(files: list[Path]) -> list[str]:
 
 
 def main() -> int:
+    # The engine's root, wherever it is run from: in a game that is engine/,
+    # and `git ls-files` there lists the engine's files only
+    os.chdir(Path(__file__).resolve().parent.parent)
     report = "--report" in sys.argv
-    files = tracked()
-    problems = check(files, report) + check_borrowed(files)
+    files, names = tracked()
+    problems = check(files, names, report) + check_borrowed(files, names)
     for p in problems:
         print(f"size-check: {p}", file=sys.stderr)
     if problems:
