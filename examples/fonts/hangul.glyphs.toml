@@ -1,0 +1,19 @@
+# Hangul (#935): Gowun Batang, a Korean serif. A syllable is jamo stacked in
+# one square block, so ink grows as letters join it: a dot, a stroke, a
+# circle, then blocks of two, three and four jamo.
+default_ramp = "syllables"
+
+[font]
+file = "ofl/GowunBatang/GowunBatang-Regular.ttf"   # OFL 1.1, subset: beside it, OFL.txt
+size = 18
+
+[ramps.syllables]
+glyphs = " ㆍㅡㅣㅇ이으을를릴흘훑뷁"
+map = "coverage"
+
+[edges]
+horizontal = "─"
+vertical = "│"
+diagonal = "／"
+antidiagonal = "＼"
+corners = "┌┐└┘├┤┬┴┼"
