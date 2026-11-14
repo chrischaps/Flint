@@ -2,20 +2,13 @@
 
 use crate::primitives::Vertex;
 
-/// Depth bias for the line-list overlays (wireframe, skeleton), pulling
-/// them in front of the surface they trace. WebGPU forbids any depth bias
-/// on line topologies and rejects the pipeline, so the web draws them
-/// unbiased.
+/// Depth bias for the line-list overlays (wireframe, skeleton): none.
+/// WebGPU forbids any depth bias on line topologies, and since wgpu 30
+/// (#934 spike) the native backends reject the pipeline too, so every
+//// target draws them unbiased. Vulkan biases only polygons, so it only
+/// changes DX12's lines.
 pub(crate) fn line_depth_bias() -> wgpu::DepthBiasState {
-    if cfg!(target_arch = "wasm32") {
-        wgpu::DepthBiasState::default()
-    } else {
-        wgpu::DepthBiasState {
-            constant: -2,
-            slope_scale: -1.0,
-            clamp: 0.0,
-        }
-    }
+    wgpu::DepthBiasState::default()
 }
 use bytemuck::{Pod, Zeroable};
 
