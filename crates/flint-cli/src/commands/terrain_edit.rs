@@ -1367,11 +1367,6 @@ impl ApplicationHandler for TerrainEditApp {
                         }
                         return;
                     }
-                    Err(flint_render::SurfaceError::OutOfMemory) => {
-                        tracing::error!("Out of GPU memory");
-                        event_loop.exit();
-                        return;
-                    }
                     Err(e) => {
                         tracing::warn!("Surface error: {:?}", e);
                         return;

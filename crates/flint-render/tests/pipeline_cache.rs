@@ -102,7 +102,7 @@ impl Frame {
         buffer
             .slice(..)
             .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = flint_render::wait_for_gpu(&self.device);
         let data = buffer
             .slice(..)
             .get_mapped_range()

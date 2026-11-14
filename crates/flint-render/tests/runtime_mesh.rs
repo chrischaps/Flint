@@ -28,14 +28,13 @@ struct Gpu {
     _lease: shared_gpu::Lease,
 }
 
-/// The shared device (#598), for this test's turn (#913).
+/// The shared device (#598), alongside the other tests holding it.
 fn gpu() -> Option<Gpu> {
     shared_gpu::lease().map(frame_for)
 }
 
 /// The shared device with no other test on it: for a test that counts
-/// the device's objects or catches its errors in a scope (wgpu 23 keeps
-/// those per device, not per thread).
+/// the whole device's objects (`generate_report`).
 fn gpu_alone() -> Option<Gpu> {
     shared_gpu::lease_alone().map(frame_for)
 }
@@ -118,7 +117,7 @@ impl Gpu {
             camera,
             &self.color_view,
         );
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = flint_render::wait_for_gpu(&self.device);
     }
 
     /// Buffers the application holds, and bytes the allocator holds where
@@ -167,7 +166,7 @@ impl Gpu {
         buffer
             .slice(..)
             .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = flint_render::wait_for_gpu(&self.device);
         let data = buffer
             .slice(..)
             .get_mapped_range()
@@ -1712,8 +1711,8 @@ fn a_ground_fog_lies_on_its_floors() {
 #[test]
 fn thousands_of_distinct_looks_draw() {
     const LOOKS: usize = 3000;
-    // Alone: its error scopes are the device's, not this thread's
-    let gpu = gpu_or_skip!(alone);
+    // Its error scopes are this thread's (wgpu 28+), so it shares the device
+    let gpu = gpu_or_skip!();
     let mut renderer = gpu.renderer();
     renderer.set_tonemapping(false);
     let mut world = FlintWorld::new();

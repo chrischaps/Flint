@@ -10,8 +10,8 @@
 //!    back to the power preference, except under `FLINT_REQUIRE_GPU`
 //!    ([`gpu_required`]), where it finds no adapter: CI asks for WARP by
 //!    name, and a run on anything else would test the wrong adapter (#314).
-//!    wgpu 23 hides WARP on a machine with a GPU; it appears on a runner
-//!    with none.
+//!    wgpu 23 hid WARP on a machine with a GPU; wgpu 30 lists it there too,
+//!    so the same name runs CI's adapter locally.
 //! 3. `WGPU_POWER_PREF` — `high`, `low`, or `none`.
 //! 4. Default: `PowerPreference::HighPerformance`, so dual-GPU laptops pick
 //!    the discrete card rather than whichever adapter enumerates first.
@@ -34,13 +34,16 @@
 //! (#314). With DXC, wgpu also picks the device's shader model, up to 6.7;
 //! FXC stops at 5.1.
 //!
-//! wgpu 23 doesn't link DXC in: it loads `dxcompiler.dll` and `dxil.dll` at
-//! instance creation. [`instance`] passes both by full path from one folder,
-//! [`dxc_dir`]: `FLINT_DXC_DIR` if set, else the running executable's
-//! folder. A full path means a copy elsewhere on `PATH` is never loaded
-//! (with no path, wgpu would take whichever `dxcompiler.dll` Windows' search
-//! order finds). `flint dxc install` puts the pinned release's two DLLs
-//! beside `flint.exe` and the test binaries.
+//! wgpu doesn't link DXC in (static DXC is #947): it loads `dxcompiler.dll`
+//! at instance creation, by the path [`instance`] passes
+//! (`Dx12Compiler::DynamicDxc`), from one folder, [`dxc_dir`]:
+//! `FLINT_DXC_DIR` if set, else the running executable's folder. A full
+//! path means a copy elsewhere on `PATH` is never loaded. wgpu 30 never
+//! loads `dxil.dll` itself (wgpu 23 did): `dxcompiler.dll` loads it by name
+//! to sign what it compiles, and Windows hands back the copy [`load_dxc`]
+//! loaded first from the same folder, so the pair always matches.
+//! `flint dxc install` puts the pinned release's two DLLs beside `flint.exe`
+//! and the test binaries.
 //!
 //! - `WGPU_DX12_COMPILER=fxc` forces FXC, the escape hatch for a driver or
 //!   DXC bug. `dxc` (or unset) is the default.
@@ -53,9 +56,10 @@
 //!   on DX12, for `flint render`, `flint goldens` and the player's F3 and
 //!   `--perf` lines.
 //!
-//! The check is the one wgpu-hal 23 makes (`DxcLib::new`: load the file,
-//! then look up `DxcCreateInstance`), made first so the report is what the
-//! instance got. It reads the disk with `std::fs`, outside the vfs: a DLL
+//! The check is the one wgpu-hal makes (load the file, then look up
+//! `DxcCreateInstance`), made first so the report is what the instance got:
+//! in wgpu 30 a `DynamicDxc` that fails to load is an instance error, not a
+//! quiet FXC fallback. It reads the disk with `std::fs`, outside the vfs: a DLL
 //! beside the executable isn't game data, and DX12 is Windows only, so the
 //! code is `cfg(windows)`.
 
@@ -105,7 +109,7 @@ pub fn instance() -> wgpu::Instance {
     })
 }
 
-/// The DLLs DXC needs, in the order wgpu-hal 23 loads them.
+/// The DLLs DXC needs: the compiler, then the signer it loads by name.
 pub const DXC_DLLS: [&str; 2] = ["dxcompiler.dll", "dxil.dll"];
 
 /// Which compiler DX12 turns shaders into bytecode with, and why (#912).
@@ -258,9 +262,10 @@ pub fn adapter_short(info: &wgpu::AdapterInfo) -> String {
     }
 }
 
-/// Load `dir`'s two DLLs as wgpu-hal 23 does (`DxcLib::new`, then
-/// `DxcCreateInstance`), and keep them loaded: wgpu loads the same files
-/// next and holds them for the device's life. Checked once per folder.
+/// Load `dir`'s two DLLs and look up `DxcCreateInstance`, as wgpu-hal does
+/// for `dxcompiler.dll`, and keep them loaded: wgpu loads the compiler
+/// again by the same path, and the compiler finds this `dxil.dll` already
+/// loaded when it asks for it by name. Checked once per folder.
 #[cfg(windows)]
 fn load_dxc(dir: &Path) -> Result<(), String> {
     type Checked = Vec<(PathBuf, Result<(), String>)>;

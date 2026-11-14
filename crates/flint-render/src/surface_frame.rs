@@ -8,7 +8,9 @@
 //! into a `Result`, so the callers match on this module's [`SurfaceError`].
 //!
 //! A suboptimal frame (`CurrentSurfaceTexture::Suboptimal`) counts as a
-//! frame, as `SurfaceTexture::suboptimal` did on wgpu 23.
+//! frame, as `SurfaceTexture::suboptimal` did on wgpu 23. There is no
+//! out-of-memory error: wgpu 29's `CurrentSurfaceTexture` has no such case,
+//! so the variant and the editors' fatal arm for it are gone (#948).
 
 /// Why no frame could be taken.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,9 +23,6 @@ pub enum SurfaceError {
     Outdated,
     /// The swapchain is gone: reconfigure it.
     Lost,
-    /// No memory for a frame. Never since wgpu 29, which folds it into a
-    /// lost device; kept so the callers' fatal arm stays until #948.
-    OutOfMemory,
     /// A validation error, caught by an error scope.
     Validation,
 }
@@ -35,7 +34,6 @@ impl std::fmt::Display for SurfaceError {
             Self::Occluded => "the surface is occluded",
             Self::Outdated => "the surface is outdated and must be reconfigured",
             Self::Lost => "the swapchain was lost and must be recreated",
-            Self::OutOfMemory => "out of memory acquiring the next frame",
             Self::Validation => "a validation error acquiring the next frame",
         })
     }

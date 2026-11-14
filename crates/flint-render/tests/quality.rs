@@ -22,10 +22,11 @@ struct Gpu {
     _lease: shared_gpu::Lease,
 }
 
-/// The shared device (#598), with no other test on it: every frame here
-/// is drawn in an error scope, and wgpu 23 keeps those per device.
+/// The shared device (#598), alongside the other tests holding it. Every
+/// frame here is drawn in an error scope, which since wgpu 28 is this
+/// thread's alone.
 fn gpu() -> Option<Gpu> {
-    shared_gpu::lease_alone().map(frame_for)
+    shared_gpu::lease().map(frame_for)
 }
 
 fn frame_for(lease: shared_gpu::Lease) -> Gpu {
@@ -190,7 +191,7 @@ impl Gpu {
         buffer
             .slice(..)
             .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = flint_render::wait_for_gpu(&self.device);
         let data = buffer
             .slice(..)
             .get_mapped_range()

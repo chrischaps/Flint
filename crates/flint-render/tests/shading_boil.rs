@@ -22,7 +22,7 @@ struct Gpu {
     _lease: shared_gpu::Lease,
 }
 
-/// The shared device (#598), for this test's turn (#913).
+/// The shared device (#598), alongside the other tests holding it.
 fn gpu() -> Option<Gpu> {
     shared_gpu::lease().map(frame_for)
 }
@@ -172,7 +172,7 @@ impl Gpu {
             &bench.camera,
             &self.color_view,
         );
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = flint_render::wait_for_gpu(&self.device);
 
         let row = (SIZE * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -203,7 +203,7 @@ impl Gpu {
         buffer
             .slice(..)
             .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = flint_render::wait_for_gpu(&self.device);
         let data = buffer
             .slice(..)
             .get_mapped_range()

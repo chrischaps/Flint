@@ -163,7 +163,7 @@ impl GpuTimer {
     /// loop: it blocks on the GPU.
     pub fn flush(&mut self, device: &wgpu::Device) {
         if self.readbacks.iter().any(|r| r.in_flight) {
-            let _ = device.poll(wgpu::PollType::wait_indefinitely());
+            let _ = crate::wait_for_gpu(device);
         }
         self.poll(device);
     }

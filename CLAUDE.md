@@ -152,7 +152,7 @@ A bullet below that names a feature in a line or two has its full text in one of
 ## Critical Gotchas
 
 - `toml::toml!` macro produces `Map<String, Value>` not `Value` -- needs `.into()` in tests
-- wgpu v30 (#945; egui 0.36): `Instance::new()` takes owned `InstanceDescriptor` (it has no `Default`: start from `InstanceDescriptor::new_without_display_handle()`); max 4 bind groups (0-3); `push_error_scope` returns a guard that pops the scope when it drops, so bind it and `.pop()` it; a frame is shown with `queue.present(frame)`; `wgpu::Queue` is not `Clone` -- pass `&Queue` through, do not stash one in a struct
+- wgpu v30 (#945; egui 0.36): `Instance::new()` takes owned `InstanceDescriptor` (it has no `Default`: start from `InstanceDescriptor::new_without_display_handle()`); max 4 bind groups (0-3); `push_error_scope` returns a guard that pops the scope when it drops, so bind it and `.pop()` it; a frame is shown with `queue.present(frame)`; block on the GPU with `flint_render::wait_for_gpu(&device)`, never `PollType::wait_indefinitely()` (clippy holds it; `FLINT_GPU_WAIT_TIMEOUT` caps every wait, #948)
 - winit v0.30: `ApplicationHandler` trait with `run_app()`; `DeviceEvent::MouseMotion` for raw mouse delta
 - Rapier v0.22: character controller types in `rapier3d::control`, NOT `rapier3d::prelude`
 - Kira v0.11: `Decibels(f32)` and `PlaybackRate(f64)` are tuple structs; uses `glam` via `mint`

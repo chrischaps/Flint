@@ -58,9 +58,9 @@ pub struct RenderContext {
 
 /// The present mode wgpu configures for `requested` on a surface offering
 /// `supported`: an `Auto` mode is the first of its list the surface has,
-/// as wgpu-core 23's `surface_configure` picks it (`AutoVsync`: FifoRelaxed,
-/// Fifo; `AutoNoVsync`: Immediate, Mailbox, Fifo). Any other mode is used
-/// as asked.
+/// as wgpu-core picks it (`AutoVsync`: FifoRelaxed, Fifo; `AutoNoVsync`:
+/// Immediate, Mailbox, Fifo; `device/surface_config.rs` in wgpu-core 30,
+/// the same lists as 23's). Any other mode is used as asked.
 pub fn resolve_present_mode(
     requested: wgpu::PresentMode,
     supported: &[wgpu::PresentMode],
@@ -238,7 +238,7 @@ impl RenderContext {
 
     /// Read a surface-sized texture back as tightly packed RGBA8 bytes.
     ///
-    /// Blocks on the GPU (`PollType::Wait`). The texture must have been
+    /// Blocks on the GPU ([`crate::wait_for_gpu`]). The texture must have been
     /// created with `COPY_SRC` and be in the surface format; Bgra formats are
     /// swizzled to RGBA on the way out. Mirrors `HeadlessContext::read_pixels`.
     pub fn read_surface_rgba(&self, texture: &wgpu::Texture) -> Result<Vec<u8>, RenderError> {
@@ -294,7 +294,7 @@ impl RenderContext {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
         });
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = crate::wait_for_gpu(&self.device);
         rx.recv()
             .map_err(|e| RenderError::BufferReadFailed(e.to_string()))?
             .map_err(|e| RenderError::BufferReadFailed(e.to_string()))?;

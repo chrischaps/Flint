@@ -178,7 +178,7 @@ impl HeadlessContext {
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
         });
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = crate::wait_for_gpu(&self.device);
 
         rx.recv()
             .map_err(|e| RenderError::BufferReadFailed(e.to_string()))?
