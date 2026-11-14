@@ -13,3 +13,6 @@ toml = { workspace = true }
 noise = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+
+[lints]
+workspace = true

@@ -24,6 +24,7 @@
 //!
 //! The repository's own tree must have no problem, and a tree with the #266
 //! mistake in it must have exactly that one, naming the file.
+#![allow(clippy::disallowed_methods)] // a test: reads its files off the disk, not through the vfs
 
 use flint_constraint::ConstraintRegistry;
 use flint_schema::SchemaRegistry;

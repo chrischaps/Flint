@@ -11,3 +11,6 @@ toml = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 sha2 = { workspace = true }
+
+[lints]
+workspace = true

@@ -7,6 +7,7 @@
 //! - `RuntimeSystem` — what the player's per-frame systems share (called by type, no registry)
 //! - `pad` — the gamepad backend (gilrs, or a stand-in without `gamepad`)
 //! - `rumble` — a general pad rumble, `PadRumble` (#748)
+#![cfg_attr(test, allow(clippy::disallowed_methods))] // unit tests read their files off the disk and assert on TOML as written; the lib build still holds the rules (#761)
 
 pub mod atomic_file;
 mod clock;

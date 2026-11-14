@@ -1,6 +1,7 @@
 //! Flint Scene - TOML scene serialization
 //!
 //! This crate handles loading and saving scenes in TOML format.
+#![cfg_attr(test, allow(clippy::disallowed_methods))] // unit tests read their files off the disk and assert on TOML as written; the lib build still holds the rules (#761)
 
 mod diagnose;
 mod edit;

@@ -34,6 +34,7 @@ pub fn config_dir() -> Option<PathBuf> {
 }
 
 /// Whether there is a file at `path`.
+#[allow(clippy::disallowed_methods)] // the OS user directory holds the player's own files, never a game's: no bundle has them (#100)
 pub fn exists(path: &Path) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -46,6 +47,7 @@ pub fn exists(path: &Path) -> bool {
 }
 
 /// The file's text, or `None` if there is none.
+#[allow(clippy::disallowed_methods)] // the OS user directory holds the player's own files, never a game's: no bundle has them (#100)
 pub fn read(path: &Path) -> io::Result<Option<String>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -92,6 +94,7 @@ pub fn remove(path: &Path) -> io::Result<()> {
 
 /// The names of the files directly in `dir`, in name order; none when
 /// there is no such directory.
+#[allow(clippy::disallowed_methods)] // the OS user directory holds the player's own files, never a game's: no bundle has them (#100)
 pub fn list(dir: &Path) -> Vec<String> {
     #[cfg(not(target_arch = "wasm32"))]
     let mut names: Vec<String> = std::fs::read_dir(dir)
@@ -220,6 +223,7 @@ mod tests {
     /// #726: a write goes through a temp file, so the file it replaces is
     /// never written into, and no temp file is left.
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn a_write_replaces_the_file_in_one_step() {
         let dir = std::env::temp_dir().join(format!("flint-user-atomic-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

@@ -16,6 +16,7 @@
 //! renamed to those. Rounds alternate the sides and each side's best round
 //! is kept, so a slow moment on a shared machine doesn't land on one side.
 //! Results: docs/design/script-api-overhead.md.
+#![allow(clippy::disallowed_methods)] // an example: reads its files off the disk, not through the vfs
 
 use flint_ecs::FlintWorld;
 use flint_script::api::overhead::{

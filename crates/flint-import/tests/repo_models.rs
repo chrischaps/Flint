@@ -5,6 +5,7 @@
 //! length. Every loader refused them ("unknown chunk type") and the tavern
 //! drew as fog (found under #294). A text search-and-replace can't see a
 //! binary file's framing, so this test does.
+#![allow(clippy::disallowed_methods)] // a test: reads its files off the disk, not through the vfs
 
 use std::path::{Path, PathBuf};
 

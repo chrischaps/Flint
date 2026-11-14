@@ -3,6 +3,7 @@
 //! Uses the committed prototype fixtures (real FLAC stems) because
 //! `open_shared` resolves stems from disk; skipped when the game repo's
 //! fixtures aren't present (engine CI), like `prototype_fixture_renders_offline`.
+#![allow(clippy::disallowed_methods)] // a test: reads its files off the disk, not through the vfs
 
 use flint_music::offline::{OfflineBackend, OfflineBackendSettings};
 use flint_rhythm::chart_session::{judgment_offset_samples, ChartSession, ChartSessionConfig};

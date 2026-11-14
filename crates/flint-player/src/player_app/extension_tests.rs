@@ -582,6 +582,7 @@ mod scene_tables {
     }
 
     impl PlayerExtension for WeatherReader {
+        #[allow(clippy::disallowed_methods)] // a test asserts on the TOML exactly as written
         fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
             let weather = ctx
                 .scene_table_as::<Weather>("weather")

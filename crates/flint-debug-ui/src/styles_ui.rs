@@ -1403,6 +1403,7 @@ mod tests {
     }
 
     /// A scene's `[post_process.styles]` as a fresh load reads it.
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn styles_in_file(path: &Path) -> StyleSettings {
         let text = std::fs::read_to_string(path).unwrap();
         let file: toml::Table = toml::from_str(&text).unwrap();
@@ -1422,6 +1423,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn commit_writes_the_look_and_clears_the_marks() {
         let dir = std::env::temp_dir().join(format!("flint-commit-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1628,6 +1630,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn commit_writes_the_reveal_and_takes_it_out_when_off() {
         let dir = std::env::temp_dir().join(format!("flint-reveal-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

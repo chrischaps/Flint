@@ -12,3 +12,6 @@ description = "The wooze field: how woozy any place in a scene is, as one functi
 [dependencies]
 flint-core = { workspace = true }
 toml = { workspace = true }
+
+[lints]
+workspace = true

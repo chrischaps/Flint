@@ -3,6 +3,7 @@
 //! every example parses, uses only keys its generator reads (what
 //! `flint gen --strict` demands), generates valid output deterministically,
 //! and the README's parameter catalog equals what the schemas say today.
+#![allow(clippy::disallowed_methods)] // a test: reads its files off the disk, not through the vfs
 
 use std::path::{Path, PathBuf};
 

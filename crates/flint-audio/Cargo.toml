@@ -40,3 +40,6 @@ web-sys = { version = "0.3", features = [
 [dev-dependencies]
 # The worklet's mixer, to drive with a remote engine in the tests (#136).
 flint-audio-worklet = { workspace = true }
+
+[lints]
+workspace = true

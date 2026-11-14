@@ -7,6 +7,7 @@
 //!
 //! Scripts can read/write ECS data, respond to collisions/triggers/input,
 //! control animation and audio, and hot-reload while the game is running.
+#![cfg_attr(test, allow(clippy::disallowed_methods))] // unit tests read their files off the disk and assert on TOML as written; the lib build still holds the rules (#761)
 
 pub mod api;
 #[cfg(feature = "check")]

@@ -17,3 +17,6 @@ syn = { version = "2", features = ["full", "visit"] }
 quote = "1"
 walkdir = "2"
 chrono = { version = "0.4", features = ["serde"] }
+
+[lints]
+workspace = true

@@ -2,6 +2,7 @@
 //!
 //! This crate provides the schema system for defining and validating
 //! components and archetypes at runtime.
+#![cfg_attr(test, allow(clippy::disallowed_methods))] // unit tests read their files off the disk and assert on TOML as written; the lib build still holds the rules (#761)
 
 mod archetype;
 mod component;

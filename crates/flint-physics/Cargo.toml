@@ -13,3 +13,6 @@ rapier3d = { workspace = true }
 crossbeam = "0.8"
 toml = { workspace = true }
 tracing = { workspace = true }
+
+[lints]
+workspace = true

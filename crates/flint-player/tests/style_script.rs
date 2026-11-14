@@ -150,6 +150,7 @@ fn on_update() {
 "#;
 
 #[test]
+#[allow(clippy::disallowed_methods)] // a test asserts on the TOML exactly as written
 fn a_script_sets_animates_and_clears_a_style() {
     let mut world = FlintWorld::new();
     let barrel = world.spawn("barrel").unwrap();
@@ -212,6 +213,7 @@ fn tween_frame(
     (events, failures)
 }
 
+#[allow(clippy::disallowed_methods)] // a test asserts on the TOML exactly as written
 fn number(world: &FlintWorld, id: flint_core::EntityId, field: &str) -> f64 {
     let c = world.get_component(id, "ascii_style").expect("styled");
     let v = c
@@ -260,6 +262,7 @@ fn on_update() {
 "##;
 
 #[test]
+#[allow(clippy::disallowed_methods)] // a test asserts on the TOML exactly as written
 fn a_tween_steps_on_game_time_and_says_when_it_is_done() {
     let mut world = FlintWorld::new();
     let barrel = world.spawn("barrel").unwrap();
@@ -514,6 +517,7 @@ fn on_update() {
 "##;
 
 #[test]
+#[allow(clippy::disallowed_methods)] // a test asserts on the TOML exactly as written
 fn a_script_reads_back_its_style_and_an_inherited_one() {
     use flint_player::SceneStyles;
     use flint_render::PostProcessConfig;

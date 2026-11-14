@@ -157,6 +157,11 @@ Chris accepted the recommendations on 2026-11-10:
   not see tests, the CLI, the viewer, or code compiled only off wasm; the
   native clippy job does not carry the rule, because it prints warnings
   without failing and would flag every test's assertion on a `toml::Value`.
+  Since then (#761): the rule is in the root `clippy.toml`, which native
+  `cargo clippy` reads too, warning in every runtime crate (native-only code
+  included) and denying in the five that draw; tests assert with `as_float`
+  under an allow (a crate's unit tests through one `cfg_attr(test, allow)` in
+  its lib.rs), and the wasm check still fails a PR.
 - Ported: physics, audio, and the renderer's material tint. The readers in
   the other runtime crates are not on the view yet. They coerce integers
   through `toml_util` and stay silent about a wrong type.

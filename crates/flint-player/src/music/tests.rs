@@ -79,6 +79,7 @@ fn probe(game: &HeadlessGame, field: &str) -> toml::Value {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // a test asserts on the TOML exactly as written
 fn a_script_reads_the_beat_and_bar_of_a_suite_with_no_chart() {
     let (dir, scene) = project("beat");
     let mut world = FlintWorld::new();

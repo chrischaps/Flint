@@ -11,6 +11,7 @@
 //!   rejected no scene that loaded before
 //!
 //! `flint-scene`'s own tests hold the schemas to the structs that read them.
+#![allow(clippy::disallowed_methods)] // a test: reads its files off the disk, not through the vfs
 
 use flint_schema::diagnostic::Severity;
 use flint_schema::{validate_table, SchemaRegistry};
