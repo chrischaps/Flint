@@ -242,17 +242,17 @@ The #277 bench, with the history on and off and with and without the edge glyphs
 flint render examples/ascii_motion.scene.toml --no-grid \
     --width 1280 --height 720 --frames 181 --orbit 6.8755 --no-images --flip-stats \
     --style ascii:temporal=off --style ascii:edges=0
-#   Flips: 181 frames, 14400 cells: 321.1 flips/frame (2.23%), 57.8 reversals/frame (0.40%)
+#   Flips: 181 frames, 14400 cells: 203.7 flips/frame (1.41%), 36.2 reversals/frame (0.25%)
 ```
 
 | `examples/ascii_motion`, 181 frames | flips/frame | reversals/frame |
 |---|---|---|
-| `temporal = "off"`, `edges = 0` | 321.1 (2.23%) | 57.8 (0.40%) |
-| `temporal = "on"`, `edges = 0` | 105.1 (0.73%) | **0.0** |
-| `temporal = "off"`, edges on (default) | 389.7 (2.71%) | 69.1 (0.48%) |
-| `temporal = "on"`, edges on (default) | 227.7 (1.58%) | 30.3 (0.21%) |
+| `temporal = "off"`, `edges = 0` | 203.7 (1.41%) | 36.2 (0.25%) |
+| `temporal = "on"`, `edges = 0` | 54.6 (0.38%) | **0.0** |
+| `temporal = "off"`, edges on (default) | 319.2 (2.22%) | 58.9 (0.41%) |
+| `temporal = "on"`, edges on (default) | 101.9 (0.71%) | **0.9** (0.01%) |
 
-The history removes the tone glyphs' shimmer completely, as the player capture in #277 found (0.1 reversals a frame). The edge glyphs, added after that measurement, are still picked fresh every frame, and they are what's left (#477). The scene's `[camera]` is the first pose of its orbit script, so `--orbit 6.8755` (the script's 0.12 rad/s) follows the same path as the player's capture.
+The history removes the tone glyphs' shimmer completely, as the player capture in #277 found (0.1 reversals a frame), and nearly all the edge glyphs' since they got one of their own (#477; 30.3 a frame before it). What's left is a line glyph showing in a cell for a single frame, almost never the same cell twice ([Temporal stability](../concepts/stylize-passes.md#temporal-stability), #481). Measured 2026-11-13. The scene's `[camera]` is the first pose of its orbit script, so `--orbit 6.8755` (the script's 0.12 rad/s) follows the same path as the player's capture.
 
 A sequence is byte-identical run to run: the same flags give the same PNGs, which the player's `--frame-step` captures don't quite manage (#341). A debug build draws this bench at about a second a frame; `--no-images` and `--ssao-samples 16` are the cheap ways to make it quicker. At the goldens' 640 x 360 it takes about a twentieth of a second a frame, and `flint goldens` holds it to a reversal budget ([sequence cases](#sequence-cases-a-shimmer-budget)).
 
