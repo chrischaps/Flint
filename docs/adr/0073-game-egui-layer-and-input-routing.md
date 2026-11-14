@@ -51,6 +51,9 @@ before.
   `TextEdit` (`text_field_focused`); the key gate, IME gate, pad hold and
   raw mouse motion follow it. [ADR 0110](0110-capture-and-focus-gates.md) added the pad hold and dropped raw
   mouse motion while a field has focus.
+- Since then: egui 0.36 shows panels only on a `Ui`, and `ui()` takes the
+  frame's root `&mut egui::Ui` ([ADR 0121](0121-extension-ui-takes-the-root-ui.md)), so a game's
+  panels sit on the background layer under its windows.
 
 ## Sources
 
