@@ -726,4 +726,150 @@ mod tests {
     fn vertex_layout_matches_the_shader() {
         assert_eq!(std::mem::size_of::<GlyphVertex>(), 28);
     }
+
+    /// A texel of an egui texture reaches the HUD's view as egui-wgpu's own
+    /// shader would put it there: egui 0.31+'s textures are Rgba8Unorm, so
+    /// the sample is already gamma. The shader used to decode it once more,
+    /// as 0.30's sRGB textures needed, which paled glows and strokes on world
+    /// text (#949).
+    #[test]
+    fn a_texel_draws_as_egui_draws_it() {
+        let Some(gpu) = super::super::scene_entry_tests::gpu() else {
+            flint_render::gpu_select::skip_without_gpu("world text texel test");
+            return;
+        };
+        let (device, queue) = (&gpu.device, &gpu.queue);
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let texel = [200u8, 100, 50, 255];
+        let mut egui_renderer =
+            egui_wgpu::Renderer::new(device, format, egui_wgpu::RendererOptions::default());
+        let id = egui::TextureId::User(949);
+        egui_renderer.update_texture(
+            device,
+            queue,
+            id,
+            &egui::epaint::ImageDelta::full(
+                egui::ColorImage::new(
+                    [1, 1],
+                    vec![egui::Color32::from_rgba_premultiplied(
+                        texel[0], texel[1], texel[2], texel[3],
+                    )],
+                ),
+                egui::TextureOptions::NEAREST,
+            ),
+        );
+        // One quad over the whole target, white, sampling the one texel
+        let white = u32::from_le_bytes([255; 4]);
+        let corner = |x: f32, y: f32| GlyphVertex {
+            position: [x, y, 0.5, 1.0],
+            uv: [0.5, 0.5],
+            color: white,
+        };
+        let mesh = GlyphMesh {
+            vertices: vec![
+                corner(-1.0, -1.0),
+                corner(1.0, -1.0),
+                corner(1.0, 1.0),
+                corner(-1.0, 1.0),
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            draws: vec![(id, 0..6)],
+        };
+        let size = wgpu::Extent3d {
+            width: 4,
+            height: 4,
+            depth_or_array_layers: 1,
+        };
+        let texture = |label, format, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let target = texture(
+            "world text texel test",
+            format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+        let depth = texture(
+            "world text texel test depth",
+            wgpu::TextureFormat::Depth32Float,
+            wgpu::TextureUsages::RENDER_ATTACHMENT,
+        );
+        let target_view = target.create_view(&Default::default());
+        let depth_view = depth.create_view(&Default::default());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        // Clear both: the text pass loads what's there
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("clear"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        let mut pipeline = WorldTextPipeline::new(device, format);
+        pipeline.draw(
+            device,
+            queue,
+            &mut encoder,
+            &target_view,
+            &depth_view,
+            &mesh,
+            &egui_renderer,
+        );
+        let row = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("world text texel test readback"),
+            size: u64::from(row) * 4,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(4),
+                },
+            },
+            size,
+        );
+        queue.submit([encoder.finish()]);
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        let _ = flint_render::wait_for_gpu(device);
+        rx.recv().unwrap().unwrap();
+        let data = slice.get_mapped_range().expect("mapped");
+        let got = [data[0], data[1], data[2], data[3]];
+        drop(data);
+        let off = (0..4).map(|k| got[k].abs_diff(texel[k])).max().unwrap();
+        assert!(off <= 1, "drew {got:?} for the texel {texel:?}");
+    }
 }

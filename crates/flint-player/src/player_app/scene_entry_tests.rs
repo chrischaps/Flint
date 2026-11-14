@@ -244,8 +244,9 @@ fn a_scene_that_cannot_load_fades_back_in_over_the_current_one() {
 }
 
 /// One device for this binary, never dropped: a device per test deadlocked
-/// NVIDIA's Vulkan driver as test threads exited (#598).
-fn gpu() -> Option<&'static HeadlessContext> {
+/// NVIDIA's Vulkan driver as test threads exited (#598). World text's GPU
+/// test takes it too.
+pub(super) fn gpu() -> Option<&'static HeadlessContext> {
     static GPU: OnceLock<Option<&'static HeadlessContext>> = OnceLock::new();
     *GPU.get_or_init(|| {
         pollster::block_on(HeadlessContext::new(64, 64))

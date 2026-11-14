@@ -9,9 +9,10 @@
 //! earlier or later from frame to frame, so timing those would show
 //! jitter that no one sees.
 //!
-//! wgpu can't say which adapter it got on the web (its `AdapterInfo` is
-//! empty there), so the page asks the browser itself, once, with the same
-//! high-performance preference wgpu asks with.
+//! wgpu can't say which adapter it got on the web (its `AdapterInfo` has
+//! only a `name`, the browser's `GPUAdapterInfo.description`, which Chrome
+//! and Firefox leave empty; #949), so the page asks the browser itself,
+//! once, with the same high-performance preference wgpu asks with.
 //!
 //! The WebGPU calls are counted by the page, which wraps `submit`,
 //! `writeBuffer`, `createBindGroup`, `createBuffer` and `beginRenderPass`
