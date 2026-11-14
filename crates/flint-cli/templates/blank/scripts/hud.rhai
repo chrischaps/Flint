@@ -15,8 +15,8 @@ fn on_update() {
 
 fn on_draw_ui() {
     let sh = screen_height();
-    draw_text(24.0, 20.0, "{{name}}", 22.0, 1.0, 0.93, 0.82, 0.95);
+    draw_text(24.0, 20.0, "{{name}}", 22.0, 1.0, 0.93, 0.82, 0.98);
     if show_help {
-        draw_text(24.0, sh - 34.0, "H  hide this    Esc  quit", 14.0, 1.0, 1.0, 1.0, 0.7);
+        draw_text(24.0, sh - 34.0, "H  hide this    Esc  quit", 14.0, 1.0, 1.0, 1.0, 0.85);
     }
 }

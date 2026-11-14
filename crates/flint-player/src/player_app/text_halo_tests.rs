@@ -362,13 +362,7 @@ fn a_halo_past_the_texture_limit_is_drawn_smaller_in_the_same_place() {
 }
 
 fn to_premul(c: &[f32; 4]) -> [u8; 4] {
-    crate::player_app::hud_render::premultiplied_as_egui_030(
-        (c[0] * 255.0) as u8,
-        (c[1] * 255.0) as u8,
-        (c[2] * 255.0) as u8,
-        (c[3] * 255.0) as u8,
-    )
-    .to_array()
+    crate::player_app::hud_render::to_color32(c).to_array()
 }
 
 /// The golden: neon "60" — a 10 pt stroke at 0.3 alpha and a 14 pt glow
