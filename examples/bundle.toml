@@ -28,6 +28,9 @@ exclude = [
     "showcase_crucible.scene.toml",
     "showcase_tavern.scene.toml",
     "music_clock.scene.toml",
+    # its suite, which names its stems from the repo root too; nothing
+    # else reads music/, and packing it failed the whole bundle (#949)
+    "music/**",
     "scripts/showcase_ambience.rhai",
     "scripts/showcase_hud.rhai",
     "scripts/showcase_passage.rhai",
