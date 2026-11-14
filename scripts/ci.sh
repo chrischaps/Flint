@@ -2,8 +2,8 @@
 # What a change must pass before it lands (#757).
 #
 #   scripts/ci.sh          formatting, every cited ADR has a record
-#                          (scripts/adr-check.sh), and the tree's size
-#                          budget (scripts/size-check.py, ADR 0121):
+#                          (scripts/adr-check.sh), the tree's shape (#760) and
+#                          its size budget (scripts/size-check.py, ADR 0122):
 #                          seconds, no build. `scripts/issue.sh
 #                          land` runs this (verify= in scripts/issue.conf), and
 #                          so does CI's rustfmt job.
@@ -34,6 +34,23 @@ fi
 echo "ci: scripts/adr-check.sh"
 bash scripts/adr-check.sh
 
+# The tree (#760): a symlink checks out as a text file on Windows without the
+# symlink privilege, and the root is for manifests and docs (a render, spec
+# or texture there is a stray: specs/, examples/ and tests/fixtures/ hold them)
+echo "ci: no symlinks, a root of manifests and docs"
+links=$(git ls-files -s | awk '$1 == "120000" { print $4 }')
+if [ -n "$links" ]; then
+    echo "ci: these are symlinks; commit the files, or name the path they point at:" >&2
+    echo "$links" >&2
+    exit 1
+fi
+strays=$(git ls-files | grep -v / | grep -vxE '\.git(ignore|attributes)|[A-Z]+\.md|Cargo\.(toml|lock)|(clippy|rustfmt|flint)\.toml' || true)
+if [ -n "$strays" ]; then
+    echo "ci: these files are at the root, which holds only manifests and docs:" >&2
+    echo "$strays" >&2
+    exit 1
+fi
+
 echo "ci: scripts/size-check.py"
 # python3 where it runs (Windows' may be a stub); standard library only
 py=python3
@@ -48,7 +65,9 @@ if [ "${1:-}" = "--full" ]; then
     echo "ci: flint script api --check-book"
     cargo run --locked -q -p flint-cli --bin flint -- script api --check-book
     echo "ci: scripts/docs-check.py"
-    # The flint just built
+    # The flint just built; python3 where it runs (Windows' may be a stub)
+    py=python3
+    "$py" --version >/dev/null 2>&1 || py=python
     "$py" scripts/docs-check.py
     echo "ci: scripts/wasm-check.sh"
     bash scripts/wasm-check.sh

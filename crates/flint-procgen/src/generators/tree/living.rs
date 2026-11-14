@@ -441,7 +441,7 @@ mod tests {
     fn lsystem_specs() -> Vec<ProcGenSpec> {
         vec![
             load("specs/oak_tree.procgen.toml"),
-            load("specs/oak_tree.procgen2.toml"),
+            load("specs/oak_tree_deep.procgen.toml"),
             load("specs/examples/oak_tree.procgen.toml"),
         ]
     }
@@ -704,7 +704,7 @@ mod tests {
 
     #[test]
     fn a_card_binds_to_its_nearest_segment() {
-        let spec = load("specs/oak_tree.procgen2.toml");
+        let spec = load("specs/oak_tree_deep.procgen.toml");
         let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
         for (k, card) in skeleton.leaf_bindings.iter().enumerate() {
             assert!((0.0..=1.0).contains(&card.along));
@@ -726,7 +726,7 @@ mod tests {
 
     #[test]
     fn a_tree_without_leaves_has_no_cards() {
-        let mut spec = load("specs/oak_tree.procgen2.toml");
+        let mut spec = load("specs/oak_tree_deep.procgen.toml");
         spec.params
             .as_table_mut()
             .unwrap()
@@ -758,7 +758,7 @@ mod tests {
 
     #[test]
     fn text_grammars_report_themselves_unsupported() {
-        let mut spec = load("specs/oak_tree.procgen2.toml");
+        let mut spec = load("specs/oak_tree_deep.procgen.toml");
         spec.params
             .as_table_mut()
             .unwrap()
@@ -777,7 +777,7 @@ mod tests {
     #[test]
     fn a_pose_of_another_shape_is_refused() {
         let oak = load("specs/examples/oak_tree.procgen.toml");
-        let small = load("specs/oak_tree.procgen2.toml");
+        let small = load("specs/oak_tree_deep.procgen.toml");
         let skeleton = TreeGenerator.structure(&small, LINEAGE).unwrap();
         assert!(TreeGenerator.pose(&oak, &skeleton, 1).is_err());
         let other = TreeGenerator.structure(&oak, LINEAGE).unwrap();
@@ -967,13 +967,13 @@ mod tests {
     const VARIANCE_SPECS: [&str; 3] = [
         "specs/examples/oak_living.procgen.toml",
         "specs/oak_tree.procgen.toml",
-        "specs/oak_tree.procgen2.toml",
+        "specs/oak_tree_deep.procgen.toml",
     ];
 
     /// How far a side of the default ring's box may move with `keep_size`.
     /// The 27-segment oak gets more room: a handful of tips decide its box.
     fn kept_limit(path: &str) -> f32 {
-        if path.ends_with("procgen2.toml") {
+        if path.ends_with("oak_tree_deep.procgen.toml") {
             0.10
         } else {
             0.06
@@ -1129,7 +1129,7 @@ mod tests {
 
     #[test]
     fn a_spec_without_a_living_table_takes_the_default_variance() {
-        let spec = load("specs/oak_tree.procgen2.toml");
+        let spec = load("specs/oak_tree_deep.procgen.toml");
         assert!(spec.living.is_none());
         let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
         let full = TreeGenerator.full_pose(&spec, &skeleton, 2).unwrap();
@@ -1144,7 +1144,7 @@ mod tests {
     #[test]
     fn variance_can_be_retuned_without_regrowing() {
         let spec = at_variance(
-            "specs/oak_tree.procgen2.toml",
+            "specs/oak_tree_deep.procgen.toml",
             VarianceConfig {
                 amount: 0.5,
                 steady: 0.25,

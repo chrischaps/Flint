@@ -199,11 +199,14 @@ fn effort_goes_in_output_config() {
 
 #[test]
 fn the_loop_sends_validator_reports_back_until_the_spec_is_valid() {
+    // "pyramid" must stay out of the tree's crown_shape enum. This test used
+    // "cone" until #198 made it a real shape the same day, and it failed
+    // unseen until plain `cargo test` ran this crate (#758).
     let broken = r##"{"name": "pine", "tags": [], "params": {
-        "trunk_height": -3.0, "trunk_radius": 0.3, "crown_shape": "cone", "leaf_density": 0.3
+        "trunk_height": -3.0, "trunk_radius": 0.3, "crown_shape": "pyramid", "leaf_density": 0.3
     }}"##;
     let half = r##"{"name": "pine", "tags": [], "params": {
-        "trunk_height": 12.0, "crown_shape": "cone", "leaf_density": 0.3
+        "trunk_height": 12.0, "crown_shape": "pyramid", "leaf_density": 0.3
     }}"##;
     let script = Scripted::new(vec![ok(broken), ok(half), ok(PINE)]);
     let (spec, report) = agent(&script)
@@ -231,7 +234,7 @@ fn the_loop_sends_validator_reports_back_until_the_spec_is_valid() {
     );
     assert!(report_text.contains("`trunk_height` = -3"), "{report_text}");
     assert!(
-        report_text.contains("\"cone\" is not one of"),
+        report_text.contains("\"pyramid\" is not one of"),
         "{report_text}"
     );
     // The system prompt is byte-identical every round (cache-friendly).

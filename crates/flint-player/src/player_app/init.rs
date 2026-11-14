@@ -791,15 +791,12 @@ impl PlayerApp {
                 Ok(img) => {
                     let rgba = img.to_rgba8();
                     let (w, h) = rgba.dimensions();
-                    // Premultiplied as egui 0.30 did, so a sprite's soft
-                    // edges blend as they were drawn (#945)
-                    let pixels = rgba
-                        .chunks_exact(4)
-                        .map(|p| {
-                            super::hud_render::premultiplied_as_egui_030(p[0], p[1], p[2], p[3])
-                        })
-                        .collect();
-                    let color_image = egui::ColorImage::new([w as usize, h as usize], pixels);
+                    // Premultiplied in display values, as the HUD blends
+                    // (#958)
+                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                        [w as usize, h as usize],
+                        rgba.as_raw(),
+                    );
                     let tex_handle = self.hud.egui_ctx.load_texture(
                         name,
                         color_image,

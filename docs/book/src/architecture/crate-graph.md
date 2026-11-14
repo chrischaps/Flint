@@ -46,7 +46,7 @@ This page shows how Flint's crates depend on each other. Dependencies flow downw
                       └─────────────────────────────────────────────┘
 ```
 
-The long arrow into `render` comes from the player (top right) and from `viewer` and `debug-ui`; the systems row beneath it (`script`, `physics`, `audio`, `animation`, `particles`) does not depend on `render`. Some edges are left out for legibility (every crate reaches `flint-core`; `render`, `animation`, `viewer` and `asset-gen` reach `import`; `render` reaches `scene`; `terrain` also feeds `debug-ui`). The table below is complete: `tools/arch-analyzer` writes it from each crate's `Cargo.toml`, and CI fails a pull request that leaves it stale.
+The long arrow into `render` comes from the player (top right) and from `viewer` and `debug-ui`; the systems row beneath it (`script`, `physics`, `audio`, `animation`, `particles`) does not depend on `render`. Some edges are left out for legibility (every crate reaches `flint-core`; `render`, `animation`, `viewer` and `asset-gen` reach `import`; `render` reaches `scene`; `terrain` also feeds `debug-ui`), and so are seven crates: `rhythm` (over `music`, under `input-capture`, the player and the CLI), `procgen-ai` (under the CLI), `android` (the Android entry, over the player), the small `wooze` and `geometry` layers just above `flint-core`, `pixels` (no dependencies, under `render`), and `audio-worklet`, a separate wasm with no engine dependency at all. The table below is complete: `tools/arch-analyzer` writes it from each crate's `Cargo.toml`, and CI fails a pull request that leaves it stale.
 
 ## Dependency Details
 

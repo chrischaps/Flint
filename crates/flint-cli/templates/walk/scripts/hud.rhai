@@ -18,13 +18,13 @@ fn on_draw_ui() {
     let sh = screen_height();
 
     // Crosshair
-    draw_circle(sw / 2.0, sh / 2.0, 2.0, 1.0, 1.0, 1.0, 0.6);
+    draw_circle(sw / 2.0, sh / 2.0, 2.0, 1.0, 1.0, 1.0, 0.79);
 
     // Title, top left
-    draw_text(24.0, 20.0, "{{name}}", 22.0, 1.0, 0.93, 0.82, 0.95);
+    draw_text(24.0, 20.0, "{{name}}", 22.0, 1.0, 0.93, 0.82, 0.98);
 
     if !show_help {
-        draw_text(24.0, sh - 34.0, "H  controls", 14.0, 1.0, 1.0, 1.0, 0.5);
+        draw_text(24.0, sh - 34.0, "H  controls", 14.0, 1.0, 1.0, 1.0, 0.73);
         return;
     }
 
@@ -46,8 +46,8 @@ fn on_draw_ui() {
     draw_rect(x, y, w, h, #{ color: [0.05, 0.05, 0.07, 0.6], rounding: 10.0, layer: -1 });
     let row_y = y + pad;
     for row in rows {
-        draw_text(x + pad, row_y, row[0], 14.0, 1.0, 0.82, 0.55, 0.95);
-        draw_text(x + pad + 62.0, row_y, row[1], 14.0, 0.95, 0.93, 0.88, 0.9);
+        draw_text(x + pad, row_y, row[0], 14.0, 1.0, 0.82, 0.55, 0.98);
+        draw_text(x + pad + 62.0, row_y, row[1], 14.0, 0.95, 0.93, 0.88, 0.95);
         row_y += line_h;
     }
 }

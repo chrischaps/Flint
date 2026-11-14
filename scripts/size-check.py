@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""What the tracked tree may carry (#759, ADR 0121). `scripts/ci.sh` runs it.
+"""What the tracked tree may carry (#759, ADR 0122). `scripts/ci.sh` runs it.
 
     python3 scripts/size-check.py            # check; exit 1 on a breach
     python3 scripts/size-check.py --report   # the sizes too, by area
@@ -19,7 +19,7 @@ the files `git ls-files` lists, as they are on disk:
    mip filter would.
 3. **No file is over `FILE_BYTES`**, but those `FILE_EXCEPTIONS` names.
 4. **The tree is under `TREE_BYTES`**, and each area under its budget in
-   `AREAS`. A breach means the budget in ADR 0121 is to be argued with,
+   `AREAS`. A breach means the budget in ADR 0122 is to be argued with,
    not raised in passing.
 5. **Borrowed files are unchanged.** The frozen fixtures load some example
    files where they lie (`tests/fixtures/borrowed.toml`), so a change to
@@ -48,11 +48,11 @@ TEXTURE_SIDE = 2048
 TEXTURE_BYTES = 3 * MB
 FILE_BYTES = 8 * MB
 # Over FILE_BYTES on purpose, each with why. Add one only with a reason a
-# reviewer would accept; ADR 0121 lists them.
+# reviewer would accept; ADR 0122 lists them.
 FILE_EXCEPTIONS = {
     "examples/models/MetalRoughSpheres.glb": "Khronos' PBR reference: 11 MB of sphere geometry, no texture to shrink",
 }
-# Copies kept on purpose, each group with why (ADR 0121 lists them).
+# Copies kept on purpose, each group with why (ADR 0122 lists them).
 DUPLICATE_EXCEPTIONS = {
     frozenset({
         "examples/models/palm_two_sided.glb",
@@ -60,8 +60,19 @@ DUPLICATE_EXCEPTIONS = {
     }): "10 KB; Sun Prints is a web game whose bundle packs only its own folder, "
         "so it can't name the example's file by a path outside it",
 }
-# The budgets (ADR 0121): what the tree measured when they were set
-# (2026-11-14, #759: 168.5 MB) with a tenth or so to grow into.
+# The showcase game's sounds (#760): its scripts build their names at run
+# time ("audio/footstep_stone_" + idx), and a game in the checkout searches
+# only its own project, so it can't borrow examples/audio by a path. 1.8 MB.
+for _sound in (
+    "ambient_tavern.ogg", "door_locked.wav", "door_open.ogg", "fire_crackle.ogg",
+    "footstep_stone_1.ogg", "footstep_stone_2.ogg", "footstep_stone_3.ogg",
+    "footstep_stone_4.ogg", "glasses_clink.ogg", "npc_greeting.wav",
+):
+    DUPLICATE_EXCEPTIONS[frozenset({f"examples/audio/{_sound}", f"showcase_game/audio/{_sound}"})] = (
+        "showcase_game plays it by a name its scripts build, inside its own project"
+    )
+# The budgets (ADR 0122): what the tree measured when they were set
+# (2026-11-14, #759: 168.8 MB) with a tenth or so to grow into.
 TREE_BYTES = 185 * MB
 # What a game's engine/ carries, by part. The first area whose prefix
 # matches a path takes it; "engine" is everything else.
@@ -69,8 +80,8 @@ AREAS = [
     ("examples", ("examples/",), 52 * MB),  # 45.3
     ("book", ("docs/",), 78 * MB),  # 70.2
     ("tests", ("tests/", "crates/flint-cli/tests/golden/"), 27 * MB),  # 23.4
-    ("showcase_game", ("showcase_game/",), 14 * MB),  # 12.0
-    ("engine", ("",), 22 * MB),  # 17.6: crates, schemas, styles, scripts, tools
+    ("showcase_game", ("showcase_game/",), 16 * MB),  # 13.8
+    ("engine", ("",), 20 * MB),  # 16.1: crates, schemas, styles, scripts, tools
 ]
 
 BINARY = {
@@ -202,10 +213,10 @@ def check(files: list[Path], report: bool) -> list[str]:
         if group not in groups:
             problems.append(f"DUPLICATE_EXCEPTIONS names {', '.join(sorted(group))}, no longer one file twice: drop it")
     if total > TREE_BYTES:
-        problems.append(f"the tree is {total / MB:.1f} MB, over its {TREE_BYTES // MB} MB budget (ADR 0121)")
+        problems.append(f"the tree is {total / MB:.1f} MB, over its {TREE_BYTES // MB} MB budget (ADR 0122)")
     for name, _, budget in AREAS:
         if sizes[name] > budget:
-            problems.append(f"{name} is {sizes[name] / MB:.1f} MB, over its {budget // MB} MB budget (ADR 0121)")
+            problems.append(f"{name} is {sizes[name] / MB:.1f} MB, over its {budget // MB} MB budget (ADR 0122)")
     if report:
         print(f"size-check: {len(files)} files, {total / MB:.1f} MB of {TREE_BYTES // MB} MB")
         for name, _, budget in AREAS:
@@ -258,7 +269,7 @@ def main() -> int:
     for p in problems:
         print(f"size-check: {p}", file=sys.stderr)
     if problems:
-        print(f"size-check: {len(problems)} problem(s); the rules are in scripts/size-check.py and ADR 0121", file=sys.stderr)
+        print(f"size-check: {len(problems)} problem(s); the rules are in scripts/size-check.py and ADR 0122", file=sys.stderr)
         return 1
     print("size-check: ok")
     return 0

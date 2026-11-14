@@ -19,7 +19,8 @@ Styles, the style mask and user styles: `src/stylize/CLAUDE.md`. Flags: `crates/
 
 | File | What lives there |
 |---|---|
-| `mod.rs` | the `SceneRenderer` struct and the draw types (`DrawCall`, `SkinnedDrawCall`, `EchoDrawCall`, the bind-cache types); `build` behind `new`/`new_headless`; `update_from_world`; the public forwards to the subsystems (terrain, skinning, lights, shadows, sky, water, ground fog); and, until PR 11 of #736, `render`/`render_to`/`encode_to`/`frame_submitted` |
+| `mod.rs` | the `SceneRenderer` struct and the draw types (`DrawCall`, `SkinnedDrawCall`, `EchoDrawCall`, the bind-cache types); `build` behind `new`/`new_headless`; `update_from_world`; the public forwards to the subsystems (terrain, skinning, lights, shadows, sky, water, ground fog) |
+| `frame.rs` | the frame: `render`, `render_to`, `encode_to` (the order the frame is recorded in), `encode_again_to`, `frame_submitted`, world lines. #739's `prepare` / `FrameInputs` go here |
 | `pipelines.rs` | `ScenePipelines` (every sample-count-baked pipeline) and `SceneLayouts` |
 | `extract.rs` | per-entity extraction into the draw lists (static, skinned, echoes, billboards, sprites, UI text) |
 | `draws.rs` | the bind cache, shared materials, procedural boxes, LOD and frustum culls, building a draw call's bind groups, shallow wooze's per-draw drift |

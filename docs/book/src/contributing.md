@@ -5,7 +5,7 @@ The five numbered engine phases (ECS, constraints, PBR rendering, runtime, AI as
 - **Bug reports** --- file issues on GitHub
 - **Schema definitions** --- new component and archetype schemas
 - **Documentation** --- improvements to this guide
-- **Test coverage** --- additional unit and integration tests (1,107 tests across the 24 default workspace crates; 6 ignored)
+- **Test coverage** --- additional unit and integration tests (`cargo test` runs them; CI does not yet, so a PR says what it ran)
 - **Constraint kinds** --- new validation rule types
 - **Physics** --- additional collider shapes, improved character controller behavior
 - **Rendering** --- post-processing effects, LOD, additional debug views
@@ -81,7 +81,7 @@ Changelog: none (reason)
 
 ## Architecture
 
-The project is a 27-member Cargo workspace: 26 crates under `crates/` plus the `tools/arch-analyzer` static analyzer. See the [Architecture Overview](architecture/overview.md) and [Crate Dependency Graph](architecture/crate-graph.md) for how the crates relate to each other. Key principles:
+The project is a 32-member Cargo workspace: 31 crates under `crates/` plus the `tools/arch-analyzer` static analyzer. See the [Architecture Overview](architecture/overview.md) and [Crate Dependency Graph](architecture/crate-graph.md) for how the crates relate to each other. Key principles:
 
 - Dependencies flow in one direction (binary crates at the top, `flint-core` at the bottom)
 - Components are dynamic `toml::Value`, not Rust types --- schemas are runtime data

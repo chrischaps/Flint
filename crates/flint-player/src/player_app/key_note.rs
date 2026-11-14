@@ -70,7 +70,7 @@ impl KeyNote {
         };
         // The HUD blends in display space: build every translucent colour
         // premultiplied, scaled by the note's strength (crates/flint-player
-        // CLAUDE.md, egui 0.30's premultiply gotcha).
+        // CLAUDE.md, the HUD blend).
         let fade = |r: u8, g: u8, b: u8, alpha: u8| {
             let k = a * alpha as f32 / 255.0;
             let p = |c: u8| (c as f32 * k).round() as u8;

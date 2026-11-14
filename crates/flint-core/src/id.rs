@@ -31,11 +31,10 @@ impl EntityId {
         self.0
     }
 
-    /// Reset the ID counter (for testing only)
-    #[cfg(test)]
-    pub fn reset_counter() {
-        NEXT_ID.store(1, Ordering::Relaxed);
-    }
+    // There is no way to lower or reset the counter, on purpose (#803): it is
+    // shared by every thread in the process, so a test that reset it while
+    // another test was spawning ids made both of them flaky. Tests assert
+    // relative to an id they took themselves.
 
     /// Set the counter to at least the given value (for loading scenes)
     pub fn ensure_counter_above(value: u64) {
@@ -76,9 +75,13 @@ impl fmt::Display for EntityId {
 mod tests {
     use super::*;
 
+    // These run in parallel with every other test in the binary, all sharing
+    // the one process-wide counter, so they never assume what its value is:
+    // the counter only ever rises, and each assertion is relative to an id
+    // the test took itself (#803).
+
     #[test]
     fn test_id_generation() {
-        EntityId::reset_counter();
         let id1 = EntityId::new();
         let id2 = EntityId::new();
         assert_ne!(id1, id2);
@@ -93,9 +96,21 @@ mod tests {
 
     #[test]
     fn test_ensure_counter_above() {
-        EntityId::reset_counter();
-        EntityId::ensure_counter_above(100);
+        // A floor above anything handed out so far, as a loaded scene's
+        // highest id would be.
+        let floor = EntityId::new().0 + 100;
+        EntityId::ensure_counter_above(floor);
         let id = EntityId::new();
-        assert!(id.0 > 100);
+        assert!(id.0 > floor, "{} should be above {floor}", id.0);
+    }
+
+    #[test]
+    fn test_ensure_counter_above_never_lowers() {
+        let before = EntityId::new();
+        // A floor already passed (a scene of low ids) leaves the counter alone.
+        EntityId::ensure_counter_above(before.0.saturating_sub(1));
+        EntityId::ensure_counter_above(0);
+        let after = EntityId::new();
+        assert!(after.0 > before.0, "{after:?} should follow {before:?}");
     }
 }

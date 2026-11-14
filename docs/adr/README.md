@@ -171,3 +171,4 @@ The files follow the merged numbers.
 | [0118](0118-renderer-owners-for-pipelines-draws-and-frame-inputs.md) | The renderer gets one owner each for sample-count pipelines, draw kinds (`DrawItem`) and per-frame inputs (`FrameInputs`, `bind_scene`) (#736) |
 | [0119](0119-game-generators-through-player-extensions.md) | A game registers its own procgen generators through `PlayerExtension::register_generators`, into the player's resolver, which keeps them across the disk-tier rebuild (#195) |
 | [0120](0120-comic-panels-as-views-swapped-into-one-renderer.md) | Comic panels: a `[panels]` scene table, each panel a view of the frame's size-keyed state swapped into the one renderer, drawn with its own camera and look, one submission a panel, laid on the page by one pass (#880) |
+| [0121](0121-extension-ui-takes-the-root-ui.md) | `PlayerExtension::ui` takes the frame's root `&mut egui::Ui`, eframe's `App::ui` shape; #946's `root_ui` is deprecated and still called (#959) |
