@@ -286,7 +286,8 @@ mod imp {
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             // What user styles get too: pack2x16float and quantizeToF16
-            // (ascii_edge_cells.wgsl) need SHADER_FLOAT16_IN_FLOAT32 (#945, #946)
+            // (ascii_edge_cells.wgsl) need SHADER_FLOAT16_IN_FLOAT32, which
+            // wgpu grants wherever the adapter has SHADER_F16_IN_F32 (#945, #946)
             crate::stylize::custom::style_capabilities(),
         )
         .validate(&module)
