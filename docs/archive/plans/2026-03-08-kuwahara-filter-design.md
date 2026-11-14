@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756): what this planned has shipped or been dropped. Current state: [Post-Processing](https://docs.chaps.dev/flint/concepts/post-processing.html).
+
 # Kuwahara Filter Post-Processing Effect — Design
 
 ## Overview

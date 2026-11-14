@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756): what this planned has shipped or been dropped. Current state: [Physics and Runtime: input](https://docs.chaps.dev/flint/concepts/physics-and-runtime.html).
+
 # Input Extensibility Design (Flint)
 
 > **Status: IMPLEMENTED** on branch `feature/input-extensibility` (commit `79c5a8a`). All phases described below are complete: config-backed bindings, runtime rebinding with persistence, gamepad support via gilrs, and ActionReleased event flow.

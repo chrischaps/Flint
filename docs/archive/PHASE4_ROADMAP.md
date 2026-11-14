@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756): what this planned has shipped or been dropped. Current state: [Physics and Runtime](https://docs.chaps.dev/flint/concepts/physics-and-runtime.html).
+
 # Phase 4: Interactive Runtime *(Complete)*
 
 > **Status:** All stages complete. Phase 4 added physics, audio, skeletal animation, Rhai scripting, particles, and a full interactive demo scene.

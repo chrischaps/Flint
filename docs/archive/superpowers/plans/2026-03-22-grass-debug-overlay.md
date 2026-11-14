@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756): what this planned has shipped or been dropped. Current state: [Debug Panels](https://docs.chaps.dev/flint/guides/debug-panels.html).
+
 # Grass Debug Overlay Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

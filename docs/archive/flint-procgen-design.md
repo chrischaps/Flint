@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756): what this planned has shipped or been dropped. Current state: [Procedural Generation](https://docs.chaps.dev/flint/concepts/procgen.html).
+
 # Flint Procedural Generation Subsystem — Design Document
 
 **Status:** Draft v1

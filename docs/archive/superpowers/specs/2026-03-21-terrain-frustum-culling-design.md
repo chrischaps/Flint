@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756): what this planned has shipped or been dropped. Current state: [Rendering: culling](https://docs.chaps.dev/flint/concepts/rendering.html).
+
 # Terrain Frustum Culling
 
 **Date:** 2026-03-21

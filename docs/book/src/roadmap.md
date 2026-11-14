@@ -17,16 +17,21 @@ Without visibility culling, every object renders every frame regardless of wheth
 - Mesh LOD switching by camera distance
 - Optional texture streaming for large worlds
 
-> Partly delivered. The renderer extracts a camera frustum every frame
-> (`flint-render/src/frustum.rs`) and culls terrain chunks by AABB against it;
-> grass has its own distance fade. Entity meshes are still drawn
-> unconditionally, so per-object culling and LOD remain open.
+> Mostly delivered. Every opaque and transparent mesh draw whose world box
+> misses the camera frustum is skipped, each shadow cascade skips the draws
+> outside its own frustum, and terrain chunks are culled the same way. A
+> multi-LOD model draws one level at a time by distance (authored
+> `flint_lod` bands, or a `LOD_0`, `LOD_1`, ... chain banded at import,
+> #193), an entity's `lod` component sets a draw distance, and two runtime
+> scales serve quality settings (see [Rendering](concepts/rendering.md)).
+> Still open: a BVH (the cull walks every draw), terrain chunk LOD, and
+> texture streaming.
 
 ## Navigation Mesh & Pathfinding
 
 **Priority: High**
 
-Every game with NPCs needs this. Currently enemies can only do simple raycast-based movement — entire genres are blocked without proper pathfinding.
+Every game with NPCs needs this. Currently enemies can only do simple raycast-based movement — entire genres are blocked without proper pathfinding. Tracked in [#969](https://github.com/chrischaps/Flint/issues/969).
 
 - Nav mesh generation from scene geometry
 - A\* pathfinding with dynamic obstacle avoidance
