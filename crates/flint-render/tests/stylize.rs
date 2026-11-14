@@ -8,9 +8,11 @@
 //! These need a GPU adapter. Without one each test prints a note and passes.
 //!
 //! They share one device ([`shared_gpu`], #598): making one per test hung
-//! the binary for hours on NVIDIA's Vulkan driver. A test that counts
-//! objects across the device or builds user styles takes it alone
-//! ([`gpu_alone`]); the rest run side by side ([`gpu`]).
+//! the binary for hours on NVIDIA's Vulkan driver. They take it in turn,
+//! and share the pipelines they build (#913). A test that counts objects
+//! across the device or builds user styles says it needs it alone
+//! ([`gpu_alone`]); the rest ([`gpu`]) could share it with
+//! `FLINT_GPU_TEST_PARALLEL=1`.
 
 mod shared_gpu;
 
@@ -32,7 +34,7 @@ struct Gpu {
     _lease: shared_gpu::Lease,
 }
 
-/// The device, alongside the other tests.
+/// The device, for this test's turn.
 fn gpu() -> Option<Gpu> {
     shared_gpu::lease().map(frame_for)
 }
