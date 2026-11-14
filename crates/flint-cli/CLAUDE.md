@@ -61,7 +61,8 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                          (#345: N frames on one renderer as out_0000.png...; temporal
    #                           styles see consecutive frames; --flip-stats / --flip-json f.json
    #                           count ASCII glyph flips and A-B-A reversals from its own grid,
-   #                           --no-images skips the PNGs; byte-identical run to run)
+   #                           --no-images skips the PNGs; byte-identical run to run;
+   #                           --last-frame writes only the last frame, to -o itself, #478)
    #   --ascii                (full-screen ASCII style, #265 = [post_process.styles.ascii])
    #   --ascii-cell 8 --ascii-font builtin --ascii-ramp classic|blocks|minimal|detailed|quadrants|braille
    #   --ascii-color source|tint|raw|mono|palette --ascii-tint 0.35,1,0.45 --ascii-background 0.15
@@ -264,6 +265,15 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    style's error to hold it (`user-style-broken`: `tests/golden/fixtures/styles/broken.*` must draw a
    passthrough, which runs the prelude's sRGB round trip). A case's `text = "<x>.txt"`
    (#317) also pins its ASCII grid exactly (`text_cells` allows some; `<case>.text.diff`).
+   A case with `frames` (#478) is a sequence: no golden, a budget. `orbit` / `camera_path` / `frame_dt`
+   become the render's flags (`Case::sequence_flags`), plus `--flip-json <case>.flips.json --last-frame`;
+   it fails when the mean `reversals_per_frame` passes `max_reversals` (required) or flips pass
+   `max_flips`. `Case::check` refuses a sequence key without `frames`, a sequence with a golden key, and
+   sequence flags in `args`, at manifest load. `CaseReport::sequence` carries the per-frame counts; the
+   sheet charts them (`golden_sheet::sequence_chart`), `scripts/goldens-summary.py` gives them a row.
+   Cases `ascii-motion-tone` / `-edges` on `tests/fixtures/scenes/ascii_motion` (60 frames, 640x360:
+   0.0 / 0.16 reversals against budgets 0.5 / 1.0; `hysteresis=0` reads 2.2 / 3.5), held by
+   `tests/render_goldens.rs::a_sequence_case_fails_when_the_history_stops_holding`.
    CI runs the goldens and `flint-render --test stylize` on WARP (#314, job `GPU tests (WARP)`)
    with `FLINT_REQUIRE_GPU=1`, which turns a GPU test's skip into a failure
    (`gpu_select::skip_without_gpu`; a new GPU test calls it). flint-render's GPU test binaries

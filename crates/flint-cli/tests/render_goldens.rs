@@ -214,6 +214,67 @@ fn style_flag_rejects_what_it_cannot_do() {
     );
 }
 
+/// #478: the shimmer gate catches a history that stops holding. The
+/// stylize suite's own `ascii-motion-tone` case, its budget as checked in,
+/// run again with `hysteresis = 0`, must fail on its budget: so a budget
+/// loosened past what that regression measures (2.2 reversals a frame
+/// against 0.5) fails this test.
+#[test]
+fn a_sequence_case_fails_when_the_history_stops_holding() {
+    let manifest_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/stylize.goldens.toml");
+    let manifest: toml::Table =
+        toml::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    let mut case = manifest["case"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"].as_str() == Some("ascii-motion-tone"))
+        .expect("the stylize suite's ascii-motion-tone case")
+        .as_table()
+        .unwrap()
+        .clone();
+    case.insert("name".into(), "ascii-motion-tone-no-hold".into());
+    let args = case.get_mut("args").unwrap().as_array_mut().unwrap();
+    args.extend(["--style".into(), "ascii:hysteresis=0".into()]);
+    let mut suite = manifest["suite"].as_table().unwrap().clone();
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let repo = std::path::absolute(&repo).unwrap();
+    suite.insert(
+        "root".into(),
+        repo.to_string_lossy().replace('\\', "/").into(),
+    );
+    suite.insert("name".into(), "shimmer-gate".into());
+    let mut regressed = toml::Table::new();
+    regressed.insert("suite".into(), suite.into());
+    regressed.insert("case".into(), vec![toml::Value::Table(case)].into());
+
+    let dir = run_dir("shimmer-gate");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("regressed.goldens.toml");
+    std::fs::write(&path, toml::to_string(&regressed).unwrap()).unwrap();
+    let run = Command::new(FLINT)
+        .arg("goldens")
+        .arg(&path)
+        .arg("--out-dir")
+        .arg(dir.join("out"))
+        .output()
+        .expect("run flint");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    if !text.contains("no GPU adapter") {
+        assert!(!run.status.success(), "hysteresis = 0 passed:\n{text}");
+        assert!(text.contains("FAIL  ascii-motion-tone-no-hold"), "{text}");
+        assert!(text.contains("reversals/frame (limit"), "{text}");
+        let report = std::fs::read_to_string(dir.join("out/report.json")).unwrap();
+        assert!(report.contains("\"reversals_per_frame\""), "{report}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// #911: the cases of one `flint goldens` run share a process, a device and
 /// now their pipelines, but no case sees what an earlier one left. Here the
 /// first case loads a user style from its own folder; the second names the

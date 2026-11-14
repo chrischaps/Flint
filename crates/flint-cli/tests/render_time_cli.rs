@@ -528,6 +528,65 @@ fn frames_on_the_clock_move_the_props_and_count_flips() {
     assert_eq!(stats["frames"], 3, "{stats}");
 }
 
+/// `--last-frame` (#478) writes only where a sequence ends, to `-o` itself,
+/// and it is the numbered run's last frame byte for byte: on the clock (this
+/// grove's living props) and on the still path (a plain fixture scene).
+#[test]
+fn last_frame_is_the_sequences_last_frame_alone() {
+    let dir = project("last_frame");
+    let seq = [
+        "--frames",
+        "3",
+        "--frame-dt",
+        "0.5",
+        "--orbit",
+        "20",
+        "--ascii",
+    ];
+    let o = render(&dir, "seq.png", &seq);
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    ok(&render(
+        &dir,
+        "last.png",
+        &[&seq[..], &["--last-frame"]].concat(),
+    ));
+    let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
+    assert_eq!(read("last.png"), read("seq_0002.png"), "on the clock");
+    assert!(!dir.join("last_0000.png").exists(), "a numbered frame too");
+
+    let still = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/pbr_test.scene.toml");
+    let plain = |out: &str, last: bool| {
+        let o = std::process::Command::new(FLINT)
+            .arg("render")
+            .arg(&still)
+            .args(["--width", "64", "--height", "48", "--no-grid"])
+            .args(seq)
+            .args(last.then_some("--last-frame"))
+            .arg("-o")
+            .arg(dir.join(out))
+            .output()
+            .expect("run flint");
+        ok(&o);
+    };
+    plain("plain.png", false);
+    plain("plain_last.png", true);
+    assert_eq!(read("plain_last.png"), read("plain_0002.png"), "still path");
+    assert!(!dir.join("plain_last_0000.png").exists());
+
+    // Nothing to write and only the last frame to write contradict
+    let o = render(
+        &dir,
+        "x.png",
+        &[&seq[..], &["--last-frame", "--no-images"]].concat(),
+    );
+    assert!(!o.status.success());
+    assert!(stderr(&o).contains("--no-images"), "{}", stderr(&o));
+}
+
 /// `--gpu-time` times the first cell's capture: a spread a pass (#292), and
 /// with `--gpu-time-json` every kept frame's raw time beside it.
 #[test]

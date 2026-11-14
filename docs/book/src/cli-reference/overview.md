@@ -442,6 +442,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--orbit <deg/s>` / `--camera-path <file>` | (still) | With `--frames`: orbit the camera about its target, or follow a TOML of `[[key]] time/position/target` keys |
 | `--flip-stats` / `--flip-json <file>` | (off) | With `--frames`: count the ASCII style's glyph flips and A-B-A reversals from its own grid, printed per frame and in sum, or written as JSON |
 | `--no-images` | `false` | With `--frames`: write no PNGs |
+| `--last-frame` | `false` | With `--frames`: write only the last frame, to `--output` itself (not numbered): the sequence's end, a temporal style's history settled (#478) |
 | `--mesh <entity>=<files>` | (none) | A frame per mesh file (one GLB, a folder, or `out/f*.glb`, natural order) shown on that entity, all on one renderer; repeatable, frame for frame. `-o` numbered PNGs, `%03d`, a `.gif` at `--fps`, or `--sheet` ([Mesh sequences](../guides/headless-rendering.md#mesh-sequences), #222) |
 | `--sheet` | `false` | With `--mesh`: one labelled contact sheet, a cell a file |
 | `--ascii` | (off) | The full-screen ASCII style (#265, [Stylize Passes](../concepts/stylize-passes.md#ascii)): one glyph per cell on one screen grid. Any `--ascii-*` flag below marked *style* also turns it on |

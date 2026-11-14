@@ -31,5 +31,6 @@ two frames on main too, and this copy draws one of them).
 | `pbr_test` | ASCII and look goldens; `render_goldens.rs`'s flag test |
 | `ascii_edges`, `ascii_entities`, `selection_outline`, `pencil_sketch`, `watercolor`, `user_styles`, `style_terrain`, `style_veil` | their own goldens; `user_styles` also `list_styles_cli.rs` |
 | `mesh_sequence` | `render_mesh_cli.rs` |
+| `ascii_motion` | the sequence goldens `ascii-motion-tone` and `ascii-motion-edges` (#478): `examples/ascii_motion` on 2026-11-13 without its orbit script, which `orbit = 6.8755` replaces. A change here moves their counts: re-measure and say so beside the budgets |
 | `pencil_meadow` | `look-rotoscope-meadow*` (#883): `examples/reveal_tear`'s clearing and meadow as a still, written here with real `light` tables |
 | `pencil_dark_sky` | `look-rotoscope-dark-sky*` (#890): written here, a YBot under the default dark sky with real lights |

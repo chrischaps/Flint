@@ -9,6 +9,8 @@ Each case's status and how far it sits from its golden, against the
 tolerance it is held to, so a run on a software adapter shows the margin
 and not only the verdict. A case that passes but isn't byte-identical
 with its golden is marked drift (#387), and the last line names them.
+A sequence case (#478) has a budget, not a golden: its row gives its
+reversals and flips a frame, and its limit is the reversal budget.
 A missing report says so, rather than nothing.
 """
 
@@ -35,14 +37,22 @@ def main(path: str) -> None:
         t = c["tolerance"]
         limit = f"{t['level']} / {t['share'] * 100:.2f}% / {t['mean']:.2f}"
         cmp = c.get("comparison")
-        if cmp:
+        seq = c.get("sequence")
+        if seq:
+            # A sequence case (#478): its means a frame against its budget
+            flips = f"{seq['flips_per_frame']:.1f} flips"
+            if seq.get("max_flips") is not None:
+                flips += f" (limit {seq['max_flips']:.1f})"
+            row = f"{seq['reversals_per_frame']:.2f} reversals/frame | {flips} | {seq['frames']} frames"
+            limit = f"{seq['max_reversals']:.2f} reversals/frame"
+        elif cmp:
             row = f"{cmp['far_share'] * 100:.3f}% | {cmp['mean']:.3f} | {cmp['max']}"
         else:
             row = " | | "
         mark = {"pass": "pass", "fail": "**FAIL**", "skip": "**SKIP**"}.get(status, f"**{status}**")
         if c.get("drift") and status == "pass":
             mark = "pass, *drift*"
-        golden = c["golden"].replace("\\", "/").rsplit("/", 1)[-1]
+        golden = "(a budget)" if seq else c["golden"].replace("\\", "/").rsplit("/", 1)[-1]
         print(f"| {c['name']} | {mark} | {row} | {limit} | {golden} |")
     print()
     print(", ".join(f"{n} {s}" for s, n in sorted(counts.items())))

@@ -488,6 +488,12 @@ pub struct RenderArgs {
     #[arg(long, requires = "sequence")]
     pub no_images: bool,
 
+    /// With --frames: write only the last frame, to --output itself (not
+    /// numbered): where the sequence ends, a temporal style's history
+    /// settled (#478)
+    #[arg(long, requires = "frames", conflicts_with_all = ["no_images", "mesh"])]
+    pub last_frame: bool,
+
     /// Bloom intensity (enables bloom; default: 0.04)
     #[arg(long)]
     pub bloom_intensity: Option<f32>,
@@ -2177,12 +2183,18 @@ fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) -> Result<(
                 )?;
             }
         }
-        if !args.no_images {
+        // --last-frame (#478) reads back only the frame it writes
+        let kept = !args.no_images && (!args.last_frame || i + 1 == frames);
+        if kept {
             let pixels =
                 pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
             let img = image::RgbaImage::from_raw(width, height, pixels)
                 .context("Failed to create image from pixel data")?;
             match out {
+                _ if args.last_frame => {
+                    img.save(&args.output)
+                        .context(format!("Failed to save image to {}", args.output))?;
+                }
                 MeshOutput::Numbered | MeshOutput::Pattern => {
                     let path = out.path(&args.output, i, frames);
                     img.save(&path)
@@ -2196,7 +2208,13 @@ fn render_sequence(args: &RenderArgs, rig: SequenceRig, frames: u32) -> Result<(
             }
         }
     }
-    if !args.no_images {
+    if args.last_frame {
+        say!(
+            "Rendered frame {} of {frames} ({width}x{height}) to {}",
+            frames - 1,
+            args.output
+        );
+    } else if !args.no_images {
         match out {
             MeshOutput::Numbered | MeshOutput::Pattern => say!(
                 "Rendered {frames} {width}x{height} frames to {} .. {}",
@@ -2864,7 +2882,18 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         };
         (frame_width, frame_height) = frame.dimensions();
         if let Some(frames) = args.frames {
-            if !args.no_images {
+            if args.last_frame {
+                // #478: only where the sequence ends, to --output itself
+                if index as u32 + 1 == frames {
+                    if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
+                        std::fs::create_dir_all(parent)
+                            .with_context(|| format!("failed to create {}", parent.display()))?;
+                    }
+                    frame
+                        .save(output)
+                        .with_context(|| format!("Failed to save image to {}", args.output))?;
+                }
+            } else if !args.no_images {
                 let path = super::frame_seq::numbered(&args.output, index as u32, frames);
                 if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
                     std::fs::create_dir_all(parent)
@@ -2933,7 +2962,13 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
 
     // Write the file
     if let Some(frames) = args.frames {
-        if !args.no_images {
+        if args.last_frame {
+            say!(
+                "Rendered frame {} of {frames} ({frame_width}x{frame_height}) to {}",
+                frames - 1,
+                args.output
+            );
+        } else if !args.no_images {
             say!(
                 "Rendered {frames} {frame_width}x{frame_height} frames to {} .. {}",
                 super::frame_seq::numbered(&args.output, 0, frames).display(),
