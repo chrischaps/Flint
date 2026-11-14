@@ -11,6 +11,7 @@
 //! scene that would load a different file than before.
 //!
 //! Run with `--nocapture` for the table.
+#![allow(clippy::disallowed_methods)] // a test: reads its files off the disk, not through the vfs
 
 use flint_core::project::{shown, AssetKind, OrderChange, Project};
 use std::collections::BTreeMap;

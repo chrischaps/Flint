@@ -243,6 +243,7 @@ mod imp {
     /// Remove the least recently touched files until `dir` holds at most
     /// `max_bytes`, never `keep` (the file just written). Returns how many
     /// went.
+    #[allow(clippy::disallowed_methods)] // lists the engine's own cache folder on the disk, which no bundle holds
     pub fn trim(dir: &Path, max_bytes: u64, keep: &Path) -> u64 {
         let Ok(entries) = fs::read_dir(dir) else {
             return 0;

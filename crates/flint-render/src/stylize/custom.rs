@@ -4583,6 +4583,7 @@ fn style(p: StylePixel) -> vec4<f32> {
     /// constant-bound loops (orton's 13-tap blurs) are left as written;
     /// radial_blur's loop runs to a parameter, so it is still guarded.
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn example_styles_warn_about_nothing() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/styles");
         let mut checked = 0;

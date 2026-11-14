@@ -224,6 +224,7 @@ fn a_second_renderer_takes_the_first_ones_pipelines_and_none_of_its_state() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
 fn a_changed_shader_builds_a_new_pipeline_not_the_kept_one() {
     let Some(lease) = shared_gpu::lease_alone() else {
         flint_render::gpu_select::skip_without_gpu("no GPU adapter");

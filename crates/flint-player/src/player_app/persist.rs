@@ -741,6 +741,7 @@ mod tests {
     /// Every file under `dir`, as a path from it with forward slashes, and
     /// its text.
     fn files_under(dir: &Path) -> Vec<(String, String)> {
+        #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
         fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, String)>) {
             let Ok(entries) = std::fs::read_dir(dir) else {
                 return;
@@ -941,6 +942,7 @@ fn on_init() {
     /// the slot's. The hard link is a second name for the old file's bytes;
     /// a write through the save path would change what it reads.
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn the_players_save_is_a_temp_file_renamed_over_the_old_one() {
         if flint_core::project::overridden().is_some() {
             return;
@@ -981,6 +983,7 @@ fn on_init() {
     /// directory, the old file is left as it was, and the next run reads
     /// the new one.
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn the_player_reads_each_old_place_once_and_saves_to_the_user_directory() {
         if flint_core::project::overridden().is_some() {
             return;
@@ -1031,6 +1034,7 @@ fn on_init() {
     /// `--save-dir` is the whole answer: nothing is read from the project
     /// or the user directory, and nothing is written to either.
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn save_dir_overrides_everything() {
         if flint_core::project::overridden().is_some() {
             return;

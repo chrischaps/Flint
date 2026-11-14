@@ -1,5 +1,6 @@
 //! Diagnostic: compare a file's reported n_frames vs its decoded frame count.
 //! Usage: cargo run -p flint-music --example probe_file -- <path> [<path>...]
+#![allow(clippy::disallowed_methods)] // an example: reads its files off the disk, not through the vfs
 
 use std::fs::File;
 use symphonia::core::codecs::DecoderOptions;

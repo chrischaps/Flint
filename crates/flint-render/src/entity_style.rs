@@ -598,6 +598,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test asserts on the TOML exactly as written
     fn a_setting_reads_entity_then_scene_then_default() {
         let mut world = FlintWorld::new();
         let barrel = world.spawn("barrel").unwrap();

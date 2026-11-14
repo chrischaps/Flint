@@ -16,3 +16,6 @@ crate-type = ["cdylib", "rlib"]
 # features would pull both in.
 kira = { version = "0.11", default-features = false }
 glam = { workspace = true }
+
+[lints]
+workspace = true

@@ -41,3 +41,6 @@ flint-ecs = { workspace = true }
 flint-scene = { workspace = true }
 flint-schema = { workspace = true }
 flint-procgen = { workspace = true }
+
+[lints]
+workspace = true

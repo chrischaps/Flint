@@ -7,6 +7,7 @@
 //!   from the structural pass.
 //! - `fixtures/invalid/*` each carry a `# expect-error: <Code>` header naming
 //!   the exact issue code the validator must emit.
+#![allow(clippy::disallowed_methods)] // a test: reads its files off the disk and asserts on the TOML exactly as written, not through the vfs
 
 use flint_music::SuiteManifest;
 use flint_rhythm::{validate_chart, validate_manifest, Chart};
