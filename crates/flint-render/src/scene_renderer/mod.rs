@@ -1207,14 +1207,14 @@ impl SceneRenderer {
             return Ok(());
         }
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: mask,
                 mip_level: 0,
                 origin: wgpu::Origin3d { x, y, z: 0 },
                 aspect: wgpu::TextureAspect::All,
             },
             bytes,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(width),
                 rows_per_image: Some(height),
@@ -1463,8 +1463,12 @@ impl SceneRenderer {
             encoder.copy_buffer_to_buffer(buffer, offset, &staging, 0, size);
             queue.submit([encoder.finish()]);
             staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-            device.poll(wgpu::Maintain::Wait);
-            let bytes = staging.slice(..).get_mapped_range().to_vec();
+            device.poll(wgpu::PollType::wait_indefinitely());
+            let bytes = staging
+                .slice(..)
+                .get_mapped_range()
+                .expect("mapped buffer range")
+                .to_vec();
             staging.unmap();
             bytes
         };
@@ -3556,7 +3560,7 @@ impl SceneRenderer {
         context: &RenderContext,
         camera: &Camera,
         view: &wgpu::TextureView,
-    ) -> Result<(), wgpu::SurfaceError> {
+    ) -> Result<(), crate::RenderError> {
         if self.device_lost {
             return Ok(());
         }
@@ -4244,6 +4248,7 @@ impl SceneRenderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: pass_color_view,
                     resolve_target: pass_resolve_target,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(clear_color),
                         store: wgpu::StoreOp::Store,
@@ -4259,6 +4264,7 @@ impl SceneRenderer {
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             self.render_main_pass(
                 &mut render_pass,
@@ -4280,6 +4286,7 @@ impl SceneRenderer {
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: pass_color_view,
                         resolve_target: pass_resolve_target,
+                        depth_slice: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(clear_color),
                             store: wgpu::StoreOp::Store,
@@ -4295,6 +4302,7 @@ impl SceneRenderer {
                     }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 self.render_main_pass(
                     &mut pass_a,
@@ -4346,6 +4354,7 @@ impl SceneRenderer {
                         Some(wgpu::RenderPassColorAttachment {
                             view: grab_color_view,
                             resolve_target: None,
+                            depth_slice: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                                 store: wgpu::StoreOp::Store,
@@ -4354,6 +4363,7 @@ impl SceneRenderer {
                         Some(wgpu::RenderPassColorAttachment {
                             view: grab_depth_view,
                             resolve_target: None,
+                            depth_slice: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
                                 store: wgpu::StoreOp::Store,
@@ -4363,6 +4373,7 @@ impl SceneRenderer {
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 blit_pass.set_pipeline(&op.blit_pipeline);
                 blit_pass.set_bind_group(0, &*blit_bind_group, &[]);
@@ -4376,6 +4387,7 @@ impl SceneRenderer {
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: pass_color_view,
                         resolve_target: pass_resolve_target,
+                        depth_slice: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Store,
@@ -4391,6 +4403,7 @@ impl SceneRenderer {
                     }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 self.render_main_pass(
                     &mut pass_b,
@@ -4776,14 +4789,14 @@ fn upload_grass_texture(
         view_formats: &[],
     });
     queue.write_texture(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: &texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
         data,
-        wgpu::ImageDataLayout {
+        wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(width * bytes_per_texel),
             rows_per_image: Some(height),

@@ -110,6 +110,7 @@
 
 use crate::postprocess::PostProcessConfig;
 use crate::stylize::StyleDescriptor;
+use crate::trusted_shader::TrustedShader as _;
 use bytemuck::{Pod, Zeroable};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -1004,8 +1005,8 @@ fn veil_pipeline(
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
-        bind_group_layouts: layouts,
-        push_constant_ranges: &[],
+        bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
+        immediate_size: 0,
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
@@ -1013,7 +1014,7 @@ fn veil_pipeline(
         vertex: wgpu::VertexState {
             module,
             entry_point: Some(vs),
-            buffers,
+            buffers: &buffers.iter().cloned().map(Some).collect::<Vec<_>>(),
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -1032,13 +1033,13 @@ fn veil_pipeline(
         },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
-            depth_write_enabled: false,
-            depth_compare: wgpu::CompareFunction::Less,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Less),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -1132,8 +1133,8 @@ fn mask_pipeline(
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
-        bind_group_layouts: layouts,
-        push_constant_ranges: &[],
+        bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
+        immediate_size: 0,
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
@@ -1141,7 +1142,7 @@ fn mask_pipeline(
         vertex: wgpu::VertexState {
             module: shader,
             entry_point: Some(entry),
-            buffers: &[buffer],
+            buffers: &[Some(buffer)],
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -1164,7 +1165,7 @@ fn mask_pipeline(
             count: samples,
             ..Default::default()
         },
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -1243,7 +1244,7 @@ impl MsaaMask {
             &[transform_bgl, &draw_bgl, bone_bgl],
             crate::primitives::SkinnedVertex::desc(),
         );
-        let resolve_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let resolve_shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Mask Resolve Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("style_mask_resolve.wgsl").into()),
         });
@@ -1262,8 +1263,8 @@ impl MsaaMask {
         });
         let resolve_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Style Mask Resolve Layout"),
-            bind_group_layouts: &[&resolve_bgl],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&resolve_bgl)],
+            immediate_size: 0,
         });
         let resolve_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Style Mask Resolve Pipeline"),
@@ -1287,7 +1288,7 @@ impl MsaaMask {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         Self {
@@ -1335,7 +1336,7 @@ impl MsaaMask {
 impl StyleMaskPass {
     pub(crate) fn new(device: &wgpu::Device, layouts: &MaskLayouts<'_>) -> Self {
         let (transform_bgl, bone_bgl) = (layouts.transform, layouts.bones);
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Mask Shader"),
             source: wgpu::ShaderSource::Wgsl(STYLE_MASK_WGSL.into()),
         });
@@ -1363,11 +1364,11 @@ impl StyleMaskPass {
             &[transform_bgl, &draw_bgl, bone_bgl],
             crate::primitives::SkinnedVertex::desc(),
         );
-        let pbr = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let pbr = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Veil PBR Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
-        let skinned = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let skinned = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Veil Skinned Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("skinned_shader.wgsl").into()),
         });
@@ -1486,7 +1487,7 @@ impl StyleMaskPass {
             .filter(|p| !p.draws.is_empty() && self.veil_particles.is_none())
             .map(|p| p.pipeline)
         {
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            let shader = device.create_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Style Veil Particle Shader"),
                 source: wgpu::ShaderSource::Wgsl(include_str!("particle_shader.wgsl").into()),
             });
@@ -1508,6 +1509,7 @@ impl StyleMaskPass {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: veil_view,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                     store: wgpu::StoreOp::Store,
@@ -1523,6 +1525,7 @@ impl StyleMaskPass {
             ),
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         if veil.is_empty() {
             return;
@@ -1714,6 +1717,7 @@ fn clear_pass<'e>(
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view,
             resolve_target: None,
+            depth_slice: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                 store: wgpu::StoreOp::Store,
@@ -1722,6 +1726,7 @@ fn clear_pass<'e>(
         depth_stencil_attachment: None,
         timestamp_writes: None,
         occlusion_query_set: None,
+        multiview_mask: None,
     })
 }
 

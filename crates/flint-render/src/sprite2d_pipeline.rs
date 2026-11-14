@@ -10,6 +10,7 @@
 //! - Storage buffer instancing for efficient batched rendering
 //! - Layer-based Z-offset for draw ordering (depth write disabled)
 
+use crate::trusted_shader::TrustedShader as _;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
@@ -57,7 +58,7 @@ pub struct Sprite2dPipeline {
 
 impl Sprite2dPipeline {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, sample_count: u32) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Sprite2D Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("sprite2d_shader.wgsl").into()),
         });
@@ -121,19 +122,19 @@ impl Sprite2dPipeline {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Sprite2D Pipeline Layout"),
             bind_group_layouts: &[
-                &uniform_bind_group_layout,
-                &instance_bind_group_layout,
-                &texture_bind_group_layout,
+                Some(&uniform_bind_group_layout),
+                Some(&instance_bind_group_layout),
+                Some(&texture_bind_group_layout),
             ],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
 
         // Alpha blending, depth test enabled but depth write DISABLED
         // (2D sprites rely on layer-based draw order, not depth buffer writes)
         let depth_stencil = wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
-            depth_write_enabled: false,
-            depth_compare: wgpu::CompareFunction::LessEqual,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         };
@@ -171,7 +172,7 @@ impl Sprite2dPipeline {
                 count: sample_count,
                 ..Default::default()
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 

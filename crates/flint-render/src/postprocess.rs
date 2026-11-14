@@ -5,6 +5,7 @@
 //! sRGB surface with exposure, ACES tonemapping, gamma, and vignette.
 
 use crate::camera::Camera;
+use crate::trusted_shader::TrustedShader as _;
 use bytemuck::{Pod, Zeroable};
 
 /// Maximum number of bloom mip levels in the downsample/upsample chain.
@@ -523,7 +524,7 @@ pub struct FxaaPipeline {
 
 impl FxaaPipeline {
     pub fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("FXAA Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("fxaa_shader.wgsl").into()),
         });
@@ -566,8 +567,8 @@ impl FxaaPipeline {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("FXAA Pipeline Layout"),
-            bind_group_layouts: &[&uniform_bgl, &texture_bgl],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&uniform_bgl), Some(&texture_bgl)],
+            immediate_size: 0,
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -595,7 +596,7 @@ impl FxaaPipeline {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -729,14 +730,14 @@ impl PostProcessPipeline {
             label: Some("PostProcess Linear Sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
 
         // --- Composite pipeline ---
-        let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let composite_shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Composite Shader"),
             source: wgpu::ShaderSource::Wgsl(COMPOSITE_WGSL.into()),
         });
@@ -876,12 +877,12 @@ impl PostProcessPipeline {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Composite Pipeline Layout"),
                 bind_group_layouts: &[
-                    &composite_uniform_bgl,
-                    &composite_scene_bgl,
-                    &composite_bloom_bgl,
-                    &composite_ssao_bgl,
+                    Some(&composite_uniform_bgl),
+                    Some(&composite_scene_bgl),
+                    Some(&composite_bloom_bgl),
+                    Some(&composite_ssao_bgl),
                 ],
-                push_constant_ranges: &[],
+                immediate_size: 0,
             });
 
         let composite_pipeline = crate::pipeline_cache::shared(
@@ -914,7 +915,7 @@ impl PostProcessPipeline {
                     },
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
+                    multiview_mask: None,
                     cache: None,
                 })
             },
@@ -928,7 +929,7 @@ impl PostProcessPipeline {
         });
 
         // --- Bloom pipelines ---
-        let bloom_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let bloom_shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Bloom Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("bloom_shader.wgsl").into()),
         });
@@ -974,8 +975,8 @@ impl PostProcessPipeline {
         let bloom_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Bloom Pipeline Layout"),
-                bind_group_layouts: &[&bloom_uniform_bgl, &bloom_texture_bgl],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&bloom_uniform_bgl), Some(&bloom_texture_bgl)],
+                immediate_size: 0,
             });
 
         let bloom_threshold_pipeline = crate::pipeline_cache::shared(
@@ -1008,7 +1009,7 @@ impl PostProcessPipeline {
                     },
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
+                    multiview_mask: None,
                     cache: None,
                 })
             },
@@ -1044,7 +1045,7 @@ impl PostProcessPipeline {
                     },
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
+                    multiview_mask: None,
                     cache: None,
                 })
             },
@@ -1092,7 +1093,7 @@ impl PostProcessPipeline {
                     },
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
+                    multiview_mask: None,
                     cache: None,
                 })
             },
@@ -1163,14 +1164,14 @@ impl PostProcessPipeline {
             view_formats: &[],
         });
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &ssao_noise_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             &noise_data,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * 4), // 4 pixels * 4 bytes (RGBA)
                 rows_per_image: Some(4),
@@ -1200,14 +1201,14 @@ impl PostProcessPipeline {
             view_formats: &[],
         });
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &white_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             &[255u8],
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(1),
                 rows_per_image: Some(1),
@@ -1221,7 +1222,7 @@ impl PostProcessPipeline {
         let white_texture_view = white_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // SSAO shader
-        let ssao_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let ssao_shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("SSAO Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("ssao_shader.wgsl").into()),
         });
@@ -1289,8 +1290,12 @@ impl PostProcessPipeline {
 
         let ssao_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("SSAO Pipeline Layout"),
-            bind_group_layouts: &[&ssao_uniform_bgl, &ssao_depth_bgl, &ssao_noise_bgl],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[
+                Some(&ssao_uniform_bgl),
+                Some(&ssao_depth_bgl),
+                Some(&ssao_noise_bgl),
+            ],
+            immediate_size: 0,
         });
 
         let ssao_pipeline =
@@ -1320,7 +1325,7 @@ impl PostProcessPipeline {
                     },
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
+                    multiview_mask: None,
                     cache: None,
                 })
             });
@@ -1333,7 +1338,7 @@ impl PostProcessPipeline {
         });
 
         // SSAO blur shader
-        let ssao_blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let ssao_blur_shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("SSAO Blur Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("ssao_blur_shader.wgsl").into()),
         });
@@ -1381,8 +1386,8 @@ impl PostProcessPipeline {
         let ssao_blur_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("SSAO Blur Pipeline Layout"),
-                bind_group_layouts: &[&ssao_blur_uniform_bgl, &ssao_blur_texture_bgl],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&ssao_blur_uniform_bgl), Some(&ssao_blur_texture_bgl)],
+                immediate_size: 0,
             });
 
         let ssao_blur_pipeline = crate::pipeline_cache::shared(
@@ -1415,7 +1420,7 @@ impl PostProcessPipeline {
                     },
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
+                    multiview_mask: None,
                     cache: None,
                 })
             },
@@ -1429,7 +1434,7 @@ impl PostProcessPipeline {
         });
 
         // --- Volumetric (god rays) pipelines ---
-        let volumetric_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let volumetric_shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Volumetric Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("volumetric_shader.wgsl").into()),
         });
@@ -1526,11 +1531,11 @@ impl PostProcessPipeline {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Volumetric Pipeline Layout"),
                 bind_group_layouts: &[
-                    &volumetric_uniform_bgl,
-                    &volumetric_depth_bgl,
-                    &volumetric_shadow_bgl,
+                    Some(&volumetric_uniform_bgl),
+                    Some(&volumetric_depth_bgl),
+                    Some(&volumetric_shadow_bgl),
                 ],
-                push_constant_ranges: &[],
+                immediate_size: 0,
             });
 
         let volumetric_pipeline = crate::pipeline_cache::shared(
@@ -1563,7 +1568,7 @@ impl PostProcessPipeline {
                     },
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
+                    multiview_mask: None,
                     cache: None,
                 })
             },
@@ -1577,7 +1582,7 @@ impl PostProcessPipeline {
         });
 
         // Volumetric blur shader
-        let volumetric_blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let volumetric_blur_shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Volumetric Blur Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("volumetric_blur_shader.wgsl").into()),
         });
@@ -1641,8 +1646,11 @@ impl PostProcessPipeline {
         let volumetric_blur_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Volumetric Blur Pipeline Layout"),
-                bind_group_layouts: &[&volumetric_blur_uniform_bgl, &volumetric_blur_texture_bgl],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[
+                    Some(&volumetric_blur_uniform_bgl),
+                    Some(&volumetric_blur_texture_bgl),
+                ],
+                immediate_size: 0,
             });
 
         let volumetric_blur_pipeline = crate::pipeline_cache::shared(
@@ -1675,7 +1683,7 @@ impl PostProcessPipeline {
                     },
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
+                    multiview_mask: None,
                     cache: None,
                 })
             },
@@ -2548,6 +2556,7 @@ pub(crate) fn fullscreen_pass(
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view: target,
             resolve_target: None,
+            depth_slice: None,
             ops: wgpu::Operations {
                 load: clear.map_or(wgpu::LoadOp::Load, wgpu::LoadOp::Clear),
                 store: wgpu::StoreOp::Store,
@@ -2556,6 +2565,7 @@ pub(crate) fn fullscreen_pass(
         depth_stencil_attachment: None,
         timestamp_writes: None,
         occlusion_query_set: None,
+        multiview_mask: None,
     });
     pass.set_pipeline(pipeline);
     for (i, group) in groups.iter().enumerate() {

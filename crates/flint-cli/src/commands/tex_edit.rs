@@ -5,6 +5,7 @@
 //! - Center: egui-snarl node graph canvas
 //! - Right: output texture preview with channel browser
 
+use flint_render::AcquireFrame;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -296,8 +297,16 @@ impl TexEditApp {
             None,
             None,
         );
-        let egui_renderer =
-            egui_wgpu::Renderer::new(&context.device, context.config.format, None, 1, false);
+        let egui_renderer = egui_wgpu::Renderer::new(
+            &context.device,
+            context.config.format,
+            egui_wgpu::RendererOptions {
+                depth_stencil_format: None,
+                msaa_samples: 1,
+                dithering: false,
+                ..Default::default()
+            },
+        );
         self.egui_winit = Some(egui_winit);
         self.egui_renderer = Some(egui_renderer);
         self.render_context = Some(context);
@@ -830,7 +839,6 @@ impl<'a> SnarlViewer<TextureNode> for TexEditViewer<'a> {
         &mut self,
         pin: &egui_snarl::InPin,
         ui: &mut egui::Ui,
-        _scale: f32,
         snarl: &mut Snarl<TextureNode>,
     ) -> PinInfo {
         let node = &snarl[pin.id.node];
@@ -845,7 +853,6 @@ impl<'a> SnarlViewer<TextureNode> for TexEditViewer<'a> {
         &mut self,
         pin: &egui_snarl::OutPin,
         ui: &mut egui::Ui,
-        _scale: f32,
         snarl: &mut Snarl<TextureNode>,
     ) -> PinInfo {
         let node = &snarl[pin.id.node];
@@ -862,9 +869,10 @@ impl<'a> SnarlViewer<TextureNode> for TexEditViewer<'a> {
         _inputs: &[egui_snarl::InPin],
         _outputs: &[egui_snarl::OutPin],
         ui: &mut egui::Ui,
-        scale: f32,
         snarl: &mut Snarl<TextureNode>,
     ) {
+        // snarl >= 0.7 zooms the Ui itself (#934 spike)
+        let scale = 1.0_f32;
         ui.vertical(|ui| {
             // Show preview thumbnail if available
             if let Some(handle) = self.app.node_preview_textures.get(&node) {
@@ -952,7 +960,6 @@ impl<'a> SnarlViewer<TextureNode> for TexEditViewer<'a> {
         &mut self,
         pos: egui::Pos2,
         ui: &mut egui::Ui,
-        _scale: f32,
         snarl: &mut Snarl<TextureNode>,
     ) {
         ui.label("Add Op");
@@ -976,7 +983,7 @@ impl<'a> SnarlViewer<TextureNode> for TexEditViewer<'a> {
                     self.app.push_undo();
                     snarl.insert_node(pos, node);
                     self.app.mark_dirty();
-                    ui.close_menu();
+                    ui.close();
                 }
             }
         }
@@ -988,7 +995,6 @@ impl<'a> SnarlViewer<TextureNode> for TexEditViewer<'a> {
         _inputs: &[egui_snarl::InPin],
         _outputs: &[egui_snarl::OutPin],
         ui: &mut egui::Ui,
-        _scale: f32,
         snarl: &mut Snarl<TextureNode>,
     ) {
         if matches!(&snarl[node], TextureNode::Op { .. }) {
@@ -999,7 +1005,7 @@ impl<'a> SnarlViewer<TextureNode> for TexEditViewer<'a> {
                     self.app.selected_node = None;
                 }
                 self.app.mark_dirty();
-                ui.close_menu();
+                ui.close();
             }
         }
     }
@@ -1166,9 +1172,8 @@ impl TexEditApp {
             .as_mut()
             .unwrap()
             .take_egui_input(window.as_ref());
-        self.egui_ctx.begin_pass(raw_input);
-        self.draw_ui();
-        let full_output = self.egui_ctx.end_pass();
+        let egui_ctx = self.egui_ctx.clone();
+        let full_output = egui_ctx.run_ui(raw_input, |ui| self.draw_ui(ui));
 
         self.egui_winit
             .as_mut()
@@ -1181,9 +1186,9 @@ impl TexEditApp {
 
         let ctx = self.render_context.as_ref().unwrap();
 
-        let surface_texture = match ctx.surface.get_current_texture() {
+        let surface_texture = match ctx.surface.acquire() {
             Ok(t) => t,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => {
                 ctx.surface.configure(&ctx.device, &ctx.config);
                 return;
             }
@@ -1205,8 +1210,10 @@ impl TexEditApp {
         // Take renderer out to avoid borrow conflicts (same pattern as gen_preview)
         let mut egui_renderer = self.egui_renderer.take().unwrap();
 
-        for (id, delta) in &full_output.textures_delta.set {
-            egui_renderer.update_texture(&ctx.device, &ctx.queue, *id, delta);
+        for (id, deltas) in &full_output.textures_delta.set {
+            for delta in deltas {
+                egui_renderer.update_texture(&ctx.device, &ctx.queue, *id, delta);
+            }
         }
 
         let mut encoder = ctx
@@ -1229,6 +1236,7 @@ impl TexEditApp {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.12,
@@ -1242,6 +1250,7 @@ impl TexEditApp {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             let mut render_pass = render_pass.forget_lifetime();
@@ -1249,7 +1258,7 @@ impl TexEditApp {
         }
 
         ctx.queue.submit(std::iter::once(encoder.finish()));
-        surface_texture.present();
+        ctx.queue.present(surface_texture);
 
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);
@@ -1258,29 +1267,27 @@ impl TexEditApp {
         self.egui_renderer = Some(egui_renderer);
     }
 
-    fn draw_ui(&mut self) {
+    fn draw_ui(&mut self, ui: &mut egui::Ui) {
         if !self.show_ui {
             return;
         }
 
-        let ctx = self.egui_ctx.clone();
-
         // ── Left panel: Node Properties ──
-        egui::SidePanel::left("properties_panel")
-            .default_width(280.0)
-            .show(&ctx, |ui| {
+        egui::Panel::left("properties_panel")
+            .default_size(280.0)
+            .show(ui, |ui| {
                 self.draw_properties_panel(ui);
             });
 
         // ── Right panel: Output Preview ──
-        egui::SidePanel::right("preview_panel")
-            .default_width(320.0)
-            .show(&ctx, |ui| {
+        egui::Panel::right("preview_panel")
+            .default_size(320.0)
+            .show(ui, |ui| {
                 self.draw_preview_panel(ui);
             });
 
         // ── Center: Node Graph Canvas ──
-        egui::CentralPanel::default().show(&ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             self.draw_graph_panel(ui);
         });
     }
@@ -1570,7 +1577,8 @@ impl TexEditApp {
 
     fn draw_graph_panel(&mut self, ui: &mut egui::Ui) {
         // Check for node selection via click
-        let selected = Snarl::<TextureNode>::get_selected_nodes("tex_edit_snarl", ui);
+        let selected =
+            egui_snarl::ui::get_selected_nodes(ui.make_persistent_id("tex_edit_snarl"), ui.ctx());
         if let Some(&node_id) = selected.first() {
             self.selected_node = Some(node_id);
         }

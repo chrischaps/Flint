@@ -1,21 +1,15 @@
 //! Render pipeline setup
 
 use crate::primitives::Vertex;
+use crate::trusted_shader::TrustedShader as _;
 
-/// Depth bias for the line-list overlays (wireframe, skeleton), pulling
-/// them in front of the surface they trace. WebGPU forbids any depth bias
-/// on line topologies and rejects the pipeline, so the web draws them
-/// unbiased.
+/// Depth bias for the line-list overlays (wireframe, skeleton): none.
+/// WebGPU forbids any depth bias on line topologies, and since wgpu 30
+/// (#934 spike) the native backends reject the pipeline too, so every
+//// target draws them unbiased. Vulkan biases only polygons, so it only
+/// changes DX12's lines.
 pub(crate) fn line_depth_bias() -> wgpu::DepthBiasState {
-    if cfg!(target_arch = "wasm32") {
-        wgpu::DepthBiasState::default()
-    } else {
-        wgpu::DepthBiasState {
-            constant: -2,
-            slope_scale: -1.0,
-            clamp: 0.0,
-        }
-    }
+    wgpu::DepthBiasState::default()
 }
 use bytemuck::{Pod, Zeroable};
 
@@ -609,7 +603,7 @@ impl SceneLayouts {
             label: Some("Material Sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
             // Ground seen edge-on (roads, floors) keeps its detail; needs
@@ -652,7 +646,7 @@ impl RenderPipeline {
         sample_count: u32,
         layouts: &SceneLayouts,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("PBR Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
@@ -660,11 +654,11 @@ impl RenderPipeline {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("PBR Pipeline Layout"),
             bind_group_layouts: &[
-                &layouts.transform_bind_group_layout,
-                &layouts.material_bind_group_layout,
-                &layouts.light_bind_group_layout,
+                Some(&layouts.transform_bind_group_layout),
+                Some(&layouts.material_bind_group_layout),
+                Some(&layouts.light_bind_group_layout),
             ],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
 
         let make_opaque = |label: &str, cull_mode: Option<wgpu::Face>| {
@@ -674,7 +668,7 @@ impl RenderPipeline {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::desc()],
+                    buffers: &[Some(Vertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -698,8 +692,8 @@ impl RenderPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -707,7 +701,7 @@ impl RenderPipeline {
                     count: sample_count,
                     ..Default::default()
                 },
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };
@@ -722,7 +716,7 @@ impl RenderPipeline {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
+                buffers: &[Some(Vertex::desc())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -746,8 +740,8 @@ impl RenderPipeline {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -755,7 +749,7 @@ impl RenderPipeline {
                 count: sample_count,
                 ..Default::default()
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -767,7 +761,7 @@ impl RenderPipeline {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::desc()],
+                    buffers: &[Some(Vertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -791,8 +785,8 @@ impl RenderPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
                     stencil: wgpu::StencilState::default(),
                     bias: line_depth_bias(),
                 }),
@@ -800,7 +794,7 @@ impl RenderPipeline {
                     count: sample_count,
                     ..Default::default()
                 },
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             });
 
@@ -812,7 +806,7 @@ impl RenderPipeline {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::desc()],
+                    buffers: &[Some(Vertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -836,8 +830,8 @@ impl RenderPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Always,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
                     stencil: wgpu::StencilState::default(),
                     bias: line_depth_bias(),
                 }),
@@ -845,7 +839,7 @@ impl RenderPipeline {
                     count: sample_count,
                     ..Default::default()
                 },
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             });
 
@@ -861,7 +855,7 @@ impl RenderPipeline {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::desc()],
+                    buffers: &[Some(Vertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -885,8 +879,8 @@ impl RenderPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -894,7 +888,7 @@ impl RenderPipeline {
                     count: sample_count,
                     ..Default::default()
                 },
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };
@@ -915,7 +909,7 @@ impl RenderPipeline {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::desc()],
+                    buffers: &[Some(Vertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -939,8 +933,8 @@ impl RenderPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -948,7 +942,7 @@ impl RenderPipeline {
                     count: sample_count,
                     ..Default::default()
                 },
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             });
 
@@ -960,7 +954,7 @@ impl RenderPipeline {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::desc()],
+                    buffers: &[Some(Vertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -984,8 +978,8 @@ impl RenderPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -993,7 +987,7 @@ impl RenderPipeline {
                     count: sample_count,
                     ..Default::default()
                 },
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             });
 

@@ -117,10 +117,10 @@ impl TextHalos {
 
         if !self.entries.contains_key(&id) {
             let max_side = ctx.input(|i| i.max_texture_side);
-            let halo = ctx.fonts(|f| {
-                let atlas = f.texture_atlas();
-                let atlas = atlas.lock();
-                rasterise(galley, atlas.image(), spec, max_side)
+            let halo = ctx.fonts_mut(|f| {
+                // epaint 0.36 hands out a copy of the atlas, not a lock on it
+                // (#934 spike): halos are cached, so this is once a label
+                rasterise(galley, &f.image(), spec, max_side)
             })?;
             if self.entries.len() >= MAX_ENTRIES {
                 self.entries.clear();
@@ -190,7 +190,7 @@ fn hash_spec(spec: &HaloSpec, h: &mut impl Hasher) {
 /// that size is mostly off the screen anyway (#657).
 pub(super) fn rasterise(
     galley: &egui::Galley,
-    atlas: &egui::FontImage,
+    atlas: &egui::ColorImage,
     spec: HaloSpec,
     max_side: usize,
 ) -> Option<HaloImage> {
@@ -264,7 +264,8 @@ pub(super) fn rasterise(
                 if tx >= atlas.size[0] || dx >= w {
                     continue;
                 }
-                let c = atlas.pixels[ty * atlas.size[0] + tx];
+                // Coverage is the atlas texel's alpha since egui 0.32
+                let c = atlas.pixels[ty * atlas.size[0] + tx].a() as f32 / 255.0;
                 let d = &mut cov[dy * w + dx];
                 *d = if scale == 1 {
                     d.max(c)
@@ -364,10 +365,7 @@ pub(super) fn rasterise(
         .collect();
 
     Some(HaloImage {
-        image: egui::ColorImage {
-            size: [w, h],
-            pixels,
-        },
+        image: egui::ColorImage::new([w, h], pixels),
         origin_px: [origin[0] * scale, origin[1] * scale],
         scale: scale as u32,
     })

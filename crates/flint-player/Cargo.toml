@@ -124,7 +124,7 @@ log = { workspace = true }
 getrandom = { version = "0.3", features = ["wasm_js"] }
 # egui-winit's default `clipboard` feature pulls arboard, which has no web
 # backend. Pinned here rather than inherited so its defaults can go.
-egui-winit = { version = "0.30.0", default-features = false }
+egui-winit = { version = "0.36.2", default-features = false }
 # Async startup (player_app/web_startup.rs), the flint-web entry
 # (src/bin/flint_web.rs, index.html), the shim page and its Begin gate for
 # sound (flint_web_shims.rs, shims.html; #101), and localStorage for user

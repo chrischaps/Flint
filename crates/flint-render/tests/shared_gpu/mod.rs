@@ -69,7 +69,7 @@ pub fn device() -> Option<&'static SharedGpu> {
             let adapter = flint_render::gpu_select::request_adapter(&instance, None).await?;
             let info = adapter.get_info();
             let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor::default(), None)
+                .request_device(&wgpu::DeviceDescriptor::default())
                 .await
                 .ok()?;
             Some(SharedGpu {

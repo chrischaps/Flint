@@ -6,6 +6,7 @@
 use super::dev_shader;
 pub(crate) use super::dev_shader::wgsl;
 pub use super::dev_shader::Wgsl;
+use crate::trusted_shader::TrustedShader as _;
 
 /// A fragment-stage uniform buffer at binding 0.
 pub fn uniform_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
@@ -205,8 +206,8 @@ fn build_fullscreen(
         .collect();
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
-        bind_group_layouts: layouts,
-        push_constant_ranges: &[],
+        bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
+        immediate_size: 0,
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
@@ -229,7 +230,7 @@ fn build_fullscreen(
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -341,7 +342,7 @@ impl ShaderText for Shader {
 /// from that folder instead and hot-reload (#418, [`dev_shader`]).
 pub fn shader(device: &wgpu::Device, label: &str, source: impl Into<Wgsl>) -> Shader {
     let text = dev_shader::source(label, source.into());
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    let module = device.create_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
         source: wgpu::ShaderSource::Wgsl(text.clone()),
     });
@@ -392,6 +393,7 @@ pub fn fullscreen_pass_targets(
             Some(wgpu::RenderPassColorAttachment {
                 view,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                     store: wgpu::StoreOp::Store,
@@ -405,6 +407,7 @@ pub fn fullscreen_pass_targets(
         depth_stencil_attachment: None,
         timestamp_writes: None,
         occlusion_query_set: None,
+        multiview_mask: None,
     });
     pass.set_pipeline(pipeline);
     for (i, group) in groups.iter().enumerate() {
@@ -622,6 +625,7 @@ pub fn scissored_pass(
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view: target,
             resolve_target: None,
+            depth_slice: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                 store: wgpu::StoreOp::Store,
@@ -630,6 +634,7 @@ pub fn scissored_pass(
         depth_stencil_attachment: None,
         timestamp_writes: None,
         occlusion_query_set: None,
+        multiview_mask: None,
     });
     pass.set_pipeline(&blit.pipeline);
     pass.set_bind_group(0, input, &[]);
@@ -669,6 +674,7 @@ pub fn fullscreen_pass_in(
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view: target,
             resolve_target: None,
+            depth_slice: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                 store: wgpu::StoreOp::Store,
@@ -677,6 +683,7 @@ pub fn fullscreen_pass_in(
         depth_stencil_attachment: None,
         timestamp_writes: None,
         occlusion_query_set: None,
+        multiview_mask: None,
     });
     if rect.is_empty() {
         return;

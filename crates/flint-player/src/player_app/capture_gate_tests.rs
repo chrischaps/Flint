@@ -53,8 +53,9 @@ impl crate::extension::PlayerExtension for Bare {}
 
 /// Run one egui frame on the app's context with a text field focused.
 fn focus_a_field(app: &PlayerApp) {
-    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    let _ = app.hud.egui_ctx.run_ui(egui::RawInput::default(), |ui| {
+        let ctx = &ui.ctx().clone();
+        egui::CentralPanel::default().show(ui, |ui| {
             let mut text = String::new();
             ui.text_edit_singleline(&mut text).request_focus();
         });
@@ -159,18 +160,20 @@ fn pad_axes_read_zero_while_a_field_has_focus() {
     assert_eq!(app.input.action_value("walk"), 0.0);
     app.input.end_frame();
     // The field lets go: the stick reads where it stands.
-    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
+    let _ = app.hud.egui_ctx.run_ui(egui::RawInput::default(), |ui| {
+        let ctx = &ui.ctx().clone();
         ctx.memory_mut(|m| m.stop_text_input());
     });
-    assert!(!app.hud.egui_ctx.wants_keyboard_input());
+    assert!(!app.hud.egui_ctx.egui_wants_keyboard_input());
     app.tick();
     assert!(app.input.action_value("walk") > 0.7);
 }
 
 /// Run one egui frame on the app's context with a button focused.
 fn focus_a_button(app: &PlayerApp) {
-    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    let _ = app.hud.egui_ctx.run_ui(egui::RawInput::default(), |ui| {
+        let ctx = &ui.ctx().clone();
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.button("Buy").request_focus();
         });
     });
@@ -187,7 +190,7 @@ fn a_focused_button_leaves_the_pads_to_the_game() {
     );
     app.add_extension(Box::new(Bare));
     focus_a_button(&app);
-    assert!(app.hud.egui_ctx.wants_keyboard_input());
+    assert!(app.hud.egui_ctx.egui_wants_keyboard_input());
     assert!(!app.text_has_focus());
     app.tick();
     assert!(app.input.action_value("walk") > 0.7);

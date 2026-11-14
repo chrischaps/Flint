@@ -12,6 +12,7 @@
 //! FXAA. Colours are display-space (sRGB), as the HUD's are, so a ring keeps
 //! the colour it had as a HUD line. Fog, bloom and tonemapping don't touch it.
 
+use crate::trusted_shader::TrustedShader as _;
 use bytemuck::{Pod, Zeroable};
 use flint_core::world_line::WorldLine;
 
@@ -196,14 +197,14 @@ impl WorldLinePipeline {
     /// `format` is the final target's (the surface's); the pass is single
     /// sample against a `Depth32Float` depth view.
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("World Line Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("world_line_shader.wgsl").into()),
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("World Line Pipeline Layout"),
             bind_group_layouts: &[],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("World Line Pipeline"),
@@ -211,7 +212,7 @@ impl WorldLinePipeline {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_world_line"),
-                buffers: &[WorldLineVertex::desc()],
+                buffers: &[Some(WorldLineVertex::desc())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -231,13 +232,13 @@ impl WorldLinePipeline {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         Self {
@@ -284,6 +285,7 @@ impl WorldLinePipeline {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -299,6 +301,7 @@ impl WorldLinePipeline {
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_vertex_buffer(0, buffer.slice(..));

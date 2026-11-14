@@ -1,6 +1,7 @@
 //! Render pipeline for skinned meshes with bone matrix storage buffer
 
 use crate::primitives::SkinnedVertex;
+use crate::trusted_shader::TrustedShader as _;
 
 /// Maximum bone count per skeleton (determines storage buffer size)
 pub const MAX_BONES: usize = 256;
@@ -43,7 +44,7 @@ impl SkinnedPipeline {
         light_bind_group_layout: &wgpu::BindGroupLayout,
         sample_count: u32,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Skinned PBR Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("skinned_shader.wgsl").into()),
         });
@@ -67,12 +68,12 @@ impl SkinnedPipeline {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Skinned PBR Pipeline Layout"),
             bind_group_layouts: &[
-                transform_bind_group_layout,
-                material_bind_group_layout,
-                light_bind_group_layout,
-                &bone_bind_group_layout,
+                Some(transform_bind_group_layout),
+                Some(material_bind_group_layout),
+                Some(light_bind_group_layout),
+                Some(&bone_bind_group_layout),
             ],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
 
         let make_opaque = |label: &str, cull_mode: Option<wgpu::Face>| {
@@ -82,7 +83,7 @@ impl SkinnedPipeline {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_skinned"),
-                    buffers: &[SkinnedVertex::desc()],
+                    buffers: &[Some(SkinnedVertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -106,8 +107,8 @@ impl SkinnedPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -115,7 +116,7 @@ impl SkinnedPipeline {
                     count: sample_count,
                     ..Default::default()
                 },
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };
@@ -124,7 +125,7 @@ impl SkinnedPipeline {
 
         // The skinned wireframe's vertex and fragment stages (#602: what is
         // left of the old outline shader)
-        let wire_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let wire_shader = device.create_module(wgpu::ShaderModuleDescriptor {
             label: Some("Skinned Wire Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("skinned_wire_shader.wgsl").into()),
         });
@@ -145,7 +146,7 @@ impl SkinnedPipeline {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_skinned"),
-                    buffers: &[SkinnedVertex::desc()],
+                    buffers: &[Some(SkinnedVertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -169,8 +170,8 @@ impl SkinnedPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: depth_write,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(depth_write),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -178,7 +179,7 @@ impl SkinnedPipeline {
                     count: sample_count,
                     ..Default::default()
                 },
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };
@@ -223,7 +224,7 @@ impl SkinnedPipeline {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_skinned"),
-                    buffers: &[SkinnedVertex::desc()],
+                    buffers: &[Some(SkinnedVertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -247,8 +248,8 @@ impl SkinnedPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -256,7 +257,7 @@ impl SkinnedPipeline {
                     count: sample_count,
                     ..Default::default()
                 },
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             });
 
@@ -268,7 +269,7 @@ impl SkinnedPipeline {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_skinned"),
-                    buffers: &[SkinnedVertex::desc()],
+                    buffers: &[Some(SkinnedVertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -292,8 +293,8 @@ impl SkinnedPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -301,7 +302,7 @@ impl SkinnedPipeline {
                     count: sample_count,
                     ..Default::default()
                 },
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             });
 
@@ -314,7 +315,7 @@ impl SkinnedPipeline {
             vertex: wgpu::VertexState {
                 module: &wire_shader,
                 entry_point: Some("vs_skinned_wire"),
-                buffers: &[SkinnedVertex::desc()],
+                buffers: &[Some(SkinnedVertex::desc())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -338,8 +339,8 @@ impl SkinnedPipeline {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: wgpu::StencilState::default(),
                 bias: crate::pipeline::line_depth_bias(),
             }),
@@ -347,7 +348,7 @@ impl SkinnedPipeline {
                 count: sample_count,
                 ..Default::default()
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 

@@ -22,6 +22,9 @@ default = ["audio", "gamepad", "dialogs"]
 audio = ["flint-player/audio", "flint-music/device", "flint-rhythm/device"]
 gamepad = ["flint-player/gamepad", "flint-input-capture/gamepad"]
 dialogs = ["dep:rfd"]
+# DXC linked into the binary (#934 spike): no DLLs on DX12. Downloads a
+# prebuilt static library at build time; Windows x86_64 MSVC only.
+static-dxc = ["flint-render/static-dxc"]
 
 [dependencies]
 flint-core = { workspace = true }
@@ -86,7 +89,7 @@ sha2 = { workspace = true }
 rfd = { workspace = true, optional = true }
 
 [dev-dependencies]
-naga = { version = "23", features = ["wgsl-in"] }
+naga = { version = "30", features = ["wgsl-in"] }
 # A JSON Schema validator, for the test that `flint schema --format json-schema`
 # describes every example scene (#684). Tests only.
 boon = "0.6"
