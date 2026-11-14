@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756): what this planned has shipped or been dropped. Current state: [Constraints and Assets](https://docs.chaps.dev/flint/concepts/constraints.html).
+
 # Phase 2: Constraints and Assets
 
 Flint's core thesis is that the primary interface is CLI and code, with visual tools focused on *validating* results rather than *creating* them. Phase 2 extends that idea into two domains: **how do you know a scene is correct?** and **how do you manage the stuff scenes are made of?**

@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756): what this planned has shipped or been dropped. Current state: [Procedural Generation](https://docs.chaps.dev/flint/concepts/procgen.html).
+
 # Living Props spike (#207): does a tree keep its structure, and how does the dial read?
 
 Nov 4, 2026 · part of #206 · throwaway work, no engine changes

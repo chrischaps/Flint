@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756): what this planned has shipped or been dropped. Current state: [Architecture Overview and the Roadmap](https://docs.chaps.dev/flint/architecture/overview.html).
+
 # Flint Engine Design Document
 
 **Version:** 0.7 (Phase 7 in progress)
@@ -819,7 +821,7 @@ The viewer answers: "Did the agent do what I asked?" not "Let me build this myse
 - Frame-budgeted generation queue --- complete
 - Runtime resolution integration in flint-player --- complete
 
-See `docs/flint-procgen-implementation-plan.md` for details.
+See `docs/archive/flint-procgen-implementation-plan.md` for details.
 
 ### Phase 7: AI-Assisted Procgen *(In Progress)*
 

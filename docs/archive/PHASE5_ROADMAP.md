@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756): what this planned has shipped or been dropped. Current state: [AI Asset Generation](https://docs.chaps.dev/flint/concepts/ai-generation.html).
+
 # Phase 5: AI Asset Pipeline *(Complete)*
 
 > **Status:** All stages complete. Phase 5 added AI asset generation (Flux, Meshy, ElevenLabs), style guides, batch resolution, build manifests, and semantic asset definitions.

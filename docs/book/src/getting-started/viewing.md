@@ -10,8 +10,6 @@ flint edit levels/tavern.scene.toml --watch --schemas schemas
 
 The `--watch` flag enables hot-reload: edit the scene TOML file, and the viewer re-parses and re-renders automatically. The entire file is re-parsed on each change (not incremental), which keeps the implementation simple and avoids synchronization issues.
 
-`flint serve` still works as a hidden alias for the same viewer.
-
 ## Camera Controls
 
 The viewer uses an orbit camera that rotates around a focus point. If the scene has a `[camera]` block, the orbit starts from that authored framing.

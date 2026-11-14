@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756): what this planned has shipped or been dropped. Current state: [Ocean](https://docs.chaps.dev/flint/concepts/ocean.html).
+
 # Water System Design
 
 ## Overview

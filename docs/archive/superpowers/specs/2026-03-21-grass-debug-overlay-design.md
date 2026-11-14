@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756): what this planned has shipped or been dropped. Current state: [Debug Panels](https://docs.chaps.dev/flint/guides/debug-panels.html).
+
 # Grass Debug Overlay — Design Spec
 
 ## Summary

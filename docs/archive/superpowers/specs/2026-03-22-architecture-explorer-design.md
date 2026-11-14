@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756): what this planned has shipped or been dropped. Current state: [Crate Dependency Graph](https://docs.chaps.dev/flint/architecture/crate-graph.html).
+
 # Architecture Explorer — Design Spec
 
 ## Overview

@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756). Where each unchecked item went: `serve.rs` is gone (`flint serve` is a hidden alias of `flint edit`); retry and timeout policy, #721; `asset resolve` nested-reference tests and docs, #968; enemy pathing, #969; projectiles, #970; keybind persistence shipped with the input config ([Physics and Runtime](https://docs.chaps.dev/flint/concepts/physics-and-runtime.html)).
+
 # Remaining Planned Work (Pending)
 
 This file tracks the **remaining** items from the approved audit plan that are **not implemented yet**.

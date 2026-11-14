@@ -1,3 +1,5 @@
+> **Historical**, archived 2026-11-14 (#756): what this planned has shipped or been dropped. Current state: [Terrain: grass](https://docs.chaps.dev/flint/concepts/terrain.html).
+
 # Terrain Grass System — Design Spec
 
 **Date:** 2026-03-21
