@@ -1865,7 +1865,7 @@ y = 10
 | `letter_spacing` | float | `0` | Extra spacing between glyphs, in points |
 | `shadow` | [dx,dy,r,g,b,a] | --- | Drop shadow offset and colour, drawn beneath the text |
 | `stroke_color`, `stroke_width` | [r,g,b,a], float | `[0,0,0,1]`, `0` | A text stroke, as `draw_text`'s `stroke` |
-| `glow_color`, `glow_radius` | [r,g,b,a], float | `[1,1,1,0.5]`, `0` | A text glow, as `draw_text`'s `glow`; on while `glow_radius` is above 0 |
+| `glow_color`, `glow_radius` | [r,g,b,a], float | `[1,1,1,0.73]`, `0` | A text glow, as `draw_text`'s `glow`; on while `glow_radius` is above 0 |
 | `text_align` | string | `"left"` | Text alignment: `left`, `center`, `right` |
 | `rounding` | float | `0` | Corner rounding for panels/rects |
 | `opacity` | float | `1.0` | Element opacity multiplier |

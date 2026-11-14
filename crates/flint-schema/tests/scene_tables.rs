@@ -151,8 +151,19 @@ fn scenes() -> Vec<(String, toml::Table)> {
     }
     let root = repo();
     let mut out = Vec::new();
-    for dir in ["examples", "tests", "showcase_game", "crates", "tools"] {
-        walk(&root.join(dir), &root, &mut out);
+    // ...and each game kept in the checkout: a top-level directory with a
+    // `flint.toml`, found by it so the engine names no game (#760)
+    let games = std::fs::read_dir(&root)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|d| d.join("flint.toml").is_file());
+    for dir in ["examples", "tests", "crates", "tools"]
+        .map(|d| root.join(d))
+        .into_iter()
+        .chain(games)
+    {
+        walk(&dir, &root, &mut out);
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     assert!(out.len() > 100, "the repository's scenes were not found");

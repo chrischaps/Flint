@@ -34,19 +34,88 @@ fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// The schema layers of the repository, each with the stack it is loaded
-/// in: the one its `flint.toml` names (`flint.toml` for the first two,
-/// `showcase_game/flint.toml` for the third). A directory of schema files
-/// that is in none of them fails [`problems`] as unread.
-const STACKS: &[&[&str]] = &[
-    &["schemas"],
-    &["schemas", "schemas/examples"],
-    &["schemas", "schemas/examples", "showcase_game/schemas"],
-];
+/// The schema layers of the repository, read from its manifests.
+struct Layers {
+    /// Each stack a layer is loaded in, as paths from the repository: the
+    /// engine's set alone (what a game's `engine/schemas` is), the stack the
+    /// root `flint.toml` names, and the one each game kept in the checkout
+    /// names (a top-level directory with a `flint.toml`, found by it so the
+    /// engine names no game, #760). A directory of schema files that is in
+    /// none of them fails [`problems`] as unread.
+    stacks: Vec<Vec<String>>,
+    /// The roots walked for `.toml` files, the layers no other layer holds:
+    /// every file under them must be a schema file of a stack's layer.
+    roots: Vec<String>,
+}
 
-/// The roots walked for `.toml` files: every file under them must be a
-/// schema file of one of the [`STACKS`]' layers.
-const ROOTS: &[&str] = &["schemas", "showcase_game/schemas"];
+impl Layers {
+    fn of_repo() -> Layers {
+        let root = repo();
+        let manifest_stack = |dir: &str| -> Option<Vec<String>> {
+            let text = std::fs::read_to_string(root.join(dir).join("flint.toml")).ok()?;
+            let doc: toml::Table = text
+                .parse()
+                .unwrap_or_else(|e| panic!("{dir}/flint.toml: {e}"));
+            let layers = doc.get("project")?.get("schemas")?.as_array()?;
+            Some(
+                layers
+                    .iter()
+                    .map(|l| normalize(&format!("{dir}/{}", l.as_str().unwrap())))
+                    .collect(),
+            )
+        };
+        let mut stacks = vec![vec!["schemas".to_string()]];
+        stacks.extend(manifest_stack("."));
+        let mut games: Vec<String> = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().join("flint.toml").is_file())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        games.sort();
+        assert!(!games.is_empty(), "no game kept in the checkout");
+        stacks.extend(games.iter().filter_map(|g| manifest_stack(g)));
+
+        let mut layers: Vec<String> = stacks.iter().flatten().cloned().collect();
+        layers.sort();
+        layers.dedup();
+        let roots = layers
+            .iter()
+            .filter(|l| !layers.iter().any(|o| l.starts_with(&format!("{o}/"))))
+            .cloned()
+            .collect();
+        Layers { stacks, roots }
+    }
+
+    fn roots(&self) -> Vec<&str> {
+        self.roots.iter().map(String::as_str).collect()
+    }
+
+    fn problems(&self, root: &Path) -> Vec<String> {
+        let stacks: Vec<Vec<&str>> = self
+            .stacks
+            .iter()
+            .map(|s| s.iter().map(String::as_str).collect())
+            .collect();
+        let stacks: Vec<&[&str]> = stacks.iter().map(Vec::as_slice).collect();
+        problems(root, &self.roots(), &stacks)
+    }
+}
+
+/// `a/./b/../c` as `a/c`, for a layer a game names from its own folder.
+fn normalize(path: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            p => parts.push(p),
+        }
+    }
+    parts.join("/")
+}
 
 /// The directories of a schema layer, and which loader reads each.
 #[derive(Clone, Copy, Debug)]
@@ -244,7 +313,7 @@ fn problems(root: &Path, roots: &[&str], stacks: &[&[&str]]) -> Vec<String> {
 
 #[test]
 fn every_schema_file_in_the_repository_loads() {
-    let found = problems(&repo(), ROOTS, STACKS);
+    let found = Layers::of_repo().problems(&repo());
     assert!(
         found.is_empty(),
         "{} problem(s) in the repository's schema files:\n  {}",
@@ -270,8 +339,8 @@ fn scratch_copy(name: &str) -> PathBuf {
     }
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("schema_files_{name}"));
     let _ = std::fs::remove_dir_all(&root);
-    for dir in ROOTS {
-        copy(&repo().join(dir), &root.join(dir));
+    for dir in Layers::of_repo().roots {
+        copy(&repo().join(&dir), &root.join(&dir));
     }
     root
 }
@@ -296,7 +365,7 @@ fn an_unescaped_quote_in_a_component_file_fails_and_names_the_file() {
     let broken = description.replacen("= \"", "= \"the \"style\" ", 1);
     std::fs::write(&file, text.replacen(&description, &broken, 1)).unwrap();
 
-    let found = problems(&root, ROOTS, STACKS);
+    let found = Layers::of_repo().problems(&root);
     println!("{}", found.join("\n"));
     assert_eq!(found.len(), 1, "one mistake, one problem: {found:#?}");
     assert!(
@@ -348,7 +417,7 @@ fn a_broken_file_of_each_kind_is_found_with_the_others() {
         "\"transfrom\"",
     );
 
-    let found = problems(&root, ROOTS, STACKS);
+    let found = Layers::of_repo().problems(&root);
     println!("{}", found.join("\n"));
     let has = |needle: &str| found.iter().any(|l| l.contains(needle));
     assert!(

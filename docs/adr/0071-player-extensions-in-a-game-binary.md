@@ -59,7 +59,9 @@ The fuller reasoning didn't survive.
   ([ADR 0103](0103-extensions-see-scripted-keys.md)), `debug_panels` / `debug_panel_ui` ([ADR 0107](0107-debug-panels-from-the-game.md)),
   `declare_script_api` ([ADR 0116](0116-declared-script-api.md)) and
   `register_generators`
-  ([ADR 0119](0119-game-generators-through-player-extensions.md)).
+  ([ADR 0119](0119-game-generators-through-player-extensions.md)); `ui`
+  takes the frame's root `&mut egui::Ui` instead of a `Context`
+  ([ADR 0121](0121-extension-ui-takes-the-root-ui.md)).
 
 ## Sources
 

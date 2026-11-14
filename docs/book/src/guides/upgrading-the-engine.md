@@ -10,7 +10,7 @@ Flint moved from wgpu 23.0.1 to 30.0.2 and from egui 0.30 to 0.36.2 (#950: [#944
 
 A game made only of scenes, scripts, schemas and user styles (`.shader.toml` and WGSL) builds and runs as before. What it can notice:
 
-- **Script HUDs look the same.** Script `draw_*` colours, text halos, world text and HUD sprites keep egui 0.30's premultiply ([HUD colours](#hud-colours)). Text is a pixel different here and there under egui's new rasteriser.
+- **A script's translucent colours draw darker** since [#958](https://github.com/chrischaps/Flint/issues/958): script `draw_*` colours, text halos, world text and HUD sprites take egui 0.36's blend, as Flint's own UI does. Opaque colours, and dark translucent ones such as shadows and dimming panels, are unchanged. [HUD colours](#hud-colours) says how to retune. Text is a pixel different here and there under egui's new rasteriser.
 - **User style errors are worded by naga 30.** `flint style check`, the log and the error card say ``no definition in scope for identifier: `x` `` where they said `'x'`, and ``expected `;`, found "let"`` where they said `expected ';', found 'let'`. The file, line, column, quoted line and Flint's hints are unchanged ([naga's wording](#nagas-wording)).
 - **`pack2x16float`, `unpack2x16float` and `quantizeToF16` work in a user style.** naga 23 didn't know `quantizeToF16`.
 - **A Kuwahara `radius` above 32 draws at 32.**
@@ -19,7 +19,7 @@ A game made only of scenes, scripts, schemas and user styles (`.shader.toml` and
 
 A game with Rust of its own ports the parts that call wgpu or egui:
 
-- a `PlayerExtension` that draws egui UI ([egui 0.30 to 0.36](#egui-030-to-036));
+- a `PlayerExtension` that draws egui UI ([the game UI hook](#the-game-ui-hook) and [egui 0.30 to 0.36](#egui-030-to-036));
 - a Rust style built on `stylize::kit`, or a renderer or window of its own ([wgpu 23 to 30](#wgpu-23-to-30), [WGSL](#wgsl) and [Flint's shaders are trusted code](#flints-shaders-are-trusted-code)).
 
 **Cargo.** Name the same versions as the engine (`wgpu = "30.0.2"`, `egui = "0.36.2"`) or take them from the engine's workspace. A subtree game that builds for the web also adds the engine's patched egui-winit to its workspace root's `Cargo.toml`, which adds the one function the web build needs:
@@ -31,7 +31,9 @@ egui-winit = { path = "engine/vendor/egui-winit" }
 
 ### egui 0.30 to 0.36
 
-**Panels are shown on a `Ui`.** egui 0.36 has one `egui::Panel` type, shown on a `Ui` rather than a `Context`. `PlayerExtension::ui` gets a `&egui::Context`, so a game's side and top panels move to the new hook `root_ui`, which gets the frame's root `Ui`. The player calls `root_ui` where it called `ui`, and the default `root_ui` calls `ui`, so an extension with only windows and areas keeps working unchanged:
+#### The game UI hook
+
+**`PlayerExtension::ui` takes the frame's root `Ui`.** egui 0.36 shows its one `egui::Panel` type on a `Ui`, not a `Context`, and eframe's `App::ui` takes `&mut egui::Ui` (eframe 0.34 deprecated `App::update(&Context)` and 0.35 removed it). `PlayerExtension::ui` took a `&egui::Context`, so a game's side and top panels had no port. It now takes the root `Ui` that egui's `Context::run_ui` hands out ([ADR 0121](https://github.com/chrischaps/Flint/blob/main/docs/adr/0121-extension-ui-takes-the-root-ui.md)): show panels on it and windows and areas from it.
 
 ```rust
 // egui 0.30
@@ -43,15 +45,19 @@ fn ui(&mut self, ctx: &egui::Context) {
 }
 
 // egui 0.36
-fn root_ui(&mut self, ui: &mut egui::Ui) {
+fn ui(&mut self, ui: &mut egui::Ui) {
     egui::Panel::left("inventory").default_size(220.0).show(ui, |ui| {
         ui.heading("Inventory");
     });
-    egui::Window::new("Quests").show(ui.ctx(), |ui| ui.label("none yet"));
+    egui::Window::new("Quests").show(ui, |ui| ui.label("none yet"));
 }
 ```
 
-Override `root_ui` or `ui`, not both: the default `root_ui` is what calls `ui`. Don't show a `CentralPanel` from either one. It covers the whole window and takes every click from the game.
+An old `ui` no longer compiles (``method `ui` has an incompatible type for trait``): a Rust trait method can't be deprecated into a new signature. The port is the parameter's type. A `Ui` derefs to its `Context`, so with `fn ui(&mut self, ctx: &mut egui::Ui)` a body written for a `Context` compiles as it was: `Window::new(..).show(ctx, ..)`, `ctx.input(..)`, `ctx.clone()` (a `Context`) and passing `ctx` to a function that takes `&egui::Context`. Only the panels need the renames below.
+
+A game that took `root_ui(&mut egui::Ui)`, the hook #946 added for panels before this change, keeps drawing: `root_ui` is deprecated, the player still calls it, and its default calls `ui`. Rename it to `ui`. rustc doesn't warn on implementing a deprecated trait method, so this line is the reminder.
+
+Don't show a `CentralPanel` from `ui`. It covers the whole window and takes every click from the game.
 
 The renames Flint's own code needed, checked against egui 0.36.2:
 
@@ -81,11 +87,36 @@ The renames Flint's own code needed, checked against egui 0.36.2:
 Two changes in behaviour:
 
 - **Modifier keys are keys.** egui-winit 0.36 sends `egui::Key::ShiftLeft`, `ControlRight` and the rest as key presses. A game that reads `ctx.input(|i| i.events)` sees them; `i.modifiers` still holds the state.
-- **A translucent colour blends in display space.** Since egui 0.31, `Color32::from_rgba_unmultiplied` and `from_white_alpha` premultiply the display values. egui 0.30 premultiplied in linear light, so a 50% white over black drew 188 there and draws 128 now. A game's own egui UI takes 0.36's blend; to keep a colour as it looked, make it brighter or more opaque.
+- **A translucent colour blends in display space.** Since egui 0.31, `Color32::from_rgba_unmultiplied` and `from_white_alpha` premultiply the display values. egui 0.30 premultiplied in linear light, so a 50% white over black drew 188 there and draws 128 now. A game's own egui UI takes 0.36's blend, and since #958 so do scripts; to keep a light colour as it looked, raise its alpha to alpha^(1/2.2) ([HUD colours](#hud-colours)).
 
 #### HUD colours
 
-Flint keeps egui 0.30's premultiply for what scripts draw: `draw_*` colours, text halos, world text and HUD sprites (`hud_render::premultiplied_as_egui_030`), because game HUDs were tuned under it. A script's translucent white over black is still 188. Flint's own editors and debug panels take egui 0.36's blend, as does a game's `PlayerExtension` egui UI. Whether scripts move to 0.36's blend is still open; when they do, it will be a changelog entry of its own.
+What scripts draw takes egui 0.36's blend ([#958](https://github.com/chrischaps/Flint/issues/958)): `draw_*` colours, text halos (`stroke` and `glow`), world text and HUD sprites. One frame now has one blend, the same as Flint's editors, debug panels and a game's `PlayerExtension` egui UI. Until #958, scripts kept egui 0.30's.
+
+**What changes.** egui 0.30 premultiplied a colour in linear light, which made a translucent light colour brighter than its alpha said. Now the alpha is used as written:
+
+- **A light colour over a darker ground draws darker.** That covers glows, halos, white text and hints, and highlights. A 50% white over black drew 188 and now draws 128, and a 0.3 cyan stroke turns a duller blue.
+- **A dark colour is unchanged.** A black panel at 0.6, or a drop shadow, draws the same bytes, because 0.30's brightening only ever added the colour's own light.
+- **Opaque colours are unchanged.** A glow at 0.9 changes only slightly.
+
+**Getting a light colour's old look back: raise its alpha to alpha^(1/2.2).** egui 0.30 drew about `alpha^(1/2.2) × colour`, so this restores what the colour adds to the frame. The ground behind it shows a little less (`1 − alpha^(1/2.2)` in place of `1 − alpha`). Over black that difference is nothing, and over a dark ground it is a level or two.
+
+| old alpha | 0.1 | 0.2 | 0.25 | 0.3 | 0.4 | 0.5 | 0.6 | 0.7 | 0.75 | 0.8 | 0.9 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| new alpha | 0.35 | 0.48 | 0.53 | 0.58 | 0.66 | 0.73 | 0.79 | 0.85 | 0.88 | 0.90 | 0.95 |
+
+Measured in the player (`--pixels-per-point 1`, a sweep of new alphas in steps of 0.01, picking the closest to each old swatch):
+
+| colour over ground | old alpha | was | now, same alpha | closest new alpha | at alpha^(1/2.2) |
+|---|---|---|---|---|---|
+| white over black | 0.25 / 0.5 / 0.75 | 136 / 187 / 224 | 63 / 127 / 191 | 0.53 / 0.73 / 0.88 | 135 / 186 / 224 |
+| cyan `[0.25, 0.85, 1]` over navy `[0.05, 0.04, 0.1]` | 0.25 / 0.5 / 0.75 | `(38, 122, 155)` / `(50, 163, 200)` / `(57, 193, 230)` | `(25, 61, 82)` / `(37, 113, 140)` / `(50, 165, 197)` | 0.56 / 0.76 / 0.89 | `(39, 119, 147)` / `(49, 161, 193)` / `(56, 191, 227)` |
+| black over white | 0.25 / 0.5 / 0.75 | 192 / 128 / 64 | 192 / 128 / 64 | unchanged | |
+| orange `[1, 0.55, 0.15]` over 50% grey | 0.25 / 0.5 / 0.75 | `(232, 168, 111)` / `(251, 165, 89)` / `(255, 155, 64)` | `(159, 131, 105)` / `(191, 134, 83)` / `(223, 137, 60)` | 0.82 / 0.97 / 1.0, still off | `(195, 134, 80)` / `(220, 136, 62)` / `(239, 138, 48)` |
+
+The last row is the limit. Over a ground about as bright as the colour, egui 0.30 drew brighter than the colour itself: the orange's green is 140, and a 50% orange over grey drew 165. No alpha gets that back. Brighten the colour, or accept the change.
+
+The engine's own colours were retuned this way: the `.style.toml` default `glow_color` is `[1, 1, 1, 0.73]` (it was 0.5), and `flint init`'s HUD hints and crosshair moved by the table.
 
 ### wgpu 23 to 30
 

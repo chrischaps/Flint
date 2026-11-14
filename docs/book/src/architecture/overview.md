@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a twenty-nine-member Cargo workspace (twenty-eight crates under `crates/` plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 32-member Cargo workspace (31 crates under `crates/` plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -22,6 +22,7 @@ flint/
 │   ├── flint-particles/    # GPU-instanced particle system with pooling and emission shapes
 │   ├── flint-animation/    # Two-tier animation: property tweens + skeletal/glTF
 │   ├── flint-audio/        # Kira spatial audio: 3D sounds, ambient loops, triggers
+│   ├── flint-audio-worklet/# Kira mixer for the browser's AudioWorklet (its own small wasm)
 │   ├── flint-terrain/      # Heightmap terrain with splat-map blending
 │   ├── flint-runtime/      # Game loop infrastructure (GameClock, InputState, EventBus, GameStateMachine, pads)
 │   ├── flint-physics/      # Rapier 3D integration (PhysicsWorld, CharacterController)
@@ -41,7 +42,7 @@ flint/
 │   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
 │   └── arch-viewer/        # Static web page that renders that JSON as an interactive graph
 ├── schemas/                # Default component, archetype, and constraint definitions
-├── examples/                   # Showcase scenes and build scripts
+├── examples/               # Curated example scenes, indexed by examples/index.toml
 └── docs/                   # This documentation (mdBook)
 ```
 
@@ -128,7 +129,7 @@ User / AI Agent
                                              flint-core
 ```
 
-`flint-cli` depends on `flint-player` directly: `flint play` is the player embedded in the CLI, and the rhythm commands (`play-chart`, `replay-chart`, `render-suite`, ...) drive `flint-music`, `flint-rhythm` and `flint-input-capture` without a scene at all. `flint-procgen-ai` is tool-time only and is not a default workspace member.
+`flint-cli` depends on `flint-player` directly: `flint play` is the player embedded in the CLI, and the rhythm commands (`play-chart`, `replay-chart`, `render-suite`, ...) drive `flint-music`, `flint-rhythm` and `flint-input-capture` without a scene at all. `flint-procgen-ai` is tool-time only: `flint-cli` links it, the player does not. Every crate but `flint-android` is a default workspace member, so plain `cargo test` runs all their tests.
 
 ## Crate Details
 
@@ -250,6 +251,10 @@ Kira 0.11 integration for game audio:
 - `AudioTrigger` --- maps game events (collision, interaction) to sound playback
 - Spatial 3D audio with distance attenuation, non-spatial ambient loops
 - Graceful degradation when no audio device is available (headless/CI)
+
+### flint-audio-worklet
+
+The web player's mixer, run in the browser's audio thread (#136). Mixing on the main thread made every long frame a late buffer on a phone, so this crate is a second, small wasm that runs Kira inside an `AudioWorkletProcessor`. It knows nothing of Flint: the page posts it sounds as samples and one batch of `protocol::Command`s a frame, and the processor asks it for 128 frames at a time. `Mixer` is plain Rust, tested natively; the C ABI the processor's JavaScript calls is wasm-only. `trunk` builds it with `cargo build -p flint-audio-worklet --target wasm32-unknown-unknown --profile worklet` before each web build.
 
 ### flint-music
 
@@ -377,7 +382,7 @@ Standalone player binary that wires together runtime, physics, audio, animation,
 
 ### flint-cli
 
-Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Scene commands: `init`, `entity`, `scene`, `query`, `schema`, `edit`, `play`, `validate`, `asset`, `render`, `gen`, `prefab`. Rhythm commands: `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `replay-chart`, `render-suite`, `spike-rumble`. The pre-`edit` tools (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`, `spline-edit`) survive as hidden subcommands.
+Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: `init`, `entity`, `scene`, `query`, `schema`, `script`, `edit`, `validate`, `check`, `examples`, `bundle`, `export`, `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `spike-rumble`, `replay-chart`, `render-suite`, `goldens`, `prefab`, `asset`, `play`, `gen`, `render`, `dxc` and `style`, of which `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `spike-rumble`, `replay-chart` and `render-suite` are the rhythm-game tools. The pre-`edit` tools (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`, `spline-edit`) survive as hidden subcommands. [The CLI reference](../cli-reference/overview.md) covers each one.
 
 ### tools/arch-analyzer
 

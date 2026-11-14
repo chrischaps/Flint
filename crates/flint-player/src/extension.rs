@@ -237,23 +237,32 @@ pub trait PlayerExtension {
     /// field rather than quitting), and clicks and the wheel over an egui
     /// area. Clicks on empty space still reach the game.
     ///
-    /// Use windows and areas here (`egui::Window::new(..).show(ctx, ..)`).
-    /// Side and top panels need the frame's root `Ui`: draw them in
-    /// [`root_ui`](Self::root_ui) instead. A `CentralPanel` covers the
-    /// whole window, so it takes every click from the game.
-    fn ui(&mut self, _ctx: &egui::Context) {}
+    /// `ui` is the frame's root `egui::Ui`, the one `Context::run_ui` hands
+    /// out (ADR 0121): the shape of eframe's `App::ui` and egui's
+    /// `Plugin::on_begin_pass`. It covers the whole window with no margin
+    /// or background. Show panels on it
+    /// (`egui::Panel::left("inventory").show(ui, |ui| ..)`; a panel on the
+    /// root takes its room from the whole window) and windows and areas
+    /// from it (`egui::Window::new("Quests").show(ui, |ui| ..)`: a `Ui`
+    /// derefs to its `Context`). `ui.ctx()` is the `Context`, to clone or
+    /// keep. A `CentralPanel` covers the whole window, so it takes every
+    /// click from the game.
+    ///
+    /// Before ADR 0121 this took `&egui::Context`. A game's
+    /// `fn ui(&mut self, ctx: &egui::Context)` becomes
+    /// `fn ui(&mut self, ctx: &mut egui::Ui)`, and the body compiles as it
+    /// was: `show(ctx, ..)`, `ctx.input(..)`, `ctx.clone()` and passing
+    /// `ctx` on as a `&Context` all go through the `Deref`.
+    fn ui(&mut self, _ui: &mut egui::Ui) {}
 
-    /// Draw the game's own egui UI on the frame's root `egui::Ui` (#946).
-    /// egui 0.36 shows a panel on a `Ui`, not a `Context`
-    /// (`egui::Panel::left("inventory").show(ui, |ui| ..)`, where 0.30 had
-    /// `SidePanel::left(..).show(ctx, ..)`), and a panel on the root takes
-    /// its room from the whole window. Called in `ui`'s place, at the same
-    /// point of the pass; the default calls [`ui`](Self::ui) with
-    /// `ui.ctx()`, so override one or the other. Windows and areas can be
-    /// shown from here too, with `ui.ctx()`.
+    /// The name `ui` had for one release (#946), when `ui` still took a
+    /// `Context`. The player still calls it, and it calls [`ui`](Self::ui),
+    /// so a game that overrode it draws as before.
+    #[deprecated(
+        note = "`ui` now takes the root `&mut egui::Ui`: rename `fn root_ui` to `fn ui` (ADR 0121)"
+    )]
     fn root_ui(&mut self, ui: &mut egui::Ui) {
-        let ctx = ui.ctx().clone();
-        self.ui(&ctx);
+        self.ui(ui);
     }
 
     /// Add to or change egui's fonts before the player installs them
@@ -289,6 +298,16 @@ pub trait PlayerExtension {
     /// state as `ui` left it. The heading and the scrolling are the
     /// player's.
     fn debug_panel_ui(&mut self, _name: &str, _ui: &mut egui::Ui) {}
+}
+
+/// Each extension's egui on the frame's root `Ui`, in the order they were
+/// added (ADR 0121). The call goes through the deprecated `root_ui`, whose
+/// default calls `ui`, so a game that still overrides `root_ui` draws too.
+#[expect(deprecated)]
+pub(crate) fn draw_ui(extensions: &mut [Box<dyn PlayerExtension>], ui: &mut egui::Ui) {
+    for ext in extensions.iter_mut() {
+        ext.root_ui(ui);
+    }
 }
 
 /// What an extension can reach in `pre_update`, at a [`Stage`], as a scene

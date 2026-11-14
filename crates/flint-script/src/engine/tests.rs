@@ -483,19 +483,14 @@ fn a_script_completes_transitions_only_if_it_can_call_complete_transition() {
         r#"fn on_update() { import "fades" as fades; fades::run(); }"#
     ));
 
-    // The scripts that draw the examples' fades
-    for (name, source) in [
-        (
-            "showcase_hud.rhai",
-            include_str!("../../../../examples/scripts/showcase_hud.rhai"),
-        ),
-        (
-            "zone_hud.rhai",
-            include_str!("../../../../showcase_game/scripts/zone_hud.rhai"),
-        ),
-    ] {
-        assert!(completes(source), "{name} ends its own fades");
-    }
+    // The script that draws the examples' fades (the example game's
+    // zone_hud.rhai is the same shape; the engine names no game, #760)
+    assert!(
+        completes(include_str!(
+            "../../../../examples/scripts/showcase_hud.rhai"
+        )),
+        "showcase_hud.rhai ends its own fades"
+    );
 }
 
 /// The finder sees a name split across the pieces `Debug` writes, and a
