@@ -1,6 +1,7 @@
 //! Terrain rendering pipeline — splat-map blended PBR terrain
 
 use crate::primitives::Vertex;
+use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 
 /// Terrain-specific uniform data (bind group 1, binding 0)
@@ -45,7 +46,7 @@ impl TerrainPipeline {
         light_layout: &wgpu::BindGroupLayout,
         sample_count: u32,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Terrain Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("terrain_shader.wgsl").into()),
         });

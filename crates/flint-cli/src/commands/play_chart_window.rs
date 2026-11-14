@@ -21,7 +21,9 @@
 //! reloads the coherence config, `q`/Escape quits.
 
 use anyhow::{Context, Result};
+use flint_render::AcquireFrame;
 use flint_render::RenderContext;
+use flint_render::TrustedShader;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -188,7 +190,7 @@ struct Gfx {
 impl Gfx {
     fn new(window: Arc<Window>, ctx: RenderContext) -> Self {
         let device = &ctx.device;
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("play-chart-window"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
@@ -290,9 +292,9 @@ impl Gfx {
             .queue
             .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&data));
 
-        let surface = match self.ctx.surface.get_current_texture() {
+        let surface = match self.ctx.surface.acquire() {
             Ok(s) => s,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => {
                 self.ctx.resize(self.ctx.size);
                 return Ok(()); // retry next frame
             }

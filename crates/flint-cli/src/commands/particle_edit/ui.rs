@@ -84,7 +84,9 @@ pub fn render_egui(app: &mut ParticleEditApp, target_view: &wgpu::TextureView) -
     let egui_ctx = &app.egui_ctx;
 
     let raw_input = egui_winit.take_egui_input(&window);
-    let full_output = egui_ctx.run(raw_input, |ctx| {
+    // A real frame: its texture updates are uploaded below (#944)
+    #[allow(clippy::disallowed_methods)]
+    let mut full_output = egui_ctx.run(raw_input, |ctx| {
         draw_menu_bar(ctx, &frame, &mut actions);
         draw_left_panel(
             ctx,
@@ -150,6 +152,8 @@ pub fn render_egui(app: &mut ParticleEditApp, target_view: &wgpu::TextureView) -
     for id in &full_output.textures_delta.free {
         egui_renderer.free_texture(id);
     }
+    // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
+    full_output.textures_delta.clear();
     actions
 }
 

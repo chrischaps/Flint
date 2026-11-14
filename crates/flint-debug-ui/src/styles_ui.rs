@@ -1112,6 +1112,7 @@ fn rgb_text(rgb: [f32; 3]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::run_headless_frame;
 
     /// Every piece of text the editor drew in one frame.
     fn drawn_text(
@@ -1123,7 +1124,7 @@ mod tests {
         let mut out = Vec::new();
         // Two passes: collapsing state settles on the first
         for _ in 0..2 {
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     editor.ui(ui, pp, authored);
                 });
@@ -1194,7 +1195,7 @@ mod tests {
         let mut out = Vec::new();
         let panel = ctx.style().visuals.panel_fill;
         for _ in 0..2 {
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     editor.ui(ui, pp, None);
                 });
@@ -1311,7 +1312,7 @@ mod tests {
                 events,
                 ..Default::default()
             };
-            let _ = ctx.run(input, |ctx| {
+            let _ = run_headless_frame(&ctx, input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     edit.merge(editor.section(ui, &TEXT_STYLE, pp, None));
                 });

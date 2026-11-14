@@ -6,6 +6,7 @@
 use super::dev_shader;
 pub(crate) use super::dev_shader::wgsl;
 pub use super::dev_shader::Wgsl;
+use crate::TrustedShader;
 
 /// A fragment-stage uniform buffer at binding 0.
 pub fn uniform_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
@@ -341,7 +342,7 @@ impl ShaderText for Shader {
 /// from that folder instead and hot-reload (#418, [`dev_shader`]).
 pub fn shader(device: &wgpu::Device, label: &str, source: impl Into<Wgsl>) -> Shader {
     let text = dev_shader::source(label, source.into());
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    let module = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
         source: wgpu::ShaderSource::Wgsl(text.clone()),
     });

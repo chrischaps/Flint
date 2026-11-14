@@ -17,6 +17,7 @@
 mod shared_gpu;
 
 use flint_ecs::FlintWorld;
+use flint_render::TrustedShader;
 use flint_render::{Camera, RendererConfig, SceneRenderer};
 
 const SIZE: u32 = 64;
@@ -934,7 +935,7 @@ fn the_palette_matcher_agrees_with_its_cpu_reference() {
         return;
     };
     let device = gpu.device;
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    let module = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("palette harness"),
         source: wgpu::ShaderSource::Wgsl(format!("{PALETTE_WGSL}\n{PALETTE_HARNESS}").into()),
     });

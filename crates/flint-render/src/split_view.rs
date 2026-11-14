@@ -7,6 +7,7 @@
 //! way, and a pixel arrives exactly as the second drawing made it. That's what
 //! lets each half of a split match a whole frame drawn the same way.
 
+use crate::TrustedShader;
 /// The second drawing and what copies it in.
 pub struct SplitView {
     width: u32,
@@ -44,7 +45,7 @@ impl SplitView {
                 count: None,
             }],
         });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Split View Copy"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });

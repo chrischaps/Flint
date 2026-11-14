@@ -5,6 +5,7 @@
 
 use super::PlayerApp;
 use crate::extension::{ExtensionCtx, PlayerExtension};
+use flint_debug_ui::run_headless_frame;
 use flint_ecs::FlintWorld;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -327,7 +328,7 @@ fn the_fonts_hook_runs_on_every_install_and_its_families_reach_scripts() {
 
     // egui has the family on the next pass, so laying text out in it from
     // `ui` doesn't panic.
-    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
+    let _ = run_headless_frame(&app.hud.egui_ctx, egui::RawInput::default(), |ctx| {
         ctx.fonts(|f| {
             f.layout_no_wrap(
                 "Capitol".into(),
@@ -528,7 +529,7 @@ fn a_game_names_debug_panels_that_f3_opens_and_it_draws() {
         )),
         ..Default::default()
     };
-    let _ = ctx.run(input, |ctx| {
+    let _ = run_headless_frame(&ctx, input, |ctx| {
         for ext in extensions.iter_mut() {
             ext.ui(ctx);
         }

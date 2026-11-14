@@ -709,6 +709,7 @@ pub(super) fn styled_entity_rows(
 #[cfg(all(test, feature = "debug-hud"))]
 mod tests {
     use super::*;
+    use flint_debug_ui::run_headless_frame;
 
     fn app() -> PlayerApp {
         PlayerApp::new(
@@ -810,7 +811,7 @@ mod tests {
             ..Default::default()
         };
         let mut width = 0.0;
-        let _ = ctx.run(input, |ctx| {
+        let _ = run_headless_frame(ctx, input, |ctx| {
             width = show_debug_panels(ctx, panels, &mut |panel, ui| panel.ui(ui))
         });
         width

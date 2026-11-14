@@ -6,6 +6,7 @@
 use super::egui_input::EguiInputGate;
 use super::input_script::InputScript;
 use super::PlayerApp;
+use flint_debug_ui::run_headless_frame;
 use flint_ecs::FlintWorld;
 use flint_runtime::InputConfig;
 use std::sync::{Arc, Mutex};
@@ -53,7 +54,7 @@ impl crate::extension::PlayerExtension for Bare {}
 
 /// Run one egui frame on the app's context with a text field focused.
 fn focus_a_field(app: &PlayerApp) {
-    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
+    let _ = run_headless_frame(&app.hud.egui_ctx, egui::RawInput::default(), |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             let mut text = String::new();
             ui.text_edit_singleline(&mut text).request_focus();
@@ -159,7 +160,7 @@ fn pad_axes_read_zero_while_a_field_has_focus() {
     assert_eq!(app.input.action_value("walk"), 0.0);
     app.input.end_frame();
     // The field lets go: the stick reads where it stands.
-    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
+    let _ = run_headless_frame(&app.hud.egui_ctx, egui::RawInput::default(), |ctx| {
         ctx.memory_mut(|m| m.stop_text_input());
     });
     assert!(!app.hud.egui_ctx.wants_keyboard_input());
@@ -169,7 +170,7 @@ fn pad_axes_read_zero_while_a_field_has_focus() {
 
 /// Run one egui frame on the app's context with a button focused.
 fn focus_a_button(app: &PlayerApp) {
-    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
+    let _ = run_headless_frame(&app.hud.egui_ctx, egui::RawInput::default(), |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.button("Buy").request_focus();
         });

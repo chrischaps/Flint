@@ -5,6 +5,7 @@
 
 use super::input_script::InputScript;
 use super::PlayerApp;
+use flint_debug_ui::run_headless_frame;
 use flint_ecs::FlintWorld;
 use winit::keyboard::KeyCode;
 
@@ -94,7 +95,7 @@ impl crate::extension::PlayerExtension for Bare {}
 
 /// Run one egui frame on the app's context with a text field focused.
 fn focus_a_field(app: &PlayerApp) {
-    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
+    let _ = run_headless_frame(&app.hud.egui_ctx, egui::RawInput::default(), |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             let mut text = String::new();
             ui.text_edit_singleline(&mut text).request_focus();
@@ -124,7 +125,7 @@ fn a_focused_button_leaves_scripted_keys_to_the_game() {
 ",
     );
     app.add_extension(Box::new(Bare));
-    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
+    let _ = run_headless_frame(&app.hud.egui_ctx, egui::RawInput::default(), |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.button("Buy").request_focus();
         });

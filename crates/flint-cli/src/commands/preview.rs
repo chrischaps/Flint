@@ -19,6 +19,7 @@ use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use flint_import::{import_gltf, ImportResult, MeshBounds};
 use flint_render::model_loader::{self, ModelLoadConfig, ModelLoadResult};
+use flint_render::AcquireFrame;
 use flint_render::{
     Camera, DebugMode, HeadlessContext, OrbitCameraController, RendererConfig, SceneRenderer,
 };
@@ -2025,7 +2026,9 @@ impl PreviewApp {
         let mut seq_loop: Option<bool> = None;
         let mut new_hold: Option<(bool, f32)> = None;
 
-        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+        // A real frame: its texture updates are uploaded below (#944)
+        #[allow(clippy::disallowed_methods)]
+        let mut full_output = self.egui_ctx.run(raw_input, |ctx| {
             // ── Left panel: model info ──
             egui::SidePanel::left("preview_info_panel")
                 .default_width(220.0)
@@ -2843,6 +2846,8 @@ impl PreviewApp {
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);
         }
+        // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
+        full_output.textures_delta.clear();
 
         self.egui_renderer = Some(egui_renderer);
 
@@ -3492,16 +3497,18 @@ impl ApplicationHandler for PreviewApp {
                     renderer.update_from_world(&state.world, &context.device);
                 }
 
-                let output = match context.surface.get_current_texture() {
+                let output = match context.surface.acquire() {
                     Ok(o) => o,
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                    Err(
+                        flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated,
+                    ) => {
                         let size = context.size;
                         if let Some(ctx) = &mut self.render_context {
                             ctx.resize(size);
                         }
                         return;
                     }
-                    Err(wgpu::SurfaceError::OutOfMemory) => {
+                    Err(flint_render::SurfaceError::OutOfMemory) => {
                         tracing::error!("Out of GPU memory");
                         event_loop.exit();
                         return;

@@ -12,6 +12,7 @@
 //! grab-pass. Lakes and rivers draw with `body_pipeline`: the same shading
 //! on a supplied mesh (see `water_body.rs`).
 
+use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 use flint_core::toml_util::{toml_color, toml_f32};
 use flint_geometry::ocean::MAX_WAVES;
@@ -350,7 +351,7 @@ impl OceanPipeline {
         light_layout: &wgpu::BindGroupLayout,
         sample_count: u32,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Ocean Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("ocean_shader.wgsl").into()),
         });
@@ -451,7 +452,7 @@ impl OceanPipeline {
         );
 
         // ── Grab blit pipeline: opaque scene color+depth → sampleable copies ──
-        let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let blit_shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Grab Blit Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("grab_blit_shader.wgsl").into()),
         });

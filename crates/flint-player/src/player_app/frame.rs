@@ -16,6 +16,7 @@ use super::{
 #[cfg(feature = "debug-hud")]
 #[cfg(feature = "debug-hud")]
 use flint_debug_ui::DebugPanel as _;
+use flint_render::AcquireFrame;
 use flint_render::GrassEntityPosition;
 use flint_runtime::state::AUDIO;
 use flint_runtime::{RuntimeSystem, StateConfig};
@@ -77,9 +78,9 @@ impl PlayerApp {
             return;
         };
 
-        let output = match context.surface.get_current_texture() {
+        let output = match context.surface.acquire() {
             Ok(output) => output,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => {
                 return;
             }
             Err(e) => {
@@ -1253,7 +1254,9 @@ impl PlayerApp {
             errors
         };
 
-        let full_output = self.hud.egui_ctx.run(raw_input, |ctx| {
+        // A real frame: its texture updates are uploaded below (#944)
+        #[allow(clippy::disallowed_methods)]
+        let mut full_output = self.hud.egui_ctx.run(raw_input, |ctx| {
             // Layers, back to front: script UI, game egui, debug panels.
             // Script UI first: it shares the background layer with any game
             // panels, so issuing it first puts those panels in front of it
@@ -1431,6 +1434,8 @@ impl PlayerApp {
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);
         }
+        // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
+        full_output.textures_delta.clear();
 
         self.hud.egui_renderer = Some(egui_renderer);
     }

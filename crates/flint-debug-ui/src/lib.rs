@@ -1,6 +1,7 @@
 mod camera_panel;
 mod dead_calm_panel;
 mod grass_panel;
+mod headless_frame;
 #[cfg(feature = "living")]
 mod living_props_panel;
 mod ocean_panel;
@@ -18,6 +19,7 @@ pub mod widgets;
 pub use camera_panel::{CameraDebugPanel, CameraPanelConfig};
 pub use dead_calm_panel::DeadCalmDebugPanel;
 pub use grass_panel::GrassDebugPanel;
+pub use headless_frame::run_headless_frame;
 #[cfg(feature = "living")]
 pub use living_props_panel::{
     pick_prop, Knob, KnobFlags, KnobSources, LivingAbState, LivingHealth, LivingKnobs,

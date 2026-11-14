@@ -15,6 +15,7 @@ use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_core::components as comp;
 use flint_ecs::FlintWorld;
 use flint_render::model_loader::{self, ModelLoadConfig};
+use flint_render::AcquireFrame;
 use flint_render::{
     post_process_config_from_def, Camera, PostProcessConfig, RenderContext, RendererConfig,
     SceneRenderer,
@@ -927,15 +928,9 @@ impl ViewerApp {
         // Animate camera snap transitions
         self.animate_camera();
 
-        let output = match self
-            .render_context
-            .as_ref()
-            .unwrap()
-            .surface
-            .get_current_texture()
-        {
+        let output = match self.render_context.as_ref().unwrap().surface.acquire() {
             Ok(output) => output,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => return,
+            Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => return,
             Err(e) => {
                 tracing::warn!("Surface error: {:?}", e);
                 return;
@@ -1541,7 +1536,9 @@ impl ViewerApp {
         let mut style_errors = flint_render::stylize::custom::errors();
         style_errors.extend(flint_render::stylize::dev_shader::errors());
 
-        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+        // A real frame: its texture updates are uploaded below (#944)
+        #[allow(clippy::disallowed_methods)]
+        let mut full_output = self.egui_ctx.run(raw_input, |ctx| {
             flint_debug_ui::paint_style_errors(ctx, &style_errors, 0.0);
             if show_panels {
                 // Left side panel: scene tree
@@ -1930,6 +1927,8 @@ impl ViewerApp {
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);
         }
+        // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
+        full_output.textures_delta.clear();
 
         self.egui_renderer = Some(egui_renderer);
 

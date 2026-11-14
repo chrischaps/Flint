@@ -3,6 +3,7 @@
 //! Renders camera-facing quads for Doom-style sprite entities.
 //! Uses a dedicated pipeline separate from PBR to keep things clean.
 
+use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 
 /// Uniform data shared across all billboards in a frame (camera vectors)
@@ -53,7 +54,7 @@ pub struct BillboardPipeline {
 
 impl BillboardPipeline {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, sample_count: u32) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Billboard Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("billboard_shader.wgsl").into()),
         });

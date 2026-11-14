@@ -19,6 +19,7 @@ use super::text_halo::{stamp_offsets, wants_halo, HaloSpec, TextHalos};
 use bytemuck::{Pod, Zeroable};
 use flint_core::world_text::WorldText;
 use flint_render::world_line_pipeline::DEPTH_SLACK;
+use flint_render::TrustedShader;
 use std::collections::HashSet;
 use std::ops::Range;
 
@@ -356,7 +357,7 @@ impl WorldTextPipeline {
     /// `format` is the HUD's (non-sRGB) view of the surface; the pass is
     /// single sample against a `Depth32Float` depth view.
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("World Text Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("world_text_shader.wgsl").into()),
         });
@@ -537,6 +538,7 @@ fn upload<'a>(
 mod tests {
     use super::*;
     use flint_core::world_text::TextPlane;
+    use flint_debug_ui::run_headless_frame;
 
     /// A camera at the origin looking down -z: 90° vertical fov, square
     /// 200-point screen, near 1, far 100. Column-major.
@@ -581,14 +583,14 @@ mod tests {
 
     fn context() -> egui::Context {
         let ctx = egui::Context::default();
-        let _ = ctx.run(Default::default(), |_| {});
+        let _ = run_headless_frame(&ctx, Default::default(), |_| {});
         ctx
     }
 
     fn build(texts: &[WorldText], v: &TextView) -> GlyphMesh {
         let ctx = context();
         let mut laid = Vec::new();
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = run_headless_frame(&ctx, Default::default(), |ctx| {
             laid = lay_out(
                 ctx,
                 texts,
