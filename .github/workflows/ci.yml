@@ -187,18 +187,26 @@ jobs:
           key: gpu-warp
           cache-on-failure: true
 
-      # DX12 compiles shaders with DXC (#912), loaded only from beside each
-      # executable: `flint dxc install` downloads the pinned release, checks
-      # its SHA-256 and copies the two DLLs into target/debug (flint.exe)
-      # and target/debug/deps (the test binaries). `status` must say DXC,
-      # or the run would test FXC without saying so
-      - name: DXC beside the binaries
+      # DX12 compiles shaders with DXC linked into every binary (#947).
+      # vendor/static-dxc's build script takes Flint's static DXC archive
+      # from this machine-wide cache, keyed by the SHA-256 it pins, and
+      # downloads it (80 MB, the release asset's own URL, no API call) only
+      # when the cache is cold. rust-cache keeps the unpacked library too,
+      # so the script reruns only after a toolchain or lockfile change
+      - name: Static DXC archive
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\flint\static-dxc
+          key: static-dxc-${{ hashFiles('vendor/static-dxc/pin.rs') }}
+
+      # `status` must say static DXC, or the run would test FXC (or a stray
+      # DLL) without saying so
+      - name: DXC linked in
         shell: bash
         run: |
           cargo build -p flint-cli --bin flint
-          target/debug/flint.exe dxc install
           target/debug/flint.exe dxc status | tee target/dxc-status.txt
-          grep -q "^DX12 shaders: DXC (" target/dxc-status.txt
+          grep -q "^DX12 shaders: DXC (static, " target/dxc-status.txt
 
       - name: cargo test -p flint-render --test stylize
         run: cargo test -p flint-render --test stylize

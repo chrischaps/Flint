@@ -1,0 +1,118 @@
+# Flint's static DXC (#947): DX12's shader compiler, built from Microsoft's
+# source as one static library, which vendor/static-dxc links into every
+# Windows build (wgpu's `static-dxc`). Microsoft ships DXC only as a DLL,
+# and the one static build anyone published was a 2023 fork, so Flint
+# builds its own: tools/dxc-static/build.ps1, the pinned DXC release with
+# tools/dxc-static/dxcompiler-static.patch (`SHARED` -> `STATIC`).
+#
+# - A pull request touching tools/dxc-static builds it, as a check.
+# - Pushing a tag `dxc-static-<dxc version>-<n>` builds it at that commit
+#   and publishes the archive as that tag's release, so the asset traces to
+#   this run and to the commit holding the script and the patch. The tag
+#   must match build.ps1's archive name. Never retag or replace an asset:
+#   vendor/static-dxc pins its SHA-256; a rebuild is a new `-<n>`.
+# - workflow_dispatch builds it without publishing.
+#
+# The archive's SHA-256, size and build time are in the job summary.
+name: static DXC
+
+on:
+  push:
+    tags: ["dxc-static-v*"]
+  pull_request:
+    paths:
+      - "tools/dxc-static/**"
+      - ".github/workflows/dxc-static.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build DXC as a static library
+    # A static library links only with the MSVC that built it or a newer
+    # one, so the oldest image with a recent enough Visual Studio (2022)
+    # lets the most machines link it
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and pack
+        shell: pwsh
+        run: |
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          tools/dxc-static/build.ps1 -Work "$env:RUNNER_TEMP\dxc" | Tee-Object -FilePath "$env:RUNNER_TEMP\build-log.txt"
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $minutes = [math]::Round($sw.Elapsed.TotalMinutes, 1)
+          $out = "$env:RUNNER_TEMP\dxc\out"
+          $archive = Get-ChildItem $out -Filter *.tar.gz | Select-Object -First 1
+          $hash = (Get-FileHash $archive.FullName -Algorithm SHA256).Hash.ToLower()
+          @(
+            "### Static DXC"
+            ""
+            "| | |"
+            "|---|---|"
+            "| archive | ``$($archive.Name)`` |"
+            "| SHA-256 | ``$hash`` |"
+            "| size | $($archive.Length) bytes |"
+            "| clone, configure, build and pack | $minutes min |"
+            ""
+            '```'
+            (Get-Content "$out\BUILD-INFO.txt")
+            '```'
+          ) | Add-Content $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dxc-static
+          path: ${{ runner.temp }}/dxc/out/
+          if-no-files-found: error
+
+  publish:
+    name: publish the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/dxc-static-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dxc-static
+          path: out
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          archive="out/${TAG}-x86_64-windows-msvc.tar.gz"
+          if [ ! -f "$archive" ]; then
+            echo "::error::the tag $TAG doesn't match the archive build.ps1 made: $(ls out)"
+            exit 1
+          fi
+          hash=$(sha256sum "$archive" | cut -d' ' -f1)
+          size=$(stat -c %s "$archive")
+          run="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          src="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/tools/dxc-static"
+          {
+            echo "DX12's shader compiler for Flint's Windows builds (#947): Microsoft's DirectX Shader Compiler, built from source as one static library and linked by \`vendor/static-dxc\`. Not a Flint release."
+            echo
+            echo "- **Source:** $(sed -n 's/^source: //p' out/BUILD-INFO.txt)"
+            echo "- **Patch:** [dxcompiler-static.patch]($src/dxcompiler-static.patch), \`SHARED\` -> \`STATIC\` on the dxcompiler target ($(sed -n 's/^patch: .*sha256 //p' out/BUILD-INFO.txt))"
+            echo "- **Build script:** [build.ps1]($src/build.ps1), at ${GITHUB_SHA}"
+            echo "- **Built by:** $run"
+            echo "- **Compiler:** $(sed -n 's/^compiler: //p' out/BUILD-INFO.txt). Linking needs that MSVC or newer."
+            echo "- **Licence:** DXC's own, in the archive: \`LICENSE.TXT\` (LLVM Release License, University of Illinois/NCSA) and \`ThirdPartyNotices.txt\`. No \`dxil.dll\` and no Microsoft binary is in it: DXC signs DXIL with its internal validator."
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| SHA-256 | \`$hash\` |"
+            echo "| size | $size bytes |"
+          } > notes.md
+          gh release create "$TAG" "$archive" out/BUILD-INFO.txt \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false \
+            --title "Static DXC ${TAG#dxc-static-}" --notes-file notes.md

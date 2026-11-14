@@ -5,6 +5,15 @@ edition.workspace = true
 license.workspace = true
 description = "wgpu renderer for Flint"
 
+[features]
+default = ["static-dxc"]
+# DX12's shader compiler linked into the binary (#947): wgpu's
+# `static-dxc`, which links `mach-dxcompiler-rs`, here Flint's own
+# vendor/static-dxc (the root Cargo.toml's [patch.crates-io]). On x86_64
+# Windows with MSVC only; a no-op everywhere else. Its build fetches one
+# archive per machine (vendor/static-dxc/build.rs says from where).
+static-dxc = ["wgpu/static-dxc", "dep:mach-dxcompiler-rs"]
+
 [dependencies]
 flint-core = { workspace = true }
 flint-wooze = { workspace = true }
@@ -44,11 +53,16 @@ image = { workspace = true, features = ["default"] }
 # module back out with every user loop guarded (#411).
 naga = { version = "30.0.2", features = ["wgsl-in", "wgsl-out"] }
 
-# DX12's shader compiler (#912): `gpu_select` loads dxcompiler.dll and
-# dxil.dll by full path from the executable's folder, as wgpu-hal does, so
-# what it reports is what wgpu gets. Already in the tree through wgpu-hal.
+# DX12's shader compiler (#912, #947): in a build without static DXC,
+# `gpu_select` loads dxcompiler.dll by name before wgpu-hal does, to report
+# which file it got. Already in the tree through wgpu-hal.
 [target.'cfg(windows)'.dependencies]
 libloading = "0.8"
+
+# The linked DXC's version and notices (`gpu_select::static_dxc`): the
+# same crate wgpu-hal links, on the target it links it on.
+[target.'cfg(all(windows, target_arch = "x86_64", target_env = "msvc"))'.dependencies]
+mach-dxcompiler-rs = { version = "0.1.7", optional = true }
 
 # Built-in shader modules and frame acquisition go through flint-render's
 # seams; the list is the workspace clippy.toml (#944).

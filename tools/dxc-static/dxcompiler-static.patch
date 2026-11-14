@@ -1,0 +1,13 @@
+diff --git a/tools/clang/tools/dxcompiler/CMakeLists.txt b/tools/clang/tools/dxcompiler/CMakeLists.txt
+index d88e3d7a..3413ab94 100644
+--- a/tools/clang/tools/dxcompiler/CMakeLists.txt
++++ b/tools/clang/tools/dxcompiler/CMakeLists.txt
+@@ -124,7 +124,7 @@ if (MSVC)
+   find_package(DiaSDK REQUIRED) # Used for constants and declarations.
+ endif (MSVC)
+ 
+-add_clang_library(dxcompiler SHARED ${SOURCES})
++add_clang_library(dxcompiler STATIC ${SOURCES})
+ add_dependencies(dxcompiler TablegenHLSLOptions) 
+ if (MSVC)
+   # No DxcEtw on non-Windows platforms.
