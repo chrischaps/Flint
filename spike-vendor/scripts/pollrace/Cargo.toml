@@ -1,0 +1,16 @@
+[package]
+name = "pollrace"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[features]
+w23 = ["dep:wgpu23"]
+w30 = ["dep:wgpu30"]
+
+[dependencies]
+wgpu23 = { package = "wgpu", version = "=23.0.1", optional = true }
+wgpu30 = { package = "wgpu", version = "=30.0.2", optional = true }
+pollster = "0.4"

@@ -1,0 +1,11 @@
+[package]
+name = "wgslsweep"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+naga23 = { package = "naga", version = "=23.1.0", features = ["wgsl-in"] }
+naga30 = { package = "naga", version = "=30.0.2", features = ["wgsl-in"] }
