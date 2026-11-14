@@ -6,8 +6,9 @@
 //! instead of taking the one kept for the old text.
 //!
 //! A binary of its own, since the cache (like the shader folder the second
-//! test points at) is the process's. Needs a GPU adapter; without one each
-//! test prints a note and passes.
+//! test points at) is the process's. Each test switches it holding the
+//! device alone, and its lease puts the harness's setting back (#913).
+//! Needs a GPU adapter; without one each test prints a note and passes.
 
 mod shared_gpu;
 
@@ -247,6 +248,9 @@ fn a_changed_shader_builds_a_new_pipeline_not_the_kept_one() {
     let file = dir.join("invert.wgsl");
     dev_shader::set_dir(Some(dir.clone()));
     pipeline_cache::set_enabled(true);
+    // The harness keeps the cache on (#913), and the copy's text is the
+    // built-in one, so an invert another test built would be taken here
+    pipeline_cache::clear();
     pipeline_cache::reset_counts();
 
     let invert = || {
