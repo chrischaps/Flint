@@ -90,7 +90,7 @@ pub fn gpu_info(adapter: &wgpu::Adapter) -> GpuInfo {
         wgpu::Backend::Metal => "metal",
         wgpu::Backend::Gl => "gl",
         wgpu::Backend::BrowserWebGpu => "webgpu",
-        wgpu::Backend::Empty => "none",
+        wgpu::Backend::Noop => "none",
     };
     let driver = [info.driver.as_str(), info.driver_info.as_str()]
         .iter()

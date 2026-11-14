@@ -1378,7 +1378,7 @@ impl LivingPropsDebugPanel {
             egui::Order::Background,
             egui::Id::new("living_pose_overlay"),
         ));
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         let mut placed: Vec<(f32, Pos2, &LivingPropRow)> = self
             .state
             .rows
@@ -1413,7 +1413,7 @@ impl LivingPropsDebugPanel {
             self.picked_on_screen = None;
             return;
         };
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
             egui::Id::new("living_picked_marks"),
@@ -2174,8 +2174,8 @@ mod tests {
             events,
             ..Default::default()
         };
-        let _ = run_headless_frame(ctx, input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
+        let _ = run_headless_frame(ctx, input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| panel.ui(ui));
         });
     }
 
@@ -2349,11 +2349,11 @@ mod tests {
                 ..Default::default()
             };
             // Collapsing headers open on the second frame.
-            let _ = run_headless_frame(&ctx, input.clone(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
+            let _ = run_headless_frame(&ctx, input.clone(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| panel.ui(ui));
             });
-            let output = run_headless_frame(&ctx, input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
+            let output = run_headless_frame(&ctx, input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| panel.ui(ui));
             });
             texts(&output)
         };
@@ -2455,7 +2455,8 @@ mod tests {
                 overlay: true,
                 ..Default::default()
             });
-            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ctx| {
+            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ui| {
+                let ctx = &ui.ctx().clone();
                 panel.paint_overlay(ctx, &view_proj);
             });
             output.shapes.len()
@@ -2484,7 +2485,8 @@ mod tests {
         with_prop.rows = vec![row("oak_1", [0.0, 0.0, -20.0])];
         panel.refresh(with_prop.clone());
         let shapes = |ctx: &egui::Context, panel: &mut LivingPropsDebugPanel| {
-            let output = run_headless_frame(ctx, egui::RawInput::default(), |ctx| {
+            let output = run_headless_frame(ctx, egui::RawInput::default(), |ui| {
+                let ctx = &ui.ctx().clone();
                 panel.paint_overlay(ctx, &view_proj);
             });
             output.shapes.len()
@@ -2559,8 +2561,8 @@ mod tests {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(420.0, 1400.0))),
             ..Default::default()
         };
-        let output = run_headless_frame(ctx, input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
+        let output = run_headless_frame(ctx, input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| panel.ui(ui));
         });
         output
             .shapes
@@ -2718,7 +2720,8 @@ mod tests {
         on.overlay = true;
         panel.refresh(on);
         let labels = |panel: &mut LivingPropsDebugPanel| {
-            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ctx| {
+            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ui| {
+                let ctx = &ui.ctx().clone();
                 panel.paint_overlay(ctx, &view_proj);
             });
             texts(&output)
@@ -2907,7 +2910,7 @@ mod tests {
             events,
             ..Default::default()
         };
-        run_headless_frame(ctx, input, |ctx| panel.paint_overlay(ctx, view))
+        run_headless_frame(ctx, input, |ui| panel.paint_overlay(ui.ctx(), view))
     }
 
     /// Two frames of it, since a new window is laid out unseen on its first.

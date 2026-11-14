@@ -444,7 +444,7 @@ mod tests {
             let instance = crate::gpu_select::instance();
             let adapter = crate::gpu_select::request_adapter(&instance, None).await?;
             adapter
-                .request_device(&wgpu::DeviceDescriptor::default(), None)
+                .request_device(&wgpu::DeviceDescriptor::default())
                 .await
                 .ok()
         })
@@ -461,8 +461,12 @@ mod tests {
         encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, buffer.size());
         queue.submit([encoder.finish()]);
         staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        device.poll(wgpu::Maintain::Wait);
-        let bytes = staging.slice(..).get_mapped_range().to_vec();
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        let bytes = staging
+            .slice(..)
+            .get_mapped_range()
+            .expect("mapped buffer range")
+            .to_vec();
         bytes
     }
 

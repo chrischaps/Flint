@@ -31,13 +31,13 @@ pub fn paint_style_errors(ctx: &egui::Context, errors: &[(String, String)], bott
         .anchor(egui::Align2::LEFT_BOTTOM, [12.0, -12.0 - bottom_inset])
         .interactable(false)
         .show(ctx, |ui| {
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(ground)
                 .stroke(egui::Stroke::new(1.0_f32, ember.gamma_multiply(0.6)))
-                .rounding(4.0)
-                .inner_margin(egui::Margin::symmetric(12.0, 9.0))
+                .corner_radius(4.0)
+                .inner_margin(egui::Margin::symmetric(12, 9))
                 .show(ui, |ui| {
-                    ui.set_max_width(ctx.screen_rect().width().min(760.0) - 24.0);
+                    ui.set_max_width(ctx.content_rect().width().min(760.0) - 24.0);
                     for (i, (style, message)) in errors.iter().enumerate() {
                         if i > 0 {
                             ui.add_space(6.0);

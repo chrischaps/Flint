@@ -95,7 +95,7 @@ pest = "2.7"
 pest_derive = "2.7"
 
 # Rendering
-wgpu = "23.0"
+wgpu = "30.0.2"
 winit = "0.30"
 pollster = "0.4"
 # Frame profiler scopes: nothing at all without a backend feature (ADR 0109)
@@ -176,10 +176,10 @@ gltf = { version = "1.4", features = ["KHR_materials_emissive_strength", "extras
 rfd = "0.15"
 
 # GUI
-egui = "0.30.0"
-egui-wgpu = "0.30.0"
-egui-winit = "0.30.0"
-egui-snarl = "0.6.0"
+egui = "0.36.2"
+egui-wgpu = "0.36.2"
+egui-winit = "0.36.2"
+egui-snarl = "0.12.0"
 
 # Internal crates
 flint-core = { path = "crates/flint-core" }
@@ -323,3 +323,13 @@ opt-level = 3
 opt-level = 3
 [profile.web-release.package.glam]
 opt-level = 3
+
+# egui-winit 0.36.2 (and 0.37.0) do not compile for wasm32 (#945): egui 0.36's
+# `DroppedFile` trait asks for `bytes_async` there, and egui-winit's
+# `NativeFile` implements only `bytes`. vendor/egui-winit is 0.36.2 from
+# crates.io with that one function added (src/dropped_file.rs, marked #945);
+# nothing else differs. Drop this patch and the folder when Flint moves to an
+# egui-winit release whose `NativeFile` implements `bytes_async` on wasm32:
+# `bash scripts/wasm-check.sh` without the patch is the test.
+[patch.crates-io]
+egui-winit = { path = "vendor/egui-winit" }

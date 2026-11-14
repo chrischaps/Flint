@@ -86,19 +86,16 @@ pub fn render_egui(app: &mut ParticleEditApp, target_view: &wgpu::TextureView) -
     let raw_input = egui_winit.take_egui_input(&window);
     // A real frame: its texture updates are uploaded below (#944)
     #[allow(clippy::disallowed_methods)]
-    let mut full_output = egui_ctx.run(raw_input, |ctx| {
-        draw_menu_bar(ctx, &frame, &mut actions);
-        draw_left_panel(
-            ctx,
-            effect,
-            views,
-            solo,
-            &mut selected,
-            &frame,
-            &mut actions,
-        );
-        draw_timeline(ctx, effect, &frame, &mut actions);
-        draw_overlays(ctx, effect, &frame, &mut actions);
+    let mut full_output = egui_ctx.run_ui(raw_input, |ui| {
+        let ctx = &ui.ctx().clone();
+        draw_menu_bar(ui, &frame, &mut actions);
+        draw_left_panel(ui, effect, views, solo, &mut selected, &frame, &mut actions);
+        draw_timeline(ui, effect, &frame, &mut actions);
+        // egui 0.36 has no Context::available_rect: what the root Ui has left
+        // is the viewport, kept for center_in_viewport's next call (#945)
+        let view = ui.available_rect_before_wrap();
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new(VIEW_RECT_ID), view));
+        draw_overlays(ctx, view, effect, &frame, &mut actions);
     });
     if selected != app.selected {
         actions.select = Some(selected);
@@ -114,8 +111,10 @@ pub fn render_egui(app: &mut ParticleEditApp, target_view: &wgpu::TextureView) -
         size_in_pixels: [context.config.width, context.config.height],
         pixels_per_point: full_output.pixels_per_point,
     };
-    for (id, delta) in &full_output.textures_delta.set {
-        egui_renderer.update_texture(&context.device, &context.queue, *id, delta);
+    for (id, deltas) in &full_output.textures_delta.set {
+        for delta in deltas {
+            egui_renderer.update_texture(&context.device, &context.queue, *id, delta);
+        }
     }
     let mut encoder = context
         .device
@@ -136,6 +135,7 @@ pub fn render_egui(app: &mut ParticleEditApp, target_view: &wgpu::TextureView) -
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -144,6 +144,7 @@ pub fn render_egui(app: &mut ParticleEditApp, target_view: &wgpu::TextureView) -
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             })
             .forget_lifetime();
         egui_renderer.render(&mut pass, &paint_jobs, &screen);
@@ -159,17 +160,17 @@ pub fn render_egui(app: &mut ParticleEditApp, target_view: &wgpu::TextureView) -
 
 // ─── Menu bar ───────────────────────────────────────────────────────────────
 
-fn draw_menu_bar(ctx: &egui::Context, f: &Frame, a: &mut UiActions) {
-    egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-        egui::menu::bar(ui, |ui| {
+fn draw_menu_bar(ui: &mut egui::Ui, f: &Frame, a: &mut UiActions) {
+    egui::Panel::top("menu_bar").show(ui, |ui| {
+        egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 if ui.button("Save            Ctrl+S").clicked() {
                     a.save = true;
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui.button("Reload from disk  Ctrl+R").clicked() {
                     a.reload = true;
-                    ui.close_menu();
+                    ui.close();
                 }
             });
             ui.menu_button("Edit", |ui| {
@@ -178,14 +179,14 @@ fn draw_menu_bar(ctx: &egui::Context, f: &Frame, a: &mut UiActions) {
                     .clicked()
                 {
                     a.undo = true;
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui
                     .add_enabled(f.can_redo, egui::Button::new("Redo   Ctrl+Y"))
                     .clicked()
                 {
                     a.redo = true;
-                    ui.close_menu();
+                    ui.close();
                 }
             });
             ui.menu_button("Presets", |ui| {
@@ -193,7 +194,7 @@ fn draw_menu_bar(ctx: &egui::Context, f: &Frame, a: &mut UiActions) {
                 for name in presets::names() {
                     if ui.button(name).clicked() {
                         a.add_preset = Some(name);
-                        ui.close_menu();
+                        ui.close();
                     }
                 }
             });
@@ -222,7 +223,7 @@ fn draw_menu_bar(ctx: &egui::Context, f: &Frame, a: &mut UiActions) {
 // ─── Left panel ─────────────────────────────────────────────────────────────
 
 fn draw_left_panel(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     effect: &mut ParticleEffect,
     views: &mut Vec<EmitterView>,
     solo: &mut Option<usize>,
@@ -230,17 +231,20 @@ fn draw_left_panel(
     f: &Frame,
     a: &mut UiActions,
 ) {
-    egui::SidePanel::left("effect_panel")
-        .default_width(360.0)
-        .min_width(300.0)
+    egui::Panel::left("effect_panel")
+        .default_size(360.0)
+        .min_size(300.0)
         .resizable(true)
-        .show(ctx, |ui| {
+        .show(ui, |ui| {
             // A solid (non-floating) scrollbar reserves its own column instead
             // of drawing over the right-hand controls.
             ui.style_mut().spacing.scroll.floating = false;
             // Drag-to-scroll would fight the curve/gradient key drags.
             egui::ScrollArea::vertical()
-                .drag_to_scroll(false)
+                .scroll_source(egui::scroll_area::ScrollSource {
+                    drag: egui::scroll_area::DragScroll::Never,
+                    ..Default::default()
+                })
                 .show(ui, |ui| {
                     // Effect header
                     ui.horizontal(|ui| {
@@ -300,11 +304,11 @@ fn draw_left_panel(
                             resp.context_menu(|ui| {
                                 if ui.button("Duplicate").clicked() {
                                     duplicate = Some(i);
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                                 if ui.add_enabled(n > 1, egui::Button::new("Delete")).clicked() {
                                     remove = Some(i);
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             });
                             ui.weak(format!("{alive}/{cap}"));
@@ -373,7 +377,7 @@ fn draw_left_panel(
                             for name in presets::names() {
                                 if ui.button(name).clicked() {
                                     a.add_preset = Some(name);
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             }
                         });
@@ -823,7 +827,7 @@ fn section_motion(ui: &mut egui::Ui, em: &mut EmitterDef) -> bool {
                     if ui.button(kind).clicked() {
                         em.forces.push(default_force(kind));
                         c = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                 }
             });
@@ -1272,10 +1276,10 @@ fn section_sub_emitters(
 
 // ─── Timeline ───────────────────────────────────────────────────────────────
 
-fn draw_timeline(ctx: &egui::Context, effect: &ParticleEffect, f: &Frame, a: &mut UiActions) {
-    egui::TopBottomPanel::bottom("timeline")
-        .exact_height(58.0)
-        .show(ctx, |ui| {
+fn draw_timeline(ui: &mut egui::Ui, effect: &ParticleEffect, f: &Frame, a: &mut UiActions) {
+    egui::Panel::bottom("timeline")
+        .exact_size(58.0)
+        .show(ui, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 if ui.button("|<").on_hover_text("Seek start (Home)").clicked() {
@@ -1405,19 +1409,28 @@ fn draw_timeline(ctx: &egui::Context, effect: &ParticleEffect, f: &Frame, a: &mu
 // ─── Overlays ───────────────────────────────────────────────────────────────
 
 fn overlay_frame() -> egui::Frame {
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(Color32::from_rgba_unmultiplied(0, 0, 0, 170))
         .stroke(Stroke::new(
             1.0f32,
             Color32::from_rgba_unmultiplied(255, 255, 255, 30),
         ))
-        .rounding(egui::Rounding::same(6.0))
-        .inner_margin(egui::Margin::same(10.0))
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::same(10))
 }
 
-fn draw_overlays(ctx: &egui::Context, effect: &ParticleEffect, f: &Frame, a: &mut UiActions) {
-    // The viewport: whatever the menu bar, side panel and timeline left over.
-    let view = ctx.available_rect();
+/// The egui temp key the viewport rect is kept under between frames.
+pub(super) const VIEW_RECT_ID: &str = "particle_edit_view_rect";
+
+/// `view` is the viewport: whatever the menu bar, side panel and timeline
+/// left over.
+fn draw_overlays(
+    ctx: &egui::Context,
+    view: egui::Rect,
+    effect: &ParticleEffect,
+    f: &Frame,
+    a: &mut UiActions,
+) {
     egui::Area::new(egui::Id::new("stats_overlay"))
         .fixed_pos(view.left_top() + egui::vec2(10.0, 10.0))
         .order(egui::Order::Foreground)

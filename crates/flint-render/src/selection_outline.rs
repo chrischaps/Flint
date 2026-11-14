@@ -165,8 +165,8 @@ fn mask_pipeline(
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
-        bind_group_layouts: layouts,
-        push_constant_ranges: &[],
+        bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
+        immediate_size: 0,
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
@@ -174,7 +174,7 @@ fn mask_pipeline(
         vertex: wgpu::VertexState {
             module: shader,
             entry_point: Some(vs),
-            buffers,
+            buffers: &buffers.iter().cloned().map(Some).collect::<Vec<_>>(),
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -196,7 +196,7 @@ fn mask_pipeline(
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -327,8 +327,8 @@ impl SelectionOutline {
         );
         let outline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Selection Outline"),
-            bind_group_layouts: &[&outline_bgl],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&outline_bgl)],
+            immediate_size: 0,
         });
         let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Selection Outline"),
@@ -352,7 +352,7 @@ impl SelectionOutline {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
@@ -464,6 +464,7 @@ impl SelectionOutline {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -472,6 +473,7 @@ impl SelectionOutline {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_pipeline(&self.outline_pipeline);
         pass.set_bind_group(0, &mask.outline_bind, &[]);

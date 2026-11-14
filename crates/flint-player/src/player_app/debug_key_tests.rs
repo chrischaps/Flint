@@ -95,8 +95,8 @@ impl crate::extension::PlayerExtension for Bare {}
 
 /// Run one egui frame on the app's context with a text field focused.
 fn focus_a_field(app: &PlayerApp) {
-    let _ = run_headless_frame(&app.hud.egui_ctx, egui::RawInput::default(), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    let _ = run_headless_frame(&app.hud.egui_ctx, egui::RawInput::default(), |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             let mut text = String::new();
             ui.text_edit_singleline(&mut text).request_focus();
         });
@@ -110,7 +110,7 @@ fn a_focused_egui_field_keeps_scripted_keys_from_the_game() {
     app.core.clock.frame_step = Some(0.25);
     app.add_extension(Box::new(Bare));
     focus_a_field(&app);
-    assert!(app.hud.egui_ctx.wants_keyboard_input());
+    assert!(app.hud.egui_ctx.egui_wants_keyboard_input());
     app.tick();
     assert!(!app.input.is_key_down(KeyCode::KeyW), "the field took it");
     app.tick();
@@ -125,13 +125,13 @@ fn a_focused_button_leaves_scripted_keys_to_the_game() {
 ",
     );
     app.add_extension(Box::new(Bare));
-    let _ = run_headless_frame(&app.hud.egui_ctx, egui::RawInput::default(), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    let _ = run_headless_frame(&app.hud.egui_ctx, egui::RawInput::default(), |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.button("Buy").request_focus();
         });
     });
     assert!(
-        app.hud.egui_ctx.wants_keyboard_input(),
+        app.hud.egui_ctx.egui_wants_keyboard_input(),
         "egui counts any focus"
     );
     app.tick();

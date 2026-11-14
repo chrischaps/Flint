@@ -59,7 +59,7 @@ pub(super) fn render_draw_commands(
     // instead, in the same layer order among themselves.
     let base_painter = ctx.layer_painter(egui::LayerId::background());
     let over_painter = ctx.layer_painter(over_ui_layer());
-    let screen = ctx.screen_rect();
+    let screen = ctx.content_rect();
 
     for item in &sorted {
         let layer_painter = if item.over_ui {
@@ -110,7 +110,7 @@ pub(super) fn render_draw_commands(
                 // Galleys bake their section colour, so shadow / stroke /
                 // main each get their own (the galley cache makes repeats
                 // cheap). Position comes from the main galley's size.
-                let galley = ctx.fonts(|f| {
+                let galley = ctx.fonts_mut(|f| {
                     f.layout_job(text_layout_job(
                         text,
                         font_id.clone(),
@@ -123,7 +123,7 @@ pub(super) fn render_draw_commands(
 
                 if let Some((shadow_color, dx, dy)) = shadow {
                     let sc = to_color32(shadow_color);
-                    let shadow_galley = ctx.fonts(|f| {
+                    let shadow_galley = ctx.fonts_mut(|f| {
                         f.layout_job(text_layout_job(text, font_id.clone(), sc, *letter_spacing))
                     });
                     painter.galley(egui::Pos2::new(pos.x + dx, pos.y + dy), shadow_galley, sc);
@@ -143,7 +143,7 @@ pub(super) fn render_draw_commands(
                 } else if let Some((stroke_color, stroke_width)) = stroke {
                     // A thin stroke (outline): the text at 8 compass offsets
                     let sc = to_color32(stroke_color);
-                    let stroke_galley = ctx.fonts(|f| {
+                    let stroke_galley = ctx.fonts_mut(|f| {
                         f.layout_job(text_layout_job(text, font_id.clone(), sc, *letter_spacing))
                     });
                     for (dx, dy) in stamp_offsets(*stroke_width) {
@@ -188,6 +188,7 @@ pub(super) fn render_draw_commands(
                     rect,
                     *rounding,
                     egui::Stroke::new(*thickness, to_color32(color)),
+                    egui::StrokeKind::Middle,
                 );
             }
 
@@ -203,11 +204,13 @@ pub(super) fn render_draw_commands(
                 let rect =
                     egui::Rect::from_min_size(egui::Pos2::new(*x, *y), egui::Vec2::new(*w, *h));
                 // Script order is tl, tr, br, bl; egui names them by compass.
-                let r = egui::Rounding {
-                    nw: rounding[0],
-                    ne: rounding[1],
-                    se: rounding[2],
-                    sw: rounding[3],
+                // Whole points from 0 to 255 since egui 0.31 (#945)
+                let px = |r: f32| r.clamp(0.0, 255.0).round() as u8;
+                let r = egui::CornerRadius {
+                    nw: px(rounding[0]),
+                    ne: px(rounding[1]),
+                    se: px(rounding[2]),
+                    sw: px(rounding[3]),
                 };
                 painter.rect_filled(rect, r, to_color32(color));
             }
@@ -391,7 +394,8 @@ mod tests {
             ..Default::default()
         };
         let items = [dot(over_ui)];
-        let out = run_headless_frame(&ctx, input, |ctx| {
+        let out = run_headless_frame(&ctx, input, |ui| {
+            let ctx = &ui.ctx().clone();
             render_draw_commands(
                 ctx,
                 &items,
@@ -400,7 +404,7 @@ mod tests {
                 &mut HashSet::new(),
                 &mut TextHalos::default(),
             );
-            egui::TopBottomPanel::top("header").show(ctx, |ui| ui.label("header"));
+            egui::Panel::top("header").show(ui, |ui| ui.label("header"));
             egui::Window::new("panel")
                 .fixed_pos([60.0, 0.0])
                 .show(ctx, |ui| ui.label("window"));

@@ -85,7 +85,7 @@ fn name_filter() -> Option<String> {
 
 /// Backends to enumerate: `WGPU_BACKEND` env var, else all.
 pub fn backends() -> wgpu::Backends {
-    wgpu::util::backend_bits_from_env().unwrap_or(wgpu::Backends::all())
+    wgpu::Backends::from_env().unwrap_or(wgpu::Backends::all())
 }
 
 /// Create a wgpu instance over [`backends`], with DX12 compiling shaders
@@ -94,8 +94,14 @@ pub fn instance() -> wgpu::Instance {
     let backends = backends();
     wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends,
-        dx12_shader_compiler: dx12_compiler(backends),
-        ..Default::default()
+        backend_options: wgpu::BackendOptions {
+            dx12: wgpu::Dx12BackendOptions {
+                shader_compiler: dx12_compiler(backends),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
     })
 }
 
@@ -205,9 +211,12 @@ fn dx12_compiler(backends: wgpu::Backends) -> wgpu::Dx12Compiler {
     let shaders = dx12_shaders();
     *LAST_DX12.lock().unwrap() = Some(shaders.clone());
     match shaders {
-        Dx12Shaders::Dxc { dir } => wgpu::Dx12Compiler::Dxc {
-            dxc_path: Some(dir.join(DXC_DLLS[0])),
-            dxil_path: Some(dir.join(DXC_DLLS[1])),
+        // wgpu 30 takes only dxcompiler.dll's path (`load_dxc` still checks
+        // both DLLs are there). A DynamicDxc that fails to load is an
+        // instance error in wgpu 30, not a quiet FXC fallback, so that check
+        // decides first (#945).
+        Dx12Shaders::Dxc { dir } => wgpu::Dx12Compiler::DynamicDxc {
+            dxc_path: dir.join(DXC_DLLS[0]).to_string_lossy().into_owned(),
         },
         // A missing DLL would make wgpu fall back by itself, but only after
         // a log line from every instance, even one that draws on Vulkan
@@ -285,7 +294,7 @@ fn load_dxc(_dir: &Path) -> Result<(), String> {
 }
 
 fn power_preference() -> wgpu::PowerPreference {
-    wgpu::util::power_preference_from_env().unwrap_or(wgpu::PowerPreference::HighPerformance)
+    wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::HighPerformance)
 }
 
 /// Pick an adapter honouring the override/env/default chain described in
@@ -296,15 +305,15 @@ pub async fn request_adapter(
 ) -> Option<wgpu::Adapter> {
     let adapter = match name_filter() {
         Some(filter) => select_by_name(instance, compatible_surface, &filter).await,
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: power_preference(),
-                    compatible_surface,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
+        None => instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: power_preference(),
+                compatible_surface,
+                force_fallback_adapter: false,
+                apply_limit_buckets: false,
+            })
+            .await
+            .ok(),
     }?;
 
     let info = adapter.get_info();
@@ -335,7 +344,7 @@ async fn select_by_name(
     // A browser hands out one adapter through `requestAdapter`; with no list
     // to filter, the web falls back to the power preference below.
     #[cfg(not(target_arch = "wasm32"))]
-    let adapters = instance.enumerate_adapters(backends());
+    let adapters = instance.enumerate_adapters(backends()).await;
     #[cfg(target_arch = "wasm32")]
     let adapters: Vec<wgpu::Adapter> = Vec::new();
     let available: Vec<String> = adapters.iter().map(|a| a.get_info().name).collect();
@@ -366,8 +375,10 @@ async fn select_by_name(
                 power_preference: power_preference(),
                 compatible_surface,
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
             })
-            .await;
+            .await
+            .ok();
     }
     matched
 }
@@ -441,7 +452,7 @@ fn software_adapter_hint() -> &'static str {
 /// List available adapters as `(name, device type, backend)` strings.
 pub fn list_adapters() -> Vec<String> {
     #[cfg(not(target_arch = "wasm32"))]
-    let adapters = instance().enumerate_adapters(backends());
+    let adapters = pollster::block_on(instance().enumerate_adapters(backends()));
     #[cfg(target_arch = "wasm32")]
     let adapters: Vec<wgpu::Adapter> = Vec::new();
     adapters
@@ -490,12 +501,7 @@ mod tests {
     fn the_adapter_line_names_the_compiler_on_dx12_only() {
         let info = |backend| wgpu::AdapterInfo {
             name: "GPU".into(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu::DeviceType::DiscreteGpu,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend,
+            ..wgpu::AdapterInfo::new(wgpu::DeviceType::DiscreteGpu, backend)
         };
         assert_eq!(
             super::adapter_line(&info(wgpu::Backend::Vulkan)),

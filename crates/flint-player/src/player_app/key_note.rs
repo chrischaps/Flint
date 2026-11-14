@@ -83,20 +83,20 @@ impl KeyNote {
             .order(egui::Order::Foreground)
             .interactable(false)
             .show(ctx, |ui| {
-                egui::Frame::none()
+                egui::Frame::NONE
                     .fill(fade(14, 16, 22, 224))
                     .stroke(egui::Stroke::new(1.0_f32, fade(255, 255, 255, 40)))
-                    .rounding(egui::Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                    .corner_radius(egui::CornerRadius::same(8))
+                    .inner_margin(egui::Margin::symmetric(12, 8))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 10.0;
                             // The key, as a keycap
-                            egui::Frame::none()
+                            egui::Frame::NONE
                                 .fill(fade(255, 196, 92, 36))
                                 .stroke(egui::Stroke::new(1.0_f32, fade(255, 196, 92, 150)))
-                                .rounding(egui::Rounding::same(4.0))
-                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                .corner_radius(egui::CornerRadius::same(4))
+                                .inner_margin(egui::Margin::symmetric(6, 2))
                                 .show(ui, |ui| {
                                     ui.label(
                                         egui::RichText::new(shown.key)
@@ -131,7 +131,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let out = run_headless_frame(ctx, input, |ctx| note.paint(ctx, 24.0));
+        let out = run_headless_frame(ctx, input, |ui| note.paint(ui.ctx(), 24.0));
         !out.shapes.is_empty()
     }
 

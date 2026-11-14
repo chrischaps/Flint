@@ -31,19 +31,16 @@ fn halo_within(
     max_side: usize,
 ) -> (Arc<egui::Galley>, HaloImage) {
     let mut out = None;
-    let _ = run_headless_frame(ctx, Default::default(), |ctx| {
-        let galley = ctx.fonts(|f| {
+    let _ = run_headless_frame(ctx, Default::default(), |ui| {
+        let ctx = &ui.ctx().clone();
+        let galley = ctx.fonts_mut(|f| {
             f.layout_no_wrap(
                 text.to_owned(),
                 egui::FontId::proportional(size),
                 egui::Color32::WHITE,
             )
         });
-        let image = ctx.fonts(|f| {
-            let atlas = f.texture_atlas();
-            let atlas = atlas.lock();
-            rasterise(&galley, atlas.image(), spec, max_side)
-        });
+        let image = ctx.fonts(|f| rasterise(&galley, &f.image(), spec, max_side));
         out = Some((galley, image.expect("a halo")));
     });
     out.unwrap()
@@ -54,15 +51,13 @@ fn coverage(ctx: &egui::Context, galley: &egui::Galley, halo: &HaloImage) -> Vec
     let [w, h] = halo.image.size;
     let mut cov = vec![0.0; w * h];
     ctx.fonts(|f| {
-        let atlas = f.texture_atlas();
-        let atlas = atlas.lock();
-        let img = atlas.image();
+        let img = f.image();
         for q in glyph_quads(galley, galley.pixels_per_point) {
             for y in 0..q.size[1] {
                 for x in 0..q.size[0] {
                     let dx = (q.dst[0] - halo.origin_px[0]) as usize + x;
                     let dy = (q.dst[1] - halo.origin_px[1]) as usize + y;
-                    let c = img.pixels[(q.uv[1] + y) * img.size[0] + q.uv[0] + x];
+                    let c = atlas_coverage(&img, q.uv[0] + x, q.uv[1] + y);
                     cov[dy * w + dx] = f32::max(cov[dy * w + dx], c);
                 }
             }
@@ -257,12 +252,13 @@ fn a_still_label_makes_one_texture_and_a_dropped_one_frees_it() {
         glow: Some(([1.0; 4], 8.0)),
     };
     let frame = |halos: &mut TextHalos, text: Option<&str>| {
-        let _ = run_headless_frame(&ctx, Default::default(), |ctx| {
+        let _ = run_headless_frame(&ctx, Default::default(), |ui| {
+            let ctx = &ui.ctx().clone();
             halos.begin_frame();
             if let Some(text) = text {
                 let font = egui::FontId::proportional(40.0);
-                let galley =
-                    ctx.fonts(|f| f.layout_no_wrap(text.into(), font.clone(), egui::Color32::RED));
+                let galley = ctx
+                    .fonts_mut(|f| f.layout_no_wrap(text.into(), font.clone(), egui::Color32::RED));
                 let shape = halos.shape(ctx, &galley, (text, &font), egui::pos2(10.3, 20.0), spec);
                 let Some(egui::Shape::Mesh(m)) = shape else {
                     panic!("an image mesh")
@@ -335,11 +331,13 @@ fn a_halo_past_the_texture_limit_is_drawn_smaller_in_the_same_place() {
         max_texture_side: Some(limit),
         ..Default::default()
     };
-    let _ = run_headless_frame(&ctx, input, |ctx| {
+    let _ = run_headless_frame(&ctx, input, |ui| {
+        let ctx = &ui.ctx().clone();
         halos.begin_frame();
         let font = egui::FontId::proportional(300.0);
-        let galley =
-            ctx.fonts(|f| f.layout_no_wrap("AFTERGLOW".into(), font.clone(), egui::Color32::WHITE));
+        let galley = ctx.fonts_mut(|f| {
+            f.layout_no_wrap("AFTERGLOW".into(), font.clone(), egui::Color32::WHITE)
+        });
         let Some(egui::Shape::Mesh(m)) = halos.shape(
             ctx,
             &galley,

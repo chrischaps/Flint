@@ -436,8 +436,16 @@ impl ParticleEditApp {
             None,
             None,
         );
-        let egui_renderer =
-            egui_wgpu::Renderer::new(&context.device, context.config.format, None, 1, false);
+        let egui_renderer = egui_wgpu::Renderer::new(
+            &context.device,
+            context.config.format,
+            egui_wgpu::RendererOptions {
+                depth_stencil_format: None,
+                msaa_samples: 1,
+                dithering: false,
+                ..Default::default()
+            },
+        );
 
         self.sim.load_textures(
             &mut renderer,
@@ -688,8 +696,11 @@ impl ParticleEditApp {
     /// region the panels leave uncovered (the panels are drawn over the 3D
     /// pass, which spans the whole window). Uses last frame's layout.
     fn center_in_viewport(&mut self) {
-        let screen = self.egui_ctx.screen_rect();
-        let view = self.egui_ctx.available_rect();
+        let screen = self.egui_ctx.content_rect();
+        let view = self
+            .egui_ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(ui::VIEW_RECT_ID)))
+            .unwrap_or(screen);
         if screen.width() <= 0.0 || screen.height() <= 0.0 {
             return;
         }
@@ -892,7 +903,7 @@ impl ApplicationHandler for ParticleEditApp {
                 if event.state != ElementState::Pressed || event.repeat {
                     return;
                 }
-                if self.egui_ctx.wants_keyboard_input() {
+                if self.egui_ctx.egui_wants_keyboard_input() {
                     return;
                 }
                 let mods = self.egui_ctx.input(|i| i.modifiers);
@@ -981,7 +992,7 @@ impl ApplicationHandler for ParticleEditApp {
             WindowEvent::MouseInput { .. }
             | WindowEvent::CursorMoved { .. }
             | WindowEvent::MouseWheel { .. } => {
-                let over_ui = self.egui_ctx.is_pointer_over_area();
+                let over_ui = self.egui_ctx.is_pointer_over_egui();
                 self.orbit.handle_event(&event, &mut self.camera, over_ui);
             }
             WindowEvent::RedrawRequested => {
@@ -1042,7 +1053,9 @@ impl ApplicationHandler for ParticleEditApp {
                 } else if self.camera.ndc_offset != [0.0, 0.0] {
                     self.camera.ndc_offset = [0.0, 0.0];
                 }
-                output.present();
+                if let Some(context) = &self.render_context {
+                    context.queue.present(output);
+                }
             }
             _ => {}
         }
