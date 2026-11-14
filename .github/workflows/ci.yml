@@ -252,6 +252,53 @@ jobs:
   # fragment and no `Changelog: none (reason)` line in a commit message, a
   # malformed fragment, or a CHANGELOG.md grown past 3 KB. Run it locally with
   # `bash scripts/changelog-check.sh`; `bash scripts/changelog-test.sh` tests it.
+  # #934 spike only (never merge): does wgpu's static-dxc build on the
+  # runner's MSVC, and does WARP draw with DXC linked in and no DLLs?
+  static-dxc:
+    name: static DXC on WARP (spike #934)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    env:
+      WGPU_BACKEND: dx12
+      WGPU_ADAPTER_NAME: Microsoft Basic Render Driver
+      FLINT_REQUIRE_GPU: "1"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gpu-warp
+          cache-on-failure: true
+      - name: cl.exe version
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationVersion
+          "Visual Studio $vs"
+      - name: build flint with --features static-dxc (own target dir)
+        shell: bash
+        run: |
+          start=$(date +%s)
+          CARGO_TARGET_DIR=target-static cargo build -p flint-cli --bin flint --features static-dxc
+          echo "build took $(( $(date +%s) - start )) s"
+          ls -la target-static/debug/flint.exe
+          ls target-static/debug/*.dll || echo "no DLLs beside flint.exe"
+          target-static/debug/flint.exe dxc status | tee dxc-status.txt
+          grep -q "^DX12 shaders: DXC (static)" dxc-status.txt
+      - name: goldens on WARP with static DXC
+        shell: bash
+        run: |
+          start=$(date +%s)
+          target-static/debug/flint.exe goldens crates/flint-cli/tests/golden/stylize.goldens.toml --require-gpu --out-dir target-static/goldens || true
+          echo "goldens took $(( $(date +%s) - start )) s"
+      - name: Upload renders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stylize-goldens-warp-static-dxc
+          path: target-static/goldens
+
   changelog:
     name: changelog
     if: github.event_name == 'pull_request'
