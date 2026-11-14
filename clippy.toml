@@ -2,14 +2,16 @@
 # in its Cargo.toml): flint-render, flint-player, flint-viewer, flint-cli,
 # flint-debug-ui.
 disallowed-methods = [
-    # #944: built-in WGSL goes through flint_render::TrustedShader, which the
-    # wgpu 30 bump (#945) turns into create_shader_module_trusted without loop
-    # bounding. User styles (stylize/custom.rs) keep the checked call.
+    # #944/#945: built-in WGSL goes through flint_render::TrustedShader, which
+    # is create_shader_module_trusted without loop bounding. User styles
+    # (stylize/custom.rs) keep the checked call.
     { path = "wgpu::Device::create_shader_module", reason = "built-in WGSL: use flint_render::TrustedShader::create_trusted_shader_module; user style WGSL keeps the checked call (#944)" },
-    # #944: wgpu 29 changes what this returns; flint_render::AcquireFrame is the one place that knows.
+    { path = "wgpu::Device::create_shader_module_trusted", reason = "built-in WGSL: use flint_render::TrustedShader::create_trusted_shader_module, the one place that picks the checks (#945)" },
+    { path = "wgpu::Device::create_shader_module_unchecked", reason = "built-in WGSL: use flint_render::TrustedShader::create_trusted_shader_module; bounds and division checks stay on (#945)" },
+    # #944: wgpu 29 changed what this returns; flint_render::AcquireFrame is the one place that knows.
     { path = "wgpu::Surface::get_current_texture", reason = "take the frame with flint_render::AcquireFrame::acquire (#944)" },
     # #944: egui 0.36 asserts when a FullOutput drops with texture updates in it.
     # Tests run frames with flint_debug_ui::run_headless_frame; a real frame
     # uploads its deltas, clears them, and allows this.
-    { path = "egui::Context::run", reason = "a test's frame is flint_debug_ui::run_headless_frame; a host that uploads its texture updates allows this (#944)" },
+    { path = "egui::Context::run_ui", reason = "a test's frame is flint_debug_ui::run_headless_frame; a host that uploads its texture updates allows this (#944)" },
 ]

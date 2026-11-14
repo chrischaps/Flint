@@ -215,14 +215,14 @@ impl SceneRenderer {
             return Ok(());
         }
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: mask,
                 mip_level: 0,
                 origin: wgpu::Origin3d { x, y, z: 0 },
                 aspect: wgpu::TextureAspect::All,
             },
             bytes,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(width),
                 rows_per_image: Some(height),
@@ -471,8 +471,12 @@ impl SceneRenderer {
             encoder.copy_buffer_to_buffer(buffer, offset, &staging, 0, size);
             queue.submit([encoder.finish()]);
             staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-            device.poll(wgpu::Maintain::Wait);
-            let bytes = staging.slice(..).get_mapped_range().to_vec();
+            let _ = device.poll(wgpu::PollType::wait_indefinitely());
+            let bytes = staging
+                .slice(..)
+                .get_mapped_range()
+                .expect("mapped buffer range")
+                .to_vec();
             staging.unmap();
             bytes
         };
@@ -878,14 +882,14 @@ fn upload_grass_texture(
         view_formats: &[],
     });
     queue.write_texture(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: &texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
         data,
-        wgpu::ImageDataLayout {
+        wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(width * bytes_per_texel),
             rows_per_image: Some(height),

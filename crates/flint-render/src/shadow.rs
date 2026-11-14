@@ -154,8 +154,8 @@ impl ShadowPass {
         let shadow_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Shadow Pipeline Layout"),
-                bind_group_layouts: &[&shadow_bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&shadow_bind_group_layout)],
+                immediate_size: 0,
             });
 
         let make_shadow = |label: &str, cull_mode: Option<wgpu::Face>| {
@@ -165,7 +165,7 @@ impl ShadowPass {
                 vertex: wgpu::VertexState {
                     module: &shadow_shader,
                     entry_point: Some("vs_shadow"),
-                    buffers: &[Vertex::desc()],
+                    buffers: &[Some(Vertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: None, // Depth only, no fragment shader
@@ -180,8 +180,8 @@ impl ShadowPass {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState {
                         constant: 2,
@@ -190,7 +190,7 @@ impl ShadowPass {
                     },
                 }),
                 multisample: wgpu::MultisampleState::default(),
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };
@@ -218,8 +218,11 @@ impl ShadowPass {
         let skinned_shadow_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Skinned Shadow Pipeline Layout"),
-                bind_group_layouts: &[&shadow_bind_group_layout, &skinned_shadow_bone_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[
+                    Some(&shadow_bind_group_layout),
+                    Some(&skinned_shadow_bone_layout),
+                ],
+                immediate_size: 0,
             });
 
         let make_skinned_shadow = |label: &str, cull_mode: Option<wgpu::Face>| {
@@ -229,7 +232,7 @@ impl ShadowPass {
                 vertex: wgpu::VertexState {
                     module: &shadow_shader,
                     entry_point: Some("vs_skinned_shadow"),
-                    buffers: &[SkinnedVertex::desc()],
+                    buffers: &[Some(SkinnedVertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: None,
@@ -244,8 +247,8 @@ impl ShadowPass {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState {
                         constant: 2,
@@ -254,7 +257,7 @@ impl ShadowPass {
                     },
                 }),
                 multisample: wgpu::MultisampleState::default(),
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };
@@ -423,8 +426,8 @@ impl ShadowPass {
                             cull_mode: Option<wgpu::Face>| {
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(label),
-                bind_group_layouts: groups,
-                push_constant_ranges: &[],
+                bind_group_layouts: &groups.iter().copied().map(Some).collect::<Vec<_>>(),
+                immediate_size: 0,
             });
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
@@ -432,7 +435,7 @@ impl ShadowPass {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some(entry),
-                    buffers: &[buffer],
+                    buffers: &[Some(buffer)],
                     compilation_options: Default::default(),
                 },
                 fragment: None,
@@ -447,8 +450,8 @@ impl ShadowPass {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState {
                         constant: 2,
@@ -457,7 +460,7 @@ impl ShadowPass {
                     },
                 }),
                 multisample: wgpu::MultisampleState::default(),
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };

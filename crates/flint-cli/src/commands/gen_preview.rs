@@ -296,8 +296,16 @@ impl GenPreviewApp {
             None,
             None,
         );
-        let egui_renderer =
-            egui_wgpu::Renderer::new(&context.device, context.config.format, None, 1, false);
+        let egui_renderer = egui_wgpu::Renderer::new(
+            &context.device,
+            context.config.format,
+            egui_wgpu::RendererOptions {
+                depth_stencil_format: None,
+                msaa_samples: 1,
+                dithering: false,
+                ..Default::default()
+            },
+        );
         self.egui_winit = Some(egui_winit);
         self.egui_renderer = Some(egui_renderer);
 
@@ -882,12 +890,12 @@ impl GenPreviewApp {
         let raw_input = egui_winit.take_egui_input(&window);
         // A real frame: its texture updates are uploaded below (#944)
         #[allow(clippy::disallowed_methods)]
-        let mut full_output = self.egui_ctx.run(raw_input, |ctx| {
+        let mut full_output = self.egui_ctx.run_ui(raw_input, |ui| {
             // Left side panel — parameter editor
-            egui::SidePanel::left("param_panel")
-                .default_width(320.0)
+            egui::Panel::left("param_panel")
+                .default_size(320.0)
                 .resizable(true)
-                .show(ctx, |ui| {
+                .show(ui, |ui| {
                     ui.heading(&spec_name);
                     ui.label(format!("Generator: {}", generator_name));
                     ui.separator();
@@ -910,7 +918,7 @@ impl GenPreviewApp {
                     ui.separator();
 
                     // Bottom section (stats, buttons, status) — always visible
-                    egui::TopBottomPanel::bottom("param_panel_bottom").show_inside(ui, |ui| {
+                    egui::Panel::bottom("param_panel_bottom").show(ui, |ui| {
                         // LOD selector
                         if lod_count > 1 {
                             ui.horizontal(|ui| {
@@ -1001,7 +1009,7 @@ impl GenPreviewApp {
 
             // Texture display in central panel (only for image output)
             if is_texture && !egui_textures.is_empty() {
-                egui::CentralPanel::default().show(ctx, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     // Toolbar: channel tabs + view controls
                     ui.horizontal(|ui| {
                         for (i, (label, _)) in egui_textures.iter().enumerate() {
@@ -1057,7 +1065,7 @@ impl GenPreviewApp {
 
                         // Scroll-to-zoom (centered on cursor)
                         if response.hovered() {
-                            let scroll = ui.input(|i| i.raw_scroll_delta.y);
+                            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
                             if scroll != 0.0 {
                                 let old_zoom = texture_zoom;
                                 texture_zoom =
@@ -1115,7 +1123,7 @@ impl GenPreviewApp {
             if !is_texture {
                 egui::Area::new(egui::Id::new("stats_overlay"))
                     .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
-                    .show(ctx, |ui| {
+                    .show(ui, |ui| {
                         egui::Frame::popup(ui.style()).show(ui, |ui| {
                             ui.label(format!("FPS: {:.0}", fps));
                         });
@@ -1143,8 +1151,10 @@ impl GenPreviewApp {
                 label: Some("egui Encoder"),
             });
 
-        for (id, image_delta) in &full_output.textures_delta.set {
-            egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+        for (id, deltas) in &full_output.textures_delta.set {
+            for image_delta in deltas {
+                egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+            }
         }
 
         egui_renderer.update_buffers(
@@ -1161,6 +1171,7 @@ impl GenPreviewApp {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -1169,6 +1180,7 @@ impl GenPreviewApp {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             let mut render_pass = render_pass.forget_lifetime();
@@ -1398,7 +1410,7 @@ impl ApplicationHandler for GenPreviewApp {
             | WindowEvent::CursorMoved { .. }
             | WindowEvent::MouseWheel { .. }) => {
                 self.orbit
-                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_area());
+                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_egui());
             }
 
             WindowEvent::RedrawRequested => {
@@ -1493,6 +1505,7 @@ impl ApplicationHandler for GenPreviewApp {
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                 view: &view,
                                 resolve_target: None,
+                                depth_slice: None,
                                 ops: wgpu::Operations {
                                     load: wgpu::LoadOp::Clear(wgpu::Color {
                                         r: 0.12,
@@ -1506,6 +1519,7 @@ impl ApplicationHandler for GenPreviewApp {
                             depth_stencil_attachment: None,
                             timestamp_writes: None,
                             occlusion_query_set: None,
+                            multiview_mask: None,
                         });
                     }
                     context.queue.submit(std::iter::once(encoder.finish()));
@@ -1516,7 +1530,9 @@ impl ApplicationHandler for GenPreviewApp {
                     self.render_egui(&view);
                 }
 
-                output.present();
+                if let Some(context) = &self.render_context {
+                    context.queue.present(output);
+                }
             }
 
             _ => {}

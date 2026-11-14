@@ -3,29 +3,28 @@
 //! Every window (the player, the web shims, the viewer, the CLI's editors
 //! and previews) takes its frame through [`AcquireFrame::acquire`], never
 //! `Surface::get_current_texture` (clippy's `disallowed_methods` holds it).
-//! wgpu 29 turns that call's `Result<_, SurfaceError>` into a
-//! `CurrentSurfaceTexture` enum; when Flint moves to it (#945) only this
-//! body changes, and the callers keep matching on this module's
-//! [`SurfaceError`].
+//! Since wgpu 29 that call returns a `CurrentSurfaceTexture` enum rather
+//! than wgpu 23's `Result<_, SurfaceError>` (#945); this module turns it back
+//! into a `Result`, so the callers match on this module's [`SurfaceError`].
 //!
-//! A suboptimal frame counts as a frame, as it does on wgpu 23
-//! (`SurfaceTexture::suboptimal`) and as `CurrentSurfaceTexture::Suboptimal`
-//! will.
+//! A suboptimal frame (`CurrentSurfaceTexture::Suboptimal`) counts as a
+//! frame, as `SurfaceTexture::suboptimal` did on wgpu 23.
 
 /// Why no frame could be taken.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfaceError {
     /// Acquiring the frame timed out.
     Timeout,
-    /// The window is hidden or minimised. wgpu 29+; never on wgpu 23.
+    /// The window is hidden or minimised.
     Occluded,
     /// The surface changed (a resize): reconfigure it.
     Outdated,
     /// The swapchain is gone: reconfigure it.
     Lost,
-    /// No memory for a frame. wgpu 23 only; wgpu 29 folds it into a lost device.
+    /// No memory for a frame. Never since wgpu 29, which folds it into a
+    /// lost device; kept so the callers' fatal arm stays until #948.
     OutOfMemory,
-    /// A validation error. wgpu 29+; never on wgpu 23.
+    /// A validation error, caught by an error scope.
     Validation,
 }
 
@@ -50,13 +49,16 @@ pub trait AcquireFrame {
 }
 
 impl AcquireFrame for wgpu::Surface<'_> {
+    #[allow(clippy::disallowed_methods)] // the one sanctioned call
     fn acquire(&self) -> Result<wgpu::SurfaceTexture, SurfaceError> {
-        #[allow(clippy::disallowed_methods)]
-        self.get_current_texture().map_err(|e| match e {
-            wgpu::SurfaceError::Timeout => SurfaceError::Timeout,
-            wgpu::SurfaceError::Outdated => SurfaceError::Outdated,
-            wgpu::SurfaceError::Lost => SurfaceError::Lost,
-            wgpu::SurfaceError::OutOfMemory => SurfaceError::OutOfMemory,
-        })
+        use wgpu::CurrentSurfaceTexture as Current;
+        match self.get_current_texture() {
+            Current::Success(frame) | Current::Suboptimal(frame) => Ok(frame),
+            Current::Timeout => Err(SurfaceError::Timeout),
+            Current::Occluded => Err(SurfaceError::Occluded),
+            Current::Outdated => Err(SurfaceError::Outdated),
+            Current::Lost => Err(SurfaceError::Lost),
+            Current::Validation => Err(SurfaceError::Validation),
+        }
     }
 }

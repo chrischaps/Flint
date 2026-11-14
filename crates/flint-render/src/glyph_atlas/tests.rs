@@ -790,9 +790,9 @@ fn the_atlas_uploads_and_reads_back() {
         .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     encoder.copy_texture_to_buffer(
         gpu.texture.as_image_copy(),
-        wgpu::ImageCopyBuffer {
+        wgpu::TexelCopyBufferInfo {
             buffer: &buffer,
-            layout: wgpu::ImageDataLayout {
+            layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(padded),
                 rows_per_image: Some(h),
@@ -807,8 +807,8 @@ fn the_atlas_uploads_and_reads_back() {
     ctx.queue.submit(Some(encoder.finish()));
     let slice = buffer.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
-    ctx.device.poll(wgpu::Maintain::Wait);
-    let data = slice.get_mapped_range();
+    let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
+    let data = slice.get_mapped_range().expect("mapped buffer range");
     for y in 0..h {
         let row = &data[(y * padded) as usize..(y * padded + w) as usize];
         assert_eq!(

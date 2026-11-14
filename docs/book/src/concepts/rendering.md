@@ -1,6 +1,6 @@
 # Rendering
 
-Flint uses wgpu 23 for cross-platform GPU rendering, providing physically-based rendering (PBR) with a Cook-Torrance BRDF, cascaded shadow mapping, optional 4x MSAA, and full glTF mesh support.
+Flint uses wgpu 30 for cross-platform GPU rendering, providing physically-based rendering (PBR) with a Cook-Torrance BRDF, cascaded shadow mapping, optional 4x MSAA, and full glTF mesh support.
 
 ## PBR Shading
 
@@ -389,7 +389,7 @@ flint render levels/tavern.scene.toml --output preview.png --width 1920 --height
 
 ## Technology
 
-The rendering stack uses winit 0.30's `ApplicationHandler` trait pattern (not the older event-loop closure style). wgpu 23 provides the GPU abstraction, selecting the best available backend (Vulkan, Metal, or DX12) at runtime.
+The rendering stack uses winit 0.30's `ApplicationHandler` trait pattern (not the older event-loop closure style). wgpu 30 provides the GPU abstraction, selecting the best available backend (Vulkan, Metal, or DX12) at runtime.
 
 ## Further Reading
 

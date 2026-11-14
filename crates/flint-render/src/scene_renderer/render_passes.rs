@@ -218,6 +218,7 @@ impl SceneRenderer {
                     }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
 
                 pass.set_pipeline(&shadow_pass.shadow_pipeline);

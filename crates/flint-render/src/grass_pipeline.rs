@@ -195,11 +195,15 @@ impl GrassCountReadback {
         if !self.mapping {
             return None;
         }
-        device.poll(wgpu::Maintain::Poll);
+        let _ = device.poll(wgpu::PollType::Poll);
         match self.state.load(Ordering::Acquire) {
             1 => {
                 let count = {
-                    let data = self.buffer.slice(..).get_mapped_range();
+                    let data = self
+                        .buffer
+                        .slice(..)
+                        .get_mapped_range()
+                        .expect("mapped buffer range");
                     u32::from_le_bytes([data[0], data[1], data[2], data[3]])
                 };
                 self.buffer.unmap();
@@ -655,11 +659,11 @@ impl GrassPipeline {
         let compute_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 bind_group_layouts: &[
-                    &compute_uniform_layout,
-                    &compute_texture_layout,
-                    &compute_storage_layout,
+                    Some(&compute_uniform_layout),
+                    Some(&compute_texture_layout),
+                    Some(&compute_storage_layout),
                 ],
-                push_constant_ranges: &[],
+                immediate_size: 0,
                 label: Some("Grass Compute Pipeline Layout"),
             });
 
@@ -727,12 +731,12 @@ impl GrassPipeline {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 bind_group_layouts: &[
-                    transform_bind_group_layout, // Group 0
-                    &render_grass_layout,        // Group 1
-                    light_bind_group_layout,     // Group 2
-                    &render_instance_layout,     // Group 3
+                    Some(transform_bind_group_layout), // Group 0
+                    Some(&render_grass_layout),        // Group 1
+                    Some(light_bind_group_layout),     // Group 2
+                    Some(&render_instance_layout),     // Group 3
                 ],
-                push_constant_ranges: &[],
+                immediate_size: 0,
                 label: Some("Grass Render Pipeline Layout"),
             });
 
@@ -742,7 +746,7 @@ impl GrassPipeline {
             vertex: wgpu::VertexState {
                 module: &render_shader,
                 entry_point: Some("vs_main"),
-                buffers: &[GrassVertex::desc()],
+                buffers: &[Some(GrassVertex::desc())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -762,8 +766,8 @@ impl GrassPipeline {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
@@ -771,7 +775,7 @@ impl GrassPipeline {
                 count: sample_count,
                 ..Default::default()
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -796,12 +800,12 @@ impl GrassPipeline {
         let shadow_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 bind_group_layouts: &[
-                    transform_bind_group_layout, // Group 0
-                    &render_grass_layout,        // Group 1
-                    &shadow_dummy_layout, // Group 2: empty placeholder (NOT light bind group)
-                    &render_instance_layout, // Group 3
+                    Some(transform_bind_group_layout), // Group 0
+                    Some(&render_grass_layout),        // Group 1
+                    Some(&shadow_dummy_layout), // Group 2: empty placeholder (NOT light bind group)
+                    Some(&render_instance_layout), // Group 3
                 ],
-                push_constant_ranges: &[],
+                immediate_size: 0,
                 label: Some("Grass Shadow Pipeline Layout"),
             });
 
@@ -811,7 +815,7 @@ impl GrassPipeline {
             vertex: wgpu::VertexState {
                 module: &render_shader,
                 entry_point: Some("vs_shadow"),
-                buffers: &[GrassVertex::desc()],
+                buffers: &[Some(GrassVertex::desc())],
                 compilation_options: Default::default(),
             },
             fragment: None, // Depth-only
@@ -822,8 +826,8 @@ impl GrassPipeline {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: Default::default(),
                 bias: wgpu::DepthBiasState {
                     constant: 2,
@@ -832,7 +836,7 @@ impl GrassPipeline {
                 },
             }),
             multisample: Default::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 

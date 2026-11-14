@@ -38,6 +38,10 @@ pub const SELECTION_COLOR_SRGB: [u8; 3] = [0xFF, 0xC8, 0x1E];
 /// The outline's width, in points (times the host's pixels per point).
 pub const OUTLINE_WIDTH_POINTS: f32 = 2.0;
 
+/// The most mask texels the outline searches either way (#945); about 4 at
+/// a scale factor of 1.
+const MAX_REACH: i32 = 64;
+
 /// How strongly the outline of a hidden part of the selection is drawn.
 pub const HIDDEN_ALPHA: f32 = 0.4;
 
@@ -165,8 +169,8 @@ fn mask_pipeline(
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
-        bind_group_layouts: layouts,
-        push_constant_ranges: &[],
+        bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
+        immediate_size: 0,
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
@@ -174,7 +178,7 @@ fn mask_pipeline(
         vertex: wgpu::VertexState {
             module: shader,
             entry_point: Some(vs),
-            buffers,
+            buffers: &buffers.iter().cloned().map(Some).collect::<Vec<_>>(),
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -196,7 +200,7 @@ fn mask_pipeline(
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -327,8 +331,8 @@ impl SelectionOutline {
         );
         let outline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Selection Outline"),
-            bind_group_layouts: &[&outline_bgl],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&outline_bgl)],
+            immediate_size: 0,
         });
         let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Selection Outline"),
@@ -352,7 +356,7 @@ impl SelectionOutline {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
@@ -448,7 +452,11 @@ impl SelectionOutline {
             mask.size.1 as f32 / output.1 as f32,
         ];
         let width = OUTLINE_WIDTH_POINTS * pixels_per_point.max(0.25);
-        let reach = ((width + 1.5) * mask_per_px[0].max(mask_per_px[1])).ceil() as i32;
+        // At most MAX_REACH: the shader loops `-reach..=reach` with loop
+        // bounding off (built-in WGSL is trusted, #945), so an absurd scale
+        // factor must not take it near i32::MAX, where it would never end
+        let reach = (((width + 1.5) * mask_per_px[0].max(mask_per_px[1])).ceil() as i32)
+            .clamp(0, MAX_REACH);
         let uniforms = OutlineUniforms {
             color: selection_color(self.outline_format),
             mask_per_px,
@@ -464,6 +472,7 @@ impl SelectionOutline {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -472,6 +481,7 @@ impl SelectionOutline {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_pipeline(&self.outline_pipeline);
         pass.set_bind_group(0, &mask.outline_bind, &[]);

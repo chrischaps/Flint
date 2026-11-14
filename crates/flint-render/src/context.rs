@@ -106,17 +106,15 @@ impl RenderContext {
         let limits = wgpu::Limits::default();
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("Flint Device"),
-                    // Timestamps where the adapter has them, so the
-                    // renderer's GPU timing can be turned on (ADR 0108).
-                    required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
-                    required_limits: limits,
-                    memory_hints: Default::default(),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Flint Device"),
+                // Timestamps where the adapter has them, so the
+                // renderer's GPU timing can be turned on (ADR 0108).
+                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+                required_limits: limits,
+                memory_hints: Default::default(),
+                ..Default::default()
+            })
             .await
             .map_err(|e| RenderError::DeviceCreation(e.to_string()))?;
 
@@ -173,6 +171,8 @@ impl RenderContext {
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode,
+            // sRGB, as every wgpu before 30 chose (#945)
+            color_space: wgpu::SurfaceColorSpace::Auto,
             alpha_mode: surface_caps.alpha_modes[0],
             // A non-sRGB view of the swapchain for the HUD pass: egui expects to
             // write sRGB-encoded values itself, so blending a translucent panel
@@ -238,7 +238,7 @@ impl RenderContext {
 
     /// Read a surface-sized texture back as tightly packed RGBA8 bytes.
     ///
-    /// Blocks on the GPU (`Maintain::Wait`). The texture must have been
+    /// Blocks on the GPU (`PollType::Wait`). The texture must have been
     /// created with `COPY_SRC` and be in the surface format; Bgra formats are
     /// swizzled to RGBA on the way out. Mirrors `HeadlessContext::read_pixels`.
     pub fn read_surface_rgba(&self, texture: &wgpu::Texture) -> Result<Vec<u8>, RenderError> {
@@ -267,15 +267,15 @@ impl RenderContext {
                 label: Some("Surface Readback Encoder"),
             });
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &staging,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded_bytes_per_row),
                     rows_per_image: Some(height),
@@ -294,12 +294,12 @@ impl RenderContext {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         rx.recv()
             .map_err(|e| RenderError::BufferReadFailed(e.to_string()))?
             .map_err(|e| RenderError::BufferReadFailed(e.to_string()))?;
 
-        let data = slice.get_mapped_range();
+        let data = slice.get_mapped_range().expect("mapped buffer range");
         let mut pixels = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
         for row in 0..height {
             let start = (row * padded_bytes_per_row) as usize;

@@ -154,7 +154,7 @@ const TWO: &str = r#"
 
 impl Gpu {
     fn frame(&self, renderer: &mut SceneRenderer, world: &FlintWorld) -> Vec<u8> {
-        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         renderer.update_from_world(world, self.device);
         renderer.render_frame_to(
             self.device,
@@ -165,7 +165,7 @@ impl Gpu {
             Some(world),
         );
         let pixels = self.read();
-        if let Some(e) = pollster::block_on(self.device.pop_error_scope()) {
+        if let Some(e) = pollster::block_on(scope.pop()) {
             panic!("validation error: {e}");
         }
         pixels
@@ -183,9 +183,9 @@ impl Gpu {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_texture_to_buffer(
             self.color.as_image_copy(),
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(row),
                     rows_per_image: None,
@@ -201,8 +201,11 @@ impl Gpu {
         buffer
             .slice(..)
             .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-        self.device.poll(wgpu::Maintain::Wait);
-        let data = buffer.slice(..).get_mapped_range();
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let data = buffer
+            .slice(..)
+            .get_mapped_range()
+            .expect("mapped buffer range");
         let mut out = Vec::with_capacity((W * H * 4) as usize);
         for y in 0..H {
             let at = (row * y) as usize;

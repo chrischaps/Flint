@@ -115,8 +115,11 @@ impl BillboardPipeline {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Billboard Pipeline Layout"),
-            bind_group_layouts: &[&billboard_bind_group_layout, &texture_bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[
+                Some(&billboard_bind_group_layout),
+                Some(&texture_bind_group_layout),
+            ],
+            immediate_size: 0,
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -149,8 +152,8 @@ impl BillboardPipeline {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -158,7 +161,7 @@ impl BillboardPipeline {
                 count: sample_count,
                 ..Default::default()
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 

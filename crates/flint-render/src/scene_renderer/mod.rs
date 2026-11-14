@@ -1844,6 +1844,7 @@ impl SceneRenderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: pass_color_view,
                     resolve_target: pass_resolve_target,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(clear_color),
                         store: wgpu::StoreOp::Store,
@@ -1859,6 +1860,7 @@ impl SceneRenderer {
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             self.render_main_pass(
                 &mut render_pass,
@@ -1880,6 +1882,7 @@ impl SceneRenderer {
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: pass_color_view,
                         resolve_target: pass_resolve_target,
+                        depth_slice: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(clear_color),
                             store: wgpu::StoreOp::Store,
@@ -1895,6 +1898,7 @@ impl SceneRenderer {
                     }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 self.render_main_pass(
                     &mut pass_a,
@@ -1946,6 +1950,7 @@ impl SceneRenderer {
                         Some(wgpu::RenderPassColorAttachment {
                             view: grab_color_view,
                             resolve_target: None,
+                            depth_slice: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                                 store: wgpu::StoreOp::Store,
@@ -1954,6 +1959,7 @@ impl SceneRenderer {
                         Some(wgpu::RenderPassColorAttachment {
                             view: grab_depth_view,
                             resolve_target: None,
+                            depth_slice: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
                                 store: wgpu::StoreOp::Store,
@@ -1963,6 +1969,7 @@ impl SceneRenderer {
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 blit_pass.set_pipeline(&op.blit_pipeline);
                 blit_pass.set_bind_group(0, &*blit_bind_group, &[]);
@@ -1976,6 +1983,7 @@ impl SceneRenderer {
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: pass_color_view,
                         resolve_target: pass_resolve_target,
+                        depth_slice: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Store,
@@ -1991,6 +1999,7 @@ impl SceneRenderer {
                     }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
                 self.render_main_pass(
                     &mut pass_b,

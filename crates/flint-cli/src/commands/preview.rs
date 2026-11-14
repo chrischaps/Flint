@@ -1291,8 +1291,16 @@ impl PreviewApp {
             None,
             None,
         );
-        let egui_renderer =
-            egui_wgpu::Renderer::new(&context.device, context.config.format, None, 1, false);
+        let egui_renderer = egui_wgpu::Renderer::new(
+            &context.device,
+            context.config.format,
+            egui_wgpu::RendererOptions {
+                depth_stencil_format: None,
+                msaa_samples: 1,
+                dithering: false,
+                ..Default::default()
+            },
+        );
         self.egui_winit = Some(egui_winit);
         self.egui_renderer = Some(egui_renderer);
 
@@ -2028,12 +2036,12 @@ impl PreviewApp {
 
         // A real frame: its texture updates are uploaded below (#944)
         #[allow(clippy::disallowed_methods)]
-        let mut full_output = self.egui_ctx.run(raw_input, |ctx| {
+        let mut full_output = self.egui_ctx.run_ui(raw_input, |ui| { let ctx = &ui.ctx().clone();
             // ── Left panel: model info ──
-            egui::SidePanel::left("preview_info_panel")
-                .default_width(220.0)
+            egui::Panel::left("preview_info_panel")
+                .default_size(220.0)
                 .resizable(true)
-                .show(ctx, |ui| {
+                .show(ui, |ui| {
                     ui.heading("Model Inspector");
                     ui.separator();
 
@@ -2303,9 +2311,9 @@ impl PreviewApp {
 
             // ── Bottom panel: animation timeline ──
             if has_anim {
-                egui::TopBottomPanel::bottom("animation_panel")
+                egui::Panel::bottom("animation_panel")
                     .resizable(false)
-                    .show(ctx, |ui| {
+                    .show(ui, |ui| {
                         ui.add_space(4.0);
 
                         // Top row: play/pause, clip selector, speed
@@ -2770,9 +2778,9 @@ impl PreviewApp {
                 .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
                 .interactable(false)
                 .show(ctx, |ui| {
-                    egui::Frame::none()
+                    egui::Frame::NONE
                         .fill(egui::Color32::from_black_alpha(160))
-                        .rounding(4.0)
+                        .corner_radius(4.0)
                         .inner_margin(6.0)
                         .show(ui, |ui| {
                             ui.colored_label(
@@ -2809,8 +2817,10 @@ impl PreviewApp {
                 label: Some("egui Encoder"),
             });
 
-        for (id, image_delta) in &full_output.textures_delta.set {
-            egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+        for (id, deltas) in &full_output.textures_delta.set {
+            for image_delta in deltas {
+                egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+            }
         }
 
         egui_renderer.update_buffers(
@@ -2827,6 +2837,7 @@ impl PreviewApp {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -2835,6 +2846,7 @@ impl PreviewApp {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             let mut render_pass = render_pass.forget_lifetime();
@@ -3385,7 +3397,7 @@ impl ApplicationHandler for PreviewApp {
             | WindowEvent::CursorMoved { .. }
             | WindowEvent::MouseWheel { .. }) => {
                 self.orbit
-                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_area());
+                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_egui());
             }
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
@@ -3530,7 +3542,9 @@ impl ApplicationHandler for PreviewApp {
                     self.render_egui(&view);
                 }
 
-                output.present();
+                if let Some(context) = &self.render_context {
+                    context.queue.present(output);
+                }
             }
             _ => {}
         }

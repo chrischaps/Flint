@@ -81,8 +81,8 @@ fn pipeline(
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
-        bind_group_layouts: layouts,
-        push_constant_ranges: &[],
+        bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
+        immediate_size: 0,
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
@@ -90,7 +90,7 @@ fn pipeline(
         vertex: wgpu::VertexState {
             module,
             entry_point: Some(vs),
-            buffers,
+            buffers: &buffers.iter().cloned().map(Some).collect::<Vec<_>>(),
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -112,8 +112,8 @@ fn pipeline(
         },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
-            depth_write_enabled: false,
-            depth_compare: wgpu::CompareFunction::LessEqual,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
@@ -121,7 +121,7 @@ fn pipeline(
             count: samples,
             ..Default::default()
         },
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
@@ -242,6 +242,7 @@ impl StyleAlbedoPass {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
                 resolve_target,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                     store: if resolve_target.is_some() {
@@ -259,6 +260,7 @@ impl StyleAlbedoPass {
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         let pipelines = &self.pipelines[which];
         let mut skinned = None;

@@ -782,9 +782,12 @@ impl ViewerApp {
         let egui_renderer = egui_wgpu::Renderer::new(
             &render_context.device,
             render_context.hud_format,
-            None,
-            1,
-            false,
+            egui_wgpu::RendererOptions {
+                depth_stencil_format: None,
+                msaa_samples: 1,
+                dithering: false,
+                ..Default::default()
+            },
         );
 
         let mut scene_renderer = SceneRenderer::new(
@@ -1045,7 +1048,7 @@ impl ViewerApp {
             self.finalize_gizmo_undo();
         }
 
-        output.present();
+        self.render_context.as_ref().unwrap().queue.present(output);
     }
 
     /// Stamp the hold's clock (#871), and while anything is drawn on ticks
@@ -1538,22 +1541,23 @@ impl ViewerApp {
 
         // A real frame: its texture updates are uploaded below (#944)
         #[allow(clippy::disallowed_methods)]
-        let mut full_output = self.egui_ctx.run(raw_input, |ctx| {
+        let mut full_output = self.egui_ctx.run_ui(raw_input, |ui| {
+            let ctx = &ui.ctx().clone();
             flint_debug_ui::paint_style_errors(ctx, &style_errors, 0.0);
             if show_panels {
                 // Left side panel: scene tree
-                egui::SidePanel::left("scene_tree_panel")
-                    .default_width(220.0)
+                egui::Panel::left("scene_tree_panel")
+                    .default_size(220.0)
                     .resizable(true)
-                    .show(ctx, |ui| {
+                    .show(ui, |ui| {
                         scene_tree.ui(ui);
                     });
 
                 // Right side panel: spline editor (in editor mode) or entity inspector
-                egui::SidePanel::right("inspector_panel")
-                    .default_width(300.0)
+                egui::Panel::right("inspector_panel")
+                    .default_size(300.0)
                     .resizable(true)
-                    .show(ctx, |ui| {
+                    .show(ui, |ui| {
                         if let Some(ed) = editor.as_mut() {
                             panel_actions =
                                 crate::panels::spline_panel::spline_editor_panel(ui, ed);
@@ -1576,10 +1580,10 @@ impl ViewerApp {
                     });
 
                 // Bottom panel: stats + constraint violations + mode indicator + undo info
-                egui::TopBottomPanel::bottom("status_panel")
-                    .default_height(100.0)
+                egui::Panel::bottom("status_panel")
+                    .default_size(100.0)
                     .resizable(true)
-                    .show(ctx, |ui| {
+                    .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             if violation_count == 0 {
                                 ui.colored_label(
@@ -1775,8 +1779,8 @@ impl ViewerApp {
                         .unwrap_or(pos);
                     drop(st); // Release lock before gizmo draw (it reads ctx.input)
 
-                    let render_rect = ctx.screen_rect();
-                    let clip_rect = ctx.available_rect();
+                    let render_rect = ctx.content_rect();
+                    let clip_rect = ui.available_rect_before_wrap();
 
                     if let Some(delta) = transform_gizmo.draw(
                         ctx,
@@ -1802,11 +1806,11 @@ impl ViewerApp {
             }
 
             // View orientation gizmo (always visible)
-            gizmo_action = view_gizmo.draw(ctx, &cam_view);
+            gizmo_action = view_gizmo.draw(ctx, &cam_view, ui.available_rect_before_wrap());
 
             // Draw spline overlay on the central area (editor mode)
             if let Some(ed) = editor.as_ref() {
-                let screen_rect = ctx.screen_rect();
+                let screen_rect = ctx.content_rect();
                 let painter = ctx.layer_painter(egui::LayerId::new(
                     egui::Order::Foreground,
                     egui::Id::new("spline_overlay"),
@@ -1890,8 +1894,10 @@ impl ViewerApp {
                 label: Some("egui Encoder"),
             });
 
-        for (id, image_delta) in &full_output.textures_delta.set {
-            egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+        for (id, deltas) in &full_output.textures_delta.set {
+            for image_delta in deltas {
+                egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+            }
         }
 
         egui_renderer.update_buffers(
@@ -1908,6 +1914,7 @@ impl ViewerApp {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -1916,6 +1923,7 @@ impl ViewerApp {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             let mut render_pass = render_pass.forget_lifetime();
@@ -2213,7 +2221,7 @@ impl ViewerApp {
         };
 
         // Check if pointer is over egui panels
-        if self.egui_ctx.is_pointer_over_area() {
+        if self.egui_ctx.is_pointer_over_egui() {
             return;
         }
 
@@ -2955,14 +2963,14 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats) 
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 209))
                 .stroke(egui::Stroke::new(
                     1.0f32,
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 38),
                 ))
-                .rounding(egui::Rounding::same(4.0))
-                .inner_margin(egui::Margin::same(10.0))
+                .corner_radius(egui::CornerRadius::same(4))
+                .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
                     ui.style_mut().override_font_id = Some(egui::FontId::monospace(11.0));
                     ui.set_min_width(180.0);

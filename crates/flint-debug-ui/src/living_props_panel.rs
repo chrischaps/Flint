@@ -1378,7 +1378,7 @@ impl LivingPropsDebugPanel {
             egui::Order::Background,
             egui::Id::new("living_pose_overlay"),
         ));
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         let mut placed: Vec<(f32, Pos2, &LivingPropRow)> = self
             .state
             .rows
@@ -1413,7 +1413,7 @@ impl LivingPropsDebugPanel {
             self.picked_on_screen = None;
             return;
         };
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
             egui::Id::new("living_picked_marks"),
@@ -2174,8 +2174,8 @@ mod tests {
             events,
             ..Default::default()
         };
-        let _ = run_headless_frame(ctx, input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
+        let _ = run_headless_frame(ctx, input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| panel.ui(ui));
         });
     }
 
@@ -2275,7 +2275,10 @@ mod tests {
     fn pressing_down_the_sliders_moves_every_knob_one_at_a_time() {
         let mut panel = LivingPropsDebugPanel::new();
         panel.refresh(state());
-        let asked = press_down(&mut panel, 60.0);
+        // On the sliders' rails, right of every section header's text: on
+        // egui 0.36 a press at x = 60 folds the Clock, Shading boil and
+        // Echoes sections away before their sliders are reached (#945)
+        let asked = press_down(&mut panel, 110.0);
         let sets: Vec<WoozePreset> = asked
             .iter()
             .filter_map(|action| match action {
@@ -2349,11 +2352,11 @@ mod tests {
                 ..Default::default()
             };
             // Collapsing headers open on the second frame.
-            let _ = run_headless_frame(&ctx, input.clone(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
+            let _ = run_headless_frame(&ctx, input.clone(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| panel.ui(ui));
             });
-            let output = run_headless_frame(&ctx, input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
+            let output = run_headless_frame(&ctx, input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| panel.ui(ui));
             });
             texts(&output)
         };
@@ -2455,7 +2458,8 @@ mod tests {
                 overlay: true,
                 ..Default::default()
             });
-            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ctx| {
+            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ui| {
+                let ctx = &ui.ctx().clone();
                 panel.paint_overlay(ctx, &view_proj);
             });
             output.shapes.len()
@@ -2484,7 +2488,8 @@ mod tests {
         with_prop.rows = vec![row("oak_1", [0.0, 0.0, -20.0])];
         panel.refresh(with_prop.clone());
         let shapes = |ctx: &egui::Context, panel: &mut LivingPropsDebugPanel| {
-            let output = run_headless_frame(ctx, egui::RawInput::default(), |ctx| {
+            let output = run_headless_frame(ctx, egui::RawInput::default(), |ui| {
+                let ctx = &ui.ctx().clone();
                 panel.paint_overlay(ctx, &view_proj);
             });
             output.shapes.len()
@@ -2553,26 +2558,41 @@ mod tests {
     }
 
     /// Every piece of text the panel draws, and where, once its headers are open.
+    /// What the panel draws once it has settled. egui 0.36 leaves out of
+    /// a frame's shapes what its clip hides, so a header still animating open
+    /// draws only the rows uncovered so far (0.30 culled them later, when
+    /// painting): frames until egui stops asking for the next at once (#945).
     fn shown(ctx: &egui::Context, panel: &mut LivingPropsDebugPanel) -> Vec<(String, Rect)> {
         frame(ctx, panel, Vec::new());
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(420.0, 1400.0))),
             ..Default::default()
         };
-        let output = run_headless_frame(ctx, input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
-        });
-        output
-            .shapes
-            .iter()
-            .filter_map(|clipped| match &clipped.shape {
-                Shape::Text(text) => Some((
-                    text.galley.text().to_string(),
-                    Rect::from_min_size(text.pos, text.galley.size()),
-                )),
-                _ => None,
-            })
-            .collect()
+        let mut last = Vec::new();
+        for _ in 0..64 {
+            let output = run_headless_frame(ctx, input.clone(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| panel.ui(ui));
+            });
+            let animating = output
+                .viewport_output
+                .get(&egui::ViewportId::ROOT)
+                .is_some_and(|v| v.repaint_delay.is_zero());
+            last = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    Shape::Text(text) => Some((
+                        text.galley.text().to_string(),
+                        Rect::from_min_size(text.pos, text.galley.size()),
+                    )),
+                    _ => None,
+                })
+                .collect();
+            if !animating {
+                break;
+            }
+        }
+        last
     }
 
     /// Click the first text that reads `text`, and return what that asked for.
@@ -2718,7 +2738,8 @@ mod tests {
         on.overlay = true;
         panel.refresh(on);
         let labels = |panel: &mut LivingPropsDebugPanel| {
-            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ctx| {
+            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ui| {
+                let ctx = &ui.ctx().clone();
                 panel.paint_overlay(ctx, &view_proj);
             });
             texts(&output)
@@ -2907,7 +2928,7 @@ mod tests {
             events,
             ..Default::default()
         };
-        run_headless_frame(ctx, input, |ctx| panel.paint_overlay(ctx, view))
+        run_headless_frame(ctx, input, |ui| panel.paint_overlay(ui.ctx(), view))
     }
 
     /// Two frames of it, since a new window is laid out unseen on its first.

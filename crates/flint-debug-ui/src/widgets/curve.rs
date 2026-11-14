@@ -39,7 +39,10 @@ pub struct CurveEditor<'a> {
 }
 
 impl<'a> CurveEditor<'a> {
-    pub fn new(id_salt: impl std::hash::Hash, keys: &'a mut Vec<[f32; 2]>) -> Self {
+    pub fn new(
+        id_salt: impl std::hash::Hash + std::fmt::Debug,
+        keys: &'a mut Vec<[f32; 2]>,
+    ) -> Self {
         Self {
             keys,
             range: 0.0..=1.0,
@@ -271,7 +274,10 @@ pub struct GradientEditor<'a> {
 }
 
 impl<'a> GradientEditor<'a> {
-    pub fn new(id_salt: impl std::hash::Hash, keys: &'a mut Vec<(f32, [f32; 4])>) -> Self {
+    pub fn new(
+        id_salt: impl std::hash::Hash + std::fmt::Debug,
+        keys: &'a mut Vec<(f32, [f32; 4])>,
+    ) -> Self {
         Self {
             keys,
             id: egui::Id::new(id_salt),
@@ -352,6 +358,7 @@ impl<'a> GradientEditor<'a> {
             bar,
             3.0,
             Stroke::new(1.0f32, ui.visuals().weak_text_color()),
+            egui::StrokeKind::Middle,
         );
 
         // Handles

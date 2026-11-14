@@ -91,6 +91,7 @@ impl SceneRenderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: mask_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: wgpu::StoreOp::Store,
@@ -99,6 +100,7 @@ impl SceneRenderer {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             let p = &outline.mask;
 

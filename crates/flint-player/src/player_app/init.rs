@@ -536,9 +536,12 @@ impl PlayerApp {
         let egui_renderer = egui_wgpu::Renderer::new(
             &render_context.device,
             render_context.hud_format,
-            None,
-            1,
-            false,
+            egui_wgpu::RendererOptions {
+                depth_stencil_format: None,
+                msaa_samples: 1,
+                dithering: false,
+                ..Default::default()
+            },
         );
         self.hud.egui_winit = Some(egui_winit);
         self.hud.egui_renderer = Some(egui_renderer);
@@ -746,10 +749,10 @@ impl PlayerApp {
                     let chars = text.chars().count() as f32;
                     return (chars * size * 0.6 + spacing * (chars - 1.0).max(0.0), size);
                 }
-                ctx.fonts(|f| {
+                ctx.fonts_mut(|f| {
                     let family = font
                         .map(|n| egui::FontFamily::Name(n.into()))
-                        .filter(|fam| f.lock().fonts.definitions().families.contains_key(fam))
+                        .filter(|fam| f.definitions().families.contains_key(fam))
                         .unwrap_or(egui::FontFamily::Proportional);
                     let job = super::fonts::text_layout_job(
                         text,
@@ -788,8 +791,15 @@ impl PlayerApp {
                 Ok(img) => {
                     let rgba = img.to_rgba8();
                     let (w, h) = rgba.dimensions();
-                    let color_image =
-                        egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+                    // Premultiplied as egui 0.30 did, so a sprite's soft
+                    // edges blend as they were drawn (#945)
+                    let pixels = rgba
+                        .chunks_exact(4)
+                        .map(|p| {
+                            super::hud_render::premultiplied_as_egui_030(p[0], p[1], p[2], p[3])
+                        })
+                        .collect();
+                    let color_image = egui::ColorImage::new([w as usize, h as usize], pixels);
                     let tex_handle = self.hud.egui_ctx.load_texture(
                         name,
                         color_image,

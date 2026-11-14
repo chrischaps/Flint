@@ -84,9 +84,9 @@ impl Frame {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_texture_to_buffer(
             self.color.as_image_copy(),
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(row),
                     rows_per_image: None,
@@ -102,8 +102,11 @@ impl Frame {
         buffer
             .slice(..)
             .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-        self.device.poll(wgpu::Maintain::Wait);
-        let data = buffer.slice(..).get_mapped_range();
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let data = buffer
+            .slice(..)
+            .get_mapped_range()
+            .expect("mapped buffer range");
         (0..SIZE as usize)
             .flat_map(|y| {
                 let start = y * row as usize;

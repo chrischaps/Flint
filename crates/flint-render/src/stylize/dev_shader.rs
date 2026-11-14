@@ -285,7 +285,11 @@ mod imp {
             .map_err(|e| place(e.location(text).map(|l| l.offset), e.message()))?;
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::default(),
+            // naga 30 asks for this capability for pack2x16float and
+            // quantizeToF16 (ascii_edge_cells.wgsl); wgpu grants it wherever
+            // the adapter has SHADER_F16_IN_F32 (#945)
+            naga::valid::Capabilities::default()
+                | naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
         )
         .validate(&module)
         .map_err(|e| {
