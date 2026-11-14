@@ -86,7 +86,7 @@ impl Default for ResolvedStyle {
             padding: [0.0; 4],
             stroke_color: [0.0, 0.0, 0.0, 1.0],
             stroke_width: 0.0,
-            glow_color: [1.0, 1.0, 1.0, 0.5],
+            glow_color: [1.0, 1.0, 1.0, 0.73],
             glow_radius: 0.0,
             uv: [0.0, 0.0, 1.0, 1.0],
             font: None,
