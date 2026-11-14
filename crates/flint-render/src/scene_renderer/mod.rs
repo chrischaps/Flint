@@ -85,8 +85,9 @@ impl Default for ArchetypeVisual {
 #[allow(dead_code)]
 pub(super) struct DrawCall {
     // GPU handles are `Arc`s so the per-entity caches below can hand the
-    // same buffers and bind groups to every frame's draw list (wgpu 23
-    // resources are not `Clone`).
+    // same buffers and bind groups to every frame's draw list. wgpu 23's
+    // resources weren't `Clone`; since wgpu 24 every handle is, so these
+    // `Arc`s could go (#948 left them).
     vertex_buffer: Arc<wgpu::Buffer>,
     index_buffer: Arc<wgpu::Buffer>,
     index_count: u32,

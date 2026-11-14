@@ -461,7 +461,7 @@ mod tests {
         encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, buffer.size());
         queue.submit([encoder.finish()]);
         staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = crate::wait_for_gpu(device);
         let bytes = staging
             .slice(..)
             .get_mapped_range()

@@ -807,7 +807,7 @@ fn the_atlas_uploads_and_reads_back() {
     ctx.queue.submit(Some(encoder.finish()));
     let slice = buffer.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
-    let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
+    let _ = crate::wait_for_gpu(&ctx.device);
     let data = slice.get_mapped_range().expect("mapped buffer range");
     for y in 0..h {
         let row = &data[(y * padded) as usize..(y * padded + w) as usize];

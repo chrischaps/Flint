@@ -168,6 +168,11 @@ jobs:
       # A line per GPU test in the log (#913): how long it held the device
       # and how much of that went on building pipelines
       FLINT_GPU_TEST_TIMES: "1"
+      # A hung GPU fails in two minutes, naming this variable (#948):
+      # wgpu 30 waits without a limit (wgpu 23 gave up at 60 s and broke
+      # the device), and flint_render::wait_for_gpu gives every wait this
+      # one. The longest whole test here held the device 15 s
+      FLINT_GPU_WAIT_TIMEOUT: "120"
     steps:
       - uses: actions/checkout@v4
 

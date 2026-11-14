@@ -8,11 +8,10 @@
 //! These need a GPU adapter. Without one each test prints a note and passes.
 //!
 //! They share one device ([`shared_gpu`], #598): making one per test hung
-//! the binary for hours on NVIDIA's Vulkan driver. They take it in turn,
-//! and share the pipelines they build (#913). A test that counts objects
-//! across the device or builds user styles says it needs it alone
-//! ([`gpu_alone`]); the rest ([`gpu`]) could share it with
-//! `FLINT_GPU_TEST_PARALLEL=1`.
+//! the binary for hours on NVIDIA's Vulkan driver. They share the
+//! pipelines they build (#913). A test that counts objects across the
+//! device takes it alone ([`gpu_alone`]); the rest take [`gpu`], which
+//! lends it as `shared_gpu` decides (`FLINT_GPU_TEST_PARALLEL`).
 
 mod shared_gpu;
 
@@ -35,14 +34,14 @@ struct Gpu {
     _lease: shared_gpu::Lease,
 }
 
-/// The device, for this test's turn.
+/// The device, alongside the other tests holding it ([`shared_gpu::lease`]).
 fn gpu() -> Option<Gpu> {
     shared_gpu::lease().map(frame_for)
 }
 
 /// The device with no other test on it: for a test that counts the
-/// device's objects ([`held`], `generate_report`) or builds user styles
-/// (their error scopes are the device's, not the thread's, in wgpu 23).
+/// device's objects ([`held`], `generate_report`). A user style's error
+/// scopes are its thread's since wgpu 28, so building one needs nothing.
 fn gpu_alone() -> Option<Gpu> {
     shared_gpu::lease_alone().map(frame_for)
 }
@@ -97,7 +96,7 @@ impl Gpu {
             &Camera::default(),
             &self.color_view,
         );
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = flint_render::wait_for_gpu(&self.device);
         self.pixels()
     }
 
@@ -132,7 +131,7 @@ impl Gpu {
         buffer
             .slice(..)
             .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = flint_render::wait_for_gpu(&self.device);
         let data = buffer
             .slice(..)
             .get_mapped_range()
@@ -1129,7 +1128,7 @@ fn ascii_holds_its_glyphs_still_under_a_wobbling_camera() {
                     &camera,
                     &gpu.color_view,
                 );
-                let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+                let _ = flint_render::wait_for_gpu(&gpu.device);
                 gpu.pixels()
             })
             .collect()
@@ -1185,7 +1184,7 @@ fn cell_means(frame: &[u8]) -> Vec<[f32; 3]> {
 
 #[test]
 fn reprojected_history_reads_the_past_of_the_surface_now_in_the_cell() {
-    let Some(gpu) = gpu_alone() else {
+    let Some(gpu) = gpu() else {
         flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
@@ -1263,7 +1262,7 @@ fn reprojected_history_reads_the_past_of_the_surface_now_in_the_cell() {
                     &camera,
                     &gpu.color_view,
                 );
-                let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+                let _ = flint_render::wait_for_gpu(&gpu.device);
                 gpu.pixels()
             })
             .collect()
@@ -1359,7 +1358,7 @@ fn the_callers_depth_with_an_id_makes_no_bind_groups_a_frame() {
             &Camera::default(),
             &gpu.color_view,
         );
-        let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = flint_render::wait_for_gpu(&gpu.device);
         gpu.pixels()
     };
     let per_frame = |renderer: &mut SceneRenderer, depth: flint_render::DepthTarget<'_>| {
@@ -2069,7 +2068,7 @@ fn coloured(pixels: &[u8]) -> Vec<bool> {
 /// once, and a frame where none asks draws it not at all.
 #[test]
 fn two_styles_share_one_edge_pass_a_frame() {
-    let Some(gpu) = gpu_alone() else {
+    let Some(gpu) = gpu() else {
         flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
@@ -2190,7 +2189,7 @@ fn two_styles_share_one_edge_pass_a_frame() {
 /// resize; and each frame draws the install it follows.
 #[test]
 fn a_hundred_user_style_saves_keep_the_bind_cache_level() {
-    let Some(gpu) = gpu_alone() else {
+    let Some(gpu) = gpu() else {
         flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
@@ -2274,7 +2273,7 @@ fn a_hundred_user_style_saves_keep_the_bind_cache_level() {
 /// draws the saved shader.
 #[test]
 fn a_saved_wgsl_draws_at_the_frame_after_poll_files_now() {
-    let Some(gpu) = gpu_alone() else {
+    let Some(gpu) = gpu() else {
         flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
@@ -2320,7 +2319,7 @@ fn a_saved_wgsl_draws_at_the_frame_after_poll_files_now() {
 /// its own pixels as `params`: three boxes, three `glow`s, one frame.
 #[test]
 fn a_user_style_takes_settings_per_entity() {
-    let Some(gpu) = gpu_alone() else {
+    let Some(gpu) = gpu() else {
         flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
@@ -3403,7 +3402,7 @@ fn with_styles(
 /// the guard let it reach) instead of hanging the device.
 #[test]
 fn a_loop_that_never_ends_draws_a_frame() {
-    let Some(gpu) = gpu_alone() else {
+    let Some(gpu) = gpu() else {
         flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
@@ -3455,7 +3454,7 @@ fn a_loop_that_never_ends_draws_a_frame() {
 /// constant one is proven to end and isn't guarded at all (#424).
 #[test]
 fn a_bounded_loop_draws_the_same_guarded() {
-    let Some(gpu) = gpu_alone() else {
+    let Some(gpu) = gpu() else {
         flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
@@ -3538,7 +3537,7 @@ fn style_on(gpu: &Gpu, name: &str) -> SceneRenderer {
 /// listed with its size and bytes.
 #[test]
 fn a_user_style_of_passes_draws_through_targets_of_its_own() {
-    let Some(gpu) = gpu_alone() else {
+    let Some(gpu) = gpu() else {
         flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };
@@ -3621,7 +3620,7 @@ reads = ["small", "mono"]
 /// past (`flint.history` says so) and starts over, cleared, after a reset.
 #[test]
 fn a_history_target_accumulates_and_starts_over_after_a_reset() {
-    let Some(gpu) = gpu_alone() else {
+    let Some(gpu) = gpu() else {
         flint_render::gpu_select::skip_without_gpu("no GPU adapter");
         return;
     };

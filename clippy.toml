@@ -13,5 +13,8 @@ disallowed-methods = [
     # #944: egui 0.36 asserts when a FullOutput drops with texture updates in it.
     # Tests run frames with flint_debug_ui::run_headless_frame; a real frame
     # uploads its deltas, clears them, and allows this.
+    # #948: wgpu 30 waits without a limit unless asked; flint_render::wait_for_gpu
+    # gives every wait FLINT_GPU_WAIT_TIMEOUT, so a hung GPU on CI fails fast.
+    { path = "wgpu_types::PollType::wait_indefinitely", reason = "block on the GPU with flint_render::wait_for_gpu, which takes FLINT_GPU_WAIT_TIMEOUT (#948)" },
     { path = "egui::Context::run_ui", reason = "a test's frame is flint_debug_ui::run_headless_frame; a host that uploads its texture updates allows this (#944)" },
 ]

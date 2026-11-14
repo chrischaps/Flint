@@ -2008,7 +2008,7 @@ impl TextCapture {
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = crate::wait_for_gpu(device);
         rx.recv().ok()?.ok()?;
         let data = slice.get_mapped_range().expect("mapped buffer range");
         let words = |x: u32, y: u32| -> [u32; 4] {

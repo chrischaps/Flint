@@ -19,6 +19,7 @@ pub mod glyph_atlas;
 mod gpu_mesh;
 pub mod gpu_select;
 pub mod gpu_timer;
+mod gpu_wait;
 pub mod grass_pipeline;
 pub mod ground_fog;
 mod headless;
@@ -71,6 +72,7 @@ pub use glyph_atlas::{
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
 pub use gpu_select::{list_adapters, no_adapter_hint, set_gpu_override};
 pub use gpu_timer::{GpuPassTime, GpuScope, GpuSpread, GpuTimer, GpuTimings, PassSpread};
+pub use gpu_wait::{gpu_wait_timeout, wait_for_gpu};
 pub use grass_pipeline::{
     check_grass_mask_patch, grass_dispatch_window, GrassComputeUniforms, GrassEntityPosition,
     GrassGround, GrassHeight, GrassInstanceGpu, GrassPipeline, GrassRenderUniforms, GrassVertex,

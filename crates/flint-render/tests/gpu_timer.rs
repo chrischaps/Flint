@@ -69,7 +69,7 @@ fn a_renderer_times_its_phases_once_asked() {
         renderer.update_from_world(&world, &device);
         renderer.render_to(&device, &queue, &depth, &camera, &color);
         renderer.finish_gpu_timings(&device, &queue);
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = flint_render::wait_for_gpu(&device);
     };
 
     // Off by default: nothing timed.
@@ -89,7 +89,7 @@ fn a_renderer_times_its_phases_once_asked() {
         let scope = timer.begin_submit(&device, &queue, "UI");
         timer.end_submit(&device, &queue, scope);
         renderer.finish_gpu_timings(&device, &queue);
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = flint_render::wait_for_gpu(&device);
     };
     // The times come back a frame or more late.
     for _ in 0..4 {

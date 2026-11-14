@@ -96,10 +96,11 @@ For a game's own style, renderer or window code. Most are renames the compiler n
 - **Passes:** each colour attachment has `depth_slice: None`, and each render pass descriptor has `multiview_mask: None`.
 - **Copies:** the deprecated names are gone: `TexelCopyBufferLayout` for `ImageDataLayout`, `TexelCopyTextureInfo` for `ImageCopyTexture`, `TexelCopyBufferInfo` for `ImageCopyBuffer`.
 - **Samplers:** `mipmap_filter: wgpu::MipmapFilterMode::Linear`.
-- **Waiting:** `device.poll(wgpu::PollType::wait_indefinitely())` or `PollType::Poll` for `Maintain::Wait` / `Maintain::Poll`. It returns a `Result`.
+- **Waiting:** `flint_render::wait_for_gpu(&device)` for `device.poll(Maintain::Wait)`, and `device.poll(wgpu::PollType::Poll)` for `Maintain::Poll`. Both return a `Result`. wgpu 23 gave up on a wait after 60 s; wgpu 30 waits as long as it takes. `wait_for_gpu` waits at most `FLINT_GPU_WAIT_TIMEOUT` seconds when that is set, and panics when it runs out, which turns a hung GPU in a test run into an error. Flint's own crates refuse `PollType::wait_indefinitely()` through clippy for that reason.
+- **Handles are `Clone`:** every wgpu type has been `Clone` since wgpu 24 (an `Arc` inside), so a `Queue` or `Device` can be kept in a struct.
 - **Reading back:** `slice.get_mapped_range()` returns a `Result`.
 - **Devices:** `request_device(&desc)` takes no trace path; finish a `DeviceDescriptor` with `..Default::default()`. `InstanceDescriptor` has no `Default`: start from `InstanceDescriptor::new_without_display_handle()`.
-- **Surfaces:** `SurfaceConfiguration` has `color_space` (`SurfaceColorSpace::Auto` is the sRGB every earlier wgpu chose). `get_current_texture()` returns a `CurrentSurfaceTexture` enum; take frames with `flint_render::AcquireFrame` (`surface.acquire()`), which returns a `Result` with `flint_render::SurfaceError`. Show a frame with `queue.present(frame)`.
+- **Surfaces:** `SurfaceConfiguration` has `color_space` (`SurfaceColorSpace::Auto` is the sRGB every earlier wgpu chose). `get_current_texture()` returns a `CurrentSurfaceTexture` enum; take frames with `flint_render::AcquireFrame` (`surface.acquire()`), which returns a `Result` with `flint_render::SurfaceError`. It has no `OutOfMemory`, because wgpu 30 has none: drop that arm. Show a frame with `queue.present(frame)`.
 - **Error scopes:** `push_error_scope` returns a guard that pops the scope when it drops. Bind it and `.pop()` it; an unbound `device.push_error_scope(..);` catches nothing.
 - **Shader modules:** make modules from your own WGSL through `flint_render::TrustedShader` (`device.create_trusted_shader_module(desc)`, or `stylize::kit::shader`), as Flint's do.
 

@@ -1,4 +1,4 @@
-//! One GPU device for a whole test binary, lent to its tests in turn (#598).
+//! One GPU device for a whole test binary, shared by its tests (#598).
 //!
 //! Tests that each made their own `wgpu::Instance` and device hung for
 //! hours on Windows with an NVIDIA card: `vkCreateDevice` takes the
@@ -10,14 +10,16 @@
 //! alone on an RTX, hung in 5 of 11 runs (and for 3.5 hours in a full
 //! workspace `cargo test`); sharing one device, it finished 18 of 18.
 //!
-//! So a binary makes its device exactly once and its tests share it,
-//! one at a time: [`lease`] and [`lease_alone`] each lend it to one test
-//! while the others wait their turn. (They lent it alongside other tests
-//! until #913; see below. `lease_alone` still names a test that must
-//! never share it: one that counts objects across the whole device,
-//! `Instance::generate_report`, or builds user styles, which catch the
-//! GPU's errors in an error scope, and wgpu 23 keeps one stack of those
-//! per device, not per thread.)
+//! So a binary makes its device exactly once and its tests share it:
+//! [`lease`] lends it to a test, alongside the other tests holding a
+//! `lease` ([`parallel`], the default) or one test at a time, and
+//! [`lease_alone`] lends it to one test while every other waits. A test
+//! takes it alone only when another test's work would change what it
+//! sees: one that counts objects across the whole device
+//! (`Instance::generate_report`), or switches something that is the
+//! process's (the pipeline cache's switch, `dev_shader`'s folder). Error
+//! scopes are no reason: they have been the thread's since wgpu 28, so a
+//! test that builds user styles or draws in a scope shares the device.
 //!
 //! And a test can't hang for hours again: a watchdog aborts the binary,
 //! naming the test, once any lease has been held past
@@ -36,19 +38,18 @@
 //! it holds the device, and its lease puts the harness's setting back when
 //! it drops.
 //!
-//! One test at a time, because DX12 stalled tests running side by side:
-//! wgpu-hal 23's DX12 `Device::wait` sets one auto-reset event per device
-//! for every waiting thread, so when two tests are in `device.poll(Wait)`
-//! at once, one wakes and the other sleeps out wgpu-core's 60 s timeout
-//! (`CLEANUP_WAIT_MS`), holding the fence's read lock, and every other
-//! test's `queue.submit` queues behind it. It cost a minute now and then
-//! while the tests were mostly compiling; with pipelines shared it came
-//! every minute, and `tests/stylize.rs` on DX12 took 400 s side by side
-//! against 37 s in turn. Vulkan has no such wait, and takes 9-11 s either
-//! way.
-//! `FLINT_GPU_TEST_PARALLEL=1` lends the device alongside other tests as
-//! before, for A/Bs; then a test sharing it that finds the cache's switch
-//! moved fails, naming itself, since only a test alone may switch it.
+//! Side by side again since #948. #913 lent the device one test at a time
+//! because DX12 stalled tests running side by side on wgpu 23: wgpu-hal
+//! 23's DX12 `Device::wait` armed one auto-reset event per device for
+//! every waiting thread, so of two tests in `device.poll(Wait)` one slept
+//! out wgpu-core's 60 s `CLEANUP_WAIT_MS` holding the fence's read lock,
+//! and every other test's `queue.submit` queued behind it. wgpu-hal 30
+//! makes an event per wait and wgpu-core 30 has no 60 s cap, and
+//! side by side is the faster harness on every backend (#948's PR has the
+//! A/B). `FLINT_GPU_TEST_PARALLEL=0` lends the device one test at a time,
+//! for an A/B or to rule sharing out; `1` asks for side by side. A test
+//! sharing the device that finds the cache's switch moved fails, naming
+//! itself, since only a test alone may switch it.
 //!
 //! `FLINT_GPU_TEST_TIMES=1` prints a line per test as its lease drops: how
 //! long it held the device, and how much of that went on building
@@ -137,17 +138,28 @@ pub fn device() -> Option<&'static SharedGpu> {
     .as_ref()
 }
 
-/// Whether [`lease`] lends the device alongside other tests, as it did
-/// before #913: `FLINT_GPU_TEST_PARALLEL=1`.
+/// Whether [`lease`] lends the device alongside other tests when
+/// `FLINT_GPU_TEST_PARALLEL` doesn't say.
+pub const PARALLEL_BY_DEFAULT: bool = true;
+
+/// Whether [`lease`] lends the device alongside other tests:
+/// `FLINT_GPU_TEST_PARALLEL=1` yes, `0` (or `off`, `false`) one at a time,
+/// unset [`PARALLEL_BY_DEFAULT`].
 pub fn parallel() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| {
-        std::env::var("FLINT_GPU_TEST_PARALLEL").is_ok_and(|v| !v.is_empty() && v != "0")
-    })
+    *ON.get_or_init(|| parse_parallel(std::env::var("FLINT_GPU_TEST_PARALLEL").ok().as_deref()))
 }
 
-/// The device, for this test's turn (or, with [`parallel`], alongside
-/// whichever other tests hold a `lease`).
+fn parse_parallel(value: Option<&str>) -> bool {
+    match value.map(|v| v.trim().to_ascii_lowercase()) {
+        Some(v) if matches!(v.as_str(), "0" | "off" | "false") => false,
+        Some(v) if !v.is_empty() => true,
+        _ => PARALLEL_BY_DEFAULT,
+    }
+}
+
+/// The device, alongside whichever other tests hold a `lease` (or, with
+/// [`parallel`] off, for this test's turn alone).
 pub fn lease() -> Option<Lease> {
     if !parallel() {
         return lease_alone();
