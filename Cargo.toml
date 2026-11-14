@@ -323,3 +323,9 @@ opt-level = 3
 opt-level = 3
 [profile.web-release.package.glam]
 opt-level = 3
+
+# #934 spike: egui-winit 0.36.2 and 0.37.0 implement egui::DroppedFile::bytes
+# on wasm32, where egui 0.36 asks for bytes_async, so the web player does
+# not compile. A copy with that one fix (spike-vendor/egui-winit/src/dropped_file.rs).
+[patch.crates-io]
+egui-winit = { path = "spike-vendor/egui-winit" }

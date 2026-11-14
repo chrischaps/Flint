@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "wgpu renderer for Flint"
 
+[features]
+# DXC linked into the binary (#934 spike), through wgpu-hal and
+# mach-dxcompiler-rs: a no-op off Windows x86_64 MSVC.
+static-dxc = ["wgpu/static-dxc"]
+
 [dependencies]
 flint-core = { workspace = true }
 flint-wooze = { workspace = true }

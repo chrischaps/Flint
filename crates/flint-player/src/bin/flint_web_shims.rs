@@ -390,7 +390,7 @@ mod web {
     async fn init_gpu(window: Arc<Window>) -> Result<Gpu, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let surface = instance
             .create_surface(window.clone())
@@ -402,9 +402,10 @@ mod web {
                 power_preference: wgpu::PowerPreference::None,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
             })
             .await
-            .ok_or("no WebGPU adapter (is WebGPU enabled in this browser?)")?;
+            .map_err(|e| format!("no WebGPU adapter (is WebGPU enabled in this browser?): {e}"))?;
         let info = adapter.get_info();
         log(&format!(
             "[flint-web] adapter: {:?} via {:?}",
@@ -435,6 +436,7 @@ mod web {
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode: wgpu::PresentMode::Fifo,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,

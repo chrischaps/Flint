@@ -115,6 +115,8 @@ pub const DXC_DLLS: [&str; 2] = ["dxcompiler.dll", "dxil.dll"];
 pub enum Dx12Shaders {
     /// DXC, both DLLs loaded from `dir`.
     Dxc { dir: PathBuf },
+    /// DXC linked into the binary (the `static-dxc` feature, #934).
+    StaticDxc,
     /// FXC, because `WGPU_DX12_COMPILER=fxc` asked for it.
     FxcAsked,
     /// FXC, because DXC couldn't be loaded; `why` names the DLL and folder.
@@ -126,7 +128,7 @@ impl Dx12Shaders {
     /// line): `DXC`, `FXC` or `FXC fallback`.
     pub fn short(&self) -> &'static str {
         match self {
-            Dx12Shaders::Dxc { .. } => "DXC",
+            Dx12Shaders::Dxc { .. } | Dx12Shaders::StaticDxc => "DXC",
             Dx12Shaders::FxcAsked => "FXC",
             Dx12Shaders::FxcFallback { .. } => "FXC fallback",
         }
@@ -141,6 +143,7 @@ impl std::fmt::Display for Dx12Shaders {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Dx12Shaders::Dxc { dir } => write!(f, "DXC ({})", dir.display()),
+            Dx12Shaders::StaticDxc => write!(f, "DXC (static)"),
             Dx12Shaders::FxcAsked => write!(f, "FXC (WGPU_DX12_COMPILER=fxc)"),
             Dx12Shaders::FxcFallback { why } => write!(f, "FXC (fallback: {why})"),
         }
@@ -189,7 +192,18 @@ pub fn dx12_shaders() -> Dx12Shaders {
             });
         }
     }
-    choose_dx12(compiler.as_deref(), dxc_dir(), load_dxc)
+    let chosen = choose_dx12(compiler.as_deref(), dxc_dir(), load_dxc);
+    // Built with DXC inside, every choice but an explicit FXC is that one
+    if cfg!(all(
+        feature = "static-dxc",
+        windows,
+        target_arch = "x86_64",
+        target_env = "msvc"
+    )) && chosen != Dx12Shaders::FxcAsked
+    {
+        return Dx12Shaders::StaticDxc;
+    }
+    chosen
 }
 
 /// The last choice [`instance`] made for DX12, which is what its adapters
@@ -213,6 +227,7 @@ fn dx12_compiler(backends: wgpu::Backends) -> wgpu::Dx12Compiler {
     match shaders {
         // wgpu >= 27 needs no dxil.dll; a DynamicDxc that fails to load is
         // an instance error in wgpu 30, not a quiet FXC fallback (#934)
+        Dx12Shaders::StaticDxc => wgpu::Dx12Compiler::StaticDxc,
         Dx12Shaders::Dxc { dir } => wgpu::Dx12Compiler::DynamicDxc {
             dxc_path: dir.join(DXC_DLLS[0]).to_string_lossy().into_owned(),
         },
