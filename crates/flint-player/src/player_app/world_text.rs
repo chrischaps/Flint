@@ -657,7 +657,9 @@ mod tests {
         assert!(!mesh.is_empty());
         let (lo, hi) = bounds(&mesh);
         let tall = hi[1] - lo[1];
-        assert!((0.2..0.6).contains(&tall), "{tall}");
+        // 0.21 on egui 0.30, 0.19 on 0.36, whose rasteriser (skrifa and
+        // vello_cpu) bounds each glyph's quad more tightly (#945)
+        assert!((0.15..0.6).contains(&tall), "{tall}");
         // Twice as far, half as big, give or take the glyphs' pixel of
         // empty padding and the em's rounding to whole pixels.
         let far = build(&[text([0.0, 0.0, -8.0], 1.0, facing_camera())], &v);

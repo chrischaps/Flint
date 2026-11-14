@@ -336,7 +336,7 @@ pub(super) fn rasterise(
 
     // Premultiplied sRGBA, the stroke over the glow.
     let premul = |c: &[f32; 4]| -> [f32; 4] {
-        let p = egui::Color32::from_rgba_unmultiplied(
+        let p = super::hud_render::premultiplied_as_egui_030(
             (c[0].clamp(0.0, 1.0) * 255.0) as u8,
             (c[1].clamp(0.0, 1.0) * 255.0) as u8,
             (c[2].clamp(0.0, 1.0) * 255.0) as u8,

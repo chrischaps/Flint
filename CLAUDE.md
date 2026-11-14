@@ -107,7 +107,7 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
   ├── flint-constraint Constraint evaluation + auto-fix
   ├── flint-query    PEG query language (pest parser)
   ├── flint-scene    TOML scene serialization/deserialization
-  ├── flint-render   wgpu PBR renderer (winit 0.30, wgpu 23, HDR post-processing, bloom, SSAO, fog)
+  ├── flint-render   wgpu PBR renderer (winit 0.30, wgpu 30, HDR post-processing, bloom, SSAO, fog)
   ├── flint-pixels   Texel loops on load (RGBA widening, mip chains); no deps, optimized in debug builds
   ├── flint-ecs      hecs wrapper with stable EntityId mapping (BiMap)
   ├── flint-schema   Component/archetype schema system
@@ -152,7 +152,7 @@ A bullet below that names a feature in a line or two has its full text in one of
 ## Critical Gotchas
 
 - `toml::toml!` macro produces `Map<String, Value>` not `Value` -- needs `.into()` in tests
-- wgpu v23: `Instance::new()` takes owned `InstanceDescriptor`; max 4 bind groups (0-3); `wgpu::Queue` is not `Clone` -- pass `&Queue` through, do not stash one in a struct
+- wgpu v30 (#945; egui 0.36): `Instance::new()` takes owned `InstanceDescriptor` (it has no `Default`: start from `InstanceDescriptor::new_without_display_handle()`); max 4 bind groups (0-3); `push_error_scope` returns a guard that pops the scope when it drops, so bind it and `.pop()` it; a frame is shown with `queue.present(frame)`; `wgpu::Queue` is not `Clone` -- pass `&Queue` through, do not stash one in a struct
 - winit v0.30: `ApplicationHandler` trait with `run_app()`; `DeviceEvent::MouseMotion` for raw mouse delta
 - Rapier v0.22: character controller types in `rapier3d::control`, NOT `rapier3d::prelude`
 - Kira v0.11: `Decibels(f32)` and `PlaybackRate(f64)` are tuple structs; uses `glam` via `mint`

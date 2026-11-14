@@ -7,12 +7,31 @@ use flint_script::draw2d::{ring_indices, ring_points, ring_steps};
 use std::collections::{HashMap, HashSet};
 
 pub(super) fn to_color32(c: &[f32; 4]) -> egui::Color32 {
-    egui::Color32::from_rgba_unmultiplied(
+    premultiplied_as_egui_030(
         (c[0] * 255.0) as u8,
         (c[1] * 255.0) as u8,
         (c[2] * 255.0) as u8,
         (c[3] * 255.0) as u8,
     )
+}
+
+/// An unmultiplied sRGBA colour premultiplied as egui 0.30's
+/// `Color32::from_rgba_unmultiplied` did it: in linear light (#945). egui 0.31
+/// moved that to display values, which draws every translucent colour darker
+/// (a 50% white over black: 128 where it was 188). Scripts' HUD colours, text
+/// halos and HUD sprites were tuned under 0.30, so they keep its bytes; the
+/// same formula and rounding as 0.30's lookup table.
+pub(super) fn premultiplied_as_egui_030(r: u8, g: u8, b: u8, a: u8) -> egui::Color32 {
+    use egui::ecolor::{gamma_u8_from_linear_f32, linear_f32_from_gamma_u8};
+    match a {
+        0 => egui::Color32::TRANSPARENT,
+        255 => egui::Color32::from_rgb(r, g, b),
+        a => {
+            let alpha = f32::from(a) / 255.0;
+            let p = |v: u8| gamma_u8_from_linear_f32(linear_f32_from_gamma_u8(v) * alpha);
+            egui::Color32::from_rgba_premultiplied(p(r), p(g), p(b), a)
+        }
+    }
 }
 
 fn pos2(p: &[f32; 2]) -> egui::Pos2 {
@@ -225,8 +244,8 @@ pub(super) fn render_draw_commands(
                 vertical,
                 ..
             } => {
-                // epaint `Vertex.color` is premultiplied sRGBA;
-                // `from_rgba_unmultiplied` (via to_color32) premultiplies.
+                // epaint `Vertex.color` is premultiplied sRGBA; to_color32
+                // premultiplies.
                 let ca = to_color32(color_a);
                 let cb = to_color32(color_b);
                 let (x0, y0, x1, y1) = (*x, *y, *x + *w, *y + *h);

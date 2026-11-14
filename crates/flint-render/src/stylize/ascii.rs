@@ -3679,7 +3679,9 @@ mod tests {
             let module = naga::front::wgsl::parse_str(src).expect(name);
             naga::valid::Validator::new(
                 naga::valid::ValidationFlags::all(),
-                naga::valid::Capabilities::default(),
+                // the edge cells' f16 packing (#945)
+                naga::valid::Capabilities::default()
+                    | naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
             )
             .validate(&module)
             .expect(name);

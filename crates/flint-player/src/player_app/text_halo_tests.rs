@@ -349,15 +349,20 @@ fn a_halo_past_the_texture_limit_is_drawn_smaller_in_the_same_place() {
         };
         let width = m.vertices.iter().map(|v| v.pos.x).fold(f32::MIN, f32::max)
             - m.vertices.iter().map(|v| v.pos.x).fold(f32::MAX, f32::min);
+        // Each side can gain up to 4(k - 1) full pixels: the 2 pixel margin
+        // is in the small image's pixels (2(k - 1) more), the glow and stroke
+        // round up to whole blocks (k - 1), and so do the glyphs' bounds
+        // (k - 1). It was 2k, which egui 0.30's glyph positions happened to
+        // keep within; 0.36's land 6 px wider at k = 2 (#945).
         assert!(
-            (width - fw as f32).abs() <= 2.0 * k as f32,
+            (width - fw as f32).abs() <= (2 * 4 * (k - 1)) as f32,
             "{width} vs {fw}"
         );
     });
 }
 
 fn to_premul(c: &[f32; 4]) -> [u8; 4] {
-    egui::Color32::from_rgba_unmultiplied(
+    crate::player_app::hud_render::premultiplied_as_egui_030(
         (c[0] * 255.0) as u8,
         (c[1] * 255.0) as u8,
         (c[2] * 255.0) as u8,
