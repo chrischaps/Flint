@@ -22,7 +22,7 @@
 name = "The Overgrown Ruins — Tavern Hub"
 version = "1.0"
 description = "Hub tavern with procgen textures, NPCs, and doors to three ruin zones"
-input_config = "showcase_game/config/input_ruins.toml"
+input_config = "config/input_ruins.toml"
 
 [post_process]
 bloom_enabled = true
@@ -577,7 +577,7 @@ parent = "main_hall"
 position = [6.2, 0, 0]
 rotation = [0, -90, 0]
 [entities.bartender.model]
-asset = "YBotWithIdle"
+asset = "../../examples/models/YBotWithIdle.glb"
 [entities.bartender.skeleton]
 skin = "Armature"
 [entities.bartender.animator]
@@ -601,7 +601,7 @@ parent = "main_hall"
 position = [-1.2, 0, 4.0]
 rotation = [0, 200, 0]
 [entities.patron_1.model]
-asset = "YBotWithIdle"
+asset = "../../examples/models/YBotWithIdle.glb"
 [entities.patron_1.skeleton]
 skin = "Armature"
 [entities.patron_1.animator]
@@ -625,7 +625,7 @@ parent = "main_hall"
 position = [-2.8, 0, 5.0]
 rotation = [0, 20, 0]
 [entities.patron_2.model]
-asset = "YBotWithIdle"
+asset = "../../examples/models/YBotWithIdle.glb"
 [entities.patron_2.skeleton]
 skin = "Armature"
 [entities.patron_2.animator]
