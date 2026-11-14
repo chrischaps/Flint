@@ -10,6 +10,7 @@ mod particles;
 mod pipelines;
 mod render_passes;
 mod selection;
+mod skinning;
 mod sky;
 mod style_mask;
 mod terrain;
@@ -20,6 +21,7 @@ pub use particles::load_scene_particle_textures;
 use render_passes::RenderPhase;
 
 pub use lights::LightingLevers;
+use skinning::{CachedBoneBind, SHADOW_BONE_KEY};
 
 use crate::bind_cache::{ArenaSlot, TransformArena};
 use crate::bitmap_font::BitmapFont;
@@ -422,40 +424,8 @@ pub(super) fn hash_parts(parts: &[&[u8]]) -> u64 {
     h
 }
 
-/// One skinned draw's bone bind group, kept across frames like
-/// [`CachedDrawBinds`]. It points at the entity's own bone buffer once
-/// `update_bone_matrices` has made one, and at the asset's shared buffer
-/// before that; `from_entity` records which, so the switch rebuilds it.
-pub(super) struct CachedBoneBind {
-    pub from_entity: bool,
-    pub bind_group: Arc<wgpu::BindGroup>,
-    pub touched: u64,
-}
-
-/// Write `matrices` into a bone buffer from bone `first`, stopping at its end.
-fn write_bones(
-    queue: &wgpu::Queue,
-    buffer: &wgpu::Buffer,
-    first: usize,
-    matrices: &[[[f32; 4]; 4]],
-) {
-    let room = crate::skinned_pipeline::MAX_BONES.saturating_sub(first);
-    let matrices = &matrices[..matrices.len().min(room)];
-    if !matrices.is_empty() {
-        queue.write_buffer(
-            buffer,
-            (first * std::mem::size_of::<[[f32; 4]; 4]>()) as u64,
-            bytemuck::cast_slice(matrices),
-        );
-    }
-}
-
 /// How long a material nothing draws with stays in the cache: about 2 s.
 const MATERIAL_GRACE_FRAMES: u64 = 120;
-
-/// The `skinned_bone_binds` key bit for a draw's shadow bones, when it has its
-/// own apart from the bones it's drawn with.
-pub(super) const SHADOW_BONE_KEY: u32 = 1 << 30;
 
 /// The `draw_bind_cache` key bit that keeps a skinned draw's binds apart
 /// from a static draw's of the same entity and sub-mesh index.
@@ -517,14 +487,6 @@ impl SceneRenderer {
         let soft = (translucent.iter()).filter(|d| d.casts_shadow && d.soft_edge_only);
         opaque.chain(soft)
     }
-}
-
-/// One faint copy of a skinned entity (#228): bones of its own and how opaque
-/// it draws. The rest it takes from the entity's own draw at extraction.
-struct EntityEcho {
-    bones: wgpu::Buffer,
-    bind_group: Arc<wgpu::BindGroup>,
-    opacity: f32,
 }
 
 /// A draw of one part of one echo. It reads the entity's transform slot rather
@@ -782,28 +744,9 @@ pub struct SceneRenderer {
     pub grass_wooze: Option<ShallowWoozeDraw>,
     /// Set when GPU device is lost (e.g. driver crash); skips all rendering
     device_lost: bool,
-    /// Per-entity bone matrix buffers. The `GpuSkinnedMesh` bone buffer is
-    /// shared by every entity that instances the asset, so entities playing
-    /// different clips need their own storage or the last upload wins.
-    entity_bone_buffers: HashMap<flint_core::EntityId, wgpu::Buffer>,
-    /// The bone matrices last written for each entity, and for each
-    /// asset's shared buffer, kept on the CPU to bound the posed meshes
-    /// for the per-entity style scissor (#385).
-    entity_bone_matrices: HashMap<flint_core::EntityId, Vec<[[f32; 4]; 4]>>,
-    asset_bone_matrices: HashMap<String, Vec<[[f32; 4]; 4]>>,
-    /// Entities whose shadow follows other bones than they're drawn with.
-    entity_shadow_bone_buffers: HashMap<flint_core::EntityId, wgpu::Buffer>,
-    /// Per entity, what each skinned part's vertex colour is multiplied by.
-    entity_part_tints: HashMap<flint_core::EntityId, Vec<[f32; 3]>>,
-    /// Per entity, how soft each skinned part's silhouette is (#582); a part
-    /// missing or at 0 is a hard edge.
-    entity_part_softness: HashMap<flint_core::EntityId, Vec<f32>>,
-    /// Living props' echoes, in the order they draw. Empty costs nothing.
-    entity_echoes: HashMap<flint_core::EntityId, Vec<EntityEcho>>,
-    /// The entities whose echoes may only add light.
-    entity_echo_lighten: std::collections::HashSet<flint_core::EntityId>,
-    /// Bone bind groups of skinned draws, by entity and sub-mesh.
-    skinned_bone_binds: HashMap<(flint_core::EntityId, u32), CachedBoneBind>,
+    /// Per-entity bones, shadow bones, echoes, part tints and softness,
+    /// and the skinned draws' bone binds (ADR 0118, #736).
+    skinning: skinning::SkinningState,
 }
 
 /// A number no other call in this process returns, for
@@ -906,15 +849,7 @@ impl SceneRenderer {
             extract_frame: 0,
             ray_meshes: HashMap::new(),
             ray_scene: Arc::default(),
-            entity_bone_buffers: HashMap::new(),
-            entity_bone_matrices: HashMap::new(),
-            asset_bone_matrices: HashMap::new(),
-            entity_shadow_bone_buffers: HashMap::new(),
-            entity_part_tints: HashMap::new(),
-            entity_part_softness: HashMap::new(),
-            entity_echoes: HashMap::new(),
-            entity_echo_lighten: std::collections::HashSet::new(),
-            skinned_bone_binds: HashMap::new(),
+            skinning: Default::default(),
             grid_draw,
             entity_draws: Vec::new(),
             skinned_entity_draws: Vec::new(),
@@ -1716,7 +1651,7 @@ impl SceneRenderer {
     pub fn clear_model_data(&mut self) {
         self.mesh_cache.clear();
         self.draw_bind_cache.clear();
-        self.skinned_bone_binds.clear();
+        self.skinning.bone_binds.clear();
         self.box_mesh_cache.clear();
         if let Some(tc) = &mut self.texture_cache {
             tc.clear_user_textures();
@@ -1864,49 +1799,15 @@ impl SceneRenderer {
         if self.device_lost {
             return;
         }
-        // A pose held on twos (#405) is written once a tick; the frames
-        // between draw the buffer as it was, CPU copies included
-        if self.entity_bone_buffers.contains_key(&entity_id)
-            && !self.motion_hold.bones_due(entity_id)
-        {
-            return;
-        }
-        let bytes: &[u8] = bytemuck::cast_slice(matrices);
-        let capacity = crate::skinned_pipeline::MAX_BONES * std::mem::size_of::<[[f32; 4]; 4]>();
-        let buffer = self
-            .entity_bone_buffers
-            .entry(entity_id)
-            .or_insert_with(|| {
-                device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(&format!(
-                        "{} Bone Buffer (entity {:?})",
-                        asset_name, entity_id
-                    )),
-                    size: capacity as u64,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                })
-            });
-        queue.write_buffer(buffer, 0, &bytes[..bytes.len().min(capacity)]);
-        let kept = &matrices[..matrices.len().min(crate::skinned_pipeline::MAX_BONES)];
-        let entity = self.entity_bone_matrices.entry(entity_id).or_default();
-        entity.clear();
-        entity.extend_from_slice(kept);
-        if let Some(asset) = self.asset_bone_matrices.get_mut(asset_name) {
-            asset.clear();
-            asset.extend_from_slice(kept);
-        } else {
-            self.asset_bone_matrices
-                .insert(asset_name.to_string(), kept.to_vec());
-        }
-        // Its sub-meshes share one buffer
-        if let Some(mesh) = self
-            .mesh_cache
-            .get_skinned(asset_name)
-            .and_then(|meshes| meshes.first())
-        {
-            queue.write_buffer(&mesh.bone_buffer, 0, bytes);
-        }
+        self.skinning.update_bone_matrices(
+            device,
+            queue,
+            &mut self.motion_hold,
+            &self.mesh_cache,
+            entity_id,
+            asset_name,
+            matrices,
+        );
     }
 
     /// Whether per-entity styles draw only inside their entities' screen
@@ -1944,11 +1845,8 @@ impl SceneRenderer {
         if self.device_lost {
             return;
         }
-        let buffer = self
-            .entity_bone_buffers
-            .entry(entity_id)
-            .or_insert_with(|| Self::create_entity_bones(device, "Entity Bone Buffer"));
-        write_bones(queue, buffer, first, matrices);
+        self.skinning
+            .write_entity_bones(device, queue, entity_id, first, matrices);
     }
 
     /// Give an entity's shadow its own bones, from the shadow pass's next frame,
@@ -1963,21 +1861,8 @@ impl SceneRenderer {
         if self.device_lost {
             return;
         }
-        let buffer = self
-            .entity_shadow_bone_buffers
-            .entry(entity_id)
-            .or_insert_with(|| Self::create_entity_bones(device, "Entity Shadow Bone Buffer"));
-        write_bones(queue, buffer, 0, matrices);
-    }
-
-    fn create_entity_bones(device: &wgpu::Device, label: &str) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size: (crate::skinned_pipeline::MAX_BONES * std::mem::size_of::<[[f32; 4]; 4]>())
-                as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
+        self.skinning
+            .write_entity_shadow_bones(device, queue, entity_id, matrices);
     }
 
     /// Write part of the bones of echo `echo` of a skinned entity, from bone
@@ -2002,44 +1887,33 @@ impl SceneRenderer {
         if self.device_lost {
             return;
         }
-        let Some(pipeline) = &self.pipelines.skinned else {
-            return;
-        };
-        let echoes = self.entity_echoes.entry(entity_id).or_default();
-        while echoes.len() <= echo {
-            let bones = Self::create_entity_bones(device, "Entity Echo Bone Buffer");
-            let bind_group =
-                Self::create_bone_bind(device, &pipeline.bone_bind_group_layout, &bones);
-            echoes.push(EntityEcho {
-                bones,
-                bind_group: Arc::new(bind_group),
-                opacity: 0.0,
-            });
-        }
-        echoes[echo].opacity = opacity;
-        write_bones(queue, &echoes[echo].bones, first, matrices);
+        self.skinning.write_entity_echo_bones(
+            self.pipelines
+                .skinned
+                .as_deref()
+                .map(|p| &p.bone_bind_group_layout),
+            device,
+            queue,
+            entity_id,
+            echo,
+            opacity,
+            first,
+            matrices,
+        );
     }
 
     /// Stop drawing an entity's echoes from `count` on. Their buffers stay, ready
     /// for the next write, so a slider sweeping a count allocates nothing on its
     /// way back up: an opacity of 0 is what leaves one out at extraction.
     pub fn set_entity_echo_count(&mut self, entity_id: flint_core::EntityId, count: usize) {
-        if let Some(echoes) = self.entity_echoes.get_mut(&entity_id) {
-            for echo in echoes.iter_mut().skip(count) {
-                echo.opacity = 0.0;
-            }
-        }
+        self.skinning.set_entity_echo_count(entity_id, count);
     }
 
     /// How an entity's echoes meet what's behind them: over it at their
     /// opacity (`false`, the default), or `lighten`, the brighter of the two,
     /// so an echo can only add light and never darken the form it's behind.
     pub fn set_entity_echo_lighten(&mut self, entity_id: flint_core::EntityId, lighten: bool) {
-        if lighten {
-            self.entity_echo_lighten.insert(entity_id);
-        } else {
-            self.entity_echo_lighten.remove(&entity_id);
-        }
+        self.skinning.set_entity_echo_lighten(entity_id, lighten);
     }
 
     /// Multiply the vertex colour of one part of an entity's skinned mesh by
@@ -2051,11 +1925,7 @@ impl SceneRenderer {
         part: usize,
         tint: [f32; 3],
     ) {
-        let tints = self.entity_part_tints.entry(entity_id).or_default();
-        if tints.len() <= part {
-            tints.resize(part + 1, [1.0; 3]);
-        }
-        tints[part] = tint;
+        self.skinning.set_entity_part_tint(entity_id, part, tint);
     }
 
     /// How soft one part of an entity's skinned mesh is at its silhouette
@@ -2070,16 +1940,8 @@ impl SceneRenderer {
         part: usize,
         softness: f32,
     ) {
-        let softness = if softness.is_finite() {
-            softness.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let parts = self.entity_part_softness.entry(entity_id).or_default();
-        if parts.len() <= part {
-            parts.resize(part + 1, 0.0);
-        }
-        parts[part] = softness;
+        self.skinning
+            .set_entity_part_softness(entity_id, part, softness);
     }
 
     /// This frame's game time, for motion held on twos (#405): call it each
@@ -2116,15 +1978,7 @@ impl SceneRenderer {
     /// Drop per-entity bone buffers (call when a scene is unloaded).
     pub fn clear_entity_bone_buffers(&mut self) {
         self.motion_hold.clear();
-        self.entity_bone_buffers.clear();
-        self.entity_bone_matrices.clear();
-        self.asset_bone_matrices.clear();
-        self.entity_shadow_bone_buffers.clear();
-        self.entity_part_tints.clear();
-        self.entity_part_softness.clear();
-        self.entity_echoes.clear();
-        self.entity_echo_lighten.clear();
-        self.skinned_bone_binds.clear();
+        self.skinning.clear();
     }
 
     /// Tell the renderer the scene's project and folder: where its styles
@@ -2908,7 +2762,7 @@ impl SceneRenderer {
         if self.motion_hold.any() {
             // Bones went up before the rates were known: a hold that starts
             // this frame keeps what they show
-            for id in self.entity_bone_buffers.keys() {
+            for id in self.skinning.bone_buffers.keys() {
                 self.motion_hold.bones_shown(*id);
             }
         }
@@ -3082,7 +2936,7 @@ impl SceneRenderer {
         // entities that changed shape/model).
         let frame = self.extract_frame;
         self.draw_bind_cache.retain_frame(frame);
-        self.skinned_bone_binds.retain(|_, b| b.touched == frame);
+        self.skinning.bone_binds.retain(|_, b| b.touched == frame);
         self.ray_scene = Arc::new(ray_scene);
 
         // Put texture cache back
