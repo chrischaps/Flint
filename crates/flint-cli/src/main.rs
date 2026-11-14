@@ -179,8 +179,8 @@ enum Commands {
     /// Render a scene to a PNG image (headless)
     Render(render::RenderArgs),
 
-    /// DX12's fast shader compiler: install dxcompiler.dll and dxil.dll
-    /// beside the binaries, or show what DX12 compiles with here
+    /// DX12's shader compiler, linked in: what DX12 compiles with here, and
+    /// DXC's notices for a Windows build that ships
     #[command(subcommand)]
     Dxc(dxc::DxcCommands),
 

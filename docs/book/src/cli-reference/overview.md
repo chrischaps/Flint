@@ -33,7 +33,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint edit <file>` | Unified interactive editor (auto-detects file type) |
 | `flint play [scene]` | Play a scene with first-person controls and physics; with no scene, the project's default (`flint.toml`'s `[project] scene`) |
 | `flint render <scene>` | Render a scene to PNG (headless) |
-| `flint dxc install` | Put DXC's `dxcompiler.dll` and `dxil.dll` beside the binaries, so DX12 compiles shaders about 5x faster ([DX12's shader compiler](#dx12s-shader-compiler)); `flint dxc status` shows what DX12 would use |
+| `flint dxc status` | What DX12 compiles shaders with here, and why: DXC is linked into the binary ([DX12's shader compiler](#dx12s-shader-compiler)); `flint dxc notices` writes DXC's licence and notices for a Windows build you ship |
 | `flint goldens <file>.goldens.toml` | Render a list of scenes and gate each against its golden PNG; `--bless` rewrites them ([Golden Suites](../guides/headless-rendering.md#golden-suites)) |
 | `flint gen <spec>` | Run a procedural generation spec to produce meshes or textures |
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
@@ -605,62 +605,66 @@ FXC is old and slow. On Flint's ASCII style, a debug `flint render` on an RTX 40
 took 26-27 s on FXC and 5 s on DXC (1.1 s on Vulkan). FXC is also where Flint's
 DX12-only miscompiles came from.
 
-wgpu loads DXC from two DLLs, `dxcompiler.dll` and `dxil.dll`. Flint loads them
-from **one folder only**: the running executable's folder, or the folder
-`FLINT_DXC_DIR` names. It loads them by full path, so a copy that another program
-left on `PATH` is never picked up. `flint dxc install` puts them there:
+**DXC is linked into Flint's binaries.** No `dxcompiler.dll` or `dxil.dll` sits
+beside them, and there is nothing to install. Where each compiler comes from:
 
-```bash
-flint dxc install                 # beside this flint.exe, and its deps/ (cargo test binaries)
-flint dxc install --to dist/win   # beside a game's executable, with the licence files
-flint dxc install --sdk           # the installed Windows SDK's copy instead of the download
-flint dxc status                  # the folder, each DLL, and what DX12 would compile with
-```
+- **FXC** is part of Windows (`d3dcompiler_47.dll`).
+- **DXC** is Microsoft's open-source DirectX Shader Compiler, v1.9.2609. Microsoft
+  publishes it only as DLLs, so Flint builds it from Microsoft's source as one
+  static library, with a one-line change (`tools/dxc-static`). The `static DXC`
+  workflow builds it and publishes it as a release asset of the Flint repository,
+  and every Windows build links it (flint-render's default `static-dxc` feature,
+  through wgpu's). Since DXC 1.8.2505 the compiler signs what it compiles itself,
+  so `dxil.dll` isn't needed.
 
-Without `--sdk` or `--from <dir>`, the command downloads a pinned
-[DirectXShaderCompiler release](https://github.com/microsoft/DirectXShaderCompiler/releases)
-(v1.9.2609) once, into `%LOCALAPPDATA%\flint\dxc\`. It checks the zip's SHA-256
-and each DLL's against the pinned values before it uses them. The DLLs are not
-in the repository. After a `cargo clean`, run `flint dxc install` again.
+The first build on a machine downloads that archive once (80 MB) into
+`%LOCALAPPDATA%\flint\static-dxc\`, and checks its SHA-256 against the pinned
+value. Every target directory and worktree on the machine then reuses it. With no
+network and nothing cached, the build stops and names the URL. Put the file in
+that folder, or point `FLINT_STATIC_DXC_ARCHIVE` at a copy of it.
+`FLINT_STATIC_DXC_CACHE` moves the folder. Linking it needs Visual Studio's C++
+tools at least as new as the ones that built it; the build says so if yours are
+older. Static DXC is linked on x86_64 Windows with MSVC only. On other Windows
+targets, Flint loads a `dxcompiler.dll` it finds by name, the executable's folder
+first, else uses FXC.
 
+DX12 takes wgpu's own default, `Dx12Compiler::Auto`, which picks the linked DXC.
 Every adapter line says which compiler DX12 uses, and why. These lines come from
-`flint render`'s `GPU:` line, `flint goldens`' `adapter:` line, the player's F3
-overlay and its `--perf` line (which shows only `DXC`, `FXC` or `FXC fallback`):
+`flint render`'s `GPU:` line, `flint goldens`' `adapter:` line, `flint dxc status`,
+the player's F3 overlay and its `--perf` line (which shows only `DXC`, `FXC` or
+`FXC fallback`):
 
 ```
-GPU: NVIDIA GeForce RTX 4070 (DiscreteGpu, Dx12, shaders DXC (C:\Flint\target\debug))
-GPU: NVIDIA GeForce RTX 4070 (DiscreteGpu, Dx12, shaders FXC (fallback: dxcompiler.dll not in C:\Flint\target\debug))
+GPU: NVIDIA GeForce RTX 4070 (DiscreteGpu, Dx12, shaders DXC (static, v1.9.2609))
 GPU: NVIDIA GeForce RTX 4070 (DiscreteGpu, Dx12, shaders FXC (WGPU_DX12_COMPILER=fxc))
 ```
 
-- **A missing DLL** (or one that won't load) means FXC. The run still draws, and
-  prints one warning that names the folder it looked in.
-- **`WGPU_DX12_COMPILER=fxc`** forces FXC. Use it to work around a driver or DXC
-  bug. `dxc`, or leaving it unset, gives the default.
+- **`WGPU_DX12_COMPILER`** overrides the choice. wgpu reads it: `fxc` forces FXC,
+  to work around a driver or DXC bug; `dxc` loads `dxcompiler.dll` by name instead;
+  `staticdxc` and `auto` give the default. If the DLL it asks for doesn't load,
+  DX12 gets FXC and the line says `FXC (fallback: ...)`.
 - **A shader that DXC rejects** is not retried with FXC. Its pipeline fails, as on
   any other backend.
+- `flint dxc status` prints the linked DXC's version, the commit it was built from,
+  how it was built, and the compiler DX12 would use.
 
-**Shipping the DLLs in a game is your choice to make.** They come under
-Microsoft's licence, not Flint's. The release zip has three licence files:
-`LICENSE-MS.txt` (the Microsoft Software License Terms for the DirectX Shader
-Compiler), plus `LICENSE-LLVM.txt` and `LICENCE-MIT.txt` for its open-source
-parts. As read on 2026-11-13, the Microsoft terms:
+##### Shipping DXC with your game
 
-- allow distributing "the object code form of the software listed in the
-  distributables file list". The zip has no such list.
-- on the condition that your application adds "significant primary
-  functionality" to the code.
-- require your distributors and end users to agree to terms that protect it and
-  Microsoft "at least as much as this agreement".
-- require you to indemnify Microsoft against claims arising from your
-  distribution.
-- forbid using Microsoft's trademarks in a way that suggests endorsement.
+DXC comes under its own open-source licence, not Microsoft's binary terms: the
+LLVM Release License (University of Illinois/NCSA), plus the notices for what it
+incorporates. No `dxil.dll` is in Flint's build, so the DLL release's
+`LICENSE-MS.txt` doesn't apply. That's Flint's reading, not legal advice. A
+Windows build of your game that carries Flint ships DXC's notices beside its
+executable:
 
-`flint export` has no desktop target, so nothing copies the DLLs into a game on
-its own. `flint dxc install --to <your build folder>` does it when you ask, and
-copies the licence files beside them as `dxc-LICENSE-MS.txt`, `dxc-LICENSE-LLVM.txt`
-and `dxc-LICENCE-MIT.txt`. A game shipped without the DLLs still runs on DX12,
-with FXC.
+```bash
+flint dxc notices --to dist/win   # writes THIRD-PARTY-NOTICES-DXC.txt
+flint dxc notices                 # or prints it
+```
+
+The file names the DXC release and the commit it was built from, then carries
+DXC's `LICENSE.TXT` and `ThirdPartyNotices.txt`. `flint export` has no desktop
+target yet, so nothing copies it into a build for you.
 
 ### Edit Flags
 

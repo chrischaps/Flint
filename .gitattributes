@@ -3,3 +3,5 @@ scripts/ci.sh text eol=lf
 *.sh text eol=lf
 *.bat text eol=crlf
 *.cmd text eol=crlf
+# The static DXC patch applies to an LF checkout of DXC (#947)
+tools/dxc-static/*.patch text eol=lf

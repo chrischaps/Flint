@@ -331,5 +331,13 @@ opt-level = 3
 # nothing else differs. Drop this patch and the folder when Flint moves to an
 # egui-winit release whose `NativeFile` implements `bytes_async` on wasm32:
 # `bash scripts/wasm-check.sh` without the patch is the test.
+#
+# mach-dxcompiler-rs is Flint's static DXC (#947): wgpu-hal's `static-dxc`
+# calls `mach_dxcompiler_rs::DxcCreateInstance`, and vendor/static-dxc
+# answers it with Microsoft's DXC built from source by Flint's own
+# workflow (tools/dxc-static), in place of crates.io's crate and its
+# prebuilt from a 2023 fork. Not a temporary patch: keep it while Flint
+# links DXC.
 [patch.crates-io]
 egui-winit = { path = "vendor/egui-winit" }
+mach-dxcompiler-rs = { path = "vendor/static-dxc" }
