@@ -128,7 +128,7 @@ pub(super) fn lay_out(
         };
         let font_id = resolve_font_id(points, t.font.as_deref(), fonts, warned);
         let galley = |color: egui::Color32| {
-            ctx.fonts(|f| {
+            ctx.fonts_mut(|f| {
                 f.layout_job(text_layout_job(
                     &t.text,
                     font_id.clone(),
@@ -385,8 +385,8 @@ impl WorldTextPipeline {
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("World Text Pipeline Layout"),
-            bind_group_layouts: &[&texture_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&texture_layout)],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("World Text Pipeline"),
@@ -394,7 +394,7 @@ impl WorldTextPipeline {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_world_text"),
-                buffers: &[GlyphVertex::desc()],
+                buffers: &[Some(GlyphVertex::desc())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -426,13 +426,13 @@ impl WorldTextPipeline {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         Self {
@@ -477,6 +477,7 @@ impl WorldTextPipeline {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -492,6 +493,7 @@ impl WorldTextPipeline {
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_vertex_buffer(0, vertices.slice(..));
@@ -581,14 +583,15 @@ mod tests {
 
     fn context() -> egui::Context {
         let ctx = egui::Context::default();
-        let _ = ctx.run(Default::default(), |_| {});
+        let _ = ctx.run_ui(Default::default(), |_| {});
         ctx
     }
 
     fn build(texts: &[WorldText], v: &TextView) -> GlyphMesh {
         let ctx = context();
         let mut laid = Vec::new();
-        let _ = ctx.run(Default::default(), |ctx| {
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            let ctx = &ui.ctx().clone();
             laid = lay_out(
                 ctx,
                 texts,

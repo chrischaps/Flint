@@ -1645,7 +1645,7 @@ fn time_gpu(
         renderer.encode_gpu_timings(&ctx.device, &mut encoder);
         ctx.queue.submit(std::iter::once(encoder.finish()));
         renderer.frame_submitted();
-        ctx.device.poll(wgpu::Maintain::Wait);
+        ctx.device.poll(wgpu::PollType::wait_indefinitely());
     }
     let spread = match renderer.gpu_timer_mut() {
         Some(timer) => {

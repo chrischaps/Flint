@@ -2008,9 +2008,9 @@ impl TextCapture {
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        device.poll(wgpu::Maintain::Wait);
+        device.poll(wgpu::PollType::wait_indefinitely());
         rx.recv().ok()?.ok()?;
-        let data = slice.get_mapped_range();
+        let data = slice.get_mapped_range().expect("mapped buffer range");
         let words = |x: u32, y: u32| -> [u32; 4] {
             let at = (y * self.row_bytes + x * TEXT_TEXEL_BYTES) as usize;
             let w: &[u8] = &data[at..at + TEXT_TEXEL_BYTES as usize];
@@ -3473,9 +3473,9 @@ impl StylePass for Ascii {
             );
             encoder.copy_texture_to_buffer(
                 capture.texture.as_image_copy(),
-                wgpu::ImageCopyBuffer {
+                wgpu::TexelCopyBufferInfo {
                     buffer: &capture.buffer,
-                    layout: wgpu::ImageDataLayout {
+                    layout: wgpu::TexelCopyBufferLayout {
                         offset: 0,
                         bytes_per_row: Some(capture.row_bytes),
                         rows_per_image: None,

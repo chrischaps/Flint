@@ -91,8 +91,12 @@ impl TerrainPipeline {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Terrain Pipeline Layout"),
-            bind_group_layouts: &[transform_layout, &material_bind_group_layout, light_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[
+                Some(transform_layout),
+                Some(&material_bind_group_layout),
+                Some(light_layout),
+            ],
+            immediate_size: 0,
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -101,7 +105,7 @@ impl TerrainPipeline {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
+                buffers: &[Some(Vertex::desc())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -125,8 +129,8 @@ impl TerrainPipeline {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -134,7 +138,7 @@ impl TerrainPipeline {
                 count: sample_count,
                 ..Default::default()
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 

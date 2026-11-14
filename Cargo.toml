@@ -95,7 +95,7 @@ pest = "2.7"
 pest_derive = "2.7"
 
 # Rendering
-wgpu = "23.0"
+wgpu = "30.0"
 winit = "0.30"
 pollster = "0.4"
 # Frame profiler scopes: nothing at all without a backend feature (ADR 0109)
@@ -176,10 +176,10 @@ gltf = { version = "1.4", features = ["KHR_materials_emissive_strength", "extras
 rfd = "0.15"
 
 # GUI
-egui = "0.30.0"
-egui-wgpu = "0.30.0"
-egui-winit = "0.30.0"
-egui-snarl = "0.6.0"
+egui = "0.36.2"
+egui-wgpu = "0.36.2"
+egui-winit = "0.36.2"
+egui-snarl = "0.12.0"
 
 # Internal crates
 flint-core = { path = "crates/flint-core" }

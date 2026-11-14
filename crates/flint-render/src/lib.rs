@@ -49,11 +49,13 @@ pub mod sprite2d_pipeline;
 pub mod style_albedo;
 pub mod style_mask;
 pub mod stylize;
+mod surface_frame;
 pub mod terrain_pipeline;
 mod texture_cache;
 pub mod water_body;
 mod wooze_pipeline;
 pub mod world_line_pipeline;
+pub use surface_frame::{AcquireFrame, SurfaceError};
 
 pub use atlas::{AtlasRegistry, TextureAtlas};
 pub use billboard_pipeline::BillboardPipeline;

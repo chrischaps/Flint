@@ -142,7 +142,7 @@ impl Stages<'_> {
             vertex: wgpu::VertexState {
                 module: self.vertex_module,
                 entry_point: Some(self.vertex_entry),
-                buffers: std::slice::from_ref(&self.vertex_layout),
+                buffers: &[Some(self.vertex_layout.clone())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -166,8 +166,8 @@ impl Stages<'_> {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(depth_write_enabled),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -175,7 +175,7 @@ impl Stages<'_> {
                 count: self.sample_count,
                 ..Default::default()
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         })
     }
@@ -413,7 +413,7 @@ mod tests {
             let instance = crate::gpu_select::instance();
             let adapter = crate::gpu_select::request_adapter(&instance, None).await?;
             let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor::default(), None)
+                .request_device(&wgpu::DeviceDescriptor::default())
                 .await
                 .ok()?;
             let target = |format, usage| {
@@ -482,9 +482,9 @@ mod tests {
             let mut encoder = self.device.create_command_encoder(&Default::default());
             encoder.copy_texture_to_buffer(
                 self.color.as_image_copy(),
-                wgpu::ImageCopyBuffer {
+                wgpu::TexelCopyBufferInfo {
                     buffer: &buffer,
-                    layout: wgpu::ImageDataLayout {
+                    layout: wgpu::TexelCopyBufferLayout {
                         offset: 0,
                         bytes_per_row: Some(row),
                         rows_per_image: None,
@@ -500,8 +500,11 @@ mod tests {
             buffer
                 .slice(..)
                 .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-            self.device.poll(wgpu::Maintain::Wait);
-            let data = buffer.slice(..).get_mapped_range();
+            self.device.poll(wgpu::PollType::wait_indefinitely());
+            let data = buffer
+                .slice(..)
+                .get_mapped_range()
+                .expect("mapped buffer range");
             let mut out = Vec::with_capacity((SIZE * SIZE * 4) as usize);
             for y in 0..SIZE {
                 let start = (row * y) as usize;

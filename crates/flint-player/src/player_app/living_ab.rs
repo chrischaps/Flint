@@ -82,7 +82,7 @@ pub fn paint_labels(ctx: &egui::Context, ab: &AbState) {
         egui::Order::Background,
         egui::Id::new("living_ab_labels"),
     ));
-    let screen = ctx.screen_rect();
+    let screen = ctx.content_rect();
     let mid = screen.center().x;
     let tab = |at: egui::Pos2, align: egui::Align2, letter: &str, name: &str, live: bool| {
         let text = format!("{letter}  {}", side_label(name));

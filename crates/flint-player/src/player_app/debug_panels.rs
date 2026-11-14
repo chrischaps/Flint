@@ -552,7 +552,7 @@ pub(super) fn show_debug_panels(
     use flint_debug_ui::PanelLayout;
 
     // Logical points (screen_rect), never config.width (physical px).
-    let screen = ctx.screen_rect();
+    let screen = ctx.content_rect();
 
     // Bottom strips draw their own compact labels (a heading would eat the
     // vertical budget).
@@ -810,7 +810,8 @@ mod tests {
             ..Default::default()
         };
         let mut width = 0.0;
-        let _ = ctx.run(input, |ctx| {
+        let _ = ctx.run_ui(input, |ui| {
+            let ctx = &ui.ctx().clone();
             width = show_debug_panels(ctx, panels, &mut |panel, ui| panel.ui(ui))
         });
         width

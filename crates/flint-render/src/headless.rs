@@ -31,17 +31,15 @@ impl HeadlessContext {
             .ok_or(RenderError::AdapterNotFound)?;
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("Flint Headless Device"),
-                    // Timestamps where the adapter has them, so the
-                    // renderer's GPU timing can be turned on (ADR 0108).
-                    required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: Default::default(),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Flint Headless Device"),
+                // Timestamps where the adapter has them, so the
+                // renderer's GPU timing can be turned on (ADR 0108).
+                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+                required_limits: wgpu::Limits::default(),
+                memory_hints: Default::default(),
+                ..Default::default()
+            })
             .await
             .map_err(|e| RenderError::DeviceCreation(e.to_string()))?;
 
@@ -151,15 +149,15 @@ impl HeadlessContext {
             });
 
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &self.color_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &staging_buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded_bytes_per_row),
                     rows_per_image: Some(self.height),
@@ -180,13 +178,15 @@ impl HeadlessContext {
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        self.device.poll(wgpu::PollType::wait_indefinitely());
 
         rx.recv()
             .map_err(|e| RenderError::BufferReadFailed(e.to_string()))?
             .map_err(|e| RenderError::BufferReadFailed(e.to_string()))?;
 
-        let data = buffer_slice.get_mapped_range();
+        let data = buffer_slice
+            .get_mapped_range()
+            .expect("mapped buffer range");
 
         // Strip row padding if present
         let mut pixels = Vec::with_capacity((self.width * self.height * bytes_per_pixel) as usize);

@@ -29,8 +29,8 @@ profiling = { workspace = true }
 
 [dev-dependencies]
 flint-asset = { workspace = true }
-naga = { version = "23", features = ["wgsl-in", "wgsl-out"] }
-epaint_default_fonts = "0.30"
+naga = { version = "30", features = ["wgsl-in", "wgsl-out"] }
+epaint_default_fonts = "0.36"
 serde_json = { workspace = true }
 
 # Native builds decode every format image does by default (with rayon); the
@@ -41,7 +41,7 @@ image = { workspace = true, features = ["default"] }
 # them. wgpu already builds naga natively, so this adds nothing there; the
 # web relies on the browser's compiler instead. `wgsl-out` writes the
 # module back out with every user loop guarded (#411).
-naga = { version = "23", features = ["wgsl-in", "wgsl-out"] }
+naga = { version = "30", features = ["wgsl-in", "wgsl-out"] }
 
 # DX12's shader compiler (#912): `gpu_select` loads dxcompiler.dll and
 # dxil.dll by full path from the executable's folder, as wgpu-hal does, so

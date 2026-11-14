@@ -48,6 +48,7 @@ fn main() {
 #[cfg(target_arch = "wasm32")]
 mod web {
     use flint_player::user_files;
+    use flint_render::AcquireFrame;
     use flint_runtime::pad::{Axis, EventType, Gilrs};
     use flint_runtime::{
         ActionConfig, ActionKind, Binding, GamepadSelector, InputConfig, InputState, RebindMode,
@@ -410,15 +411,13 @@ mod web {
             info.name, info.backend
         ));
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("flint-web"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: wgpu::MemoryHints::default(),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("flint-web"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: wgpu::MemoryHints::default(),
+                ..Default::default()
+            })
             .await
             .map_err(|e| format!("request_device: {e}"))?;
 
@@ -461,9 +460,9 @@ mod web {
         }
 
         fn draw(&mut self, phase: f64) {
-            let frame = match self.surface.get_current_texture() {
+            let frame = match self.surface.acquire() {
                 Ok(frame) => frame,
-                Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => {
                     self.surface.configure(&self.device, &self.config);
                     return;
                 }
@@ -479,6 +478,7 @@ mod web {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(sky_at(phase, self.config.format.is_srgb())),
                         store: wgpu::StoreOp::Store,
@@ -487,7 +487,7 @@ mod web {
                 ..Default::default()
             });
             self.queue.submit([encoder.finish()]);
-            frame.present();
+            self.queue.present(frame);
         }
     }
 

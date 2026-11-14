@@ -92,8 +92,14 @@ impl ViewGizmo {
     }
 
     /// Draw the gizmo and return any user interaction
-    pub fn draw(&mut self, ctx: &egui::Context, cam: &CameraView) -> Option<GizmoAction> {
-        let central_rect = ctx.available_rect();
+    /// `central_rect` is what the side panels leave (egui 0.36 has no
+    /// `Context::available_rect`; the caller's root `Ui` knows it).
+    pub fn draw(
+        &mut self,
+        ctx: &egui::Context,
+        cam: &CameraView,
+        central_rect: egui::Rect,
+    ) -> Option<GizmoAction> {
         let gizmo_pos = egui::pos2(
             central_rect.right() - GIZMO_DIAMETER - MARGIN,
             central_rect.top() + MARGIN,

@@ -94,7 +94,7 @@ impl Gpu {
             &Camera::default(),
             &self.color_view,
         );
-        self.device.poll(wgpu::Maintain::Wait);
+        self.device.poll(wgpu::PollType::wait_indefinitely());
         self.pixels()
     }
 
@@ -111,9 +111,9 @@ impl Gpu {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_texture_to_buffer(
             self.color.as_image_copy(),
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(row),
                     rows_per_image: None,
@@ -129,8 +129,11 @@ impl Gpu {
         buffer
             .slice(..)
             .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-        self.device.poll(wgpu::Maintain::Wait);
-        let data = buffer.slice(..).get_mapped_range();
+        self.device.poll(wgpu::PollType::wait_indefinitely());
+        let data = buffer
+            .slice(..)
+            .get_mapped_range()
+            .expect("mapped buffer range");
         (0..SIZE as usize)
             .flat_map(|y| {
                 let start = y * row as usize;
@@ -954,8 +957,8 @@ fn the_palette_matcher_agrees_with_its_cpu_reference() {
         layout: Some(
             &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: None,
-                bind_group_layouts: &[&layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
             }),
         ),
         vertex: wgpu::VertexState {
@@ -973,7 +976,7 @@ fn the_palette_matcher_agrees_with_its_cpu_reference() {
         primitive: Default::default(),
         depth_stencil: None,
         multisample: Default::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
 
@@ -1017,6 +1020,7 @@ fn the_palette_matcher_agrees_with_its_cpu_reference() {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &gpu.color_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,
@@ -1122,7 +1126,7 @@ fn ascii_holds_its_glyphs_still_under_a_wobbling_camera() {
                     &camera,
                     &gpu.color_view,
                 );
-                gpu.device.poll(wgpu::Maintain::Wait);
+                gpu.device.poll(wgpu::PollType::wait_indefinitely());
                 gpu.pixels()
             })
             .collect()
@@ -1256,7 +1260,7 @@ fn reprojected_history_reads_the_past_of_the_surface_now_in_the_cell() {
                     &camera,
                     &gpu.color_view,
                 );
-                gpu.device.poll(wgpu::Maintain::Wait);
+                gpu.device.poll(wgpu::PollType::wait_indefinitely());
                 gpu.pixels()
             })
             .collect()
@@ -1352,7 +1356,7 @@ fn the_callers_depth_with_an_id_makes_no_bind_groups_a_frame() {
             &Camera::default(),
             &gpu.color_view,
         );
-        gpu.device.poll(wgpu::Maintain::Wait);
+        gpu.device.poll(wgpu::PollType::wait_indefinitely());
         gpu.pixels()
     };
     let per_frame = |renderer: &mut SceneRenderer, depth: flint_render::DepthTarget<'_>| {

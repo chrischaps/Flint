@@ -163,7 +163,7 @@ impl GpuTimer {
     /// loop: it blocks on the GPU.
     pub fn flush(&mut self, device: &wgpu::Device) {
         if self.readbacks.iter().any(|r| r.in_flight) {
-            device.poll(wgpu::Maintain::Wait);
+            device.poll(wgpu::PollType::wait_indefinitely());
         }
         self.poll(device);
     }
@@ -305,7 +305,7 @@ impl GpuTimer {
         if !self.readbacks.iter().any(|r| r.in_flight) {
             return;
         }
-        device.poll(wgpu::Maintain::Poll);
+        device.poll(wgpu::PollType::Poll);
         for readback in &mut self.readbacks {
             if !readback.in_flight {
                 continue;
@@ -314,7 +314,11 @@ impl GpuTimer {
                 1 => {
                     let bytes = readback.count as u64 * wgpu::QUERY_SIZE as u64;
                     let ticks: Vec<u64> = {
-                        let data = readback.buffer.slice(..bytes).get_mapped_range();
+                        let data = readback
+                            .buffer
+                            .slice(..bytes)
+                            .get_mapped_range()
+                            .expect("mapped buffer range");
                         bytemuck::pod_collect_to_vec(&data)
                     };
                     readback.buffer.unmap();

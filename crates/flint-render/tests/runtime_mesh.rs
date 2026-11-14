@@ -118,7 +118,7 @@ impl Gpu {
             camera,
             &self.color_view,
         );
-        self.device.poll(wgpu::Maintain::Wait);
+        self.device.poll(wgpu::PollType::wait_indefinitely());
     }
 
     /// Buffers the application holds, and bytes the allocator holds where
@@ -149,9 +149,9 @@ impl Gpu {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_texture_to_buffer(
             self.color.as_image_copy(),
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(row),
                     rows_per_image: None,
@@ -167,8 +167,11 @@ impl Gpu {
         buffer
             .slice(..)
             .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-        self.device.poll(wgpu::Maintain::Wait);
-        let data = buffer.slice(..).get_mapped_range();
+        self.device.poll(wgpu::PollType::wait_indefinitely());
+        let data = buffer
+            .slice(..)
+            .get_mapped_range()
+            .expect("mapped buffer range");
         let at = (row * (SIZE / 2) + (SIZE / 2) * 4) as usize;
         [data[at], data[at + 1], data[at + 2], data[at + 3]]
     }
@@ -1737,11 +1740,11 @@ fn thousands_of_distinct_looks_draw() {
             .unwrap();
     }
 
-    gpu.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
-    gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let oom_guard = gpu.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    let validation_guard = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     gpu.frame(&mut renderer, &world, &camera);
-    let validation = pollster::block_on(gpu.device.pop_error_scope());
-    let out_of_memory = pollster::block_on(gpu.device.pop_error_scope());
+    let validation = pollster::block_on(validation_guard.pop());
+    let out_of_memory = pollster::block_on(oom_guard.pop());
     assert!(validation.is_none(), "{LOOKS} looks: {validation:?}");
     assert!(out_of_memory.is_none(), "{LOOKS} looks: {out_of_memory:?}");
     let stats = renderer.collect_stats();

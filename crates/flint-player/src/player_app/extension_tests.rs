@@ -327,8 +327,9 @@ fn the_fonts_hook_runs_on_every_install_and_its_families_reach_scripts() {
 
     // egui has the family on the next pass, so laying text out in it from
     // `ui` doesn't panic.
-    let _ = app.hud.egui_ctx.run(egui::RawInput::default(), |ctx| {
-        ctx.fonts(|f| {
+    let _ = app.hud.egui_ctx.run_ui(egui::RawInput::default(), |ui| {
+        let ctx = &ui.ctx().clone();
+        ctx.fonts_mut(|f| {
             f.layout_no_wrap(
                 "Capitol".into(),
                 egui::FontId::new(14.0, egui::FontFamily::Name("game".into())),
@@ -528,7 +529,8 @@ fn a_game_names_debug_panels_that_f3_opens_and_it_draws() {
         )),
         ..Default::default()
     };
-    let _ = ctx.run(input, |ctx| {
+    let _ = ctx.run_ui(input, |ui| {
+        let ctx = &ui.ctx().clone();
         for ext in extensions.iter_mut() {
             ext.ui(ctx);
         }

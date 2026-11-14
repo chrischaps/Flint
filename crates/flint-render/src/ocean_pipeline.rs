@@ -392,12 +392,12 @@ impl OceanPipeline {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             bind_group_layouts: &[
-                transform_layout,         // group 0
-                &ocean_bind_group_layout, // group 1
-                light_layout,             // group 2
-                &grab_bind_group_layout,  // group 3
+                Some(transform_layout),         // group 0
+                Some(&ocean_bind_group_layout), // group 1
+                Some(light_layout),             // group 2
+                Some(&grab_bind_group_layout),  // group 3
             ],
-            push_constant_ranges: &[],
+            immediate_size: 0,
             label: Some("Ocean Pipeline Layout"),
         });
 
@@ -409,7 +409,7 @@ impl OceanPipeline {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some(entry),
-                    buffers: &[buffer],
+                    buffers: &[Some(buffer)],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -430,8 +430,8 @@ impl OceanPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
@@ -439,7 +439,7 @@ impl OceanPipeline {
                     count: sample_count,
                     ..Default::default()
                 },
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };
@@ -473,8 +473,8 @@ impl OceanPipeline {
                 label: Some("Grab Blit Bind Group Layout"),
             });
         let blit_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            bind_group_layouts: &[&blit_bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&blit_bind_group_layout)],
+            immediate_size: 0,
             label: Some("Grab Blit Pipeline Layout"),
         });
         let blit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -510,7 +510,7 @@ impl OceanPipeline {
             },
             depth_stencil: None,
             multisample: Default::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 

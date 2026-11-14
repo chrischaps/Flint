@@ -144,7 +144,7 @@ impl Gpu {
     /// Panics on any validation error, which is what a pipeline left at
     /// the wrong sample count, or a target at the wrong size, would give.
     fn frame(&self, renderer: &mut SceneRenderer, world: &FlintWorld) -> Vec<u8> {
-        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let guard = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         renderer.update_from_world(world, self.device);
         renderer.render_to(
             self.device,
@@ -154,7 +154,7 @@ impl Gpu {
             &self.color_view,
         );
         let pixels = self.read();
-        if let Some(e) = pollster::block_on(self.device.pop_error_scope()) {
+        if let Some(e) = pollster::block_on(guard.pop()) {
             panic!("validation error at {:?}: {e}", renderer.quality());
         }
         pixels
@@ -172,9 +172,9 @@ impl Gpu {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_texture_to_buffer(
             self.color.as_image_copy(),
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(row),
                     rows_per_image: None,
@@ -190,8 +190,11 @@ impl Gpu {
         buffer
             .slice(..)
             .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-        self.device.poll(wgpu::Maintain::Wait);
-        let data = buffer.slice(..).get_mapped_range();
+        self.device.poll(wgpu::PollType::wait_indefinitely());
+        let data = buffer
+            .slice(..)
+            .get_mapped_range()
+            .expect("mapped buffer range");
         let mut out = Vec::with_capacity((SIZE * SIZE * 4) as usize);
         for y in 0..SIZE {
             let at = (row * y) as usize;

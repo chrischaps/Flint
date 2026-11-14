@@ -2998,8 +2998,8 @@ fn build(d: &StyleDevice) -> CustomPass {
             }
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("User Style Layout"),
-                bind_group_layouts: &layouts,
-                push_constant_ranges: &[],
+                bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
+                immediate_size: 0,
             });
             PassGpu {
                 format: p
@@ -3038,8 +3038,8 @@ fn build(d: &StyleDevice) -> CustomPass {
     };
     let passthrough_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("User Style Passthrough Layout"),
-        bind_group_layouts: &[&frame_bgl, &input_bgl],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&frame_bgl), Some(&input_bgl)],
+        immediate_size: 0,
     });
     let (_, passthrough) = pipeline(
         device,
@@ -3129,7 +3129,7 @@ fn pipeline(
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
     (module, pipeline)
@@ -3398,14 +3398,14 @@ fn upload_image(
         view_formats: &[],
     });
     queue.write_texture(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: &texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
         &image,
-        wgpu::ImageDataLayout {
+        wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(width * 4),
             rows_per_image: Some(height),
@@ -3423,6 +3423,7 @@ fn clear(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view,
             resolve_target: None,
+            depth_slice: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                 store: wgpu::StoreOp::Store,
@@ -3431,6 +3432,7 @@ fn clear(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         depth_stencil_attachment: None,
         timestamp_writes: None,
         occlusion_query_set: None,
+        multiview_mask: None,
     });
 }
 
@@ -3512,9 +3514,9 @@ impl CustomPass {
             },
             None => compose_pass(source, i, &user),
         };
-        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let guard = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let (module, made) = pipeline(device, &gpu.layout, &composed.text, gpu.format);
-        let scope = Settling::new(device.pop_error_scope());
+        let scope = Settling::new(guard.pop());
         let info = Settling::new(module.get_compilation_info());
         build.pending = Some(Pending {
             pipeline: made,
@@ -4612,7 +4614,7 @@ fn style(p: StylePixel) -> vec4<f32> {
             let instance = crate::gpu_select::instance();
             let adapter = crate::gpu_select::request_adapter(&instance, None).await?;
             adapter
-                .request_device(&wgpu::DeviceDescriptor::default(), None)
+                .request_device(&wgpu::DeviceDescriptor::default())
                 .await
                 .ok()
         })

@@ -121,19 +121,19 @@ impl Sprite2dPipeline {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Sprite2D Pipeline Layout"),
             bind_group_layouts: &[
-                &uniform_bind_group_layout,
-                &instance_bind_group_layout,
-                &texture_bind_group_layout,
+                Some(&uniform_bind_group_layout),
+                Some(&instance_bind_group_layout),
+                Some(&texture_bind_group_layout),
             ],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
 
         // Alpha blending, depth test enabled but depth write DISABLED
         // (2D sprites rely on layer-based draw order, not depth buffer writes)
         let depth_stencil = wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
-            depth_write_enabled: false,
-            depth_compare: wgpu::CompareFunction::LessEqual,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         };
@@ -171,7 +171,7 @@ impl Sprite2dPipeline {
                 count: sample_count,
                 ..Default::default()
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 

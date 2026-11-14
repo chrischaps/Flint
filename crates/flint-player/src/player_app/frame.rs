@@ -16,6 +16,7 @@ use super::{
 #[cfg(feature = "debug-hud")]
 #[cfg(feature = "debug-hud")]
 use flint_debug_ui::DebugPanel as _;
+use flint_render::AcquireFrame;
 use flint_render::GrassEntityPosition;
 use flint_runtime::state::AUDIO;
 use flint_runtime::{RuntimeSystem, StateConfig};
@@ -37,7 +38,7 @@ impl PlayerApp {
     /// a texture past the GPU's limit (#657). Until egui agrees, it's the
     /// window's size at the scale egui is about to use.
     pub(super) fn script_screen_size(&self) -> (f32, f32) {
-        let rect = self.hud.egui_ctx.screen_rect();
+        let rect = self.hud.egui_ctx.content_rect();
         let egui_size = (rect.width(), rect.height());
         let Some(window) = &self.window else {
             return egui_size;
@@ -77,9 +78,9 @@ impl PlayerApp {
             return;
         };
 
-        let output = match context.surface.get_current_texture() {
+        let output = match context.surface.acquire() {
             Ok(output) => output,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => {
                 return;
             }
             Err(e) => {
@@ -686,7 +687,9 @@ impl PlayerApp {
             }
         }
 
-        output.present();
+        if let Some(context) = &self.render_context {
+            context.queue.present(output);
+        }
         let presented = web_time::Instant::now();
         self.perf_mark(super::perf::Phase::Present);
         #[cfg(target_arch = "wasm32")]
@@ -1253,7 +1256,8 @@ impl PlayerApp {
             errors
         };
 
-        let full_output = self.hud.egui_ctx.run(raw_input, |ctx| {
+        let full_output = self.hud.egui_ctx.run_ui(raw_input, |ui| {
+            let ctx = &ui.ctx().clone();
             // Layers, back to front: script UI, game egui, debug panels.
             // Script UI first: it shares the background layer with any game
             // panels, so issuing it first puts those panels in front of it
@@ -1373,8 +1377,10 @@ impl PlayerApp {
             .and_then(|r| r.gpu_timer_mut())
             .map(|t| t.begin(encoder, "UI"));
 
-        for (id, image_delta) in &full_output.textures_delta.set {
-            egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+        for (id, deltas) in &full_output.textures_delta.set {
+            for image_delta in deltas {
+                egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+            }
         }
 
         egui_renderer.update_buffers(
@@ -1407,6 +1413,7 @@ impl PlayerApp {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load, // overlay on top of 3D
                         store: wgpu::StoreOp::Store,
@@ -1415,6 +1422,7 @@ impl PlayerApp {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             let mut render_pass = render_pass.forget_lifetime();
@@ -1664,14 +1672,14 @@ fn render_stats_overlay(
         .order(egui::Order::Foreground)
         .interactable(false)
         .show(ctx, |ui| {
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 209))
                 .stroke(egui::Stroke::new(
                     1.0f32,
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 38),
                 ))
-                .rounding(egui::Rounding::same(4.0))
-                .inner_margin(egui::Margin::same(10.0))
+                .corner_radius(egui::CornerRadius::same(4))
+                .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
                     ui.style_mut().override_font_id = Some(egui::FontId::monospace(11.0));
                     ui.set_min_width(180.0);
