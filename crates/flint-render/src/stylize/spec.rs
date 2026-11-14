@@ -522,14 +522,25 @@ mod tests {
         for d in registry() {
             StyleSpec::parse(d.name).unwrap();
         }
-        // A line a style, then the reveal's keys every style takes (#406)
+        // A line a style, then the reveal's keys every style takes (#406).
+        // Tests beside this one register user and game styles (#489), and
+        // the registry only grows, so the help lists every style registered
+        // before it was made, in order, and at most those registered after
+        let before = registry();
         let help = style_spec_help();
-        assert_eq!(help.lines().count(), registry().len() + 1);
-        assert!(help
-            .lines()
-            .last()
-            .unwrap()
-            .contains("reveal_shape=tear|wipe|iris|panel"));
+        let after = registry().len();
+        let lines: Vec<&str> = help.lines().collect();
+        let (reveal, styles) = lines.split_last().unwrap();
+        assert!(
+            (before.len()..=after).contains(&styles.len()),
+            "{} lines for {}..{after} styles",
+            styles.len(),
+            before.len()
+        );
+        for (d, line) in before.iter().zip(styles) {
+            assert!(line.starts_with(&format!("{}: ", d.name)), "{line}");
+        }
+        assert!(reveal.contains("reveal_shape=tear|wipe|iris|panel"));
     }
 
     #[test]
