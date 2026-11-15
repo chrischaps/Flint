@@ -69,18 +69,19 @@ struct OceanUniforms {
     sky_horizon: vec4<f32>,
     sky_haze: vec4<f32>,           // rgb + haze strength in alpha
     sky_reflection_strength: f32,  // 0 disables (also 0 when no sky component)
-    // Contact foam: splash ring around the scene's ocean_contact hull.
+    // Contact foam: a splash ring round each ocean_contact hull (#749).
     splash_strength: f32,          // overall gain; 0 disables (also 0 with no hull)
     splash_width: f32,             // max band width outward from the hull (m)
     splash_flicker_speed: f32,     // lapping-animation rate
-    hull_a: vec4<f32>,             // [center.x, center.z, cos(yaw), sin(yaw)]
-    hull_b: vec4<f32>,             // [half_x, half_z, baseline, noise_scale]
-    hull_c: vec4<f32>,             // [hull_vel.xyz, response]
+    splash_baseline: f32,          // churn floor on calm water
+    splash_noise_scale: f32,       // scalloped edge frequency
+    splash_response: f32,          // impact speed -> churn gain (s/m)
+    contact_count: u32,            // hulls in use, 0..=MAX_CONTACTS
     // Cel band edge treatment (see cel_band + the ramp in fs_main).
     band_wobble: f32,              // ramp noise wobble amplitude (0 = off)
     band_dither: f32,              // halftone transition width, 0 = hard line
     band_dither_scale: f32,        // halftone dot grid frequency (dots/m)
-    rain_ripple: f32,              // rain impact-ring density 0..1 (weather)
+    rain_ripple: f32,              // rain impact-ring density 0..1
     foam_glow: vec4<f32>,          // bioluminescence: rgb + strength in .a
     // Reality tear (mirrors PostProcessConfig): 2 = blood ocean.
     mode: u32,
@@ -97,6 +98,16 @@ struct OceanUniforms {
     shore_foam_reach: f32,
     _pad_shore1: f32,
     _pad_shore2: f32,
+    // The hulls the sea foams round, the first contact_count of them.
+    hulls: array<ContactHull, 4>,
+};
+
+// One ocean_contact hull as drawn; must match ContactHullGpu in
+// ocean_pipeline.rs (MAX_CONTACTS of them).
+struct ContactHull {
+    pose: vec4<f32>,     // [center.x, center.z, cos(yaw), sin(yaw)]
+    extent: vec4<f32>,   // [half_x, half_z, 0, 0]
+    velocity: vec4<f32>, // [vel.xyz, 0]
 };
 
 @group(1) @binding(0)
@@ -562,8 +573,8 @@ fn fs_main(in: VertexOutput,
     // ── Reality tear, mode 2: the sea turns to blood ────────────────────
     // The whole palette is remapped through locals BEFORE any use, so every
     // downstream term (bands, SSS, foam, reflections) agrees. Remapping here
-    // — after the TOD script's palette landed in the uniforms — means the
-    // tear can never race time_of_day.rhai.
+    // — after a script's palette (a time of day) landed in the uniforms —
+    // means the tear can never race it.
     var deep_rgb = body.deep_color.rgb;
     var shallow_rgb = body.shallow_color.rgb;
     var sss_rgb = ocean.sss_color.rgb;
@@ -692,28 +703,34 @@ fn fs_main(in: VertexOutput,
     let foam_flecks = smoothstep(fleck_cut - lace_aa, fleck_cut + lace_aa, lace)
         * halo_band * (1.0 - foam_solid);
 
-    // ── Contact foam: churn where water strikes the ocean_contact hull ──
-    // Rounded-rect SDF in the hull's yawed local frame; churn is driven by
+    // ── Contact foam: churn where water strikes an ocean_contact hull ──
+    // Rounded-rect SDF in each hull's yawed local frame; churn is driven by
     // the water's orbital velocity relative to the hull, projected INTO the
     // nearest hull face — so a flat sea (or the lee side, where flow moves
-    // away from the hull) stays quiet, and the windward face flares.
+    // away from the hull) stays quiet, and the windward face flares. Where
+    // two hulls' rings meet, the stronger shows.
     var contact_foam = 0.0;
-    if (ocean.splash_strength > 0.001) {
-        let rel = in.world_pos.xz - ocean.hull_a.xy;
-        let cy = ocean.hull_a.z;
-        let sy = ocean.hull_a.w;
+    // The count is the CPU's, clamped again so the loop ends on any input
+    // (built-in WGSL runs without loop bounding, #944).
+    let contact_count = min(ocean.contact_count, 4u);
+    for (var hi = 0u; hi < contact_count; hi++) {
+        let hull = ocean.hulls[hi];
+        let rel = in.world_pos.xz - hull.pose.xy;
+        let cy = hull.pose.z;
+        let sy = hull.pose.w;
         // World → hull-local. Yaw convention: forward = (sin y, cos y),
         // right = (cos y, -sin y), matching the engine's Y-up Euler rotation.
         let local = vec2<f32>(rel.x * cy - rel.y * sy, rel.x * sy + rel.y * cy);
         // Corner radius ~ log radius so foam wraps the outer logs.
         let corner = 0.13;
-        let qd = abs(local) - (ocean.hull_b.xy - vec2<f32>(corner));
+        let qd = abs(local) - (hull.extent.xy - vec2<f32>(corner));
         let sd = length(max(qd, vec2<f32>(0.0))) + min(max(qd.x, qd.y), 0.0) - corner;
-        // Derivative BEFORE the divergent branch below.
+        // Derivative BEFORE the divergent branch below (the loop's bound
+        // is uniform, so this is still uniform control flow).
         let sd_aa = clamp(fwidth(sd) * 1.5, 1e-4, 0.4);
 
-        if (sd < ocean.splash_width * 2.0 + 0.3) {
-            let rel_vel = gerstner_velocity(in.param_xz, in.fade) - ocean.hull_c.xyz;
+        if (ocean.splash_strength > 0.001 && sd < ocean.splash_width * 2.0 + 0.3) {
+            let rel_vel = gerstner_velocity(in.param_xz, in.fade) - hull.velocity.xyz;
             // Outward hull normal from the SDF gradient, hull-local frame.
             var g_local: vec2<f32>;
             if (sd > 0.0 && (qd.x > 0.0 || qd.y > 0.0)) {
@@ -739,19 +756,21 @@ fn fs_main(in: VertexOutput,
             // what actually churns — weight impact by surface height so
             // windward crest-strikes dominate and the lee stays quiet.
             let crest = clamp(0.5 + swell * 1.2, 0.25, 1.25);
-            let churn = clamp(ocean.hull_b.z + impact * crest * ocean.hull_c.w, 0.0, 1.5);
+            let churn = clamp(ocean.splash_baseline + impact * crest * ocean.splash_response,
+                              0.0, 1.5);
 
             // Scalloped, lapping edge; churn drives both width and opacity.
-            let lap = fbm(local * ocean.hull_b.w + vec2<f32>(
+            let lap = fbm(local * ocean.splash_noise_scale + vec2<f32>(
                 ocean.time * 0.9 * ocean.splash_flicker_speed,
                 ocean.time * -0.6 * ocean.splash_flicker_speed));
             let width = ocean.splash_width * churn * (0.55 + 0.9 * lap);
             let band = 1.0 - smoothstep(width - sd_aa, width + sd_aa, sd);
-            contact_foam = band * clamp(ocean.splash_strength * churn, 0.0, 1.5);
+            var hull_foam = band * clamp(ocean.splash_strength * churn, 0.0, 1.5);
             // Same lace as the crest foam breaks the ring into a dashed,
             // bubbly lap — a solid band reads as a glow decal at night.
-            contact_foam *= 0.30 + 0.70 * smoothstep(0.38 - lace_aa,
-                                                     0.38 + lace_aa, lace);
+            hull_foam *= 0.30 + 0.70 * smoothstep(0.38 - lace_aa,
+                                                  0.38 + lace_aa, lace);
+            contact_foam = max(contact_foam, hull_foam);
         }
     }
 
@@ -946,7 +965,8 @@ fn fs_main(in: VertexOutput,
     // the time-of-day palette. foam_color itself is constant white and the
     // raw hemisphere ambient is desaturated — together they rendered dusk
     // foam as daylight blue-gray slabs on a purple sea. Water keeps plain
-    // ambient: its palette is already TOD-driven by time_of_day.rhai.
+    // ambient: its palette is the component's, which a game's time of day
+    // may already be moving.
     var foam_ambient = ambient;
     if (ocean.sky_reflection_strength > 0.001) {
         let sky_glow = mix(sky_hor_rgb, sky_haze_rgb, ocean.sky_haze.a);
@@ -1020,8 +1040,8 @@ fn fs_main(in: VertexOutput,
         color = mix(color, sky_ref, clamp(reflect_amt, 0.0, 1.0));
     }
 
-    // ── Bioluminescent foam (foam_glow.a > 0, driven by biolum.rhai on
-    // rare night bloom windows). Emissive, added AFTER reflection/
+    // ── Bioluminescent foam (foam_glow.a > 0: the component's foam_glow,
+    // which a game raises at night). Emissive, added AFTER reflection/
     // refraction mixing so nothing washes it out. Weighted hard toward
     // agitation — bioluminescence is STIMULATED light: the churned
     // contact wake flares, flecks spark, and the passive crest mass gets

@@ -338,6 +338,11 @@ topic = "world"
 purpose = "The ocean's shoreline foam round a quay, a slipway and piers; tune it live with F3"
 
 [[example]]
+scene = "contact_foam.scene.toml"
+topic = "world"
+purpose = "Contact foam round three hulls, each posed its own way: Euler yaw, a parent, a quaternion"
+
+[[example]]
 scene = "particles_demo.scene.toml"
 topic = "world"
 purpose = "Particles: fire, smoke, sparks and dust motes"
