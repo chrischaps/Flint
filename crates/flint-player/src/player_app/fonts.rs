@@ -31,8 +31,8 @@
 //! build their layout jobs through [`text_layout_job`] so measurement and
 //! drawing can never disagree.
 
-use flint_core::toml_util::{check_keys, KeyIssue, Shape};
 use flint_core::project::{AssetKind, Listed, Project};
+use flint_core::toml_util::{check_keys, KeyIssue, Shape};
 use flint_core::vfs;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -63,15 +63,20 @@ const MANIFEST: Shape = Shape::Table(&[
 /// The keys of a `fonts.toml` manifest that will be ignored: misspelled,
 /// in the wrong table, or a `[font]` where the format wants `[[font]]`.
 /// Empty for a document that doesn't parse (`parse_manifest` says why).
-pub fn manifest_issues(text: &str) -> Vec<KeyIssue> {
+#[cfg(test)]
+fn manifest_issues(text: &str) -> Vec<KeyIssue> {
     text.parse::<toml::Value>()
-        .map(|doc| check_keys(&doc, &MANIFEST))
+        .map(|doc| manifest_doc_issues(&doc))
         .unwrap_or_default()
+}
+
+fn manifest_doc_issues(doc: &toml::Value) -> Vec<KeyIssue> {
+    check_keys(doc, &MANIFEST)
 }
 
 /// Parse a `fonts.toml` manifest. Entries missing `name` or `file` are
 /// dropped with a warning; a malformed document yields an empty list.
-/// Keys the format doesn't know are warned about ([`manifest_issues`]).
+/// Keys the format doesn't know are warned about (each one a `KeyIssue`).
 pub fn parse_manifest(text: &str) -> Vec<FontAlias> {
     let doc: toml::Value = match text.parse() {
         Ok(v) => v,
@@ -80,7 +85,7 @@ pub fn parse_manifest(text: &str) -> Vec<FontAlias> {
             return Vec::new();
         }
     };
-    for issue in check_keys(&doc, &MANIFEST) {
+    for issue in manifest_doc_issues(&doc) {
         tracing::warn!("fonts.toml: {issue}");
     }
     let Some(entries) = doc.get("font").and_then(|v| v.as_array()) else {

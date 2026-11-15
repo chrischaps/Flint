@@ -452,7 +452,11 @@ mod tests {
         assert!(message.contains("did you mean `spacing`?"), "{message}");
         // A glyph set named in the wrong spelling would draw the grid's font
         let glyph = font_toml_issues("[font]\nglyph = \"kana\"\n");
-        assert!(glyph[0].to_string().contains("did you mean `glyphs`?"), "{}", glyph[0]);
+        assert!(
+            glyph[0].to_string().contains("did you mean `glyphs`?"),
+            "{}",
+            glyph[0]
+        );
     }
 
     #[test]
