@@ -19,7 +19,7 @@
 //!   book defines with `fn`, or a name in `script-api-allow.txt` beside
 //!   `src/`. A row's `name(a, b[, c])` claims both arities.
 
-use flint_script::api::registry::{ApiEntry, ApiListing, CallbackDoc, CONVENTIONS};
+use flint_script::api::registry::{ApiEntry, ApiListing, CallbackSpec, CONVENTIONS};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -195,7 +195,7 @@ fn function_table(entries: &[&ApiEntry]) -> String {
     out
 }
 
-fn callback_table(callbacks: &[CallbackDoc]) -> String {
+fn callback_table(callbacks: &[CallbackSpec]) -> String {
     let mut out = String::from("| Callback | When it runs |\n|---|---|\n");
     for c in callbacks {
         let _ = writeln!(

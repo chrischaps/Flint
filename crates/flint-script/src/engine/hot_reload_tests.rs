@@ -4,6 +4,7 @@
 use crate::context::InputSnapshot;
 use crate::engine::test_support::*;
 use crate::engine::ScriptEngine;
+use flint_core::callbacks::Callback;
 use flint_ecs::FlintWorld;
 use std::sync::Arc;
 
@@ -353,8 +354,8 @@ fn test_hot_reload_preserves_scope() {
 
     // init_called should still be true
     assert!(script.init_called);
-    assert!(script.has_on_update);
-    assert!(!script.has_on_init);
+    assert!(script.defines(Callback::Update));
+    assert!(!script.defines(Callback::Init));
 }
 
 #[test]

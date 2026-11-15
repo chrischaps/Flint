@@ -26,8 +26,6 @@ pub mod instance;
 pub mod interact;
 
 pub use instance::ScriptInstance;
-#[cfg(test)]
-pub(crate) use instance::CALLBACK_ARITIES;
 pub use interact::{find_nearest_interactable, NearestInteractable};
 
 /// A Rhai engine that parses as Flint's does, with none of its API: what
@@ -370,6 +368,8 @@ impl Default for ScriptEngine {
     }
 }
 
+#[cfg(test)]
+mod callback_tests;
 #[cfg(test)]
 mod hot_reload_tests;
 #[cfg(test)]
