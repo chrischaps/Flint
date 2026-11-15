@@ -434,7 +434,7 @@ impl UiSystem {
         self.documents.push(doc);
         self.handle_map.insert(handle, idx);
 
-        println!("[ui] Loaded {} (handle {})", layout_path, handle);
+        tracing::info!(target: "script", "UI loaded: {} (handle {})", layout_path, handle);
         handle
     }
 

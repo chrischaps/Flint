@@ -568,9 +568,10 @@ the page's `#perf` panel):
 - **cpu ms**, mean and max per phase of the frame: input, scripts,
   physics, script ui, anim/fx, sync (procgen, renderer sync, late audio),
   render (draw lists, encoding, submission), hud, present.
-- **scripts**: the four with the worst single frame, by file, and the
-  script system's own steps in brackets (`[hot reload]`, `[load, on_init]`,
-  `[events]`); `ScriptSystem::set_update_timing`.
+- **scripts**: the four callbacks with the worst single frame, by file
+  and callback (`hud.rhai:on_draw_ui`, #703), and the script system's own
+  steps in brackets, less the callbacks they ran (`[hot reload]`,
+  `[load]`); `ScriptSystem::set_timing` / `take_times`.
 - **gpu ms** per pass from `timestamp-query` (ADR 0108), where the adapter
   has it. The post chain is now a scope per effect (`SSAO`, `Bloom`,
   `Volumetric`, `Kuwahara`), not one `Post-process`. Without timestamps the

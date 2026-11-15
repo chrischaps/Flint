@@ -1501,10 +1501,10 @@ impl super::game_core::FrameHost for PlayerApp {
 
     fn phase_done(&mut self, phase: super::perf::Phase) {
         self.perf_mark(phase);
-        if phase == super::perf::Phase::Scripts {
-            if let Some(perf) = &mut self.stats.perf {
-                perf.record_scripts(self.core.script.update_times());
-            }
+        // Every phase can call scripts (on_update, on_draw_ui, animation
+        // ends, scene changes): what each called is this frame's (#703)
+        if let Some(perf) = &mut self.stats.perf {
+            perf.record_scripts(&self.core.script.take_times());
         }
     }
 

@@ -27,21 +27,27 @@ impl ScriptEngine {
     /// script functions act for. A failure is recorded in
     /// [`Self::errors`] with the script's file, the entity's name, the
     /// callback and the line; returns whether it ran without one. An entity
-    /// with no script is not called and is no failure.
+    /// with no script is not called and is no failure. With timing on, the
+    /// call is timed under its script's source and `callback` (#703).
     pub(crate) fn call(
         &mut self,
         entity: EntityId,
         callback: &str,
         args: impl rhai::FuncArgs,
     ) -> bool {
-        let Some(script) = self.scripts.get_mut(&entity) else {
+        if !self.enter(entity) {
             return true;
-        };
-        crate::lock_or_recover(&self.ctx).current_entity = entity;
-        match self
+        }
+        let began = self.times.is_some().then(web_time::Instant::now);
+        let script = self.scripts.get_mut(&entity).unwrap();
+        let result = self
             .engine
-            .call_fn::<()>(&mut script.scope, &script.calls, callback, args)
-        {
+            .call_fn::<()>(&mut script.scope, &script.calls, callback, args);
+        if let (Some(times), Some(began)) = (&mut self.times, began) {
+            let ms = began.elapsed().as_secs_f32() * 1000.0;
+            times.callback(&script.source_path, callback, ms);
+        }
+        match result {
             Ok(()) => true,
             Err(e) => {
                 let failure = Failure::eval(&script.file, &name_of(script, entity), callback, &e);
@@ -87,12 +93,7 @@ impl ScriptEngine {
         let _world_scope = self.lend(world);
 
         for entity_id in self.in_order(|s| s.defines(Callback::Update)) {
-            let began = self.update_times.is_some().then(web_time::Instant::now);
             self.call(entity_id, cb::ON_UPDATE, ());
-            if let (Some(began), Some(script)) = (began, self.scripts.get(&entity_id)) {
-                let path = script.source_path.clone();
-                self.add_update_time(&path, began);
-            }
         }
     }
 

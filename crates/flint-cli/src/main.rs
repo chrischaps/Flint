@@ -194,7 +194,9 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,rfd=off")),
+                // `script=info`: what scripts print, and the script system's
+                // reloads (#703)
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,rfd=off,script=info")),
         )
         // Stdout belongs to what a command answers with, such as --report json.
         .with_writer(std::io::stderr)
