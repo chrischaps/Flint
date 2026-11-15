@@ -75,9 +75,9 @@ The renames Flint's own code and The Capitol's client needed, checked against th
 | `ui.output_mut(\|o\| o.copied_text = text)` | `ui.ctx().copy_text(text)` |
 | `Frame::none()` | `Frame::NONE` |
 | `.rounding(r)`, `Rounding` | `.corner_radius(r)`, `CornerRadius` (a `u8` a corner). `Rounding` is gone, alias and all |
-| `Rounding { nw: 3.0, ne: 3.0, sw: 0.0, se: 0.0 }`, `Rounding::same(12.0)` | `CornerRadius { nw: 3, ne: 3, sw: 0, se: 0 }`, `CornerRadius::same(12)`. For `f32` corners, `egui::epaint::CornerRadiusF32 { nw: top, .. }`, which converts wherever a `CornerRadius` is taken |
+| `Rounding { nw: 3.0, ne: 3.0, sw: 0.0, se: 0.0 }`, `Rounding::same(12.0)` | `CornerRadius { nw: 3, ne: 3, sw: 0, se: 0 }`, `CornerRadius::same(12)`. For `f32` corners, `egui::epaint::CornerRadiusF32 { nw: top, ne: top, sw: 3.0, se: 3.0 }`, which converts wherever a `CornerRadius` is taken |
 | `Visuals`' `window_rounding` and `menu_rounding`, `WidgetVisuals`' `rounding` (fields: `v.widgets.inactive.rounding = r`) | `window_corner_radius`, `menu_corner_radius`, `corner_radius` (`v.widgets.inactive.corner_radius = CornerRadius::same(6)`) |
-| `Margin::same(10.0)`, `Margin::symmetric(12.0, 8.0)` | `Margin::same(10)`, `Margin::symmetric(12, 8)` (an `i8` a side, in a `Margin { right: 10, .. }` literal too) |
+| `Margin::same(10.0)`, `Margin::symmetric(12.0, 8.0)` | `Margin::same(10)`, `Margin::symmetric(12, 8)` (an `i8` a side, in a `Margin { right: 10, ..Default::default() }` literal too) |
 | `Shadow { offset: vec2(0.0, 4.0), blur: 8.0, spread: 0.0, color }`, or `offset: [0.0, 4.0].into()` | `Shadow { offset: [0, 4], blur: 8, spread: 0, color }`: `offset` is `[i8; 2]`, `blur` and `spread` are `u8`. In `Frame::shadow`, `Visuals::window_shadow` and `popup_shadow` too |
 | `painter.rect_stroke(rect, radius, stroke)` | `painter.rect_stroke(rect, radius, stroke, egui::StrokeKind::Outside)`; `Outside` is 0.30's placement, and `Middle` draws half a stroke further in |
 | `painter.rect(rect, radius, fill, stroke)` | `painter.rect(rect, radius, fill, stroke, egui::StrokeKind::Outside)` |
