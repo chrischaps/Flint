@@ -94,5 +94,6 @@ Two general ideas had grown up inside one aesthetic and under its name.
 - A new field is a `static FieldKeys<N>` and a `ParamField::new`; it gets
   zones, ramps and their error messages with nothing more. It has no scene
   table or Rhai surface of its own until a follow-up gives it one.
+- Book: concepts/procgen.md, "The wooze field".
 - `Cycle::read` takes `(beats, glide, amount)`; a caller outside the tree that
   passed a `&WoozeSample` passes `s.glide, s.amplitude`.
