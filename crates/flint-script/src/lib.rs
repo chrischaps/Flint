@@ -65,15 +65,20 @@ pub struct ScriptSystem {
 pub const MAX_PENDING_EXPRESSIONS: usize = 256;
 
 impl ScriptSystem {
-    /// Time each script's `on_update` from now on, for a perf readout.
-    pub fn set_update_timing(&mut self, on: bool) {
-        self.engine.set_update_timing(on);
+    /// Time every script callback from now on, for a perf readout (#703:
+    /// `on_update` alone before).
+    pub fn set_timing(&mut self, on: bool) {
+        self.engine.set_timing(on);
     }
 
-    /// Each script file's time in the last frame's `on_update`, ms; empty
-    /// unless [`set_update_timing`](Self::set_update_timing) is on.
-    pub fn update_times(&self) -> &[(String, f32)] {
-        self.engine.update_times()
+    /// What the scripts took since the last take, ms: each callback under
+    /// `<source>:<callback>` (`scripts/hud.rhai:on_draw_ui`), and the script
+    /// system's own steps in brackets (`[hot reload]`, `[load]`), less the
+    /// callbacks they ran. Empty unless [`set_timing`](Self::set_timing) is
+    /// on. A host takes them after each batch of calls, so each lands in
+    /// the frame it was spent in.
+    pub fn take_times(&mut self) -> Vec<(String, f32)> {
+        self.engine.take_times()
     }
 
     /// Every script error of the run (#693): each failure counted once per
@@ -438,7 +443,7 @@ impl ScriptSystem {
                     .and_then(|f| f.to_str())
                     .unwrap_or("unknown.rhai")
                     .to_string();
-                println!("[script] Loaded (chunk): {:?} → {}", entity_id, source);
+                tracing::info!(target: "script", "Loaded (chunk): {:?} → {}", entity_id, source);
                 let file = errors::shown_file(script_path);
                 self.engine
                     .add_named_script(entity_id, ast, source, "", Some(&file));
@@ -655,25 +660,21 @@ impl RuntimeSystem for ScriptSystem {
     fn update(&mut self, world: &mut FlintWorld, _dt: f64) -> Result<()> {
         // Errors say which frame they first happened in (#693)
         self.engine.errors.next_frame();
-        // A perf readout times each step below, and each script's on_update.
-        self.engine.clear_update_times();
-        let timing = self.engine.timing();
-        let now = || timing.then(web_time::Instant::now);
+        // A perf readout times every callback (ScriptEngine::call), and
+        // the steps below on their own (#703)
 
         // Check for hot-reloaded scripts
-        let began = now();
+        let began = self.engine.step_began();
         self.sync.check_hot_reload(&mut self.engine, world);
 
         // Check for edited .ui.toml / .style.toml / token files
         crate::lock_or_recover(&self.engine.ctx)
             .ui_system
             .poll_reload();
-        if let Some(began) = began {
-            self.engine.add_update_time("[hot reload]", began);
-        }
+        self.engine.step_done("[hot reload]", began);
 
         // Discover any new script entities
-        let began = now();
+        let began = self.engine.step_began();
         self.sync.discover_and_load(world, &mut self.engine);
 
         // Save data at an older version (a slot a script switched to last
@@ -683,25 +684,15 @@ impl RuntimeSystem for ScriptSystem {
 
         // Call on_init for newly added scripts
         self.engine.call_inits(world);
-        if let Some(began) = began {
-            self.engine.add_update_time("[load, on_init]", began);
-        }
+        self.engine.step_done("[load]", began);
 
         // Process events (collision, trigger, action callbacks)
-        let began = now();
         let events = std::mem::take(&mut self.pending_events);
         self.engine.process_events(&events, world);
-        if let Some(began) = began {
-            self.engine.add_update_time("[events]", began);
-        }
 
         // Expression states from outside (Flint#518), so on_update sees them
-        let began = now();
         let states: Vec<rhai::Map> = self.pending_expressions.drain(..).collect();
         self.engine.deliver_expressions(world, states);
-        if let Some(began) = began {
-            self.engine.add_update_time("[expression]", began);
-        }
 
         // Call on_update() for all scripts
         self.engine.call_updates(world);

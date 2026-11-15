@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 mod callbacks;
 pub mod instance;
 pub mod interact;
+pub mod output;
 
 pub use instance::ScriptInstance;
 pub use interact::{find_nearest_interactable, NearestInteractable};
@@ -49,10 +50,10 @@ pub struct ScriptEngine {
     /// Base directory for `import "name"` (`<scripts>/lib`). `None` until a
     /// scene sets it; the resolver then maps `import "x"` to `<lib>/x.rhai`.
     module_base: Option<ModuleBase>,
-    /// Each script's last `on_update`, ms, by source path: kept only while
-    /// [`set_update_timing`](Self::set_update_timing) is on (the perf
-    /// readout, Flint#120). Scripts sharing a file add up.
-    update_times: Option<Vec<(String, f32)>>,
+    /// Each callback's time, ms, by source path and callback, since the
+    /// host last took them: kept only while [`set_timing`](Self::set_timing)
+    /// is on (the perf readout, Flint#120; every callback since #703).
+    times: Option<output::Times>,
     /// Scripts' `random()` sequence, seeded once from the clock (#580)
     pub(crate) random: crate::random::ScriptRandom,
     /// What the declared API registered (ADR 0116); empty on the web
@@ -65,6 +66,8 @@ impl ScriptEngine {
     pub fn new() -> Self {
         let ctx = Arc::new(Mutex::new(ScriptCallContext::new()));
         let mut engine = compiler();
+        // print and debug to the log, never stdout (#703)
+        output::route_speech(&mut engine, &ctx);
 
         // Register all API functions
         let mut registry = api::ApiRegistry::default();
@@ -79,7 +82,7 @@ impl ScriptEngine {
             ctx,
             scripts: HashMap::new(),
             module_base: None,
-            update_times: None,
+            times: None,
             random,
             registry,
             errors: crate::errors::ScriptErrors::new(),
@@ -201,9 +204,9 @@ impl ScriptEngine {
     pub(crate) fn lend(&mut self, world: &mut FlintWorld) -> WorldScope {
         let scope = WorldScope::new(&self.ctx, world);
         for entity in self.in_order(|s| s.top_level_pending) {
+            self.enter(entity);
             let script = self.scripts.get_mut(&entity).unwrap();
             script.top_level_pending = false;
-            crate::lock_or_recover(&self.ctx).current_entity = entity;
             if let Err(e) = self
                 .engine
                 .run_ast_with_scope(&mut script.scope, &script.ast)
@@ -261,8 +264,8 @@ impl ScriptEngine {
             return Vec::new();
         }
         let _world = self.lend(world);
+        self.enter(entity);
         let script = self.scripts.get_mut(&entity).unwrap();
-        crate::lock_or_recover(&self.ctx).current_entity = entity;
         let mut fresh = Scope::new();
         if let Err(e) = self.engine.run_ast_with_scope(&mut fresh, &script.ast) {
             let name = callbacks::name_of(script, entity);
@@ -307,6 +310,7 @@ impl ScriptEngine {
     pub fn name_script(&mut self, entity: EntityId, name: &str) {
         if let Some(script) = self.scripts.get_mut(&entity) {
             script.entity_name = name.to_string();
+            script.speaker = None;
         }
     }
 
@@ -335,39 +339,50 @@ impl ScriptEngine {
         c.total_time = total_time;
     }
 
-    /// Time each script's `on_update` (see [`update_times`](Self::update_times)).
-    pub fn set_update_timing(&mut self, on: bool) {
-        self.update_times = on.then(Vec::new);
+    /// Time every callback from now on (see [`take_times`](Self::take_times)).
+    pub fn set_timing(&mut self, on: bool) {
+        self.times = on.then(output::Times::default);
     }
 
-    /// The last frame's time per script file, ms; empty unless timing is
-    /// on. The script system's own steps are there too, in brackets.
-    pub fn update_times(&self) -> &[(String, f32)] {
-        self.update_times.as_deref().unwrap_or(&[])
+    /// What was timed since the last take, ms: each callback under
+    /// `<source>:<callback>` (`scripts/hud.rhai:on_draw_ui`), scripts sharing
+    /// a file adding up, and the script system's own steps in brackets,
+    /// without the callbacks they ran. Empty unless timing is on.
+    pub fn take_times(&mut self) -> Vec<(String, f32)> {
+        self.times
+            .as_mut()
+            .map(output::Times::take)
+            .unwrap_or_default()
     }
 
-    /// Whether [`set_update_timing`](Self::set_update_timing) is on.
+    /// Whether [`set_timing`](Self::set_timing) is on.
     pub fn timing(&self) -> bool {
-        self.update_times.is_some()
+        self.times.is_some()
     }
 
-    /// Start a frame's times afresh.
-    pub(crate) fn clear_update_times(&mut self) {
-        if let Some(times) = &mut self.update_times {
-            times.clear();
+    /// A step of the script system begins now, when timing.
+    pub(crate) fn step_began(&self) -> Option<output::StepStart> {
+        self.times.as_ref().map(output::Times::begin)
+    }
+
+    /// The step `label` that began at `start` is done.
+    pub(crate) fn step_done(&mut self, label: &str, start: Option<output::StepStart>) {
+        if let (Some(times), Some(start)) = (&mut self.times, start) {
+            times.step(label, start);
         }
     }
 
-    /// Add the time since `began` to `label`'s, when timing.
-    pub(crate) fn add_update_time(&mut self, label: &str, began: web_time::Instant) {
-        let Some(times) = &mut self.update_times else {
-            return;
+    /// `entity`'s script is the one running: what `self_entity()` answers
+    /// and what its `print`s name. Whether the entity has a script.
+    pub(crate) fn enter(&mut self, entity: EntityId) -> bool {
+        let Some(script) = self.scripts.get_mut(&entity) else {
+            return false;
         };
-        let ms = began.elapsed().as_secs_f32() * 1000.0;
-        match times.iter_mut().find(|(p, _)| p == label) {
-            Some((_, t)) => *t += ms,
-            None => times.push((label.to_string(), ms)),
-        }
+        let speaker = script.speaker(entity);
+        let mut c = crate::lock_or_recover(&self.ctx);
+        c.current_entity = entity;
+        c.speaker = speaker;
+        true
     }
 
     /// Drain all accumulated draw commands (and reset the clip stack)
@@ -424,6 +439,8 @@ mod callback_tests;
 mod error_tests;
 #[cfg(test)]
 mod hot_reload_tests;
+#[cfg(test)]
+mod output_tests;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]

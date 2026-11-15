@@ -40,6 +40,9 @@ pub struct ScriptInstance {
     /// The script's file as found, for its errors (#693): the scene's
     /// `source` unless [`super::ScriptEngine::add_named_script`] said where.
     pub file: String,
+    /// The file and entity its `print`s name (#703), made at its first call
+    /// and again after it is renamed.
+    pub(crate) speaker: Option<std::sync::Arc<super::output::Speaker>>,
 }
 
 impl ScriptInstance {
@@ -47,6 +50,22 @@ impl ScriptInstance {
     /// at the argument count the engine calls it with.
     pub fn defines(&self, callback: Callback) -> bool {
         self.defines[callback as usize]
+    }
+
+    /// Who this script is, on `entity`, in what it prints.
+    pub(crate) fn speaker(
+        &mut self,
+        entity: flint_core::EntityId,
+    ) -> std::sync::Arc<super::output::Speaker> {
+        if self.speaker.is_none() {
+            self.speaker = Some(std::sync::Arc::new(super::output::Speaker {
+                file: self.file.clone(),
+                entity: super::callbacks::name_of(self, entity),
+            }));
+        }
+        self.speaker
+            .clone()
+            .unwrap_or_else(super::output::Speaker::nobody)
     }
 
     pub fn new(ast: AST, source_path: String) -> Self {
@@ -65,6 +84,7 @@ impl ScriptInstance {
             init_called: false,
             entity_name: String::new(),
             file,
+            speaker: None,
         }
     }
 

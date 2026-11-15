@@ -326,7 +326,7 @@ impl ScriptSync {
             let files: Vec<PathBuf> = lib_now.keys().cloned().collect();
             self.lib_timestamps = lib_now;
             if !(worker && self.send_lib(files)) {
-                println!("[script] scripts/lib changed - reloading all scripts");
+                tracing::info!(target: "script", "scripts/lib changed - reloading all scripts");
                 engine.reset_module_cache();
                 self.queue_all(engine);
             }
@@ -427,12 +427,20 @@ impl ScriptSync {
         match ast {
             Ok(ast) => {
                 if let Some(script) = engine.scripts.get(&entity_id) {
-                    println!("[script] Hot-reloaded: {}", script.source_path);
+                    tracing::info!(target: "script", "Hot-reloaded: {}", script.source_path);
                 }
                 // New top-level lets get their initial values (#634)
                 let added = engine.reload_script(world, entity_id, ast);
                 if !added.is_empty() {
-                    println!("[script]   new top-level variables: {}", added.join(", "));
+                    tracing::info!(
+                        target: "script",
+                        "{}: new top-level variables: {}",
+                        engine
+                            .scripts
+                            .get(&entity_id)
+                            .map_or("", |s| s.source_path.as_str()),
+                        added.join(", ")
+                    );
                 }
             }
             Err(e) => {
@@ -483,7 +491,7 @@ impl ScriptSync {
                     self.apply(engine, world, entity, path, modified, ast);
                 }
                 Done::Lib { compiled } => {
-                    println!("[script] scripts/lib changed - reloading all scripts");
+                    tracing::info!(target: "script", "scripts/lib changed - reloading all scripts");
                     self.lib_in_flight = false;
                     engine.reset_module_cache_with(compiled);
                     self.queue_all(engine);
