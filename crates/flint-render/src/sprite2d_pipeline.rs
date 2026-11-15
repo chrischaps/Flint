@@ -39,6 +39,8 @@ pub struct Sprite2dUniforms {
 
 /// A single 2D sprite batch draw call (one per texture group).
 pub struct Sprite2dBatch {
+    /// Held while its bind group draws from it.
+    #[allow(dead_code)]
     pub instance_buffer: wgpu::Buffer,
     pub instance_count: u32,
     pub texture_bind_group: wgpu::BindGroup,
@@ -48,6 +50,8 @@ pub struct Sprite2dBatch {
 /// The 2D sprite rendering pipeline.
 pub struct Sprite2dPipeline {
     pub pipeline: wgpu::RenderPipeline,
+    /// Held with the pipeline it was laid out for.
+    #[allow(dead_code)]
     pub uniform_bind_group_layout: wgpu::BindGroupLayout,
     pub instance_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,

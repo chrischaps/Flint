@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::{BoundingBox, MaterialData, MeshData, SubMesh, Vertex};
 
 /// The most bones a skinned mesh can have: what the renderer's per-skeleton
-/// bone buffer holds (`flint_render::skinned_pipeline::MAX_BONES`).
+/// bone buffer holds (`flint_render::MAX_BONES`).
 pub const MAX_SKINNED_BONES: usize = 256;
 
 /// How far a vertex's weights may stray from summing to 1.

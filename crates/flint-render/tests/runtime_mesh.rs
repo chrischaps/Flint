@@ -109,7 +109,12 @@ impl Gpu {
 
     /// Extract and render one frame, then wait for the GPU.
     fn frame(&self, renderer: &mut SceneRenderer, world: &FlintWorld, camera: &Camera) {
-        renderer.update_from_world(world, self.device);
+        renderer.prepare(
+            self.device,
+            self.queue,
+            world,
+            &flint_render::FrameInputs::default(),
+        );
         renderer.render_to(
             self.device,
             self.queue,

@@ -955,7 +955,17 @@ fn render_image(args: &PreviewArgs) -> Result<image::RgbaImage> {
         }
     }
 
-    renderer.update_from_world(&world, &ctx.device);
+    // The frame's inputs and the world (#739): the post time --style-time
+    // holds, else 0
+    renderer.prepare(
+        &ctx.device,
+        &ctx.queue,
+        &world,
+        &flint_render::FrameInputs {
+            look_time: Some(args.style.look_time().unwrap_or(0.0)),
+            ..Default::default()
+        },
+    );
     args.style.apply_to_renderer(&mut renderer, &ctx.device);
     // A still is the first frame of its tick, so its pose is the live one;
     // the whole-frame rate holds the post time styles read (#871)
@@ -3505,8 +3515,20 @@ impl ApplicationHandler for PreviewApp {
                     }
                 }
 
+                // The frame's inputs and the world (#739): held poses on the
+                // clip's clock, the post time standing still at 0
                 if let Ok(state) = self.state.lock() {
-                    renderer.update_from_world(&state.world, &context.device);
+                    renderer.prepare(
+                        &context.device,
+                        &context.queue,
+                        &state.world,
+                        &flint_render::FrameInputs {
+                            time: motion_time,
+                            look_time: Some(0.0),
+                            grass_time: Some(0.0),
+                            ..Default::default()
+                        },
+                    );
                 }
 
                 let output = match context.surface.acquire() {
@@ -3596,9 +3618,6 @@ mod tests {
     /// held to the real one here, in a crate that sees both.
     #[test]
     fn procgen_knows_the_renderers_bone_limit() {
-        assert_eq!(
-            flint_procgen::MAX_SKINNED_BONES,
-            flint_render::skinned_pipeline::MAX_BONES
-        );
+        assert_eq!(flint_procgen::MAX_SKINNED_BONES, flint_render::MAX_BONES);
     }
 }

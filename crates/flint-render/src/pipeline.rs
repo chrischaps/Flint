@@ -200,12 +200,7 @@ impl MaterialUniforms {
         }
     }
 
-    /// Sets the emission from an imported material.
-    pub fn set_emission(&mut self, material: &flint_import::ImportedMaterial) {
-        self.set_emission_overridden(material, None, None);
-    }
-
-    /// [`set_emission`](Self::set_emission) with the material's `emissive`
+    /// Sets the emission from an imported material, with its `emissive`
     /// colour and `emissive_strength` replaced where given (#624: a
     /// `material_overrides` entry recolouring an imported model's glow). The
     /// strength reaches per-vertex light too, as the material's own does.

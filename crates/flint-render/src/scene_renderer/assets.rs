@@ -175,11 +175,16 @@ impl SceneRenderer {
         both
     }
 
+    /// The folder of the scene `bind_scene` bound, if any.
+    pub fn scene_dir(&self) -> Option<&Path> {
+        self.scene_dir.as_deref()
+    }
+
     /// Tell the renderer the scene's project and folder: where its styles
     /// find palettes, glyph sets, papers and strokes (ADR 0114). Sets
-    /// `scene_dir` too. A host that only sets `scene_dir` gets the project
-    /// found from that folder, once.
-    pub fn set_asset_scope(&mut self, scope: flint_core::project::AssetScope) {
+    /// `scene_dir` too. `bind_scene` calls it; with none bound, the working
+    /// directory stands in for the scene's folder.
+    pub(crate) fn set_asset_scope(&mut self, scope: flint_core::project::AssetScope) {
         self.scene_dir = Some(scope.scene_dir.clone());
         *self.asset_scope.lock().unwrap_or_else(|e| e.into_inner()) =
             Some((self.scene_dir.clone(), Arc::new(scope)));

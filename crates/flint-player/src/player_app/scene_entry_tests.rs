@@ -390,7 +390,7 @@ fn fonts_resolve_beside_the_scene_a_transition_reaches() {
                 .atlas()
                 .cell_size();
             (
-                renderer.scene_dir.clone(),
+                renderer.scene_dir().map(std::path::Path::to_path_buf),
                 scope.scene_dir.clone(),
                 ui_text,
                 styles,

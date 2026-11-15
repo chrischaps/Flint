@@ -639,7 +639,7 @@ impl SceneRenderer {
 
     /// Update entity positions for grass bend-on-contact.
     /// Also updates entity_count in the render uniform buffer.
-    pub fn update_grass_entities(
+    pub(crate) fn update_grass_entities(
         &mut self,
         queue: &wgpu::Queue,
         positions: &[GrassEntityPosition],

@@ -183,6 +183,12 @@ impl SceneRenderer {
         self.update_from_world(world, device);
     }
 
+    /// The pixels per point the last [`prepare`](Self::prepare) took (1
+    /// before any).
+    pub fn pixels_per_point(&self) -> f32 {
+        self.pixels_per_point
+    }
+
     /// Everything of `inputs` but the world and the particles.
     fn take_inputs(&mut self, queue: &wgpu::Queue, inputs: &FrameInputs<'_>) {
         // The one clock and what holds part of it

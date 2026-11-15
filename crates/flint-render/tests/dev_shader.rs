@@ -62,7 +62,12 @@ impl Frame {
     }
 
     fn draw(&self, renderer: &mut SceneRenderer, world: &FlintWorld) -> Vec<u8> {
-        renderer.update_from_world(world, self.device);
+        renderer.prepare(
+            self.device,
+            self.queue,
+            world,
+            &flint_render::FrameInputs::default(),
+        );
         renderer.render_to(
             self.device,
             self.queue,

@@ -248,8 +248,9 @@ impl PlayerApp {
                     renderer.set_sheen(rp.lighting.sheen_color, rp.lighting.sheen_strength);
                 }
                 if flags.mode_changed {
+                    // Its overlays are read from the world at the next
+                    // frame's `prepare` (#739)
                     renderer.set_debug_mode(rp.debug_mode);
-                    renderer.update_from_world(&self.core.world, &context.device);
                 }
                 if flags.fov_changed {
                     self.camera.fov = rp.fov_deg;

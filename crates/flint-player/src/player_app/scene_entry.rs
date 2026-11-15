@@ -196,7 +196,6 @@ impl PlayerApp {
         register_skeletal_data(&load_result, &mut self.core.animation);
         register_node_animation_data(&load_result, &mut self.core.animation);
         self.skeletal_entity_assets = load_result.skinned_entities;
-        renderer.update_from_world(&self.core.world, device);
 
         // Procedural geometry from spline + spline_mesh entities
         crate::spline_gen::load_splines(
@@ -207,7 +206,18 @@ impl PlayerApp {
             device,
             queue,
         );
-        renderer.update_from_world(&self.core.world, device);
+        // The scene's draws, read once its models and splines are in (#739:
+        // the frame's own inputs replace these at its first sync)
+        renderer.prepare(
+            device,
+            queue,
+            &self.core.world,
+            &flint_render::FrameInputs {
+                time: self.core.clock.total_time,
+                look_time: self.launch.style_time.map(f64::from),
+                ..Default::default()
+            },
+        );
 
         // The scene's first frame has no past (`bind_scene` started styles'
         // history over, #277), and its first camera is no cut from the last

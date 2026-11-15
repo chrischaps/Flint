@@ -6,7 +6,7 @@
 //! for skeletal animation.
 
 pub mod atlas;
-pub mod billboard_pipeline;
+pub(crate) mod billboard_pipeline;
 pub mod bind_cache;
 pub mod bitmap_font;
 mod camera;
@@ -20,17 +20,17 @@ mod gpu_mesh;
 pub mod gpu_select;
 pub mod gpu_timer;
 mod gpu_wait;
-pub mod grass_pipeline;
+pub(crate) mod grass_pipeline;
 pub mod ground_fog;
 mod headless;
 pub mod look;
 pub mod model_loader;
 pub mod motion_hold;
-pub mod ocean_pipeline;
+pub(crate) mod ocean_pipeline;
 pub mod orbit_controller;
 pub mod palette;
 pub mod panels;
-pub mod particle_pipeline;
+pub(crate) mod particle_pipeline;
 mod pipeline;
 pub mod pipeline_cache;
 pub mod post_style;
@@ -40,27 +40,26 @@ pub mod quality;
 pub mod render_scale;
 pub mod render_stats;
 mod scene_renderer;
-pub mod selection_outline;
-pub mod shadow;
+pub(crate) mod selection_outline;
+pub(crate) mod shadow;
 pub mod shallow_wooze;
-pub mod skinned_pipeline;
-pub mod sky_pipeline;
-pub mod skybox_pipeline;
+pub(crate) mod skinned_pipeline;
+pub(crate) mod sky_pipeline;
+pub(crate) mod skybox_pipeline;
 pub mod split_view;
-pub mod sprite2d_pipeline;
-pub mod style_albedo;
+pub(crate) mod sprite2d_pipeline;
+pub(crate) mod style_albedo;
 pub mod style_mask;
 pub mod stylize;
 mod surface_frame;
-pub mod terrain_pipeline;
+pub(crate) mod terrain_pipeline;
 mod texture_cache;
 mod trusted_shader;
 pub mod water_body;
 mod wooze_pipeline;
-pub mod world_line_pipeline;
+pub(crate) mod world_line_pipeline;
 
 pub use atlas::{AtlasRegistry, TextureAtlas};
-pub use billboard_pipeline::BillboardPipeline;
 pub use bind_cache::{new_depth_id, DepthKey, DepthTarget};
 pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
@@ -74,27 +73,14 @@ pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
 pub use gpu_select::{list_adapters, no_adapter_hint, set_gpu_override};
 pub use gpu_timer::{GpuPassTime, GpuScope, GpuSpread, GpuTimer, GpuTimings, PassSpread};
 pub use gpu_wait::{gpu_wait_timeout, wait_for_gpu};
-pub use grass_pipeline::{
-    check_grass_mask_patch, grass_dispatch_window, GrassComputeUniforms, GrassEntityPosition,
-    GrassGround, GrassHeight, GrassInstanceGpu, GrassPipeline, GrassRenderUniforms, GrassVertex,
-    BLADE_INDEX_COUNT, MAX_GRASS_ENTITIES,
-};
+pub use grass_pipeline::{GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu};
 pub use ground_fog::GroundFog;
 pub use headless::HeadlessContext;
-pub use ocean_pipeline::{OceanPipeline, OceanUniformsGpu, OceanVisuals};
+pub use ocean_pipeline::OceanVisuals;
 pub use orbit_controller::OrbitCameraController;
-pub use particle_pipeline::{
-    ParticleBlendMode, ParticleBuffers, ParticleDrawCall, ParticleDrawData, ParticleInstance,
-    ParticlePipeline, ParticleUniforms,
-};
-pub use pipeline::{
-    DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline, SceneLayouts,
-    SpotLight, TransformUniforms,
-};
-pub use postprocess::{
-    post_process_config_from_def, PostProcessConfig, PostProcessPipeline, PostProcessResources,
-    HDR_FORMAT,
-};
+pub use particle_pipeline::{ParticleBlendMode, ParticleDrawData, ParticleInstance};
+pub use pipeline::LightUniforms;
+pub use postprocess::{post_process_config_from_def, PostProcessConfig, HDR_FORMAT};
 pub use primitives::{
     create_box_mesh, create_plane_mesh, generate_normal_arrows, generate_skeleton_lines,
     generate_skeleton_lines_colored, srgb_to_linear, triangles_to_wireframe_indices, Mesh,
@@ -108,20 +94,21 @@ pub use scene_renderer::{
     BoundGrass, BoundScene, FrameInputs, LightingLevers, LoadedGrassGround, LoadedTerrain,
     LodSettings, RendererConfig, SceneBinding, SceneRenderer, View2d, DEFAULT_CLEAR_COLOR,
 };
-pub use skinned_pipeline::SkinnedPipeline;
-pub use sky_pipeline::{SkyParams, SkyPipeline, SkyUniformsGpu};
-pub use skybox_pipeline::SkyboxPipeline;
+/// The most bones one skinned mesh's buffer holds.
+pub use skinned_pipeline::MAX_BONES;
+pub use sky_pipeline::SkyParams;
 pub use split_view::SplitView;
-pub use sprite2d_pipeline::{
-    Sprite2dBatch, Sprite2dInstanceGpu, Sprite2dPipeline, Sprite2dUniforms,
-};
+
 pub use style_mask::{StyleIds, STYLE_MASK_FORMAT};
 pub use surface_frame::{AcquireFrame, SurfaceError};
-pub use terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 pub use texture_cache::{memoize_mip_chains, open_image, TextureCache};
 pub use trusted_shader::TrustedShader;
 pub use water_body::{river_points, RiverPoint, WaterBodyLook, WaterBodyMesh, WaterVertex};
 pub use wooze_pipeline::{ShallowWoozeDraw, WAVELENGTH_MIN};
+/// How far a world line's ends are pulled toward the eye, as a share of
+/// their distance (ADR 0083), so a line or text lying on a surface
+/// doesn't fight it for depth. The player's world text uses it too.
+pub use world_line_pipeline::DEPTH_SLACK as WORLD_LINE_DEPTH_SLACK;
 
 #[cfg(test)]
 mod tests {
@@ -503,7 +490,7 @@ mod tests {
             .expect("GrassComputeUniforms in grass_compute.wgsl");
         assert_eq!(
             span as usize,
-            std::mem::size_of::<crate::GrassComputeUniforms>()
+            std::mem::size_of::<crate::grass_pipeline::GrassComputeUniforms>()
         );
     }
 
@@ -536,7 +523,7 @@ mod tests {
             .expect("GrassRenderUniforms in grass_render.wgsl");
         assert_eq!(
             span as usize,
-            std::mem::size_of::<crate::GrassRenderUniforms>()
+            std::mem::size_of::<crate::grass_pipeline::GrassRenderUniforms>()
         );
     }
 }

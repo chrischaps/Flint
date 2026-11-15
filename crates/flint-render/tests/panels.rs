@@ -156,7 +156,12 @@ const TWO: &str = r#"
 impl Gpu {
     fn frame(&self, renderer: &mut SceneRenderer, world: &FlintWorld) -> Vec<u8> {
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        renderer.update_from_world(world, self.device);
+        renderer.prepare(
+            self.device,
+            self.queue,
+            world,
+            &flint_render::FrameInputs::default(),
+        );
         renderer.render_frame_to(
             self.device,
             self.queue,

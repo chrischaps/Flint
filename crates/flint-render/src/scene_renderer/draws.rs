@@ -422,7 +422,7 @@ impl SceneRenderer {
     /// Replace which entities have shallow wooze this frame, and how far along
     /// each is (#215). What's named here shows from the next `update_from_world`.
     /// An empty list, the default, costs a scene nothing.
-    pub fn set_shallow_wooze(
+    pub(crate) fn set_shallow_wooze(
         &mut self,
         draws: impl IntoIterator<Item = (flint_core::EntityId, ShallowWoozeDraw)>,
     ) {

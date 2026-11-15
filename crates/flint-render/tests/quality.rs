@@ -145,8 +145,39 @@ impl Gpu {
     /// Panics on any validation error, which is what a pipeline left at
     /// the wrong sample count, or a target at the wrong size, would give.
     fn frame(&self, renderer: &mut SceneRenderer, world: &FlintWorld) -> Vec<u8> {
+        self.frame_of(renderer, world, &Extras::default())
+    }
+
+    /// [`frame`](Self::frame) with the frame's shallow wooze and particles,
+    /// which every frame hands over again (#739).
+    fn frame_of(
+        &self,
+        renderer: &mut SceneRenderer,
+        world: &FlintWorld,
+        extras: &Extras,
+    ) -> Vec<u8> {
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        renderer.update_from_world(world, self.device);
+        renderer.prepare(
+            self.device,
+            self.queue,
+            world,
+            &flint_render::FrameInputs {
+                shallow_wooze: &extras.shallow,
+                ..Default::default()
+            },
+        );
+        if !extras.particles.is_empty() {
+            renderer.update_particles(
+                self.device,
+                self.queue,
+                &[flint_render::ParticleDrawData {
+                    instances: &extras.particles,
+                    texture: "",
+                    blend: flint_render::ParticleBlendMode::Additive,
+                    sort_key: 0.0,
+                }],
+            );
+        }
         renderer.render_to(
             self.device,
             self.queue,
@@ -534,7 +565,14 @@ fn set_material(world: &mut FlintWorld, name: &str, keys: &[(&str, toml::Value)]
 /// Every kind of scene draw at once (#735): plain and blended static meshes,
 /// both woozy (#215), a skinned mesh woozy too, a skinned prop with a
 /// `lighten` echo and a soft-edged part (#582), a billboard and particles.
-fn every_draw_kind(gpu: &Gpu) -> (SceneRenderer, FlintWorld) {
+/// What a frame draws beyond the world: shallow wooze and particles.
+#[derive(Default)]
+struct Extras {
+    shallow: Vec<(flint_core::EntityId, flint_render::ShallowWoozeDraw)>,
+    particles: Vec<flint_render::ParticleInstance>,
+}
+
+fn every_draw_kind(gpu: &Gpu) -> (SceneRenderer, FlintWorld, Extras) {
     let (mut renderer, mut world) = scene(gpu);
     for (name, (vertices, indices)) in [
         ("woozy", square(0.8, 1.0, [0.2, 0.9, 0.3, 1.0])),
@@ -599,9 +637,9 @@ fn every_draw_kind(gpu: &Gpu) -> (SceneRenderer, FlintWorld) {
         index: 3,
         weight: 0.4,
     };
-    renderer.set_shallow_wooze(
-        ["woozy", "woozy_glass", "woozy_figure"].map(|n| (world.get_id(n).unwrap(), woozy)),
-    );
+    let shallow = ["woozy", "woozy_glass", "woozy_figure"]
+        .map(|n| (world.get_id(n).unwrap(), woozy))
+        .to_vec();
 
     let sprite_id = world.spawn("sprite").unwrap();
     let mut transform = toml::Table::new();
@@ -627,17 +665,14 @@ fn every_draw_kind(gpu: &Gpu) -> (SceneRenderer, FlintWorld) {
             vel_stretch: [0.0, 0.0, 0.0, 0.4],
         })
         .collect();
-    renderer.update_particles(
-        gpu.device,
-        gpu.queue,
-        &[flint_render::ParticleDrawData {
-            instances: &instances,
-            texture: "",
-            blend: flint_render::ParticleBlendMode::Additive,
-            sort_key: 0.0,
-        }],
-    );
-    (renderer, world)
+    (
+        renderer,
+        world,
+        Extras {
+            shallow,
+            particles: instances,
+        },
+    )
 }
 
 /// MSAA 1 to 4 to 1 at run time with every kind of draw on screen (#735).
@@ -651,18 +686,18 @@ fn msaa_switches_with_every_draw_kind_on_screen() {
     let d = QualitySettings::default();
     let four = QualitySettings { msaa: 4, ..d };
     for built_first in [true, false] {
-        let (mut renderer, world) = every_draw_kind(&gpu);
+        let (mut renderer, world, extras) = every_draw_kind(&gpu);
         let base = if built_first {
-            Some(gpu.frame(&mut renderer, &world))
+            Some(gpu.frame_of(&mut renderer, &world, &extras))
         } else {
             None
         };
         renderer.set_quality(gpu.device, &four);
         assert_eq!(renderer.msaa(), 4);
-        let smooth = gpu.frame(&mut renderer, &world);
+        let smooth = gpu.frame_of(&mut renderer, &world, &extras);
         renderer.set_quality(gpu.device, &d);
         assert_eq!(renderer.msaa(), 1);
-        let back = gpu.frame(&mut renderer, &world);
+        let back = gpu.frame_of(&mut renderer, &world, &extras);
         if let Some(base) = base {
             assert!(brightness(&base) > 0, "the scene drew nothing");
             assert_eq!(

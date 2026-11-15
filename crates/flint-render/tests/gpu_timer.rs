@@ -66,7 +66,12 @@ fn a_renderer_times_its_phases_once_asked() {
     let world = FlintWorld::new();
     let camera = Camera::default();
     let frame = |renderer: &mut SceneRenderer| {
-        renderer.update_from_world(&world, &device);
+        renderer.prepare(
+            &device,
+            &queue,
+            &world,
+            &flint_render::FrameInputs::default(),
+        );
         renderer.render_to(&device, &queue, &depth, &camera, &color);
         renderer.finish_gpu_timings(&device, &queue);
         let _ = flint_render::wait_for_gpu(&device);
@@ -83,7 +88,12 @@ fn a_renderer_times_its_phases_once_asked() {
     );
     // A host scope of its own, in the same frame as the renderer's.
     let timed = |renderer: &mut SceneRenderer| {
-        renderer.update_from_world(&world, &device);
+        renderer.prepare(
+            &device,
+            &queue,
+            &world,
+            &flint_render::FrameInputs::default(),
+        );
         renderer.render_to(&device, &queue, &depth, &camera, &color);
         let timer = renderer.gpu_timer_mut().unwrap();
         let scope = timer.begin_submit(&device, &queue, "UI");

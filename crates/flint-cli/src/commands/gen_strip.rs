@@ -433,7 +433,12 @@ impl StripStage {
     /// The prop as it's loaded now, as an image.
     fn capture(&mut self) -> Result<RgbImage> {
         let ctx = &self.ctx;
-        self.renderer.update_from_world(&self.world, &ctx.device);
+        self.renderer.prepare(
+            &ctx.device,
+            &ctx.queue,
+            &self.world,
+            &flint_render::FrameInputs::default(),
+        );
         self.renderer.render_to(
             &ctx.device,
             &ctx.queue,

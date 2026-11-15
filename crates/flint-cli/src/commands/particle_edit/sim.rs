@@ -15,6 +15,8 @@ const HANDLE: u64 = 1;
 
 pub struct PreviewSim {
     system: ParticleSystem,
+    /// The renderer's world: nothing but the particles
+    world: flint_ecs::FlintWorld,
     name: String,
     time: f32,
     accum: f32,
@@ -31,6 +33,7 @@ impl PreviewSim {
     pub fn new() -> Self {
         Self {
             system: ParticleSystem::with_seed(0x5EED_0068),
+            world: flint_ecs::FlintWorld::new(),
             name: String::new(),
             time: 0.0,
             accum: 0.0,
@@ -136,16 +139,29 @@ impl PreviewSim {
         false
     }
 
-    /// Pack + upload for this frame.
+    /// Pack this frame's particles and hand them to the renderer with the
+    /// frame's inputs (#739), the post time held at `look_time`
+    /// (`--style-time`) or 0.
     pub fn upload(
         &mut self,
         renderer: &mut SceneRenderer,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         camera_pos: [f32; 3],
+        look_time: Option<f64>,
     ) {
         self.system.pack(Some(camera_pos));
-        renderer.update_particles_from(device, queue, &self.system.sync);
+        renderer.prepare(
+            device,
+            queue,
+            &self.world,
+            &flint_render::FrameInputs {
+                look_time: Some(look_time.unwrap_or(0.0)),
+                grass_time: Some(0.0),
+                particles: Some(&self.system.sync),
+                ..Default::default()
+            },
+        );
     }
 
     /// Load referenced textures by the project's one search

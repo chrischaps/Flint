@@ -522,6 +522,8 @@ pub struct GrassPipeline {
     pub compute_storage_layout: wgpu::BindGroupLayout,
     pub render_grass_layout: wgpu::BindGroupLayout,
     pub render_instance_layout: wgpu::BindGroupLayout,
+    /// Held with the bind group made from it.
+    #[allow(dead_code)]
     pub shadow_dummy_layout: wgpu::BindGroupLayout,
     pub shadow_dummy_bind_group: wgpu::BindGroup,
     // Shared blade mesh
