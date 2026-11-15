@@ -8,7 +8,8 @@
 use crate::widgets::drag_f32;
 use crate::DebugPanel;
 use flint_core::toml_util::{toml_color, toml_f32};
-use flint_geometry::ocean::OceanParams;
+use flint_core::world_line::WorldLine;
+use flint_geometry::ocean::{OceanParams, WaveSpectrum};
 use flint_scene::SceneDocument;
 use std::path::PathBuf;
 
@@ -94,8 +95,6 @@ pub struct OceanPanelConfig {
     pub grid_scale: f32,
     pub fade_start: f32,
     pub fade_end: f32,
-    // Diagnostics
-    pub show_probe: bool,
 }
 
 impl OceanPanelConfig {
@@ -147,10 +146,6 @@ impl OceanPanelConfig {
             grid_scale: f("grid_scale", 60.0),
             fade_start: f("fade_start", 90.0),
             fade_end: f("fade_end", 170.0),
-            show_probe: value
-                .get("show_probe")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
         }
     }
 
@@ -204,7 +199,6 @@ impl OceanPanelConfig {
             ("grid_scale", f(self.grid_scale)),
             ("fade_start", f(self.fade_start)),
             ("fade_end", f(self.fade_end)),
-            ("show_probe", toml::Value::Boolean(self.show_probe)),
         ]
     }
 }
@@ -216,7 +210,17 @@ pub struct OceanDebugPanel {
     ocean_entity_name: String,
     open: bool,
     dirty: bool,
+    /// The parity probe is shown: the panel's own switch, never the
+    /// component's (#749).
+    show_probe: bool,
+    /// The spectrum the probe samples, made again when the ocean changes.
+    probe_spectrum: Option<WaveSpectrum>,
 }
+
+/// How far ahead of the camera the probe stands on the water (m).
+const PROBE_AHEAD: f32 = 6.0;
+/// The probe's colour (display sRGB): an orange no sea is.
+const PROBE_COLOR: [f32; 4] = [1.0, 0.42, 0.08, 1.0];
 
 impl OceanDebugPanel {
     pub fn new(config: OceanPanelConfig, scene_path: PathBuf, ocean_entity_name: String) -> Self {
@@ -227,7 +231,69 @@ impl OceanDebugPanel {
             ocean_entity_name,
             open: false,
             dirty: false,
+            show_probe: false,
+            probe_spectrum: None,
         }
+    }
+
+    /// Whether the parity probe is on.
+    pub fn probe_shown(&self) -> bool {
+        self.show_probe
+    }
+
+    pub fn set_probe_shown(&mut self, shown: bool) {
+        self.show_probe = shown;
+    }
+
+    /// The CPU/GPU parity probe's lines this frame (none while it is off):
+    /// a cross and a stem pinned at the CPU's `sample_height` for the
+    /// `ocean` component as it stands, at a point on the water
+    /// `PROBE_AHEAD` metres in front of the camera, on the waves' clock
+    /// `time`. The world lines are depth-tested, so the stem vanishes into
+    /// the water exactly at the cross while the two agree; when the cross
+    /// floats above the drawn surface or sinks under it, the sampler and
+    /// the shader have diverged and nothing that floats can be trusted.
+    pub fn probe_lines(
+        &mut self,
+        ocean: &toml::Value,
+        time: f64,
+        camera_pos: [f32; 3],
+        camera_forward: [f32; 3],
+    ) -> Vec<WorldLine> {
+        if !self.show_probe {
+            return Vec::new();
+        }
+        let params = OceanParams::from_component(ocean);
+        if self
+            .probe_spectrum
+            .as_ref()
+            .is_none_or(|s| s.params != params)
+        {
+            self.probe_spectrum = Some(WaveSpectrum::generate(&params));
+        }
+        let spectrum = self.probe_spectrum.as_ref().expect("made just above");
+        let flat = [camera_forward[0], camera_forward[2]];
+        let len = (flat[0] * flat[0] + flat[1] * flat[1]).sqrt();
+        let dir = if len > 1e-4 {
+            [flat[0] / len, flat[1] / len]
+        } else {
+            [0.0, -1.0]
+        };
+        let x = camera_pos[0] + dir[0] * PROBE_AHEAD;
+        let z = camera_pos[2] + dir[1] * PROBE_AHEAD;
+        let h = spectrum.sample_height(x, z, time);
+        let line = |a: [f32; 3], b: [f32; 3]| WorldLine {
+            a,
+            b,
+            color: PROBE_COLOR,
+            thickness: 2.5,
+        };
+        let arm = 0.45;
+        vec![
+            line([x, h - 0.6, z], [x, h + 0.9, z]),
+            line([x - arm, h, z], [x + arm, h, z]),
+            line([x, h, z - arm], [x, h, z + arm]),
+        ]
     }
 
     pub fn config(&self) -> &OceanPanelConfig {
@@ -542,14 +608,15 @@ impl DebugPanel for OceanDebugPanel {
         egui::CollapsingHeader::new("Diagnostics")
             .default_open(false)
             .show(ui, |ui| {
-                changed |= ui
-                    .checkbox(&mut self.config.show_probe, "Wave probe buoy")
+                // The probe is the panel's, not the scene's: no edit to
+                // commit, so it doesn't make the panel dirty
+                ui.checkbox(&mut self.show_probe, "Wave probe")
                     .on_hover_text(
-                        "CPU/GPU parity check: a buoy pinned to ocean_height(). \
-                         It must sit exactly on the rendered surface; if it \
-                         detaches, the sampler and the shader have diverged.",
-                    )
-                    .changed();
+                        "CPU/GPU parity check: an orange cross pinned to \
+                         ocean_height() ahead of the camera. It must sit \
+                         exactly on the drawn surface; if it floats or sinks, \
+                         the sampler and the shader have diverged.",
+                    );
             });
 
         if changed {
@@ -592,5 +659,61 @@ impl DebugPanel for OceanDebugPanel {
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::*;
+
+    fn panel(ocean: &toml::Value) -> OceanDebugPanel {
+        OceanDebugPanel::new(
+            OceanPanelConfig::from_component(ocean),
+            PathBuf::from("scene.toml"),
+            "ocean".into(),
+        )
+    }
+
+    #[test]
+    fn the_probe_is_off_until_ticked() {
+        let ocean: toml::Value = toml::from_str("amplitude = 0.8").unwrap();
+        let mut p = panel(&ocean);
+        assert!(p
+            .probe_lines(&ocean, 3.0, [0.0, 2.0, 0.0], [0.0, 0.0, -1.0])
+            .is_empty());
+    }
+
+    #[test]
+    fn the_probe_crosses_at_the_cpu_height_ahead_of_the_camera() {
+        let ocean: toml::Value = toml::from_str("amplitude = 0.8\nseed = 4").unwrap();
+        let mut p = panel(&ocean);
+        p.set_probe_shown(true);
+        let t = 7.25;
+        let lines = p.probe_lines(&ocean, t, [1.0, 3.0, 2.0], [0.6, -0.5, -0.8]);
+        assert_eq!(lines.len(), 3);
+        // Six metres along the camera's forward laid flat: (0.6, -0.8)
+        let (x, z) = (1.0 + 0.6 * PROBE_AHEAD, 2.0 - 0.8 * PROBE_AHEAD);
+        let h = WaveSpectrum::generate(&OceanParams::from_component(&ocean)).sample_height(x, z, t);
+        let cross = lines[1];
+        assert!((cross.a[1] - h).abs() < 1e-6 && (cross.b[1] - h).abs() < 1e-6);
+        assert!(
+            (cross.a[2] - z).abs() < 1e-5 && ((cross.a[0] + cross.b[0]) / 2.0 - x).abs() < 1e-5
+        );
+        // The stem runs through it, into the water and out
+        let stem = lines[0];
+        assert!(stem.a[1] < h && stem.b[1] > h);
+    }
+
+    #[test]
+    fn the_probe_is_not_a_scene_edit() {
+        // The component no longer has show_probe, and ticking it commits nothing
+        let ocean: toml::Value = toml::from_str("amplitude = 0.8").unwrap();
+        let p = panel(&ocean);
+        assert!(p
+            .config()
+            .to_fields()
+            .iter()
+            .all(|(name, _)| *name != "show_probe"));
+        assert!(!p.is_dirty());
     }
 }

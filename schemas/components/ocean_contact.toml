@@ -1,6 +1,6 @@
 [component.ocean_contact]
-description = "Hull footprint that churns contact foam where it meets the ocean surface. One per scene (first found wins); requires an ocean component. Foam look is tuned by the ocean's splash_* fields."
+description = "A footprint that churns contact foam where it meets the ocean surface: a hull, a pier, a swimmer. Read from the entity's world transform, so a parented or quaternion-posed one foams where it is drawn; up to four foam at once, the nearest the camera, and each one left out is warned about by name. Requires an ocean component, whose splash_* fields tune the look."
 
 [component.ocean_contact.fields]
-half_x = { type = "f32", description = "Hull half-extent along local X in meters", default = 1.0 }
-half_z = { type = "f32", description = "Hull half-extent along local Z in meters", default = 1.0 }
+half_x = { type = "f32", description = "Half-extent along the entity's local X, in its local units (metres at scale 1)", default = 1.0 }
+half_z = { type = "f32", description = "Half-extent along the entity's local Z, in its local units (metres at scale 1)", default = 1.0 }

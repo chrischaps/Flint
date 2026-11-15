@@ -308,6 +308,20 @@ impl PhysicsSystem {
         Some([vel.x, vel.y])
     }
 
+    /// A dynamic body's linear velocity in m/s, what the solver moved it
+    /// with. `None` for a kinematic or fixed body, or an entity with none:
+    /// those move by their transforms, which a reader differences itself.
+    /// The ocean's contact foam takes it (#749).
+    pub fn dynamic_velocity(&self, entity_id: EntityId) -> Option<[f32; 3]> {
+        let body_handle = self.sync.body_map.get(&entity_id)?;
+        let body = self.physics_world.get_rigid_body(*body_handle)?;
+        if !body.is_dynamic() {
+            return None;
+        }
+        let vel = body.linvel();
+        Some([vel.x, vel.y, vel.z])
+    }
+
     /// Sync specific new entities to Rapier (for chunk loading).
     pub fn sync_new_entities(&mut self, world: &mut FlintWorld, _entity_ids: &[EntityId]) {
         // sync_to_rapier already skips already-synced entities, so we can just re-run it

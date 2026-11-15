@@ -1100,6 +1100,15 @@ impl PlayerApp {
             position: [cam_pos.x, cam_pos.y, cam_pos.z],
             _pad: 0.0,
         }];
+        // A hull on a dynamic body foams with the velocity the solver gave
+        // it (#749); the rest have their drawn motion differenced
+        let contact_velocities: Vec<_> = self
+            .core
+            .world
+            .entities_with_component(flint_geometry::components::OCEAN_CONTACT)
+            .iter()
+            .filter_map(|&id| Some((id, self.core.physics.dynamic_velocity(id)?)))
+            .collect();
         let mut inputs = FrameInputs {
             // Ocean waves run on the clock scripts see via total_time(),
             // keeping script-side ocean_height() queries in sync with the
@@ -1117,6 +1126,7 @@ impl PlayerApp {
                 .then_some(&self.core.particles.sync),
             world_lines: &self.hud.world_lines,
             grass_benders: &benders,
+            contact_velocities: &contact_velocities,
             ..Default::default()
         };
         // What the subsystems draw: the boil, shallow wooze, woozy grass
@@ -1448,6 +1458,44 @@ impl PlayerApp {
 
         self.hud.egui_renderer = Some(egui_renderer);
     }
+
+    /// The Ocean Debug panel's CPU/GPU parity probe, when its box is
+    /// ticked (#749): a cross pinned to the CPU's wave height ahead of the
+    /// camera, on the clock the renderer's waves run on.
+    #[cfg(feature = "debug-hud")]
+    fn add_ocean_probe_lines(&mut self) {
+        let time = self.core.clock.total_time;
+        let camera_pos = self.camera.position_array();
+        let forward = self.camera.forward_vector();
+        for panel in &mut self.debug_panels {
+            if panel.name() != "Ocean Debug" {
+                continue;
+            }
+            let Some(ocean_panel) = panel
+                .as_any_mut()
+                .downcast_mut::<flint_debug_ui::OceanDebugPanel>()
+            else {
+                continue;
+            };
+            if !ocean_panel.probe_shown() {
+                continue;
+            }
+            let Some(ocean) = self
+                .core
+                .world
+                .get_id(ocean_panel.entity_name())
+                .and_then(|id| {
+                    self.core
+                        .world
+                        .get_component(id, flint_geometry::components::OCEAN)
+                })
+            else {
+                continue;
+            };
+            let lines = ocean_panel.probe_lines(ocean, time, camera_pos, forward);
+            self.hud.world_lines.extend(lines);
+        }
+    }
 }
 /// The player's part in the game's frame (ADR 0117 decision 4): what
 /// `game_core::step` calls back, in the order it does.
@@ -1588,6 +1636,9 @@ impl super::game_core::FrameHost for PlayerApp {
         // Depth-tested world lines (ADR 0083) render with this frame's
         // scene, handed over with its inputs
         self.hud.world_lines = self.core.script.drain_world_lines();
+        // The Ocean Debug panel's parity probe draws with them (#749)
+        #[cfg(feature = "debug-hud")]
+        self.add_ocean_probe_lines();
         // World text (ADR 0104) is laid out in the HUD's egui pass.
         self.hud.world_texts = self.core.script.drain_world_texts();
     }
