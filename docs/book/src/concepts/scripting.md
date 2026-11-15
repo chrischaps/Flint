@@ -2098,6 +2098,31 @@ and exits 1. What else it reports: a syntax error at its line, a literal no decl
 
 **A game's own functions.** A function the game's binary registers through a [player extension](../guides/player-extensions.md) is not in the engine's API, so the check reports a call of it as `unknown-function`. Name each one with `--allow <name>`, or give the binary's own listing, which has them with their parameters, with `--api <file>`: the game binary prints `app.core.script.api_listing()` in the shape `flint script api --json` prints (a `functions` list, each with a `name` and its `params`). `flint check` and `flint validate` take both flags.
 
+## When a script fails while running
+
+`flint script check` finds what it can before the game runs. What it can't see, such as a value of the wrong type or a call that only goes wrong in some states, fails while the game runs. A failing callback stops where it failed, and the game keeps running without what it would have done. Every failure is counted (#693):
+
+- **Logged once, then counted.** The first time a script fails one way (same file, callback, line and message) the console gets one line with the file, line, entity and callback. The same failure again is counted, not printed again, except at its 10th, 100th, 1000th... time:
+
+  ```text
+  [script] scripts/flicker.rhai:5:5: flicker, on_update: Function not found: set_feild (i64, ...) (logged again at 10, 100, 1000... times)
+  [script] scripts/flicker.rhai:5:5: flicker, on_update: the same error 10 times since frame 1: Function not found: set_feild (i64, ...)
+  ```
+
+  An error inside a helper names it after the callback (`door, on_init > swing`). A script that isn't found or doesn't compile is an error the same way, with `load` or `compile` for the callback, and so is a failure in its top-level statements (`top level`).
+- **On screen.** The player draws a card in the bottom-left corner with each failing script of the scene: the entity and callback, the file and line, the message and how many times. A script is taken off the card when its file is saved and reloads, and every script is when the scene changes. A script that didn't compile at load is loaded again when its file is saved, and runs its `on_init` then. The card is part of the debug HUD (`debug-hud`, on by default).
+- **At the end of a run.** `flint-player --exit-after` prints `[script] N errors (M times in all)` and one line for each, or `[script] no errors`. So does `flint render --scripts` (and `--script-time`), whose `--report json` adds a `script_errors` list: each error's `file`, `entity`, `callback`, `function`, `line`, `column`, `message`, `count`, `first_frame` and `last_frame`.
+- **As a failed run.** `--strict-scripts` (on `flint-player`, `flint play` and `flint render`, where it implies `--scripts`) makes any script error at load or run time exit 1, naming how many and the first, so a headless check of a broken game can't pass:
+
+  ```bash
+  flint-player levels/dock.scene.toml --exit-after 5 --strict-scripts
+  flint render levels/dock.scene.toml --script-time 5 --strict-scripts -o dock.png
+  ```
+
+  The picture is still written. Without the flag, errors are counted and printed as above and the run exits 0.
+
+A game binary reads the same list as `app.core.script.errors()` (`flint_script::ScriptErrors`): its `all` is every error of the run, `on_screen` what the card shows and `summary` the lines above.
+
 ## Hot-Reload
 
 The script system checks file modification timestamps each frame. When a `.rhai` file changes on disk:

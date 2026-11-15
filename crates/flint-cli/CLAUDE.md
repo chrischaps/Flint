@@ -168,6 +168,11 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                           --frame-step / --fps through the `clock` / `span` groups. A render that
    #                           doesn't run a scene's scripts names them, a still too (scripts_not_run);
    #                           goldens script-beat*: tests/fixtures/scenes/stylize_props_scripted)
+   #   --strict-scripts       (#693: implies --scripts (fold_script_time); exit 1 after the picture is written
+   #                           when any stage's game has a script error. run_stages merges every stage's
+   #                           ScriptErrors, prints summary() to stderr when scripted, and puts them in
+   #                           --report json as script_errors (render_report::ScriptErrorReport).
+   #                           tests/render_scripts_cli.rs a_failing_script_is_counted_once_*)
    #   --expression-timeline f.json   (expression() fed on the render's clock; implies --scripts)
    #   --time 0..4 --fps 12 -o x.gif   (a span as a GIF sharing one palette; a still pixel never flickers;
    #                           frames wait on disk as deflated deltas, x.gif.frames~, so memory stays flat, #588;

@@ -7,58 +7,77 @@
 //! [`ScriptEngine::in_order`]. A callback is called on the script's
 //! functions and imports (`ScriptInstance::calls`), so its top-level
 //! statements are not run again first (#692).
+//!
+//! Every call is [`ScriptEngine::call`] (#693): the one place a callback
+//! runs, so every failure is counted in [`ScriptEngine::errors`] rather than
+//! warned about on its own, and the one place a per-callback timer goes
+//! (#703).
 
 use super::interact::{get_interactable_config, is_near_player};
-use super::ScriptEngine;
+use super::{ScriptEngine, ScriptInstance};
 use crate::api;
+use crate::errors::Failure;
 use flint_core::callbacks::{self as cb, Callback};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_runtime::GameEvent;
 
 impl ScriptEngine {
+    /// Call `callback` with `args` on `entity`'s script, as the entity the
+    /// script functions act for. A failure is recorded in
+    /// [`Self::errors`] with the script's file, the entity's name, the
+    /// callback and the line; returns whether it ran without one. An entity
+    /// with no script is not called and is no failure.
+    pub(crate) fn call(
+        &mut self,
+        entity: EntityId,
+        callback: &str,
+        args: impl rhai::FuncArgs,
+    ) -> bool {
+        let Some(script) = self.scripts.get_mut(&entity) else {
+            return true;
+        };
+        crate::lock_or_recover(&self.ctx).current_entity = entity;
+        match self
+            .engine
+            .call_fn::<()>(&mut script.scope, &script.calls, callback, args)
+        {
+            Ok(()) => true,
+            Err(e) => {
+                let failure = Failure::eval(&script.file, &name_of(script, entity), callback, &e);
+                self.errors.record(failure);
+                false
+            }
+        }
+    }
+
+    /// Whether `entity` has a script and `defines` says it has the callback.
+    fn defines(&self, entity: EntityId, defines: impl Fn(&ScriptInstance) -> bool) -> bool {
+        self.scripts.get(&entity).is_some_and(defines)
+    }
+
     /// Call on_init() for all scripts that haven't been initialized yet
     pub fn call_inits(&mut self, world: &mut FlintWorld) {
         let _world_scope = self.lend(world);
-
-        let entity_ids = self.in_order(|_| true);
-        for entity_id in entity_ids {
-            let script = self.scripts.get_mut(&entity_id).unwrap();
-            if script.defines(Callback::Init) && !script.init_called {
-                {
-                    let mut c = crate::lock_or_recover(&self.ctx);
-                    c.current_entity = entity_id;
-                }
-                script.init_called = true;
-                if let Err(e) =
-                    self.engine
-                        .call_fn::<()>(&mut script.scope, &script.calls, cb::ON_INIT, ())
-                {
-                    tracing::warn!("on_init error ({}): {}", script.source_path, e);
-                }
-            }
-        }
+        let entity_ids = self.in_order(|s| s.defines(Callback::Init) && !s.init_called);
+        self.init(&entity_ids);
     }
 
     /// Call on_init() for specific entities (chunk loading)
     pub fn call_inits_for(&mut self, world: &mut FlintWorld, entity_ids: &[EntityId]) {
         let _world_scope = self.lend(world);
+        self.init(entity_ids);
+    }
 
+    /// `on_init` once for each of `entity_ids` that defines it.
+    fn init(&mut self, entity_ids: &[EntityId]) {
         for &entity_id in entity_ids {
-            if let Some(script) = self.scripts.get_mut(&entity_id) {
-                if script.defines(Callback::Init) && !script.init_called {
-                    {
-                        let mut c = crate::lock_or_recover(&self.ctx);
-                        c.current_entity = entity_id;
-                    }
-                    script.init_called = true;
-                    if let Err(e) =
-                        self.engine
-                            .call_fn::<()>(&mut script.scope, &script.calls, cb::ON_INIT, ())
-                    {
-                        tracing::warn!("on_init error ({}): {}", script.source_path, e);
-                    }
-                }
+            let Some(script) = self.scripts.get_mut(&entity_id) else {
+                continue;
+            };
+            if script.defines(Callback::Init) && !script.init_called {
+                script.init_called = true;
+                self.call(entity_id, cb::ON_INIT, ());
             }
         }
     }
@@ -67,25 +86,12 @@ impl ScriptEngine {
     pub fn call_updates(&mut self, world: &mut FlintWorld) {
         let _world_scope = self.lend(world);
 
-        let entity_ids = self.in_order(|_| true);
-        for entity_id in entity_ids {
-            let script = self.scripts.get_mut(&entity_id).unwrap();
-            if script.defines(Callback::Update) {
-                {
-                    let mut c = crate::lock_or_recover(&self.ctx);
-                    c.current_entity = entity_id;
-                }
-                let began = self.update_times.is_some().then(web_time::Instant::now);
-                if let Err(e) =
-                    self.engine
-                        .call_fn::<()>(&mut script.scope, &script.calls, cb::ON_UPDATE, ())
-                {
-                    tracing::warn!("on_update error ({}): {}", script.source_path, e);
-                }
-                if let Some(began) = began {
-                    let path = script.source_path.clone();
-                    self.add_update_time(&path, began);
-                }
+        for entity_id in self.in_order(|s| s.defines(Callback::Update)) {
+            let began = self.update_times.is_some().then(web_time::Instant::now);
+            self.call(entity_id, cb::ON_UPDATE, ());
+            if let (Some(began), Some(script)) = (began, self.scripts.get(&entity_id)) {
+                let path = script.source_path.clone();
+                self.add_update_time(&path, began);
             }
         }
     }
@@ -94,21 +100,8 @@ impl ScriptEngine {
     pub fn call_draw_uis(&mut self, world: &mut FlintWorld) {
         let _world_scope = self.lend(world);
 
-        let entity_ids = self.in_order(|_| true);
-        for entity_id in entity_ids {
-            let script = self.scripts.get_mut(&entity_id).unwrap();
-            if script.defines(Callback::DrawUi) {
-                {
-                    let mut c = crate::lock_or_recover(&self.ctx);
-                    c.current_entity = entity_id;
-                }
-                if let Err(e) =
-                    self.engine
-                        .call_fn::<()>(&mut script.scope, &script.calls, cb::ON_DRAW_UI, ())
-                {
-                    tracing::warn!("on_draw_ui error ({}): {}", script.source_path, e);
-                }
-            }
+        for entity_id in self.in_order(|s| s.defines(Callback::DrawUi)) {
+            self.call(entity_id, cb::ON_DRAW_UI, ());
         }
     }
 
@@ -131,10 +124,14 @@ impl ScriptEngine {
                     self.call_collision_exit(*entity_b, *entity_a);
                 }
                 GameEvent::TriggerEntered { entity, trigger } => {
-                    self.call_trigger_enter(*trigger, *entity);
+                    if self.defines(*trigger, |s| s.defines(Callback::TriggerEnter)) {
+                        self.call(*trigger, cb::ON_TRIGGER_ENTER, (entity.raw() as i64,));
+                    }
                 }
                 GameEvent::TriggerExited { entity, trigger } => {
-                    self.call_trigger_exit(*trigger, *entity);
+                    if self.defines(*trigger, |s| s.defines(Callback::TriggerExit)) {
+                        self.call(*trigger, cb::ON_TRIGGER_EXIT, (entity.raw() as i64,));
+                    }
                 }
                 GameEvent::ActionPressed(action) => {
                     self.call_action_on_all(action, world);
@@ -148,82 +145,14 @@ impl ScriptEngine {
     }
 
     fn call_collision(&mut self, entity: EntityId, other: EntityId) {
-        if let Some(script) = self.scripts.get_mut(&entity) {
-            if script.defines(Callback::Collision) {
-                {
-                    let mut c = crate::lock_or_recover(&self.ctx);
-                    c.current_entity = entity;
-                }
-                let other_id = other.raw() as i64;
-                if let Err(e) = self.engine.call_fn::<()>(
-                    &mut script.scope,
-                    &script.calls,
-                    cb::ON_COLLISION,
-                    (other_id,),
-                ) {
-                    tracing::warn!("on_collision error ({}): {}", script.source_path, e);
-                }
-            }
+        if self.defines(entity, |s| s.defines(Callback::Collision)) {
+            self.call(entity, cb::ON_COLLISION, (other.raw() as i64,));
         }
     }
 
     fn call_collision_exit(&mut self, entity: EntityId, other: EntityId) {
-        if let Some(script) = self.scripts.get_mut(&entity) {
-            if script.defines(Callback::CollisionExit) {
-                {
-                    let mut c = crate::lock_or_recover(&self.ctx);
-                    c.current_entity = entity;
-                }
-                let other_id = other.raw() as i64;
-                if let Err(e) = self.engine.call_fn::<()>(
-                    &mut script.scope,
-                    &script.calls,
-                    cb::ON_COLLISION_EXIT,
-                    (other_id,),
-                ) {
-                    tracing::warn!("on_collision_exit error ({}): {}", script.source_path, e);
-                }
-            }
-        }
-    }
-
-    fn call_trigger_enter(&mut self, trigger: EntityId, entity: EntityId) {
-        if let Some(script) = self.scripts.get_mut(&trigger) {
-            if script.defines(Callback::TriggerEnter) {
-                {
-                    let mut c = crate::lock_or_recover(&self.ctx);
-                    c.current_entity = trigger;
-                }
-                let entity_id = entity.raw() as i64;
-                if let Err(e) = self.engine.call_fn::<()>(
-                    &mut script.scope,
-                    &script.calls,
-                    cb::ON_TRIGGER_ENTER,
-                    (entity_id,),
-                ) {
-                    tracing::warn!("on_trigger_enter error ({}): {}", script.source_path, e);
-                }
-            }
-        }
-    }
-
-    fn call_trigger_exit(&mut self, trigger: EntityId, entity: EntityId) {
-        if let Some(script) = self.scripts.get_mut(&trigger) {
-            if script.defines(Callback::TriggerExit) {
-                {
-                    let mut c = crate::lock_or_recover(&self.ctx);
-                    c.current_entity = trigger;
-                }
-                let entity_id = entity.raw() as i64;
-                if let Err(e) = self.engine.call_fn::<()>(
-                    &mut script.scope,
-                    &script.calls,
-                    cb::ON_TRIGGER_EXIT,
-                    (entity_id,),
-                ) {
-                    tracing::warn!("on_trigger_exit error ({}): {}", script.source_path, e);
-                }
-            }
+        if self.defines(entity, |s| s.defines(Callback::CollisionExit)) {
+            self.call(entity, cb::ON_COLLISION_EXIT, (other.raw() as i64,));
         }
     }
 
@@ -247,19 +176,7 @@ impl ScriptEngine {
         };
 
         for entity_id in entity_ids {
-            let script = self.scripts.get_mut(&entity_id).unwrap();
-            {
-                let mut c = crate::lock_or_recover(&self.ctx);
-                c.current_entity = entity_id;
-            }
-            if let Err(e) = self.engine.call_fn::<()>(
-                &mut script.scope,
-                &script.calls,
-                cb::ON_EVENT,
-                (name.to_string(), data.clone()),
-            ) {
-                tracing::warn!("on_event error ({}): {}", script.source_path, e);
-            }
+            self.call(entity_id, cb::ON_EVENT, (name.to_string(), data.clone()));
         }
     }
 
@@ -278,63 +195,29 @@ impl ScriptEngine {
         for state in states {
             crate::lock_or_recover(&self.ctx).expression = state.clone();
             for &entity_id in &entity_ids {
-                let script = self.scripts.get_mut(&entity_id).unwrap();
-                crate::lock_or_recover(&self.ctx).current_entity = entity_id;
-                if let Err(e) = self.engine.call_fn::<()>(
-                    &mut script.scope,
-                    &script.calls,
+                self.call(
+                    entity_id,
                     cb::ON_EXPRESSION,
                     (rhai::Dynamic::from_map(state.clone()),),
-                ) {
-                    tracing::warn!("on_expression error ({}): {}", script.source_path, e);
-                }
+                );
             }
         }
     }
 
     fn call_action_on_all(&mut self, action: &str, world: &FlintWorld) {
-        let entity_ids = self.in_order(|_| true);
-        for entity_id in entity_ids {
-            let script = self.scripts.get_mut(&entity_id).unwrap();
-
-            // on_action callback
-            if script.defines(Callback::Action) {
-                {
-                    let mut c = crate::lock_or_recover(&self.ctx);
-                    c.current_entity = entity_id;
-                }
-                let action_str = action.to_string();
-                if let Err(e) = self.engine.call_fn::<()>(
-                    &mut script.scope,
-                    &script.calls,
-                    cb::ON_ACTION,
-                    (action_str,),
-                ) {
-                    tracing::warn!("on_action error ({}): {}", script.source_path, e);
-                }
+        for entity_id in
+            self.in_order(|s| s.defines(Callback::Action) || s.defines(Callback::Interact))
+        {
+            if self.defines(entity_id, |s| s.defines(Callback::Action)) {
+                self.call(entity_id, cb::ON_ACTION, (action.to_string(),));
             }
 
             // on_interact sugar: ActionPressed("interact") + proximity + interactable check
-            if script.defines(Callback::Interact) && action == "interact" {
+            if action == "interact" && self.defines(entity_id, |s| s.defines(Callback::Interact)) {
                 // Read range from interactable component, fall back to 3.0
                 let (range, enabled) = get_interactable_config(entity_id, world);
-                if !enabled {
-                    continue;
-                }
-                let close_enough = is_near_player(entity_id, world, range);
-                if close_enough {
-                    {
-                        let mut c = crate::lock_or_recover(&self.ctx);
-                        c.current_entity = entity_id;
-                    }
-                    if let Err(e) = self.engine.call_fn::<()>(
-                        &mut script.scope,
-                        &script.calls,
-                        cb::ON_INTERACT,
-                        (),
-                    ) {
-                        tracing::warn!("on_interact error ({}): {}", script.source_path, e);
-                    }
+                if enabled && is_near_player(entity_id, world, range) {
+                    self.call(entity_id, cb::ON_INTERACT, ());
                 }
             }
         }
@@ -364,19 +247,7 @@ impl ScriptEngine {
         }
         let _world_scope = self.lend(world);
         for entity_id in entity_ids {
-            let script = self.scripts.get_mut(&entity_id).unwrap();
-            {
-                let mut c = crate::lock_or_recover(&self.ctx);
-                c.current_entity = entity_id;
-            }
-            if let Err(e) = self.engine.call_fn::<()>(
-                &mut script.scope,
-                &script.calls,
-                cb::ON_PERSIST_MIGRATE,
-                (from,),
-            ) {
-                tracing::warn!("on_persist_migrate error ({}): {}", script.source_path, e);
-            }
+            self.call(entity_id, cb::ON_PERSIST_MIGRATE, (from,));
         }
         let mut c = crate::lock_or_recover(&self.ctx);
         let Some(store) = c.try_persistent_store_mut() else {
@@ -397,23 +268,8 @@ impl ScriptEngine {
     pub fn call_scene_exits(&mut self, world: &mut FlintWorld) {
         let _world_scope = self.lend(world);
 
-        let entity_ids = self.in_order(|_| true);
-        for entity_id in entity_ids {
-            let script = self.scripts.get_mut(&entity_id).unwrap();
-            if script.defines(Callback::SceneExit) {
-                {
-                    let mut c = crate::lock_or_recover(&self.ctx);
-                    c.current_entity = entity_id;
-                }
-                if let Err(e) = self.engine.call_fn::<()>(
-                    &mut script.scope,
-                    &script.calls,
-                    cb::ON_SCENE_EXIT,
-                    (),
-                ) {
-                    tracing::warn!("on_scene_exit error ({}): {}", script.source_path, e);
-                }
-            }
+        for entity_id in self.in_order(|s| s.defines(Callback::SceneExit)) {
+            self.call(entity_id, cb::ON_SCENE_EXIT, ());
         }
     }
 
@@ -421,23 +277,8 @@ impl ScriptEngine {
     pub fn call_scene_enters(&mut self, world: &mut FlintWorld) {
         let _world_scope = self.lend(world);
 
-        let entity_ids = self.in_order(|_| true);
-        for entity_id in entity_ids {
-            let script = self.scripts.get_mut(&entity_id).unwrap();
-            if script.defines(Callback::SceneEnter) {
-                {
-                    let mut c = crate::lock_or_recover(&self.ctx);
-                    c.current_entity = entity_id;
-                }
-                if let Err(e) = self.engine.call_fn::<()>(
-                    &mut script.scope,
-                    &script.calls,
-                    cb::ON_SCENE_ENTER,
-                    (),
-                ) {
-                    tracing::warn!("on_scene_enter error ({}): {}", script.source_path, e);
-                }
-            }
+        for entity_id in self.in_order(|s| s.defines(Callback::SceneEnter)) {
+            self.call(entity_id, cb::ON_SCENE_ENTER, ());
         }
     }
 
@@ -455,21 +296,12 @@ impl ScriptEngine {
         let _world_scope = self.lend(world);
 
         for cue in cues {
-            if let Some(script) = self.scripts.get_mut(&cue.entity_id) {
-                if script.defines(Callback::SequenceCue) {
-                    {
-                        let mut c = crate::lock_or_recover(&self.ctx);
-                        c.current_entity = cue.entity_id;
-                    }
-                    if let Err(e) = self.engine.call_fn::<()>(
-                        &mut script.scope,
-                        &script.calls,
-                        cb::ON_SEQUENCE_CUE,
-                        (cue.sequence.clone(), cue.cue.clone()),
-                    ) {
-                        tracing::warn!("on_sequence_cue error ({}): {}", script.source_path, e);
-                    }
-                }
+            if self.defines(cue.entity_id, |s| s.defines(Callback::SequenceCue)) {
+                self.call(
+                    cue.entity_id,
+                    cb::ON_SEQUENCE_CUE,
+                    (cue.sequence.clone(), cue.cue.clone()),
+                );
             }
         }
     }
@@ -487,23 +319,23 @@ impl ScriptEngine {
         let _world_scope = self.lend(world);
 
         for event in events {
-            if let Some(script) = self.scripts.get_mut(&event.entity_id) {
-                if script.defines(Callback::AnimationEnd) {
-                    {
-                        let mut c = crate::lock_or_recover(&self.ctx);
-                        c.current_entity = event.entity_id;
-                    }
-                    let clip_name = event.clip_name.clone();
-                    if let Err(e) = self.engine.call_fn::<()>(
-                        &mut script.scope,
-                        &script.calls,
-                        cb::ON_ANIMATION_END,
-                        (clip_name,),
-                    ) {
-                        tracing::warn!("on_animation_end error ({}): {}", script.source_path, e);
-                    }
-                }
+            if self.defines(event.entity_id, |s| s.defines(Callback::AnimationEnd)) {
+                self.call(
+                    event.entity_id,
+                    cb::ON_ANIMATION_END,
+                    (event.clip_name.clone(),),
+                );
             }
         }
+    }
+}
+
+/// The name an error gives a script's entity: its own, or its id when
+/// nothing named it (a chunk's script loaded by path).
+pub(super) fn name_of(script: &ScriptInstance, entity: EntityId) -> String {
+    if script.entity_name.is_empty() {
+        format!("entity {}", entity.raw())
+    } else {
+        script.entity_name.clone()
     }
 }

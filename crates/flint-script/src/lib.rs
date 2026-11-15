@@ -15,6 +15,7 @@ pub mod check;
 pub mod context;
 pub mod draw2d;
 pub mod engine;
+pub mod errors;
 pub mod host;
 #[cfg(test)]
 mod layout_tests;
@@ -35,6 +36,7 @@ pub use context::{DrawCommand, DrawItem};
 use context::{InputSnapshot, ScriptCommand};
 pub use context::{SoundPlay, SoundRef};
 use engine::ScriptEngine;
+pub use errors::{ScriptError, ScriptErrors};
 use flint_core::Result;
 use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, InputState, RuntimeSystem};
@@ -72,6 +74,15 @@ impl ScriptSystem {
     /// unless [`set_update_timing`](Self::set_update_timing) is on.
     pub fn update_times(&self) -> &[(String, f32)] {
         self.engine.update_times()
+    }
+
+    /// Every script error of the run (#693): each failure counted once per
+    /// file, callback, line and message, load and compile errors included,
+    /// kept through scene changes. `errors().on_screen()` is what the
+    /// player's card shows, `errors().summary()` what a run prints at its
+    /// end.
+    pub fn errors(&self) -> &ScriptErrors {
+        self.engine.errors()
     }
 
     pub fn new() -> Self {
@@ -428,11 +439,16 @@ impl ScriptSystem {
                     .unwrap_or("unknown.rhai")
                     .to_string();
                 println!("[script] Loaded (chunk): {:?} → {}", entity_id, source);
-                self.engine.add_script(entity_id, ast, source);
+                let file = errors::shown_file(script_path);
+                self.engine
+                    .add_named_script(entity_id, ast, source, "", Some(&file));
                 self.sync.discovered.insert(entity_id);
             }
             Err(e) => {
-                tracing::warn!("Compile error for chunk entity {:?}: {}", entity_id, e);
+                let file = errors::shown_file(script_path);
+                let entity = format!("entity {}", entity_id.raw());
+                self.engine
+                    .record_error(errors::Failure::compile(&file, &entity, &e));
             }
         }
     }
@@ -637,6 +653,8 @@ impl RuntimeSystem for ScriptSystem {
     }
 
     fn update(&mut self, world: &mut FlintWorld, _dt: f64) -> Result<()> {
+        // Errors say which frame they first happened in (#693)
+        self.engine.errors.next_frame();
         // A perf readout times each step below, and each script's on_update.
         self.engine.clear_update_times();
         let timing = self.engine.timing();

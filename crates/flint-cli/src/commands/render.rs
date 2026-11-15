@@ -712,6 +712,13 @@ pub struct RenderArgs {
     #[arg(long)]
     pub scripts: bool,
 
+    /// Fail (exit 1) when any script failed, to load, to compile or at run
+    /// time (#693), after writing the picture. Implies --scripts. Every
+    /// error is counted either way: once each on stderr with its count, and
+    /// in --report json's script_errors
+    #[arg(long)]
+    pub strict_scripts: bool,
+
     /// Run the scene's scripts to game time T and capture there: --scripts
     /// --time T in one flag, beside --particle-time and --anim-time (#371), so a
     /// style beat, a flickering light or a door a script drives is in the
@@ -901,9 +908,13 @@ pub fn run_in(args: RenderArgs, host: &mut RenderHost) -> Result<()> {
 }
 
 /// --script-time T is --scripts --time T (#371): everything after reads those.
+/// --strict-scripts runs them too (#693).
 fn fold_script_time(mut args: RenderArgs) -> RenderArgs {
     if let Some(t) = args.script_time.take() {
         args.time = Some(t);
+        args.scripts = true;
+    }
+    if args.strict_scripts {
         args.scripts = true;
     }
     args
@@ -3001,6 +3012,20 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         )?;
     }
 
+    // Every script error of the run, each sweep cell's game folded in
+    // (#693): once each on stderr, in the report, and a failure under
+    // --strict-scripts
+    let mut script_errors = flint_script::ScriptErrors::new();
+    for stage in &stages {
+        script_errors.merge(stage.game.script_errors());
+    }
+    let scripted = args.scripts || args.expression_timeline.is_some();
+    if scripted {
+        for line in script_errors.summary() {
+            eprintln!("{line}");
+        }
+    }
+
     if report_json {
         let field = stages[0].game.wooze().map(|(field, _)| field);
         let report = render_report::RenderReport {
@@ -3015,9 +3040,19 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
             captures,
             still_props: still_props(&stages[0]),
             warnings,
+            script_errors: script_errors
+                .all()
+                .iter()
+                .map(render_report::ScriptErrorReport::from)
+                .collect(),
         };
         let json = serde_json::to_string(&report).context("serialising the render report")?;
         println!("{json}");
+    }
+    if args.strict_scripts {
+        if let Some(why) = script_errors.strict_failure() {
+            anyhow::bail!(why);
+        }
     }
     Ok(())
 }

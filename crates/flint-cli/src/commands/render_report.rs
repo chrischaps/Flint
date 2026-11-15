@@ -27,6 +27,50 @@ pub struct RenderReport {
     /// in the warnings on stderr.
     pub still_props: Vec<String>,
     pub warnings: Vec<String>,
+    /// With --scripts: every script error of the run, each once with its
+    /// count (#693). Empty when every script ran clean.
+    pub script_errors: Vec<ScriptErrorReport>,
+}
+
+/// One way a script failed (#693), as `flint_script::ScriptError` counts it.
+#[derive(Debug, Serialize)]
+pub struct ScriptErrorReport {
+    pub file: String,
+    pub entity: String,
+    /// Other entities whose scripts failed the same way.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub also_on: Vec<String>,
+    /// `on_update`..., or `load`, `compile`, `top level`.
+    pub callback: String,
+    /// The helper the error was in, when not the callback itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<usize>,
+    pub message: String,
+    pub count: u64,
+    pub first_frame: u64,
+    pub last_frame: u64,
+}
+
+impl From<&flint_script::ScriptError> for ScriptErrorReport {
+    fn from(e: &flint_script::ScriptError) -> Self {
+        Self {
+            file: e.file.clone(),
+            entity: e.entity_name.clone(),
+            also_on: e.also_on.clone(),
+            callback: e.callback.clone(),
+            function: e.function.clone(),
+            line: e.line,
+            column: e.column,
+            message: e.message.clone(),
+            count: e.count,
+            first_frame: e.first_frame,
+            last_frame: e.last_frame,
+        }
+    }
 }
 
 /// Every living prop at one capture.
@@ -284,10 +328,13 @@ mod tests {
             }],
             still_props: vec![],
             warnings: vec![],
+            script_errors: vec![],
         };
         let json: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert!(json.get("sweep").is_none());
+        // Present and empty when every script ran clean (#693)
+        assert_eq!(json["script_errors"], serde_json::json!([]));
         assert_eq!(json["captures"][0]["time"], 3.5);
         assert!(json["captures"][0].get("column").is_none());
     }

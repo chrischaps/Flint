@@ -30,9 +30,10 @@ use winit::window::Window;
 
 impl PlayerApp {
     /// Why the run failed, once `run_app` has returned: the player didn't
-    /// start, or a run that asked for a screenshot doesn't have it (#639).
-    /// A binary exits non-zero on `Some`, so a capture that left no file
-    /// can't pass for one that did.
+    /// start, a run that asked for a screenshot doesn't have it (#639), or
+    /// a script failed under `--strict-scripts` (#693). A binary exits
+    /// non-zero on `Some`, so a capture that left no file can't pass for
+    /// one that did, nor a broken game for a working one.
     pub fn run_failure(&self) -> Option<String> {
         if let Some(e) = &self.outcome.init_error {
             return Some(format!("the player failed to start: {e}"));
@@ -40,7 +41,13 @@ impl PlayerApp {
         if let Some(e) = &self.outcome.scene_failure {
             return Some(e.clone());
         }
-        self.capture.missing()
+        if let Some(missing) = self.capture.missing() {
+            return Some(missing);
+        }
+        if self.launch.strict_scripts {
+            return self.core.script.errors().strict_failure();
+        }
+        None
     }
 
     pub fn new(
