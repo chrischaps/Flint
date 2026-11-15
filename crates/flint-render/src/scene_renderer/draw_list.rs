@@ -335,11 +335,11 @@ impl DrawList {
                     Draw::Billboard(_) | Draw::Terrain(_) | Draw::Particles(_) => {}
                 }
             }
-            items.sort_by(|a, b| {
-                sort_depth(b)
-                    .partial_cmp(&sort_depth(a))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            // A permutation of the items by their keys, then each item moved
+            // once: an item is several hundred bytes, and a grove's 600 echoes
+            // cost a merge sort's many moves 0.07 ms a frame. Equal keys keep
+            // their order, as a stable sort's do.
+            items.sort_by_cached_key(|item| farthest_first(sort_depth(item)));
         }
     }
 }
@@ -354,6 +354,17 @@ pub(super) fn echo_order(item: &DrawItem) -> usize {
         | Draw::Terrain(_)
         | Draw::Particles(_) => 0,
     }
+}
+
+/// A key that sorts squared distances farthest first: the bits of a finite
+/// `f32` ordered as the floats are, reversed.
+fn farthest_first(distance: f32) -> std::cmp::Reverse<u32> {
+    let bits = distance.to_bits();
+    std::cmp::Reverse(if bits >> 31 == 1 {
+        !bits
+    } else {
+        bits | 1 << 31
+    })
 }
 
 fn origin(model: &[[f32; 4]; 4]) -> [f32; 3] {
@@ -433,6 +444,15 @@ mod tests {
         assert_eq!(list.drawn().count(), 0);
         list.uncull();
         assert_eq!(list.drawn().count(), 1);
+    }
+
+    #[test]
+    fn farthest_first_orders_as_the_distances_do() {
+        let d = [0.0f32, 1e-30, 0.5, 1.0, 2.0, 1e30, f32::INFINITY];
+        for w in d.windows(2) {
+            assert!(farthest_first(w[0]) > farthest_first(w[1]), "{w:?}");
+        }
+        assert_eq!(farthest_first(3.0), farthest_first(3.0));
     }
 
     #[test]
