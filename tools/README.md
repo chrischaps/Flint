@@ -32,9 +32,11 @@ CLAUDE.md asks.
 | `darkroom_images.py` | The darkroom style's LUT strips and papers in `demo/styles/` (#413); deterministic | | numpy, Pillow |
 | `style-images/make_images.py` | The demo paper and stroke images (#390); deterministic | | numpy, Pillow |
 | `ascii_flips.py` | Counts ASCII glyph flips and A-B-A reversals (shimmer) across captured frames (#277) | reads `flint-player` captures | numpy, Pillow |
+| **Assets** | | | |
+| `assets/cap_textures.py` | Brings textures under the tree's caps (2048 texels a side, 3 MB; ADR 0122, #759): halves with `flint_pixels::mip_chain`'s own filter, colour maps to JPEG, data maps PNG, GLBs rewritten whole. `scripts/size-check.py` names it | | numpy, Pillow |
 | **Test fixtures** | | | |
 | `make_sphere_glb.py` | `demo/models/Sphere.glb`, a UV sphere for the ASCII edge tests (#267) | | standard library |
-| `test-models/double_sided_card.py` | `testModels/DoubleSidedCard.glb`, the glTF `doubleSided` fixture (#623) | | standard library |
+| `test-models/double_sided_card.py` | `tests/fixtures/models/DoubleSidedCard.glb`, the glTF `doubleSided` fixture (#623) | | standard library |
 | `test-models/double_sided_palm.py` | `demo/models/palm_{two,one}_sided.glb` for `demo/double_sided.scene.toml` (#623) | | standard library |
 | **The showcase film** (`showcase/CLAUDE.md`) | | | |
 | `showcase/build_scenes.py` | Writes `demo/film/*.scene.toml` from the set and each beat; `--check` for staleness | | standard library |

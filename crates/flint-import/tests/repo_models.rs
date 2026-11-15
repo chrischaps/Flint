@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 const DIRS: &[&str] = &[
     "examples/models",
-    "testModels",
-    "tests/fixtures/scenes/models",
+    // The frozen fixtures borrow examples/models (#759); this is their own
+    "tests/fixtures/models",
 ];
 
 fn repo_root() -> PathBuf {

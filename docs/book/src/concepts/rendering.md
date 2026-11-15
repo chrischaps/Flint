@@ -211,7 +211,7 @@ A double-sided material:
 - **casts shadows from both sides**, so a card shadows the ground whichever way it faces the sun;
 - **is outlined and styled on both faces**, since the style mask and veil already draw both.
 
-For a runtime mesh, set `ImportedMaterial::double_sided`. Single-sided is the cheaper choice for closed solids: culling saves the back half of their fragments. A card generator that writes every card twice, the second copy wound the other way, can write it once with `doubleSided` instead, at half the triangles. The palms' models come from `tools/test-models/double_sided_palm.py`, and the test fixture `testModels/DoubleSidedCard.glb` from `double_sided_card.py` beside it.
+For a runtime mesh, set `ImportedMaterial::double_sided`. Single-sided is the cheaper choice for closed solids: culling saves the back half of their fragments. A card generator that writes every card twice, the second copy wound the other way, can write it once with `doubleSided` instead, at half the triangles. The palms' models come from `tools/test-models/double_sided_palm.py`, and the test fixture `tests/fixtures/models/DoubleSidedCard.glb` from `double_sided_card.py` beside it.
 
 ### Emission
 

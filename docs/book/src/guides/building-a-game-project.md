@@ -343,6 +343,18 @@ git subtree push --prefix=engine flint-engine main
 
 Engine edits are normal commits in your game repo. The subtree commands handle splitting and merging the `engine/` prefix.
 
+### What `engine/` carries, and leaving some of it out
+
+A subtree is the engine's whole tree, so a game carries the engine's examples, its book and its test fixtures along with the crates. The engine keeps that under a budget ([ADR 0122](https://github.com/chrischaps/Flint/blob/main/docs/adr/0122-what-a-games-engine-carries.md)): 185 MB in all, no file stored twice, no texture over 2048 texels a side, checked on every engine PR. `python3 engine/scripts/size-check.py --report` prints each part's size (in a sparse checkout, of what is written out).
+
+Nothing a game builds reads `engine/examples`, `engine/docs`, `engine/tests` or `engine/showcase_game`, so each clone or worktree of the game can leave them out of its working tree with a sparse checkout:
+
+```bash
+git sparse-checkout set --no-cone '/*' '!/engine/examples/' '!/engine/docs/' '!/engine/tests/' '!/engine/showcase_game/'
+```
+
+On a game with the engine of 2026-11-14 this took the working tree from 166 MB to 41 MB. The engine still builds (`cargo build --manifest-path engine/Cargo.toml`), and `git subtree pull` and `push` work as before: the files are still in the repository, just not written out. `git sparse-checkout disable` brings them back. In Git Bash, prefix the command with `MSYS_NO_PATHCONV=1`, or Git Bash rewrites `'/*'` as a Windows path and the checkout keeps everything.
+
 ### After a pull: read the changelog
 
 `--squash` folds the engine's commits into one, so their subjects are gone from your history. The engine's changelog is where to read what changed: every change a game can notice (scene and schema keys, script functions, CLI flags, formats, Cargo features, and changes in how something looks, sounds or behaves), each with what to do about it. Before pulling, note the day of your last pull; after it, print what is new since then:

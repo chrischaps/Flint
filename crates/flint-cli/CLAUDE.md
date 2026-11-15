@@ -240,7 +240,7 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
 ## Goldens and `flint goldens`
 
    **Goldens (#271):** every case loads a frozen scene under `tests/fixtures/scenes/` (#763; its README),
-   never `examples/` (test `no_golden_case_loads_an_example`): copy a scene there, with its assets, to pin it.
+   never `examples/` (test `no_golden_case_loads_an_example`): copy a scene there to pin it, and name an example's binary by path rather than copying it (`../../../examples/models/x.glb`), pinned in `tests/fixtures/borrowed.toml` (#759; `scripts/size-check.py` fails on a copy or an unpinned borrow).
    `flint goldens crates/flint-cli/tests/golden/stylize.goldens.toml`
    renders every stylize case and fails past its tolerance (`--bless` rewrites, `--case`,
    `--out-dir` gets renders + `<case>.diff.png` + `report.json` + an `index.html` contact

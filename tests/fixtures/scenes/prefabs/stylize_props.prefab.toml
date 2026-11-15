@@ -69,7 +69,7 @@ position = [1.3, 0.48, 5.6]
 rotation = [0, 40, 0]
 scale = [0.5, 0.5, 0.5]
 [entities.barrel.model]
-asset = "barrel"
+asset = "../../../examples/models/barrel.glb"
 
 # No animator, as in style_mask.scene.toml: at rest it agrees in
 # `flint render` and the player (#294, #307)
@@ -79,7 +79,7 @@ archetype = "character"
 position = [-0.9, 0, 4.0]
 rotation = [0, 25, 0]
 [entities.ybot.model]
-asset = "YBotWithIdle"
+asset = "../../../examples/models/YBotWithIdle.glb"
 [entities.ybot.skeleton]
 skin = "Armature"
 
@@ -89,7 +89,7 @@ archetype = "furniture"
 position = [0.2, 0.48, 4.6]
 scale = [0.5, 0.5, 0.5]
 [entities.cask.model]
-asset = "barrel"
+asset = "../../../examples/models/barrel.glb"
 
 [entities.crate]
 archetype = "furniture"

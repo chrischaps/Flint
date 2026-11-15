@@ -62,23 +62,23 @@ roughness = 0.97
 [entities.tree_a.transform]
 position = [0, 0, 0]
 [entities.tree_a.model]
-asset = "barrel"
+asset = "../../../examples/models/barrel.glb"
 
 [entities.tree_b]
 [entities.tree_b.transform]
 position = [-6.5, 0, -2.5]
 [entities.tree_b.model]
-asset = "barrel"
+asset = "../../../examples/models/barrel.glb"
 
 [entities.tree_c]
 [entities.tree_c.transform]
 position = [6.5, 0, -2.5]
 [entities.tree_c.model]
-asset = "barrel"
+asset = "../../../examples/models/barrel.glb"
 
 [entities.bench]
 [entities.bench.transform]
 position = [2.6, 0, 2.4]
 rotation = [0, -25, 0]
 [entities.bench.model]
-asset = "wooden_bench"
+asset = "../../../examples/models/wooden_bench.glb"

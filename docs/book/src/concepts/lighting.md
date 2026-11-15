@@ -138,7 +138,7 @@ How they combine in the shader: hemisphere ambient interpolates between the two 
 
 [ADRs 0042](https://github.com/chrischaps/Flint/blob/main/docs/adr/0042-clay-look-research-spike.md) through 0052 grew these levers to give a scene a soft, sculpted, matte "clay" reading without touching materials. A recipe that works on the tavern showcase:
 
-![Clay levers off](../images/clay-off.png)
+![Clay levers off](../images/room-unstyled.png)
 
 *The tavern with default shading: Lambert diffuse, sharp terminator, neutral grade.*
 

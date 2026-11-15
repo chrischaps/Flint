@@ -75,12 +75,12 @@ archetype = "terrain"
 [entities.ground.transform]
 position = [-32, 0, -32]
 [entities.ground.terrain]
-heightmap = "terrain/heightmap.png"
-splat_map = "terrain/splatmap.png"
-layer0_texture = "terrain/grass.png"
-layer1_texture = "terrain/dirt.png"
-layer2_texture = "terrain/rock.png"
-layer3_texture = "terrain/sand.png"
+heightmap = "../../../examples/terrain/heightmap.png"
+splat_map = "../../../examples/terrain/splatmap.png"
+layer0_texture = "../../../examples/terrain/grass.png"
+layer1_texture = "../../../examples/terrain/dirt.png"
+layer2_texture = "../../../examples/terrain/rock.png"
+layer3_texture = "../../../examples/terrain/sand.png"
 width = 64.0
 depth = 64.0
 height_scale = 6.0
@@ -101,7 +101,7 @@ archetype = "furniture"
 position = [-2.6, 2.72, 13.2]
 scale = [0.6, 0.6, 0.6]
 [entities.barrel.model]
-asset = "barrel"
+asset = "../../../examples/models/barrel.glb"
 
 [entities.table]
 archetype = "furniture"
@@ -109,7 +109,7 @@ archetype = "furniture"
 position = [0.6, 2.2, 15.0]
 rotation = [0, -20, 0]
 [entities.table.model]
-asset = "table"
+asset = "../../../examples/models/table.glb"
 
 # --- A styled transparent: the lens ---
 

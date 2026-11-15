@@ -1,11 +1,12 @@
 # Frozen test scenes (#763)
 
 The scenes the stylize goldens (`crates/flint-cli/tests/golden/stylize.goldens.toml`)
-and the CLI tests load, with every asset they read: models, textures, the
-props prefab, user styles, papers, strokes, fonts, palettes, terrain and
-particle effects.
+and the CLI tests load, with the text assets they read: the props prefab,
+user styles, fonts, palettes and particle effects. The binaries they share
+with the examples (models, textures, papers, strokes, LUTs, terrain) they
+**borrow**: each is named by its path in `examples/`, and pinned (#759).
 
-They are copies. Most started as scenes in `examples/`, frozen here on
+The scenes are copies. Most started as scenes in `examples/`, frozen here on
 2026-11-10 so the examples can be improved without re-blessing a golden.
 They render byte-identical to the `demo/` scenes they were copied from (all
 79 cases, checked against a control run of main; `style-veil` flips between
@@ -15,7 +16,17 @@ two frames on main too, and this copy draws one of them).
   purpose, in the same commit as the re-bless, and say why.
 - **Don't point a golden or a test at `examples/`.** `render_goldens.rs`'s
   `no_golden_case_loads_an_example` fails the build when a case does. Copy
-  the scene here, with the assets it loads, and point at the copy.
+  the scene here and point at the copy.
+- **Borrow an example's binary; don't copy it** (#759, ADR 0122). A copy is
+  the same bytes tracked twice, which `scripts/size-check.py` refuses. Name
+  the file by path from the scene (`asset = "../../../examples/models/YBot.glb"`,
+  `texture = "../../../examples/textures/wood_planks.jpg"`; from `styles/`
+  one more `../`) and pin it in `../borrowed.toml` with its SHA-256. The
+  check fails when a pinned file changes, so improving a borrowed example
+  file is copy on write: first copy the old bytes here
+  (`git show HEAD:examples/... > <folder>/...`), point the fixture at the
+  copy and drop the pin, then change the example. A binary only the fixtures
+  use lives here, as `../models/DoubleSidedCard.glb` does.
 - **They are written in the examples' archetypes** (`furniture`), which are the layer `schemas/examples`, not the engine's set (#681). The repository's `flint.toml` lists it, so a fixture run with no `--schemas` resolves them; a flag is the whole list, so the suite and the tests pass `--schemas schemas --schemas schemas/examples`.
 - **Their lights are tables nothing reads, on purpose.** Eight of them (and the golden suite's `broken_style` fixture) spell a sun as `[entities.sun.directional_light]`, so they are lit by the engine's built-in key and fill, and the goldens pin that. The examples they were copied from now carry real `light` tables (#681); making these real would move every golden that loads them, so they stay until someone re-blesses on purpose. #683's unknown-component diagnostic will name them.
 - **Assets are found by the one asset search** (ADR 0114): a scene here

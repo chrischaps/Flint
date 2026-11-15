@@ -1,0 +1,118 @@
+# The examples/ files the frozen fixtures load where they lie (#759, ADR 0121).
+#
+# tests/fixtures/scenes/ is frozen so goldens don't move when an example
+# improves (#763), but a copy of every binary they share would be the same
+# bytes tracked twice. So a fixture names the example's file by path
+# (`asset = "../../../examples/models/YBot.glb"`) and its bytes are pinned
+# here. `scripts/size-check.py` (run by scripts/ci.sh) fails when one
+# changes, when a fixture names an examples/ binary that isn't here, and
+# when a pin has no borrower left.
+#
+# Changing a pinned example file (copy on write): first copy the old bytes
+# into tests/fixtures/scenes/<folder>/ (`git show HEAD:<path> > ...`),
+# point the fixture at the copy and delete its pin here; then change the
+# example. To move the fixture with it instead, change both, re-bless the
+# goldens that move and update the sha256.
+#
+# `by` names a test that reads the file by a path the scan can't see
+# (a directory and a file name joined in Rust).
+
+[[borrow]]
+path = "examples/mesh_meadow/mask.png"
+sha256 = "4dbb36d484d91127a76e56e48ae67827baf797d57255149db9760ece3453875a"
+
+[[borrow]]
+path = "examples/models/Box.glb"
+sha256 = "ed52f7192b8311d700ac0ce80644e3852cd01537e4d62241b9acba023da3d54e"
+by = ["crates/flint-cli/tests/render_anim_cli.rs", "crates/flint-cli/tests/render_motion_hold_cli.rs", "crates/flint-cli/tests/render_mesh_cli.rs"]
+
+[[borrow]]
+path = "examples/models/Lantern.glb"
+sha256 = "7e4b848254484de339a34bf816c27cedbe2c526ee5309c18a0048d876eecb07e"
+by = ["crates/flint-cli/tests/render_mesh_cli.rs"]
+
+[[borrow]]
+path = "examples/models/Sphere.glb"
+sha256 = "9dcbf96545f878caa3a7bef700a1ffe1674361f2282159236f46d15c62db98b4"
+by = ["crates/flint-cli/tests/render_mesh_cli.rs"]
+
+[[borrow]]
+path = "examples/models/YBot.glb"
+sha256 = "52b9f9d54564ee94b1d5850c5cbe66ca0cd57719d99b91c02ef5c5fc7dc8527c"
+
+[[borrow]]
+path = "examples/models/YBotWithIdle.glb"
+sha256 = "c5bf6a06b9229d01cc5496ca716bf15a9267f5e0ec0d4ab5ed466b52fa2b884b"
+by = ["crates/flint-animation/src/skeleton.rs", "crates/flint-cli/tests/render_anim_cli.rs", "crates/flint-cli/tests/render_motion_hold_cli.rs"]
+
+[[borrow]]
+path = "examples/models/barrel.glb"
+sha256 = "d8a1b7a64881ef72b9fe78d7bb424af97576b408358a4f95b411bd88e9419391"
+
+[[borrow]]
+path = "examples/models/table.glb"
+sha256 = "b90a204695fc7ead0d98460b3d566558bc9ffb9c2e13fa239ca46313207846d7"
+
+[[borrow]]
+path = "examples/models/wooden_bench.glb"
+sha256 = "19da88568a3ea420acd6ee5bab46e064e5668742fe45d6c001a8f5630c31b27e"
+
+[[borrow]]
+path = "examples/papers/cold_press.png"
+sha256 = "ebe73c85bb9c43f976275501330f994fa21a025d15835a950ea2f5e815963c1b"
+
+[[borrow]]
+path = "examples/strokes/graphite.png"
+sha256 = "72ebcd67f7b0cf4c46c84326c1006a5fc2c22602df24d3916495f4111e329d11"
+
+[[borrow]]
+path = "examples/styles/luts/warm_print.png"
+sha256 = "0aa544f4d8d95e6e16d7c813c38456ae425eb21188b35779569794bcce210bb5"
+
+[[borrow]]
+path = "examples/styles/papers/cotton.png"
+sha256 = "2b3247309acd0c985c99bf6e4b1862d7bde27e2ffb3b2c735969874a9e654517"
+
+[[borrow]]
+path = "examples/terrain/dirt.png"
+sha256 = "951e94938c101fbb5b8e62e95ce3a21a1b073fa80bda057abdbcfd78fdfba23f"
+
+[[borrow]]
+path = "examples/terrain/grass.png"
+sha256 = "9275bf610795a0dabff8d4e4acc550e9b5ccf744bdb2ec75958057ecc1d3974a"
+
+[[borrow]]
+path = "examples/terrain/heightmap.png"
+sha256 = "a34022fa70c27dbda47788ee7c8ba77e51da599cae23a44331e3c16d740a5754"
+
+[[borrow]]
+path = "examples/terrain/rock.png"
+sha256 = "b0a37a032826226c5b727d43a64240939a2a60c38ce953d77edd563c7d0ba6f3"
+
+[[borrow]]
+path = "examples/terrain/sand.png"
+sha256 = "1dfa1c19d810abac87a5bdad7baa392a9134c463e00de6749355ae5e57652aa3"
+
+[[borrow]]
+path = "examples/terrain/splatmap.png"
+sha256 = "63e23cf90d36814754173186b2f344deb144ce9f8dbe1f4ac957182b95e5816a"
+
+[[borrow]]
+path = "examples/textures/floor_tiles.png"
+sha256 = "bb769873b052fdeecd73adfff251a83232aede84b46cc2a1877e5517d8c61cb6"
+
+[[borrow]]
+path = "examples/textures/stone_wall.png"
+sha256 = "1254cb6938cfc7225151e2f7f678207c840ef527fe7e145a351243615f0f73bf"
+
+[[borrow]]
+path = "examples/textures/wisp_sprite.png"
+sha256 = "4d2d8b1ba66ef581c082ac4d785121571fb0df652fd154d7ae5089d7e3f1e198"
+
+[[borrow]]
+path = "examples/textures/wood_planks.jpg"
+sha256 = "768a2334bbf68f3101b943bdf2af49a84fd91d3fbed17e39a34b6d797eaea9e8"
+
+[[borrow]]
+path = "examples/textures/wood_planks_old.png"
+sha256 = "61fe1dea0adace4c486b61cdedd7e1b5efff5947c54fac7c7b87200e95e28968"

@@ -909,7 +909,7 @@ min = [-1.5, 0, -0.3]
 max = [1.5, 0.9, 0.3]
 
 [entities.pew_row_L1.material]
-texture = "textures/wood_planks.png"
+texture = "textures/wood_planks.jpg"
 roughness = 0.65
 
 [entities.pew_row_L2]
@@ -924,7 +924,7 @@ min = [-1.5, 0, -0.3]
 max = [1.5, 0.9, 0.3]
 
 [entities.pew_row_L2.material]
-texture = "textures/wood_planks.png"
+texture = "textures/wood_planks.jpg"
 roughness = 0.65
 
 [entities.pew_row_L3]
@@ -939,7 +939,7 @@ min = [-1.5, 0, -0.3]
 max = [1.5, 0.9, 0.3]
 
 [entities.pew_row_L3.material]
-texture = "textures/wood_planks.png"
+texture = "textures/wood_planks.jpg"
 roughness = 0.65
 
 [entities.pew_row_R1]
@@ -954,7 +954,7 @@ min = [-1.5, 0, -0.3]
 max = [1.5, 0.9, 0.3]
 
 [entities.pew_row_R1.material]
-texture = "textures/wood_planks.png"
+texture = "textures/wood_planks.jpg"
 roughness = 0.65
 
 [entities.pew_row_R2]
@@ -969,7 +969,7 @@ min = [-1.5, 0, -0.3]
 max = [1.5, 0.9, 0.3]
 
 [entities.pew_row_R2.material]
-texture = "textures/wood_planks.png"
+texture = "textures/wood_planks.jpg"
 roughness = 0.65
 
 [entities.pew_row_R3]
@@ -984,7 +984,7 @@ min = [-1.5, 0, -0.3]
 max = [1.5, 0.9, 0.3]
 
 [entities.pew_row_R3.material]
-texture = "textures/wood_planks.png"
+texture = "textures/wood_planks.jpg"
 roughness = 0.65
 
 # -- Floor platform: raised dais beneath the altar --
@@ -1017,7 +1017,7 @@ min = [-0.25, 0, -0.2]
 max = [0.25, 1.3, 0.2]
 
 [entities.lectern.material]
-texture = "textures/wood_planks.png"
+texture = "textures/wood_planks.jpg"
 roughness = 0.6
 
 # -- Transept left: prayer kneelers and reliquary --
@@ -1033,7 +1033,7 @@ min = [-2, 0, -0.4]
 max = [2, 0.5, 0.4]
 
 [entities.kneeler_left.material]
-texture = "textures/wood_planks.png"
+texture = "textures/wood_planks.jpg"
 roughness = 0.7
 
 [entities.reliquary]
@@ -1080,7 +1080,7 @@ min = [-1.0, 0, -0.5]
 max = [1.0, 0.8, 0.5]
 
 [entities.offering_table.material]
-texture = "textures/wood_planks.png"
+texture = "textures/wood_planks.jpg"
 roughness = 0.65
 
 # -- Narthex: entry benches and notice board --
@@ -1096,7 +1096,7 @@ min = [-2, 0, -0.3]
 max = [2, 0.5, 0.3]
 
 [entities.entry_bench_left.material]
-texture = "textures/wood_planks.png"
+texture = "textures/wood_planks.jpg"
 roughness = 0.7
 
 [entities.entry_bench_right]
@@ -1111,7 +1111,7 @@ min = [-2, 0, -0.3]
 max = [2, 0.5, 0.3]
 
 [entities.entry_bench_right.material]
-texture = "textures/wood_planks.png"
+texture = "textures/wood_planks.jpg"
 roughness = 0.7
 
 [entities.notice_board]
@@ -1126,7 +1126,7 @@ min = [-0.05, -0.6, -0.4]
 max = [0.05, 0.6, 0.4]
 
 [entities.notice_board.material]
-texture = "textures/wood_planks.png"
+texture = "textures/wood_planks.jpg"
 roughness = 0.6
 
 # -- Apse: reredos screen behind the altar --

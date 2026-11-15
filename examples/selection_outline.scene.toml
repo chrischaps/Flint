@@ -73,7 +73,7 @@ position = [-1.6, 0, -2.4]
 min = [-0.6, 0, -0.6]
 max = [0.6, 1.2, 0.6]
 [entities.crate.material]
-texture = "wood_planks.png"
+texture = "wood_planks.jpg"
 base_color_r = 0.55
 base_color_g = 0.38
 base_color_b = 0.22
@@ -175,7 +175,7 @@ position = [-0.4, 0.3, 0.5]
 min = [-0.3, -0.3, -0.06]
 max = [0.3, 0.3, 0.06]
 [entities.cart_wheel_l.material]
-texture = "wood_planks.png"
+texture = "wood_planks.jpg"
 base_color_r = 0.25
 base_color_g = 0.22
 base_color_b = 0.2
@@ -188,7 +188,7 @@ position = [0.4, 0.3, 0.5]
 min = [-0.3, -0.3, -0.06]
 max = [0.3, 0.3, 0.06]
 [entities.cart_wheel_r.material]
-texture = "wood_planks.png"
+texture = "wood_planks.jpg"
 base_color_r = 0.25
 base_color_g = 0.22
 base_color_b = 0.2

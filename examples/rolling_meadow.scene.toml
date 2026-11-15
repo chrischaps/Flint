@@ -78,10 +78,10 @@ position = [-192, 0, -192]
 [entities.ground.terrain]
 heightmap = "rolling_meadow/heightmap.png"
 splat_map = "rolling_meadow/splatmap.png"
-layer0_texture = "rolling_meadow/grass.png"
-layer1_texture = "rolling_meadow/dirt.png"
-layer2_texture = "rolling_meadow/rock.png"
-layer3_texture = "rolling_meadow/sand.png"
+layer0_texture = "terrain/grass.png"
+layer1_texture = "terrain/dirt.png"
+layer2_texture = "terrain/rock.png"
+layer3_texture = "terrain/sand.png"
 width = 384.0
 depth = 384.0
 height_scale = 25.0
