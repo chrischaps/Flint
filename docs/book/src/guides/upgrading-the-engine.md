@@ -20,13 +20,39 @@ A game made only of scenes, scripts, schemas and user styles (`.shader.toml` and
 A game with Rust of its own ports the parts that call wgpu or egui:
 
 - a `PlayerExtension` that draws egui UI ([the game UI hook](#the-game-ui-hook) and [egui 0.30 to 0.36](#egui-030-to-036));
-- a Rust style built on `stylize::kit`, or a renderer or window of its own ([wgpu 23 to 30](#wgpu-23-to-30), [WGSL](#wgsl) and [Flint's shaders are trusted code](#flints-shaders-are-trusted-code)).
+- a Rust style built on `stylize::kit`, or a renderer or window of its own ([wgpu 23 to 30](#wgpu-23-to-30), [WGSL](#wgsl) and [Flint's shaders are trusted code](#flints-shaders-are-trusted-code));
+- and every game binary, whatever it calls: its `Cargo.toml` names the engine's patches ([Cargo](#cargo)), or it doesn't build.
 
-**Cargo.** Name the same versions as the engine (`wgpu = "30.0.2"`, `egui = "0.36.2"`) or take them from the engine's workspace. A subtree game that builds for the web also adds the engine's patched egui-winit to its workspace root's `Cargo.toml`, which adds the one function the web build needs:
+#### Cargo
+
+Name the same versions as the engine (`wgpu = "30.0.2"`, `egui = "0.36.2"`) or take them from the engine's workspace.
+
+A game whose own workspace builds engine crates (any game binary, with the engine at `engine/`) also names the engine's two patches in its workspace root's `Cargo.toml`, **on every platform**. cargo applies `[patch]` only from the root of the workspace it builds, so the engine's own lines don't reach a game's build ([#982](https://github.com/chrischaps/Flint/issues/982)):
 
 ```toml
 [patch.crates-io]
+mach-dxcompiler-rs = { path = "engine/vendor/static-dxc" }
 egui-winit = { path = "engine/vendor/egui-winit" }
+```
+
+- **`mach-dxcompiler-rs`** is Flint's static DXC ([#947](https://github.com/chrischaps/Flint/issues/947)), the DX12 shader compiler linked into every Windows build. flint-render asks for exactly its version, `=0.1.947`, which crates.io doesn't have. Without the line cargo stops before it builds anything, on Linux and macOS too:
+
+  ```
+  error: failed to select a version for the requirement `mach-dxcompiler-rs = "=0.1.947"`
+  candidate versions found which didn't match: 0.1.7+2026.10.26-141dd7f.1, 0.1.6+2026.09.16-48d5a66.1, ...
+  location searched: crates.io index
+  required by package `flint-render v0.1.0 (...\engine\crates\flint-render)`
+  ```
+
+  So a game never builds crates.io's mach-dxcompiler-rs (mach's prebuilt DXC, fetched through GitHub's API on every clean build) in Flint's place, and no adapter line names a DXC the game doesn't carry. With the line, the first build on a machine fetches Flint's archive once into `%LOCALAPPDATA%\flint\static-dxc`, and later builds work offline.
+- **`egui-winit`** adds the one function the web build needs ([#945](https://github.com/chrischaps/Flint/issues/945)). A native build compiles without it.
+
+`flint check` on the game warns about each line its root lacks or points elsewhere (`missing-cargo-patch`), with the line to add. Paths are from the root's folder: a root beside `engine/` writes `engine/vendor/...`.
+
+A new game, or one whose `Cargo.lock` has no `mach-dxcompiler-rs` in it (written with an engine from before #947), needs nothing more: the line is all. A lockfile that already holds crates.io's copy (written by a build of an engine from between #947 and #982) makes cargo say ``failed to select a version for `mach-dxcompiler-rs` `` and ``locked to 0.1.7+2026.10.26-141dd7f.1`` once the line is in. Unlock it once:
+
+```bash
+cargo update -p mach-dxcompiler-rs
 ```
 
 ### egui 0.30 to 0.36

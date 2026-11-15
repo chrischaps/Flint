@@ -123,6 +123,7 @@ checked 2 scenes and 3 files: 6 errors, 1 warning
 | `[wooze]` and `[living.species]` | `bad-wooze` `bad-species` |
 | Constraints, and that each one can be evaluated | `constraint` `bad-constraint` |
 | `flint.toml` reads, its schema directories exist, its start scene is there | `bad-manifest` `bad-schemas` `missing-asset` |
+| A folder's `Cargo.toml` (a game with a Rust binary) names every `[patch.crates-io]` line of the engine it builds by path, since cargo applies only the root workspace's ([Upgrading the Engine](../guides/upgrading-the-engine.md#cargo)) | `missing-cargo-patch` |
 | Every script compiles, and its calls, callbacks and imports fit the script API ([`flint script check`](../concepts/scripting.md#checking-your-scripts)) | `script-syntax` `unknown-function` `wrong-arity` `bad-argument` `unknown-callback` `callback-arity` `missing-module` `deprecated-function` `mixed-numbers` |
 
 A model or texture name counts as found when the asset catalog holds it, when a procgen spec the scene can see is named that, or when the file search finds it, in that order, as at run time. A `model` with `runtime = true` has no file to find. A script is checked for the files its string literals name, and held to the script API as `flint script check` holds it; a script problem has a line and a column (`error[wrong-arity] 82:9: ...`).
