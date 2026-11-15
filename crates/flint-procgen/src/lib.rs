@@ -41,6 +41,7 @@ pub use export_glb::{mesh_lods_to_glb, mesh_to_glb, skinned_mesh_to_glb};
 pub use generator::{GenerationCost, Generator, LivingGenerator};
 pub use generators::creature::CreatureGenerator;
 pub use generators::register_built_in_generators;
+pub use generators::sweep::SweepGenerator;
 pub use generators::texture::TextureGenerator;
 pub use generators::tree::TreeGenerator;
 pub use living::{

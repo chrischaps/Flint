@@ -366,7 +366,7 @@ file = "oval_plus.spline.toml"
 
 ### Spline Meshes
 
-The `spline_mesh` component generates geometry by sweeping a rectangular cross-section along a spline:
+The `spline_mesh` component generates geometry by sweeping a cross-section along a spline. The simplest is a box, `width` across and `height` tall:
 
 ```toml
 [entities.road_surface]
@@ -382,7 +382,36 @@ texture = "textures/asphalt.png"
 texture_length = 6.0         # metres of road per texture repeat
 ```
 
-One spline can feed multiple mesh entities (road surface, walls, guardrails) with different cross-section dimensions and colours. The mesh's look is the component's own fields (`color`, `stripe_color`, `metallic`, `roughness`, `texture`, `normal_texture`), and it comes with a triangle-mesh collider unless `collider = false`. `chunk_size` splits a long sweep into child entities. `flint schema spline_mesh` lists every field with its fallback; `spline`, `width` and `height` are required. The mesh is built in world space, so leave the entity's transform at the origin.
+Any other shape is a `profile`: a polygon of `[right, up]` points in metres, in place of `width` and `height`.
+
+```toml
+[entities.hand_rail.spline_mesh]
+spline = "track_path"
+profile = [[0.05, 0.0], [0.035, 0.035], [0.0, 0.05], [-0.035, 0.035],
+           [-0.05, 0.0], [-0.035, -0.035], [0.0, -0.05], [0.035, -0.035]]
+smooth = true                # shade it round: a tube
+offset = [-6.5, 0.9]
+color = [0.86, 0.64, 0.3, 1.0]
+metallic = 1.0
+collider = false
+```
+
+- A **closed** profile (the default) is a solid. Its faces look outward whichever way round the points are listed, and it is capped where the sweep starts and stops: the ends of an open spline and both sides of every gap. A concave profile (an I-beam, an L) is capped correctly.
+- `profile_closed = false` makes it an **open** surface: no closing edge and no caps. It faces to the left of the order the points are listed in, so a road listed from left to right faces up, and a U listed that way faces into its channel.
+- `smooth = true` shades it round, each point's normal the average of its two edges', with texture u running once around the profile. Flat (the default) gives each edge its own normal, and u runs 0..1 across each face, read upward on a wall so the walls on both sides of a road show their texture standing up.
+
+![examples/sweep_garden.scene.toml: one banked loop with a box path, striped kerbs, a brass tube and an open gutter, climbing to a gap](../images/sweep-garden.png)
+
+One spline can feed multiple mesh entities (road surface, walls, guardrails) with different cross-sections and colours. The mesh's look is the component's own fields (`color`, `stripe_color`, `metallic`, `roughness`, `texture`, `normal_texture`), and it comes with a triangle-mesh collider unless `collider = false`. `chunk_size` splits a long sweep into child entities; the texture and the stripes run on across them. `flint schema spline_mesh` lists every field with its fallback; `spline` is required, and `width` and `height` unless there is a `profile`. The mesh is built in world space, so leave the entity's transform at the origin. `examples/sweep_garden.scene.toml` sweeps six shapes along one loop.
+
+A spline file with a mistake is named with its line and column, by `flint check` (`bad-spline`) and in the warning a render or the player logs:
+
+```
+splines/ring.spline.toml: 1 error
+  error[bad-spline] 10:1: missing field `position`
+```
+
+To make one model of a swept shape, without a spline file or a collider, use the [`sweep_v1`](procgen.md#sweep_v1) procgen generator: it is the same sweep.
 
 ## Further Reading
 

@@ -277,6 +277,7 @@ fn assets(
     let mut names: Vec<&String> = file.entities.keys().collect();
     names.sort_unstable();
     let mut bad_specs = BTreeSet::new();
+    let mut bad_splines = BTreeSet::new();
     // One asset missing is one problem, however many entities name it: the
     // first is the diagnostic's, the rest are counted in its message
     let mut misses: Vec<((AssetKind, String), Diagnostic, Vec<String>)> = Vec::new();
@@ -324,7 +325,25 @@ fn assets(
             }
             let answer = project.explain(*kind, name, scene_dir);
             match answer.found {
-                Some(path) => out.reached.push(path),
+                Some(path) => {
+                    // A spline file the loader would refuse, placed (#750)
+                    if *component == "spline" && bad_splines.insert(path.clone()) {
+                        if let Err(e) = flint_geometry::spline_file::SplineFile::read(&path) {
+                            let mut d = Diagnostic::error(codes::BAD_SPLINE, e.message.clone())
+                                .file(&path)
+                                .hint(format!(
+                                    "{} names it (entity '{entity}', spline.file); the \
+                                         spline loads no path and its meshes are not made",
+                                    shown(scene)
+                                ));
+                            if let (Some(line), Some(column)) = (e.line, e.column) {
+                                d = d.at(line, column);
+                            }
+                            out.diagnostics.push(d);
+                        }
+                    }
+                    out.reached.push(path)
+                }
                 None => {
                     let key = (*kind, name.to_string());
                     if let Some((_, _, others)) = misses.iter_mut().find(|(k, _, _)| *k == key) {

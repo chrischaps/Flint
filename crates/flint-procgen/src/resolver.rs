@@ -625,7 +625,10 @@ value = 42",
         assert_eq!(resolver.check_generator("test_cube"), Ok(()));
         let err = resolver.check_generator("rock").unwrap_err();
         assert!(err.contains("'boulder_v9' is not registered"), "{err}");
-        assert!(err.contains("mock, texture_v1"), "sorted known list: {err}");
+        assert!(
+            err.contains("mock, sweep_v1, texture_v1"),
+            "sorted known list: {err}"
+        );
         assert!(resolver.check_generator("nonexistent").is_err());
         // Checking generates nothing.
         assert_eq!(resolver.cache_stats().misses, 0);

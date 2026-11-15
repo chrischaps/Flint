@@ -7,7 +7,6 @@ pub mod extension;
 #[cfg(feature = "music")]
 mod music;
 mod player_app;
-pub mod spline_gen;
 pub mod user_files;
 pub mod window_args;
 

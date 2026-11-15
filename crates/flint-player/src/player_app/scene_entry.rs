@@ -200,15 +200,24 @@ impl PlayerApp {
         register_node_animation_data(&load_result, &mut self.core.animation);
         self.skeletal_entity_assets = load_result.skinned_entities;
 
-        // Procedural geometry from spline + spline_mesh entities
-        crate::spline_gen::load_splines(
+        // Meshes swept along the scene's splines (#750), each with its
+        // collider unless it says `collider = false`
+        let splines = flint_render::load_scene_splines(
             &self.core.scene_path,
             &mut self.core.world,
             renderer,
-            Some(&mut self.core.physics),
             device,
             queue,
         );
+        for c in splines.colliders {
+            self.core.physics.register_static_trimesh(
+                c.entity,
+                c.vertices,
+                c.triangles,
+                c.friction,
+                c.restitution,
+            );
+        }
         // The scene's draws, read once its models and splines are in (#739:
         // the frame's own inputs replace these at its first sync)
         renderer.prepare(

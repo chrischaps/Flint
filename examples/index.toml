@@ -126,6 +126,11 @@ scene = "shear_road_yawed.scene.toml"
 topic = "rendering"
 purpose = "The sheared road seen from a yawed camera (#625)"
 
+[[example]]
+scene = "sweep_garden.scene.toml"
+topic = "rendering"
+purpose = "Six cross-sections swept along one banked loop: a box, striped kerbs, a smooth tube, an open gutter and a concave I-beam, capped at a gap (#750)"
+
 # --- stylize ----------------------------------------------------------------
 
 [[example]]

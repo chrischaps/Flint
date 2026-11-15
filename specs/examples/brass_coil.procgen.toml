@@ -1,0 +1,102 @@
+# A brass coil: a smooth tube swept up a helix (sweep_v1, #750). The path
+# is inline, written as a .spline.toml's control points are, so the spec is
+# the whole input and `flint gen` makes the same bytes every time.
+#
+#   flint gen specs/examples/brass_coil.procgen.toml -o coil.glb
+#   flint edit specs/examples/brass_coil.procgen.toml
+
+generator = "sweep_v1"
+
+[meta]
+name = "brass_coil"
+description = "A smooth brass tube coiled three times up a helix"
+version = "1.0.0"
+tags = ["sweep", "metal", "example"]
+
+[seed]
+mode = "fixed"
+value = 750
+
+[params]
+spacing = 0.04
+smooth = true
+profile = [[0.04, 0.0], [0.0324, 0.0235], [0.0124, 0.038], [-0.0124, 0.038], [-0.0324, 0.0235], [-0.04, 0.0], [-0.0324, -0.0235], [-0.0124, -0.038], [0.0124, -0.038], [0.0324, -0.0235]]
+color = "#c8964a"
+metallic = 1.0
+roughness = 0.3
+texture_length = 0.25
+
+[[params.control_points]]
+position = [0.45, 0.12, 0.0]
+
+[[params.control_points]]
+position = [0.3182, 0.165, 0.3182]
+
+[[params.control_points]]
+position = [0.0, 0.21, 0.45]
+
+[[params.control_points]]
+position = [-0.3182, 0.255, 0.3182]
+
+[[params.control_points]]
+position = [-0.45, 0.3, 0.0]
+
+[[params.control_points]]
+position = [-0.3182, 0.345, -0.3182]
+
+[[params.control_points]]
+position = [-0.0, 0.39, -0.45]
+
+[[params.control_points]]
+position = [0.3182, 0.435, -0.3182]
+
+[[params.control_points]]
+position = [0.45, 0.48, -0.0]
+
+[[params.control_points]]
+position = [0.3182, 0.525, 0.3182]
+
+[[params.control_points]]
+position = [0.0, 0.57, 0.45]
+
+[[params.control_points]]
+position = [-0.3182, 0.615, 0.3182]
+
+[[params.control_points]]
+position = [-0.45, 0.66, 0.0]
+
+[[params.control_points]]
+position = [-0.3182, 0.705, -0.3182]
+
+[[params.control_points]]
+position = [-0.0, 0.75, -0.45]
+
+[[params.control_points]]
+position = [0.3182, 0.795, -0.3182]
+
+[[params.control_points]]
+position = [0.45, 0.84, -0.0]
+
+[[params.control_points]]
+position = [0.3182, 0.885, 0.3182]
+
+[[params.control_points]]
+position = [0.0, 0.93, 0.45]
+
+[[params.control_points]]
+position = [-0.3182, 0.975, 0.3182]
+
+[[params.control_points]]
+position = [-0.45, 1.02, 0.0]
+
+[[params.control_points]]
+position = [-0.3182, 1.065, -0.3182]
+
+[[params.control_points]]
+position = [-0.0, 1.11, -0.45]
+
+[[params.control_points]]
+position = [0.3182, 1.155, -0.3182]
+
+[[params.control_points]]
+position = [0.45, 1.2, -0.0]

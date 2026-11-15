@@ -449,7 +449,10 @@ twist = 5.0               # Banked turn
 | `spline.closed` | bool | Whether the spline forms a closed loop |
 | `sampling.spacing` | f32 | Distance between sampled points along the curve |
 | `control_points[].position` | `[f32; 3]` | 3D position `[x, y, z]` |
-| `control_points[].twist` | f32 | Banking angle in degrees (interpolated with C1 continuity via Catmull-Rom) |
+| `control_points[].twist` | f32 | Banking angle in degrees (interpolated with C1 continuity via Catmull-Rom). Default 0 |
+| `control_points[].gap_after` | bool | No geometry from this point to the next: a `spline_mesh` stops and caps itself on both sides. Default false |
+
+`[spline]` and at least two control points are required, each `position` exactly three numbers, and `spacing` above 0 (default 2). `closed` defaults to true. A file that breaks any of these is named with its line and column, by `flint check` as `bad-spline` and in the warning the loader logs, and the spline is left out; keys the format doesn't read (`name`) are allowed.
 
 The engine samples the control points into a dense array using Catmull-Rom interpolation, stored as the `spline_data` ECS component. Scripts can query this data via `spline_closest_point()` and `spline_sample_at()`.
 
