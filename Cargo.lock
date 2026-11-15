@@ -2036,6 +2036,7 @@ dependencies = [
  "flint-particles",
  "flint-pixels",
  "flint-scene",
+ "flint-schema",
  "flint-terrain",
  "flint-wooze",
  "image",

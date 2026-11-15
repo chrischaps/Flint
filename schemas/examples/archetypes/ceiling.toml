@@ -5,3 +5,7 @@ components = ["transform", "bounds"]
 [archetype.ceiling.defaults.bounds]
 min = [-5, -0.1, -5]
 max = [5, 0.1, 5]
+
+# The box it draws as when it has `bounds` and nothing else to draw (#751)
+[archetype.ceiling.visual]
+color = [0.65, 0.62, 0.58]

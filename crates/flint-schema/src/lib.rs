@@ -10,7 +10,7 @@ pub mod lint;
 mod registry;
 mod validation;
 
-pub use archetype::ArchetypeSchema;
+pub use archetype::{ArchetypeSchema, ArchetypeVisual};
 pub use component::{
     type_name_of, ComponentSchema, FieldSchema, FieldType, TableSchema, OLD_TYPE_NAMES, TYPE_NAMES,
 };

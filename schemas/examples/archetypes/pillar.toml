@@ -5,3 +5,7 @@ components = ["transform", "bounds"]
 [archetype.pillar.defaults.bounds]
 min = [-0.25, 0, -0.25]
 max = [0.25, 4, 0.25]
+
+# The box it draws as when it has `bounds` and nothing else to draw (#751)
+[archetype.pillar.visual]
+color = [0.70, 0.65, 0.55]

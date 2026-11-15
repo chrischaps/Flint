@@ -8,3 +8,7 @@ locked = false
 
 [archetype.door.defaults.audio_trigger]
 on_interact = "door_open.ogg"
+
+# The box it draws as when it has `bounds` and nothing else to draw (#751)
+[archetype.door.visual]
+color = [1.0, 0.53, 0.27]

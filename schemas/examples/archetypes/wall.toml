@@ -5,3 +5,7 @@ components = ["transform", "bounds"]
 [archetype.wall.defaults.bounds]
 min = [-5, 0, -0.15]
 max = [5, 4, 0.15]
+
+# The box it draws as when it has `bounds` and nothing else to draw (#751)
+[archetype.wall.visual]
+color = [0.76, 0.70, 0.60]

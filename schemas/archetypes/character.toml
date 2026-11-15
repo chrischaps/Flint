@@ -1,3 +1,7 @@
 [archetype.character]
 description = "A character entity (player or NPC)"
 components = ["transform"]
+
+# The box it draws as when it has `bounds` and nothing else to draw (#751)
+[archetype.character.visual]
+color = [1.0, 1.0, 0.27]

@@ -111,13 +111,22 @@ pub fn archetype_json(archetype: &ArchetypeSchema) -> Value {
         .into_iter()
         .map(|(component, table)| (component.clone(), to_json(table)))
         .collect();
-    json!({
+    let mut out = json!({
         "kind": "archetype",
         "name": archetype.name,
         "description": archetype.description,
         "components": archetype.components,
         "defaults": defaults,
-    })
+    });
+    // Its placeholder box (#751), only when the archetype gives one
+    if let Some(visual) = &archetype.visual {
+        // Each channel as the file spells it (0.76, not 0.7599999904632568)
+        let color = visual
+            .color
+            .map(|c| c.to_string().parse::<f64>().unwrap_or(c.into()));
+        out["visual"] = json!({ "color": color, "wireframe": visual.wireframe });
+    }
+    out
 }
 
 /// Everything loaded: the directories, the type names (and the old spellings
