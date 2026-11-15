@@ -25,6 +25,14 @@ WARN styles.ascii.color: unknown value 'plaid'; it takes: source, tint, raw, mon
 WARN styles.invert.strength=3 is outside its range 0..1; kept as written, past what the style is tuned for
 ```
 
+An entity's own style component is held to the same ranges (#492). A built-in style's (`ascii_style`, `pencil_style`, `watercolor_style`) has a schema whose fields carry its parameters' ranges, colours' channels included, so the scene loader warns and `flint check` and `flint validate` report an `out-of-range` error, naming the entity, the field and the range. A user style's `<name>_style` is declared open, since it loads at run time, so the same check runs against the style's own `[params]` ranges: the renderer warns when it binds the scene and `flint check` reports it. A built-in style gets the value as written (and may clamp it or draw it badly: ASCII at `cell = 400` is two flat blocks); a user style clamps it into its range, so `glow = 90` draws exactly as `glow = 2` would, which is why it is said:
+
+```text
+error[out-of-range] entity 'bench' ascii_style.cell: 400 is above the maximum 32
+error[out-of-range] entity 'crate' ascii_style.tint[0]: 3 is above the maximum 1
+error[out-of-range] entity 'barrel' hologram_style.glow: 90 is outside its range 0..2
+```
+
 Kuwahara's table is `[post_process.styles.kuwahara]`, and the contour's `[post_process.styles.contour]`. Scenes from before the tables spell them `kuwahara_enabled`, `kuwahara_radius`, `contour_width` and so on in `[post_process]`; those keys are folded into the tables when the scene loads (see [Post-Processing](post-processing.md#kuwahara-painterly-filter)).
 
 From the command line, `--style name[:key=value,...]` turns any registered style on over a scene without editing it (#271), on `flint render` and on `flint edit <model or effect> --render`:

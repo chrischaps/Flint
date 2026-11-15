@@ -3347,7 +3347,7 @@ fn a_script_cross_fades_whole_frame_styles_without_allocating_and_clears_exactly
         set_post_style(c, "kuwahara", false).unwrap()
     });
     edit(&mut renderer, &|c| {
-        set_post_style_param(c, "invert", "blend", 1.0.into()).unwrap()
+        set_post_style_param(c, "invert", "blend", 1.0.into()).unwrap();
     });
     let full = gpu.frame(&mut renderer, &world);
     for (i, (a, b)) in plain.iter().zip(&full).enumerate() {

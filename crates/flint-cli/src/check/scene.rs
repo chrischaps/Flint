@@ -477,6 +477,7 @@ fn styles(
     if memo.style_dirs.insert(scene_dir.to_path_buf()) {
         found.extend(messages.iter().map(|m| user_style_diagnostic(m, scene_dir)));
     }
+    user_style_ranges(scene, file, found);
     let Some(mut post) = file.post_process.clone() else {
         return;
     };
@@ -509,6 +510,50 @@ fn styles(
                     .tried(tried)
                     .hint("the scene is drawn without its look; `flint look list` names them"),
             );
+        }
+    }
+}
+
+/// Each entity's user-style component (`hologram_style`) against the style's
+/// own ranges (#492). A built-in style's component has a schema whose
+/// fields carry them, so `diagnose` says `ascii_style { cell = 400 }` is out
+/// of range; a user style's is declared open, since it loads at run time,
+/// and this says it in the same words, as an error as that one is.
+fn user_style_ranges(scene: &Path, file: &SceneFile, found: &mut Vec<Diagnostic>) {
+    let mut entities: Vec<_> = file.entities.iter().collect();
+    entities.sort_unstable_by_key(|(name, _)| *name);
+    for (name, entity) in entities {
+        for d in flint_render::stylize::registry() {
+            let Some(component) = d.component else {
+                continue;
+            };
+            if !flint_render::stylize::custom::is_user_style(d.name) {
+                continue;
+            }
+            let Some(table) = entity.components.get(component).and_then(|c| c.as_table()) else {
+                continue;
+            };
+            for (field, error) in flint_render::style_mask::out_of_range(d, table) {
+                // `glow=90 is outside ..` under `hologram_style.glow` says the
+                // name twice; a colour's channel (`tint_r=2`) keeps its own
+                let error = match error.strip_prefix(&format!("{field}=")) {
+                    Some(rest) => rest.to_string(),
+                    None => error,
+                };
+                found.push(
+                    Diagnostic::error(codes::OUT_OF_RANGE, error)
+                        .file(scene)
+                        .entity(name.clone())
+                        .component(component)
+                        .field(field)
+                        .hint(format!(
+                            "the user style '{}' draws it clamped into that range; \
+                             `flint render {} --list-styles` lists its ranges",
+                            d.name,
+                            shown(scene)
+                        )),
+                );
+            }
         }
     }
 }

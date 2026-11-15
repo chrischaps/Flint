@@ -181,7 +181,7 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `unknown-field` | warning | a component table has a field its schema does not declare; the hint is the nearest declared field |
 | `bad-type` | error | a value of the wrong type for its field: a string where the schema says `f32`, a `vec3` of two numbers, a component that is not a table |
 | `bad-enum-value` | error | a string that is none of an enum field's `values`; the hint lists them |
-| `out-of-range` | error | a number below the field's `min` or above its `max` |
+| `out-of-range` | error | a number below the field's `min` or above its `max`; a vector's or colour's members each (#492) |
 | `missing-field` | error | a `required` field that neither the entity, its archetype's defaults nor the field's `default` supplies |
 | `unknown-component` | error | a component table that no loaded schema directory declares; the hint is the nearest component name |
 | `unknown-archetype` | error | an `archetype = "..."` that no loaded schema directory declares, so the entity gets no defaults |

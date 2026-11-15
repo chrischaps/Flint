@@ -2179,6 +2179,12 @@ fn loaded(name: &str) -> Option<Arc<Loaded>> {
         .cloned()
 }
 
+/// Whether `name` is a loaded user style (a `.shader.toml`'s), not a
+/// built-in or a game's.
+pub fn is_user_style(name: &str) -> bool {
+    loaded(name).is_some()
+}
+
 /// The folders a scene finds styles in, nearest first: `styles/` in the
 /// scene's directory, in each directory above it up to the project root,
 /// then in the mounted engine (ADR 0114; [`AssetKind::Styles`]).

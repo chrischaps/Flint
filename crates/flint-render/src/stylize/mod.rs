@@ -178,6 +178,18 @@ impl StyleParam {
             )
         })
     }
+
+    /// `value` brought into `min..=max`, as a script's setter keeps it,
+    /// and, when it was outside, [`range_error`](Self::range_error)'s words
+    /// and what it became: "cell=400 is outside its range 4..32; clamped
+    /// to 32" (#492), for the script's author.
+    pub fn clamp(&self, value: f64) -> (f64, Option<String>) {
+        let kept = value.clamp(self.min as f64, self.max as f64);
+        let note = self
+            .range_error(value as f32)
+            .map(|e| format!("{e}; clamped to {}", kept as f32));
+        (kept, note)
+    }
 }
 
 /// One named choice a style takes (a font, a ramp, a colour mode): a

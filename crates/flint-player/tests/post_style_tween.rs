@@ -26,6 +26,31 @@ fn done(events: &[GameEvent]) -> Vec<(String, String)> {
         .collect()
 }
 
+/// A whole-frame style's number past its range is clamped and says so
+/// (#492): `set_post_style_param` each time, a tween once at its start.
+#[test]
+fn a_whole_frame_number_past_its_range_says_so() {
+    let mut config = PostProcessConfig::default();
+    let applied = flint_player::set_post_style_param(&mut config, "kuwahara", "radius", 99.into());
+    match applied {
+        StyleApplied::Clamped(None, note) => assert_eq!(
+            note,
+            "set_post_style_param: kuwahara.radius=99 is outside its range 1..8; clamped to 8"
+        ),
+        other => panic!("a clamp expected, got {other:?}"),
+    }
+    let mut tweens = StyleTweens::default();
+    let applied = tweens.tween_post(&mut config, "kuwahara", "blend", 3.0, 1.0, "linear");
+    match applied {
+        StyleApplied::Clamped(None, note) => assert!(
+            note.starts_with("tween_post_style_param: kuwahara.blend=3 is outside its range 0..1"),
+            "{note}"
+        ),
+        other => panic!("a clamp expected, got {other:?}"),
+    }
+    assert!(tweens.is_tweening_post("kuwahara", "blend"));
+}
+
 #[test]
 fn a_reveal_tween_opens_from_the_live_frame_to_the_style() {
     let mut config = PostProcessConfig::default();
