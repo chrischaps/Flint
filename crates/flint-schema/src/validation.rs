@@ -645,6 +645,7 @@ mod tests {
             name: "door".to_string(),
             description: None,
             fields,
+            panel: None,
         }
     }
 
@@ -839,6 +840,7 @@ mod tests {
             name: "inventory".to_string(),
             description: None,
             fields: HashMap::new(),
+            panel: None,
         };
         let data: toml::Value = toml::from_str("slots = 4\nitems = [\"key\"]\n").unwrap();
         assert_eq!(validate_component(&schema, &data), []);

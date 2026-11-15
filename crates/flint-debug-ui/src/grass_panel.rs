@@ -235,6 +235,25 @@ impl DebugPanel for GrassDebugPanel {
         "Grass Debug"
     }
 
+    fn weight(&self) -> u32 {
+        22
+    }
+
+    /// Push an edit to the renderer: a new density reallocates the blades.
+    fn sync(&mut self, ctx: &mut crate::PanelCtx) {
+        if !self.dirty {
+            return;
+        }
+        if self.density_changed {
+            ctx.renderer
+                .reload_grass_config(ctx.device, self.config.clone());
+            self.density_changed = false;
+        } else {
+            ctx.renderer.set_grass_config(self.config.clone());
+        }
+        self.dirty = false;
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
 

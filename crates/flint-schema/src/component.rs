@@ -208,6 +208,8 @@ pub struct ComponentSchema {
     pub name: String,
     pub description: Option<String>,
     pub fields: HashMap<String, FieldSchema>,
+    /// Its F3 panel, when a field says what it is on one (#744; `panel.rs`).
+    pub panel: Option<crate::panel::PanelSpec>,
 }
 
 impl ComponentSchema {
@@ -256,8 +258,12 @@ pub struct ComponentSchemaFile {
 pub struct ComponentSchemaDefinition {
     #[serde(default)]
     pub description: Option<String>,
+    /// In the order they are written, which is a panel's row order.
     #[serde(default)]
-    pub fields: HashMap<String, FieldSchemaDefinition>,
+    pub fields: indexmap::IndexMap<String, FieldSchemaDefinition>,
+    /// `[component.<name>.panel]`: the F3 panel's own keys (#744).
+    #[serde(default)]
+    pub panel: Option<toml::Value>,
     /// Keys beside `description` and `fields`, which the loader refuses
     /// (#792): eleven engine files once declared their fields here, under
     /// `[component.x]` instead of `[component.x.fields]`, and loaded empty.
@@ -267,7 +273,7 @@ pub struct ComponentSchemaDefinition {
 
 /// The keys a `[component.<name>]` table may hold; any other is ignored by
 /// the loader and reported by [`lint`](crate::lint).
-pub const COMPONENT_KEYS: &[&str] = &["description", "fields"];
+pub const COMPONENT_KEYS: &[&str] = &["description", "fields", "panel"];
 
 /// The keys a field definition may hold ([`DetailedFieldSchema`]).
 pub const FIELD_KEYS: &[&str] = &[
@@ -282,6 +288,7 @@ pub const FIELD_KEYS: &[&str] = &[
     "kind",
     "unless",
     "fields",
+    "panel",
 ];
 
 /// Field definition as it appears in TOML files
@@ -338,9 +345,21 @@ pub struct DetailedFieldSchema {
     /// A table's own fields.
     #[serde(default)]
     pub fields: Option<HashMap<String, FieldSchemaDefinition>>,
+    /// What the field is on its component's F3 panel (#744). Boxed: most
+    /// fields have none, and every field definition carries the slot.
+    #[serde(default)]
+    pub panel: Option<Box<toml::Value>>,
 }
 
 impl FieldSchemaDefinition {
+    /// The field's `panel` key, if it has one.
+    pub fn panel(&self) -> Option<&toml::Value> {
+        match self {
+            FieldSchemaDefinition::Simple(_) => None,
+            FieldSchemaDefinition::Detailed(d) => d.panel.as_deref(),
+        }
+    }
+
     pub fn to_field_schema(self) -> FieldSchema {
         match self {
             FieldSchemaDefinition::Simple(type_str) => {

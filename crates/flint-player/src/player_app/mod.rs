@@ -7,6 +7,8 @@ mod asset_search_tests;
 mod camera_cut;
 #[cfg(test)]
 mod capture_gate_tests;
+#[cfg(all(test, feature = "debug-hud"))]
+mod component_panel_tests;
 #[cfg(test)]
 mod debug_key_tests;
 mod debug_panels;
@@ -97,35 +99,10 @@ use std::sync::Arc;
 use transition::TransitionPhase;
 use winit::window::Window;
 
-// Component-name conventions shared by the debug panels (debug_panels.rs)
-// and the frame loop's panel-drain blocks. Kept here, the defining module,
-// so both siblings reach them via `super::`.
-
-/// Game-side day/night component driven by a script; the player only knows
-/// it to offer the F3 time scrubber (see flint-debug-ui tod_panel).
-#[cfg(feature = "debug-hud")]
-const TIME_OF_DAY_COMPONENT: &str = "time_of_day";
-#[cfg(feature = "debug-hud")]
-const WEATHER_COMPONENT: &str = "weather";
-/// Reality-tear controller (rare render-mode world events) driven by a
-/// game-side script; the F3 Reality panel forces/ends tears for tuning.
-#[cfg(feature = "debug-hud")]
-const REALITY_COMPONENT: &str = "reality";
-/// Second-raft visitor event controller driven by a game-side script; the
-/// F3 Visitor panel shows its phase/day and can force a visit for tuning.
-#[cfg(feature = "debug-hud")]
-const RAFT_VISITOR_COMPONENT: &str = "raft_visitor";
-/// Dead-calm ocean-stillness event controller driven by a game-side script;
-/// the F3 Dead Calm panel shows its phase/envelope and can force/end one.
-#[cfg(feature = "debug-hud")]
-const DEAD_CALM_COMPONENT: &str = "dead_calm";
 /// Live-tunable camera settings applied to the render camera at scene load
 /// and edited through the F3 Camera panel (see flint-debug-ui camera_panel).
+/// A game's own controllers get their panels from their schemas (#744).
 const CAMERA_TUNING_COMPONENT: &str = "camera_tuning";
-
-/// Panel name for the terrain grass debug overlay (F3).
-#[cfg(feature = "debug-hud")]
-const GRASS_DEBUG_PANEL: &str = "Grass Debug";
 
 /// Frame-capture settings for the player (`--screenshot` family of flags).
 ///

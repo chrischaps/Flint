@@ -326,6 +326,26 @@ impl DebugPanel for OceanDebugPanel {
         "Ocean Debug"
     }
 
+    fn weight(&self) -> u32 {
+        46
+    }
+
+    /// Push an edit into the world's `ocean` component: the renderer's
+    /// extraction and the script API both read from there.
+    fn sync(&mut self, ctx: &mut crate::PanelCtx) {
+        if !self.dirty {
+            return;
+        }
+        if let Some(id) = ctx.world.get_id(&self.ocean_entity_name) {
+            if let Some(comps) = ctx.world.get_components_mut(id) {
+                for (field, value) in self.config.to_fields() {
+                    comps.set_field(flint_geometry::components::OCEAN, field, value);
+                }
+            }
+        }
+        self.dirty = false;
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
 
