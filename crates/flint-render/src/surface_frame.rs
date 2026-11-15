@@ -1,6 +1,6 @@
 //! Taking the next swapchain image (#944).
 //!
-//! Every window (the player, the web shims, the viewer, the CLI's editors
+//! Every window (the player, the web player, the viewer, the CLI's editors
 //! and previews) takes its frame through [`AcquireFrame::acquire`], never
 //! `Surface::get_current_texture` (clippy's `disallowed_methods` holds it).
 //! Since wgpu 29 that call returns a `CurrentSurfaceTexture` enum rather

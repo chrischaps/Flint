@@ -16,6 +16,7 @@
 //! the truth about who owns a value rather than pretending to.
 
 use crate::styles_ui::StylesEditor;
+use crate::widgets::section;
 use crate::DebugPanel;
 use flint_render::style_mask::{legend, LegendEntry, StyleIds};
 use flint_render::stylize::StyleSettings;
@@ -729,12 +730,6 @@ fn boil_status(boil: &flint_wooze::BoilFrame) -> String {
             boil.step, boil.amount, boil.seed
         )
     }
-}
-
-fn section(ui: &mut egui::Ui, title: &str, default_open: bool, add: impl FnOnce(&mut egui::Ui)) {
-    egui::CollapsingHeader::new(title)
-        .default_open(default_open)
-        .show(ui, add);
 }
 
 fn slider(

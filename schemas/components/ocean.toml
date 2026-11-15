@@ -27,12 +27,12 @@ ramp_steps = { type = "f32", description = "Cel bands in the diffuse ramp (1-8)"
 specular_strength = { type = "f32", description = "Sun glint intensity (0 disables)", default = 1.0 }
 band_wobble = { type = "f32", description = "Ramp edge wobble: noise raggedizes cel band contours (0 = razor edges)", default = 0.2 }
 band_dither = { type = "f32", description = "Halftone dither width at band edges: dots grow/merge across the transition (0 = hard line)", default = 0.0 }
-rain_ripple = { type = "f32", description = "Rain impact-ring density 0..1 (weather-driven; 0 = off)", default = 0.0 }
+rain_ripple = { type = "f32", description = "Rain impact-ring density 0..1: expanding rings where drops land, fading out by about 30 m from the camera (0 = off)", default = 0.0 }
 band_dither_scale = { type = "f32", description = "Halftone dot grid frequency in dots per meter", default = 1.5 }
 foam_glow_color = { type = "color", description = "Bioluminescent foam glow color (RGBA linear, emissive teal-green)", default = [0.35, 0.95, 0.75, 1.0] }
-foam_glow = { type = "f32", description = "Bioluminescent glow strength (0 = off; time_of_day.rhai fades it in at night)", default = 0.0 }
+foam_glow = { type = "f32", description = "Bioluminescent glow strength: emissive light from churned foam, brightest at contact foam (0 = off)", default = 0.0 }
 
-# ── Contact foam (splash ring around the scene's ocean_contact hull) ────
+# ── Contact foam (a splash ring round each ocean_contact entity) ────────
 splash_strength = { type = "f32", description = "Contact foam overall gain (0 disables)", default = 1.0 }
 splash_width = { type = "f32", description = "Max foam band width outward from the hull at full churn (m)", default = 0.35 }
 splash_flicker_speed = { type = "f32", description = "Contact foam lapping/flicker animation rate", default = 1.6 }
@@ -57,6 +57,3 @@ sky_reflection_strength = { type = "f32", description = "Fresnel-weighted analyt
 grid_scale = { type = "f32", description = "Inner metric scale of the camera-following grid (m)", default = 60.0 }
 fade_start = { type = "f32", description = "Distance where wave displacement starts fading (m)", default = 90.0 }
 fade_end = { type = "f32", description = "Distance where the ocean is flat (m)", default = 170.0 }
-
-# ── Diagnostics ─────────────────────────────────────────────────────────
-show_probe = { type = "bool", description = "Show the CPU/GPU parity buoy (a wave_probe script pins it to ocean_height; parked underwater when false)", default = false }

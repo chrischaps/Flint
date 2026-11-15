@@ -95,6 +95,8 @@ At the top is the warped clock, drawn as what it is: one step's worth of hold, t
 | Variance | `amount`, `steady` and `keep size`. **Unheld** sets 1, 0 and off: each pose exactly as it grew |
 | Silhouette | `softness`: the body's outline feathers at rest, 0 a hard edge; the cards keep theirs ([Softness](../concepts/procgen.md#softness)) |
 
+Hover a knob for a line on what it does; a `mixed` one says why it's mixed instead.
+
 **What a knob does right away.** Nothing here pops except stagger, which can't change without moving a part to its new place on the clock.
 
 - `step` bends the clock from where it stands. `glide` and `drift` reach each part on its next beat, as they do when a script moves them.
