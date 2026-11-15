@@ -15,8 +15,8 @@ pub use diagnose::{diagnose, diagnose_scene, diagnose_scene_in};
 pub use edit::{SceneEdit, SceneScalar};
 pub use flint_core::diagnostic::{self, Diagnostic, Severity};
 pub use format::{
-    fold_legacy_style_keys, CameraDef, EntityDef, PostProcessDef, PrefabFile, PrefabInstance,
-    SceneFile, SceneMetadata, LEGACY_STYLE_KEYS,
+    fold_legacy_style_keys, CameraDef, EntityDef, EnvironmentDef, PostProcessDef, PrefabFile,
+    PrefabInstance, SceneFile, SceneMetadata, LEGACY_STYLE_KEYS,
 };
 pub use loader::{
     load_scene, load_scene_diagnosed, load_scene_string, load_scene_text, reload_scene,

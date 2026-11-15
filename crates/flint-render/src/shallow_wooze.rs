@@ -1,5 +1,8 @@
-//! Shallow wooze in the player (#215): what a `shallow_wooze` component asks of the
-//! renderer each frame.
+//! Shallow wooze's clocks (#215), and woozy grass's (#252): what a `shallow_wooze`
+//! component and `grass.wooze` ask of the renderer each frame, handed over as
+//! [`FrameInputs::shallow_wooze`](crate::FrameInputs::shallow_wooze),
+//! `grass_time` and `grass_wooze`. The player's living subsystem and the scene
+//! viewer each keep one of each (#739; they were the player's alone).
 //!
 //! A component covers its entity and everything below it, because a hand-made bench
 //! is usually several entities and a GLB can expand into several. The topmost
@@ -14,10 +17,10 @@
 
 use std::collections::HashMap;
 
+use crate::{ShallowWoozeDraw, WAVELENGTH_MIN};
 use flint_core::toml_util::toml_f32;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_render::{ShallowWoozeDraw, WAVELENGTH_MIN};
 use flint_wooze::{ShallowClock, ShallowNow, WoozeField};
 
 /// Metres at full swing, unless a component says.
