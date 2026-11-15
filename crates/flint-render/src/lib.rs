@@ -539,3 +539,7 @@ mod tests {
         );
     }
 }
+
+// Close-out probe for epic #676: unformatted, and a denied lint. Never merged.
+#[allow(dead_code)]
+fn closeout_676_probe()->usize{let b=std::fs::read("x").unwrap_or_default();b.len()}
