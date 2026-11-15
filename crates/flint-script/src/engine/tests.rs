@@ -514,6 +514,6 @@ fn completes_transition_follows_a_hot_reload() {
     engine.add_script(id, fades, "hud.rhai".into());
     assert!(engine.can_complete_transition());
     let plain = engine.compile("fn on_update() {}").unwrap();
-    engine.reload_script(id, plain);
+    engine.reload_script(&mut FlintWorld::new(), id, plain);
     assert!(!engine.can_complete_transition());
 }

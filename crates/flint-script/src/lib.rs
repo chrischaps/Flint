@@ -643,7 +643,7 @@ impl RuntimeSystem for ScriptSystem {
 
         // Check for hot-reloaded scripts
         let began = now();
-        self.sync.check_hot_reload(&mut self.engine);
+        self.sync.check_hot_reload(&mut self.engine, world);
 
         // Check for edited .ui.toml / .style.toml / token files
         crate::lock_or_recover(&self.engine.ctx)
@@ -942,8 +942,6 @@ mod tests {
         let draw = r#"fn on_update() {
             record(`${random()} ${random()} ${random_range(5.0, 6.0)}`);
         }"#;
-        // In on_init: top-level statements run again before every callback,
-        // so a seed_random(n) up there would restart the sequence each frame
         let seeded_here = r#"
             fn on_init() { seed_random(1234); }
             fn on_update() {
@@ -951,6 +949,14 @@ mod tests {
             }"#;
         let by_host = run(draw, Some(1234));
         assert_eq!(run(seeded_here, None), by_host);
+        // At the top of the script too: it runs once (#692), so the seed no
+        // longer restarts the sequence before every callback
+        let seeded_at_top = r#"
+            seed_random(1234);
+            fn on_update() {
+                record(`${random()} ${random()} ${random_range(5.0, 6.0)}`);
+            }"#;
+        assert_eq!(run(seeded_at_top, None), by_host);
         assert_eq!(
             run(seeded_here, Some(99)),
             by_host,
