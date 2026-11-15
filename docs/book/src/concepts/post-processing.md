@@ -194,7 +194,7 @@ High `volumetric_density` with a short `volumetric_max_distance` and `decay` clo
 
 The anisotropic Kuwahara filter turns the HDR image into flat, brush-like patches that follow local edge direction. It runs as a pre-pass on the HDR buffer before SSAO and bloom, so lighting effects stay crisp on top of the painted surface. Three shaders cooperate: a structure-tensor pass, a tensor blur, and the sector filter itself.
 
-![Kuwahara off](../images/kuwahara-off.png)
+![Kuwahara off](../images/room-unstyled.png)
 
 *The tavern showcase with the Kuwahara pre-pass disabled.*
 

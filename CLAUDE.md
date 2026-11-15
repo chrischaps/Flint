@@ -25,8 +25,9 @@ cargo test -p flint-core       # Test a single crate
 cargo clippy                   # Lint
 cargo fmt --all                # Format (rustfmt.toml pins the edition; `rustfmt <file>` for one file)
 bash scripts/ci.sh             # What a PR must pass: formatting, a record for every cited ADR
-                               #   (scripts/adr-check.sh) and every clippy.toml made from the root's
-                               #   (scripts/clippy-conf.sh --check), in seconds. `issue.sh land` runs it.
+                               #   (scripts/adr-check.sh), every clippy.toml made from the root's
+                               #   (scripts/clippy-conf.sh --check) and the tree's size budget
+                               #   (scripts/size-check.py, ADR 0122), in seconds. `issue.sh land` runs it.
 bash scripts/ci.sh --full      #   ...plus what CI's clippy and wasm jobs run (two builds)
 ```
 
@@ -187,7 +188,8 @@ Build, preview and publish commands: `docs/CLAUDE.md`.
 - `flint.toml` -- the checkout as a project: `schemas = ["schemas", "schemas/examples"]`, read by everything run from this tree (a game with the engine as a subtree never reads it)
 - `styles/` -- AI style guides (`*.styleguide.toml`, #420; `*.style.toml` is a UI class file) and looks (`*.look.toml`)
 - `examples/` -- Curated example scenes and their assets (was `demo/`, #763); `examples/index.toml` gives each a topic and purpose, `flint examples` lists them, `flint examples --check` (CI) holds the index to the folder and validates each. Improve them freely: nothing pins their pixels
-- `tests/fixtures/scenes/` -- Frozen copies of the scenes the goldens and CLI tests load, with their assets. No golden may load from `examples/` (`no_golden_case_loads_an_example`); a change here is a change to a test
+- `tests/fixtures/scenes/` -- Frozen copies of the scenes the goldens and CLI tests load. No golden may load a scene from `examples/` (`no_golden_case_loads_an_example`); a change here is a change to a test. The binaries they share with the examples they borrow by path (`../../../examples/models/YBot.glb`), each pinned by SHA-256 in `tests/fixtures/borrowed.toml` (#759), so changing a borrowed example file fails `scripts/ci.sh` until the fixture keeps the old bytes
+- **Every byte here is in every game** (ADR 0122, #759): a subtree is the whole tree. `scripts/size-check.py` (in `scripts/ci.sh`) fails a PR on a binary tracked twice, a texture over 2048 texels a side or 3 MB (`tools/assets/cap_textures.py` shrinks one with the renderer's own mip filter; colour maps as JPEG), a file over 8 MB, or the tree or one of its parts over budget; `--report` prints the sizes
 - `showcase_game/` -- The Overgrown Ruins, the example game: a project with its own `flint.toml`, assets and sounds (its bartender's model it names as `../../examples/models/YBotWithIdle.glb`), the engine beside it (`../schemas`) rather than under it. A top-level directory with a `flint.toml` is a game kept in the checkout; tests find one by its manifest, so engine code never names it (#760), and `crates/flint-cli/tests/checkout_games_cli.rs` fails when one names a file it doesn't have
 - The root holds only manifests and docs, and nothing is a symlink (a Windows checkout without the privilege gets a text file): `scripts/ci.sh` refuses either. A default `flint render` writes `render.png` to the working directory, which `.gitignore` covers, as it does coverage runs' `*.profraw`
 - `crates/flint-cli/templates/` -- What `flint init` writes (#707): the game-project scaffold, compiled into the binary; `tests/init_cli.rs` builds and runs each

@@ -2,8 +2,10 @@
 # What a change must pass before it lands (#757).
 #
 #   scripts/ci.sh          formatting, every cited ADR has a record
-#                          (scripts/adr-check.sh), and every clippy.toml is the
-#                          root list's copy (scripts/clippy-conf.sh --check, #761):
+#                          (scripts/adr-check.sh), every clippy.toml is the
+#                          root list's copy (scripts/clippy-conf.sh --check, #761),
+#                          the tree's shape (#760) and its size budget
+#                          (scripts/size-check.py, ADR 0122):
 #                          seconds, no build. `scripts/issue.sh
 #                          land` runs this (verify= in scripts/issue.conf), and
 #                          so does CI's rustfmt job.
@@ -53,6 +55,12 @@ if [ -n "$strays" ]; then
     echo "$strays" >&2
     exit 1
 fi
+
+echo "ci: scripts/size-check.py"
+# python3 where it runs (Windows' may be a stub); standard library only
+py=python3
+"$py" --version >/dev/null 2>&1 || py=python
+"$py" scripts/size-check.py
 
 if [ "${1:-}" = "--full" ]; then
     echo "ci: cargo clippy --all-targets"

@@ -12,10 +12,11 @@
 //! can interact with.
 
 use crate::api;
-use crate::context::{DrawItem, InputSnapshot, ScriptCallContext, ScriptCommand};
+use crate::context::{DrawItem, InputSnapshot, ScriptCallContext, ScriptCommand, WorldScope};
 use crate::module_resolver::{ModuleBase, VfsModuleResolver};
 use flint_core::vfs;
 use flint_core::EntityId;
+use flint_ecs::FlintWorld;
 use rhai::{Engine, Scope, AST};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -163,19 +164,33 @@ impl ScriptEngine {
         self.compile(&source)
     }
 
-    /// Add a compiled script for an entity
+    /// Add a compiled script for an entity. Its top-level statements (the
+    /// `let`s the callbacks share, and any call they make) run once, at the
+    /// next lending of the world ([`Self::lend`], which every callback batch
+    /// starts with), so a top-level `get_entity("door")` finds the door and
+    /// `self_entity()` is `entity` (#692).
     pub fn add_script(&mut self, entity: EntityId, ast: AST, source_path: String) {
-        let mut instance = ScriptInstance::new(ast, source_path);
-        // Evaluate top-level statements to populate scope with module-level variables.
-        // Without this, `let x = 0.0;` at the top of a script never enters the Scope,
-        // so `call_fn` can't find it from within `on_init`/`on_update`.
-        if let Err(e) = self
-            .engine
-            .run_ast_with_scope(&mut instance.scope, &instance.ast)
-        {
-            tracing::warn!("module init error ({}): {}", instance.source_path, e);
+        self.scripts
+            .insert(entity, ScriptInstance::new(ast, source_path));
+    }
+
+    /// Lend `world` to scripts until the guard drops, first running the top
+    /// level of every script added since the last lending, in
+    /// [`Self::in_order`], each with `self_entity()` its own entity.
+    pub(crate) fn lend(&mut self, world: &mut FlintWorld) -> WorldScope {
+        let scope = WorldScope::new(&self.ctx, world);
+        for entity in self.in_order(|s| s.top_level_pending) {
+            let script = self.scripts.get_mut(&entity).unwrap();
+            script.top_level_pending = false;
+            crate::lock_or_recover(&self.ctx).current_entity = entity;
+            if let Err(e) = self
+                .engine
+                .run_ast_with_scope(&mut script.scope, &script.ast)
+            {
+                tracing::warn!("top-level error ({}): {}", script.source_path, e);
+            }
         }
-        self.scripts.insert(entity, instance);
+        scope
     }
 
     /// Hot-reload an entity's script with a new AST (#634). The entity's scope
@@ -184,16 +199,26 @@ impl ScriptEngine {
     /// names it added (empty when there is no script on `entity`).
     ///
     /// The new source's top-level statements run once, into a scope of their
-    /// own, and only names the kept scope lacks are copied over. Running them
-    /// again has no cost a script doesn't already pay: `call_fn` evaluates a
-    /// script's top-level statements before every callback (that is how a
-    /// global `import` reaches `on_update`), rewinding the `let`s it pushes.
-    pub fn reload_script(&mut self, entity: EntityId, ast: AST) -> Vec<String> {
+    /// own, with `world` lent and `self_entity()` the script's entity, and
+    /// only names the kept scope lacks are copied over. A script whose top
+    /// level hasn't run yet takes the new source and runs it at the next
+    /// lending, as it would have.
+    pub fn reload_script(
+        &mut self,
+        world: &mut FlintWorld,
+        entity: EntityId,
+        ast: AST,
+    ) -> Vec<String> {
         let Some(script) = self.scripts.get_mut(&entity) else {
             return Vec::new();
         };
         script.hot_reload(ast);
-
+        if script.top_level_pending {
+            return Vec::new();
+        }
+        let _world = self.lend(world);
+        let script = self.scripts.get_mut(&entity).unwrap();
+        crate::lock_or_recover(&self.ctx).current_entity = entity;
         let mut fresh = Scope::new();
         if let Err(e) = self.engine.run_ast_with_scope(&mut fresh, &script.ast) {
             tracing::warn!(
@@ -351,3 +376,5 @@ mod hot_reload_tests;
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod top_level_tests;

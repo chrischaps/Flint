@@ -439,19 +439,19 @@ args = ["--no-grid", "--style", "pencil:boil=4,scope=screen", "--style-time", "1
 [[case]]
 name = "pencil-paper-image"
 scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
-args = ["--no-grid", "--style", "pencil:paper_image=cold_press,grain=0.8"]
+args = ["--no-grid", "--style", "pencil:paper_image=../../../examples/papers/cold_press.png,grain=0.8"]
 
 [[case]]
 name = "pencil-stroke-image"
 scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
-args = ["--no-grid", "--style", "pencil:paper_image=cold_press,stroke_image=graphite,stroke_rows=4,thickness=1.5"]
+args = ["--no-grid", "--style", "pencil:paper_image=../../../examples/papers/cold_press.png,stroke_image=../../../examples/strokes/graphite.png,stroke_rows=4,thickness=1.5"]
 
 # The strip on surfaces (#389 x #390): world strokes draw it too, the row
 # twice the stroke width in metres
 [[case]]
 name = "pencil-world-stroke-image"
 scene = "tests/fixtures/scenes/pencil_sketch.scene.toml"
-args = ["--no-grid", "--style", "pencil:grid=world,scope=screen,stroke_image=graphite,stroke_rows=4,thickness=1.5"]
+args = ["--no-grid", "--style", "pencil:grid=world,scope=screen,stroke_image=../../../examples/strokes/graphite.png,stroke_rows=4,thickness=1.5"]
 
 # --- the other registered styles ------------------------------------------
 #
@@ -616,7 +616,7 @@ tolerance = { level = 8, share = 0.005, mean = 0.3 }
 [[case]]
 name = "watercolor-paper-image"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
-args = ["--no-grid", "--style", "watercolor:paper_image=cold_press,grain_scale=1.5,grain=0.6"]
+args = ["--no-grid", "--style", "watercolor:paper_image=../../../examples/papers/cold_press.png,grain_scale=1.5,grain=0.6"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
 # Over Kuwahara: the two chain (HDR brush pools, then display-stage paint)
@@ -751,10 +751,14 @@ args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:scope=entities"]
 # Tone from the light (#869): the picture over the style albedo, so the
 # brown floor in the sun is blank at the neutral brightness and only the
 # shadows are hatched: the barrels' undersides, the crate's shaded face and
-# what they cast. Under tone = "picture" brightness 0 hatches the whole floor
+# what they cast. Under tone = "picture" brightness 0 hatches the whole floor.
+# The rotoscope look already says tone = "light", brightness = 0, so this
+# draws `look-rotoscope`'s frame byte for byte and shares its golden (#759:
+# one copy of an image); a look that stops saying so splits them again
 [[case]]
 name = "look-rotoscope-light"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+golden = "look-rotoscope.png"
 args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:tone=light,brightness=0"]
 
 # The same per entity, 4x: the variants take tone from the preset, and the

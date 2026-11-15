@@ -85,7 +85,7 @@ fn project(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("models")).unwrap();
     std::fs::create_dir_all(dir.join("scripts")).unwrap();
-    let models = repo().join("tests/fixtures/scenes/models");
+    let models = repo().join("examples/models");
     for model in ["YBotWithIdle.glb", "Box.glb"] {
         std::fs::copy(models.join(model), dir.join("models").join(model)).unwrap();
     }

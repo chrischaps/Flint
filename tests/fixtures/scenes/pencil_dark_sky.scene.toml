@@ -48,4 +48,4 @@ position = [0, 0, 0]
 scale = [2.0, 2.0, 2.0]
 
 [entities.ybot.model]
-asset = "YBotWithIdle"
+asset = "../../../examples/models/YBotWithIdle.glb"
