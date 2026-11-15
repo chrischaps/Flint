@@ -1,7 +1,8 @@
 //! Who is drawn on ticks, and when a tick turns (#405, #873).
 //!
-//! The clock and the hierarchy rule of `motion_hold`, shared by everything
-//! that draws a held entity: the renderer (its matrix, bones and lights,
+//! The clock (`flint_core::step_clock::tick`, re-exported) and the
+//! hierarchy rule of `motion_hold`, shared by everything that draws a held
+//! entity: the renderer (its matrix, bones and lights,
 //! `flint_render::motion_hold`) and the particle sync (where a held emitter
 //! emits from). They live here, beside the world, so that crates which
 //! cannot see the renderer hold on the same frames it does.
@@ -13,11 +14,10 @@ use flint_core::EntityId;
 
 use crate::FlintWorld;
 
-/// A tick lands this far (in ticks) early, so a time that sums to a whole
-/// tick a hair short in floating point (5 steps of 1/60 against 1/12) still
-/// counts as on it. A thousandth of a tick is 83 µs at 12 a second: far below
-/// a frame at any rate a film uses.
-pub const TICK_EARLY: f32 = 1e-3;
+// The tick is the stepped clock with no glide (#747): the function the
+// living props' hold-and-glide reads, so a held pose, a style's boil and a
+// living prop all count beats the same way.
+pub use flint_core::step_clock::{tick, TICK_EARLY};
 
 /// The default rate of a `motion_hold` component: twelve drawings a second,
 /// on twos at 24 frames a second.
@@ -28,15 +28,6 @@ pub const DEFAULT_RATE: f32 = 12.0;
 /// and a boil fed the same seconds agree to the bit.
 pub fn post_time(seconds: f64) -> f32 {
     (seconds % 100_000.0) as f32
-}
-
-/// Which tick `time` falls in at `rate` ticks a second, or `None` for a rate
-/// of 0 (or below, or not finite): nothing held. Time before 0 is tick 0.
-pub fn tick(time: f32, rate: f32) -> Option<i64> {
-    if !(rate > 0.0 && rate.is_finite() && time.is_finite()) {
-        return None;
-    }
-    Some((time.max(0.0) * rate + TICK_EARLY).floor() as i64)
 }
 
 /// `time` held to the start of its tick: what time-driven styles see under a
