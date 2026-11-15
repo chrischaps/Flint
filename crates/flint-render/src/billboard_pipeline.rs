@@ -40,7 +40,6 @@ pub struct BillboardDrawCall {
     pub sprite_buffer: wgpu::Buffer,
     pub billboard_bind_group: wgpu::BindGroup,
     pub texture_bind_group: wgpu::BindGroup,
-    pub entity_id: Option<flint_core::EntityId>,
 }
 
 /// The billboard rendering pipeline

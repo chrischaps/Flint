@@ -5,8 +5,8 @@
 
 use super::helpers::{extract_bounds_info, mat4_inv_transpose, parse_blend_mode, MaterialOverride};
 use super::{
-    hash_parts, transform_aabb, CachedBoneBind, EchoDrawCall, SceneRenderer, SkinnedDrawCall,
-    SHADOW_BONE_KEY, SKINNED_DRAW_KEY,
+    draw_list::echo_order, hash_parts, transform_aabb, Blend, CachedBoneBind, Draw, DrawItem,
+    EchoDrawCall, Layer, SceneRenderer, SkinnedDrawCall, SHADOW_BONE_KEY, SKINNED_DRAW_KEY,
 };
 use crate::billboard_pipeline::{BillboardDrawCall, BillboardUniforms, SpriteInstance};
 use crate::bitmap_font::{anchor_origin, apply_fill};
@@ -257,7 +257,7 @@ impl SceneRenderer {
         };
 
         let inv_transpose = mat4_inv_transpose(&model_matrix);
-        let first_echo_draw = self.echo_draws.len();
+        let first_echo_draw = self.draws.layer(Layer::Echo).len();
         // All of an entity's echoes read the transform of its first part, as
         // every part's holds the same matrices.
         let mut echo_transform: Option<Arc<wgpu::BindGroup>> = None;
@@ -428,7 +428,12 @@ impl SceneRenderer {
                     mr_view,
                     em_view,
                 );
-                self.echo_draws.push(EchoDrawCall {
+                let blend = if echoes_lighten {
+                    Blend::Lighten
+                } else {
+                    Blend::Alpha
+                };
+                let draw = EchoDrawCall {
                     vertex_buffer: gpu_mesh.vertex_buffer.clone(),
                     index_buffer: gpu_mesh.index_buffer.clone(),
                     index_count: gpu_mesh.index_count,
@@ -438,11 +443,17 @@ impl SceneRenderer {
                     material_buffer: buffer,
                     material_bind_group: bind_group,
                     bone_bind_group: copy.bind_group.clone(),
-                    lighten: echoes_lighten,
                     origin: [model_matrix[3][0], model_matrix[3][1], model_matrix[3][2]],
                     echo,
                     sort_depth: 0.0,
-                });
+                };
+                // An echo casts nothing: the shadow is the prop's own
+                self.draws.push(DrawItem::new(
+                    Some(entity_id),
+                    blend,
+                    false,
+                    Draw::Echo(draw),
+                ));
             }
 
             let entity_bones = self.skinning.bone_buffers.get(&entity_id);
@@ -569,10 +580,7 @@ impl SceneRenderer {
                 wire_index_count,
                 model: model_matrix,
                 model_inv_transpose: inv_transpose,
-                entity_id: Some(entity_id),
-                blend_mode,
                 sort_depth: 0.0,
-                casts_shadow: Self::ecs_casts_shadow(world, entity_id),
                 world_aabb: {
                     let bones = self
                         .skinning
@@ -583,21 +591,20 @@ impl SceneRenderer {
                     let (lo, hi) = super::posed_aabb(bones, gpu_mesh.aabb_min, gpu_mesh.aabb_max);
                     Some(transform_aabb(&model_matrix, lo, hi))
                 },
-                wooze: None,
                 double_sided: gpu_mesh.material.double_sided,
                 soft_edge_only,
             };
-
-            if is_transparent {
-                self.transparent_skinned_draws.push(skinned_draw);
-            } else {
-                self.skinned_entity_draws.push(skinned_draw);
-            }
+            self.draws.push(DrawItem::new(
+                Some(entity_id),
+                Blend::of_mesh(is_transparent, blend_mode),
+                Self::ecs_casts_shadow(world, entity_id),
+                Draw::Skinned(skinned_draw),
+            ));
         }
 
         // They came a part at a time: a whole echo at a time, in its order,
         // is what keeps overlapping copies from flickering.
-        self.echo_draws[first_echo_draw..].sort_by_key(|draw| draw.echo);
+        self.draws.layer_mut(Layer::Echo)[first_echo_draw..].sort_by_key(echo_order);
 
         true
     }
@@ -772,10 +779,8 @@ impl SceneRenderer {
                 binds,
                 model_matrix,
                 inv_transpose,
-                entity_id,
-                blend_mode,
             );
-            draw.casts_shadow = Self::ecs_casts_shadow(world, entity_id);
+            let casts_shadow = Self::ecs_casts_shadow(world, entity_id);
             draw.double_sided = gpu_mesh.material.double_sided;
             draw.world_aabb = Some(transform_aabb(
                 &model_matrix,
@@ -789,11 +794,12 @@ impl SceneRenderer {
                 draw.world_aabb,
             );
 
-            if is_transparent {
-                self.transparent_draws.push(draw);
-            } else {
-                self.entity_draws.push(draw);
-            }
+            self.draws.push(DrawItem::new(
+                Some(entity_id),
+                Blend::of_mesh(is_transparent, blend_mode),
+                casts_shadow,
+                Draw::Static(draw),
+            ));
 
             // Generate wireframe overlay for imported meshes
             if need_overlay {
@@ -1214,13 +1220,18 @@ impl SceneRenderer {
             label: Some("Billboard Texture Bind Group"),
         });
 
-        self.billboard_draws.push(BillboardDrawCall {
-            billboard_buffer,
-            sprite_buffer,
-            billboard_bind_group,
-            texture_bind_group,
-            entity_id: Some(entity_id),
-        });
+        // Opaque: its alpha only cuts it out, and it writes depth
+        self.draws.push(DrawItem::new(
+            Some(entity_id),
+            Blend::Opaque,
+            false,
+            Draw::Billboard(BillboardDrawCall {
+                billboard_buffer,
+                sprite_buffer,
+                billboard_bind_group,
+                texture_bind_group,
+            }),
+        ));
     }
 
     /// Extract a standalone `ui_text` entity (without a sprite component).
@@ -1474,16 +1485,14 @@ impl SceneRenderer {
                         binds,
                         model,
                         inv_transpose,
-                        entity_id,
-                        proc_blend_mode,
                     );
-                    draw.casts_shadow = casts_shadow;
                     draw.style_aabb = box_aabb;
-                    if proc_is_transparent {
-                        self.transparent_draws.push(draw);
-                    } else {
-                        self.entity_draws.push(draw);
-                    }
+                    self.draws.push(DrawItem::new(
+                        Some(entity_id),
+                        Blend::of_mesh(proc_is_transparent, proc_blend_mode),
+                        casts_shadow,
+                        Draw::Static(draw),
+                    ));
                 } else {
                     let mut material_uniforms = MaterialUniforms::procedural();
                     Self::apply_unlit(world, entity_id, &mut material_uniforms);
@@ -1511,12 +1520,14 @@ impl SceneRenderer {
                         binds,
                         model,
                         inv_transpose,
-                        entity_id,
-                        BlendMode::Alpha,
                     );
-                    draw.casts_shadow = casts_shadow;
                     draw.style_aabb = box_aabb;
-                    self.entity_draws.push(draw);
+                    self.draws.push(DrawItem::new(
+                        Some(entity_id),
+                        Blend::Opaque,
+                        casts_shadow,
+                        Draw::Static(draw),
+                    ));
                 }
             } else {
                 // Use material.color for PBR base color if present
@@ -1567,16 +1578,14 @@ impl SceneRenderer {
                     binds,
                     model,
                     inv_transpose,
-                    entity_id,
-                    proc_blend_mode,
                 );
-                draw.casts_shadow = casts_shadow;
                 draw.style_aabb = box_aabb;
-                if proc_is_transparent {
-                    self.transparent_draws.push(draw);
-                } else {
-                    self.entity_draws.push(draw);
-                }
+                self.draws.push(DrawItem::new(
+                    Some(entity_id),
+                    Blend::of_mesh(proc_is_transparent, proc_blend_mode),
+                    casts_shadow,
+                    Draw::Static(draw),
+                ));
             }
         } else {
             let material_uniforms = MaterialUniforms::procedural();
@@ -1603,10 +1612,13 @@ impl SceneRenderer {
                 binds,
                 model,
                 inv_transpose,
-                entity_id,
-                BlendMode::Alpha,
             );
-            self.entity_draws.push(draw);
+            self.draws.push(DrawItem::new(
+                Some(entity_id),
+                Blend::Opaque,
+                true,
+                Draw::Static(draw),
+            ));
         }
 
         // Debug overlays are rebuilt every frame; they only exist in the

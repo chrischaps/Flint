@@ -49,6 +49,7 @@ impl SceneRenderer {
         draws: &[ParticleDrawData<'_>],
     ) {
         self.particle_draws.clear();
+        self.draws.set_particles(std::iter::empty());
         if self.pipelines.particle.is_none() || self.particle_buffers.is_none() {
             return;
         }
@@ -87,6 +88,7 @@ impl SceneRenderer {
             buffers.write_instances(queue, &scratch);
         }
         sort_particle_draws(&mut calls);
+        self.draws.set_particles(calls.iter());
         self.particle_draws = calls;
         self.particle_upload_scratch = scratch;
     }

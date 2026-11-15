@@ -1,0 +1,452 @@
+//! The frame's draws as one list of items (ADR 0118 decision 4, #737).
+//!
+//! Every pass used to walk its own choice of nine draw lists, and a list a
+//! pass forgot was a silent fault that only a styled scene showed (the
+//! style veil never saw echoes). Now extraction fills one [`DrawList`] of
+//! [`DrawItem`]s, and each pass is a filter over it and a selector that
+//! matches on [`Draw`] with no wildcard arm: a new kind of draw is one new
+//! variant, and the compiler asks every pass what to do with it.
+//!
+//! Items hold cache handles (`Arc`s of the bind cache's buffers and bind
+//! groups), never buffers of their own, and the list keeps its allocation
+//! from frame to frame. It is held in [`Layer`] order, which is the order
+//! the main pass and the style mask draw in, so a pass that walks the whole
+//! list walks it in that order and the main pass draws a layer at a time.
+
+use super::{DrawCall, EchoDrawCall, SkinnedDrawCall};
+use crate::billboard_pipeline::BillboardDrawCall;
+use crate::pipeline::BlendMode;
+use crate::wooze_pipeline::ShallowWoozeUniforms;
+use flint_core::EntityId;
+
+/// What an item draws: its kind, and what only that kind carries.
+pub(super) enum Draw {
+    /// A model's sub-mesh or a procedural box, opaque or blended, or a
+    /// wireframe box (`DrawCall::is_wireframe`).
+    Static(DrawCall),
+    /// A skinned mesh's sub-mesh, posed by its bone bind group.
+    Skinned(SkinnedDrawCall),
+    /// One part of one echo of a living prop (#228): its entity's skinned
+    /// mesh under the echo's bones, translucent, writing no depth.
+    Echo(EchoDrawCall),
+    /// A camera-facing sprite, cut out at half alpha, writing depth.
+    Billboard(BillboardDrawCall),
+    /// Chunk `n` of the bound terrain (`TerrainRenderer::draws`), which
+    /// `bind_scene` loads once a scene rather than every extraction.
+    Terrain(u32),
+    /// Draw `n` of the frame's particle upload (`particle_draws`).
+    Particles(u32),
+}
+
+/// How an item's colour goes onto what's behind it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Blend {
+    /// Replaces it, and writes depth. Billboards are opaque: their alpha
+    /// only cuts them out.
+    Opaque,
+    Alpha,
+    /// A particle's colour already multiplied by its alpha.
+    Premultiplied,
+    Additive,
+    Multiply,
+    /// May only add light (an echo's `echo_blend = "lighten"`).
+    Lighten,
+}
+
+impl Blend {
+    /// A mesh's: opaque unless it's transparent, then its material's mode.
+    pub fn of_mesh(transparent: bool, mode: BlendMode) -> Self {
+        match (transparent, mode) {
+            (false, _) => Blend::Opaque,
+            (true, BlendMode::Alpha) => Blend::Alpha,
+            (true, BlendMode::Additive) => Blend::Additive,
+            (true, BlendMode::Multiply) => Blend::Multiply,
+        }
+    }
+
+    /// A particle emitter's.
+    pub fn of_particles(mode: flint_particles::ParticleBlendMode) -> Self {
+        use flint_particles::ParticleBlendMode as P;
+        match mode {
+            P::Alpha => Blend::Alpha,
+            P::Premultiplied => Blend::Premultiplied,
+            P::Additive => Blend::Additive,
+            P::Multiply => Blend::Multiply,
+        }
+    }
+
+    /// Whether it lets what's behind it show: what the style veil takes.
+    pub fn blends(self) -> bool {
+        self != Blend::Opaque
+    }
+
+    /// The mesh pipelines' mode for a blended static or skinned draw.
+    pub fn mesh_mode(self) -> BlendMode {
+        match self {
+            Blend::Additive => BlendMode::Additive,
+            Blend::Multiply => BlendMode::Multiply,
+            Blend::Opaque | Blend::Alpha | Blend::Premultiplied | Blend::Lighten => {
+                BlendMode::Alpha
+            }
+        }
+    }
+}
+
+/// Which vertex stage an item's mesh goes through.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum VertexStage {
+    Plain,
+    /// Shallow wooze (#215): its vertices drift by this frame's field, so
+    /// every pass that draws its geometry needs its woozy pipeline.
+    Wooze(ShallowWoozeUniforms),
+}
+
+/// Why an item is left out of this camera's frame (set by `render_to`'s
+/// culls, cleared at the start of each `render_to`).
+#[derive(Clone, Copy, Debug, Default)]
+struct Cull {
+    /// Not its level of detail from here, or past its draw distance (#56):
+    /// out of the shadow pass too.
+    lod: bool,
+    /// Outside the camera's frustum: still in the shadow pass (ADR 0074).
+    camera: bool,
+}
+
+/// One draw of the frame.
+pub(super) struct DrawItem {
+    /// Who it draws: the style mask, the veil, the selection outline and
+    /// the stats ask. The terrain's is the one `bind_scene` named.
+    pub entity: Option<EntityId>,
+    pub blend: Blend,
+    pub vertex: VertexStage,
+    /// The entity's `material.cast_shadows` (ADR 0100). What casting means
+    /// for a kind is the shadow pass's selector's to say (a translucent
+    /// skinned mesh casts only when it is translucent for its soft edge).
+    pub casts_shadow: bool,
+    cull: Cull,
+    pub draw: Draw,
+}
+
+impl DrawItem {
+    pub fn new(entity: Option<EntityId>, blend: Blend, casts_shadow: bool, draw: Draw) -> Self {
+        Self {
+            entity,
+            blend,
+            vertex: VertexStage::Plain,
+            casts_shadow,
+            cull: Cull::default(),
+            draw,
+        }
+    }
+
+    /// The layer it is kept and drawn in.
+    pub fn layer(&self) -> Layer {
+        let opaque = self.blend == Blend::Opaque;
+        match &self.draw {
+            Draw::Terrain(_) => Layer::Terrain,
+            Draw::Static(_) if opaque => Layer::OpaqueStatic,
+            Draw::Static(_) => Layer::BlendedStatic,
+            Draw::Skinned(_) if opaque => Layer::OpaqueSkinned,
+            Draw::Skinned(_) => Layer::BlendedSkinned,
+            Draw::Billboard(_) => Layer::Billboard,
+            Draw::Echo(_) => Layer::Echo,
+            Draw::Particles(_) => Layer::Particles,
+        }
+    }
+
+    /// Its drift, when it goes through the woozy vertex stage.
+    pub fn wooze(&self) -> Option<&ShallowWoozeUniforms> {
+        match &self.vertex {
+            VertexStage::Wooze(w) => Some(w),
+            VertexStage::Plain => None,
+        }
+    }
+
+    /// Whether this camera draws it: neither culled for its level of
+    /// detail nor outside the frustum.
+    pub fn drawn(&self) -> bool {
+        !self.cull.lod && !self.cull.camera
+    }
+
+    /// Whether it is past its level of detail or draw distance from here,
+    /// which leaves it out of the shadow pass too.
+    pub fn lod_culled(&self) -> bool {
+        self.cull.lod
+    }
+
+    pub fn set_lod_culled(&mut self, culled: bool) {
+        self.cull.lod = culled;
+    }
+
+    pub fn set_camera_culled(&mut self, culled: bool) {
+        self.cull.camera = culled;
+    }
+}
+
+/// The groups the list is kept in, in the order the main pass draws them
+/// (the main pass draws other things between them: grass and the ocean
+/// after the terrain, the grid after the billboards, 2D sprites before the
+/// blended statics).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Layer {
+    Terrain,
+    OpaqueStatic,
+    OpaqueSkinned,
+    Billboard,
+    /// Sorted back to front for each camera.
+    BlendedStatic,
+    /// Sorted back to front for each camera.
+    BlendedSkinned,
+    /// Sorted back to front by their entity's origin for each camera; an
+    /// entity's echoes keep their order (farthest from now first).
+    Echo,
+    /// In the order the particle upload sorted them.
+    Particles,
+}
+
+impl Layer {
+    pub const COUNT: usize = 8;
+    pub const ALL: [Layer; Layer::COUNT] = [
+        Layer::Terrain,
+        Layer::OpaqueStatic,
+        Layer::OpaqueSkinned,
+        Layer::Billboard,
+        Layer::BlendedStatic,
+        Layer::BlendedSkinned,
+        Layer::Echo,
+        Layer::Particles,
+    ];
+
+    fn index(self) -> usize {
+        self as usize
+    }
+
+    /// Whether extraction fills it. Terrain items follow the bound
+    /// terrain and particle items the particle upload, so a frame's
+    /// extraction leaves those two be.
+    fn extracted(self) -> bool {
+        match self {
+            Layer::Terrain | Layer::Particles => false,
+            Layer::OpaqueStatic
+            | Layer::OpaqueSkinned
+            | Layer::Billboard
+            | Layer::BlendedStatic
+            | Layer::BlendedSkinned
+            | Layer::Echo => true,
+        }
+    }
+}
+
+/// The frame's draws, a vector a layer, each kept across frames.
+#[derive(Default)]
+pub(super) struct DrawList {
+    layers: [Vec<DrawItem>; Layer::COUNT],
+}
+
+impl DrawList {
+    /// Empty the layers extraction fills, keeping their allocations.
+    pub fn clear_extracted(&mut self) {
+        for layer in Layer::ALL.into_iter().filter(|l| l.extracted()) {
+            self.layers[layer.index()].clear();
+        }
+    }
+
+    pub fn push(&mut self, item: DrawItem) {
+        self.layers[item.layer().index()].push(item);
+    }
+
+    pub fn layer(&self, layer: Layer) -> &[DrawItem] {
+        &self.layers[layer.index()]
+    }
+
+    pub fn layer_mut(&mut self, layer: Layer) -> &mut Vec<DrawItem> {
+        &mut self.layers[layer.index()]
+    }
+
+    /// Every item, in layer order.
+    pub fn iter(&self) -> impl Iterator<Item = &DrawItem> + Clone {
+        self.layers.iter().flatten()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut DrawItem> {
+        self.layers.iter_mut().flatten()
+    }
+
+    /// Every item this camera draws, in layer order.
+    pub fn drawn(&self) -> impl Iterator<Item = &DrawItem> + Clone {
+        self.iter().filter(|i| i.drawn())
+    }
+
+    /// Bring every item back before a camera's culls (`render_to`).
+    pub fn uncull(&mut self) {
+        for item in self.iter_mut() {
+            item.cull = Cull::default();
+        }
+    }
+
+    /// One terrain item a chunk, for the `chunks` the bound terrain has
+    /// and the entity `bind_scene` named. Called at each `render_to`, so a
+    /// host that edits terrain without extracting (the terrain editor)
+    /// still draws it.
+    pub fn sync_terrain(&mut self, chunks: usize, entity: Option<EntityId>) {
+        let layer = &mut self.layers[Layer::Terrain.index()];
+        if layer.len() == chunks && layer.first().is_none_or(|i| i.entity == entity) {
+            return;
+        }
+        layer.clear();
+        layer.extend(
+            (0..chunks as u32)
+                .map(|n| DrawItem::new(entity, Blend::Opaque, true, Draw::Terrain(n))),
+        );
+    }
+
+    /// One particle item a particle draw, after an upload.
+    pub fn set_particles<'a>(
+        &mut self,
+        draws: impl Iterator<Item = &'a crate::particle_pipeline::ParticleDrawCall>,
+    ) {
+        let layer = &mut self.layers[Layer::Particles.index()];
+        layer.clear();
+        layer.extend(draws.enumerate().map(|(n, d)| {
+            DrawItem::new(
+                None,
+                Blend::of_particles(d.blend),
+                false,
+                Draw::Particles(n as u32),
+            )
+        }));
+    }
+
+    /// Back-to-front order for this camera of the three blended layers,
+    /// by squared distance from `camera` (stable, so equally far items keep
+    /// their order: an entity's parts, an entity's echoes).
+    pub fn sort_blended(&mut self, camera: [f32; 3]) {
+        let distance = |p: [f32; 3]| {
+            let (dx, dy, dz) = (p[0] - camera[0], p[1] - camera[1], p[2] - camera[2]);
+            dx * dx + dy * dy + dz * dz
+        };
+        for layer in [Layer::BlendedStatic, Layer::BlendedSkinned, Layer::Echo] {
+            let items = &mut self.layers[layer.index()];
+            for item in items.iter_mut() {
+                match &mut item.draw {
+                    Draw::Static(d) => d.sort_depth = distance(origin(&d.model)),
+                    Draw::Skinned(d) => d.sort_depth = distance(origin(&d.model)),
+                    Draw::Echo(d) => d.sort_depth = distance(d.origin),
+                    Draw::Billboard(_) | Draw::Terrain(_) | Draw::Particles(_) => {}
+                }
+            }
+            items.sort_by(|a, b| {
+                sort_depth(b)
+                    .partial_cmp(&sort_depth(a))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+    }
+}
+
+/// An echo's place among its entity's echoes, which draw in that order.
+pub(super) fn echo_order(item: &DrawItem) -> usize {
+    match &item.draw {
+        Draw::Echo(d) => d.echo,
+        Draw::Static(_)
+        | Draw::Skinned(_)
+        | Draw::Billboard(_)
+        | Draw::Terrain(_)
+        | Draw::Particles(_) => 0,
+    }
+}
+
+fn origin(model: &[[f32; 4]; 4]) -> [f32; 3] {
+    [model[3][0], model[3][1], model[3][2]]
+}
+
+/// The distance a blended item sorts by (0 for kinds that don't sort).
+fn sort_depth(item: &DrawItem) -> f32 {
+    match &item.draw {
+        Draw::Static(d) => d.sort_depth,
+        Draw::Skinned(d) => d.sort_depth,
+        Draw::Echo(d) => d.sort_depth,
+        Draw::Billboard(_) | Draw::Terrain(_) | Draw::Particles(_) => 0.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_layer_is_in_all_once_and_in_order() {
+        for (n, layer) in Layer::ALL.into_iter().enumerate() {
+            assert_eq!(layer.index(), n, "{layer:?}");
+        }
+    }
+
+    #[test]
+    fn extraction_leaves_the_terrain_and_particle_items_be() {
+        let mut list = DrawList::default();
+        list.sync_terrain(3, None);
+        list.push(DrawItem::new(
+            None,
+            Blend::Additive,
+            false,
+            Draw::Particles(0),
+        ));
+        list.clear_extracted();
+        assert_eq!(list.layer(Layer::Terrain).len(), 3);
+        assert_eq!(list.layer(Layer::Particles).len(), 1);
+        assert_eq!(list.iter().count(), 4);
+    }
+
+    #[test]
+    fn terrain_items_follow_the_chunks_and_the_entity() {
+        let mut list = DrawList::default();
+        let ground = EntityId::from_raw(7);
+        list.sync_terrain(2, None);
+        list.sync_terrain(2, Some(ground));
+        assert!(list
+            .layer(Layer::Terrain)
+            .iter()
+            .all(|i| i.entity == Some(ground)));
+        list.sync_terrain(0, Some(ground));
+        assert!(list.layer(Layer::Terrain).is_empty());
+        list.sync_terrain(4, Some(ground));
+        let chunks: Vec<u32> = (list.layer(Layer::Terrain).iter())
+            .filter_map(|i| {
+                if let Draw::Terrain(n) = i.draw {
+                    Some(n)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(chunks, [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn a_culled_item_comes_back_for_the_next_camera() {
+        let mut list = DrawList::default();
+        list.sync_terrain(1, None);
+        for item in list.iter_mut() {
+            item.set_lod_culled(true);
+            item.set_camera_culled(true);
+        }
+        assert_eq!(list.drawn().count(), 0);
+        list.uncull();
+        assert_eq!(list.drawn().count(), 1);
+    }
+
+    #[test]
+    fn only_opaque_doesnt_blend() {
+        let blends = [
+            Blend::Opaque,
+            Blend::Alpha,
+            Blend::Premultiplied,
+            Blend::Additive,
+            Blend::Multiply,
+            Blend::Lighten,
+        ];
+        for b in blends {
+            assert_eq!(b.blends(), b != Blend::Opaque, "{b:?}");
+        }
+    }
+}
