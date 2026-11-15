@@ -12,8 +12,8 @@ The game's workspace root names the engine's two patches as well, on every platf
 
 ```toml
 [workspace]
-members = ["."]
 exclude = ["engine"]        # the subtree is a workspace of its own
+                            # (with `members = ["."]` added, cargo can't load the engine's crates)
 
 [dependencies]
 flint-player = { path = "engine/crates/flint-player" }

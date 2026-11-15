@@ -84,15 +84,23 @@ pub fn patches(project_root: &Path) -> Vec<Diagnostic> {
                 spelled_from(&wanted, &root_dir)
             );
             let hint = format!(
-                "add `{line}` under [patch.crates-io] in {} (book: Upgrading the Engine)",
-                vfs::normalize(&root_manifest)
+                "add `{line}` under [patch.crates-io] in this workspace's root Cargo.toml \
+                 (book: Upgrading the Engine, Cargo)"
             );
+            // What building without it does
+            let costs = match name.as_str() {
+                "mach-dxcompiler-rs" => {
+                    "so cargo stops on flint-render's `mach-dxcompiler-rs = \"=0.1.947\"`, \
+                     Flint's own DXC, which crates.io doesn't have"
+                        .to_string()
+                }
+                _ => format!("so the engine's crates get crates.io's `{name}` here"),
+            };
             let message = match ours.iter().find(|(n, _)| *n == name) {
                 None => format!(
-                    "the engine at `{}` patches `{name}`, and this workspace doesn't: \
-                     cargo applies [patch] only from the workspace root, so the engine's \
-                     crates build here against crates.io's `{name}`",
-                    vfs::normalize(engine)
+                    "the engine at `{}` patches `{name}` and this workspace doesn't: cargo \
+                     applies [patch] only from the workspace root, {costs}",
+                    spelled_from(engine, &root_dir)
                 ),
                 Some((_, mine)) if same_dir(&clean(&root_dir.join(mine)), &wanted) => continue,
                 Some((_, mine)) => format!(
@@ -300,7 +308,7 @@ mod tests {
         }
     }
 
-    const GAME: &str = "[workspace]\nmembers = [\".\"]\nexclude = [\"engine\"]\n\n\
+    const GAME: &str = "[workspace]\nexclude = [\"engine\"]\n\n\
          [package]\nname = \"game\"\n\n\
          [dependencies]\nflint-render = { path = \"engine/crates/flint-render\" }\n";
 

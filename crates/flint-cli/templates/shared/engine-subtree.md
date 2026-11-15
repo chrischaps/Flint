@@ -20,7 +20,6 @@ cargo build --release --manifest-path engine/Cargo.toml
 
 ```toml
 [workspace]
-members = ["."]
 exclude = ["engine"]
 
 [patch.crates-io]
