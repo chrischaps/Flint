@@ -17,6 +17,12 @@ use crate::spec::{LivingConfig, ProcGenSpec, Stagger, VarianceConfig, JITTER_TAR
 use crate::types::{BoundingBox, BranchSegment, MeshData};
 use crate::{ProcGenError, Result};
 
+/// One piece of a living structure, with its stable `id` and `parent`: a tree's
+/// branch, a form's section of its spine. The living layer is generic over what
+/// grows it, so it says `Segment`; the type is the tree generator's
+/// [`BranchSegment`], which every living generator already emits.
+pub type Segment = BranchSegment;
+
 /// How many times [`LivingSkeleton::with_variance`] corrects its size. A
 /// fixed count, so the result doesn't depend on a tolerance. Limbs stay on the
 /// trunk, so the box isn't quite proportional to the scale and one round isn't
@@ -177,12 +183,12 @@ impl LivingClock {
     }
 
     /// The clock at `t` seconds for one segment, with its phase offset.
-    pub fn for_segment(&self, t: f64, segment: &BranchSegment) -> WarpedTime {
+    pub fn for_segment(&self, t: f64, segment: &Segment) -> WarpedTime {
         WarpedTime::at_beat(t / f64::from(self.step) + self.phase(segment), self.glide)
     }
 
     /// How far ahead of the prop's own beat this segment runs, in beats.
-    pub fn phase(&self, segment: &BranchSegment) -> f64 {
+    pub fn phase(&self, segment: &Segment) -> f64 {
         match self.stagger {
             Stagger::None => 0.0,
             Stagger::PerLevel => f64::from(segment.depth) * STAGGER_PER_LEVEL,
@@ -193,7 +199,7 @@ impl LivingClock {
     }
 
     /// [`for_segment`](Self::for_segment) for every segment, written over `out`.
-    pub fn times_into(&self, t: f64, segments: &[BranchSegment], out: &mut Vec<WarpedTime>) {
+    pub fn times_into(&self, t: f64, segments: &[Segment], out: &mut Vec<WarpedTime>) {
         out.clear();
         out.extend(segments.iter().map(|s| self.for_segment(t, s)));
     }
@@ -475,7 +481,7 @@ pub struct LivingSkeleton {
     pub lineage_seed: u64,
     /// The rest pose's segments, each with its stable id and parent. A
     /// parent always comes before its children.
-    pub segments: Vec<BranchSegment>,
+    pub segments: Vec<Segment>,
     /// The leaf cards in the rest pose, whole and in order: card `k` is
     /// `card_index_count` indices starting at `k * card_index_count`.
     pub leaf_mesh: MeshData,
@@ -537,18 +543,14 @@ impl LivingSkeleton {
     ///
     /// This also works on a blend of two poses, which is what keeps a blended
     /// tree whole.
-    pub fn posed_segments(&self, pose: &LivingPose) -> Result<Vec<BranchSegment>> {
+    pub fn posed_segments(&self, pose: &LivingPose) -> Result<Vec<Segment>> {
         let mut posed = Vec::with_capacity(self.segments.len());
         self.posed_segments_into(pose, &mut posed)?;
         Ok(posed)
     }
 
     /// [`posed_segments`](Self::posed_segments), written over `posed`.
-    pub fn posed_segments_into(
-        &self,
-        pose: &LivingPose,
-        posed: &mut Vec<BranchSegment>,
-    ) -> Result<()> {
+    pub fn posed_segments_into(&self, pose: &LivingPose, posed: &mut Vec<Segment>) -> Result<()> {
         self.check_pose(pose)?;
         posed.clear();
         for (rest, p) in self.segments.iter().zip(&pose.segments) {
@@ -565,7 +567,7 @@ impl LivingSkeleton {
             let end = start + dir * (rest.length() * p.length_scale);
             let slide = Vec3::from_array(p.slide);
             let (start, end) = (start + slide, end + slide);
-            posed.push(BranchSegment {
+            posed.push(Segment {
                 start,
                 end,
                 radius_start: rest.radius_start * p.radius_scale,
@@ -732,7 +734,7 @@ impl LivingSkeleton {
     }
 
     /// How `pose` carries leaf card `k`, given the segments it poses.
-    fn card_carry(&self, k: usize, pose: &LivingPose, posed: &[BranchSegment]) -> CardCarry {
+    fn card_carry(&self, k: usize, pose: &LivingPose, posed: &[Segment]) -> CardCarry {
         let card = &self.leaf_bindings[k];
         let (rest, now) = (
             &self.segments[card.segment as usize],
@@ -864,7 +866,7 @@ impl LivingRig {
         &self,
         skeleton: &LivingSkeleton,
         pose: &LivingPose,
-        posed: &mut Vec<BranchSegment>,
+        posed: &mut Vec<Segment>,
         out: &mut Vec<[[f32; 4]; 4]>,
     ) -> Result<()> {
         skeleton.posed_segments_into(pose, posed)?;
@@ -1000,8 +1002,8 @@ mod tests {
         }
     }
 
-    fn segment(id: u32, depth: u32) -> BranchSegment {
-        BranchSegment {
+    fn segment(id: u32, depth: u32) -> Segment {
+        Segment {
             start: Vec3::ZERO,
             end: Vec3::UP,
             radius_start: 0.1,

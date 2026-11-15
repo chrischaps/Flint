@@ -23,9 +23,10 @@ pub use grass_panel::GrassDebugPanel;
 pub use headless_frame::run_headless_frame;
 #[cfg(feature = "living")]
 pub use living_props_panel::{
-    pick_prop, Knob, KnobFlags, KnobSources, LivingAbState, LivingHealth, LivingKnobs,
-    LivingPanelAction, LivingPanelState, LivingPickedState, LivingPropRow, LivingPropsDebugPanel,
-    LivingSpeciesState, PanelScope, LIVING_PROPS_DEBUG_PANEL,
+    pick_prop, Knob, KnobControl, KnobDesc, KnobFlags, KnobSection, KnobSources, KnobValue,
+    LivingAbState, LivingHealth, LivingKnobs, LivingPanelAction, LivingPanelState,
+    LivingPickedState, LivingPropRow, LivingPropsDebugPanel, LivingSpeciesState, PanelScope,
+    LIVING_PROPS_DEBUG_PANEL,
 };
 pub use ocean_panel::{OceanDebugPanel, OceanPanelConfig};
 pub use particles_panel::{
