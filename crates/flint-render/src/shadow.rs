@@ -78,6 +78,8 @@ pub struct ShadowPass {
     /// `skinned_shadow_pipeline` culling nothing (#623).
     pub skinned_shadow_pipeline_double_sided: wgpu::RenderPipeline,
     pub skinned_shadow_bone_layout: wgpu::BindGroupLayout,
+    /// Held while its views draw and sample it.
+    #[allow(dead_code)]
     pub shadow_texture: wgpu::Texture,
     pub shadow_view: wgpu::TextureView,
     pub cascade_views: Vec<wgpu::TextureView>,

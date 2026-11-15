@@ -65,8 +65,9 @@ impl StyleArgs {
     }
 
     /// Apply the words to `renderer`'s config and build the styles they
-    /// turned on; set the post time. A no-op without either flag, so a
-    /// capture without them is unchanged.
+    /// turned on. A no-op without any, so a capture without them is
+    /// unchanged. The post time goes in with the frame's inputs
+    /// ([`look_time`](Self::look_time)).
     pub fn apply_to_renderer(
         &self,
         renderer: &mut flint_render::SceneRenderer,
@@ -78,9 +79,12 @@ impl StyleArgs {
             renderer.set_post_process_config(config);
             renderer.ensure_style_resources(device);
         }
-        if let Some(t) = self.style_time {
-            renderer.ocean_time = t as f64;
-        }
+    }
+
+    /// `--style-time` as the frame's `look_time`: the post time animated
+    /// styles see, held there (#328); none leaves it at the frame's clock.
+    pub fn look_time(&self) -> Option<f64> {
+        self.style_time.map(f64::from)
     }
 }
 

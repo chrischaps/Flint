@@ -88,7 +88,17 @@ fn frame_for(lease: shared_gpu::Lease) -> Gpu {
 
 impl Gpu {
     fn frame(&self, renderer: &mut SceneRenderer, world: &FlintWorld) -> Vec<u8> {
-        renderer.update_from_world(world, self.device);
+        self.frame_with(renderer, world, &flint_render::FrameInputs::default())
+    }
+
+    /// [`frame`](Self::frame) with this frame's inputs (#739).
+    fn frame_with(
+        &self,
+        renderer: &mut SceneRenderer,
+        world: &FlintWorld,
+        inputs: &flint_render::FrameInputs,
+    ) -> Vec<u8> {
+        renderer.prepare(self.device, self.queue, world, inputs);
         renderer.render_to(
             self.device,
             self.queue,
@@ -677,8 +687,14 @@ fn ascii_draws_one_glyph_per_cell_on_one_grid() {
 
     // At 2 px per point (a high-DPI window) the cells are 16 px: 4 a side,
     // each the 8 px cell drawn at twice the size
-    renderer.pixels_per_point = 2.0;
-    let doubled = gpu.frame(&mut renderer, &world);
+    let doubled = gpu.frame_with(
+        &mut renderer,
+        &world,
+        &flint_render::FrameInputs {
+            pixels_per_point: 2.0,
+            ..Default::default()
+        },
+    );
     let big = block(&doubled, 16, 0, 0);
     for cy in 0..4 {
         for cx in 0..4 {
@@ -699,7 +715,6 @@ fn ascii_draws_one_glyph_per_cell_on_one_grid() {
     // The ramp and colour options reach the shader: a different ramp
     // draws a different glyph for the same sky, the tint another colour
     config.styles.set_option("ascii", "ramp", "blocks");
-    renderer.pixels_per_point = 1.0;
     renderer.set_post_process_config(config.clone());
     assert_ne!(block(&gpu.frame(&mut renderer, &world), 8, 0, 0), first);
     config.styles.set_option("ascii", "ramp", "classic");
@@ -1120,7 +1135,12 @@ fn ascii_holds_its_glyphs_still_under_a_wobbling_camera() {
                 let wobble = if i % 2 == 0 { 0.0 } else { WOBBLE };
                 camera.target.x += wobble;
                 camera.target.y += wobble;
-                renderer.update_from_world(&world, gpu.device);
+                renderer.prepare(
+                    gpu.device,
+                    gpu.queue,
+                    &world,
+                    &flint_render::FrameInputs::default(),
+                );
                 renderer.render_to(
                     gpu.device,
                     gpu.queue,
@@ -1254,7 +1274,12 @@ fn reprojected_history_reads_the_past_of_the_surface_now_in_the_cell() {
                     target: flint_core::Vec3::new(x, 0.0, 0.0),
                     ..Camera::default()
                 };
-                renderer.update_from_world(&world, gpu.device);
+                renderer.prepare(
+                    gpu.device,
+                    gpu.queue,
+                    &world,
+                    &flint_render::FrameInputs::default(),
+                );
                 renderer.render_to(
                     gpu.device,
                     gpu.queue,
@@ -1350,7 +1375,12 @@ fn the_callers_depth_with_an_id_makes_no_bind_groups_a_frame() {
     renderer.set_post_process_config(config);
 
     let frame = |renderer: &mut SceneRenderer, depth: flint_render::DepthTarget<'_>| {
-        renderer.update_from_world(&world, gpu.device);
+        renderer.prepare(
+            gpu.device,
+            gpu.queue,
+            &world,
+            &flint_render::FrameInputs::default(),
+        );
         renderer.render_to(
             gpu.device,
             gpu.queue,
@@ -2402,7 +2432,12 @@ fn a_user_style_takes_settings_per_entity() {
             .is_enabled("utest_glow"),
         "the scene has no table for it"
     );
-    renderer.update_from_world(&world, gpu.device);
+    renderer.prepare(
+        gpu.device,
+        gpu.queue,
+        &world,
+        &flint_render::FrameInputs::default(),
+    );
     renderer.ensure_style_resources(gpu.device);
     let styled = gpu.frame(&mut renderer, &world);
 
@@ -2600,18 +2635,30 @@ fn glass_in_front_of_a_styled_entity_unmasks_it_by_its_coverage() {
     );
 }
 
-/// A flat terrain chunk `half` metres each way around the origin.
-fn flat_chunk(half: f32) -> flint_terrain::TerrainChunk {
-    let corners = [[-half, -half], [half, -half], [half, half], [-half, half]];
-    flint_terrain::TerrainChunk {
-        grid_pos: (0, 0),
-        positions: corners.iter().map(|[x, z]| [*x, 0.0, *z]).collect(),
-        normals: vec![[0.0, 1.0, 0.0]; 4],
-        uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-        indices: vec![0, 2, 1, 0, 3, 2],
-        aabb_min: [-half, 0.0, -half],
-        aabb_max: [half, 0.0, half],
-    }
+/// A `ground` entity with a flat heightmap terrain `half` metres each way
+/// around the origin (the fixture's heightmap at no height), its file found
+/// from the style_terrain fixture's folder.
+fn flat_terrain(world: &mut FlintWorld, half: f64) -> flint_core::EntityId {
+    let ground = world.spawn("ground").unwrap();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut transform = toml::Table::new();
+    transform.insert("position".into(), vec3([-half, 0.0, -half]));
+    world
+        .set_component(ground, "transform", transform.into())
+        .unwrap();
+    let mut terrain = toml::Table::new();
+    terrain.insert(
+        "heightmap".into(),
+        "../../../examples/terrain/heightmap.png".into(),
+    );
+    terrain.insert("width".into(), (2.0 * half).into());
+    terrain.insert("depth".into(), (2.0 * half).into());
+    terrain.insert("height_scale".into(), 0.0.into());
+    terrain.insert("chunk_resolution".into(), 64.into());
+    world
+        .set_component(ground, "terrain", terrain.into())
+        .unwrap();
+    ground
 }
 
 /// A procedural box `half` metres each way, centred `y` up, made
@@ -2751,7 +2798,7 @@ fn a_styled_terrain_is_masked_around_the_props_on_it() {
     };
     use flint_render::entity_style::set_entity_style;
     let mut world = FlintWorld::new();
-    let ground = world.spawn("ground").unwrap();
+    let ground = flat_terrain(&mut world, 40.0);
     boxed(&mut world, "cube", 2.5, 2.5, None);
     let mut renderer = SceneRenderer::new_headless(
         gpu.device,
@@ -2761,20 +2808,12 @@ fn a_styled_terrain_is_masked_around_the_props_on_it() {
         SIZE,
         RendererConfig::default(),
     );
-    let no_textures: [String; 4] = Default::default();
-    renderer.load_terrain(
-        gpu.device,
-        gpu.queue,
-        &[flat_chunk(40.0)],
-        &flint_core::Transform::default(),
-        1.0,
-        0.0,
-        0.9,
-        "",
-        &no_textures,
-        std::path::Path::new("."),
-    );
-    renderer.set_terrain_entity(Some(ground));
+    // Binding the scene loads its terrain and names it for the mask (#739)
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/style_terrain.scene.toml");
+    let binding = flint_render::SceneBinding::for_scene(&fixtures);
+    let bound = renderer.bind_scene(gpu.device, gpu.queue, &world, &binding);
+    assert_eq!(bound.terrain.map(|t| t.entity), Some(ground));
     let plain = gpu.frame(&mut renderer, &world);
 
     set_entity_style(&mut world, ground, "ascii").unwrap();
@@ -2794,8 +2833,10 @@ fn a_styled_terrain_is_masked_around_the_props_on_it() {
             "the unstyled cube at ({x},{y}) was styled"
         );
     }
-    // A terrain the host didn't name stays out of the mask, as before
-    renderer.set_terrain_entity(None);
+    // Its style off again, the frame is the plain one
+    assert!(flint_render::entity_style::clear_entity_style(
+        &mut world, ground
+    ));
     assert_eq!(gpu.frame(&mut renderer, &world), plain);
 }
 
@@ -3206,13 +3247,16 @@ fn ascii_smoothing_settles_in_the_same_time_at_any_frame_rate() {
     let run = |hz: f32, style_dt: f32| -> f32 {
         let dt = 1.0 / hz;
         let mut r = renderer();
-        r.style_dt = style_dt;
+        let inputs = flint_render::FrameInputs {
+            dt: style_dt,
+            ..Default::default()
+        };
         r.set_post_process_config(config(&r, 0.0, "on"));
-        gpu.frame(&mut r, &world);
+        gpu.frame_with(&mut r, &world, &inputs);
         r.set_post_process_config(config(&r, STEP, "on"));
         let mut trace = Vec::new();
         for i in 1..=(2.0 * hz) as usize {
-            let gone = (mean(&gpu.frame(&mut r, &world)) - from) / (to - from);
+            let gone = (mean(&gpu.frame_with(&mut r, &world, &inputs)) - from) / (to - from);
             trace.push(format!("{:.3}", gone));
             if gone >= 0.9 {
                 eprintln!("{hz} Hz: {}", trace.join(" "));

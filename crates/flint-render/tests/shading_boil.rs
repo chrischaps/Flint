@@ -163,8 +163,15 @@ impl Gpu {
         bench
             .renderer
             .ensure_kuwahara_resources(self.device, self.queue);
-        bench.renderer.set_boil(boil);
-        bench.renderer.update_from_world(&bench.world, self.device);
+        bench.renderer.prepare(
+            self.device,
+            self.queue,
+            &bench.world,
+            &flint_render::FrameInputs {
+                boil,
+                ..Default::default()
+            },
+        );
         bench.renderer.render_to(
             self.device,
             self.queue,
@@ -340,7 +347,6 @@ fn the_contour_survives_a_resize() {
     let before = gpu.pixels(&mut bench, &config, drawing(3, 1.0));
     bench.renderer.resize_postprocess(gpu.device, SIZE, SIZE);
     // Nothing calls ensure here: the resize must have made its texture again.
-    bench.renderer.set_boil(drawing(3, 1.0));
     let after = gpu.pixels(&mut bench, &config, drawing(3, 1.0));
     assert_eq!(before, after);
 }

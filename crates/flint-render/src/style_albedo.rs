@@ -145,11 +145,6 @@ impl StyleAlbedoPass {
         }
     }
 
-    /// How many opaque draws the last frame drew into the albedo.
-    pub fn last_draws(&self) -> usize {
-        self.last_draws
-    }
-
     fn pipelines(
         &mut self,
         device: &wgpu::Device,

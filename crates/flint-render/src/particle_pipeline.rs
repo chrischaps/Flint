@@ -308,10 +308,6 @@ impl ParticleBuffers {
         &self.instance_bind_group
     }
 
-    pub fn instance_capacity(&self) -> u32 {
-        self.instance_capacity
-    }
-
     /// Grow the shared instance buffer (next power of two) so it holds at
     /// least `needed` instances. Returns `true` when it was reallocated.
     pub fn ensure_capacity(

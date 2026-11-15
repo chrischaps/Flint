@@ -18,8 +18,8 @@ use super::hud_render::to_color32;
 use super::text_halo::{stamp_offsets, wants_halo, HaloSpec, TextHalos};
 use bytemuck::{Pod, Zeroable};
 use flint_core::world_text::WorldText;
-use flint_render::world_line_pipeline::DEPTH_SLACK;
 use flint_render::TrustedShader;
+use flint_render::WORLD_LINE_DEPTH_SLACK as DEPTH_SLACK;
 use std::collections::HashSet;
 use std::ops::Range;
 

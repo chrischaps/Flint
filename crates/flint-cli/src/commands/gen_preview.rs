@@ -445,7 +445,12 @@ impl GenPreviewApp {
 
         let world = build_mesh_world(1);
         if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
-            renderer.update_from_world(&world, &context.device);
+            renderer.prepare(
+                &context.device,
+                &context.queue,
+                &world,
+                &flint_render::FrameInputs::default(),
+            );
         }
         self.last_world = Some(world);
 
@@ -517,7 +522,12 @@ impl GenPreviewApp {
 
         let world = build_mesh_world(mesh.submeshes.len());
         if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
-            renderer.update_from_world(&world, &context.device);
+            renderer.prepare(
+                &context.device,
+                &context.queue,
+                &world,
+                &flint_render::FrameInputs::default(),
+            );
         }
         self.last_world = Some(world);
 
@@ -1347,7 +1357,12 @@ impl ApplicationHandler for GenPreviewApp {
                                 if let (Some(world), Some(context)) =
                                     (&self.last_world, &self.render_context)
                                 {
-                                    renderer.update_from_world(world, &context.device);
+                                    renderer.prepare(
+                                        &context.device,
+                                        &context.queue,
+                                        world,
+                                        &flint_render::FrameInputs::default(),
+                                    );
                                 }
                             }
                         }
@@ -1364,7 +1379,12 @@ impl ApplicationHandler for GenPreviewApp {
                                 if let (Some(world), Some(context)) =
                                     (&self.last_world, &self.render_context)
                                 {
-                                    renderer.update_from_world(world, &context.device);
+                                    renderer.prepare(
+                                        &context.device,
+                                        &context.queue,
+                                        world,
+                                        &flint_render::FrameInputs::default(),
+                                    );
                                 }
                             }
                         }
@@ -1375,7 +1395,12 @@ impl ApplicationHandler for GenPreviewApp {
                                 if let (Some(world), Some(context)) =
                                     (&self.last_world, &self.render_context)
                                 {
-                                    renderer.update_from_world(world, &context.device);
+                                    renderer.prepare(
+                                        &context.device,
+                                        &context.queue,
+                                        world,
+                                        &flint_render::FrameInputs::default(),
+                                    );
                                 }
                             }
                         }

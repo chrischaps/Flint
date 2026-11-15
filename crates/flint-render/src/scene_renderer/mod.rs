@@ -616,7 +616,7 @@ pub struct SceneRenderer {
     /// Time in seconds driving wave phases. Set by the player each frame from
     /// the game clock — the same clock scripts see via total_time(), which is
     /// what keeps script-side ocean_height() queries in sync with the GPU.
-    pub ocean_time: f64,
+    ocean_time: f64,
     /// Motion on twos (#405): who is drawn on ticks, what they last showed,
     /// and the clock hosts stamp with [`Self::set_motion_time`].
     motion_hold: crate::motion_hold::MotionHold,
@@ -625,7 +625,7 @@ pub struct SceneRenderer {
     /// clock's `delta_time` (so it follows `--frame-step`), the viewer from
     /// its frame time. Hosts that don't set it get 1/60, which is what a
     /// per-frame weight always meant.
-    pub style_dt: f32,
+    style_dt: f32,
     /// The boil the last `prepare` took (#739), stamped into the config
     /// `encode_to` draws. `None` until a host prepares a frame.
     frame_boil: Option<flint_wooze::BoilFrame>,
@@ -684,9 +684,9 @@ pub struct SceneRenderer {
     #[allow(dead_code)]
     surface_format: wgpu::TextureFormat,
     // Parallax: camera offset in world units + orthographic viewport height
-    pub camera_offset: [f32; 2],
-    pub ortho_height: f32,
-    pub aspect_ratio: f32,
+    camera_offset: [f32; 2],
+    ortho_height: f32,
+    aspect_ratio: f32,
     /// `ui_text` fonts by what the component named, each uploaded once
     /// (`load_ui_font`); `None` for one that failed, warned about once.
     bitmap_font_cache: HashMap<String, Option<BitmapFont>>,
@@ -697,24 +697,24 @@ pub struct SceneRenderer {
     /// Scene directory for resolving relative font/texture paths. A host
     /// that holds the scene's project sets it through
     /// [`set_asset_scope`](Self::set_asset_scope).
-    pub scene_dir: Option<std::path::PathBuf>,
+    scene_dir: Option<std::path::PathBuf>,
     /// The project and folder styles search from, with the `scene_dir` it
     /// was made for: found once a scene, not once a lookup.
     asset_scope: std::sync::Mutex<Option<AssetScopeFor>>,
     /// Physical pixels per logical point of the window it draws into: the
     /// OS scale factor. Styles sized in points (ASCII cells, #265) scale by
     /// it. Hosts with a window set it; 1 headless.
-    pub pixels_per_point: f32,
+    pixels_per_point: f32,
     /// Frames drawn through the post chain, handed to styles as
     /// [`StyleFrame::frame`](crate::stylize::StyleFrame::frame) (#277).
     style_frame_serial: std::sync::atomic::AtomicU64,
     /// Bumped by [`reset_style_history`](Self::reset_style_history).
     style_history_epoch: u64,
     /// Time in seconds, used for grass wind animation. Set by the player before render().
-    pub grass_time: f32,
+    grass_time: f32,
     /// The comb of woozy grass this frame (#252), from the clock the player set
     /// `grass_time` on. `None`, the default, combs nothing.
-    pub grass_wooze: Option<ShallowWoozeDraw>,
+    grass_wooze: Option<ShallowWoozeDraw>,
     /// Set when GPU device is lost (e.g. driver crash); skips all rendering
     device_lost: bool,
     /// Per-entity bones, shadow bones, echoes, part tints and softness,
@@ -986,7 +986,7 @@ impl SceneRenderer {
     /// then masks the terrain's chunks like any styled mesh. Hosts call it
     /// beside [`load_terrain`](Self::load_terrain); `None` leaves the
     /// terrain unmasked, as it was before.
-    pub fn set_terrain_entity(&mut self, entity: Option<flint_core::EntityId>) {
+    pub(crate) fn set_terrain_entity(&mut self, entity: Option<flint_core::EntityId>) {
         self.terrain.entity = entity;
     }
 
@@ -1254,7 +1254,7 @@ impl SceneRenderer {
 
     /// Update meshes from the world state
     #[profiling::function]
-    pub fn update_from_world(&mut self, world: &FlintWorld, device: &wgpu::Device) {
+    pub(crate) fn update_from_world(&mut self, world: &FlintWorld, device: &wgpu::Device) {
         if self.device_lost {
             return;
         }

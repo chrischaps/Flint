@@ -166,6 +166,7 @@ fn run_headless(
         &ctx.device,
         &ctx.queue,
         camera.position_array(),
+        args.style.look_time(),
     );
 
     args.style.apply_to_renderer(&mut renderer, &ctx.device);
@@ -1037,6 +1038,7 @@ impl ApplicationHandler for ParticleEditApp {
                         &context.device,
                         &context.queue,
                         self.camera.position_array(),
+                        None,
                     );
                     let _ = renderer.render(context, &self.camera, &view);
                 }
