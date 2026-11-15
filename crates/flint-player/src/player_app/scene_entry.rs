@@ -12,7 +12,7 @@
 use super::scene_loading::{
     build_model_load_config, load_animations_from_world, load_audio_from_world,
     load_scripts_from_world, load_sequences_from_world, load_sprite_animations_from_world,
-    load_terrain_from_world_inner, register_node_animation_data, register_skeletal_data,
+    register_node_animation_data, register_skeletal_data, register_terrain_collider,
     LoadedGrassInfo,
 };
 use super::PlayerApp;
@@ -137,9 +137,15 @@ impl PlayerApp {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Option<LoadedGrassInfo> {
-        // The renderer's styles find their palettes, glyph sets and papers
-        // from the scene's project and folder (ADR 0114)
-        renderer.set_asset_scope(self.kept_asset_scope());
+        // The scene, bound (#739): its project and folder, which the
+        // renderer's styles find palettes, glyph sets and papers from (ADR
+        // 0114); no style history, bones or levers of the last scene; and
+        // its terrain and grass
+        let binding = self
+            .scene_binding
+            .take()
+            .unwrap_or_else(|| flint_render::SceneBinding::new(self.kept_asset_scope()));
+        let bound = renderer.bind_scene(device, queue, &self.core.world, &binding);
 
         let config = build_model_load_config(
             &self.core.project,
@@ -203,15 +209,13 @@ impl PlayerApp {
         );
         renderer.update_from_world(&self.core.world, device);
 
-        // The scene's first frame has no past: styles that keep history
-        // (ASCII's temporal stability, #277) start over, and its first
-        // camera is no cut from the last scene's
-        renderer.reset_style_history();
+        // The scene's first frame has no past (`bind_scene` started styles'
+        // history over, #277), and its first camera is no cut from the last
+        // scene's
         self.style.camera_cut.forget();
 
-        // Lighting: the built-in ambient and levers, then what the scene
-        // authors (absent = renderer default)
-        renderer.reset_ambient();
+        // Lighting: what the scene authors over the built-in levers
+        // `bind_scene` put back (absent = renderer default)
         renderer.set_scene_shadows(self.scene.shadows);
         renderer.set_default_lights(self.scene.default_lights);
         if let Some((sky, ground)) = self.scene.ambient {
@@ -266,19 +270,17 @@ impl PlayerApp {
             self.scene.post_process.as_ref(),
         );
 
-        // Terrain, its colliders and grass
-        let mut grass = None;
-        load_terrain_from_world_inner(
-            &self.core.world,
-            &self.core.scene_path,
-            device,
-            queue,
-            renderer,
-            &mut self.core.physics,
-            &mut self.terrain,
-            &mut grass,
-        );
-        grass
+        // The terrain `bind_scene` loaded: its collider, and its heights for
+        // scripts
+        if let Some(loaded) = bound.terrain {
+            register_terrain_collider(&mut self.core.physics, &loaded);
+            self.terrain = Some((loaded.terrain, loaded.config));
+        }
+        bound.grass.map(|grass| LoadedGrassInfo {
+            config: grass.config,
+            terrain_entity_name: grass.entity_name,
+            component: grass.component,
+        })
     }
 
     /// The scene's debug panels. The last scene's go (grass, ocean,

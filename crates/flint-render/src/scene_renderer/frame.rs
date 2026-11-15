@@ -14,15 +14,216 @@
 //!
 //! The subsystems own their state (`msaa`, `sky`, `lights`, `terrain`,
 //! `style_mask`, `water`, `skinning`, `grass`) and this file orchestrates
-//! them. The per-frame inputs hosts set by hand today (`ocean_time`,
-//! `grass_time`, `style_dt`, `pixels_per_point`, `set_boil`,
-//! `set_shallow_wooze`, `set_motion_time`, world lines) are what #739's
-//! `prepare(&world, &FrameInputs)` gathers, and it lives here beside
-//! `encode_to`.
+//! them.
+//!
+//! The host protocol (ADR 0118 decision 5, #739), the same for every host
+//! (the player and `flint render`; the viewer moves onto it next):
+//!
+//! ```text
+//! bind_scene(world, &SceneBinding)        once a scene load (binding.rs)
+//! each frame:
+//!   set_motion_time(t), then bone writes  (only a host that writes bones)
+//!   prepare(world, &FrameInputs)          everything the frame reads
+//!   encode_to / encode_frame_to           record it
+//!   submit, then frame_submitted
+//! ```
+//!
+//! [`FrameInputs`] is every per-frame input in one struct: a field a host
+//! leaves at its default turns its feature off for the frame, so nothing a
+//! host forgot to set lingers from an earlier frame.
 
 use super::*;
 
+/// What a frame draws that the world doesn't say (ADR 0118 decision 5,
+/// #739), handed to [`SceneRenderer::prepare`] once a frame. Every field has
+/// a default that turns its feature off, so a host names only what it has:
+/// `FrameInputs { time, dt, pixels_per_point, ..Default::default() }`.
+///
+/// One clock: `time` is the frame's game time, and everything that moves
+/// runs on it unless a host holds part of it still (`look_time`,
+/// `grass_time`).
+#[derive(Clone)]
+pub struct FrameInputs<'a> {
+    /// The frame's clock, in seconds of game time (the player's
+    /// `total_time`, a capture's moment). Motion held on twos ticks on it
+    /// (#405), and so, unless held below, do the ocean's waves and its
+    /// contact foam, the sky, the post chain's grain and animated styles
+    /// (`post_time`), and the grass's wind.
+    pub time: f64,
+    /// Seconds this frame stepped, for styles whose history is a rate
+    /// (ASCII's smoothing, #342). Default 1/60, what a per-frame weight
+    /// always meant.
+    pub dt: f32,
+    /// Holds the ocean, the sky and the post chain at this moment while
+    /// `time` runs on (`--style-time`, #328). `None`: they run on `time`.
+    pub look_time: Option<f64>,
+    /// Holds the grass's wind at this moment (woozy grass's sway, #252, or a
+    /// still's rest). `None`: the wind runs on `time`.
+    pub grass_time: Option<f32>,
+    /// The comb of woozy grass this frame (#252). `None` combs nothing.
+    pub grass_wooze: Option<ShallowWoozeDraw>,
+    /// Each woozy entity's drift this frame (#215). Empty: every mesh at rest.
+    pub shallow_wooze: &'a [(flint_core::EntityId, ShallowWoozeDraw)],
+    /// The shading boil's drawing this frame (#214), from whoever owns the
+    /// boil clock. The default boils nothing.
+    pub boil: flint_wooze::BoilFrame,
+    /// Physical pixels per logical point of the target: styles sized in
+    /// points (ASCII cells, #265), comic panels' gutters and world lines'
+    /// widths scale by it. Default 1, a headless target.
+    pub pixels_per_point: f32,
+    /// How 2D sprites and screen-anchored entities are placed (ADR 0063).
+    pub view_2d: View2d,
+    /// The particles to draw, packed (`ParticleSystem::pack`). `None` draws
+    /// none.
+    pub particles: Option<&'a flint_particles::ParticleSync>,
+    /// Depth-tested script lines (ADR 0083), widths in logical points.
+    pub world_lines: &'a [flint_core::world_line::WorldLine],
+    /// What bends the grass this frame (bend-on-contact). Empty bends none.
+    pub grass_benders: &'a [GrassEntityPosition],
+}
+
+impl Default for FrameInputs<'_> {
+    fn default() -> Self {
+        Self {
+            time: 0.0,
+            dt: 1.0 / 60.0,
+            look_time: None,
+            grass_time: None,
+            grass_wooze: None,
+            shallow_wooze: &[],
+            boil: Default::default(),
+            pixels_per_point: 1.0,
+            view_2d: View2d::default(),
+            particles: None,
+            world_lines: &[],
+            grass_benders: &[],
+        }
+    }
+}
+
+/// The 2D view sprites and screen-anchored entities are laid out in (ADR
+/// 0063): the camera's offset in world units and the orthographic
+/// viewport's height and aspect.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct View2d {
+    pub camera_offset: [f32; 2],
+    pub ortho_height: f32,
+    pub aspect_ratio: f32,
+}
+
+impl Default for View2d {
+    fn default() -> Self {
+        Self {
+            camera_offset: [0.0, 0.0],
+            ortho_height: 10.0,
+            aspect_ratio: 16.0 / 9.0,
+        }
+    }
+}
+
+impl View2d {
+    /// The view `camera` gives: its position's x and y, its orthographic
+    /// height (10 when it has none), its aspect.
+    pub fn of(camera: &Camera) -> Self {
+        Self {
+            camera_offset: [camera.position.x, camera.position.y],
+            ortho_height: if camera.ortho_height > 0.0 {
+                camera.ortho_height
+            } else {
+                10.0
+            },
+            aspect_ratio: camera.aspect,
+        }
+    }
+}
+
 impl SceneRenderer {
+    // ── The frame's inputs ──
+
+    /// Take this frame's inputs and read the world into the draw lists
+    /// (#739): the one call between a scene's bone writes and `encode_to`.
+    /// Everything `inputs` carries replaces the last frame's, so a field at
+    /// its default is off this frame, whatever an earlier one set.
+    ///
+    /// Bones are written before it, after [`set_motion_time`]
+    /// (Self::set_motion_time) stamps the same `time`: a held entity's bones
+    /// are gated by its hold's tick (#405), and the uploads precede the
+    /// extraction that reads them.
+    #[profiling::function]
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        world: &FlintWorld,
+        inputs: &FrameInputs<'_>,
+    ) {
+        self.take_inputs(queue, inputs);
+        self.update_from_world(world, device);
+        match inputs.particles {
+            Some(sync) => self.update_particles_from(device, queue, sync),
+            None => self.update_particles(device, queue, &[]),
+        }
+    }
+
+    /// [`prepare`](Self::prepare) again within the frame, for the other half
+    /// of a split view (#238): the same inputs, with that side's boil and
+    /// shallow wooze, and the world read again. Draw it with
+    /// [`encode_again_to`](Self::encode_again_to), which draws that boil
+    /// once; a later `encode_to` draws the frame's own again. The draws and
+    /// the shallow wooze stay this side's until the next `prepare`.
+    pub fn prepare_again(
+        &mut self,
+        device: &wgpu::Device,
+        world: &FlintWorld,
+        boil: flint_wooze::BoilFrame,
+        shallow_wooze: &[(flint_core::EntityId, ShallowWoozeDraw)],
+    ) {
+        self.again_boil = Some(boil);
+        self.set_shallow_wooze(shallow_wooze.iter().copied());
+        self.update_from_world(world, device);
+    }
+
+    /// Everything of `inputs` but the world and the particles.
+    fn take_inputs(&mut self, queue: &wgpu::Queue, inputs: &FrameInputs<'_>) {
+        // The one clock and what holds part of it
+        self.set_motion_time(inputs.time);
+        self.ocean_time = inputs.look_time.unwrap_or(inputs.time);
+        self.grass_time = inputs.grass_time.unwrap_or(inputs.time as f32);
+        self.grass_wooze = inputs.grass_wooze;
+        self.style_dt = inputs.dt;
+        // The boil is the frame's, whatever config a host sets before
+        // `encode_to`: it goes into the drawn config there too
+        self.frame_boil = Some(inputs.boil);
+        self.again_boil = None;
+        self.set_boil(inputs.boil);
+        self.pixels_per_point = inputs.pixels_per_point;
+        let View2d {
+            camera_offset,
+            ortho_height,
+            aspect_ratio,
+        } = inputs.view_2d;
+        self.camera_offset = camera_offset;
+        self.ortho_height = ortho_height;
+        self.aspect_ratio = aspect_ratio;
+        self.set_shallow_wooze(inputs.shallow_wooze.iter().copied());
+        self.update_grass_entities(queue, inputs.grass_benders);
+        self.world_lines.clear();
+        self.world_lines.extend_from_slice(inputs.world_lines);
+        self.world_line_px_per_point = inputs.pixels_per_point;
+    }
+
+    /// The boil the last [`prepare`](Self::prepare) took (or a split view's
+    /// other side's, [`prepare_again`](Self::prepare_again)), into the drawn
+    /// and authored configs, in case a host set a config since (a look, a
+    /// panel's edit) that carries another. A renderer never prepared keeps
+    /// the config's own.
+    fn stamp_frame_boil(&mut self) {
+        if let Some(boil) = self.again_boil.or(self.frame_boil) {
+            self.postprocess_config.boil = boil;
+            self.authored_postprocess.boil = boil;
+        }
+    }
+
     // ── Render entry points ──
 
     /// Render the scene using a RenderContext (windowed mode)
@@ -95,6 +296,7 @@ impl SceneRenderer {
         }
         let depth = depth.into();
         let depth_view = depth.view;
+        self.stamp_frame_boil();
         // A style switched on by any route (scene load, F4, a script's
         // config) is built before the frame that first needs it (#262).
         // When nothing new is on this is a walk over the registry.
@@ -569,6 +771,8 @@ impl SceneRenderer {
         let timer = self.gpu_timer.take();
         self.encode_to(device, queue, encoder, depth_view, camera, target_view);
         self.gpu_timer = timer;
+        // The other side's boil is drawn once (#739)
+        self.again_boil = None;
     }
 
     /// Start what waits on the frame [`encode_to`](Self::encode_to)

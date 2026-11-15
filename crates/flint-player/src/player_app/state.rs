@@ -339,6 +339,9 @@ pub(super) struct Hud {
     /// Depth-tested world text queued this frame (ADR 0104), laid out in
     /// the egui pass and drawn before the HUD.
     pub(super) world_texts: Vec<flint_core::world_text::WorldText>,
+    /// Depth-tested world lines the scripts drew this frame (ADR 0083),
+    /// handed to the renderer with the frame's inputs (#739).
+    pub(super) world_lines: Vec<flint_core::world_line::WorldLine>,
     pub(super) world_text_pipeline: Option<world_text::WorldTextPipeline>,
     pub(super) textures: HashMap<String, egui::TextureHandle>,
     /// Family names registered from `<project>/fonts/` (file stems + manifest
@@ -373,6 +376,7 @@ impl Default for Hud {
             egui_fonts_ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             draw_commands: Vec::new(),
             world_texts: Vec::new(),
+            world_lines: Vec::new(),
             world_text_pipeline: None,
             textures: HashMap::new(),
             fonts: HashSet::new(),

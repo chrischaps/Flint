@@ -11,9 +11,10 @@
 use super::living_props;
 use super::shallow_wooze::{self, GrassWooze, ShallowWooze};
 use super::subsystem::{
-    EncodeCtx, ExitReport, KeyPress, PlayerInput, RenderCtx, ReportCtx, SceneCtx, Stage, StageCtx,
+    EncodeCtx, ExitReport, FrameCtx, KeyPress, PlayerInput, ReportCtx, SceneCtx, Stage, StageCtx,
     Subsystem,
 };
+use flint_render::FrameInputs;
 use flint_script::context::ScriptCommand;
 use winit::keyboard::KeyCode;
 
@@ -29,8 +30,6 @@ pub(crate) struct LivingSubsystem {
     pub(crate) wooze_missing_warned: bool,
     /// The shading boil's beats (#214), on the same clock as the field.
     pub(crate) boil_clock: flint_wooze::BoilClock,
-    /// The boil drawn this frame, for the A/B's other side
-    pub(crate) boil_now: flint_wooze::BoilFrame,
     /// Shallow wooze (#215): the clocks of the meshes on the field with no poses.
     pub(crate) shallow_wooze: ShallowWooze,
     /// Woozy grass (#252): the grass's sway and comb on the same clock.
@@ -170,13 +169,12 @@ impl LivingSubsystem {
             None => ctx.resolver.process_living_in(living_dt, wooze),
         };
         let shallow = self.capture.is_none_or(|c| c.shallow);
-        // Hand-made meshes read the same field on the same dt (#215).
+        // Hand-made meshes read the same field on the same dt (#215); the
+        // renderer takes their draws with the frame's inputs
         if let (Some(field), Some(renderer)) = (&self.wooze, ctx.renderer.as_deref_mut()) {
             if shallow {
-                let draws =
-                    self.shallow_wooze
-                        .advance(ctx.world, field, self.wooze_time, living_dt);
-                renderer.set_shallow_wooze(draws.iter().copied());
+                self.shallow_wooze
+                    .advance(ctx.world, field, self.wooze_time, living_dt);
             }
             // And so does grass that asks to (#252), where the viewer stands.
             self.grass_wooze.advance(
@@ -408,23 +406,13 @@ impl Subsystem for LivingSubsystem {
     }
 
     fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
-        match stage {
-            Stage::Procgen => {
-                // What the panel asked this frame, then the clock it may
-                // have frozen
-                #[cfg(feature = "debug-hud")]
-                self.drain_living_panel(ctx);
-                let dt = self.living_dt(ctx);
-                self.tick(ctx, dt);
-            }
-            // The grass's clock: the field's, or the wall clock when it isn't
-            // woozy (the renderer's own default, set in its sync)
-            Stage::Sync => {
-                if let Some(renderer) = ctx.renderer.as_deref_mut() {
-                    self.grass_wooze.apply(renderer, ctx.clock.total_time);
-                }
-            }
-            _ => {}
+        // What the panel asked this frame, then the clock it may have
+        // frozen. What it draws goes to the renderer in `frame_inputs`.
+        if stage == Stage::Procgen {
+            #[cfg(feature = "debug-hud")]
+            self.drain_living_panel(ctx);
+            let dt = self.living_dt(ctx);
+            self.tick(ctx, dt);
         }
     }
 
@@ -468,20 +456,20 @@ impl Subsystem for LivingSubsystem {
         }
     }
 
-    fn pre_render(&mut self, ctx: &mut RenderCtx) {
-        // The shading boil's drawing (#214): the field where the viewer stands.
-        // With no field the amount is 0, and neither pass boils.
-        let renderer = &mut *ctx.renderer;
-        self.boil_now = self
-            .wooze
-            .as_ref()
-            .map(|field| {
-                let sample = field.sample(ctx.camera.position_array(), self.wooze_time);
-                self.boil_clock
-                    .frame(&sample, renderer.post_process_config().boil_on)
-            })
-            .unwrap_or_default();
-        renderer.set_boil(self.boil_now);
+    fn frame_inputs<'s>(&'s self, ctx: &FrameCtx, inputs: &mut FrameInputs<'s>) {
+        if let Some(field) = &self.wooze {
+            // The shading boil's drawing (#214): the field where the viewer
+            // stands. With no field, none: neither pass boils.
+            let sample = field.sample(ctx.camera.position_array(), self.wooze_time);
+            inputs.boil = self.boil_clock.frame(&sample, ctx.boil_on);
+            // Hand-made meshes' drift (#215), outside a capture of no moment
+            if self.capture.is_none_or(|c| c.shallow) {
+                inputs.shallow_wooze = self.shallow_wooze.draws();
+            }
+        }
+        // The grass's clock: the field's, or the frame's when it isn't woozy
+        inputs.grass_time = self.grass_wooze.sway_time();
+        inputs.grass_wooze = self.grass_wooze.comb();
     }
 
     fn post_encode(&mut self, ctx: &mut EncodeCtx) {
@@ -509,8 +497,6 @@ impl Subsystem for LivingSubsystem {
                 blend: &mut self.blend,
                 world: ctx.world,
                 camera: ctx.camera,
-                own_boil: self.boil_now,
-                own_shallow: &self.shallow_wooze,
             },
             ctx.renderer,
             ctx.device,
@@ -531,10 +517,6 @@ impl Subsystem for LivingSubsystem {
     }
 
     fn scene_unloading(&mut self, ctx: &mut SceneCtx) {
-        // The renderer keeps the last shallow draws it was handed
-        if let Some(renderer) = ctx.renderer.as_deref_mut() {
-            renderer.set_shallow_wooze(std::iter::empty());
-        }
         // The panel's picks outlive the scene, as --compare's do
         if let Some(picks) = &self.tune.ab_picks {
             ctx.launch.compare = Some(picks.clone());

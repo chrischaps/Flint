@@ -5,7 +5,7 @@
 
 use super::camera_cut;
 use super::hud_render::render_draw_commands;
-use super::subsystem::{EncodeCtx, RenderCtx};
+use super::subsystem::{EncodeCtx, FrameCtx};
 use super::PlayerApp;
 use super::TransitionPhase;
 #[cfg(feature = "debug-hud")]
@@ -17,7 +17,7 @@ use super::{
 #[cfg(feature = "debug-hud")]
 use flint_debug_ui::DebugPanel as _;
 use flint_render::AcquireFrame;
-use flint_render::GrassEntityPosition;
+use flint_render::{FrameInputs, GrassEntityPosition, View2d};
 use flint_runtime::state::AUDIO;
 use flint_runtime::{RuntimeSystem, StateConfig};
 use std::collections::HashSet;
@@ -90,20 +90,6 @@ impl PlayerApp {
         };
 
         let view = context.frame_view(&output.texture);
-
-        // The shading boil (#214): none, unless a subsystem draws one (the
-        // living subsystem, where the viewer stands in its wooze field)
-        renderer.set_boil(Default::default());
-        if !self.core.subsystems.is_empty() {
-            let mut ctx = RenderCtx {
-                renderer: &mut *renderer,
-                device: &context.device,
-                queue: &context.queue,
-                camera: &self.camera,
-                clock: &self.core.clock,
-            };
-            self.core.subsystems.pre_render(&mut ctx);
-        }
 
         // Apply script-driven post-processing overrides before rendering.
         // The Rendering & Effects panel's freeze switch (ADR 0053) skips the
@@ -614,13 +600,11 @@ impl PlayerApp {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Frame Encoder"),
             });
-        // Styles sized in points (ASCII cells, #265) follow the window's
-        // scale factor, which changes when it moves to another monitor
-        // `--pixels-per-point` (#435) pins it, and egui's with it, so a
-        // capture's glyphs and panels are the same size on any display
+        // `--pixels-per-point` (#435) pins egui's scale with the renderer's
+        // (`renderer_pixels_per_point`), so a capture's glyphs and panels
+        // are the same size on any display
         if let Some(window) = &self.window {
             let native = window.scale_factor() as f32;
-            renderer.pixels_per_point = self.launch.pixels_per_point.unwrap_or(native);
             if let Some(ppp) = self.launch.pixels_per_point {
                 let zoom = ppp / native.max(0.01);
                 if (self.hud.egui_ctx.zoom_factor() - zoom).abs() > 1e-4 {
@@ -1094,60 +1078,63 @@ impl PlayerApp {
             }
         }
 
-        // Refresh renderer with updated transforms
-        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
-            renderer.camera_offset = [self.camera.position.x, self.camera.position.y];
-            renderer.ortho_height = if self.camera.ortho_height > 0.0 {
-                self.camera.ortho_height
-            } else {
-                10.0
-            };
-            renderer.aspect_ratio = self.camera.aspect;
-            // As in bones_posed (#405), for a frame that skipped it
-            renderer.set_motion_time(self.core.clock.total_time);
-            renderer.update_from_world(&self.core.world, &context.device);
-            // Next frame's scripts cast against what this one draws (ADR 0105).
-            self.core.script.set_ray_scene(renderer.ray_scene());
+        // Particles packed, camera-sorted, for the upload (ADR 0068)
+        if self.particles_render_enabled && self.scene_renderer.is_some() {
+            self.core.particles.pack(Some(self.camera.position_array()));
         }
 
-        // Pack (camera-sorted) and upload particle instances (ADR 0068)
-        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
-            if self.particles_render_enabled {
-                self.core.particles.pack(Some(self.camera.position_array()));
-                renderer.update_particles_from(
-                    &context.device,
-                    &context.queue,
-                    &self.core.particles.sync,
-                );
-            } else {
-                renderer.update_particles(&context.device, &context.queue, &[]);
-            }
-        }
-
-        // Update grass time and entity positions for bend-on-contact
-        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
-            // The wall clock, unless the grass is on the wooze field's (#252):
-            // then the shallow wooze subsystem sets it at Stage::Sync
-            renderer.grass_time = self.core.clock.total_time as f32;
-            renderer.grass_wooze = None;
-            // Ocean waves run on the same clock scripts see via total_time(),
-            // keeping script-side ocean_height() queries in sync with the GPU.
-            renderer.ocean_time = self.core.clock.total_time;
+        // The frame's inputs, and the world read into the draw lists (#739)
+        let ppp = self.renderer_pixels_per_point();
+        let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context)
+        else {
+            return;
+        };
+        let cam_pos = self.camera.position;
+        // The grass bends where the camera stands
+        let benders = [GrassEntityPosition {
+            position: [cam_pos.x, cam_pos.y, cam_pos.z],
+            _pad: 0.0,
+        }];
+        let mut inputs = FrameInputs {
+            // Ocean waves run on the clock scripts see via total_time(),
+            // keeping script-side ocean_height() queries in sync with the
+            // GPU, and so do held poses (#405), the grass and the post time
+            time: self.core.clock.total_time,
             // History styles decay by game time (#342), so a --frame-step
             // capture settles alike at any step
-            renderer.style_dt = self.core.clock.delta_time as f32;
+            dt: self.core.clock.delta_time as f32,
             // --style-time holds the post time, as `flint render`'s does (#328)
-            if let Some(t) = self.launch.style_time {
-                renderer.ocean_time = t as f64;
-            }
+            look_time: self.launch.style_time.map(f64::from),
+            pixels_per_point: ppp,
+            view_2d: View2d::of(&self.camera),
+            particles: self
+                .particles_render_enabled
+                .then_some(&self.core.particles.sync),
+            world_lines: &self.hud.world_lines,
+            grass_benders: &benders,
+            ..Default::default()
+        };
+        // What the subsystems draw: the boil, shallow wooze, woozy grass
+        let frame = FrameCtx {
+            camera: &self.camera,
+            boil_on: renderer.post_process_config().boil_on,
+        };
+        self.core.subsystems.frame_inputs(&frame, &mut inputs);
+        renderer.prepare(&context.device, &context.queue, &self.core.world, &inputs);
+        // Next frame's scripts cast against what this one draws (ADR 0105).
+        self.core.script.set_ray_scene(renderer.ray_scene());
+    }
 
-            let cam_pos = self.camera.position;
-            let grass_entities = vec![GrassEntityPosition {
-                position: [cam_pos.x, cam_pos.y, cam_pos.z],
-                _pad: 0.0,
-            }];
-            renderer.update_grass_entities(&context.queue, &grass_entities);
-        }
+    /// Physical pixels per logical point the renderer draws at: the
+    /// window's scale factor, which changes when it moves to another
+    /// monitor, unless `--pixels-per-point` (#435) pins it. Styles sized in
+    /// points (ASCII cells, #265) follow it.
+    fn renderer_pixels_per_point(&self) -> f32 {
+        self.window.as_ref().map_or(1.0, |window| {
+            self.launch
+                .pixels_per_point
+                .unwrap_or(window.scale_factor() as f32)
+        })
     }
 
     fn drain_post_overrides(&mut self) {
@@ -1582,11 +1569,9 @@ impl super::game_core::FrameHost for PlayerApp {
         commands.extend(ui_commands);
         self.hud.draw_commands = commands;
 
-        // Depth-tested world lines (ADR 0083) render with this frame's scene.
-        let world_lines = self.core.script.drain_world_lines();
-        if let Some(renderer) = &mut self.scene_renderer {
-            renderer.set_world_lines(world_lines, self.hud.egui_ctx.pixels_per_point());
-        }
+        // Depth-tested world lines (ADR 0083) render with this frame's
+        // scene, handed over with its inputs
+        self.hud.world_lines = self.core.script.drain_world_lines();
         // World text (ADR 0104) is laid out in the HUD's egui pass.
         self.hud.world_texts = self.core.script.drain_world_texts();
     }

@@ -1,6 +1,7 @@
 //! Scene renderer - converts FlintWorld entities to GPU meshes
 
 mod assets;
+mod binding;
 mod draws;
 mod extract;
 mod frame;
@@ -22,6 +23,8 @@ mod style_mask;
 mod terrain;
 mod water;
 
+pub use binding::{BoundGrass, BoundScene, LoadedTerrain, SceneBinding};
+pub use frame::{FrameInputs, View2d};
 pub use grass_ground::{load_grass_ground_in, load_scene_grass_ground, LoadedGrassGround};
 pub use particles::load_scene_particle_textures;
 use post::next_post_config_generation;
@@ -623,6 +626,12 @@ pub struct SceneRenderer {
     /// its frame time. Hosts that don't set it get 1/60, which is what a
     /// per-frame weight always meant.
     pub style_dt: f32,
+    /// The boil the last `prepare` took (#739), stamped into the config
+    /// `encode_to` draws. `None` until a host prepares a frame.
+    frame_boil: Option<flint_wooze::BoilFrame>,
+    /// A split view's other side's boil (`prepare_again`), drawn by the
+    /// next `encode_again_to` only.
+    again_boil: Option<flint_wooze::BoilFrame>,
     // Particles (ADR 0068): their pipeline is in `pipelines`, and what it
     // draws from here, so instances uploaded before an MSAA change still draw.
     particle_buffers: Option<ParticleBuffers>,
@@ -840,6 +849,8 @@ impl SceneRenderer {
             ocean_time: 0.0,
             motion_hold: Default::default(),
             style_dt: 1.0 / 60.0,
+            frame_boil: None,
+            again_boil: None,
             // Particles (ADR 0068): no instances until a caller steps a
             // ParticleSystem, so a scene without one draws none.
             particle_buffers,

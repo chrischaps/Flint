@@ -1749,7 +1749,7 @@ color = "tint"
 tint = [1.0, 0.72, 0.32]
 ```
 
-The host names the terrain's entity (`SceneRenderer::set_terrain_entity`) beside `load_terrain`; `flint render` and the player do.
+Binding the scene (`SceneRenderer::bind_scene`, which every host calls when a scene loads) loads its terrain and names the terrain's entity for the mask, so a styled terrain is masked in `flint render` and the player.
 
 **A styled transparent is a lens.** Glass, a ghost or a hologram with a style of its own is drawn into the mask after every opaque, back to front as the scene drew it. It writes no depth, but it is tested against the depth the opaques wrote, so an opaque in front still hides it. Where it shows, its id (and its blend) replaces whatever was behind it, and the style draws that whole pixel: what you see through a green-glyph pane comes out in green glyphs. The decision, and the alternatives it was chosen over:
 
