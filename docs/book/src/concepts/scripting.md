@@ -612,6 +612,8 @@ The feed logs each state it delivers at info under the `expression` target
 
 The message can be any value, printed as Rhai prints it: `log(42)` and `log(3.5)` log the number, and a map or array logs its contents. `log` with one float used to reach Rhai's own base-10 logarithm and print nothing; the logarithm is `log(x, 10.0)`.
 
+Rhai's own `print(x)` and `debug(x)` go to the same log, at info level, naming the script's file and entity (`INFO script: opened file=scripts/door.rhai entity=door`); `debug` shows its value as Rhai debugs it (a string in quotes) and adds the line. None of them writes to stdout, so `flint render --scripts --report json` answers with the report alone. `flint` writes its log to stderr. `flint` and `flint-player` show everything under `script` at info and above unless `RUST_LOG` says otherwise (`RUST_LOG=warn` hides it); a game binary that sets up its own `tracing_subscriber` adds `script=info` to its filter to see them.
+
 ### Physics API
 
 Physics functions provide raycasting and camera access for combat, line-of-sight checks, and interaction targeting:

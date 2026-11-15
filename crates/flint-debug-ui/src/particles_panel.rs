@@ -1,9 +1,9 @@
 //! F3 "Particles" panel: live alive counts per effect instance, play / stop /
 //! burst controls, the global budget and a draw toggle (ADR 0068).
 //!
-//! The panel holds plain data; the host (`flint-player`) refreshes the rows
-//! each frame while the panel is clean and drains `take_actions()` when it
-//! is dirty, so this crate never depends on `flint-particles`.
+//! The panel holds plain data; its `sync` refreshes the rows each frame
+//! while the panel is clean and applies `take_actions()` to the particles
+//! when it is dirty.
 
 use crate::widgets::drag_u32;
 use crate::DebugPanel;
@@ -92,6 +92,62 @@ impl ParticlesDebugPanel {
 impl DebugPanel for ParticlesDebugPanel {
     fn name(&self) -> &str {
         PARTICLES_DEBUG_PANEL
+    }
+
+    fn weight(&self) -> u32 {
+        14
+    }
+
+    /// Apply what was pressed; while nothing was, mirror the live counts.
+    fn sync(&mut self, ctx: &mut crate::PanelCtx) {
+        let sync = &mut *ctx.particles;
+        if self.dirty {
+            for action in self.take_actions() {
+                use ParticlePanelAction as A;
+                match action {
+                    A::Play(id) => sync.set_playing(id, true),
+                    A::Stop(id) => sync.set_playing(id, false),
+                    A::Burst(id, n) => sync.queue_burst(id, n),
+                    A::StopDetached(h) => sync.stop_effect(h),
+                    A::RestartAll => sync.restart_all(),
+                    A::SetBudget(b) => sync.set_budget(b as usize),
+                    A::SetRender(on) => ctx.host.particles_render = on,
+                }
+            }
+            self.dirty = false;
+            return;
+        }
+        let rows = sync
+            .instances()
+            .map(|(key, inst)| {
+                let (entity_id, handle, label) = match key {
+                    flint_particles::InstanceKey::Entity(id) => (
+                        Some(id),
+                        0,
+                        ctx.world.get_name(id).unwrap_or("?").to_string(),
+                    ),
+                    flint_particles::InstanceKey::Detached(h) => (None, h, format!("effect #{h}")),
+                };
+                let effect = match &inst.source {
+                    flint_particles::EffectSource::Asset(fx) => Some(fx.name.clone()),
+                    flint_particles::EffectSource::Inline => None,
+                };
+                EmitterRow {
+                    entity_id,
+                    handle,
+                    label,
+                    effect,
+                    emitters: inst.emitters.len(),
+                    alive: inst.alive(),
+                    capacity: inst.capacity(),
+                    playing: inst.any_emitter_playing(),
+                }
+            })
+            .collect();
+        let alive = sync.total_alive();
+        let budget = sync.budget() as u32;
+        self.refresh(rows, alive, budget);
+        self.render_enabled = ctx.host.particles_render;
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) {

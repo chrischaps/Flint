@@ -21,7 +21,7 @@ pub(crate) const WINDOW_SECS: f64 = 10.0;
 pub(crate) enum Phase {
     /// Pointer lock, pads, the clock, transitions, extensions, events
     Input,
-    /// Scripts' `on_update`
+    /// Scripts' `on_update`, and the events and `on_init`s before it
     Scripts,
     /// The fixed-step physics and the camera that follows it
     Physics,
@@ -75,7 +75,7 @@ struct Frame {
     at: f64,
     ms: f32,
     phases: [f32; Phase::COUNT],
-    /// Each script's `on_update`, indexed as `PerfRecorder::script_names`.
+    /// Each script callback's time, indexed as `PerfRecorder::script_names`.
     scripts: Vec<f32>,
 }
 
@@ -87,7 +87,8 @@ pub(crate) struct PhaseTime {
     pub max: f32,
 }
 
-/// A script file's `on_update` over the window: the mean frame's, and the
+/// A script callback over the window (`hud.rhai:on_draw_ui`, #703; or one
+/// of the script system's own steps, `[load]`): the mean frame's, and the
 /// worst.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ScriptTime {
@@ -113,7 +114,7 @@ pub(crate) struct PerfSummary {
     /// frames were the player's own work or time spent elsewhere.
     pub worst_frame: f32,
     pub worst_frame_cpu: f32,
-    /// The scripts with the worst single `on_update`, worst first.
+    /// The script callbacks with the worst single frame, worst first.
     pub scripts: Vec<ScriptTime>,
 }
 
@@ -158,8 +159,8 @@ impl PerfRecorder {
         self.begin_frame_at(Instant::now());
     }
 
-    /// This frame's time in each script file's `on_update`
-    /// (`ScriptSystem::update_times`).
+    /// This frame's time in each script callback
+    /// (`ScriptSystem::take_times`), added to what the frame already has.
     pub(crate) fn record_scripts(&mut self, times: &[(String, f32)]) {
         for (path, ms) in times {
             let i = match self.script_names.iter().position(|n| n == path) {
@@ -548,9 +549,9 @@ pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
     }
     if !s.scripts.is_empty() {
         line(String::new());
-        line("scripts         mean   max   (worst first)".to_string());
+        line("scripts                    mean   max   (worst first)".to_string());
         for sc in &s.scripts {
-            line(format!("  {:<13}{:5.2} {:5.1}", sc.name, sc.mean, sc.max));
+            line(format!("  {:<24}{:5.2} {:5.1}", sc.name, sc.mean, sc.max));
         }
     }
     line(String::new());
@@ -685,7 +686,7 @@ impl super::PlayerApp {
     /// submissions a frame, so `?perf=cpu` leaves it off.
     pub fn enable_perf(&mut self, gpu: bool) {
         self.stats.perf = Some(PerfRecorder::new(gpu));
-        self.core.script.set_update_timing(true);
+        self.core.script.set_timing(true);
     }
 
     /// The end of `phase` in this frame, when recording.
@@ -805,10 +806,14 @@ impl super::PlayerApp {
     }
 }
 
-/// `scripts/biolum.rhai` -> `biolum`.
-fn script_name(path: &str) -> String {
-    let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    file.strip_suffix(".rhai").unwrap_or(file).to_string()
+/// `scripts/biolum.rhai:on_update` -> `biolum.rhai:on_update`: the file
+/// without its folder, and the callback (#703).
+fn script_name(label: &str) -> String {
+    label
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(label)
+        .to_string()
 }
 
 /// "Chrome 156", "Firefox 159": the browser and its major version from a
@@ -1060,17 +1065,19 @@ mod tests {
             rec.begin_frame_at(t);
             let spike = if i == 4 { 40.0 } else { 0.1 };
             rec.record_scripts(&[
-                ("scripts/weather.rhai".to_string(), 0.5),
-                ("scripts/whale.rhai".to_string(), spike),
+                ("scripts/weather.rhai:on_update".to_string(), 0.5),
+                ("scripts/whale.rhai:on_update".to_string(), spike),
             ]);
+            // A frame's later batch adds to what it has
+            rec.record_scripts(&[("scripts/weather.rhai:on_update".to_string(), 0.25)]);
             t += ms(16.0);
         }
         rec.begin_frame_at(t);
         let s = rec.summary().unwrap();
-        assert_eq!(s.scripts[0].name, "whale");
+        assert_eq!(s.scripts[0].name, "whale.rhai:on_update");
         assert!((s.scripts[0].max - 40.0).abs() < 0.01);
-        assert_eq!(s.scripts[1].name, "weather");
-        assert!((s.scripts[1].mean - 0.5).abs() < 0.01);
+        assert_eq!(s.scripts[1].name, "weather.rhai:on_update");
+        assert!((s.scripts[1].mean - 0.75).abs() < 0.01);
     }
 
     #[test]

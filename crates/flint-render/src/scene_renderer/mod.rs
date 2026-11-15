@@ -74,23 +74,14 @@ type AssetScopeFor = (
 /// dark slate background.
 pub const DEFAULT_CLEAR_COLOR: [f32; 4] = [0.1, 0.1, 0.15, 1.0];
 
-/// Visual representation for an archetype
-#[derive(Clone)]
-pub struct ArchetypeVisual {
-    pub color: [f32; 4],
-    pub wireframe: bool,
-    pub default_size: [f32; 3],
-}
+/// The base colour of an imported model's mesh that has no material: the
+/// green the first demo's `furniture` drew in, kept when the renderer stopped
+/// naming archetypes (#751) so a material-less model looks as it did.
+pub(super) const MODEL_FALLBACK_COLOR: [f32; 4] = [0.27, 1.0, 0.53, 1.0];
 
-impl Default for ArchetypeVisual {
-    fn default() -> Self {
-        Self {
-            color: [0.5, 0.5, 0.5, 1.0],
-            wireframe: false,
-            default_size: [1.0, 1.0, 1.0],
-        }
-    }
-}
+/// [`MODEL_FALLBACK_COLOR`] for a skinned model: the first demo's
+/// `character` yellow.
+pub(super) const SKINNED_MODEL_FALLBACK_COLOR: [f32; 4] = [1.0, 1.0, 0.27, 1.0];
 
 /// A single draw call with its own GPU resources
 #[allow(dead_code)]
@@ -518,7 +509,10 @@ pub struct SceneRenderer {
     /// Shallow wooze (#215): each entity's drift this frame, from the caller.
     /// Its pipelines are in `pipelines`, built when the first draw needs them.
     shallow_wooze: HashMap<flint_core::EntityId, ShallowWoozeDraw>,
-    archetype_visuals: HashMap<String, ArchetypeVisual>,
+    /// The placeholder box each archetype's `bounds` draws as, from the
+    /// schemas the scene was bound with ([`SceneBinding::with_archetypes`],
+    /// #751); an archetype not here draws grey.
+    archetype_visuals: HashMap<String, flint_schema::ArchetypeVisual>,
     mesh_cache: MeshCache,
     /// Per-(entity, sub-mesh) transform/material resources reused across
     /// frames; see `CachedDrawBinds`.
@@ -729,7 +723,7 @@ impl SceneRenderer {
         let layouts = SceneLayouts::new(device);
         let pipelines =
             ScenePipelines::build(device, scene_format, sample_count, &layouts, Present::NEW);
-        let archetype_visuals = Self::default_archetype_visuals();
+        let archetype_visuals = HashMap::new();
         let texture_cache = TextureCache::new(device, queue);
 
         // Create grid draw call (only for debug/inspection modes)
@@ -1305,16 +1299,12 @@ impl SceneRenderer {
             if hidden.contains(&entity.id) {
                 continue;
             }
-            let archetype = entity.archetype.as_deref().unwrap_or("unknown");
-            let visual =
-                self.archetype_visuals
-                    .get(archetype)
-                    .cloned()
-                    .unwrap_or(ArchetypeVisual {
-                        color: [0.5, 0.5, 0.5, 1.0],
-                        wireframe: false,
-                        default_size: [1.0, 1.0, 1.0],
-                    });
+            let visual = entity
+                .archetype
+                .as_deref()
+                .and_then(|archetype| self.archetype_visuals.get(archetype))
+                .copied()
+                .unwrap_or_default();
 
             let model_matrix = world
                 .get_world_matrix(entity.id)

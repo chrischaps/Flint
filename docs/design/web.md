@@ -21,8 +21,6 @@ rustup target add wasm32-unknown-unknown
 cargo check --target wasm32-unknown-unknown -p flint-player   # the whole player
 cd crates/flint-player
 trunk serve                 # http://127.0.0.1:8080, the player on the First Light scene
-trunk serve shims.html      # the shim check (#100): sky clear, time, pad, rebinds;
-                            #   sound behind a Begin click (#101)
 trunk build --release       # dist/, with wasm-opt -Oz (trunk fetches binaryen)
 trunk build --release --cargo-profile web-release   # what the site ships (#123, Size)
 ```
@@ -260,8 +258,7 @@ sunprint` builds just that game for a local trial.
 can play. Its `pattern_preload` preloads only the 90 KB JS glue. Trunk's
 default loader also preloads the wasm, so even a browser that can't play
 would have downloaded the whole wasm (7 MB). Under `trunk serve` there is no `games.json`
-and the page plays what the query names, as before. `shims.html` has no
-doorway, so it awaits `undefined` and starts at once.
+and the page plays what the query names, as before.
 
 **Embed.** `?game=float&embed=1` is for iframes. It shows the world and its
 Begin button, with the progress hairline centred low, and no wordmark,
@@ -568,9 +565,10 @@ the page's `#perf` panel):
 - **cpu ms**, mean and max per phase of the frame: input, scripts,
   physics, script ui, anim/fx, sync (procgen, renderer sync, late audio),
   render (draw lists, encoding, submission), hud, present.
-- **scripts**: the four with the worst single frame, by file, and the
-  script system's own steps in brackets (`[hot reload]`, `[load, on_init]`,
-  `[events]`); `ScriptSystem::set_update_timing`.
+- **scripts**: the four callbacks with the worst single frame, by file
+  and callback (`hud.rhai:on_draw_ui`, #703), and the script system's own
+  steps in brackets, less the callbacks they ran (`[hot reload]`,
+  `[load]`); `ScriptSystem::set_timing` / `take_times`.
 - **gpu ms** per pass from `timestamp-query` (ADR 0108), where the adapter
   has it. The post chain is now a scope per effect (`SSAO`, `Bloom`,
   `Volumetric`, `Kuwahara`), not one `Post-process`. Without timestamps the
@@ -1048,7 +1046,7 @@ yet: that is #133.
 Firefox 159 on Windows drew Float at p50 83.3 ms, five refreshes, with a
 stall of 1 to 3 s every few seconds and half the audio buffers late.
 There were two causes, one on top of the other, and neither was Firefox's
-presentation: the sky-only shim page held 16.7 ms in the same browser
+presentation: the sky-only shim page (retired by #752) held 16.7 ms in the same browser
 (99% of 5,373 frames).
 
 All of these runs are headed Firefox 159 over WebDriver BiDi, Float's
@@ -1506,22 +1504,23 @@ tickets). Counts are for the runtime crates the player links:
   -i <crate>` finds none of them. Only flint-cli and the viewer use them.
   The remaining `std::process::id` calls in player crates are all in tests.
 
-The shim page (`shims.html`, bin `flint-web-shims`) exercises all of these: the day runs on
-`web_time::Instant`, the left stick scrubs it, `pause_day` (Space or the
-pad's South button) holds it through `InputState`, and R followed by a key
-or pad button rebinds `pause_day` and saves the rebind through `user_files`.
-
-Over its sky sits the Begin gate (#101). Float's sea and one of its songs
-are fetched from its GitHub repo and decoded, and the click opens the sound
-(query parameters are listed at the top of `flint_web_shims.rs`: `?music=`,
-`?buffer=`, `?audio=`, `?begin=auto`, `?stall=`). The corner counts late
-buffers, and the console prints a steadiness line every 10 s.
+A shim page (`shims.html`, bin `flint-web-shims`) exercised these before
+the player ran in the browser: a sky clear whose day ran on
+`web_time::Instant`, scrubbed by the left stick, held by `pause_day`
+through `InputState` and rebound with R through `user_files`, under a Begin
+gate that streamed Float's sea and a song from Float's repo on GitHub. The
+real player (`index.html`, #99) does all of it on real scenes, so #752
+deleted the page: the player has one web binary, and no engine source
+fetches from a game's repo. Its late-buffer counter lives on in `?perf=1`'s
+audio line (`AudioEngine::buffer_stats`), and the console's steadiness line
+every 10 s is flint-audio's. Its `?stall=` and `?buffer=` knobs went with it;
+the page is in the history at `5e29be73` for a rerun of the measurements below.
 
 ## Sound
 
 #101. A browser gives no sound before a user gesture: an `AudioContext`
 made earlier is kept suspended, and Chrome warns about it. So on wasm32
-`AudioEngine::new()` stays silent, and the shim page's **Begin** gate opens the
+`AudioEngine::new()` stays silent, and the page's **Begin** gate opens the
 stream from inside the click handler:
 
 - `AudioEngine::silent()` / `start()`. On the desktop `new()` is `silent()`
@@ -1623,8 +1622,8 @@ thread talks to it by `postMessage`:
   with `{}` and needs no wasm-bindgen glue (a worklet has no `TextDecoder`
   for it anyway). It is built with the workspace's `worklet` profile
   (opt-level 3: it runs against the audio thread's deadline), by a trunk
-  `pre_build` hook into `target/worklet`, and `index.html` / `shims.html`
-  copy it next to the page.
+  `pre_build` hook into `target/worklet`, and `index.html` copies it next
+  to the page.
 - `flint_audio::remote` is the engine's side. Each call (`play_non_spatial`,
   `create_spatial_track`, `set_position`, `set_bus_volume`, …) becomes a
   `remote::Command`, encoded into one byte batch; the ids are made on the
@@ -1683,7 +1682,7 @@ command protocol to keep in step with the engine's API; it needs no headers,
 no service worker and no second player build.
 
 **Measured** in headless Chrome 156 on this laptop with the shim page
-(`shims.html`, Float's `ocean_loop.ogg` and `music_day.ogg`, built
+(`shims.html`, since retired (#752), Float's `ocean_loop.ogg` and `music_day.ogg`, built
 `web-release`), 60 s each. `?stall=N` holds the main thread N ms every 2 s;
 `?mixer=main` is the old stream:
 

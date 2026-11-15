@@ -12,6 +12,9 @@ use flint_core::toml_util::toml_f32;
 use flint_scene::SceneDocument;
 use std::path::PathBuf;
 
+/// The engine component this panel tunes (`schemas/components/camera_tuning.toml`).
+pub const CAMERA_TUNING: &str = "camera_tuning";
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CameraPanelConfig {
     pub fov_deg: f32,
@@ -69,7 +72,7 @@ impl CameraDebugPanel {
     fn commit_to_file(&self) -> Result<(), String> {
         let mut doc = SceneDocument::from_file(&self.scene_path)?;
         for (field, value) in self.config.to_fields() {
-            doc.patch_field(&self.entity_name, "camera_tuning", field, &value)?;
+            doc.patch_field(&self.entity_name, CAMERA_TUNING, field, &value)?;
         }
         doc.save(&self.scene_path)
     }
@@ -87,6 +90,25 @@ fn label_for(fov_deg: f32) -> &'static str {
 impl DebugPanel for CameraDebugPanel {
     fn name(&self) -> &str {
         "Camera"
+    }
+
+    /// An edit drives the live camera and the component (so Commit to File
+    /// keeps it); otherwise the slider follows the camera, so a script's
+    /// FOV doesn't leave it stale.
+    fn sync(&mut self, ctx: &mut crate::PanelCtx) {
+        if !self.dirty {
+            self.sync_fov(ctx.camera.fov);
+            return;
+        }
+        ctx.camera.fov = self.config.fov_deg;
+        if let Some(id) = ctx.world.get_id(&self.entity_name) {
+            if let Some(comps) = ctx.world.get_components_mut(id) {
+                for (field, value) in self.config.to_fields() {
+                    comps.set_field(CAMERA_TUNING, field, value);
+                }
+            }
+        }
+        self.dirty = false;
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) {

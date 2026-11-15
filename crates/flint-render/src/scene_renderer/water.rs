@@ -1,6 +1,6 @@
 //! The sea and the game's lakes and rivers, owned by [`WaterRenderer`]
 //! (ADR 0118, #736): the ocean's uniforms and transform, the wave spectrum
-//! and look a scene's `ocean` gives, the contact-foam hull, water bodies
+//! and look a scene's `ocean` gives, the contact-foam hulls, water bodies
 //! (ADR 0094), and the refraction grab the water reads (an opaque-scene
 //! snapshot, kept per view so a comic panel has its own). The pipelines are
 //! in `ScenePipelines`; the host's clock is still `SceneRenderer::ocean_time`.
@@ -10,7 +10,6 @@ use crate::ocean_pipeline::OceanPipeline;
 use crate::pipeline::TransformUniforms;
 use crate::postprocess::HDR_FORMAT;
 use crate::sky_pipeline::SkyParams;
-use flint_core::components as comp;
 use flint_ecs::FlintWorld;
 
 /// The water's GPU resources and what the scene says about it.
@@ -33,13 +32,16 @@ pub(crate) struct WaterRenderer {
     visuals: crate::ocean_pipeline::OceanVisuals,
     /// The scene has a sea this frame (and its pipeline built).
     ocean_active: bool,
-    /// Contact-foam hull: ([x, z, cos_yaw, sin_yaw], [half_x, half_z]).
-    /// None when the scene has no `ocean_contact` entity.
-    contact: Option<([f32; 4], [f32; 2])>,
-    /// (ocean_time, hull position) of the previous frame, for velocity.
-    contact_prev: Option<(f64, [f32; 3])>,
-    /// Smoothed hull velocity fed to the contact-foam churn term.
-    contact_vel: [f32; 3],
+    /// Every `ocean_contact` hull this frame, as drawn, in name order
+    /// (#749). `upload` foams round the `MAX_CONTACTS` nearest the camera.
+    contacts: Vec<ContactHull>,
+    /// Each hull's motion across frames, for the velocity a host didn't
+    /// give: by entity, dropped with the hull.
+    contact_motion: std::collections::HashMap<flint_core::EntityId, ContactMotion>,
+    /// The velocities the host gave this frame (`FrameInputs::contact_velocities`).
+    contact_velocities: std::collections::HashMap<flint_core::EntityId, [f32; 3]>,
+    /// Hulls already warned about being left out, by name.
+    contact_warned: std::cell::RefCell<std::collections::BTreeSet<String>>,
     /// Grab pass (refraction): opaque scene color+depth snapshots, at the
     /// view's size.
     pub(crate) grab: OceanGrab,
@@ -59,6 +61,80 @@ pub(crate) struct OceanGrab {
     pub(crate) depth: Option<(wgpu::Texture, wgpu::TextureView)>,
     size: (u32, u32),
     pub(crate) bind_group: Option<wgpu::BindGroup>,
+}
+
+/// One `ocean_contact` hull as the frame draws it (#749).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ContactHull {
+    pub(crate) id: flint_core::EntityId,
+    pub(crate) name: String,
+    /// The entity's origin in the world, its parents and pose applied.
+    pub(crate) position: [f32; 3],
+    /// (cos yaw, sin yaw) of its heading on the water.
+    pub(crate) heading: [f32; 2],
+    /// Half extents in metres, the world scale applied.
+    pub(crate) half: [f32; 2],
+    /// Its velocity: the host's, or its drawn position differenced.
+    pub(crate) velocity: [f32; 3],
+}
+
+impl ContactHull {
+    fn to_gpu(&self) -> crate::ocean_pipeline::ContactHullGpu {
+        crate::ocean_pipeline::ContactHullGpu {
+            pose: [
+                self.position[0],
+                self.position[2],
+                self.heading[0],
+                self.heading[1],
+            ],
+            extent: [self.half[0], self.half[1], 0.0, 0.0],
+            velocity: [self.velocity[0], self.velocity[1], self.velocity[2], 0.0],
+        }
+    }
+}
+
+/// A hull's last drawn position and smoothed velocity.
+#[derive(Debug, Clone, Copy)]
+struct ContactMotion {
+    time: f64,
+    position: [f32; 3],
+    velocity: [f32; 3],
+}
+
+/// Fastest a hull is taken to move (m/s): a teleport or a scene load would
+/// otherwise read as a slam.
+const CONTACT_MAX_SPEED: f32 = 5.0;
+
+/// Where a hull with world matrix `m` (column-major) lies on the water: its
+/// origin, its heading as (cos yaw, sin yaw), and `half` scaled by the
+/// world's scale along its local X and Z.
+///
+/// The heading is the mean of its local Z axis and its local X axis turned
+/// a quarter, each laid flat: exactly the yaw for an upright hull, and the
+/// line its footprint follows for one that pitches or rolls. The shader's
+/// convention is forward = (sin y, cos y), right = (cos y, -sin y).
+pub(crate) fn hull_on_water(m: &[[f32; 4]; 4], half: [f32; 2]) -> ([f32; 3], [f32; 2], [f32; 2]) {
+    let x_axis = [m[0][0], m[0][1], m[0][2]];
+    let z_axis = [m[2][0], m[2][1], m[2][2]];
+    let len = |v: [f32; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let (sx, sz) = (len(x_axis), len(z_axis));
+    let (ix, iz) = (1.0 / sx.max(1e-6), 1.0 / sz.max(1e-6));
+    // Forward on the water: (sin y, cos y)
+    let f = [
+        z_axis[0] * iz - x_axis[2] * ix,
+        z_axis[2] * iz + x_axis[0] * ix,
+    ];
+    let fl = (f[0] * f[0] + f[1] * f[1]).sqrt();
+    let heading = if fl > 1e-6 {
+        [f[1] / fl, f[0] / fl]
+    } else {
+        [1.0, 0.0]
+    };
+    (
+        [m[3][0], m[3][1], m[3][2]],
+        heading,
+        [(half[0] * sx).max(0.01), (half[1] * sz).max(0.01)],
+    )
 }
 
 /// What the water's uniforms read from the rest of the frame.
@@ -157,9 +233,10 @@ impl WaterRenderer {
             spectrum: None,
             visuals: crate::ocean_pipeline::OceanVisuals::default(),
             ocean_active: false,
-            contact: None,
-            contact_prev: None,
-            contact_vel: [0.0; 3],
+            contacts: Vec::new(),
+            contact_motion: std::collections::HashMap::new(),
+            contact_velocities: std::collections::HashMap::new(),
+            contact_warned: Default::default(),
             grab: OceanGrab::default(),
             grab_dummy_bind_group: None,
             grab_this_frame: false,
@@ -442,53 +519,103 @@ impl WaterRenderer {
         self.bodies.clear();
     }
 
-    /// Extract the first `ocean_contact` entity: hull center/yaw/extents for
-    /// the splash ring, plus hull velocity differentiated across frames
-    /// (drift + heave both count as impact against the moving water).
-    pub(crate) fn extract_contact(&mut self, world: &FlintWorld, time: f64) {
-        use flint_core::toml_util::{toml_f32, toml_vec3};
-        self.contact = None;
-        for &entity_id in world.entities_with_component(flint_geometry::components::OCEAN_CONTACT) {
-            let Some(components) = world.get_components(entity_id) else {
-                continue;
-            };
-            let Some(contact) = components.get(flint_geometry::components::OCEAN_CONTACT) else {
-                continue;
-            };
-            let Some(tf) = components.get(comp::TRANSFORM) else {
-                continue;
-            };
+    /// The hull velocities a host gave this frame (`FrameInputs::contact_velocities`).
+    pub(crate) fn set_contact_velocities(&mut self, given: &[(flint_core::EntityId, [f32; 3])]) {
+        self.contact_velocities.clear();
+        self.contact_velocities.extend(given.iter().copied());
+    }
 
-            let pos = tf.get("position").and_then(toml_vec3).unwrap_or([0.0; 3]);
-            let rot = tf.get("rotation").and_then(toml_vec3).unwrap_or([0.0; 3]);
-            let yaw = rot[1].to_radians(); // engine Euler is degrees; Y = yaw
+    /// Every `ocean_contact` entity, as drawn (#749): its world matrix gives
+    /// the centre, heading and scaled extents, so a hull under a parent or
+    /// posed with `rotation_quat` (as physics writes one) foams where it is.
+    /// Its velocity is the host's when it gave one (physics knows it), else
+    /// its drawn position differenced across frames on the waves' clock:
+    /// drift and heave both count as impact against the moving water.
+    pub(crate) fn extract_contact(&mut self, world: &FlintWorld, time: f64) {
+        use flint_core::toml_util::toml_f32;
+        let key = flint_geometry::components::OCEAN_CONTACT;
+        self.contacts.clear();
+        for &id in world.entities_with_component(key) {
+            let Some(contact) = world.get_component(id, key) else {
+                continue;
+            };
+            let Some(matrix) = world.get_world_matrix(id) else {
+                continue;
+            };
             let half_x = contact.get("half_x").and_then(toml_f32).unwrap_or(1.0);
             let half_z = contact.get("half_z").and_then(toml_f32).unwrap_or(1.0);
+            let (position, heading, half) = hull_on_water(&matrix, [half_x, half_z]);
 
-            self.contact = Some((
-                [pos[0], pos[2], yaw.cos(), yaw.sin()],
-                [half_x.max(0.01), half_z.max(0.01)],
-            ));
-
-            // Hull velocity on the same clock as the waves. Clamped against
-            // teleports/scene loads, lightly smoothed against frame jitter.
-            if let Some((prev_t, prev_pos)) = self.contact_prev {
-                let dt = (time - prev_t) as f32;
+            let motion = self.contact_motion.entry(id).or_insert(ContactMotion {
+                time,
+                position,
+                velocity: [0.0; 3],
+            });
+            if let Some(given) = self.contact_velocities.get(&id) {
+                motion.velocity = given.map(|v| v.clamp(-CONTACT_MAX_SPEED, CONTACT_MAX_SPEED));
+            } else {
+                // Clamped against teleports, lightly smoothed against
+                // frame jitter.
+                let dt = (time - motion.time) as f32;
                 if dt > 1e-4 {
                     let k = (10.0 * dt).min(1.0);
-                    for i in 0..3 {
-                        let v = ((pos[i] - prev_pos[i]) / dt).clamp(-5.0, 5.0);
-                        self.contact_vel[i] += (v - self.contact_vel[i]) * k;
+                    for ((vel, now), was) in motion
+                        .velocity
+                        .iter_mut()
+                        .zip(position)
+                        .zip(motion.position)
+                    {
+                        let v = ((now - was) / dt).clamp(-CONTACT_MAX_SPEED, CONTACT_MAX_SPEED);
+                        *vel += (v - *vel) * k;
                     }
                 }
             }
-            self.contact_prev = Some((time, pos));
-            break; // one contact hull per scene
+            motion.time = time;
+            motion.position = position;
+
+            self.contacts.push(ContactHull {
+                id,
+                name: world.get_name(id).unwrap_or_default().to_string(),
+                position,
+                heading,
+                half,
+                velocity: motion.velocity,
+            });
         }
-        if self.contact.is_none() {
-            self.contact_prev = None;
-            self.contact_vel = [0.0; 3];
+        // Name order, so which hulls foam never rests on a HashMap's
+        self.contacts.sort_by(|a, b| a.name.cmp(&b.name));
+        let seen: std::collections::HashSet<_> = self.contacts.iter().map(|c| c.id).collect();
+        self.contact_motion.retain(|id, _| seen.contains(id));
+    }
+
+    /// The hulls the sea foams round this frame: all of them up to
+    /// `MAX_CONTACTS`, else the ones nearest `camera_pos`, warning once by
+    /// name about each left out.
+    pub(crate) fn contacts_to_foam(&self, camera_pos: [f32; 3]) -> Vec<&ContactHull> {
+        use crate::ocean_pipeline::MAX_CONTACTS;
+        if self.contacts.len() <= MAX_CONTACTS {
+            return self.contacts.iter().collect();
         }
+        let dist2 = |c: &ContactHull| {
+            (0..3)
+                .map(|i| (c.position[i] - camera_pos[i]).powi(2))
+                .sum::<f32>()
+        };
+        let mut by_distance: Vec<&ContactHull> = self.contacts.iter().collect();
+        by_distance.sort_by(|a, b| dist2(a).total_cmp(&dist2(b)).then(a.name.cmp(&b.name)));
+        let mut warned = self.contact_warned.borrow_mut();
+        for left_out in &by_distance[MAX_CONTACTS..] {
+            if warned.insert(left_out.name.clone()) {
+                tracing::warn!(
+                    "ocean_contact on '{}': the sea foams round {} hulls at once, the nearest \
+                     the camera, and this one is farther; it has no contact foam while it is",
+                    left_out.name,
+                    MAX_CONTACTS
+                );
+            }
+        }
+        by_distance.truncate(MAX_CONTACTS);
+        by_distance
     }
 
     /// Write this frame's ocean uniforms (wave phases in f64, grid follows
@@ -514,6 +641,7 @@ impl WaterRenderer {
             queue.write_buffer(tbuf, 0, bytemuck::cast_slice(&[transform]));
 
             let v = &self.visuals;
+            let hulls = self.contacts_to_foam(camera_pos);
             // Snap the grid to inner-cell multiples so wave sampling
             // positions stay world-anchored while the mesh follows us.
             let q = v.snap_quantum();
@@ -555,21 +683,24 @@ impl WaterRenderer {
                     0.0
                 },
                 // Contact foam is off (strength 0) without a hull.
-                splash_strength: if self.contact.is_some() {
-                    v.splash_strength
-                } else {
+                splash_strength: if hulls.is_empty() {
                     0.0
+                } else {
+                    v.splash_strength
                 },
                 splash_width: v.splash_width,
                 splash_flicker_speed: v.splash_flicker_speed,
-                hull_a: self.contact.map(|(a, _)| a).unwrap_or([0.0, 0.0, 1.0, 0.0]),
-                hull_b: {
-                    let h = self.contact.map(|(_, h)| h).unwrap_or([1.0, 1.0]);
-                    [h[0], h[1], v.splash_baseline, v.splash_noise_scale]
-                },
-                hull_c: {
-                    let hv = self.contact_vel;
-                    [hv[0], hv[1], hv[2], v.splash_response]
+                splash_baseline: v.splash_baseline,
+                splash_noise_scale: v.splash_noise_scale,
+                splash_response: v.splash_response,
+                contact_count: hulls.len() as u32,
+                hulls: {
+                    let mut gpu = [crate::ocean_pipeline::ContactHullGpu::default();
+                        crate::ocean_pipeline::MAX_CONTACTS];
+                    for (slot, hull) in gpu.iter_mut().zip(&hulls) {
+                        *slot = hull.to_gpu();
+                    }
+                    gpu
                 },
                 band_wobble: v.band_wobble,
                 band_dither: v.band_dither,
@@ -582,8 +713,8 @@ impl WaterRenderer {
                     v.foam_glow,
                 ],
                 // Reality tear rides the shared post-process fields: the
-                // remap happens in-shader AFTER the TOD palette lands in
-                // these uniforms, so it can never race time_of_day.rhai.
+                // remap happens in-shader AFTER a script's palette lands in
+                // these uniforms, so it can never race it.
                 mode: frame.render_mode,
                 mode_mix: frame.mode_mix,
                 // Shoreline foam reads the grab pass's depth: off
@@ -659,5 +790,226 @@ impl WaterRenderer {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod contact_tests {
+    //! Contact foam's hulls (#749): read as drawn, several at once, the
+    //! host's velocity over the differenced one.
+    use super::*;
+    use crate::ocean_pipeline::MAX_CONTACTS;
+    use flint_core::EntityId;
+
+    fn entity(world: &mut FlintWorld, name: &str, transform: &str) -> EntityId {
+        let id = world.spawn(name).unwrap();
+        world
+            .set_component(id, "transform", toml::from_str(transform).unwrap())
+            .unwrap();
+        id
+    }
+
+    fn hull(world: &mut FlintWorld, name: &str, transform: &str) -> EntityId {
+        let id = entity(world, name, transform);
+        world
+            .set_component(
+                id,
+                "ocean_contact",
+                toml::from_str("half_x = 0.5\nhalf_z = 1.0").unwrap(),
+            )
+            .unwrap();
+        id
+    }
+
+    fn water() -> WaterRenderer {
+        WaterRenderer::without_gpu(None, None, None, None, None)
+    }
+
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-5
+    }
+
+    #[test]
+    fn a_parented_hull_foams_where_its_parent_puts_it() {
+        let mut world = FlintWorld::new();
+        let boat = entity(
+            &mut world,
+            "boat",
+            "position = [10.0, 0.0, 4.0]\nrotation = [0.0, 90.0, 0.0]",
+        );
+        let h = hull(&mut world, "hull", "position = [0.0, 0.0, 2.0]");
+        world.set_parent(h, boat).unwrap();
+        let mut w = water();
+        w.extract_contact(&world, 0.0);
+        let c = &w.contacts[0];
+        // The boat's yaw of 90 turns the hull's +Z offset onto +X
+        assert!(
+            close(c.position[0], 12.0) && close(c.position[2], 4.0),
+            "{c:?}"
+        );
+        assert!(
+            close(c.heading[0], 0.0) && close(c.heading[1], 1.0),
+            "{c:?}"
+        );
+    }
+
+    #[test]
+    fn a_quaternion_posed_hull_keeps_its_yaw() {
+        let mut world = FlintWorld::new();
+        let s = std::f32::consts::FRAC_1_SQRT_2;
+        hull(
+            &mut world,
+            "dinghy",
+            &format!("rotation_quat = [0.0, {s}, 0.0, {s}]"),
+        );
+        let mut w = water();
+        w.extract_contact(&world, 0.0);
+        let c = &w.contacts[0];
+        assert!(
+            close(c.heading[0], 0.0) && close(c.heading[1], 1.0),
+            "{c:?}"
+        );
+    }
+
+    #[test]
+    fn an_euler_yaw_reads_as_before() {
+        // The old reading was rotation[1]'s cos and sin: an upright hull
+        // keeps it (bit for bit at 0, Float's raft at rest)
+        for yaw in [0.0f32, 20.0, -35.0, 135.0] {
+            let mut world = FlintWorld::new();
+            hull(&mut world, "raft", &format!("rotation = [0.0, {yaw}, 0.0]"));
+            let mut w = water();
+            w.extract_contact(&world, 0.0);
+            let c = &w.contacts[0];
+            let r = yaw.to_radians();
+            assert!(
+                close(c.heading[0], r.cos()) && close(c.heading[1], r.sin()),
+                "{yaw}: {c:?}"
+            );
+        }
+        let mut world = FlintWorld::new();
+        hull(
+            &mut world,
+            "raft",
+            "position = [0.0, 0.05, 0.0]\nrotation = [0.0, 0.0, 0.0]",
+        );
+        let mut w = water();
+        w.extract_contact(&world, 0.0);
+        assert_eq!(w.contacts[0].heading, [1.0, 0.0]);
+        assert_eq!(w.contacts[0].half, [0.5, 1.0]);
+    }
+
+    #[test]
+    fn a_pitched_and_rolled_hull_keeps_its_heading() {
+        // A raft riding the swell: pitch and roll must not swing the ring
+        let mut world = FlintWorld::new();
+        hull(&mut world, "raft", "rotation = [8.0, 30.0, -6.0]");
+        let mut w = water();
+        w.extract_contact(&world, 0.0);
+        let yaw = w.contacts[0].heading[1]
+            .atan2(w.contacts[0].heading[0])
+            .to_degrees();
+        assert!((yaw - 30.0).abs() < 1.0, "heading {yaw}");
+    }
+
+    #[test]
+    fn scale_grows_the_footprint() {
+        let mut world = FlintWorld::new();
+        let parent = entity(&mut world, "barge", "scale = [2.0, 1.0, 3.0]");
+        let h = hull(&mut world, "hull", "position = [0.0, 0.0, 0.0]");
+        world.set_parent(h, parent).unwrap();
+        let mut w = water();
+        w.extract_contact(&world, 0.0);
+        assert!(close(w.contacts[0].half[0], 1.0) && close(w.contacts[0].half[1], 3.0));
+    }
+
+    #[test]
+    fn two_hulls_both_foam() {
+        let mut world = FlintWorld::new();
+        hull(&mut world, "skiff", "position = [-4.0, 0.0, 0.0]");
+        hull(&mut world, "tender", "position = [4.0, 0.0, 0.0]");
+        let mut w = water();
+        w.extract_contact(&world, 0.0);
+        let foaming: Vec<&str> = w
+            .contacts_to_foam([0.0, 5.0, 10.0])
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(foaming, ["skiff", "tender"]);
+    }
+
+    #[test]
+    fn past_the_limit_the_nearest_foam() {
+        let mut world = FlintWorld::new();
+        for i in 0..MAX_CONTACTS + 2 {
+            hull(
+                &mut world,
+                &format!("boat_{i}"),
+                &format!("position = [{}.0, 0.0, 0.0]", i * 10),
+            );
+        }
+        let mut w = water();
+        w.extract_contact(&world, 0.0);
+        // The camera stands by the last two
+        let camera = [((MAX_CONTACTS + 1) * 10) as f32, 5.0, 0.0];
+        let mut foaming: Vec<String> = w
+            .contacts_to_foam(camera)
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        foaming.sort();
+        assert_eq!(foaming, ["boat_2", "boat_3", "boat_4", "boat_5"]);
+        // Each left out is warned about once
+        assert_eq!(
+            *w.contact_warned.borrow(),
+            ["boat_0".to_string(), "boat_1".to_string()]
+                .into_iter()
+                .collect()
+        );
+        w.contacts_to_foam(camera);
+        assert_eq!(w.contact_warned.borrow().len(), 2);
+    }
+
+    #[test]
+    fn velocity_is_differenced_per_hull() {
+        let mut world = FlintWorld::new();
+        let a = hull(&mut world, "a", "position = [0.0, 0.0, 0.0]");
+        hull(&mut world, "b", "position = [9.0, 0.0, 0.0]");
+        let mut w = water();
+        w.extract_contact(&world, 0.0);
+        // a moves 1 m along X in 0.5 s; b stays
+        world
+            .set_component(
+                a,
+                "transform",
+                toml::from_str("position = [1.0, 0.0, 0.0]").unwrap(),
+            )
+            .unwrap();
+        w.extract_contact(&world, 0.5);
+        // k = min(10 * 0.5, 1) = 1: the speed in full
+        assert!(close(w.contacts[0].velocity[0], 2.0), "{:?}", w.contacts[0]);
+        assert_eq!(w.contacts[1].velocity, [0.0; 3]);
+    }
+
+    #[test]
+    fn the_hosts_velocity_wins() {
+        let mut world = FlintWorld::new();
+        let a = hull(&mut world, "a", "position = [0.0, 0.0, 0.0]");
+        let mut w = water();
+        w.set_contact_velocities(&[(a, [0.0, -1.5, 0.75])]);
+        w.extract_contact(&world, 0.0);
+        assert_eq!(w.contacts[0].velocity, [0.0, -1.5, 0.75]);
+        // Clamped as a differenced one is
+        w.set_contact_velocities(&[(a, [40.0, 0.0, 0.0])]);
+        w.extract_contact(&world, 0.1);
+        assert_eq!(w.contacts[0].velocity[0], CONTACT_MAX_SPEED);
+    }
+
+    #[test]
+    fn no_hull_no_foam() {
+        let world = FlintWorld::new();
+        let mut w = water();
+        w.extract_contact(&world, 0.0);
+        assert!(w.contacts_to_foam([0.0; 3]).is_empty());
     }
 }

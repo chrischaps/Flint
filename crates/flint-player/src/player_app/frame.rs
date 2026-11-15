@@ -8,14 +8,6 @@ use super::hud_render::render_draw_commands;
 use super::subsystem::{EncodeCtx, FrameCtx};
 use super::PlayerApp;
 use super::TransitionPhase;
-#[cfg(feature = "debug-hud")]
-use super::{
-    CAMERA_TUNING_COMPONENT, DEAD_CALM_COMPONENT, GRASS_DEBUG_PANEL, RAFT_VISITOR_COMPONENT,
-    REALITY_COMPONENT, TIME_OF_DAY_COMPONENT, WEATHER_COMPONENT,
-};
-#[cfg(feature = "debug-hud")]
-#[cfg(feature = "debug-hud")]
-use flint_debug_ui::DebugPanel as _;
 use flint_render::AcquireFrame;
 use flint_render::{FrameInputs, GrassEntityPosition, View2d};
 use flint_runtime::state::AUDIO;
@@ -106,477 +98,38 @@ impl PlayerApp {
             renderer.set_post_process_config(config);
         }
 
-        // Push debug panel grass config changes to renderer
-        #[cfg(feature = "debug-hud")]
-        for panel in &mut self.debug_panels {
-            if panel.name() == GRASS_DEBUG_PANEL && panel.is_dirty() {
-                // A name collision must be a miss, not a panic.
-                if let Some(grass_panel) = panel
-                    .as_any_mut()
-                    .downcast_mut::<flint_debug_ui::GrassDebugPanel>()
-                {
-                    if grass_panel.density_changed() {
-                        renderer.reload_grass_config(&context.device, grass_panel.config().clone());
-                        grass_panel.clear_density_changed();
-                    } else {
-                        renderer.set_grass_config(grass_panel.config().clone());
-                    }
-                }
-                panel.clear_dirty();
-            }
-        }
-
-        // Particles panel (ADR 0068): live-mirror counts while clean, apply
-        // play/stop/burst/budget/draw actions when dirty.
-        #[cfg(feature = "debug-hud")]
-        for panel in &mut self.debug_panels {
-            if panel.name() != flint_debug_ui::PARTICLES_DEBUG_PANEL {
-                continue;
-            }
-            let Some(pp) = panel
-                .as_any_mut()
-                .downcast_mut::<flint_debug_ui::ParticlesDebugPanel>()
-            else {
-                continue;
-            };
-            if flint_debug_ui::DebugPanel::is_dirty(pp) {
-                for action in pp.take_actions() {
-                    use flint_debug_ui::ParticlePanelAction as A;
-                    match action {
-                        A::Play(id) => self.core.particles.sync.set_playing(id, true),
-                        A::Stop(id) => self.core.particles.sync.set_playing(id, false),
-                        A::Burst(id, n) => self.core.particles.sync.queue_burst(id, n),
-                        A::StopDetached(h) => self.core.particles.sync.stop_effect(h),
-                        A::RestartAll => self.core.particles.sync.restart_all(),
-                        A::SetBudget(b) => self.core.particles.sync.set_budget(b as usize),
-                        A::SetRender(on) => self.particles_render_enabled = on,
-                    }
-                }
-                flint_debug_ui::DebugPanel::clear_dirty(pp);
-            } else {
-                let rows: Vec<flint_debug_ui::EmitterRow> = self
-                    .core
-                    .particles
-                    .sync
-                    .instances()
-                    .map(|(key, inst)| {
-                        let (entity_id, handle, label) = match key {
-                            flint_particles::InstanceKey::Entity(id) => (
-                                Some(id),
-                                0,
-                                self.core.world.get_name(id).unwrap_or("?").to_string(),
-                            ),
-                            flint_particles::InstanceKey::Detached(h) => {
-                                (None, h, format!("effect #{h}"))
-                            }
-                        };
-                        let effect = match &inst.source {
-                            flint_particles::EffectSource::Asset(fx) => Some(fx.name.clone()),
-                            flint_particles::EffectSource::Inline => None,
-                        };
-                        flint_debug_ui::EmitterRow {
-                            entity_id,
-                            handle,
-                            label,
-                            effect,
-                            emitters: inst.emitters.len(),
-                            alive: inst.alive(),
-                            capacity: inst.capacity(),
-                            playing: inst.any_emitter_playing(),
-                        }
-                    })
-                    .collect();
-                pp.refresh(
-                    rows,
-                    self.core.particles.sync.total_alive(),
-                    self.core.particles.sync.budget() as u32,
-                );
-                pp.render_enabled = self.particles_render_enabled;
-            }
-        }
-
-        // A style the F4 or F3 editor just wrote into the scene file (#364):
-        // the scene's authored settings after it, for the other editor too
-        #[cfg(feature = "debug-hud")]
-        let mut committed_styles: Option<flint_render::stylize::StyleSettings> = None;
-
-        // Rendering & Effects panel (ADR 0053): live-mirror renderer state
-        // while the panel is clean; write edits through when dirty, routing
-        // expensive operations by the per-group flags.
-        #[cfg(feature = "debug-hud")]
-        for panel in &mut self.debug_panels {
-            if panel.name() != flint_debug_ui::RENDER_DEBUG_PANEL {
-                continue;
-            }
-            // A name collision must be a miss, not a panic.
-            let Some(rp) = panel
-                .as_any_mut()
-                .downcast_mut::<flint_debug_ui::RenderDebugPanel>()
-            else {
-                continue;
-            };
-            self.post.debug_freeze = rp.freeze_scripts;
-            if flint_debug_ui::DebugPanel::is_dirty(rp) {
-                let flags = rp.take_flags();
-                if flags.look_changed {
-                    self.style.pending_look = Some(rp.look.clone());
-                }
-                if flags.styles_committed {
-                    committed_styles = rp.authored_styles().cloned();
-                }
-                if flags.pp_changed {
-                    renderer.set_post_process_config(rp.pp.clone());
-                    if flags.style_needs_resources {
-                        renderer.ensure_style_resources(&context.device);
-                    }
-                    if flags.fxaa_needs_resources {
-                        renderer.ensure_fxaa_resources(&context.device);
-                    }
-                }
-                if flags.shadows_changed {
-                    renderer.set_shadows(rp.shadows_enabled);
-                }
-                if flags.shadow_res_changed {
-                    renderer.set_shadow_resolution(&context.device, rp.shadow_resolution);
-                }
-                if flags.lighting_reset {
-                    renderer.reset_ambient();
-                } else if flags.lighting_changed {
-                    renderer.set_ambient(rp.lighting.ambient_sky, rp.lighting.ambient_ground);
-                    renderer.set_diffuse_wrap(rp.lighting.diffuse_wrap);
-                    renderer.set_oren_nayar(rp.lighting.oren_nayar);
-                    renderer.set_sheen(rp.lighting.sheen_color, rp.lighting.sheen_strength);
-                }
-                if flags.mode_changed {
-                    // Its overlays are read from the world at the next
-                    // frame's `prepare` (#739)
-                    renderer.set_debug_mode(rp.debug_mode);
-                }
-                if flags.fov_changed {
-                    self.camera.fov = rp.fov_deg;
-                }
-                flint_debug_ui::DebugPanel::clear_dirty(rp);
-            } else {
-                rp.refresh(
-                    renderer.post_process_config(),
-                    renderer.debug_state().mode,
-                    renderer.shadows_enabled(),
-                    renderer.shadow_resolution(),
-                    renderer.lighting_levers(),
-                    self.camera.fov,
-                );
-            }
-            rp.set_style_ids(renderer.style_ids());
-        }
-
-        // F3 Styles panel (#268): the same write-through as F4, for the
-        // style table alone. Entity rows only while it is open.
+        // Every panel applies its edits and reads back what it shows (#744):
+        // one loop, no panel asked its name. What they tell the player comes
+        // back through `PanelHost`.
         #[cfg(feature = "debug-hud")]
         {
-            let rows = self
-                .debug_panels
-                .iter()
-                .any(|p| p.name() == flint_debug_ui::STYLES_DEBUG_PANEL && p.is_open())
-                .then(|| {
-                    super::debug_panels::styled_entity_rows(&self.core.world, renderer.style_ids())
-                });
+            let mut host = flint_debug_ui::PanelHost {
+                particles_render: self.particles_render_enabled,
+                ..Default::default()
+            };
+            let mut ctx = flint_debug_ui::PanelCtx {
+                world: &mut self.core.world,
+                renderer: &mut *renderer,
+                device: &context.device,
+                camera: &mut self.camera,
+                particles: &mut self.core.particles.sync,
+                host: &mut host,
+            };
             for panel in &mut self.debug_panels {
-                if panel.name() != flint_debug_ui::STYLES_DEBUG_PANEL {
-                    continue;
-                }
-                let Some(sp) = panel
-                    .as_any_mut()
-                    .downcast_mut::<flint_debug_ui::StylesDebugPanel>()
-                else {
-                    continue;
-                };
-                if flint_debug_ui::DebugPanel::is_dirty(sp) {
-                    let edit = sp.take_edit();
-                    if edit.committed.is_some() {
-                        committed_styles = sp.authored_styles().cloned();
-                    }
-                    if edit.changed {
-                        let mut config = renderer.post_process_config().clone();
-                        config.styles = sp.pp.styles.clone();
-                        renderer.set_post_process_config(config);
-                        if edit.needs_resources {
-                            renderer.ensure_style_resources(&context.device);
-                        }
-                    }
-                    flint_debug_ui::DebugPanel::clear_dirty(sp);
-                } else {
-                    let entities = rows.clone().unwrap_or_else(|| sp.entities().to_vec());
-                    sp.refresh(renderer.post_process_config(), entities);
-                }
+                panel.sync(&mut ctx);
             }
-        }
-        #[cfg(feature = "debug-hud")]
-        if let Some(authored) = committed_styles {
-            super::debug_panels::set_panels_authored_styles(&mut self.debug_panels, &authored);
-        }
-
-        // Push ocean panel edits into the world's `ocean` component — the
-        // renderer extraction and the script API both read from there.
-        #[cfg(feature = "debug-hud")]
-        for panel in &mut self.debug_panels {
-            if panel.name() == "Ocean Debug" && panel.is_dirty() {
-                let ocean_panel = panel
-                    .as_any_mut()
-                    .downcast_mut::<flint_debug_ui::OceanDebugPanel>()
-                    .unwrap();
-                if let Some(entity_id) = self.core.world.get_id(ocean_panel.entity_name()) {
-                    if let Some(comps) = self.core.world.get_components_mut(entity_id) {
-                        for (field, value) in ocean_panel.config().to_fields() {
-                            comps.set_field(flint_geometry::components::OCEAN, field, value);
-                        }
-                    }
-                }
-                panel.clear_dirty();
+            if let Some(freeze) = host.freeze_scripts {
+                self.post.debug_freeze = freeze;
             }
-        }
-
-        // Day/time panel: push edits into the component; while auto time
-        // advances (the game script owns time_hours), pull it back so the
-        // slider tracks the sky instead of going stale. The day counter is
-        // script-owned outright, so day edits are one-shot overrides (never
-        // part of the persistent config) and the live value is pulled back
-        // every frame for display.
-        #[cfg(feature = "debug-hud")]
-        for panel in &mut self.debug_panels {
-            if panel.name() != "Day / Time" {
-                continue;
+            if let Some(look) = host.look {
+                self.style.pending_look = Some(look);
             }
-            let tod_panel = panel
-                .as_any_mut()
-                .downcast_mut::<flint_debug_ui::TimeOfDayDebugPanel>()
-                .unwrap();
-            let Some(entity_id) = self.core.world.get_id(tod_panel.entity_name()) else {
-                continue;
-            };
-            if let Some(day) = tod_panel.take_day_set() {
-                if let Some(comps) = self.core.world.get_components_mut(entity_id) {
-                    comps.set_field(TIME_OF_DAY_COMPONENT, "day", toml::Value::Float(day as f64));
-                }
-            }
-            if tod_panel.is_dirty() {
-                if let Some(comps) = self.core.world.get_components_mut(entity_id) {
-                    for (field, value) in tod_panel.config().to_fields() {
-                        comps.set_field(TIME_OF_DAY_COMPONENT, field, value);
-                    }
-                }
-                tod_panel.clear_dirty();
-            } else if let Some(hours) = self
-                .core
-                .world
-                .get_components(entity_id)
-                .and_then(|comps| comps.get(TIME_OF_DAY_COMPONENT))
-                .and_then(|c| c.get("time_hours"))
-                .and_then(flint_core::toml_util::toml_f32)
-            {
-                tod_panel.sync_time(hours);
-            }
-            let day = self
-                .core
-                .world
-                .get_components(entity_id)
-                .and_then(|comps| comps.get(TIME_OF_DAY_COMPONENT))
-                .and_then(|c| c.get("day"))
-                .and_then(flint_core::toml_util::toml_f32);
-            tod_panel.sync_day(day);
-        }
-
-        // Weather panel: push edits + queued one-shots into the component;
-        // the weather script owns state/wind/sea, so pull those back for the
-        // read-only status line every frame.
-        #[cfg(feature = "debug-hud")]
-        for panel in &mut self.debug_panels {
-            if panel.name() != "Weather" {
-                continue;
-            }
-            let weather_panel = panel
-                .as_any_mut()
-                .downcast_mut::<flint_debug_ui::WeatherDebugPanel>()
-                .unwrap();
-            let Some(entity_id) = self.core.world.get_id(weather_panel.entity_name()) else {
-                continue;
-            };
-            let one_shots = weather_panel.take_one_shots();
-            if weather_panel.is_dirty() || !one_shots.is_empty() {
-                if let Some(comps) = self.core.world.get_components_mut(entity_id) {
-                    if weather_panel.is_dirty() {
-                        for (field, value) in weather_panel.config().to_fields() {
-                            comps.set_field(WEATHER_COMPONENT, field, value);
-                        }
-                    }
-                    for (field, value) in one_shots {
-                        comps.set_field(WEATHER_COMPONENT, field, value);
-                    }
-                }
-                weather_panel.clear_dirty();
-            }
-            if let Some(comp) = self
-                .core
-                .world
-                .get_components(entity_id)
-                .and_then(|comps| comps.get(WEATHER_COMPONENT))
-            {
-                let g = |name: &str| {
-                    comp.get(name)
-                        .and_then(flint_core::toml_util::toml_f32)
-                        .unwrap_or(0.0)
-                };
-                weather_panel.sync_status(g("state"), g("wind"), g("sea"));
-            }
-        }
-
-        // Reality panel: push edits + queued one-shots into the component;
-        // the reality script owns active_mode/mix/next_in_s, so pull those
-        // back for the read-only status line every frame.
-        #[cfg(feature = "debug-hud")]
-        for panel in &mut self.debug_panels {
-            if panel.name() != "Reality" {
-                continue;
-            }
-            let reality_panel = panel
-                .as_any_mut()
-                .downcast_mut::<flint_debug_ui::RealityDebugPanel>()
-                .unwrap();
-            let Some(entity_id) = self.core.world.get_id(reality_panel.entity_name()) else {
-                continue;
-            };
-            let one_shots = reality_panel.take_one_shots();
-            if reality_panel.is_dirty() || !one_shots.is_empty() {
-                if let Some(comps) = self.core.world.get_components_mut(entity_id) {
-                    if reality_panel.is_dirty() {
-                        for (field, value) in reality_panel.config().to_fields() {
-                            comps.set_field(REALITY_COMPONENT, field, value);
-                        }
-                    }
-                    for (field, value) in one_shots {
-                        comps.set_field(REALITY_COMPONENT, field, value);
-                    }
-                }
-                reality_panel.clear_dirty();
-            }
-            if let Some(comp) = self
-                .core
-                .world
-                .get_components(entity_id)
-                .and_then(|comps| comps.get(REALITY_COMPONENT))
-            {
-                let g = |name: &str, dv: f32| {
-                    comp.get(name)
-                        .and_then(flint_core::toml_util::toml_f32)
-                        .unwrap_or(dv)
-                };
-                reality_panel.sync_status(
-                    g("active_mode", 0.0),
-                    g("mix", 0.0),
-                    g("next_in_s", -1.0),
-                );
-            }
-        }
-
-        // Visitor panel: queue the one-shot trigger into the component; the
-        // visitor script owns phase/day, so pull those back for the
-        // read-only status line every frame.
-        #[cfg(feature = "debug-hud")]
-        for panel in &mut self.debug_panels {
-            if panel.name() != "Visitor" {
-                continue;
-            }
-            let visitor_panel = panel
-                .as_any_mut()
-                .downcast_mut::<flint_debug_ui::VisitorDebugPanel>()
-                .unwrap();
-            let Some(entity_id) = self.core.world.get_id(visitor_panel.entity_name()) else {
-                continue;
-            };
-            let one_shots = visitor_panel.take_one_shots();
-            if !one_shots.is_empty() {
-                if let Some(comps) = self.core.world.get_components_mut(entity_id) {
-                    for (field, value) in one_shots {
-                        comps.set_field(RAFT_VISITOR_COMPONENT, field, value);
-                    }
-                }
-            }
-            if let Some(comp) = self
-                .core
-                .world
-                .get_components(entity_id)
-                .and_then(|comps| comps.get(RAFT_VISITOR_COMPONENT))
-            {
-                let g = |name: &str, dv: f32| {
-                    comp.get(name)
-                        .and_then(flint_core::toml_util::toml_f32)
-                        .unwrap_or(dv)
-                };
-                visitor_panel.sync_status(g("phase", 0.0), g("day", 1.0));
-            }
-        }
-
-        // Dead Calm panel: queue the one-shot trigger/end into the
-        // component; the calm script owns phase/calm/next_in_s, so pull
-        // those back for the read-only status line every frame.
-        #[cfg(feature = "debug-hud")]
-        for panel in &mut self.debug_panels {
-            if panel.name() != "Dead Calm" {
-                continue;
-            }
-            let calm_panel = panel
-                .as_any_mut()
-                .downcast_mut::<flint_debug_ui::DeadCalmDebugPanel>()
-                .unwrap();
-            let Some(entity_id) = self.core.world.get_id(calm_panel.entity_name()) else {
-                continue;
-            };
-            let one_shots = calm_panel.take_one_shots();
-            if !one_shots.is_empty() {
-                if let Some(comps) = self.core.world.get_components_mut(entity_id) {
-                    for (field, value) in one_shots {
-                        comps.set_field(DEAD_CALM_COMPONENT, field, value);
-                    }
-                }
-            }
-            if let Some(comp) = self
-                .core
-                .world
-                .get_components(entity_id)
-                .and_then(|comps| comps.get(DEAD_CALM_COMPONENT))
-            {
-                let g = |name: &str, dv: f32| {
-                    comp.get(name)
-                        .and_then(flint_core::toml_util::toml_f32)
-                        .unwrap_or(dv)
-                };
-                calm_panel.sync_status(g("phase", 0.0), g("calm", 0.0), g("next_in_s", -1.0));
-            }
-        }
-
-        // Camera panel: edits drive the live render camera and the component
-        // (so Commit to File persists them); while idle, track the camera so
-        // script FOV overrides don't leave the slider stale.
-        #[cfg(feature = "debug-hud")]
-        for panel in &mut self.debug_panels {
-            if panel.name() != "Camera" {
-                continue;
-            }
-            let cam_panel = panel
-                .as_any_mut()
-                .downcast_mut::<flint_debug_ui::CameraDebugPanel>()
-                .unwrap();
-            if cam_panel.is_dirty() {
-                self.camera.fov = cam_panel.config().fov_deg;
-                if let Some(entity_id) = self.core.world.get_id(cam_panel.entity_name()) {
-                    if let Some(comps) = self.core.world.get_components_mut(entity_id) {
-                        for (field, value) in cam_panel.config().to_fields() {
-                            comps.set_field(CAMERA_TUNING_COMPONENT, field, value);
-                        }
-                    }
-                }
-                cam_panel.clear_dirty();
-            } else {
-                cam_panel.sync_fov(self.camera.fov);
+            self.particles_render_enabled = host.particles_render;
+            // A style the F4 or F3 editor just wrote into the scene file
+            // (#364): the scene's authored settings after it, for the other
+            // editor too
+            if let Some(authored) = host.committed_styles {
+                super::debug_panels::set_panels_authored_styles(&mut self.debug_panels, &authored);
             }
         }
 
@@ -1100,6 +653,15 @@ impl PlayerApp {
             position: [cam_pos.x, cam_pos.y, cam_pos.z],
             _pad: 0.0,
         }];
+        // A hull on a dynamic body foams with the velocity the solver gave
+        // it (#749); the rest have their drawn motion differenced
+        let contact_velocities: Vec<_> = self
+            .core
+            .world
+            .entities_with_component(flint_geometry::components::OCEAN_CONTACT)
+            .iter()
+            .filter_map(|&id| Some((id, self.core.physics.dynamic_velocity(id)?)))
+            .collect();
         let mut inputs = FrameInputs {
             // Ocean waves run on the clock scripts see via total_time(),
             // keeping script-side ocean_height() queries in sync with the
@@ -1117,6 +679,7 @@ impl PlayerApp {
                 .then_some(&self.core.particles.sync),
             world_lines: &self.hud.world_lines,
             grass_benders: &benders,
+            contact_velocities: &contact_velocities,
             ..Default::default()
         };
         // What the subsystems draw: the boil, shallow wooze, woozy grass
@@ -1448,6 +1011,44 @@ impl PlayerApp {
 
         self.hud.egui_renderer = Some(egui_renderer);
     }
+
+    /// The Ocean Debug panel's CPU/GPU parity probe, when its box is
+    /// ticked (#749): a cross pinned to the CPU's wave height ahead of the
+    /// camera, on the clock the renderer's waves run on.
+    #[cfg(feature = "debug-hud")]
+    fn add_ocean_probe_lines(&mut self) {
+        let time = self.core.clock.total_time;
+        let camera_pos = self.camera.position_array();
+        let forward = self.camera.forward_vector();
+        for panel in &mut self.debug_panels {
+            if panel.name() != "Ocean Debug" {
+                continue;
+            }
+            let Some(ocean_panel) = panel
+                .as_any_mut()
+                .downcast_mut::<flint_debug_ui::OceanDebugPanel>()
+            else {
+                continue;
+            };
+            if !ocean_panel.probe_shown() {
+                continue;
+            }
+            let Some(ocean) = self
+                .core
+                .world
+                .get_id(ocean_panel.entity_name())
+                .and_then(|id| {
+                    self.core
+                        .world
+                        .get_component(id, flint_geometry::components::OCEAN)
+                })
+            else {
+                continue;
+            };
+            let lines = ocean_panel.probe_lines(ocean, time, camera_pos, forward);
+            self.hud.world_lines.extend(lines);
+        }
+    }
 }
 /// The player's part in the game's frame (ADR 0117 decision 4): what
 /// `game_core::step` calls back, in the order it does.
@@ -1501,10 +1102,10 @@ impl super::game_core::FrameHost for PlayerApp {
 
     fn phase_done(&mut self, phase: super::perf::Phase) {
         self.perf_mark(phase);
-        if phase == super::perf::Phase::Scripts {
-            if let Some(perf) = &mut self.stats.perf {
-                perf.record_scripts(self.core.script.update_times());
-            }
+        // Every phase can call scripts (on_update, on_draw_ui, animation
+        // ends, scene changes): what each called is this frame's (#703)
+        if let Some(perf) = &mut self.stats.perf {
+            perf.record_scripts(&self.core.script.take_times());
         }
     }
 
@@ -1588,6 +1189,9 @@ impl super::game_core::FrameHost for PlayerApp {
         // Depth-tested world lines (ADR 0083) render with this frame's
         // scene, handed over with its inputs
         self.hud.world_lines = self.core.script.drain_world_lines();
+        // The Ocean Debug panel's parity probe draws with them (#749)
+        #[cfg(feature = "debug-hud")]
+        self.add_ocean_probe_lines();
         // World text (ADR 0104) is laid out in the HUD's egui pass.
         self.hud.world_texts = self.core.script.drain_world_texts();
     }

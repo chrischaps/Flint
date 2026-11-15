@@ -1812,14 +1812,18 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "flint-core",
+ "flint-ecs",
  "flint-geometry",
+ "flint-particles",
  "flint-procgen",
  "flint-render",
  "flint-scene",
+ "flint-schema",
  "flint-terrain",
  "flint-wooze",
  "toml",
  "tracing",
+ "wgpu",
 ]
 
 [[package]]
@@ -2036,6 +2040,7 @@ dependencies = [
  "flint-particles",
  "flint-pixels",
  "flint-scene",
+ "flint-schema",
  "flint-terrain",
  "flint-wooze",
  "image",
@@ -2100,6 +2105,7 @@ name = "flint-schema"
 version = "0.1.0"
 dependencies = [
  "flint-core",
+ "indexmap",
  "serde",
  "thiserror 2.0.18",
  "toml",
@@ -2857,6 +2863,8 @@ checksum = "7714e70437a7dc3ac8eb7e6f8df75fd8eb422675fc7678aff7364301092b1017"
 dependencies = [
  "equivalent",
  "hashbrown 0.16.1",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

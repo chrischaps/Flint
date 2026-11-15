@@ -217,10 +217,10 @@ egui-based GUI inspector built on top of `flint-render`:
 ### flint-debug-ui
 
 The summonable debug overlay shared by the viewer and the player:
-- `DebugPanel` trait (`name`, `ui`, `is_open`, `toggle`, `layout`, dirty tracking) and `PanelLayout::{SideRight, Bottom}`
-- `assign_columns()` balances open panels across three side columns by a per-panel weight
-- Panel roster: Rendering & Effects (`RENDER_DEBUG_PANEL`, F4), Ocean, Day / Time, Camera, Grass, Reality, Weather, Visitor, Dead Calm
-- Depends on `flint-render` (it mirrors and writes through to renderer state), `flint-terrain`, and `flint-scene`
+- `DebugPanel` trait (`name`, `ui`, `sync(&mut PanelCtx)`, `weight`, `is_open`, `toggle`, `layout`, dirty tracking) and `PanelLayout::{SideRight, Bottom}`; the player syncs every panel in one loop
+- `assign_columns()` balances open panels across three side columns by each panel's `weight()`
+- Panel roster: Rendering & Effects (`RENDER_DEBUG_PANEL`, F4), Ocean, Camera, Grass, Particles, Styles, Living Props, and `ComponentPanel`, drawn from any component schema whose fields say `panel = ...` (#744)
+- Depends on `flint-render` (it mirrors and writes through to renderer state), `flint-ecs`, `flint-particles`, `flint-schema`, `flint-terrain`, and `flint-scene`
 - Optional in the player behind the default-on `debug-hud` cargo feature; feature-off builds carry no debug surface
 
 ### flint-runtime

@@ -249,7 +249,9 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+                // `script=info`: what scripts print, and the script system's
+                // reloads and transitions (#703)
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,script=info")),
         )
         .init();
 

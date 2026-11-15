@@ -56,19 +56,21 @@ pub struct OceanUniformsGpu {
     pub sky_horizon: [f32; 4],
     pub sky_haze: [f32; 4],
     pub sky_reflection_strength: f32,
-    // ── Contact foam (splash ring around the `ocean_contact` hull) ──
+    // ── Contact foam (a splash ring round each `ocean_contact` hull) ──
     /// Overall gain; forced 0 when the scene has no contact entity.
     pub splash_strength: f32,
     /// Max foam band width outward from the hull at full churn (m).
     pub splash_width: f32,
     /// Lapping-animation rate.
     pub splash_flicker_speed: f32,
-    /// [center.x, center.z, cos(yaw), sin(yaw)] of the contact hull.
-    pub hull_a: [f32; 4],
-    /// [half_x, half_z, splash_baseline, splash_noise_scale].
-    pub hull_b: [f32; 4],
-    /// [hull_vel.x, hull_vel.y, hull_vel.z, splash_response].
-    pub hull_c: [f32; 4],
+    /// Churn floor on calm water.
+    pub splash_baseline: f32,
+    /// World-space frequency of the scalloped edge.
+    pub splash_noise_scale: f32,
+    /// Impact speed to churn gain (s/m).
+    pub splash_response: f32,
+    /// How many of `hulls` are in use (0..=`MAX_CONTACTS`).
+    pub contact_count: u32,
     // ── Cel band edge treatment ──
     /// Noise wobble amplitude on the diffuse ramp, in shade units (0 = off).
     pub band_wobble: f32,
@@ -76,10 +78,10 @@ pub struct OceanUniformsGpu {
     pub band_dither: f32,
     /// World-space halftone dot grid frequency (dots per meter).
     pub band_dither_scale: f32,
-    /// Rain impact-ring density 0..1 (weather-driven; 0 = off).
+    /// Rain impact-ring density 0..1 (0 = off).
     pub rain_ripple: f32,
     // ── Bioluminescent foam ──
-    /// Emissive glow rgb + strength in .a (TOD script fades it in at night).
+    /// Emissive glow rgb + strength in .a (0 = off).
     pub foam_glow: [f32; 4],
     // ── Reality-tear render mode (mirrors PostProcessConfig) ──
     /// 2 = blood ocean; other modes leave the water alone.
@@ -99,6 +101,25 @@ pub struct OceanUniformsGpu {
     /// the screen-space search measures to (0 = no search).
     pub shore_foam_reach: f32,
     pub _pad_shore: [f32; 2],
+    /// The hulls the sea foams round this frame, the first `contact_count`
+    /// of them (#749).
+    pub hulls: [ContactHullGpu; MAX_CONTACTS],
+}
+
+/// How many `ocean_contact` hulls foam at once. Past this the ones nearest
+/// the camera foam, and each one left out is warned about once by name.
+pub const MAX_CONTACTS: usize = 4;
+
+/// One contact hull, laid out as `ContactHull` in ocean_shader.wgsl.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Pod, Zeroable)]
+pub struct ContactHullGpu {
+    /// [center.x, center.z, cos(yaw), sin(yaw)], the hull as drawn.
+    pub pose: [f32; 4],
+    /// [half_x, half_z, 0, 0] in metres, the world scale applied.
+    pub extent: [f32; 4],
+    /// [vel.x, vel.y, vel.z, 0] in m/s, the hull's own motion.
+    pub velocity: [f32; 4],
 }
 
 /// Visual (non-simulation) parameters of the `ocean` component.
@@ -142,12 +163,12 @@ pub struct OceanVisuals {
     pub band_dither: f32,
     /// Halftone dot grid frequency (dots per meter).
     pub band_dither_scale: f32,
-    /// Rain impact-ring density (0 = none; weather.rhai drives it with rain).
+    /// Rain impact-ring density (0 = none). A game's weather sets it.
     pub rain_ripple: f32,
-    /// Bioluminescent foam glow color (emissive; not TOD-lit by design —
-    /// it IS a light source. The strength below is what TOD animates).
+    /// Bioluminescent foam glow color (emissive; unlit by design: it IS a
+    /// light source).
     pub foam_glow_color: [f32; 4],
-    /// Bioluminescent glow strength (0 = off; time_of_day.rhai drives it).
+    /// Bioluminescent glow strength (0 = off). A game's clock sets it.
     pub foam_glow: f32,
     /// Shoreline foam band: where the opaque scene behind the water lies
     /// within this many metres below the surface (0 = off, the default).
@@ -550,11 +571,59 @@ mod tests {
         // waves(512) + 4 colors(64) + grid_offset(8) + 2×u32(8) + 8×f32(32)
         // + absorption vec3+turbidity(16) + refr/near/far/grab(16)
         // + sky snapshot 3×vec4 + strength(64, incl. 3 splash scalars)
-        // + contact hull 3×vec4(48) + band edge 4×f32(16)
+        // + splash baseline/noise/response + count (16) + band edge 4×f32(16)
         // + foam_glow vec4(16) + mode u32 + mode_mix + shore width/strength (16)
-        // + shore colour vec4(16) + shore speed + pad3 (16) = 848
-        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 848);
-        assert_eq!(848 % 16, 0, "uniform size must be 16-byte aligned");
+        // + shore colour vec4(16) + shore speed + pad3 (16)
+        // + MAX_CONTACTS hulls of 3×vec4 (4 × 48) = 1008
+        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 1008);
+        assert_eq!(1008 % 16, 0, "uniform size must be 16-byte aligned");
+    }
+
+    /// The Rust block and the shader's agree field by field: naga's offsets
+    /// for `OceanUniforms` against `offset_of!` here, so a field moved on
+    /// one side alone fails (#749 rebuilt the contact block).
+    #[test]
+    fn uniform_offsets_match_the_shader() {
+        let module = naga::front::wgsl::parse_str(include_str!("ocean_shader.wgsl")).unwrap();
+        let (span, members) = module
+            .types
+            .iter()
+            .find_map(|(_, t)| match &t.inner {
+                naga::TypeInner::Struct { members, span }
+                    if t.name.as_deref() == Some("OceanUniforms") =>
+                {
+                    Some((*span, members.clone()))
+                }
+                _ => None,
+            })
+            .expect("OceanUniforms in the shader");
+        assert_eq!(span as usize, std::mem::size_of::<OceanUniformsGpu>());
+        let offset = |name: &str| {
+            members
+                .iter()
+                .find(|m| m.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("no {name} in OceanUniforms"))
+                .offset as usize
+        };
+        use std::mem::offset_of;
+        assert_eq!(
+            offset("splash_strength"),
+            offset_of!(OceanUniformsGpu, splash_strength)
+        );
+        assert_eq!(
+            offset("contact_count"),
+            offset_of!(OceanUniformsGpu, contact_count)
+        );
+        assert_eq!(
+            offset("band_wobble"),
+            offset_of!(OceanUniformsGpu, band_wobble)
+        );
+        assert_eq!(offset("foam_glow"), offset_of!(OceanUniformsGpu, foam_glow));
+        assert_eq!(
+            offset("shore_foam_color"),
+            offset_of!(OceanUniformsGpu, shore_foam_color)
+        );
+        assert_eq!(offset("hulls"), offset_of!(OceanUniformsGpu, hulls));
     }
 
     #[test]

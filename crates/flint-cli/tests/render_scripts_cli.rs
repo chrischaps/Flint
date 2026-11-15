@@ -524,6 +524,70 @@ fn the_report_says_what_each_capture_heard_and_what_didnt_run() {
 // #697: a capture is a script host like the player, so the style commands
 // the old headless dispatcher dropped land in the picture.
 
+/// `text` without its terminal colours (the log colours its fields).
+fn plain(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // ESC [ ... m
+            for c in chars.by_ref() {
+                if c == 'm' {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// #703: a script's `print` and `debug` are the log's, on stderr, so the
+/// report on stdout stays a report.
+#[test]
+fn a_script_print_never_reaches_the_json_report() {
+    let dir = project("print");
+    std::fs::write(
+        dir.join("scripts/tint.rhai"),
+        format!(
+            "{TINT}\nprint(\"top level says hi\");\n\
+             fn on_init() {{ print(\"init says hi\"); }}\n\
+             fn on_draw_ui() {{ debug(\"ui says hi\"); }}\n"
+        ),
+    )
+    .unwrap();
+    let tl = timeline(&dir);
+    let o = render(
+        &dir,
+        "p.png",
+        &[
+            "--expression-timeline",
+            &tl,
+            "--time",
+            "0.5",
+            "--report",
+            "json",
+        ],
+    );
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert!(!stdout.contains("says hi"), "a print on stdout: {stdout}");
+    serde_json::from_slice::<serde_json::Value>(&o.stdout).expect("stdout is only the report");
+    let err = plain(&stderr(&o));
+    for said in ["top level says hi", "init says hi"] {
+        let line = err
+            .lines()
+            .find(|l| l.contains(said))
+            .unwrap_or_else(|| panic!("{said:?} not in the log: {err}"));
+        assert!(line.contains("script:"), "{line}");
+        assert!(line.contains("entity=director"), "{line}");
+    }
+}
+
 /// The floor drawn in ASCII from `on_init`, its cells easing from 4 to 16
 /// points over two seconds.
 const STYLER: &str = r#"

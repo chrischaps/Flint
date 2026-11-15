@@ -80,6 +80,10 @@ pub struct FrameInputs<'a> {
     pub world_lines: &'a [flint_core::world_line::WorldLine],
     /// What bends the grass this frame (bend-on-contact). Empty bends none.
     pub grass_benders: &'a [GrassEntityPosition],
+    /// Each `ocean_contact` hull's velocity in m/s this frame, from whoever
+    /// knows it (the player's physics, for a dynamic body; #749). A hull
+    /// not listed has its drawn position differenced across frames instead.
+    pub contact_velocities: &'a [(flint_core::EntityId, [f32; 3])],
 }
 
 impl Default for FrameInputs<'_> {
@@ -97,6 +101,7 @@ impl Default for FrameInputs<'_> {
             particles: None,
             world_lines: &[],
             grass_benders: &[],
+            contact_velocities: &[],
         }
     }
 }
@@ -213,6 +218,7 @@ impl SceneRenderer {
         self.aspect_ratio = aspect_ratio;
         self.set_shallow_wooze(inputs.shallow_wooze.iter().copied());
         self.update_grass_entities(queue, inputs.grass_benders);
+        self.water.set_contact_velocities(inputs.contact_velocities);
         self.world_lines.clear();
         self.world_lines.extend_from_slice(inputs.world_lines);
         self.world_line_px_per_point = inputs.pixels_per_point;

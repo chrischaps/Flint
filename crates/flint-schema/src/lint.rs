@@ -10,6 +10,9 @@
 //!   [`OLD_TYPE_NAMES`]). It still loads.
 //! - `unknown-type`: a type that is none ([`TYPE_NAMES`]), an `asset` with no
 //!   `kind`, or a `kind` that is no asset kind.
+//! - `bad-panel`: a mistake in what a component's fields say about its F3
+//!   panel (#744): a role that is none, a key a field's panel doesn't hold, a
+//!   `format` with no placeholder. The loader leaves that row off the panel.
 //! - `ignored-schema-key`: a key the loader ignores. The usual one is a field
 //!   written under `[component.x]` instead of `[component.x.fields]`, which
 //!   leaves the component with no fields: nothing in it is checked and none
@@ -21,7 +24,9 @@
 //! ([`SchemaRegistry::game_lints`](crate::SchemaRegistry::game_lints)); the
 //! engine's own files are held clean by `tests/engine_schemas.rs`.
 
-use crate::component::{type_name_of, COMPONENT_KEYS, FIELD_KEYS, OLD_TYPE_NAMES, TYPE_NAMES};
+use crate::component::{
+    type_name_of, ComponentSchemaDefinition, COMPONENT_KEYS, FIELD_KEYS, OLD_TYPE_NAMES, TYPE_NAMES,
+};
 use flint_core::diagnostic::{self, codes, Diagnostic};
 use flint_core::project::AssetKind;
 use std::path::Path;
@@ -137,6 +142,7 @@ pub fn lint_schema_file(kind: SchemaKind, text: &str, file: Option<&Path>) -> Ve
 
 fn lint_component(kind: SchemaKind, name: &str, def: &toml::Table, found: &mut Vec<Diagnostic>) {
     let key_word = kind.key();
+    lint_panel(kind, name, def, found);
     for (key, value) in def {
         if key == "fields" {
             for (field, field_def) in value.as_table().into_iter().flatten() {
@@ -167,6 +173,50 @@ fn lint_component(kind: SchemaKind, name: &str, def: &toml::Table, found: &mut V
             };
             found.push(d.field(key.clone()));
         }
+    }
+}
+
+/// `bad-panel`: what is wrong with a component's F3 panel (#744), each as
+/// the loader reads it ([`crate::panel::panel_of`]), and any `panel` in a
+/// scene table, which has none.
+fn lint_panel(kind: SchemaKind, name: &str, def: &toml::Table, found: &mut Vec<Diagnostic>) {
+    let fields = def.get("fields").and_then(|f| f.as_table());
+    if kind == SchemaKind::Table {
+        let keyed = def.contains_key("panel")
+            || fields
+                .into_iter()
+                .flatten()
+                .any(|(_, f)| f.get("panel").is_some());
+        if keyed {
+            found.push(
+                Diagnostic::warning(
+                    codes::BAD_PANEL,
+                    "a scene table has no F3 panel: only a component's fields can be on one",
+                )
+                .hint("leave `panel` out of a `[table.*]`"),
+            );
+        }
+        return;
+    }
+    let Ok(parsed) = toml::Value::Table(def.clone()).try_into::<ComponentSchemaDefinition>() else {
+        return;
+    };
+    let mut schemas = Vec::new();
+    for (field, field_def) in &parsed.fields {
+        schemas.push((
+            field.as_str(),
+            field_def.clone().to_field_schema(),
+            field_def.panel(),
+        ));
+    }
+    let rows: Vec<_> = schemas.iter().map(|(f, s, p)| (*f, s, *p)).collect();
+    let (_, problems) = crate::panel::panel_of(name, parsed.panel.as_ref(), &rows);
+    for problem in problems {
+        let d = Diagnostic::warning(codes::BAD_PANEL, problem.message).hint_opt(problem.hint);
+        found.push(match problem.field {
+            Some(field) => d.field(field),
+            None => d.field("panel"),
+        });
     }
 }
 

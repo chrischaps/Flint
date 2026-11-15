@@ -295,6 +295,14 @@ fn one_text(name: &str, registry: &SchemaRegistry) -> String {
             }
         }
     }
+    // The box its `bounds` draws as with nothing else to draw (#751)
+    if let Some(visual) = &archetype.visual {
+        let [r, g, b, a] = visual.color;
+        out.push_str(&format!(
+            "\nPlaceholder: color = [{r}, {g}, {b}, {a}]{}\n",
+            if visual.wireframe { ", wireframe" } else { "" }
+        ));
+    }
     out
 }
 

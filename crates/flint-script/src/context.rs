@@ -697,6 +697,8 @@ pub struct ScriptCallContext {
     pub camera_view_proj: [[f32; 4]; 4],
     /// Entity currently being scripted
     pub current_entity: EntityId,
+    /// Its script's file and entity name, for what it prints (#703)
+    pub speaker: Arc<crate::engine::output::Speaker>,
     /// Accumulated commands to be drained after all scripts run
     pub commands: Vec<ScriptCommand>,
     /// Accumulated 2D draw commands for the current frame, each stamped
@@ -863,6 +865,7 @@ impl ScriptCallContext {
             ],
             camera_direction: [0.0, 0.0, 1.0],
             current_entity: EntityId::from_raw(0),
+            speaker: crate::engine::output::Speaker::nobody(),
             commands: Vec::new(),
             draw_commands: Vec::new(),
             world_lines: Vec::new(),

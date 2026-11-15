@@ -1809,9 +1809,15 @@ mod picks {
             let living = app.core.procgen_resolver.living_props();
             let field = wooze.as_ref().map(|field| (field, time));
             let resolved = living.resolved(LivingPropId(i), field);
+            // Knob by knob: the window lists them in the panel's order (#753),
+            // the report in its own.
+            let by_key = |mut rows: Vec<(Knob, String, String)>| {
+                rows.sort_by_key(|(knob, _, _)| knob.key());
+                rows
+            };
             assert_eq!(
-                shown_of(&picked.knobs, &picked.sources),
-                report_of(&resolved),
+                by_key(shown_of(&picked.knobs, &picked.sources)),
+                by_key(report_of(&resolved)),
                 "{name}"
             );
             // A zone with the last word on a knob is one the tree stands in.

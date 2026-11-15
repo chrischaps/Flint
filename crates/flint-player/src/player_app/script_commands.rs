@@ -37,7 +37,7 @@ impl PlayerApp {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            println!("[quit] a script asked to quit");
+            tracing::info!(target: "script", "a script asked to quit");
             self.outcome.exit_requested = true;
             if self.capture.exit_after.is_some() {
                 self.print_exit_report();
@@ -146,7 +146,7 @@ impl ScriptHost for PlayerApp {
             }
             TransitionPhase::Entering { .. } => {
                 self.transition_phase = TransitionPhase::Idle;
-                println!("[transition] Transition complete");
+                tracing::info!(target: "script", "Transition complete");
             }
             _ => {}
         }
@@ -197,7 +197,7 @@ impl ScriptHost for PlayerApp {
 
     fn load_scene(&mut self, path: String) {
         if self.transition_phase.is_idle() {
-            println!("[transition] Starting exit transition → {}", path);
+            tracing::info!(target: "script", "Starting exit transition → {}", path);
             self.transition_phase = TransitionPhase::Exiting {
                 target_scene: path,
                 elapsed: 0.0,
@@ -208,7 +208,7 @@ impl ScriptHost for PlayerApp {
     fn reload_scene(&mut self) {
         if self.transition_phase.is_idle() {
             let path = self.core.scene_path.clone();
-            println!("[transition] Reloading current scene");
+            tracing::info!(target: "script", "Reloading current scene");
             self.transition_phase = TransitionPhase::Exiting {
                 target_scene: path,
                 elapsed: 0.0,

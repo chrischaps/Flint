@@ -39,7 +39,8 @@ impl PlayerExtension for SunPrints {
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::new("warn"))
+        // script=info: what the game's scripts print and log (#703)
+        .with_env_filter(tracing_subscriber::EnvFilter::new("warn,script=info"))
         .init();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
