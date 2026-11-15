@@ -4,6 +4,7 @@
 use crate::context::InputSnapshot;
 use crate::engine::test_support::*;
 use crate::engine::ScriptEngine;
+use flint_core::callbacks::Callback;
 use flint_ecs::FlintWorld;
 use std::sync::Arc;
 
@@ -29,7 +30,7 @@ fn test_hot_reload_and_bad_edit() {
     sync.set_scripts_dir(dir.clone());
     let ast = engine.compile_file(&path).unwrap();
     engine.add_script(id, ast, "binder.rhai".into());
-    sync.check_hot_reload(&mut engine); // records the initial timestamp
+    sync.check_hot_reload(&mut engine, &mut world); // records the initial timestamp
 
     engine.provide_context(InputSnapshot::default(), 0.016, 0.0);
     engine.call_updates(&mut world);
@@ -48,7 +49,7 @@ fn test_hot_reload_and_bad_edit() {
     f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
         .unwrap();
     drop(f);
-    sync.check_hot_reload(&mut engine);
+    sync.check_hot_reload(&mut engine, &mut world);
     engine.call_updates(&mut world);
     assert_eq!(probe_float(&world, id, "lx"), 2.0, "v2 must be live");
 
@@ -61,7 +62,7 @@ fn test_hot_reload_and_bad_edit() {
     f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(10))
         .unwrap();
     drop(f);
-    sync.check_hot_reload(&mut engine);
+    sync.check_hot_reload(&mut engine, &mut world);
     world
         .set_component(
             id,
@@ -129,7 +130,7 @@ fn test_hot_reload_compiles_on_the_worker() {
         |engine: &mut ScriptEngine, world: &mut FlintWorld, done: &dyn Fn(&FlintWorld) -> bool| {
             let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
             loop {
-                sync.check_hot_reload(engine);
+                sync.check_hot_reload(engine, world);
                 engine.provide_context(InputSnapshot::default(), 0.016, 0.0);
                 engine.call_updates(world);
                 if done(world) || std::time::Instant::now() > until {
@@ -160,7 +161,7 @@ fn test_hot_reload_compiles_on_the_worker() {
     // A broken edit keeps the last good script running
     write(&script, "fn on_update( {", 15);
     for _ in 0..40 {
-        sync.check_hot_reload(&mut engine);
+        sync.check_hot_reload(&mut engine, &mut world);
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     engine.call_updates(&mut world);
@@ -286,7 +287,7 @@ fn test_hot_reload_takes_a_nearer_script_that_appears_later() {
     let mut frame = |engine: &mut ScriptEngine, world: &mut FlintWorld| {
         // One changed script is recompiled a call
         for _ in 0..3 {
-            sync.check_hot_reload(engine);
+            sync.check_hot_reload(engine, world);
         }
         engine.provide_context(InputSnapshot::default(), 0.016, 0.0);
         engine.call_updates(world);
@@ -353,8 +354,8 @@ fn test_hot_reload_preserves_scope() {
 
     // init_called should still be true
     assert!(script.init_called);
-    assert!(script.has_on_update);
-    assert!(!script.has_on_init);
+    assert!(script.defines(Callback::Update));
+    assert!(!script.defines(Callback::Init));
 }
 
 #[test]
@@ -408,7 +409,7 @@ fn test_hot_reload_initialises_new_top_level_lets() {
     "#,
         )
         .unwrap();
-    let added = engine.reload_script(id, v2);
+    let added = engine.reload_script(&mut world, id, v2);
     assert_eq!(added, vec!["boost_s".to_string(), "LIMIT".to_string()]);
     engine.call_updates(&mut world);
     engine.call_updates(&mut world);
@@ -433,7 +434,7 @@ fn test_hot_reload_initialises_new_top_level_lets() {
     let v3 = engine
         .compile("let boost_s = 0.25; fn on_update() {}")
         .unwrap();
-    assert!(engine.reload_script(id, v3).is_empty());
+    assert!(engine.reload_script(&mut world, id, v3).is_empty());
     let script = engine.scripts.get(&id).unwrap();
     assert_eq!(script.scope.get_value::<f64>("boost_s"), Some(2.25));
 }

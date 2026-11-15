@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::context::InputSnapshot;
+use flint_core::callbacks::Callback;
 use flint_core::components as comp;
 use flint_ecs::FlintWorld;
 use flint_runtime::GameEvent;
@@ -42,12 +43,12 @@ fn test_callback_detection() {
         .unwrap();
 
     let instance = ScriptInstance::new(ast, "test.rhai".into());
-    assert!(instance.has_on_init);
-    assert!(instance.has_on_update);
-    assert!(instance.has_on_collision);
-    assert!(!instance.has_on_trigger_enter);
-    assert!(!instance.has_on_action);
-    assert!(!instance.has_on_interact);
+    assert!(instance.defines(Callback::Init));
+    assert!(instance.defines(Callback::Update));
+    assert!(instance.defines(Callback::Collision));
+    assert!(!instance.defines(Callback::TriggerEnter));
+    assert!(!instance.defines(Callback::Action));
+    assert!(!instance.defines(Callback::Interact));
 }
 
 #[test]
@@ -368,14 +369,15 @@ fn test_module_level_variables_persist() {
 }
 
 #[test]
-fn test_arity_mismatch_still_detects_function() {
-    // A script with the wrong arity should still be detected (warning, not error)
+fn test_arity_mismatch_is_left_out() {
+    // A callback at the wrong count is warned at load and never called,
+    // where it used to fail every frame (#700)
     let engine = ScriptEngine::new();
     let ast = engine
         .compile(
             r#"
         fn on_update(dt) {
-            // Wrong arity — should warn but still detect
+            // Wrong arity: warned, not called
         }
     "#,
         )
@@ -383,8 +385,8 @@ fn test_arity_mismatch_still_detects_function() {
 
     let instance = ScriptInstance::new(ast, "test_mismatch.rhai".into());
     assert!(
-        instance.has_on_update,
-        "has_on_update should be true even with wrong arity"
+        !instance.defines(Callback::Update),
+        "on_update(dt) is not the on_update the engine calls"
     );
 }
 
@@ -514,6 +516,6 @@ fn completes_transition_follows_a_hot_reload() {
     engine.add_script(id, fades, "hud.rhai".into());
     assert!(engine.can_complete_transition());
     let plain = engine.compile("fn on_update() {}").unwrap();
-    engine.reload_script(id, plain);
+    engine.reload_script(&mut FlintWorld::new(), id, plain);
     assert!(!engine.can_complete_transition());
 }

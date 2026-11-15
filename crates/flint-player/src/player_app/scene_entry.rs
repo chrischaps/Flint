@@ -214,23 +214,6 @@ impl PlayerApp {
         // scene's
         self.style.camera_cut.forget();
 
-        // Lighting: what the scene authors over the built-in levers
-        // `bind_scene` put back (absent = renderer default)
-        renderer.set_scene_shadows(self.scene.shadows);
-        renderer.set_default_lights(self.scene.default_lights);
-        if let Some((sky, ground)) = self.scene.ambient {
-            renderer.set_ambient(sky, ground);
-        }
-        if let Some(wrap) = self.scene.diffuse_wrap {
-            renderer.set_diffuse_wrap(wrap);
-        }
-        if let Some(oren) = self.scene.oren_nayar {
-            renderer.set_oren_nayar(oren);
-        }
-        if let Some((color, strength)) = self.scene.sheen {
-            renderer.set_sheen(color, strength);
-        }
-
         // Skybox: none unless the scene names one. A path found by the
         // project's one search (`AssetKind::Files`); a miss is warned about
         // with every path tried

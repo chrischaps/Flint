@@ -55,6 +55,26 @@ A new game, or one whose `Cargo.lock` has no `mach-dxcompiler-rs` in it (written
 cargo update -p mach-dxcompiler-rs
 ```
 
+**A `Cargo.lock` written before wgpu 30** (by any build of an engine from before [#945](https://github.com/chrischaps/Flint/issues/945)) breaks wgpu-hal on Windows ([#995](https://github.com/chrischaps/Flint/issues/995)). Such a lock holds `windows 0.58.0`, which wgpu-hal 23 used, and `windows 0.54.0`, which cpal (under Flint's audio) uses. wgpu-hal 30 is on `windows 0.62`. It hands its D3D12 device to gpu-allocator 0.28, which takes any `windows` from 0.53 to 0.62, and when cargo moves the lock forward it gives gpu-allocator a version the lock already holds. The two crates' D3D12 types are then different types, and wgpu-hal fails before any game code compiles:
+
+```
+wgpu-hal-30.0.2\src\dx12\suballocation.rs:83:71: error[E0308]: mismatched types: expected `ID3D12Device`, found a different `ID3D12Device`
+wgpu-hal-30.0.2\src\dx12\suballocation.rs:299:32: error[E0277]: the trait bound `ResourceCategory: From<&D3D12_RESOURCE_DESC>` is not satisfied
+wgpu-hal-30.0.2\src\dx12\suballocation.rs:306:17: error[E0277]: the trait bound `&ID3D12Heap: Param<ID3D12Heap, InterfaceType>` is not satisfied
+...
+error: could not compile `wgpu-hal` (lib) due to 10 previous errors
+```
+
+Only the dx12 backend uses gpu-allocator, so Linux and macOS build, but the lock is one file for every platform: mend it wherever the game is built. In the game's workspace root, before or after the first build, unlock every `windows` the lock holds other than wgpu-hal's 0.62:
+
+```bash
+cargo update -p windows@0.54.0 -p windows@0.58.0
+```
+
+gpu-allocator then gets wgpu-hal's `windows 0.62.2`, the only one left locked in its range, and the rest of the lock stays as it was. Moving The Capitol's lock forward this way removed `windows 0.58.0` and changed nothing else. Unlocking one crate is not enough: after `cargo update -p gpu-allocator`, or `cargo update -p windows@0.58.0` with or without `--precise 0.62.2`, cargo gives gpu-allocator cpal's 0.54 and the same ten errors follow.
+
+`flint check` on the game warns about it (`stale-cargo-lock`) once cargo has moved the lock (any build, or `cargo tree`), and its hint is the `cargo update` for the versions that lock holds. Seeding the lock from the engine's (`cp engine/Cargo.lock Cargo.lock`, then build) also works, but it moves the game's other crates to the engine's versions too: on The Capitol's lock it changed 15 more, 7 of them back to older releases (rustls from 0.23.45 to 0.23.36, http from 1.5.0 to 1.4.0).
+
 ### egui 0.30 to 0.36
 
 #### The game UI hook
@@ -85,11 +105,11 @@ A game that took `root_ui(&mut egui::Ui)`, the hook #946 added for panels before
 
 Don't show a `CentralPanel` from `ui`. It covers the whole window and takes every click from the game.
 
-The renames Flint's own code and The Capitol's client needed, checked against the egui 0.36.2 and egui_plot 0.37.0 sources, with each 0.36 form compiled against them. It's what two codebases hit, not every change in six releases: for a name it lacks, egui's [CHANGELOG](https://github.com/emilk/egui/blob/main/CHANGELOG.md) has a migration guide for each release from 0.31 to 0.36. rustc's "no method named" or "cannot find function" for a removed function doesn't name its replacement.
+The renames Flint's own code and The Capitol's client needed (its binary and its tests: `cargo check --all-targets`, then `cargo test`), checked against the egui 0.36.2 and egui_plot 0.37.0 sources, with each 0.36 form compiled against them. It's what two codebases hit, not every change in six releases: for a name it lacks, egui's [CHANGELOG](https://github.com/emilk/egui/blob/main/CHANGELOG.md) has a migration guide for each release from 0.31 to 0.36. rustc's "no method named" or "cannot find function" for a removed function doesn't name its replacement.
 
 | egui 0.30 | egui 0.36 |
 |---|---|
-| `ctx.run(input, \|ctx\| ..)` | `ctx.run_ui(input, \|ui\| ..)`; the closure gets the root `Ui` (`ui.ctx()` for the context). In a test, `flint_debug_ui::run_headless_frame(ctx, input, \|ui\| ..)` |
+| `ctx.run(input, \|ctx\| ..)` | `ctx.run_ui(input, \|ui\| ..)`; the closure gets the root `Ui` (`ui.ctx()` for the context). In a test, `flint_debug_ui::run_headless_frame(ctx, input, \|ui\| ..)`, which clears the frame's texture updates; see [tests](#tests) |
 | `SidePanel::left(id)`, `TopBottomPanel::top(id)` | `Panel::left(id)`, `Panel::top(id)` (and `right`, `bottom`), `.show(ui, ..)`. A helper that took `&egui::Context` to show a panel takes `&mut egui::Ui` |
 | a panel's `default_width` / `default_height`, `min_`, `max_`, `exact_width` / `_height`, `width_range` / `height_range` | `default_size`, `min_size`, `max_size`, `exact_size`, `size_range` |
 | a panel's `show_animated(ctx, open, ..)` | `show_collapsible(ui, &mut open, ..)` |
@@ -97,7 +117,10 @@ The renames Flint's own code and The Capitol's client needed, checked against th
 | `ctx.style()`, `ctx.set_style(..)`, `ctx.style_mut(..)` | `ctx.global_style()`, `ctx.set_global_style(..)`, `ctx.global_style_mut(..)` |
 | `ctx.screen_rect()`, `i.screen_rect()` | `ctx.content_rect()`, `i.content_rect()` |
 | `ctx.available_rect()` | none on the context: in the `ui` hook, `ui.available_rect_before_wrap()` |
+| `ctx.wants_keyboard_input()`, `ctx.wants_pointer_input()`, `ctx.is_using_pointer()`, `ctx.is_pointer_over_area()` | `ctx.egui_wants_keyboard_input()`, `ctx.egui_wants_pointer_input()`, `ctx.egui_is_using_pointer()`, `ctx.is_pointer_over_egui()`. These are what a game's input routing asks ("is egui using this key or click?"); 0.34 renamed them and the old names are gone |
 | `ctx.fonts(\|f\| f.layout_no_wrap(..))` | `ctx.fonts_mut(\|f\| f.layout_no_wrap(..))`; laying text out needs the mutable view, and `fonts` reads only |
+| `ctx.fonts(\|f\| f.lock().fonts.definitions())` | `ctx.fonts(\|f\| f.definitions())`: the closure gets a `FontsView`, which has no `lock` and has the reads on it. `has_glyph`, `glyph_width` and `row_height` need `fonts_mut` |
+| `RawInput { modifiers: Modifiers { shift: true, .. }, .. }` | no field: put `egui::Event::ModifiersChanged(Modifiers { shift: true, ..Default::default() })` in `events`. egui keeps the modifiers until the next such event, where 0.30 read the field afresh each frame, so a test that holds Shift for one frame sends `ModifiersChanged(Modifiers::NONE)` after it, or sends one every frame as 0.30 did |
 | `ui.output_mut(\|o\| o.copied_text = text)` | `ui.ctx().copy_text(text)` |
 | `Frame::none()` | `Frame::NONE` |
 | `.rounding(r)`, `Rounding` | `.corner_radius(r)`, `CornerRadius` (a `u8` a corner). `Rounding` is gone, alias and all |
@@ -126,11 +149,29 @@ A value computed as an `f32` casts: `blur: (r * 3.0) as u8`, `right: bar as i8`.
 
 **Companion crates.** A crate built on egui names the egui it takes, and one that names another links a second egui, whose types don't line up with Flint's. egui's own crates share its number: egui-wgpu, egui-winit, egui_extras, egui_glow and eframe are 0.36.2. The rest number their own: egui_plot 0.37.0 is the release on egui 0.36 (egui_plot 0.36 is on egui 0.35, and 0.38 on 0.37), and egui-snarl's is 0.12.0. The `egui` line in a crate's `Cargo.toml` on crates.io says which.
 
-Three changes in behaviour:
+Four changes in behaviour:
 
 - **Modifier keys are keys.** egui-winit 0.36 sends `egui::Key::ShiftLeft`, `ControlRight` and the rest as key presses. A game that reads `ctx.input(|i| i.events)` sees them; `i.modifiers` still holds the state.
 - **A translucent colour blends in display space.** Since egui 0.31, `Color32::from_rgba_unmultiplied` and `from_white_alpha` premultiply the display values. egui 0.30 premultiplied in linear light, so a 50% white over black drew 188 there and draws 128 now. A game's own egui UI takes 0.36's blend, and since #958 so do scripts; to keep a light colour as it looked, raise its alpha to alpha^(1/2.2) ([HUD colours](#hud-colours)).
+- **A `Frame` with a stroke is two stroke widths bigger.** Since egui 0.31 a `Frame` lays out `content + inner_margin + 2 × stroke.width + outer_margin`, with its content one stroke width further in. egui 0.30 laid out `content + inner_margin + outer_margin` and drew the stroke outside that, over whatever was next to it. The stroke still sits one margin out from the content; what grew is the space laid out around it, which now holds the stroke. Measured on 100 × 20 of content with an 8 px margin and a 1 px stroke: 0.30 lays out 116 × 36, 0.36 lays out 118 × 38, and both paint 118 × 38. `Frame::group`, `window`, `menu` and `popup` take the style's 1 px stroke, so egui's groups, windows and menus grow by 2 px too. A game that fits a framed panel to a width (`ui.set_width(width - 24.0)` inside a 12 px margin) gets a panel 2 px wider: The Capitol's guild panel measures 522 px where it measured 520. To get 0.30's layout back, take the stroke off the outer margin, `.outer_margin(Margin::same(-1))` for a 1 px stroke on a frame with no outer margin: it lays out, places its content and paints exactly as 0.30 did. Or take `2.0 * stroke.width` off the width the content sets.
 - **A `ScrollArea` scrolls by dragging its content only on a touch screen.** egui 0.30 dragged it with the mouse too. 0.36's default `ScrollSource` drags once egui has seen a touch (`DragScroll::OnTouch`); `.scroll_source(ScrollSource::ALL)` is 0.30's.
+
+#### Tests
+
+A test that runs egui frames runs them through `flint_debug_ui::run_headless_frame(ctx, input, |ui| ..)`, not a plain `ctx.run_ui`. Nothing uploads a test's textures, and egui 0.36 asserts, in a debug build, when a frame's output is dropped with texture updates in it. A context's first frame always uploads the font atlas, so a test that drops a plain `run_ui`'s output, `let _ =` included, panics (the count is how many updates were left):
+
+```text
+Dropped TexturesDelta with 1 unapplied deltas. Deltas need to be handled. If you want to drop this intentionally call `clear` before dropping.
+```
+
+It compiles, so `cargo check --all-targets` passes and only `cargo test` finds it: 115 of The Capitol's 560 tests panicked. `run_headless_frame` runs `run_ui`, clears the texture updates and returns the rest of the output as it was. A game whose tests call it names flint-debug-ui as a dev-dependency, beside the engine crates it already has (the path is from the crate's folder):
+
+```toml
+[dev-dependencies]
+flint-debug-ui = { path = "engine/crates/flint-debug-ui" }
+```
+
+Without it, clear them yourself: `ctx.run_ui(input, ..).textures_delta.clear()`.
 
 #### HUD colours
 

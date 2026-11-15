@@ -289,7 +289,8 @@ impl ScriptSync {
     /// there a worker thread reads and compiles what changed, so a frame
     /// only swaps finished ASTs in (#633). Without the worker (tools, tests)
     /// one changed script is recompiled a call, the rest in the calls after.
-    pub fn check_hot_reload(&mut self, engine: &mut ScriptEngine) {
+    /// A reloaded script's new top level runs with `world` lent (#692).
+    pub fn check_hot_reload(&mut self, engine: &mut ScriptEngine, world: &mut FlintWorld) {
         if self.search.is_none() {
             return;
         }
@@ -298,7 +299,7 @@ impl ScriptSync {
         }
         let worker = self.reload_worker();
         if worker {
-            self.take_finished(engine);
+            self.take_finished(engine, world);
         }
 
         // A script that didn't compile at load, saved since: discovered
@@ -386,7 +387,7 @@ impl ScriptSync {
         // What it is now, taken before the read: a write after it is a change
         let modified = file_watch::modified(&script_path);
         let ast = engine.compile_file(&script_path);
-        self.apply(engine, entity_id, script_path, modified, ast);
+        self.apply(engine, world, entity_id, script_path, modified, ast);
     }
 
     fn queue(to_reload: &mut Vec<(EntityId, PathBuf)>, entity: EntityId, path: PathBuf) {
@@ -417,6 +418,7 @@ impl ScriptSync {
     fn apply(
         &mut self,
         engine: &mut ScriptEngine,
+        world: &mut FlintWorld,
         entity_id: EntityId,
         script_path: PathBuf,
         modified: Option<SystemTime>,
@@ -428,7 +430,7 @@ impl ScriptSync {
                     println!("[script] Hot-reloaded: {}", script.source_path);
                 }
                 // New top-level lets get their initial values (#634)
-                let added = engine.reload_script(entity_id, ast);
+                let added = engine.reload_script(world, entity_id, ast);
                 if !added.is_empty() {
                     println!("[script]   new top-level variables: {}", added.join(", "));
                 }
@@ -466,7 +468,7 @@ impl ScriptSync {
 
     /// Apply what the worker has finished.
     #[cfg(not(target_arch = "wasm32"))]
-    fn take_finished(&mut self, engine: &mut ScriptEngine) {
+    fn take_finished(&mut self, engine: &mut ScriptEngine, world: &mut FlintWorld) {
         use crate::reload_worker::Done;
         let Some(worker) = &self.worker else { return };
         for done in worker.finished() {
@@ -478,7 +480,7 @@ impl ScriptSync {
                     ast,
                 } => {
                     self.in_flight.remove(&entity);
-                    self.apply(engine, entity, path, modified, ast);
+                    self.apply(engine, world, entity, path, modified, ast);
                 }
                 Done::Lib { compiled } => {
                     println!("[script] scripts/lib changed - reloading all scripts");
@@ -491,7 +493,7 @@ impl ScriptSync {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn take_finished(&mut self, _: &mut ScriptEngine) {}
+    fn take_finished(&mut self, _: &mut ScriptEngine, _: &mut FlintWorld) {}
 
     /// Hand a changed lib to the worker; false if it has gone.
     #[cfg(not(target_arch = "wasm32"))]

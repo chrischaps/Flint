@@ -9,11 +9,11 @@
 //! in `living_tuning.rs` and `living_ab.rs`.
 
 use super::living_props;
-use super::shallow_wooze::{self, GrassWooze, ShallowWooze};
 use super::subsystem::{
     EncodeCtx, ExitReport, FrameCtx, KeyPress, PlayerInput, ReportCtx, SceneCtx, Stage, StageCtx,
     Subsystem,
 };
+use flint_render::shallow_wooze::{self, GrassWooze, ShallowWooze};
 use flint_render::FrameInputs;
 use flint_script::context::ScriptCommand;
 use winit::keyboard::KeyCode;

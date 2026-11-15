@@ -181,13 +181,18 @@ Audio can be controlled from [Rhai scripts](scripting.md) using deferred command
 
 | Function | Description |
 |----------|-------------|
-| `play_sound(name)` | Play a non-spatial sound at default volume |
+| `play_sound(name)` | Play a non-spatial sound at default volume; returns its handle |
 | `play_sound(name, volume)` | Play a non-spatial sound at the given volume (0.0--1.0) |
+| `play_sound(name, opts)` | Play a non-spatial sound with options: `volume`, `pitch`, `looping`, `bus` (`"sfx"` or `"music"`), each optional |
 | `play_sound(name, volume, pitch)` | As above, with a pitch multiplier |
-| `play_sound_at(name, x, y, z, volume)` | Play a spatial sound at a 3D position |
+| `play_sound_at(name, x, y, z, volume)` | Play a spatial sound at a 3D position; returns its handle |
 | `play_sound_at(name, x, y, z, volume, pitch)` | As above, with a pitch multiplier |
-| `play_sound_at(name, x, y, z, opts)` | Play a spatial sound with options: `volume`, `pitch`, `min_distance`, `max_distance`, `rolloff`, each optional |
-| `stop_sound(name)` | Stop a playing sound |
+| `play_sound_at(name, x, y, z, opts)` | Play a spatial sound with options: `volume`, `pitch`, `looping`, `bus`, `min_distance`, `max_distance`, `rolloff`, each optional |
+| `stop_sound(handle)` | Stop the sound that handle names |
+| `stop_sound(name)` | Stop every sound a script started by that name |
+| `stop_sound(handle_or_name, fade)` | As above, fading out over `fade` seconds |
+| `set_sound_volume(handle, volume)` | Set a playing sound's volume (0.0--1.0) |
+| `set_sound_volume(handle, volume, fade)` | Fade it there over `fade` seconds |
 | `audio_position(entity)` | Seconds into the sound the entity's `audio_source` is playing, wrapped for a loop, on the mixer's clock; `-1.0` before it has started and after it ends. See [Keeping time with the music](#keeping-time-with-the-music) |
 | `audio_output_latency()` | How long after it is mixed a sound is heard, seconds, where the platform says (the browser); `-1.0` where it doesn't (the desktop) |
 
@@ -200,6 +205,35 @@ fn on_interact() {
         #{ volume: 0.6, min_distance: 20.0, max_distance: 600.0, rolloff: 0.7 });
 }
 ```
+
+### Stopping, looping and fading
+
+Every `play_sound` and `play_sound_at` returns a handle, a number the script keeps to name that sound later. A sound that plays once can be left to end. A loop plays until it is stopped, or until the scene ends: a transition stops every loop a script started, as it does the scene's `audio_source` loops.
+
+```rust
+let rain = 0;
+
+fn on_trigger_enter(other) {
+    // Fade in over two seconds: start silent, then ramp up
+    rain = play_sound("rain_loop", #{ looping: true, volume: 0.0 });
+    set_sound_volume(rain, 0.7, 2.0);
+}
+
+fn on_trigger_exit(other) {
+    stop_sound(rain, 1.5);           // fade out and stop
+}
+
+fn on_interact() {
+    stop_sound("alarm");             // every alarm a script started
+}
+```
+
+- `stop_sound(handle)` stops one sound. `stop_sound(name)` stops every sound a script started under that name, found the same way `play_sound` finds it (see [Sound names](#sound-names)). Neither touches `audio_source`s or trigger sounds.
+- A stop or volume change with no fade still takes 10 ms, so a cut doesn't click.
+- A handle for a sound that has ended, was stopped, or never started (an unknown name, a one-shot placed out of earshot) does nothing and gives no warning.
+- The options map's loop key is `looping`. `loop` is a Rhai keyword, so `#{ loop: true }` doesn't parse. An unknown key, a value of the wrong type or an unknown `bus` is ignored, and the script gets one warning per function and key.
+- A placed loop starts even when the listener is out of earshot, so it is heard when the listener comes back. A placed one-shot out of earshot isn't started at all.
+- The desktop and the browser behave the same: the handle reaches kira on the desktop, and the worklet's mixer on the web.
 
 ### Sound names
 

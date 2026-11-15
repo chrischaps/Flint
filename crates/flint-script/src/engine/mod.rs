@@ -12,10 +12,11 @@
 //! can interact with.
 
 use crate::api;
-use crate::context::{DrawItem, InputSnapshot, ScriptCallContext, ScriptCommand};
+use crate::context::{DrawItem, InputSnapshot, ScriptCallContext, ScriptCommand, WorldScope};
 use crate::module_resolver::{ModuleBase, VfsModuleResolver};
 use flint_core::vfs;
 use flint_core::EntityId;
+use flint_ecs::FlintWorld;
 use rhai::{Engine, Scope, AST};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -25,8 +26,6 @@ pub mod instance;
 pub mod interact;
 
 pub use instance::ScriptInstance;
-#[cfg(test)]
-pub(crate) use instance::CALLBACK_ARITIES;
 pub use interact::{find_nearest_interactable, NearestInteractable};
 
 /// A Rhai engine that parses as Flint's does, with none of its API: what
@@ -166,15 +165,19 @@ impl ScriptEngine {
         self.compile(&source)
     }
 
-    /// Add a compiled script for an entity
+    /// Add a compiled script for an entity. Its top-level statements (the
+    /// `let`s the callbacks share, and any call they make) run once, at the
+    /// next lending of the world ([`Self::lend`], which every callback batch
+    /// starts with), so a top-level `get_entity("door")` finds the door and
+    /// `self_entity()` is `entity` (#692).
     pub fn add_script(&mut self, entity: EntityId, ast: AST, source_path: String) {
         self.add_named_script(entity, ast, source_path, "", None);
     }
 
     /// [`Self::add_script`], with the entity's name (see
-    /// [`Self::name_script`]) and the file it was found at (#693), both
-    /// known before its top-level statements run, so an error there names
-    /// them.
+    /// [`Self::name_script`]) and the file it was found at (#693), so an
+    /// error in its top level (run at the next [`Self::lend`]) or in a
+    /// callback names them.
     pub fn add_named_script(
         &mut self,
         entity: EntityId,
@@ -188,22 +191,33 @@ impl ScriptEngine {
         if let Some(file) = file {
             instance.file = file.to_string();
         }
-        // Evaluate top-level statements to populate scope with module-level variables.
-        // Without this, `let x = 0.0;` at the top of a script never enters the Scope,
-        // so `call_fn` can't find it from within `on_init`/`on_update`.
-        if let Err(e) = self
-            .engine
-            .run_ast_with_scope(&mut instance.scope, &instance.ast)
-        {
-            let name = callbacks::name_of(&instance, entity);
-            self.errors.record(crate::errors::Failure::eval(
-                &instance.file,
-                &name,
-                crate::errors::TOP_LEVEL,
-                &e,
-            ));
-        }
         self.scripts.insert(entity, instance);
+    }
+
+    /// Lend `world` to scripts until the guard drops, first running the top
+    /// level of every script added since the last lending, in
+    /// [`Self::in_order`], each with `self_entity()` its own entity. A
+    /// failure there is counted as the script's `top level` error (#693).
+    pub(crate) fn lend(&mut self, world: &mut FlintWorld) -> WorldScope {
+        let scope = WorldScope::new(&self.ctx, world);
+        for entity in self.in_order(|s| s.top_level_pending) {
+            let script = self.scripts.get_mut(&entity).unwrap();
+            script.top_level_pending = false;
+            crate::lock_or_recover(&self.ctx).current_entity = entity;
+            if let Err(e) = self
+                .engine
+                .run_ast_with_scope(&mut script.scope, &script.ast)
+            {
+                let name = callbacks::name_of(script, entity);
+                self.errors.record(crate::errors::Failure::eval(
+                    &script.file,
+                    &name,
+                    crate::errors::TOP_LEVEL,
+                    &e,
+                ));
+            }
+        }
+        scope
     }
 
     /// Every script error of the run (#693).
@@ -227,18 +241,28 @@ impl ScriptEngine {
     /// names it added (empty when there is no script on `entity`).
     ///
     /// The new source's top-level statements run once, into a scope of their
-    /// own, and only names the kept scope lacks are copied over. Running them
-    /// again has no cost a script doesn't already pay: `call_fn` evaluates a
-    /// script's top-level statements before every callback (that is how a
-    /// global `import` reaches `on_update`), rewinding the `let`s it pushes.
-    pub fn reload_script(&mut self, entity: EntityId, ast: AST) -> Vec<String> {
+    /// own, with `world` lent and `self_entity()` the script's entity, and
+    /// only names the kept scope lacks are copied over. A script whose top
+    /// level hasn't run yet takes the new source and runs it at the next
+    /// lending, as it would have.
+    pub fn reload_script(
+        &mut self,
+        world: &mut FlintWorld,
+        entity: EntityId,
+        ast: AST,
+    ) -> Vec<String> {
         let Some(script) = self.scripts.get_mut(&entity) else {
             return Vec::new();
         };
         script.hot_reload(ast);
-
         // What failed in the old source is not what runs now
         self.errors.file_reloaded(&script.file);
+        if script.top_level_pending {
+            return Vec::new();
+        }
+        let _world = self.lend(world);
+        let script = self.scripts.get_mut(&entity).unwrap();
+        crate::lock_or_recover(&self.ctx).current_entity = entity;
         let mut fresh = Scope::new();
         if let Err(e) = self.engine.run_ast_with_scope(&mut fresh, &script.ast) {
             let name = callbacks::name_of(script, entity);
@@ -395,6 +419,8 @@ impl Default for ScriptEngine {
 }
 
 #[cfg(test)]
+mod callback_tests;
+#[cfg(test)]
 mod error_tests;
 #[cfg(test)]
 mod hot_reload_tests;
@@ -402,3 +428,5 @@ mod hot_reload_tests;
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod top_level_tests;

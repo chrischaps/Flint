@@ -68,19 +68,27 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
     };
     vec![
         C::PlaySound {
+            handle: 1,
             name: s("ding"),
-            volume: 1.0,
-            pitch: 1.0,
+            play: flint_script::SoundPlay::default(),
         },
         C::PlaySoundAt {
+            handle: 2,
             name: s("ding"),
             position: (0.0, 0.0, 0.0),
-            volume: 1.0,
-            pitch: 1.0,
+            play: flint_script::SoundPlay::default(),
             distances: None,
             rolloff: None,
         },
-        C::StopSound { name: s("ding") },
+        C::StopSound {
+            sound: flint_script::SoundRef::Name(s("ding")),
+            fade: 0.0,
+        },
+        C::SetSoundVolume {
+            handle: 1,
+            volume: 0.5,
+            fade: 0.0,
+        },
         C::FireEvent {
             name: s("bell"),
             data: toml::Value::Boolean(true),

@@ -2,7 +2,11 @@
 //! `on_update`, `on_draw_ui`, the collision, trigger, action and custom
 //! events, `on_expression`, `on_scene_exit` / `on_scene_enter`, sequence cues,
 //! animation ends and `on_persist_migrate`. Each call lends the world for its
-//! scope (`WorldScope`) and goes through the scripts in [`ScriptEngine::in_order`].
+//! scope ([`ScriptEngine::lend`], which first runs the top level of any
+//! script added since) and goes through the scripts in
+//! [`ScriptEngine::in_order`]. A callback is called on the script's
+//! functions and imports (`ScriptInstance::calls`), so its top-level
+//! statements are not run again first (#692).
 //!
 //! Every call is [`ScriptEngine::call`] (#693): the one place a callback
 //! runs, so every failure is counted in [`ScriptEngine::errors`] rather than
@@ -12,9 +16,8 @@
 use super::interact::{get_interactable_config, is_near_player};
 use super::{ScriptEngine, ScriptInstance};
 use crate::api;
-use crate::context::WorldScope;
 use crate::errors::Failure;
-use flint_core::callbacks as cb;
+use flint_core::callbacks::{self as cb, Callback};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_runtime::GameEvent;
@@ -37,7 +40,7 @@ impl ScriptEngine {
         crate::lock_or_recover(&self.ctx).current_entity = entity;
         match self
             .engine
-            .call_fn::<()>(&mut script.scope, &script.ast, callback, args)
+            .call_fn::<()>(&mut script.scope, &script.calls, callback, args)
         {
             Ok(()) => true,
             Err(e) => {
@@ -55,14 +58,14 @@ impl ScriptEngine {
 
     /// Call on_init() for all scripts that haven't been initialized yet
     pub fn call_inits(&mut self, world: &mut FlintWorld) {
-        let _world_scope = WorldScope::new(&self.ctx, world);
-        let entity_ids = self.in_order(|s| s.has_on_init && !s.init_called);
+        let _world_scope = self.lend(world);
+        let entity_ids = self.in_order(|s| s.defines(Callback::Init) && !s.init_called);
         self.init(&entity_ids);
     }
 
     /// Call on_init() for specific entities (chunk loading)
     pub fn call_inits_for(&mut self, world: &mut FlintWorld, entity_ids: &[EntityId]) {
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
         self.init(entity_ids);
     }
 
@@ -72,7 +75,7 @@ impl ScriptEngine {
             let Some(script) = self.scripts.get_mut(&entity_id) else {
                 continue;
             };
-            if script.has_on_init && !script.init_called {
+            if script.defines(Callback::Init) && !script.init_called {
                 script.init_called = true;
                 self.call(entity_id, cb::ON_INIT, ());
             }
@@ -81,9 +84,9 @@ impl ScriptEngine {
 
     /// Call on_update() for all scripts
     pub fn call_updates(&mut self, world: &mut FlintWorld) {
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
-        for entity_id in self.in_order(|s| s.has_on_update) {
+        for entity_id in self.in_order(|s| s.defines(Callback::Update)) {
             let began = self.update_times.is_some().then(web_time::Instant::now);
             self.call(entity_id, cb::ON_UPDATE, ());
             if let (Some(began), Some(script)) = (began, self.scripts.get(&entity_id)) {
@@ -95,9 +98,9 @@ impl ScriptEngine {
 
     /// Call on_draw_ui() for all scripts that define it
     pub fn call_draw_uis(&mut self, world: &mut FlintWorld) {
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
-        for entity_id in self.in_order(|s| s.has_on_draw_ui) {
+        for entity_id in self.in_order(|s| s.defines(Callback::DrawUi)) {
             self.call(entity_id, cb::ON_DRAW_UI, ());
         }
     }
@@ -108,7 +111,7 @@ impl ScriptEngine {
             return;
         }
 
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
         for event in events {
             match event {
@@ -121,12 +124,12 @@ impl ScriptEngine {
                     self.call_collision_exit(*entity_b, *entity_a);
                 }
                 GameEvent::TriggerEntered { entity, trigger } => {
-                    if self.defines(*trigger, |s| s.has_on_trigger_enter) {
+                    if self.defines(*trigger, |s| s.defines(Callback::TriggerEnter)) {
                         self.call(*trigger, cb::ON_TRIGGER_ENTER, (entity.raw() as i64,));
                     }
                 }
                 GameEvent::TriggerExited { entity, trigger } => {
-                    if self.defines(*trigger, |s| s.has_on_trigger_exit) {
+                    if self.defines(*trigger, |s| s.defines(Callback::TriggerExit)) {
                         self.call(*trigger, cb::ON_TRIGGER_EXIT, (entity.raw() as i64,));
                     }
                 }
@@ -142,13 +145,13 @@ impl ScriptEngine {
     }
 
     fn call_collision(&mut self, entity: EntityId, other: EntityId) {
-        if self.defines(entity, |s| s.has_on_collision) {
+        if self.defines(entity, |s| s.defines(Callback::Collision)) {
             self.call(entity, cb::ON_COLLISION, (other.raw() as i64,));
         }
     }
 
     fn call_collision_exit(&mut self, entity: EntityId, other: EntityId) {
-        if self.defines(entity, |s| s.has_on_collision_exit) {
+        if self.defines(entity, |s| s.defines(Callback::CollisionExit)) {
             self.call(entity, cb::ON_COLLISION_EXIT, (other.raw() as i64,));
         }
     }
@@ -158,7 +161,7 @@ impl ScriptEngine {
     /// deterministic. `data` always arrives as a map: a non-table payload
     /// is wrapped as `#{ value: .. }` (ADR 0072).
     fn call_event_on_all(&mut self, name: &str, data: &toml::Value) {
-        let entity_ids = self.in_order(|s| s.has_on_event);
+        let entity_ids = self.in_order(|s| s.defines(Callback::Event));
         if entity_ids.is_empty() {
             return;
         }
@@ -186,8 +189,8 @@ impl ScriptEngine {
         if states.is_empty() {
             return;
         }
-        let _world_scope = WorldScope::new(&self.ctx, world);
-        let entity_ids = self.in_order(|s| s.has_on_expression);
+        let _world_scope = self.lend(world);
+        let entity_ids = self.in_order(|s| s.defines(Callback::Expression));
 
         for state in states {
             crate::lock_or_recover(&self.ctx).expression = state.clone();
@@ -202,13 +205,15 @@ impl ScriptEngine {
     }
 
     fn call_action_on_all(&mut self, action: &str, world: &FlintWorld) {
-        for entity_id in self.in_order(|s| s.has_on_action || s.has_on_interact) {
-            if self.defines(entity_id, |s| s.has_on_action) {
+        for entity_id in
+            self.in_order(|s| s.defines(Callback::Action) || s.defines(Callback::Interact))
+        {
+            if self.defines(entity_id, |s| s.defines(Callback::Action)) {
                 self.call(entity_id, cb::ON_ACTION, (action.to_string(),));
             }
 
             // on_interact sugar: ActionPressed("interact") + proximity + interactable check
-            if action == "interact" && self.defines(entity_id, |s| s.has_on_interact) {
+            if action == "interact" && self.defines(entity_id, |s| s.defines(Callback::Interact)) {
                 // Read range from interactable component, fall back to 3.0
                 let (range, enabled) = get_interactable_config(entity_id, world);
                 if enabled && is_near_player(entity_id, world, range) {
@@ -236,11 +241,11 @@ impl ScriptEngine {
         let Some(from) = pending else {
             return;
         };
-        let entity_ids = self.in_order(|s| s.has_on_persist_migrate);
+        let entity_ids = self.in_order(|s| s.defines(Callback::PersistMigrate));
         if entity_ids.is_empty() {
             return;
         }
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
         for entity_id in entity_ids {
             self.call(entity_id, cb::ON_PERSIST_MIGRATE, (from,));
         }
@@ -261,18 +266,18 @@ impl ScriptEngine {
 
     /// Call on_scene_exit() for all scripts that define it
     pub fn call_scene_exits(&mut self, world: &mut FlintWorld) {
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
-        for entity_id in self.in_order(|s| s.has_on_scene_exit) {
+        for entity_id in self.in_order(|s| s.defines(Callback::SceneExit)) {
             self.call(entity_id, cb::ON_SCENE_EXIT, ());
         }
     }
 
     /// Call on_scene_enter() for all scripts that define it
     pub fn call_scene_enters(&mut self, world: &mut FlintWorld) {
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
-        for entity_id in self.in_order(|s| s.has_on_scene_enter) {
+        for entity_id in self.in_order(|s| s.defines(Callback::SceneEnter)) {
             self.call(entity_id, cb::ON_SCENE_ENTER, ());
         }
     }
@@ -288,10 +293,10 @@ impl ScriptEngine {
             return;
         }
 
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
         for cue in cues {
-            if self.defines(cue.entity_id, |s| s.has_on_sequence_cue) {
+            if self.defines(cue.entity_id, |s| s.defines(Callback::SequenceCue)) {
                 self.call(
                     cue.entity_id,
                     cb::ON_SEQUENCE_CUE,
@@ -311,10 +316,10 @@ impl ScriptEngine {
             return;
         }
 
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
         for event in events {
-            if self.defines(event.entity_id, |s| s.has_on_animation_end) {
+            if self.defines(event.entity_id, |s| s.defines(Callback::AnimationEnd)) {
                 self.call(
                     event.entity_id,
                     cb::ON_ANIMATION_END,

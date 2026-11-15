@@ -6,7 +6,18 @@ use super::TransitionPhase;
 use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::quality::QualitySettings;
 use flint_core::Vec3 as FlintVec3;
-use flint_script::{CameraOverrides, ScriptHost};
+use flint_script::{CameraOverrides, ScriptHost, SoundPlay, SoundRef};
+use std::time::Duration;
+
+/// A script's sound as the engine plays it.
+fn keyed(play: &SoundPlay) -> flint_audio::engine::KeyedPlay {
+    flint_audio::engine::KeyedPlay {
+        volume: play.volume,
+        pitch: play.pitch,
+        looping: play.looping,
+        bus: flint_audio::Bus::from_name(&play.bus),
+    }
+}
 
 impl PlayerApp {
     /// A script's `quit_game()` (#659): the run ends as closing the window
@@ -66,15 +77,12 @@ impl ScriptHost for PlayerApp {
         "the player"
     }
 
-    fn play_sound(&mut self, name: String, volume: f64, pitch: f64) {
+    // A script's sounds are the engine's keyed ones (#699): the handle
+    // `play_sound` returned is the key `stop_sound` and `set_sound_volume`
+    // find it by, on kira here or in the browser's worklet alike.
+    fn play_sound(&mut self, handle: u64, name: String, play: SoundPlay) {
         if self.audio.engine.is_available() {
-            if let Err(e) = self.audio.engine.play_non_spatial(
-                &name,
-                volume,
-                pitch,
-                false,
-                flint_audio::Bus::Sfx,
-            ) {
+            if let Err(e) = self.audio.engine.play_keyed(handle, &name, keyed(&play)) {
                 tracing::warn!(target: "script", "play_sound error: {:?}", e);
             }
         }
@@ -82,29 +90,41 @@ impl ScriptHost for PlayerApp {
 
     fn play_sound_at(
         &mut self,
+        handle: u64,
         name: String,
         position: (f64, f64, f64),
-        volume: f64,
-        pitch: f64,
+        play: SoundPlay,
         distances: Option<(f32, f32)>,
         rolloff: Option<f32>,
     ) {
         let pos = FlintVec3::new(position.0 as f32, position.1 as f32, position.2 as f32);
-        if let Err(e) = self.audio.engine.play_oneshot_at(
+        if let Err(e) = self.audio.engine.play_keyed_at(
+            handle,
             &name,
             pos,
-            volume,
-            pitch,
             distances.unwrap_or(flint_audio::engine::DEFAULT_DISTANCES),
             rolloff.unwrap_or(flint_audio::engine::DEFAULT_ROLLOFF),
-            flint_audio::Bus::Sfx,
+            keyed(&play),
         ) {
             tracing::warn!(target: "script", "play_sound_at error: {:?}", e);
         }
     }
 
-    fn stop_sound(&mut self, _name: String) {
-        // One-shot sounds play to completion (same as AudioCommand::Stop)
+    fn stop_sound(&mut self, sound: SoundRef, fade: f64) {
+        let fade = Duration::from_secs_f64(fade.max(0.0));
+        match sound {
+            SoundRef::Handle(h) => {
+                self.audio.engine.stop_keyed(h, fade);
+            }
+            SoundRef::Name(name) => {
+                self.audio.engine.stop_keyed_named(&name, fade);
+            }
+        }
+    }
+
+    fn set_sound_volume(&mut self, handle: u64, volume: f64, fade: f64) {
+        let fade = Duration::from_secs_f64(fade.max(0.0));
+        self.audio.engine.set_keyed_volume(handle, volume, fade);
     }
 
     fn fire_event(&mut self, name: String, data: toml::Value) {

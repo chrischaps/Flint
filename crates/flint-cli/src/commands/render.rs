@@ -4121,8 +4121,8 @@ fn load_particles(
 
 /// The renderer's share of a capture's scene, the same for the one-renderer
 /// path and every stage (#739): the scene bound (its project and folder,
-/// nothing of a last scene, its terrain and grass), then its `[environment]`
-/// levers, with the CLI's over them.
+/// nothing of a last scene, its `[environment]` levers, its terrain and
+/// grass), with the CLI's levers over them.
 fn bind_capture_scene(
     args: &RenderArgs,
     ctx: &HeadlessContext,
@@ -4131,7 +4131,10 @@ fn bind_capture_scene(
     scene_file: &flint_scene::SceneFile,
     binding: &flint_render::SceneBinding,
 ) {
-    let bound = renderer.bind_scene(&ctx.device, &ctx.queue, world, binding);
+    let binding = binding
+        .clone()
+        .with_environment(scene_file.environment.as_ref());
+    let bound = renderer.bind_scene(&ctx.device, &ctx.queue, world, &binding);
     if let Some(grass) = bound
         .grass
         .as_ref()
@@ -4159,29 +4162,6 @@ fn bind_capture_scene(
         say!("[grass] Enabled on grass_ground");
     }
 
-    // Scene-authored hemisphere ambient + diffuse wrap (absent = renderer default)
-    if let Some(env) = &scene_file.environment {
-        // No shadows, no built-in lights (#627)
-        renderer.set_scene_shadows(env.casts_shadows());
-        renderer.set_default_lights(env.uses_default_lights());
-        if env.ambient_sky.is_some() || env.ambient_ground.is_some() {
-            renderer.set_ambient(
-                env.ambient_sky
-                    .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_SKY),
-                env.ambient_ground
-                    .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_GROUND),
-            );
-        }
-        if let Some(wrap) = env.diffuse_wrap {
-            renderer.set_diffuse_wrap(wrap);
-        }
-        if let Some(oren) = env.oren_nayar {
-            renderer.set_oren_nayar(oren);
-        }
-        if let Some(strength) = env.sheen_strength {
-            renderer.set_sheen(env.sheen_color.unwrap_or([1.0; 3]), strength);
-        }
-    }
     // CLI overrides win over scene-authored values
     if let Some(oren) = args.oren_nayar {
         renderer.set_oren_nayar(oren);

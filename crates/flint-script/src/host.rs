@@ -19,7 +19,9 @@
 //! overrides the method; a headless capture that can't names it on its
 //! presentation-only list (`flint_player::PRESENTATION_ONLY`).
 
-use crate::context::{CameraOverrides, LogLevel, PostProcessOverrides, ScriptCommand};
+use crate::context::{
+    CameraOverrides, LogLevel, PostProcessOverrides, ScriptCommand, SoundPlay, SoundRef,
+};
 use flint_core::quality::QualitySettings;
 use flint_core::EntityId;
 use std::collections::BTreeSet;
@@ -44,24 +46,31 @@ pub trait ScriptHost {
     }
 
     // ── Sound ──
-    fn play_sound(&mut self, name: String, volume: f64, pitch: f64) {
+    /// `handle` is the script's name for the sound, which `stop_sound` and
+    /// `set_sound_volume` give back (#699).
+    fn play_sound(&mut self, handle: u64, name: String, play: SoundPlay) {
         self.unsupported("play_sound");
     }
     /// `distances` is `(min, max)` metres and `rolloff` the curve between,
     /// `None` for the engine's defaults.
     fn play_sound_at(
         &mut self,
+        handle: u64,
         name: String,
         position: (f64, f64, f64),
-        volume: f64,
-        pitch: f64,
+        play: SoundPlay,
         distances: Option<(f32, f32)>,
         rolloff: Option<f32>,
     ) {
         self.unsupported("play_sound_at");
     }
-    fn stop_sound(&mut self, name: String) {
+    /// Stop a sound a script started, or every one by that name, fading
+    /// over `fade` seconds.
+    fn stop_sound(&mut self, sound: SoundRef, fade: f64) {
         self.unsupported("stop_sound");
+    }
+    fn set_sound_volume(&mut self, handle: u64, volume: f64, fade: f64) {
+        self.unsupported("set_sound_volume");
     }
     fn set_audio_lowpass(&mut self, cutoff_hz: f32) {
         self.unsupported("set_audio_lowpass");
@@ -239,20 +248,21 @@ pub trait ScriptHost {
 pub fn apply<H: ScriptHost + ?Sized>(host: &mut H, cmd: ScriptCommand) {
     use ScriptCommand as C;
     match cmd {
-        C::PlaySound {
-            name,
-            volume,
-            pitch,
-        } => host.play_sound(name, volume, pitch),
+        C::PlaySound { handle, name, play } => host.play_sound(handle, name, play),
         C::PlaySoundAt {
+            handle,
             name,
             position,
-            volume,
-            pitch,
+            play,
             distances,
             rolloff,
-        } => host.play_sound_at(name, position, volume, pitch, distances, rolloff),
-        C::StopSound { name } => host.stop_sound(name),
+        } => host.play_sound_at(handle, name, position, play, distances, rolloff),
+        C::StopSound { sound, fade } => host.stop_sound(sound, fade),
+        C::SetSoundVolume {
+            handle,
+            volume,
+            fade,
+        } => host.set_sound_volume(handle, volume, fade),
         C::SetAudioLowpass { cutoff_hz } => host.set_audio_lowpass(cutoff_hz),
         C::FireEvent { name, data } => host.fire_event(name, data),
         C::Log { level, message } => host.log(level, message),
@@ -377,7 +387,7 @@ mod tests {
         fn unsupported(&mut self, command: &'static str) {
             self.unsupported.push(command);
         }
-        fn play_sound(&mut self, name: String, _volume: f64, _pitch: f64) {
+        fn play_sound(&mut self, _handle: u64, name: String, _play: crate::SoundPlay) {
             self.sounds.push(name);
         }
     }
@@ -389,9 +399,9 @@ mod tests {
             &mut host,
             [
                 ScriptCommand::PlaySound {
+                    handle: 1,
                     name: "ding".into(),
-                    volume: 1.0,
-                    pitch: 1.0,
+                    play: crate::SoundPlay::default(),
                 },
                 ScriptCommand::QuitGame,
                 ScriptCommand::SetTimeScale { scale: 0.5 },

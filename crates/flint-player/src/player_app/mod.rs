@@ -58,8 +58,8 @@ mod schemas;
 pub mod script_commands;
 #[cfg(feature = "debug-hud")]
 mod script_error_card;
-#[cfg(feature = "living")]
-mod shallow_wooze;
+#[cfg(test)]
+mod script_sound_tests;
 mod state;
 pub mod style_commands;
 pub(crate) mod subsystem;

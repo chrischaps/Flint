@@ -42,6 +42,7 @@ pub mod render_stats;
 mod scene_renderer;
 pub mod selection_outline;
 pub mod shadow;
+pub mod shallow_wooze;
 pub mod skinned_pipeline;
 pub mod sky_pipeline;
 pub mod skybox_pipeline;
