@@ -45,57 +45,86 @@ pub fn tear_active(config: &PostProcessConfig) -> bool {
     config.enabled && tears(config.render_mode) && config.mode_mix > 0.001
 }
 
-/// Post-processing configuration (runtime-adjustable parameters).
-#[derive(Debug, Clone)]
-pub struct PostProcessConfig {
-    pub enabled: bool,
-    pub exposure: f32,
-    pub bloom_enabled: bool,
-    pub bloom_intensity: f32,
-    pub bloom_threshold: f32,
-    pub bloom_soft_threshold: f32,
-    pub vignette_enabled: bool,
-    pub vignette_intensity: f32,
-    pub vignette_smoothness: f32,
-    pub chromatic_aberration: f32,
-    pub radial_blur: f32,
-    pub desaturate: f32,
-    pub dof_strength: f32,
-    pub dof_focus_distance: f32,
-    pub dof_focus_range: f32,
-    pub ssao_enabled: bool,
-    pub ssao_radius: f32,
-    pub ssao_intensity: f32,
-    pub ssao_bias: f32,
-    /// Hemisphere samples per pixel, 1..=64 (clamped at upload). 64 is the
-    /// full kernel (the pre-lever behavior); the shader strides through the
-    /// scale-ordered kernel so lower counts keep full radius coverage. SSAO
-    /// is the renderer's heaviest per-pixel pass — 16 is the quality/cost
-    /// sweet spot when the blur pass can hide the extra noise.
-    pub ssao_samples: u32,
-    pub fog_enabled: bool,
-    pub fog_color: [f32; 3],
-    pub fog_density: f32,
-    pub fog_start: f32,
-    pub fog_end: f32,
-    pub fog_height_enabled: bool,
-    pub fog_height_falloff: f32,
-    pub fog_height_origin: f32,
-    /// Height fog's density at `fog_height_origin` (ADR 0101). It falls by
-    /// e every `1 / fog_height_falloff` metres above the origin, and its
-    /// optical depth along each view ray adds to the distance fog's. 0 (the
-    /// default) adds nothing, so a scene that only turned height fog on
-    /// looks as it did when height fog did nothing.
-    pub fog_height_density: f32,
-    /// Aerial tint (ADR 0101): far things take `fog_tint_color` (linear),
-    /// up to `fog_tint_strength` (0 = off, the default), ramping in over
-    /// `fog_tint_start..fog_tint_end` metres from the camera. It lies under
-    /// the fog, so the farthest things still run into `fog_color`. Rides
-    /// `fog_enabled`, and leaves the sky alone.
-    pub fog_tint_color: [f32; 3],
-    pub fog_tint_strength: f32,
-    pub fog_tint_start: f32,
-    pub fog_tint_end: f32,
+/// The macro [`flint_schema::post_effects!`] calls to make
+/// [`PostProcessConfig`] (#741): one field a built-in effect's key, named
+/// and defaulted as the scene's, then the renderer's own fields (what a
+/// script or the game sets, never a scene), passed through with their
+/// defaults; and the copy from a scene's [`flint_scene::PostProcessDef`].
+macro_rules! post_process_config {
+    (
+        {
+            $(
+                $(#[$xmeta:meta])*
+                pub $xfield:ident : $xtype:ty = $xdefault:expr
+            ),* $(,)?
+        }
+        $(
+            $effect:ident $elabel:literal $ehelp:literal {
+                $(
+                    $key:ident : $kind:ident = $default:expr,
+                    $([$min:literal, $max:literal])? $widget:ident $(($speed:literal))?;
+                    $label:literal, $help:literal
+                )*
+            }
+        )*
+    ) => {
+        /// Post-processing configuration (runtime-adjustable parameters).
+        ///
+        /// Every built-in effect key of a scene's `[post_process]` is a
+        /// field here of the same name and default, made from the effects'
+        /// descriptors ([`flint_schema::post_effects`], #741); the fields
+        /// after them are the renderer's own.
+        #[derive(Debug, Clone)]
+        pub struct PostProcessConfig {
+            $($(
+                #[doc = $help]
+                pub $key: flint_schema::post_type!($kind),
+            )*)*
+            $(
+                $(#[$xmeta])*
+                pub $xfield: $xtype,
+            )*
+        }
+
+        impl Default for PostProcessConfig {
+            fn default() -> Self {
+                Self {
+                    $($( $key: $default, )*)*
+                    $( $xfield: $xdefault, )*
+                }
+            }
+        }
+
+        impl PostProcessConfig {
+            /// The built-in effect key `key`'s field, to read or set by name
+            /// (the F4 panel's widgets, `--sweep post.<key>`). `None` for a
+            /// key that is no effect's.
+            pub fn param_mut(&mut self, key: &str) -> Option<flint_schema::post_effects::PostParamMut<'_>> {
+                match key {
+                    $($( stringify!($key) => Some(flint_schema::post_param_mut!($kind, &mut self.$key)), )*)*
+                    _ => None,
+                }
+            }
+
+            /// The built-in effect key `key`'s value. `None` for a key that
+            /// is no effect's.
+            pub fn param(&self, key: &str) -> Option<flint_schema::post_effects::PostValue> {
+                match key {
+                    $($( stringify!($key) => Some(flint_schema::post_value!($kind, self.$key)), )*)*
+                    _ => None,
+                }
+            }
+
+            /// Every built-in effect key from a scene's block.
+            fn copy_params(&mut self, def: &flint_scene::PostProcessDef) {
+                $($( self.$key = def.$key; )*)*
+            }
+        }
+    };
+}
+
+flint_schema::post_effects!(post_process_config {
+    pub enabled: bool = true,
     /// Ground fog (ADR 0106): fog on floors of its own, read from the map
     /// set with `SceneRenderer::set_ground_fog`, so a mist can fill hollows
     /// at many heights. Its density per metre at a texel's floor where the
@@ -103,138 +132,34 @@ pub struct PostProcessConfig {
     /// no map. Unlit and in `ground_fog_color` (linear), it lies under the
     /// distance fog and the aerial tint, and rides `enabled`, not
     /// `fog_enabled`.
-    pub ground_fog_density: f32,
-    pub ground_fog_color: [f32; 3],
+    pub ground_fog_density: f32 = 0.0,
+    pub ground_fog_color: [f32; 3] = [0.8, 0.82, 0.86],
     /// It falls by e every `1 / ground_fog_falloff` metres over the floor.
-    pub ground_fog_falloff: f32,
+    pub ground_fog_falloff: f32 = 0.5,
     /// Steps each view ray marches through it, 1..=64 (clamped at upload).
-    pub ground_fog_steps: u32,
-    pub dither_enabled: bool,
-    pub dither_intensity: f32,
-    pub volumetric_enabled: bool,
-    pub volumetric_samples: u32,
-    pub volumetric_density: f32,
-    pub volumetric_max_distance: f32,
-    pub volumetric_decay: f32,
-    /// The shared geometry edges' thresholds (#301): the relative
-    /// view-distance step that is a silhouette, and the rebuilt-normal
-    /// Sobel that is a crease. One pair for every style that reads
-    /// [`StyleFrame::edges`](crate::stylize::StyleFrame::edges), since the
-    /// pass runs once a frame; a style wanting more or fewer lines scales
-    /// the strengths it reads.
-    pub edge_depth: f32,
-    pub edge_normal: f32,
-    /// Film frames each drawing of the shading boil (#214) is held: 1, 2
-    /// or 3. Shared by the boils of the `kuwahara` and `contour` styles,
-    /// whose amounts are their own `boil` parameters (#599).
-    pub boil_on: u32,
-    /// Motion on twos for the whole frame (#405): entities that name no
-    /// `motion_hold` rate of their own are drawn on ticks, this many a
-    /// second, and the post time styles, grain and the tear read holds to
-    /// the start of each tick. 0 = off. See [`crate::motion_hold`].
-    pub motion_hold: f32,
+    pub ground_fog_steps: u32 = 24,
     /// This frame's drawing, from the wooze field. Whoever owns the clock stamps
     /// it each frame with `SceneRenderer::set_boil`; a scene with no field never
     /// does, and its amount of 0 turns both boils off.
-    pub boil: flint_wooze::BoilFrame,
+    pub boil: flint_wooze::BoilFrame = Default::default(),
     /// Stylized render mode: 0 = none, 1 = Matrix code, 2 = blood ocean
     /// grade, 3 = drunk, 4 = Tron wireframe (reality tears), 5 = underwater
     /// (submerged-eye moments; masks by a per-pixel waterline, not the
     /// tear mask), 6 = the tear alone (#397: no look of its own, so only
     /// styled props with `blend_source = "tear"` show where it tears).
-    pub render_mode: u32,
+    pub render_mode: u32 = 0,
     /// Blend strength for the active render mode (0 = normal view).
-    pub mode_mix: f32,
-    /// Animated film grain intensity (0 = off). Hash noise on pixel coords,
-    /// time-quantized to 24 Hz off the shared post `time`; luma-weighted so
-    /// highlights stay clean (ADR 0050).
-    pub film_grain: f32,
-    /// Color grade, ASC-CDL-shaped, applied right after ACES tonemapping:
-    /// pow(max(color * gain + lift, 0), 1/gamma). Neutral = lift 0 /
-    /// gamma 1 / gain 1; neutrality is guarded by a CPU-computed enable
-    /// flag, never by pow(x, 1.0) float identity (ADR 0050).
-    pub grade_lift: [f32; 3],
-    pub grade_gamma: [f32; 3],
-    pub grade_gain: [f32; 3],
+    pub mode_mix: f32 = 0.0,
     /// Per-mode tuning. Tears (1-4): x = bleed-mask scale, y = mask style
     /// (0 fbm / 1 iris), z = per-mode rate, w = spare. Underwater (5):
     /// x = signed eye depth in meters (+ = submerged; waterline Y =
     /// camera Y + x), y = sea energy 0..1, z = daylight 0..1, w = biolum 0..1.
-    pub mode_params: [f32; 4],
-    /// FXAA pass on the final composite output (default off — headless
-    /// pixel-diff gates run single-path without it; ADR 0050, the cheap
-    /// interim for tech-debt #13 until the MSAA workstream).
-    pub fxaa_enabled: bool,
+    pub mode_params: [f32; 4] = [0.0; 4],
     /// Registered stylize passes' settings by style name (#262), from a
     /// scene's `[post_process.styles.<name>]` (Kuwahara's included, #298:
     /// a scene's old `kuwahara_*` keys are folded in on the way).
-    pub styles: crate::stylize::StyleSettings,
-}
-
-impl Default for PostProcessConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            exposure: 1.0,
-            bloom_enabled: true,
-            bloom_intensity: 0.04,
-            bloom_threshold: 1.0,
-            bloom_soft_threshold: 0.5,
-            vignette_enabled: false,
-            vignette_intensity: 0.3,
-            vignette_smoothness: 2.0,
-            chromatic_aberration: 0.0,
-            radial_blur: 0.0,
-            desaturate: 0.0,
-            dof_strength: 0.0,
-            dof_focus_distance: 10.0,
-            dof_focus_range: 5.0,
-            ssao_enabled: true,
-            ssao_radius: 0.5,
-            ssao_intensity: 1.0,
-            ssao_bias: 0.025,
-            ssao_samples: 64,
-            fog_enabled: false,
-            fog_color: [0.7, 0.75, 0.82],
-            fog_density: 0.02,
-            fog_start: 5.0,
-            fog_end: 100.0,
-            fog_height_enabled: false,
-            fog_height_falloff: 0.1,
-            fog_height_origin: 0.0,
-            fog_height_density: 0.0,
-            fog_tint_color: [0.42, 0.50, 0.65],
-            fog_tint_strength: 0.0,
-            fog_tint_start: 100.0,
-            fog_tint_end: 1000.0,
-            ground_fog_density: 0.0,
-            ground_fog_color: [0.8, 0.82, 0.86],
-            ground_fog_falloff: 0.5,
-            ground_fog_steps: 24,
-            dither_enabled: false,
-            dither_intensity: 0.03,
-            volumetric_enabled: false,
-            volumetric_samples: 32,
-            volumetric_density: 1.0,
-            volumetric_max_distance: 100.0,
-            volumetric_decay: 0.98,
-            edge_depth: 0.6,
-            edge_normal: 2.5,
-            boil_on: 2,
-            motion_hold: 0.0,
-            boil: Default::default(),
-            render_mode: 0,
-            mode_mix: 0.0,
-            mode_params: [0.0; 4],
-            film_grain: 0.0,
-            grade_lift: [0.0; 3],
-            grade_gamma: [1.0; 3],
-            grade_gain: [1.0; 3],
-            fxaa_enabled: false,
-            styles: Default::default(),
-        }
-    }
-}
+    pub styles: crate::stylize::StyleSettings = Default::default(),
+});
 
 impl PostProcessConfig {
     /// True when any grade component deviates from neutral. The shader
@@ -268,58 +193,14 @@ impl PostProcessConfig {
 
 /// Convert a `PostProcessDef` (scene TOML) to a `PostProcessConfig` (renderer).
 ///
-/// Centralises the field-by-field copy so that new fields are never forgotten.
+/// Every built-in effect key is copied by the code its descriptor makes
+/// (#741), so a new key can't be forgotten here.
 /// Lives here (not in the player) so every front end that renders a scene —
 /// player, CLI render, viewer — applies the authored `[post_process]` block
 /// through one function.
 pub fn post_process_config_from_def(pp_def: &flint_scene::PostProcessDef) -> PostProcessConfig {
     let mut config = PostProcessConfig::default();
-    config.bloom_enabled = pp_def.bloom_enabled;
-    config.bloom_intensity = pp_def.bloom_intensity;
-    config.bloom_threshold = pp_def.bloom_threshold;
-    config.vignette_enabled = pp_def.vignette_enabled;
-    config.vignette_intensity = pp_def.vignette_intensity;
-    config.vignette_smoothness = pp_def.vignette_smoothness;
-    config.exposure = pp_def.exposure;
-    config.ssao_enabled = pp_def.ssao_enabled;
-    config.ssao_radius = pp_def.ssao_radius;
-    config.ssao_intensity = pp_def.ssao_intensity;
-    config.ssao_samples = pp_def.ssao_samples;
-    config.fog_enabled = pp_def.fog_enabled;
-    config.fog_color = pp_def.fog_color;
-    config.fog_density = pp_def.fog_density;
-    config.fog_start = pp_def.fog_start;
-    config.fog_end = pp_def.fog_end;
-    config.fog_height_enabled = pp_def.fog_height_enabled;
-    config.fog_height_falloff = pp_def.fog_height_falloff;
-    config.fog_height_origin = pp_def.fog_height_origin;
-    config.fog_height_density = pp_def.fog_height_density;
-    config.fog_tint_color = pp_def.fog_tint_color;
-    config.fog_tint_strength = pp_def.fog_tint_strength;
-    config.fog_tint_start = pp_def.fog_tint_start;
-    config.fog_tint_end = pp_def.fog_tint_end;
-    config.chromatic_aberration = pp_def.chromatic_aberration;
-    config.radial_blur = pp_def.radial_blur;
-    config.desaturate = pp_def.desaturate;
-    config.dof_strength = pp_def.dof_strength;
-    config.dof_focus_distance = pp_def.dof_focus_distance;
-    config.dof_focus_range = pp_def.dof_focus_range;
-    config.dither_enabled = pp_def.dither_enabled;
-    config.dither_intensity = pp_def.dither_intensity;
-    config.volumetric_enabled = pp_def.volumetric_enabled;
-    config.volumetric_samples = pp_def.volumetric_samples;
-    config.volumetric_density = pp_def.volumetric_density;
-    config.volumetric_max_distance = pp_def.volumetric_max_distance;
-    config.volumetric_decay = pp_def.volumetric_decay;
-    config.edge_depth = pp_def.edge_depth;
-    config.edge_normal = pp_def.edge_normal;
-    config.boil_on = pp_def.boil_on;
-    config.motion_hold = pp_def.motion_hold;
-    config.film_grain = pp_def.film_grain;
-    config.grade_lift = pp_def.grade_lift;
-    config.grade_gamma = pp_def.grade_gamma;
-    config.grade_gain = pp_def.grade_gain;
-    config.fxaa_enabled = pp_def.fxaa;
+    config.copy_params(pp_def);
     // The old `kuwahara_*` (#298) and `contour_*` (#599) keys arrive folded
     // into their styles' tables
     let (styles, warnings) = crate::stylize::StyleSettings::from_tables(&pp_def.style_tables());
@@ -471,7 +352,7 @@ pub struct SsaoBlurUniforms {
 const SSAO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
 /// Intermediate target for the FXAA pass (ADR 0050) — only allocated when
-/// `fxaa_enabled` (Kuwahara lazy pattern). The composite pass renders into
+/// `fxaa` (Kuwahara lazy pattern). The composite pass renders into
 /// this instead of the swapchain; the FXAA pass then samples it and writes
 /// the real target. Same format as the composite pipeline's baked fragment
 /// target so that pipeline is reused unchanged.
@@ -2801,6 +2682,46 @@ fn generate_ssao_noise() -> [u8; 64] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #741: every built-in effect key is a field of the scene's block and
+    /// of the config, each defaulting to its descriptor's default, and a
+    /// scene's value reaches the config by the generated copy.
+    #[test]
+    fn every_effect_key_is_a_scene_key_and_a_config_field() {
+        use flint_schema::post_effects;
+        let mut def = flint_scene::PostProcessDef::default();
+        let mut config = PostProcessConfig::default();
+        for p in post_effects::params() {
+            assert_eq!(def.param(p.key), Some(p.default), "{} in the scene", p.key);
+            assert_eq!(
+                config.param(p.key),
+                Some(p.default),
+                "{} in the config",
+                p.key
+            );
+            assert!(config.param_mut(p.key).is_some(), "{}", p.key);
+            // A value off the default, set by name, comes through the copy
+            let end = match p.default.numbers().first() {
+                Some(&n) if n == p.max => p.min,
+                _ => p.max,
+            };
+            let changed = match p.default {
+                post_effects::PostValue::Bool(b) => toml::Value::Boolean(!b),
+                post_effects::PostValue::U32(_) => toml::Value::Integer(end as i64),
+                post_effects::PostValue::F32(_) => toml::Value::Float(end as f64),
+                post_effects::PostValue::Rgb(_) => {
+                    toml::Value::Array(vec![toml::Value::Float(end as f64); 3])
+                }
+            };
+            def.param_mut(p.key).unwrap().set(&changed).unwrap();
+        }
+        config = post_process_config_from_def(&def);
+        for p in post_effects::params() {
+            assert_eq!(config.param(p.key), def.param(p.key), "{} copied", p.key);
+            assert_ne!(config.param(p.key), Some(p.default), "{} changed", p.key);
+        }
+        assert!(config.param("styles").is_none() && config.param("render_mode").is_none());
+    }
 
     #[test]
     fn old_kuwahara_keys_make_the_same_config_as_the_table() {

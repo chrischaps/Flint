@@ -227,6 +227,9 @@ fn diagnose_tables(
             continue;
         };
         found.extend(validate_table(schema, data));
+        if name == "post_process" {
+            found.extend(post_range_warnings(data));
+        }
         let Some(lookup) = lookup.as_deref_mut() else {
             continue;
         };
@@ -236,6 +239,34 @@ fn diagnose_tables(
             }
         }
     }
+}
+
+/// `post-range` (#741): each built-in effect key of a `[post_process]` whose
+/// value lies outside what its effect is tuned for
+/// ([`flint_schema::post_effects`]). A warning, as a style value past its
+/// range is (#355): the value still draws.
+fn post_range_warnings(data: &toml::Value) -> Vec<Diagnostic> {
+    let Some(table) = data.as_table() else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for (key, value) in table {
+        let Some(param) = flint_schema::post_effects::param(key) else {
+            continue;
+        };
+        if let Some(message) = param.range_error(value) {
+            found.push(
+                Diagnostic::warning(codes::POST_RANGE, message)
+                    .table("post_process")
+                    .field(key.clone())
+                    .hint(format!(
+                        "{}: {}; `flint render --list-effects` lists every key and its range",
+                        param.label, param.help
+                    )),
+            );
+        }
+    }
+    found
 }
 
 /// What a reference is looked up in: the scene's entities, and the project's
@@ -708,6 +739,36 @@ position = [0, 0, 0]
         assert_eq!(found[2].hint.as_deref(), Some("did you mean `shadows`?"));
         assert!(found.iter().all(|d| d.component.is_none()
             && d.file.as_deref() == Some(Path::new("scenes/a.scene.toml"))));
+    }
+
+    /// #741: a built-in effect key past the range its effect is tuned for
+    /// warns, naming the key and the range, as a style value does; a key
+    /// inside it, and the table's own keys, say nothing. The effect keys
+    /// are declared by their descriptors, not the schema file.
+    #[test]
+    fn a_post_value_past_its_range_warns() {
+        let schema = "[table.post_process]\n[table.post_process.fields]\n\
+                      look = { type = \"string\" }\n";
+        let scene = "[scene]\nname = \"s\"\n[post_process]\nlook = \"none\"\n\
+                     exposure = 1.2\nbloom_intensity = 3\nfog_color = [0.5, 0.5, 2.0]\n";
+        let found = with_scene(
+            &[
+                ("schemas/scene/post_process.toml", schema),
+                ("scenes/a.scene.toml", scene),
+            ],
+            |registry, project| diagnose(Path::new("scenes/a.scene.toml"), registry, project),
+        );
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            [
+                "warning[post-range] [post_process] bloom_intensity: bloom_intensity=3 is \
+                 outside its range 0..1",
+                "warning[post-range] [post_process] fog_color: fog_color=[0.5, 0.5, 2.0] is \
+                 outside its range 0..1",
+            ]
+        );
+        assert!(found.iter().all(|d| !d.is_error()));
     }
 
     /// A table of the game's layer is known with that layer and unknown

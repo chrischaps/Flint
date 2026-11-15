@@ -109,169 +109,126 @@ pub struct PrefabInstance {
     pub overrides: HashMap<String, HashMap<String, toml::Value>>,
 }
 
-/// Post-processing settings for the scene
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PostProcessDef {
-    #[serde(default = "default_true")]
-    pub bloom_enabled: bool,
-    #[serde(default = "default_bloom_intensity")]
-    pub bloom_intensity: f32,
-    #[serde(default = "default_bloom_threshold")]
-    pub bloom_threshold: f32,
-    #[serde(default)]
-    pub vignette_enabled: bool,
-    #[serde(default = "default_vignette_intensity")]
-    pub vignette_intensity: f32,
-    #[serde(default = "default_vignette_smoothness")]
-    pub vignette_smoothness: f32,
-    #[serde(default = "default_exposure")]
-    pub exposure: f32,
-    #[serde(default = "default_true")]
-    pub ssao_enabled: bool,
-    #[serde(default = "default_ssao_radius")]
-    pub ssao_radius: f32,
-    #[serde(default = "default_ssao_intensity")]
-    pub ssao_intensity: f32,
-    /// SSAO hemisphere samples per pixel, 1-64 (default 64 = full quality).
-    /// The heaviest per-pixel cost in the post stack; 16 is usually
-    /// indistinguishable on soft/matte scenes and ~4x cheaper.
-    #[serde(default = "default_ssao_samples")]
-    pub ssao_samples: u32,
-    #[serde(default)]
-    pub fog_enabled: bool,
-    #[serde(default = "default_fog_color")]
-    pub fog_color: [f32; 3],
-    #[serde(default = "default_fog_density")]
-    pub fog_density: f32,
-    #[serde(default = "default_fog_start")]
-    pub fog_start: f32,
-    #[serde(default = "default_fog_end")]
-    pub fog_end: f32,
-    #[serde(default)]
-    pub fog_height_enabled: bool,
-    #[serde(default = "default_fog_height_falloff")]
-    pub fog_height_falloff: f32,
-    #[serde(default)]
-    pub fog_height_origin: f32,
-    /// Height fog's density at `fog_height_origin` (ADR 0101); 0 adds none.
-    #[serde(default)]
-    pub fog_height_density: f32,
-    /// Aerial tint (ADR 0101): far things take this colour, up to
-    /// `fog_tint_strength` (0 = off), over `fog_tint_start..fog_tint_end` m.
-    #[serde(default = "default_fog_tint_color")]
-    pub fog_tint_color: [f32; 3],
-    #[serde(default)]
-    pub fog_tint_strength: f32,
-    #[serde(default = "default_fog_tint_start")]
-    pub fog_tint_start: f32,
-    #[serde(default = "default_fog_tint_end")]
-    pub fog_tint_end: f32,
-    #[serde(default)]
-    pub dither_enabled: bool,
-    #[serde(default = "default_dither_intensity")]
-    pub dither_intensity: f32,
-    #[serde(default)]
-    pub volumetric_enabled: bool,
-    #[serde(default = "default_volumetric_samples")]
-    pub volumetric_samples: u32,
-    #[serde(default = "default_volumetric_density")]
-    pub volumetric_density: f32,
-    #[serde(default = "default_volumetric_max_distance")]
-    pub volumetric_max_distance: f32,
-    #[serde(default = "default_volumetric_decay")]
-    pub volumetric_decay: f32,
-    #[serde(default)]
-    pub chromatic_aberration: f32,
-    #[serde(default)]
-    pub radial_blur: f32,
-    #[serde(default)]
-    pub desaturate: f32,
-    #[serde(default)]
-    pub dof_strength: f32,
-    #[serde(default = "default_dof_focus_distance")]
-    pub dof_focus_distance: f32,
-    #[serde(default = "default_dof_focus_range")]
-    pub dof_focus_range: f32,
+/// The macro [`flint_schema::post_effects!`] calls to make
+/// [`PostProcessDef`]: one field a built-in effect's key (#741), then the
+/// fields that are no effect's, passed through.
+macro_rules! post_process_def {
+    (
+        {
+            $(
+                $(#[$xmeta:meta])*
+                pub $xfield:ident : $xtype:ty
+            ),* $(,)?
+        }
+        $(
+            $effect:ident $elabel:literal $ehelp:literal {
+                $(
+                    $key:ident : $kind:ident = $default:expr,
+                    $([$min:literal, $max:literal])? $widget:ident $(($speed:literal))?;
+                    $label:literal, $help:literal
+                )*
+            }
+        )*
+    ) => {
+        /// Post-processing settings for the scene: a scene's `[post_process]`.
+        ///
+        /// The built-in effects' keys (`bloom_intensity`, `fog_color`, ...)
+        /// are fields made from their descriptors
+        /// ([`flint_schema::post_effects`], #741), each defaulting to its
+        /// descriptor's default; the rest (styles, the look, the old style
+        /// keys) are this crate's.
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        #[serde(default)]
+        pub struct PostProcessDef {
+            $($(
+                #[doc = $help]
+                pub $key: flint_schema::post_type!($kind),
+            )*)*
+            $(
+                $(#[$xmeta])*
+                pub $xfield: $xtype,
+            )*
+        }
+
+        impl Default for PostProcessDef {
+            fn default() -> Self {
+                Self {
+                    $($( $key: $default, )*)*
+                    $( $xfield: Default::default(), )*
+                }
+            }
+        }
+
+        impl PostProcessDef {
+            /// The built-in effect key `key`'s field, to read or set by
+            /// name. `None` for a key that is no effect's.
+            pub fn param_mut(&mut self, key: &str) -> Option<flint_schema::post_effects::PostParamMut<'_>> {
+                match key {
+                    $($( stringify!($key) => Some(flint_schema::post_param_mut!($kind, &mut self.$key)), )*)*
+                    _ => None,
+                }
+            }
+
+            /// The built-in effect key `key`'s value. `None` for a key that
+            /// is no effect's.
+            pub fn param(&self, key: &str) -> Option<flint_schema::post_effects::PostValue> {
+                match key {
+                    $($( stringify!($key) => Some(flint_schema::post_value!($kind, self.$key)), )*)*
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+flint_schema::post_effects!(post_process_def {
     /// The old spellings of `[post_process.styles.kuwahara]` (#298), kept
     /// so scenes written before the style table still load. Read them
     /// through [`style_tables`](Self::style_tables), which folds them in;
     /// a key the table also sets is the table's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kuwahara_enabled: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kuwahara_radius: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kuwahara_sharpness: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kuwahara_hardness: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kuwahara_anisotropy: Option<f32>,
-    /// The shared geometry edges' thresholds (#301), which every style that
-    /// reads them sees: the relative view-distance step that is a
-    /// silhouette, and the normal change (Sobel) that is a crease.
-    #[serde(default = "default_edge_depth")]
-    pub edge_depth: f32,
-    #[serde(default = "default_edge_normal")]
-    pub edge_normal: f32,
     /// Stylize passes by name (#262): `[post_process.styles.invert]` with
     /// `enabled` (default true) and the style's numeric parameters. The
     /// renderer checks names and parameters against its registry.
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub styles: std::collections::BTreeMap<String, toml::Table>,
     /// The old spellings of the shading boil's and the contour's settings
     /// (#214), which are `[post_process.styles.kuwahara] boil` and
     /// `[post_process.styles.contour]` since #599. Kept so older scenes
     /// still load, and read through [`style_tables`](Self::style_tables)
     /// like the `kuwahara_*` keys above.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kuwahara_boil: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub contour_enabled: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub contour_width: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub contour_threshold: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub contour_strength: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub contour_luma: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub contour_color: Option<[f32; 3]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub contour_fade: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub contour_boil: Option<f32>,
-    /// Film frames each drawing of the shading boil is held: 1, 2 or 3 ("on
-    /// twos"). A beat of the field's `step` is six film frames. Shared by
-    /// both styles' boils.
-    #[serde(default = "default_boil_on")]
-    pub boil_on: u32,
-    /// Motion on twos for the whole frame (#405): every entity that names no
-    /// `motion_hold` rate of its own is drawn on ticks, this many a second,
-    /// and the post time styles read holds to the same ticks. 0 = off.
-    #[serde(default)]
-    pub motion_hold: f32,
-    /// Animated film grain intensity (0 = off; ~0.02-0.05 is subtle).
-    #[serde(default)]
-    pub film_grain: f32,
-    /// Color grade lift (per-channel add after ACES). Neutral = [0,0,0].
-    #[serde(default)]
-    pub grade_lift: [f32; 3],
-    /// Color grade gamma (per-channel midtone curve). Neutral = [1,1,1].
-    #[serde(default = "default_grade_one")]
-    pub grade_gamma: [f32; 3],
-    /// Color grade gain (per-channel multiply). Neutral = [1,1,1].
-    #[serde(default = "default_grade_one")]
-    pub grade_gain: [f32; 3],
-    /// FXAA anti-aliasing pass on the final composite (default off — the
-    /// headless pixel-diff gates run without it; ADR 0050).
-    #[serde(default)]
-    pub fxaa: bool,
     /// A look (#356): a `styles/<name>.look.toml` beside the scene (or its
     /// parent's `styles/`), or a built-in (`ascii_noir`, `graphite`, ...),
     /// laid under this block's own keys. `flint_render::look::resolve`
     /// applies it; until then the struct holds the scene's keys alone.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub look: Option<String>,
     /// The keys the scene's `[post_process]` wrote, as written (the loader
     /// records them), so a look goes under exactly those and a later
@@ -279,106 +236,10 @@ pub struct PostProcessDef {
     /// code, which then counts every field as its own.
     #[serde(skip)]
     pub authored: Option<toml::Table>,
-}
-
-fn default_grade_one() -> [f32; 3] {
-    [1.0, 1.0, 1.0]
-}
+});
 
 fn default_true() -> bool {
     true
-}
-
-fn default_bloom_intensity() -> f32 {
-    0.04
-}
-
-fn default_bloom_threshold() -> f32 {
-    1.0
-}
-
-fn default_vignette_intensity() -> f32 {
-    0.3
-}
-
-fn default_vignette_smoothness() -> f32 {
-    2.0
-}
-
-fn default_exposure() -> f32 {
-    1.0
-}
-
-fn default_ssao_radius() -> f32 {
-    0.5
-}
-
-fn default_ssao_intensity() -> f32 {
-    1.0
-}
-
-fn default_ssao_samples() -> u32 {
-    64
-}
-
-fn default_fog_color() -> [f32; 3] {
-    [0.7, 0.75, 0.82]
-}
-
-fn default_fog_density() -> f32 {
-    0.02
-}
-
-fn default_fog_start() -> f32 {
-    5.0
-}
-
-fn default_fog_end() -> f32 {
-    100.0
-}
-
-fn default_fog_height_falloff() -> f32 {
-    0.1
-}
-
-fn default_fog_tint_color() -> [f32; 3] {
-    [0.42, 0.50, 0.65]
-}
-
-fn default_fog_tint_start() -> f32 {
-    100.0
-}
-
-fn default_fog_tint_end() -> f32 {
-    1000.0
-}
-
-fn default_dof_focus_distance() -> f32 {
-    10.0
-}
-
-fn default_dof_focus_range() -> f32 {
-    5.0
-}
-
-fn default_dither_intensity() -> f32 {
-    0.03
-}
-
-fn default_volumetric_samples() -> u32 {
-    32
-}
-
-fn default_volumetric_density() -> f32 {
-    1.0
-}
-
-fn default_volumetric_max_distance() -> f32 {
-    100.0
-}
-
-fn default_volumetric_decay() -> f32 {
-    0.98
 }
 
 /// The `[post_process]` keys that predate the style table, and the
@@ -448,14 +309,6 @@ fn closest_name(key: &str, known: &[String]) -> Option<String> {
         .filter(|(d, _)| *d <= 3)
         .min_by_key(|(d, _)| *d)
         .map(|(_, k)| k.clone())
-}
-
-fn default_edge_depth() -> f32 {
-    0.6
-}
-
-fn default_edge_normal() -> f32 {
-    2.5
 }
 
 impl PostProcessDef {
@@ -638,10 +491,6 @@ impl PostProcessDef {
         }
         styles
     }
-}
-
-fn default_boil_on() -> u32 {
-    2
 }
 
 /// Camera configuration for the scene

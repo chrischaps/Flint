@@ -21,6 +21,7 @@ use crate::DebugPanel;
 use flint_render::style_mask::{legend, LegendEntry, StyleIds};
 use flint_render::stylize::StyleSettings;
 use flint_render::{DebugMode, LightingLevers, PostProcessConfig};
+use flint_schema::post_effects::{self, PostParam, PostParamMut, PostWidget};
 
 pub const RENDER_DEBUG_PANEL: &str = "Rendering & Effects";
 
@@ -315,141 +316,64 @@ impl RenderDebugPanel {
             f.pp_changed |= ui
                 .checkbox(&mut self.pp.enabled, "Post-processing")
                 .changed();
-            f.pp_changed |= slider_log(ui, "Exposure", &mut self.pp.exposure, 0.1..=4.0);
-            f.pp_changed |= ui
-                .checkbox(&mut self.pp.vignette_enabled, "Vignette")
-                .changed();
-            f.pp_changed |= slider(
-                ui,
-                "Vignette intensity",
-                &mut self.pp.vignette_intensity,
-                0.0..=1.0,
-            );
-            f.pp_changed |= slider(
-                ui,
-                "Vignette smoothness",
-                &mut self.pp.vignette_smoothness,
-                0.5..=5.0,
-            );
-            f.pp_changed |= slider(
-                ui,
-                "Chromatic aberration",
-                &mut self.pp.chromatic_aberration,
-                0.0..=0.02,
-            );
-            f.pp_changed |= slider(ui, "Radial blur", &mut self.pp.radial_blur, 0.0..=1.0);
-            f.pp_changed |= slider(ui, "Desaturate", &mut self.pp.desaturate, 0.0..=1.0);
         });
 
-        section(ui, "SSAO", false, |ui| {
-            f.pp_changed |= ui.checkbox(&mut self.pp.ssao_enabled, "Enabled").changed();
-            f.pp_changed |= slider(ui, "Radius", &mut self.pp.ssao_radius, 0.05..=2.0);
-            f.pp_changed |= slider(ui, "Intensity", &mut self.pp.ssao_intensity, 0.0..=3.0);
-            f.pp_changed |= slider(ui, "Bias", &mut self.pp.ssao_bias, 0.0..=0.1);
-            let r = ui.horizontal(|ui| {
-                ui.label("Samples");
-                ui.add(egui::Slider::new(&mut self.pp.ssao_samples, 1..=64))
-                    .on_hover_text("Heaviest per-pixel pass — 16 is the quality/cost sweet spot")
-                    .changed()
-            });
-            f.pp_changed |= r.inner;
-        });
-
-        section(ui, "Depth of field", false, |ui| {
-            f.pp_changed |= slider(ui, "Strength", &mut self.pp.dof_strength, 0.0..=1.5);
-            f.pp_changed |= slider_log(
-                ui,
-                "Focus distance",
-                &mut self.pp.dof_focus_distance,
-                0.1..=100.0,
-            );
-            f.pp_changed |= slider_log(ui, "Focus range", &mut self.pp.dof_focus_range, 0.1..=60.0);
-        });
-
-        section(ui, "Fog", false, |ui| {
-            f.pp_changed |= ui.checkbox(&mut self.pp.fog_enabled, "Enabled").changed();
-            f.pp_changed |= color_row(ui, "Color", &mut self.pp.fog_color);
-            f.pp_changed |= slider_log(ui, "Density", &mut self.pp.fog_density, 0.0005..=0.2);
-            f.pp_changed |= drag(ui, "Start", &mut self.pp.fog_start, 0.5);
-            f.pp_changed |= drag(ui, "End", &mut self.pp.fog_end, 0.5);
-            f.pp_changed |= ui
-                .checkbox(&mut self.pp.fog_height_enabled, "Height fog")
-                .changed();
-            f.pp_changed |= slider(
-                ui,
-                "Height falloff",
-                &mut self.pp.fog_height_falloff,
-                0.0..=1.0,
-            );
-            f.pp_changed |= drag(ui, "Height origin", &mut self.pp.fog_height_origin, 0.25);
-            f.pp_changed |= slider_log(
-                ui,
-                "Height density",
-                &mut self.pp.fog_height_density,
-                0.0..=0.5,
-            );
-            f.pp_changed |= color_row(ui, "Tint color", &mut self.pp.fog_tint_color);
-            f.pp_changed |= slider(
-                ui,
-                "Tint strength",
-                &mut self.pp.fog_tint_strength,
-                0.0..=1.0,
-            );
-            f.pp_changed |= drag(ui, "Tint start", &mut self.pp.fog_tint_start, 1.0);
-            f.pp_changed |= drag(ui, "Tint end", &mut self.pp.fog_tint_end, 1.0);
-            // Ground fog (ADR 0106): shows where the game has set a map
-            f.pp_changed |= slider_log(
-                ui,
-                "Ground density",
-                &mut self.pp.ground_fog_density,
-                0.0..=2.0,
-            );
-            f.pp_changed |= color_row(ui, "Ground color", &mut self.pp.ground_fog_color);
-            f.pp_changed |= slider_log(
-                ui,
-                "Ground falloff",
-                &mut self.pp.ground_fog_falloff,
-                0.05..=5.0,
-            );
-            let r = ui.horizontal(|ui| {
-                ui.label("Ground steps");
-                ui.add(egui::Slider::new(&mut self.pp.ground_fog_steps, 1..=64))
-                    .changed()
-            });
-            f.pp_changed |= r.inner;
-        });
-
-        section(ui, "Bloom", false, |ui| {
-            f.pp_changed |= ui.checkbox(&mut self.pp.bloom_enabled, "Enabled").changed();
-            f.pp_changed |= slider(ui, "Intensity", &mut self.pp.bloom_intensity, 0.0..=0.5);
-            f.pp_changed |= slider(ui, "Threshold", &mut self.pp.bloom_threshold, 0.0..=3.0);
-            f.pp_changed |= slider(
-                ui,
-                "Soft threshold",
-                &mut self.pp.bloom_soft_threshold,
-                0.0..=1.0,
-            );
-        });
-
-        section(ui, "Grade / Grain / FXAA", false, |ui| {
-            f.pp_changed |= rgb_drags(ui, "Lift", &mut self.pp.grade_lift, -0.25..=0.25, 0.002);
-            f.pp_changed |= rgb_drags(ui, "Gamma", &mut self.pp.grade_gamma, 0.25..=4.0, 0.01);
-            f.pp_changed |= rgb_drags(ui, "Gain", &mut self.pp.grade_gain, 0.0..=2.0, 0.01);
-            if ui.button("Neutral grade").clicked() {
-                self.pp.grade_lift = [0.0; 3];
-                self.pp.grade_gamma = [1.0; 3];
-                self.pp.grade_gain = [1.0; 3];
-                f.pp_changed = true;
-            }
-            f.pp_changed |= slider(ui, "Film grain", &mut self.pp.film_grain, 0.0..=0.2);
-            let was_off = !self.pp.fxaa_enabled;
-            if ui.checkbox(&mut self.pp.fxaa_enabled, "FXAA").changed() {
-                f.pp_changed = true;
-                if was_off && self.pp.fxaa_enabled {
-                    f.fxaa_needs_resources = true;
+        // Every built-in effect, one section each, its widgets drawn from
+        // its descriptor (#741); after them, what is the renderer's own
+        // and no scene key (ground fog, the boil's clock) or does more
+        // than set a field (the neutral grade)
+        let fxaa_was_on = self.pp.fxaa;
+        for effect in post_effects::EFFECTS {
+            section(ui, effect.label, false, |ui| {
+                for param in effect.params {
+                    f.pp_changed |= param_widget(ui, &mut self.pp, param);
                 }
-            }
-        });
+                match effect.name {
+                    "fog" => {
+                        // Ground fog (ADR 0106): shows where the game has set a map
+                        ui.separator();
+                        f.pp_changed |= slider_log(
+                            ui,
+                            "Ground density",
+                            &mut self.pp.ground_fog_density,
+                            0.0..=2.0,
+                        );
+                        f.pp_changed |=
+                            color_row(ui, "Ground color", &mut self.pp.ground_fog_color);
+                        f.pp_changed |= slider_log(
+                            ui,
+                            "Ground falloff",
+                            &mut self.pp.ground_fog_falloff,
+                            0.05..=5.0,
+                        );
+                        let r = ui.horizontal(|ui| {
+                            ui.label("Ground steps");
+                            ui.add(egui::Slider::new(&mut self.pp.ground_fog_steps, 1..=64))
+                                .changed()
+                        });
+                        f.pp_changed |= r.inner;
+                    }
+                    "grade" => {
+                        if ui.button("Neutral grade").clicked() {
+                            self.pp.grade_lift = [0.0; 3];
+                            self.pp.grade_gamma = [1.0; 3];
+                            self.pp.grade_gain = [1.0; 3];
+                            f.pp_changed = true;
+                        }
+                    }
+                    "timing" => {
+                        // The boil's amounts are the Kuwahara and contour
+                        // styles' own `boil` (#599), in Styles below
+                        ui.label("Boil amounts: Styles > Kuwahara / Contour > Boil");
+                        ui.label(boil_status(&self.pp.boil));
+                    }
+                    _ => {}
+                }
+            });
+        }
+        if !fxaa_was_on && self.pp.fxaa {
+            f.fxaa_needs_resources = true;
+        }
 
         // Every registered style (#262; Kuwahara too since #298), one
         // section each, drawn from their descriptors (#268)
@@ -466,31 +390,7 @@ impl RenderDebugPanel {
                     .restore(name, &self.pp.styles);
                 f.styles_committed = true;
             }
-            // The shared geometry edges' thresholds (#301): one pair for
-            // every style that reads them (edges_view shows what they find)
-            ui.separator();
-            ui.label("Shared edges");
-            f.pp_changed |= slider(ui, "Silhouette step", &mut self.pp.edge_depth, 0.05..=4.0);
-            f.pp_changed |= slider(ui, "Crease", &mut self.pp.edge_normal, 0.2..=8.0);
-        });
-
-        section(ui, "Shading boil", false, |ui| {
-            // How long each drawing is held (#214). The amounts are the
-            // Kuwahara and contour styles' own `boil` (#599), in Styles above
-            ui.label("Amounts: Styles > Kuwahara / Contour > Boil");
-            let names = ["Ones", "Twos", "Threes"];
-            let cur = (self.pp.boil_on.clamp(1, 3) - 1) as usize;
-            egui::ComboBox::from_label("Hold each drawing")
-                .selected_text(names[cur])
-                .show_ui(ui, |ui| {
-                    for (i, name) in names.iter().enumerate() {
-                        if ui.selectable_label(cur == i, *name).clicked() && cur != i {
-                            self.pp.boil_on = i as u32 + 1;
-                            f.pp_changed = true;
-                        }
-                    }
-                });
-            ui.label(boil_status(&self.pp.boil));
+            ui.weak("The shared geometry edges every style reads: Shared edges, above");
         });
 
         section(ui, "Render mode", false, |ui| {
@@ -528,34 +428,6 @@ impl RenderDebugPanel {
             });
             r.response.on_hover_text(hover);
             f.pp_changed |= r.inner;
-        });
-
-        section(ui, "Dither / Volumetric", false, |ui| {
-            f.pp_changed |= ui.checkbox(&mut self.pp.dither_enabled, "Dither").changed();
-            f.pp_changed |= slider(
-                ui,
-                "Dither intensity",
-                &mut self.pp.dither_intensity,
-                0.0..=0.1,
-            );
-            ui.separator();
-            f.pp_changed |= ui
-                .checkbox(&mut self.pp.volumetric_enabled, "Volumetric")
-                .changed();
-            let r = ui.horizontal(|ui| {
-                ui.label("Samples");
-                ui.add(egui::Slider::new(&mut self.pp.volumetric_samples, 8..=64))
-                    .changed()
-            });
-            f.pp_changed |= r.inner;
-            f.pp_changed |= slider(ui, "Density", &mut self.pp.volumetric_density, 0.0..=4.0);
-            f.pp_changed |= slider(
-                ui,
-                "Max distance",
-                &mut self.pp.volumetric_max_distance,
-                10.0..=300.0,
-            );
-            f.pp_changed |= slider(ui, "Decay", &mut self.pp.volumetric_decay, 0.8..=1.0);
         });
 
         section(ui, "Shadows", false, |ui| {
@@ -732,6 +604,69 @@ fn boil_status(boil: &flint_wooze::BoilFrame) -> String {
     }
 }
 
+/// One built-in effect parameter's widget, as its descriptor says (#741):
+/// a checkbox, a slider over the range it is tuned for (logarithmic for
+/// one spanning decades), a drag value, a colour or three channels, its
+/// help on hover. A value the scene set past the range is shown as it is
+/// and only clamped once the slider is moved.
+fn param_widget(ui: &mut egui::Ui, pp: &mut PostProcessConfig, param: &PostParam) -> bool {
+    let Some(field) = pp.param_mut(param.key) else {
+        return false;
+    };
+    let range = param.min..=param.max;
+    let clamping = egui::SliderClamping::Edits;
+    let response = match (field, param.widget) {
+        (PostParamMut::Bool(on), _) => {
+            return ui
+                .checkbox(on, param.label)
+                .on_hover_text(param.help)
+                .changed()
+        }
+        (PostParamMut::F32(value), PostWidget::Drag(speed)) => labelled(ui, param, |ui| {
+            ui.add(egui::DragValue::new(value).speed(speed))
+        }),
+        (PostParamMut::F32(value), widget) => labelled(ui, param, |ui| {
+            ui.add(
+                egui::Slider::new(value, range)
+                    .logarithmic(widget == PostWidget::Log)
+                    .clamping(clamping),
+            )
+        }),
+        (PostParamMut::U32(value), _) => labelled(ui, param, |ui| {
+            ui.add(egui::Slider::new(value, param.min as u32..=param.max as u32).clamping(clamping))
+        }),
+        (PostParamMut::Rgb(rgb), PostWidget::Channels(speed)) => {
+            return ui
+                .horizontal(|ui| {
+                    ui.label(param.label).on_hover_text(param.help);
+                    let mut changed = false;
+                    for v in rgb.iter_mut() {
+                        changed |= ui
+                            .add(egui::DragValue::new(v).speed(speed).range(range.clone()))
+                            .changed();
+                    }
+                    changed
+                })
+                .inner
+        }
+        (PostParamMut::Rgb(rgb), _) => labelled(ui, param, |ui| ui.color_edit_button_rgb(rgb)),
+    };
+    response.changed()
+}
+
+/// A row of `param`'s label and the widget `add` makes, its help on both.
+fn labelled(
+    ui: &mut egui::Ui,
+    param: &PostParam,
+    add: impl FnOnce(&mut egui::Ui) -> egui::Response,
+) -> egui::Response {
+    ui.horizontal(|ui| {
+        ui.label(param.label).on_hover_text(param.help);
+        add(ui).on_hover_text(param.help)
+    })
+    .inner
+}
+
 fn slider(
     ui: &mut egui::Ui,
     label: &str,
@@ -759,38 +694,10 @@ fn slider_log(
     .inner
 }
 
-fn drag(ui: &mut egui::Ui, label: &str, value: &mut f32, speed: f32) -> bool {
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.add(egui::DragValue::new(value).speed(speed)).changed()
-    })
-    .inner
-}
-
 fn color_row(ui: &mut egui::Ui, label: &str, rgb: &mut [f32; 3]) -> bool {
     ui.horizontal(|ui| {
         ui.label(label);
         ui.color_edit_button_rgb(rgb).changed()
-    })
-    .inner
-}
-
-fn rgb_drags(
-    ui: &mut egui::Ui,
-    label: &str,
-    rgb: &mut [f32; 3],
-    range: std::ops::RangeInclusive<f32>,
-    speed: f32,
-) -> bool {
-    ui.horizontal(|ui| {
-        ui.label(label);
-        let mut changed = false;
-        for v in rgb.iter_mut() {
-            changed |= ui
-                .add(egui::DragValue::new(v).speed(speed).range(range.clone()))
-                .changed();
-        }
-        changed
     })
     .inner
 }

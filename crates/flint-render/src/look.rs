@@ -172,6 +172,14 @@ pub fn overlay(
             did_you_mean(near)
         ));
     }
+    // A built-in effect's value past what it is tuned for is refused, as a
+    // style value in a look is (#355, #741); a scene's only warns
+    if let Some(first) = flint_schema::post_effects::range_warnings(&over)
+        .into_iter()
+        .next()
+    {
+        return Err(format!("[post_process] {first}"));
+    }
     merge(&mut table, &over);
     let def: PostProcessDef = toml::Value::Table(table)
         .try_into()

@@ -88,7 +88,7 @@ sheen_strength = 0.15
 
 ### `[post_process]`
 
-Configures the HDR post-processing pipeline. Every key is optional. See [Post-Processing](../concepts/post-processing.md) for what each effect does and the matching `flint render` flags.
+Configures the HDR post-processing pipeline. Every key is optional. See [Post-Processing](../concepts/post-processing.md) for what each effect does and the matching `flint render` flags. The table below is a summary; `flint render --list-effects` prints every key from the engine itself, with the range its effect is tuned for (a value past it warns as `post-range`, [#741](../concepts/post-processing.md#listing-the-keys)).
 
 ```toml
 [post_process]
@@ -107,6 +107,7 @@ fxaa = false
 | `bloom_enabled` | bool | `true` | Bloom pass |
 | `bloom_intensity` | f32 | `0.04` | Bloom strength |
 | `bloom_threshold` | f32 | `1.0` | Brightness above which pixels bloom |
+| `bloom_soft_threshold` | f32 | `0.5` | How softly blooming starts below the threshold; `0` is a hard cut |
 | `vignette_enabled` | bool | `false` | Edge darkening |
 | `vignette_intensity` | f32 | `0.3` | Vignette strength |
 | `vignette_smoothness` | f32 | `2.0` | Vignette falloff curve |
@@ -114,6 +115,7 @@ fxaa = false
 | `ssao_enabled` | bool | `true` | Screen-space ambient occlusion |
 | `ssao_radius` | f32 | `0.5` | SSAO sample radius (world units) |
 | `ssao_intensity` | f32 | `1.0` | SSAO darkening strength |
+| `ssao_bias` | f32 | `0.025` | Depth a sample must clear to occlude, against self-shadowing acne |
 | `ssao_samples` | u32 | `64` | Hemisphere samples per pixel, 1–64. The heaviest per-pixel cost in the stack; `16` is ~4x cheaper and usually indistinguishable on matte scenes |
 | `fog_enabled` | bool | `false` | Distance fog |
 | `fog_color` | `[f32; 3]` | `[0.7, 0.75, 0.82]` | Fog colour |
