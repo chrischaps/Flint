@@ -585,7 +585,9 @@ pub fn tone_mode(name: &str) -> f32 {
 /// post time, so a still drawing (boil 0) never changes and a boiling one
 /// changes in steps, the same steps at the same `--style-time`. The steps
 /// are [`motion_hold::tick`](crate::motion_hold::tick)'s, so a pose held at
-/// `rate = boil` moves in the same frames the lines redraw (#405).
+/// `rate = boil` moves in the same frames the lines redraw (#405), and that
+/// is the stepped clock with no glide ([`flint_core::step_clock`], #747), the
+/// one a living prop holds and glides on.
 pub fn effective_seed(seed: f32, boil: f32, time: f32) -> f32 {
     let base = seed.max(0.0).floor();
     match crate::motion_hold::tick(time, boil) {
@@ -1232,6 +1234,19 @@ mod tests {
         assert_eq!(effective_seed(7.0, 4.0, 1.0), 11.0);
         assert_eq!(effective_seed(7.0, 4.0, f32::NAN), 7.0);
         assert_eq!(effective_seed(-3.0, 0.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn the_boil_steps_on_the_living_props_clock() {
+        // The seed's step is the stepped clock with no glide (#747): the beat
+        // `warp` gives a living prop counting 1/boil seconds a beat.
+        let mut t = 0.0f32;
+        for _ in 0..600 {
+            t += 1.0 / 60.0;
+            let beats = f64::from(t * 12.0 + flint_core::step_clock::TICK_EARLY);
+            let (beat, _) = flint_core::step_clock::warp(beats, 0.0);
+            assert_eq!(effective_seed(3.0, 12.0, t), 3.0 + beat as f32, "t {t}");
+        }
     }
 
     /// The `pencil_style` schema and the descriptor agree: every field is a

@@ -9,6 +9,8 @@
 //! - `vfs` - The read-only file layer every runtime read goes through
 //! - `bundle` - Game bundles: a game's files in one fetchable blob for the vfs
 //! - `project` - A project's root and its `flint.toml` manifest, found through the vfs
+//! - `step_clock` - The stepped hold-and-glide clock everything drawn on ticks reads (#747)
+//! - `field` - Named numbers as one function of place and time: zones, falloff, ramps (ADR 0123)
 #![cfg_attr(test, allow(clippy::disallowed_methods))] // unit tests read their files off the disk and assert on TOML as written; the lib build still holds the rules (#761)
 
 pub mod bundle;
@@ -17,6 +19,7 @@ pub mod components;
 pub mod diagnostic;
 mod error;
 pub mod events;
+pub mod field;
 pub mod file_watch;
 mod hash;
 mod id;
@@ -25,6 +28,7 @@ pub mod project;
 pub mod projection;
 pub mod quality;
 pub mod quat;
+pub mod step_clock;
 pub mod toml_util;
 mod types;
 pub mod vfs;

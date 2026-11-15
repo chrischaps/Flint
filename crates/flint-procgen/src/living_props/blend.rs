@@ -137,7 +137,9 @@ impl LivingProps {
         }
 
         if self.defaults.shadows == LivingShadows::Drift {
-            let slow = prop.shadow_cycle.read(prop.beats / 2.0, &prop.wooze);
+            let slow =
+                prop.shadow_cycle
+                    .read(prop.beats / 2.0, prop.wooze.glide, prop.wooze.amplitude);
             let (from, to) = LivingClock::slow_pair(slow.index);
             let weight = slow.weight;
             let shown = prop.shadow_cycle.shown(weight);
@@ -271,7 +273,7 @@ pub(super) fn blend_bones(
         .resize(skeleton.segments.len(), Cycle::default());
     frame.times.clear();
     for (segment, part) in skeleton.segments.iter().zip(&mut drawn.parts) {
-        let now = part.read(beats + clock.phase(segment), wooze);
+        let now = part.read(beats + clock.phase(segment), wooze.glide, wooze.amplitude);
         frame.times.push(WarpedTime {
             index: now.index,
             weight: now.weight,
