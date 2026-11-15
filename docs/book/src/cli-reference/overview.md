@@ -350,13 +350,9 @@ Built-in panels:
 | Panel | Component | Controls |
 |-------|-----------|----------|
 | Ocean Debug | `ocean` | Wave spectrum, colors, foam, contact foam, cel band edges, clarity/turbidity, grid, CPU/GPU parity probe |
-| Day / Time | `time_of_day` | Clock readout, 0–24 h scrub slider, preset hours, natural-advance toggle, day counter, day length (with the effective ramped length), sun path tilt |
 | Camera | `camera_tuning` | Vertical FOV |
 | Grass Debug | `grass` | Density, height, wind, LOD distances |
-| Weather | `weather` | Read-only state/wind/sea, `forced_state` override, one-shot snap / lightning-strike buttons |
-| Reality | `reality` | Read-only active render-mode tear and mix, trigger-mode and end-now buttons, mix pin |
-| Visitor | `raft_visitor` | Read-only phase/day plus a trigger-visit button |
-| Dead Calm | `dead_calm` | Read-only phase/calm plus trigger and end-now buttons |
+| (its schema's title) | any component whose schema puts a field on a panel (`panel = "status"`, `"tune"`, `"trigger"`) | A status line, trigger buttons and tune fields, from the schema alone ([A Panel From a Schema](../guides/debug-panels.md#a-panel-from-a-schema)) |
 | Rendering & Effects | (always, when a renderer is active) | Post chain, SSAO, depth of field, fog, bloom, grade/grain/FXAA, Kuwahara, contour, shading boil, render mode, dither/volumetric, shadows and resolution, lighting levers, camera FOV, debug shading mode. Owned by **F4**, not F3 |
 | Music Guide | `music_session` | Upcoming pulse/press/flick windows with countdown, per-channel targets beside the live stick and trigger state (`` ` ``) |
 | Manifest Map | `music_session` | Full-width bottom strip: sections, bar ruler, tempo/meter changes, re-entry points, playhead and this run's judged pulses and seams (`\`) |
@@ -368,8 +364,8 @@ current values back into the scene TOML, so a tuning session ends as a diff
 rather than as notes. Values a game script owns each frame (a day counter, a
 published factor) are deliberately never committed.
 
-Games can add their own panels for their own components; unknown panels simply
-take a default size weight in the column layout.
+Games get panels for their own components from those components' schemas,
+with no Rust; a game binary can also add panels through its extension.
 
 `Escape` releases the mouse so panels can be clicked; clicking the world
 recaptures it.

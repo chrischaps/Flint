@@ -293,11 +293,8 @@ impl PlayerApp {
             self.debug_panels.push(Box::new(panel));
         }
         self.create_ocean_debug_panel();
-        self.create_tod_debug_panel();
-        self.create_weather_debug_panel();
-        self.create_reality_debug_panel();
-        self.create_visitor_debug_panel();
-        self.create_dead_calm_debug_panel();
+        // A game's controllers, from their schemas (#744)
+        self.create_component_panels();
         self.create_camera_debug_panel();
         self.create_particles_debug_panel();
         #[cfg(feature = "living")]

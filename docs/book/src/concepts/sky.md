@@ -36,9 +36,10 @@ The payoff is that the same component serves a game with a wheeling
 sunrise-to-starscape cycle, a game permanently frozen at golden hour, and a
 game whose sky is driven by something other than time entirely.
 
-The engine's contribution is the **Day / Time** debug panel (`F3`), which
-drives a game-side `time_of_day` component by convention — see
-[the CLI reference](../cli-reference/overview.md#debug-panels-f3).
+A game gets an `F3` panel for its own `time_of_day` component (a clock on
+the status line, a 0 to 24 h slider with preset hours, the day length) by
+writing `panel` lines in that component's schema: see
+[A Panel From a Schema](../guides/debug-panels.md#a-panel-from-a-schema).
 
 ## Fields
 

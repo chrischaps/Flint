@@ -7,6 +7,7 @@
 mod archetype;
 mod component;
 pub mod lint;
+pub mod panel;
 mod registry;
 mod validation;
 
@@ -16,6 +17,7 @@ pub use component::{
 };
 pub use flint_core::diagnostic::{self, Diagnostic, Severity};
 pub use flint_core::project::{SchemaDirs, SchemaDirsError, SchemaSource};
+pub use panel::{PanelRole, PanelRow, PanelSpec, PanelValue};
 #[allow(deprecated)]
 pub use registry::discover_schema_dirs;
 pub use registry::SchemaRegistry;

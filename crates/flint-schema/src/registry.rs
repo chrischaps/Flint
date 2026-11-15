@@ -193,6 +193,9 @@ impl SchemaRegistry {
             name: name.to_string(),
             description: def.description,
             fields,
+            // A scene table is no entity's: it has no F3 panel (the lint
+            // says so of a `panel` key)
+            panel: None,
         }
     }
 
@@ -236,19 +239,32 @@ impl SchemaRegistry {
         }
         for (name, def) in file.component {
             let mut fields = HashMap::new();
+            // In the order written, with each field's `panel` key (#744)
+            let mut written = Vec::new();
             for (field_name, field_def) in def.fields {
                 if let Some(type_name) = field_def.unknown_type_name() {
                     tracing::warn!(
-                        "{source}: component '{name}' field '{field_name}' has unknown type                          \"{type_name}\"; validating it as a string"
+                        "{source}: component '{name}' field '{field_name}' has unknown type \
+                         \"{type_name}\"; validating it as a string"
                     );
                 }
+                let panel = field_def.panel().cloned();
+                written.push((field_name.clone(), panel));
                 fields.insert(field_name, field_def.to_field_schema());
             }
+            // A mistake in a panel is the lint's to say (`bad-panel`), with
+            // the file's name; the loader leaves that row out
+            let rows: Vec<_> = written
+                .iter()
+                .map(|(field, panel)| (field.as_str(), &fields[field], panel.as_ref()))
+                .collect();
+            let (panel, _) = crate::panel::panel_of(&name, def.panel.as_ref(), &rows);
 
             let schema = ComponentSchema {
                 name: name.clone(),
                 description: def.description,
                 fields,
+                panel,
             };
             self.components.insert(name, schema);
         }

@@ -809,6 +809,68 @@ impl DebugPanel for RenderDebugPanel {
         self.ui_contents(ui);
     }
 
+    fn weight(&self) -> u32 {
+        60
+    }
+
+    /// Mirror the renderer while clean; while dirty, write the edits
+    /// through, each group by its flag (the costly ones only when asked).
+    fn sync(&mut self, ctx: &mut crate::PanelCtx) {
+        let renderer = &mut *ctx.renderer;
+        ctx.host.freeze_scripts = Some(self.freeze_scripts);
+        if self.dirty {
+            let flags = self.take_flags();
+            if flags.look_changed {
+                ctx.host.look = Some(self.look.clone());
+            }
+            if flags.styles_committed {
+                ctx.host.committed_styles = self.authored_styles.clone();
+            }
+            if flags.pp_changed {
+                renderer.set_post_process_config(self.pp.clone());
+                if flags.style_needs_resources {
+                    renderer.ensure_style_resources(ctx.device);
+                }
+                if flags.fxaa_needs_resources {
+                    renderer.ensure_fxaa_resources(ctx.device);
+                }
+            }
+            if flags.shadows_changed {
+                renderer.set_shadows(self.shadows_enabled);
+            }
+            if flags.shadow_res_changed {
+                renderer.set_shadow_resolution(ctx.device, self.shadow_resolution);
+            }
+            if flags.lighting_reset {
+                renderer.reset_ambient();
+            } else if flags.lighting_changed {
+                renderer.set_ambient(self.lighting.ambient_sky, self.lighting.ambient_ground);
+                renderer.set_diffuse_wrap(self.lighting.diffuse_wrap);
+                renderer.set_oren_nayar(self.lighting.oren_nayar);
+                renderer.set_sheen(self.lighting.sheen_color, self.lighting.sheen_strength);
+            }
+            if flags.mode_changed {
+                // Its overlays are read from the world at the next frame's
+                // `prepare` (#739)
+                renderer.set_debug_mode(self.debug_mode);
+            }
+            if flags.fov_changed {
+                ctx.camera.fov = self.fov_deg;
+            }
+            self.dirty = false;
+        } else {
+            self.refresh(
+                renderer.post_process_config(),
+                renderer.debug_state().mode,
+                renderer.shadows_enabled(),
+                renderer.shadow_resolution(),
+                renderer.lighting_levers(),
+                ctx.camera.fov,
+            );
+        }
+        self.set_style_ids(renderer.style_ids());
+    }
+
     fn is_open(&self) -> bool {
         self.open
     }

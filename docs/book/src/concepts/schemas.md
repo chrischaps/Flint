@@ -73,6 +73,7 @@ style = { type = "enum", values = ["hinged", "sliding"], required = true }
 - `min` / `max` --- numeric range bounds
 - `required` --- the field must be written (defaults to false). An archetype default or the field's own `default` counts as written
 - `values` --- valid options for enum types
+- `panel` --- what the field is on its component's F3 debug panel: `"status"`, `"tune"` or `"trigger"`, or a table of those keys ([A Panel From a Schema](../guides/debug-panels.md#a-panel-from-a-schema)). Validation ignores it
 
 A component schema with a name and **no fields** is open: the component is known and nothing in its table is checked. See [a component only scripts read](#a-component-only-scripts-read).
 
@@ -194,9 +195,10 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `old-type-name` | warning | a schema file of the game's spells a type the old way (`float` for `f32`); it still loads |
 | `unknown-type` | warning | a schema file of the game's names a type that is none, an `asset` with no `kind`, or a `kind` that is no asset kind; the field is checked as a string |
 | `ignored-schema-key` | warning | a schema file of the game's holds a key the loader ignores: a field written under `[component.x]` instead of `[component.x.fields]`, a misspelled key of a field, or a `[table.*]` in a component file |
+| `bad-panel` | warning | a component schema's fields say something about its [F3 panel](../guides/debug-panels.md#a-panel-from-a-schema) the loader can't use (a role that is none, a key a field's panel doesn't hold, a `format` with no placeholder); that row is left off the panel |
 | `unknown-table` | warning | a top-level table of the scene that no loaded schema directory declares as a [`[table.<name>]`](#scene-level-tables); the hint is the nearest table name. Not raised when no table schema is loaded at all |
 
-`old-type-name`, `unknown-type` and `ignored-schema-key` are about a schema file, not the scene: `flint validate` and `flint check` print them with the file's name, for the game's own schema directories only. A schema file inside a Flint engine checkout (the engine's repository, or the `engine/` subtree a game carries) is the engine's, and is not reported.
+`old-type-name`, `unknown-type`, `ignored-schema-key` and `bad-panel` are about a schema file, not the scene: `flint validate` and `flint check` print them with the file's name, for the game's own schema directories only. A schema file inside a Flint engine checkout (the engine's repository, or the `engine/` subtree a game carries) is the engine's, and is not reported.
 
 `flint check` adds the codes of the project around the scene:
 
