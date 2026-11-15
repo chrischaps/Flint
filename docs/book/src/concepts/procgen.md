@@ -573,7 +573,7 @@ flint render examples/living_compare.scene.toml --time 3.5 -o compare.png --repo
 
 Different species are different trees, so an oak beside a thorn compares nothing. A fair pair is one spec beside a copy of itself:
 
-1. Copy the spec and change only its `meta.name`, say to `grove_oak_twin`. It's a species of its own, and with the same `lineage_seed` it grows the same skeleton: `a_copy_of_a_spec_under_a_new_name_grows_the_same_skeleton` in `living_props.rs` tests exactly that.
+1. Copy the spec and change only its `meta.name`, say to `grove_oak_twin`. It's a species of its own, and with the same `lineage_seed` it grows the same skeleton: `a_copy_of_a_spec_under_a_new_name_grows_the_same_skeleton` in the living props' tests (`flint-procgen/src/living_props/tests.rs`) tests exactly that.
 2. Stand the two side by side with the same `lineage_seed`, rotation and scale, and give them the same `phase_offset`, so they hold and glide on the same beats.
 3. Give the copy its own values in `[living.species.grove_oak_twin]` and leave the original alone.
 

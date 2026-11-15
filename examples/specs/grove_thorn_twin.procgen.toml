@@ -2,7 +2,7 @@
 #
 # Everything below is examples/specs/grove_thorn.procgen.toml, unchanged but for meta.name. A species is a spec,
 # so this is a second species that grows the very same tree: the same lineage
-# seed gives the same skeleton (living_props.rs tests that). A scene can then
+# seed gives the same skeleton (the living props' tests check that). A scene can then
 # give it values of its own in [living.species.grove_thorn_twin] and stand it beside
 # the original. Change the original and copy it again.
 
