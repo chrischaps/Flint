@@ -84,7 +84,7 @@ The renames Flint's own code and The Capitol's client needed, checked against th
 | `ui.allocate_new_ui(UiBuilder::new().max_rect(r), \|ui\| ..)`, `ui.allocate_ui_at_rect(r, \|ui\| ..)` | `ui.scope_builder(UiBuilder::new().max_rect(r), \|ui\| ..)` |
 | `egui::show_tooltip_at_pointer(ctx, layer, id, \|ui\| ..)` | `egui::Tooltip::always_open(ctx.clone(), layer, id, egui::PopupAnchor::Pointer).show(\|ui\| ..)`. It returns `Option<InnerResponse<R>>`: `.map(\|r\| r.inner)` for 0.30's `Option<R>` |
 | `ScrollArea::vertical().drag_to_scroll(false)` | `.scroll_source(ScrollSource { drag: DragScroll::Never, ..Default::default() })` (both in `egui::scroll_area`) |
-| `TextEdit::multiline(&mut s).frame(false)` | `.frame(Frame::NONE.inner_margin(Margin::symmetric(4, 2)))`. A frame of the game's own replaces the text edit's margin, so give it 0.30's: `symmetric(4, 2)`, or what the game passed to `.margin(..)` |
+| `TextEdit::multiline(&mut s).frame(false)` | `.frame(Frame::NONE.inner_margin(Margin::symmetric(4, 2)))`. A frame of the game's own replaces the text edit's margin, so give it 0.30's: `Margin::symmetric(4, 2)`, or what the game passed to `.margin(..)` |
 | `sense.click`, `sense.drag`, `sense.focusable` (fields) | `sense.senses_click()`, `sense.senses_drag()`, `sense.is_focusable()`: `Sense` is bit flags |
 | `response.fake_primary_click` | `response.flags.contains(egui::response::Flags::FAKE_PRIMARY_CLICKED)` (both are `#[doc(hidden)]`) |
 | `d.insert_temp(id, value)` returns `()` | it returns a `RawKey`, so a `match` arm or closure that ends in it ends in `;`: `Some(h) => { d.insert_temp(id, h); }` |
