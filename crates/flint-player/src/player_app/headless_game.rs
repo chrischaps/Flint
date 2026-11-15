@@ -441,6 +441,12 @@ impl HeadlessGame {
         self.core.script.expression()
     }
 
+    /// Every script error so far, counted (#693): what `flint render`
+    /// reports and `--strict-scripts` fails on.
+    pub fn script_errors(&self) -> &flint_script::ScriptErrors {
+        self.core.script.errors()
+    }
+
     fn note(&mut self, what: &str) {
         if self.notes.insert(what.to_string()) {
             tracing::warn!("{what}");

@@ -5,6 +5,7 @@
 //! support live hot-reload during play.
 
 use crate::engine::ScriptEngine;
+use crate::errors::Failure;
 use crate::module_resolver::ModuleBase;
 use flint_core::components as comp;
 use flint_core::file_watch;
@@ -35,6 +36,10 @@ pub struct ScriptSync {
     /// caller's thread one is recompiled a call (#633), so a lib change
     /// doesn't compile them all in one frame; with a worker, all are sent.
     to_reload: Vec<(EntityId, PathBuf)>,
+    /// Scripts that didn't compile at load, with the file's time then
+    /// (#693): saving the file again loads it afresh, as a change to a
+    /// loaded script reloads that.
+    failed_at_load: HashMap<EntityId, (PathBuf, Option<SystemTime>)>,
     /// Reads and compiles off the frame thread (#633), once
     /// [`file_watch`] answers from its own thread (the player), or a test
     /// asks for it. Dropped by [`Self::clear`], so nothing from the last
@@ -62,6 +67,7 @@ impl ScriptSync {
             located: HashMap::new(),
             lib_timestamps: BTreeMap::new(),
             to_reload: Vec::new(),
+            failed_at_load: HashMap::new(),
             #[cfg(not(target_arch = "wasm32"))]
             worker: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -88,6 +94,7 @@ impl ScriptSync {
         self.located.clear();
         self.lib_timestamps.clear();
         self.to_reload.clear();
+        self.failed_at_load.clear();
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.worker = None;
@@ -234,10 +241,11 @@ impl ScriptSync {
                 continue;
             }
 
+            let entity_name = world.get_name(entity_id).unwrap_or("?");
             let located = match self.locate(source, None) {
                 Ok(located) => located,
                 Err(not_found) => {
-                    tracing::warn!("{not_found}");
+                    engine.record_error(Failure::load(source, entity_name, &not_found));
                     self.discovered.insert(entity_id);
                     continue;
                 }
@@ -245,7 +253,6 @@ impl ScriptSync {
             let script_path = located.path.clone();
             self.located.insert(entity_id, located);
 
-            let entity_name = world.get_name(entity_id).unwrap_or("?");
             match engine.compile_file(&script_path) {
                 Ok(ast) => {
                     // stderr, so a caller's stdout stays its own (`flint render
@@ -255,11 +262,21 @@ impl ScriptSync {
                     if let Some(modified) = file_watch::modified(&script_path) {
                         self.file_timestamps.insert(script_path.clone(), modified);
                     }
-                    engine.add_script(entity_id, ast, source.to_string());
-                    engine.name_script(entity_id, entity_name);
+                    let file = crate::errors::shown_file(&script_path);
+                    engine.add_named_script(
+                        entity_id,
+                        ast,
+                        source.to_string(),
+                        entity_name,
+                        Some(&file),
+                    );
                 }
                 Err(e) => {
-                    tracing::warn!("Compile error in {}: {}", source, e);
+                    let file = crate::errors::shown_file(&script_path);
+                    engine.record_error(Failure::compile(&file, entity_name, &e));
+                    let modified = file_watch::modified(&script_path);
+                    self.failed_at_load
+                        .insert(entity_id, (script_path.clone(), modified));
                 }
             }
 
@@ -282,6 +299,23 @@ impl ScriptSync {
         let worker = self.reload_worker();
         if worker {
             self.take_finished(engine);
+        }
+
+        // A script that didn't compile at load, saved since: discovered
+        // afresh by the `discover_and_load` that follows (#693)
+        let saved: Vec<EntityId> = self
+            .failed_at_load
+            .iter()
+            .filter(|(_, (path, then))| {
+                file_watch::modified(path).is_some_and(|now| then.is_none_or(|t| now > t))
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for entity_id in saved {
+            if let Some((path, _)) = self.failed_at_load.remove(&entity_id) {
+                engine.file_reloaded(&crate::errors::shown_file(&path));
+                self.discovered.remove(&entity_id);
+            }
         }
 
         // A changed shared module invalidates every importer: drop the
@@ -401,7 +435,12 @@ impl ScriptSync {
             }
             Err(e) => {
                 // Keep old AST on compile error; tried again once it changes
-                tracing::warn!("Hot-reload compile error: {}", e);
+                if let Some(script) = engine.scripts.get(&entity_id) {
+                    let failure = Failure::compile(&script.file, &script.entity_name, &e);
+                    engine.record_error(failure);
+                } else {
+                    tracing::warn!("Hot-reload compile error: {}", e);
+                }
             }
         }
         if let Some(modified) = modified {

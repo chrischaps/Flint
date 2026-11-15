@@ -237,6 +237,12 @@ struct Args {
     /// no id
     #[arg(long, value_name = "DIR")]
     save_dir: Option<std::path::PathBuf>,
+
+    /// Exit non-zero when any script failed, to load, to compile or at run
+    /// time (#693), so a headless --exit-after run of a broken game fails.
+    /// Every error is counted either way, and --exit-after prints them
+    #[arg(long)]
+    strict_scripts: bool,
 }
 
 fn main() -> Result<()> {
@@ -393,6 +399,7 @@ fn main() -> Result<()> {
         app.launch.safe_area = Some([l, t, r, b]);
     }
     app.launch.touch_device = args.touch_device;
+    app.launch.strict_scripts = args.strict_scripts;
     app.launch.pixels_per_point = args.pixels_per_point.filter(|p| *p > 0.0);
     if let Some(name) = &args.look {
         // Refuse a bad name now. The scene's user styles first: a look may

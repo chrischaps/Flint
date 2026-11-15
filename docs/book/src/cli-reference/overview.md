@@ -225,6 +225,7 @@ adapter, no window) also exits 1 now, from `flint play` too.
 | `--stats` | Open the F2 rendering stats overlay from the first frame. F2 still closes it |
 | `--perf` | Print a perf line every 10 s: frame p50/p99/max, each phase's CPU time (mean/max), each pass's GPU time where the adapter can time, draws and triangles. The same line the web page's `?perf=1` copies, so a desktop and a browser can be set side by side |
 | `--no-hot-reload` | Don't watch the game's files: scripts, UI documents, user styles, glyph sets and palettes load once and never reload, and nothing polls the disk (#633). Also on `flint play` |
+| `--strict-scripts` | Exit 1 when any script failed, to load, to compile or while running (#693). Without it script errors are still counted and `--exit-after` prints them, a line each with its count ([When a script fails while running](../concepts/scripting.md#when-a-script-fails-while-running)). Also on `flint play` |
 
 A stepped run is repeatable as long as its scripts are. `--frame-step` (or `--seed`) takes care of `random()`; a script that reads `timestamp()` still sees the wall clock. Two stepped runs of `examples/seeded_stars.scene.toml`, which scatters a sky with `random()` every second, write byte-identical screenshots; before #635 every run drew its own sky:
 
@@ -516,9 +517,10 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--scripts` | `false` | Run the scene's scripts, a clock step at a time through the player's own frame (its game core), deterministically (seeded `random()`, no wall clock). Commands go through the player's dispatcher, so styles, tweens, style reads, looks and the camera apply as in the player; what a capture can't do (sound, the window, other scenes, physics) is named in a warning. See [Headless Rendering](../guides/headless-rendering.md#scripts-and-an-expression-timeline) |
 | `--script-time <t>` | (none) | `--scripts --time <t>` in one flag, beside `--particle-time` and `--anim-time`: run the scene's scripts to game time `t` and capture there, so a look a script sets is in the picture. Takes what `--time` takes (a span, a list) |
 | `--expression-timeline <file>` | (none) | Feed scripts' `expression()` and `on_expression` from a JSON timeline on the render's clock. Implies `--scripts` |
+| `--strict-scripts` | `false` | Exit 1, after writing the picture, when any script failed to load, to compile or while running (#693). Implies `--scripts`. Either way a scripted render prints each error once with its count, and `--report json` lists them as `script_errors` |
 | `--fps <n>` | `12` | With a `--time` span: GIF frames per second of game time, up to 50 |
 | `--sweep <knob=a,b,...>` | (none) | The same moment once per value, as labelled columns: `wooze.glide=0,0.25,0.5,1`. Takes `wooze.amplitude`, `.step`, `.glide`, `.jitter`, `.preset` |
-| `--report json` | (none) | One JSON object on stdout: each living prop's lineage seed, pose indices, the wooze values it read, and every species value with the layer that set it. Everything else moves to stderr |
+| `--report json` | (none) | One JSON object on stdout: each living prop's lineage seed, pose indices, the wooze values it read, and every species value with the layer that set it, and `script_errors`, each script error of the run with its entity, callback, line and count. Everything else moves to stderr |
 | `--grade-lift <r,g,b>` | `0,0,0` | Colour-grade lift (per-channel add after ACES) |
 | `--grade-gamma <r,g,b>` | `1,1,1` | Colour-grade gamma (per-channel curve) |
 | `--grade-gain <r,g,b>` | `1,1,1` | Colour-grade gain (per-channel multiply) |

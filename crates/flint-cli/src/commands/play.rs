@@ -83,6 +83,11 @@ pub struct PlayArgs {
     /// no id
     #[arg(long, value_name = "DIR")]
     pub save_dir: Option<std::path::PathBuf>,
+
+    /// Exit non-zero when any script failed, to load, to compile or at run
+    /// time (#693). Every error is counted either way
+    #[arg(long)]
+    pub strict_scripts: bool,
 }
 
 pub fn run(mut args: PlayArgs) -> Result<()> {
@@ -167,6 +172,7 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
     );
 
     app.launch.save_dir = args.save_dir.clone();
+    app.launch.strict_scripts = args.strict_scripts;
     app.launch.window_size = args.window.size();
     app.launch.window_options = args.window.clone();
     app.launch.expression_feed = expression_feed;
@@ -191,7 +197,8 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
     app.set_schemas(registry, schema_dirs);
 
     event_loop.run_app(&mut app)?;
-    // A player that failed to start exits non-zero (#639).
+    // A player that failed to start exits non-zero (#639), as does one
+    // whose scripts failed under --strict-scripts (#693).
     if let Some(failure) = app.run_failure() {
         anyhow::bail!(failure);
     }

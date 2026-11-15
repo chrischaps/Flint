@@ -35,6 +35,9 @@ pub struct ScriptInstance {
     /// run in (empty until [`ScriptEngine::name_script`]). Entity ids differ run
     /// to run, so a name is what makes the order the same every time (#8).
     pub entity_name: String,
+    /// The script's file as found, for its errors (#693): the scene's
+    /// `source` unless [`super::ScriptEngine::add_named_script`] said where.
+    pub file: String,
 }
 
 impl ScriptInstance {
@@ -57,6 +60,7 @@ impl ScriptInstance {
         let has_on_expression = has_function(&ast, cb::ON_EXPRESSION);
         let has_on_persist_migrate = has_function(&ast, cb::ON_PERSIST_MIGRATE);
         let completes_transition = may_complete_transition(&ast);
+        let file = source_path.clone();
 
         Self {
             ast,
@@ -81,6 +85,7 @@ impl ScriptInstance {
             completes_transition,
             init_called: false,
             entity_name: String::new(),
+            file,
         }
     }
 

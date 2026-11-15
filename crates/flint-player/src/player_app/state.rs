@@ -110,6 +110,10 @@ pub struct LaunchOptions {
     /// comparing (split or not) once a scene has props to compare.
     pub compare: Option<(String, String)>,
     pub compare_at_start: Option<bool>,
+    /// `--strict-scripts` (#693): a run with any script error, at load or
+    /// run time, fails (`PlayerApp::run_failure`), so a headless run of a
+    /// broken game can't exit 0.
+    pub strict_scripts: bool,
 }
 
 impl Default for LaunchOptions {
@@ -136,6 +140,7 @@ impl Default for LaunchOptions {
             expression_feed: None,
             compare: None,
             compare_at_start: None,
+            strict_scripts: false,
         }
     }
 }
