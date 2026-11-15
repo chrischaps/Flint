@@ -949,3 +949,86 @@ fn a_state_that_pauses_living_stills_the_grove_as_in_the_player() {
         "pausing scripts stilled the grove"
     );
 }
+
+// #693: a script that fails every frame is one line on stderr, then a
+// count, one entry in the report, and with --strict-scripts a failed run.
+const TYPO: &str = r#"
+fn on_update() {
+    let key = get_entity("key");
+    set_feild(key, "light", "intensity", 28.0);
+}
+"#;
+
+#[test]
+fn a_failing_script_is_counted_once_reported_and_fails_a_strict_run() {
+    let dir = project("typo");
+    std::fs::write(dir.join("scripts/tint.rhai"), TYPO).unwrap();
+    let o = render(
+        &dir,
+        "typo.png",
+        &["--script-time", "1", "--report", "json"],
+    );
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let said = stderr(&o);
+    // Logged the first time, then at 10: not once a frame
+    let lines = said.matches("set_feild").count();
+    assert!(lines <= 4, "{lines} lines name it:\n{said}");
+    assert!(
+        said.contains("tint.rhai:4:5: director, on_update: Function not found: set_feild"),
+        "names the file, line, entity and callback:\n{said}"
+    );
+    assert!(said.contains("[script] 1 error ("), "{said}");
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&o.stdout).expect("stdout is only the report");
+    let errors = report["script_errors"].as_array().unwrap();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0]["entity"], "director");
+    assert_eq!(errors[0]["callback"], "on_update");
+    assert_eq!(errors[0]["line"], 4);
+    assert!(errors[0]["count"].as_u64().unwrap() >= 60, "{errors:?}");
+
+    let strict = render(
+        &dir,
+        "strict.png",
+        &["--script-time", "1", "--strict-scripts"],
+    );
+    assert!(
+        !strict.status.success(),
+        "--strict-scripts passed a broken script"
+    );
+    assert!(
+        stderr(&strict).contains("1 script error under --strict-scripts"),
+        "{}",
+        stderr(&strict)
+    );
+    assert!(
+        dir.join("strict.png").exists(),
+        "the picture is still written"
+    );
+
+    // A compile error counts too, and a clean scene passes strict
+    std::fs::write(dir.join("scripts/tint.rhai"), "fn on_update( {\n}\n").unwrap();
+    let broken = render(
+        &dir,
+        "broken.png",
+        &["--script-time", "0.1", "--strict-scripts"],
+    );
+    assert!(!broken.status.success());
+    assert!(
+        stderr(&broken).contains("director, compile"),
+        "{}",
+        stderr(&broken)
+    );
+    std::fs::write(dir.join("scripts/tint.rhai"), TINT).unwrap();
+    let clean = render(
+        &dir,
+        "clean.png",
+        &["--script-time", "0.1", "--strict-scripts"],
+    );
+    ok(&clean);
+    assert!(stderr(&clean).contains("[script] no errors"));
+}

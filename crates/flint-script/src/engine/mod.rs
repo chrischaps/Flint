@@ -57,6 +57,8 @@ pub struct ScriptEngine {
     pub(crate) random: crate::random::ScriptRandom,
     /// What the declared API registered (ADR 0116); empty on the web
     registry: api::ApiRegistry,
+    /// Every script error of the run, counted (#693)
+    pub(crate) errors: crate::errors::ScriptErrors,
 }
 
 impl ScriptEngine {
@@ -80,6 +82,7 @@ impl ScriptEngine {
             update_times: None,
             random,
             registry,
+            errors: crate::errors::ScriptErrors::new(),
         }
     }
 
@@ -168,13 +171,33 @@ impl ScriptEngine {
     /// starts with), so a top-level `get_entity("door")` finds the door and
     /// `self_entity()` is `entity` (#692).
     pub fn add_script(&mut self, entity: EntityId, ast: AST, source_path: String) {
-        self.scripts
-            .insert(entity, ScriptInstance::new(ast, source_path));
+        self.add_named_script(entity, ast, source_path, "", None);
+    }
+
+    /// [`Self::add_script`], with the entity's name (see
+    /// [`Self::name_script`]) and the file it was found at (#693), so an
+    /// error in its top level (run at the next [`Self::lend`]) or in a
+    /// callback names them.
+    pub fn add_named_script(
+        &mut self,
+        entity: EntityId,
+        ast: AST,
+        source_path: String,
+        entity_name: &str,
+        file: Option<&str>,
+    ) {
+        let mut instance = ScriptInstance::new(ast, source_path);
+        instance.entity_name = entity_name.to_string();
+        if let Some(file) = file {
+            instance.file = file.to_string();
+        }
+        self.scripts.insert(entity, instance);
     }
 
     /// Lend `world` to scripts until the guard drops, first running the top
     /// level of every script added since the last lending, in
-    /// [`Self::in_order`], each with `self_entity()` its own entity.
+    /// [`Self::in_order`], each with `self_entity()` its own entity. A
+    /// failure there is counted as the script's `top level` error (#693).
     pub(crate) fn lend(&mut self, world: &mut FlintWorld) -> WorldScope {
         let scope = WorldScope::new(&self.ctx, world);
         for entity in self.in_order(|s| s.top_level_pending) {
@@ -185,10 +208,31 @@ impl ScriptEngine {
                 .engine
                 .run_ast_with_scope(&mut script.scope, &script.ast)
             {
-                tracing::warn!("top-level error ({}): {}", script.source_path, e);
+                let name = callbacks::name_of(script, entity);
+                self.errors.record(crate::errors::Failure::eval(
+                    &script.file,
+                    &name,
+                    crate::errors::TOP_LEVEL,
+                    &e,
+                ));
             }
         }
         scope
+    }
+
+    /// Every script error of the run (#693).
+    pub fn errors(&self) -> &crate::errors::ScriptErrors {
+        &self.errors
+    }
+
+    /// Count an error found outside a callback: a load or compile error.
+    pub fn record_error(&mut self, failure: crate::errors::Failure) {
+        self.errors.record(failure);
+    }
+
+    /// `file` is being loaded again: its errors so far are off the screen.
+    pub(crate) fn file_reloaded(&mut self, file: &str) {
+        self.errors.file_reloaded(file);
     }
 
     /// Hot-reload an entity's script with a new AST (#634). The entity's scope
@@ -211,6 +255,8 @@ impl ScriptEngine {
             return Vec::new();
         };
         script.hot_reload(ast);
+        // What failed in the old source is not what runs now
+        self.errors.file_reloaded(&script.file);
         if script.top_level_pending {
             return Vec::new();
         }
@@ -219,11 +265,13 @@ impl ScriptEngine {
         crate::lock_or_recover(&self.ctx).current_entity = entity;
         let mut fresh = Scope::new();
         if let Err(e) = self.engine.run_ast_with_scope(&mut fresh, &script.ast) {
-            tracing::warn!(
-                "module init error on reload ({}): {}",
-                script.source_path,
-                e
-            );
+            let name = callbacks::name_of(script, entity);
+            self.errors.record(crate::errors::Failure::eval(
+                &script.file,
+                &name,
+                crate::errors::TOP_LEVEL,
+                &e,
+            ));
         }
         // A name the source declares twice appears twice, oldest first; the
         // last declaration is the one the callbacks would see.
@@ -354,6 +402,8 @@ impl ScriptEngine {
     /// Clear all script instances. Preserves the Rhai Engine and registered API.
     pub fn clear(&mut self) {
         self.scripts.clear();
+        // Kept for the run's count, off the screen
+        self.errors.scene_cleared();
         let mut c = crate::lock_or_recover(&self.ctx);
         c.commands.clear();
         c.draw_commands.clear();
@@ -370,6 +420,8 @@ impl Default for ScriptEngine {
 
 #[cfg(test)]
 mod callback_tests;
+#[cfg(test)]
+mod error_tests;
 #[cfg(test)]
 mod hot_reload_tests;
 #[cfg(test)]

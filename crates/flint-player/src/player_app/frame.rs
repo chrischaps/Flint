@@ -764,6 +764,10 @@ impl PlayerApp {
         for line in self.subsystem_report() {
             eprintln!("{line}");
         }
+        // Every script error of the run, each once with its count (#693)
+        for line in self.core.script.errors().summary() {
+            eprintln!("{line}");
+        }
     }
 
     /// Decide whether this frame should be written to disk, and to where.
@@ -1242,6 +1246,11 @@ impl PlayerApp {
             errors.extend(flint_render::stylize::dev_shader::errors());
             errors
         };
+        // Scripts that fail (#693), each once with its count, until the
+        // file is saved again or the scene changes
+        #[cfg(feature = "debug-hud")]
+        let (script_errors, script_errors_unkept) =
+            super::script_error_card::rows(self.core.script.errors());
 
         // A real frame: its texture updates are uploaded below (#944)
         #[allow(clippy::disallowed_methods)]
@@ -1318,15 +1327,21 @@ impl PlayerApp {
             key_note.paint(ctx, 16.0);
 
             #[cfg(feature = "debug-hud")]
-            flint_debug_ui::paint_style_errors(
-                ctx,
-                &style_errors,
-                if cfg!(target_arch = "wasm32") {
+            {
+                let inset = if cfg!(target_arch = "wasm32") {
                     52.0
                 } else {
                     0.0
-                },
-            );
+                };
+                // The script card in the corner, the style card above it
+                let scripts = flint_debug_ui::paint_script_errors(
+                    ctx,
+                    &script_errors,
+                    script_errors_unkept,
+                    inset,
+                );
+                flint_debug_ui::paint_style_errors(ctx, &style_errors, inset + scripts);
+            }
         });
 
         self.hud.draw_commands = draw_commands;
