@@ -90,7 +90,14 @@ fn schemas_components_holds_only_components() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     assert_eq!(
         tables.into_iter().collect::<Vec<_>>(),
-        ["camera", "environment", "living", "post_process", "wooze"],
+        [
+            "camera",
+            "environment",
+            "living",
+            "panels",
+            "post_process",
+            "wooze"
+        ],
         "the engine's scene tables; a new one needs a reader, and a line in the book"
     );
     assert!(components.len() > 40 && !components.contains("wooze"));
@@ -112,7 +119,7 @@ fn the_registry_loads_the_engine_tables_clean() {
             );
         }
     }
-    assert_eq!(registry.tables().len(), 5);
+    assert_eq!(registry.tables().len(), 6);
     let about_tables: Vec<String> = registry
         .lints()
         .iter()

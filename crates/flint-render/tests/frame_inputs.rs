@@ -231,6 +231,62 @@ fn a_bound_scene_draws_its_terrain_masked_and_the_next_forgets_it() {
     );
 }
 
+/// #751: a placeholder box takes its colour from its archetype's schema,
+/// `[archetype.<name>.visual]`, which the binding hands over; the renderer
+/// knows no archetype by name, so a binding without the schemas draws it
+/// grey, and the next scene's binding replaces the last one's colours.
+#[test]
+fn a_games_archetype_colours_its_box_from_its_schema() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let mut schemas = flint_schema::SchemaRegistry::new();
+    schemas
+        .load_archetype_string(
+            "[archetype.crate]\ncomponents = [\"transform\", \"bounds\"]\n\n\
+             [archetype.crate.visual]\ncolor = [0.9, 0.1, 0.1]\n",
+        )
+        .unwrap();
+    let mut world = FlintWorld::new();
+    world.spawn_archetype("box", "crate", &schemas).unwrap();
+    let id = world.get_id("box").unwrap();
+    let mut transform = toml::Table::new();
+    transform.insert("position".into(), vec3([0.0, 0.0, 0.0]));
+    world
+        .set_component(id, "transform", transform.into())
+        .unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-2.0, -2.0, -2.0]));
+    bounds.insert("max".into(), vec3([2.0, 2.0, 2.0]));
+    world.set_component(id, "bounds", bounds.into()).unwrap();
+
+    let centre = |pixels: &[u8]| {
+        let at = ((SIZE / 2) * SIZE + SIZE / 2) as usize * 4;
+        [pixels[at], pixels[at + 1], pixels[at + 2]]
+    };
+    let plain = SceneBinding::for_scene(&fixture_scene());
+    let coloured = plain.clone().with_archetypes(&schemas);
+
+    let mut renderer = gpu.renderer();
+    renderer.bind_scene(gpu.device, gpu.queue, &world, &coloured);
+    let [r, g, b] = centre(&gpu.frame(&mut renderer, &world, &FrameInputs::default()));
+    assert!(
+        r > 2 * g.max(b) && r > 64,
+        "the crate is not the schema's red: {:?}",
+        [r, g, b]
+    );
+
+    // Bound again without the schemas: grey, as any archetype with no visual
+    renderer.bind_scene(gpu.device, gpu.queue, &world, &plain);
+    let grey = centre(&gpu.frame(&mut renderer, &world, &FrameInputs::default()));
+    let spread = grey.iter().max().unwrap() - grey.iter().min().unwrap();
+    assert!(
+        spread <= 8 && grey[0] > 32,
+        "the last binding's colour outlived it: {grey:?}"
+    );
+}
+
 /// #739: what a frame's inputs leave at the default is off that frame,
 /// whatever an earlier frame set: no host can leave a stale world line or
 /// boil behind by not setting it.

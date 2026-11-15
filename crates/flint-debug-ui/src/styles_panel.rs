@@ -5,9 +5,9 @@
 //! view (`--debug-mode style`) paints that style in.
 //!
 //! The host creates it when the scene uses a style (a
-//! `[post_process.styles]` table or a `style_mask` entity), mirrors the
-//! renderer's config into it while it is clean, and while it is dirty
-//! copies its `pp.styles` (and nothing else) back into the renderer's
+//! `[post_process.styles]` table or a `style_mask` entity). Its `sync`
+//! mirrors the renderer's config into it while it is clean, and while it is
+//! dirty copies its `pp.styles` (and nothing else) back into the renderer's
 //! config, as the F4 panel does for the whole config (ADR 0053).
 
 use crate::styles_ui::{StylesEdit, StylesEditor};
@@ -112,9 +112,71 @@ impl StylesDebugPanel {
     }
 }
 
+/// The scene's styled entities for the F3 Styles panel: each entity
+/// with a `style_mask`, by name, with its style's mask-view hue.
+pub fn styled_entity_rows(
+    world: &flint_ecs::FlintWorld,
+    ids: &flint_render::style_mask::StyleIds,
+) -> Vec<StyledEntityRow> {
+    use flint_render::style_mask::{debug_color, STYLE_MASK_COMPONENT};
+    let mut rows: Vec<_> = world
+        .entities_with_component(STYLE_MASK_COMPONENT)
+        .iter()
+        .filter_map(|&id| {
+            let name = world.get_name(id)?.to_string();
+            let mask = world.get_components(id)?.get(STYLE_MASK_COMPONENT)?;
+            let style = mask.get("style")?.as_str()?.to_string();
+            let enabled = mask
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let color = ids.id(&style).map(debug_color);
+            Some(StyledEntityRow {
+                name,
+                style,
+                enabled,
+                color,
+            })
+        })
+        .collect();
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    rows
+}
+
 impl DebugPanel for StylesDebugPanel {
     fn name(&self) -> &str {
         STYLES_DEBUG_PANEL
+    }
+
+    fn weight(&self) -> u32 {
+        24
+    }
+
+    /// The same write-through as F4's, for the style table alone; the
+    /// styled entities are read only while the panel is open.
+    fn sync(&mut self, ctx: &mut crate::PanelCtx) {
+        if self.dirty {
+            let edit = self.take_edit();
+            if edit.committed.is_some() {
+                ctx.host.committed_styles = self.authored.clone();
+            }
+            if edit.changed {
+                let mut config = ctx.renderer.post_process_config().clone();
+                config.styles = self.pp.styles.clone();
+                ctx.renderer.set_post_process_config(config);
+                if edit.needs_resources {
+                    ctx.renderer.ensure_style_resources(ctx.device);
+                }
+            }
+            self.dirty = false;
+            return;
+        }
+        let entities = if self.open {
+            styled_entity_rows(ctx.world, ctx.renderer.style_ids())
+        } else {
+            std::mem::take(&mut self.entities)
+        };
+        self.refresh(ctx.renderer.post_process_config(), entities);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) {

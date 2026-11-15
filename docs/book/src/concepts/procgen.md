@@ -494,6 +494,8 @@ In a scene with a table, the field decides `step` and `glide` for every prop, wh
 
 **No change pops.** A new step bends each prop's clock from wherever it stands, at once. A new glide or amplitude can't do that, since either one would move a pose that's on screen, so each part of a prop reads them when its own cycle begins and finishes the cycle it's in. Under stagger, a tree takes a change one level at a time. A new amplitude is the one thing that waits a little longer: the pose already on its way arrives as it was promised, and the cycle after it heads for the new value, so a change of amplitude reaches a prop within two steps. Leaf tints keep to the same 9 levels wherever a prop stands, so a grove still shares a few materials.
 
+**The clock and the field are not wooze's own** ([ADR 0123](https://github.com/chrischaps/flint/blob/main/docs/adr/0123-step-clock-and-param-field.md)). The hold-and-glide clock is `flint_core::step_clock`: `warp(beats, glide)` is where a count of beats stands, and with a glide of 0 it is `tick`, the clock that [motion on twos](stylize-passes.md#motion-on-twos) and a pencil style's `boil` step on. So a pose held at `motion_hold { rate = 12 }`, a pencil `boil = 12` and a living prop at a step of 1/12 s all turn on the same frames. The zones, falloff and ramps are `flint_core::field::ParamField`, named numbers over a key set: the wooze field is that field with these four knobs. A game's Rust can make its own, how foggy or windy a level is by place, from a `static FieldKeys` naming its keys; there is no scene table or script call for one yet.
+
 **From a script.** The field changes at run time through three functions, each of which can take a last argument of seconds to get there over. See the [Wooze API](scripting.md#wooze-api).
 
 ```rust
@@ -601,7 +603,7 @@ flint render examples/living_compare.scene.toml --time 3.5 -o compare.png --repo
 
 Different species are different trees, so an oak beside a thorn compares nothing. A fair pair is one spec beside a copy of itself:
 
-1. Copy the spec and change only its `meta.name`, say to `grove_oak_twin`. It's a species of its own, and with the same `lineage_seed` it grows the same skeleton: `a_copy_of_a_spec_under_a_new_name_grows_the_same_skeleton` in `living_props.rs` tests exactly that.
+1. Copy the spec and change only its `meta.name`, say to `grove_oak_twin`. It's a species of its own, and with the same `lineage_seed` it grows the same skeleton: `a_copy_of_a_spec_under_a_new_name_grows_the_same_skeleton` in the living props' tests (`flint-procgen/src/living_props/tests.rs`) tests exactly that.
 2. Stand the two side by side with the same `lineage_seed`, rotation and scale, and give them the same `phase_offset`, so they hold and glide on the same beats.
 3. Give the copy its own values in `[living.species.grove_oak_twin]` and leave the original alone.
 

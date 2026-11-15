@@ -140,11 +140,14 @@ impl PlayerApp {
         // The scene, bound (#739): its project and folder, which the
         // renderer's styles find palettes, glyph sets and papers from (ADR
         // 0114); no style history, bones or levers of the last scene; and
-        // its terrain and grass
+        // its terrain and grass; its archetypes' placeholder boxes, from the
+        // registry its world was made with (#751)
+        let schemas = self.schemas.held_or_read(&self.schema_dirs.dirs);
         let binding = self
             .scene_binding
             .take()
-            .unwrap_or_else(|| flint_render::SceneBinding::new(self.kept_asset_scope()));
+            .unwrap_or_else(|| flint_render::SceneBinding::new(self.kept_asset_scope()))
+            .with_archetypes(&schemas);
         let bound = renderer.bind_scene(device, queue, &self.core.world, &binding);
 
         let config = build_model_load_config(
@@ -302,11 +305,8 @@ impl PlayerApp {
             self.debug_panels.push(Box::new(panel));
         }
         self.create_ocean_debug_panel();
-        self.create_tod_debug_panel();
-        self.create_weather_debug_panel();
-        self.create_reality_debug_panel();
-        self.create_visitor_debug_panel();
-        self.create_dead_calm_debug_panel();
+        // A game's controllers, from their schemas (#744)
+        self.create_component_panels();
         self.create_camera_debug_panel();
         self.create_particles_debug_panel();
         #[cfg(feature = "living")]

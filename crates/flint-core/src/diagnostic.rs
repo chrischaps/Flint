@@ -98,6 +98,10 @@ pub mod codes {
     /// `[component.x]` instead of `[component.x.fields]`, or a misspelled
     /// key of a field.
     pub const IGNORED_SCHEMA_KEY: &str = "ignored-schema-key";
+    /// A component schema's fields say something about its F3 panel the
+    /// loader can't use (#744): a role that is none, a key a field's panel
+    /// doesn't hold, a `format` with no placeholder. That row is left off.
+    pub const BAD_PANEL: &str = "bad-panel";
     /// A top-level table of a scene that no loaded schema directory declares
     /// as a `[table.<name>]` (#686): a misspelled `[enviroment]`, or a
     /// game's own table before its schema says so. A warning (nothing reads
@@ -266,6 +270,11 @@ pub mod codes {
             IGNORED_SCHEMA_KEY,
             Severity::Warning,
             "a schema file holds a key the loader ignores",
+        ),
+        (
+            BAD_PANEL,
+            Severity::Warning,
+            "a component schema's F3 panel says something the loader can't use; that row is left off",
         ),
         (
             MISSING_FILE,
@@ -778,7 +787,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 44);
+        assert_eq!(seen.len(), 45);
     }
 
     /// A problem in a scene-level table names the table as its header is

@@ -1,0 +1,105 @@
+[scene]
+name = "Contact Foam"
+version = "1.0"
+description = "Three hulls in one sea, each posed its own way, and each foaming where it is drawn: a skiff yawed with Euler angles, a tender moored under a parent, a dinghy posed with a quaternion as physics writes it (#749). Tune the foam live with F3."
+
+# Looking down over the three, so each ring of foam reads against the water.
+[camera]
+position = [0.0, 9.0, 12.0]
+target = [0.0, 0.0, -0.5]
+fov = 50.0
+
+[environment]
+ambient_sky = [0.38, 0.42, 0.52]
+ambient_ground = [0.10, 0.10, 0.12]
+
+[entities.sky.sky]
+zenith_color = [0.16, 0.28, 0.58, 1.0]
+horizon_color = [0.74, 0.64, 0.60, 1.0]
+haze_color = [0.95, 0.72, 0.52, 0.30]
+cloud_coverage = 0.25
+
+[entities.sun.light]
+type = "directional"
+direction = [-0.4, 0.55, 0.7]
+color = [1.0, 0.88, 0.70]
+intensity = 2.4
+
+[post_process]
+exposure = 1.0
+bloom_enabled = true
+bloom_threshold = 2.0
+bloom_intensity = 0.1
+
+# A light chop, so the foam laps visibly against each hull.
+[entities.ocean.ocean]
+seed = 11
+amplitude = 0.35
+wavelength_min = 1.2
+wavelength_max = 14.0
+choppiness = 0.55
+wind_speed = 5.0
+fetch_km = 4.0
+foam_threshold = 0.5
+splash_strength = 1.0
+splash_width = 0.45
+splash_baseline = 0.35
+
+# ------------------------------------------------------------
+#  The skiff: yawed with Euler angles, the case that always worked
+# ------------------------------------------------------------
+[entities.skiff]
+archetype = "furniture"
+[entities.skiff.transform]
+position = [-4.5, 0.0, 0.5]
+rotation = [0.0, 20.0, 0.0]
+[entities.skiff.bounds]
+min = [-0.6, -0.3, -1.3]
+max = [0.6, 0.35, 1.3]
+[entities.skiff.material]
+texture = "textures/wood_planks_old.png"
+roughness = 0.85
+[entities.skiff.ocean_contact]
+half_x = 0.6
+half_z = 1.3
+
+# ------------------------------------------------------------
+#  The tender: placed by its mooring, a parent with no body of its own
+# ------------------------------------------------------------
+[entities.mooring]
+[entities.mooring.transform]
+position = [4.0, 0.0, 1.0]
+rotation = [0.0, -35.0, 0.0]
+
+[entities.tender]
+archetype = "furniture"
+parent = "mooring"
+[entities.tender.transform]
+position = [0.0, 0.0, -1.5]
+[entities.tender.bounds]
+min = [-0.7, -0.3, -1.5]
+max = [0.7, 0.4, 1.5]
+[entities.tender.material]
+texture = "textures/wood_planks_old.png"
+roughness = 0.85
+[entities.tender.ocean_contact]
+half_x = 0.7
+half_z = 1.5
+
+# ------------------------------------------------------------
+#  The dinghy: 60 degrees of yaw as a quaternion, as physics poses a body
+# ------------------------------------------------------------
+[entities.dinghy]
+archetype = "furniture"
+[entities.dinghy.transform]
+position = [0.0, 0.0, -4.0]
+rotation_quat = [0.0, 0.5, 0.0, 0.8660254]
+[entities.dinghy.bounds]
+min = [-0.5, -0.3, -1.0]
+max = [0.5, 0.3, 1.0]
+[entities.dinghy.material]
+texture = "textures/wood_planks_old.png"
+roughness = 0.85
+[entities.dinghy.ocean_contact]
+half_x = 0.5
+half_z = 1.0

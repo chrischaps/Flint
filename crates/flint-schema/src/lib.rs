@@ -7,15 +7,17 @@
 mod archetype;
 mod component;
 pub mod lint;
+pub mod panel;
 mod registry;
 mod validation;
 
-pub use archetype::ArchetypeSchema;
+pub use archetype::{ArchetypeSchema, ArchetypeVisual};
 pub use component::{
     type_name_of, ComponentSchema, FieldSchema, FieldType, TableSchema, OLD_TYPE_NAMES, TYPE_NAMES,
 };
 pub use flint_core::diagnostic::{self, Diagnostic, Severity};
 pub use flint_core::project::{SchemaDirs, SchemaDirsError, SchemaSource};
+pub use panel::{PanelRole, PanelRow, PanelSpec, PanelValue};
 #[allow(deprecated)]
 pub use registry::discover_schema_dirs;
 pub use registry::SchemaRegistry;

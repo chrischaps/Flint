@@ -20,6 +20,8 @@ use flint_core::project::{AssetScope, Project};
 use flint_core::toml_util::{toml_f32, toml_vec3};
 use flint_core::{EntityId, Transform, Vec3};
 use flint_ecs::FlintWorld;
+use flint_schema::{ArchetypeVisual, SchemaRegistry};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// A scene as a renderer binds it: its project and folder, with the user
@@ -31,6 +33,9 @@ pub struct SceneBinding {
     style_messages: Vec<String>,
     /// The scene's `[environment]`, whose lighting levers `bind_scene` sets.
     environment: Option<flint_scene::EnvironmentDef>,
+    /// Each archetype's placeholder box, from its schema's
+    /// `[archetype.<name>.visual]` (#751).
+    archetype_visuals: HashMap<String, ArchetypeVisual>,
 }
 
 impl SceneBinding {
@@ -45,7 +50,21 @@ impl SceneBinding {
             assets,
             style_messages,
             environment: None,
+            archetype_visuals: HashMap::new(),
         }
+    }
+
+    /// The archetypes the scene's entities were made from, in `schemas`:
+    /// the box each one's `bounds` draws as when it has nothing else to
+    /// draw, its `[archetype.<name>.visual]` (#751). The renderer names no
+    /// archetype, so without this every placeholder box is grey.
+    pub fn with_archetypes(mut self, schemas: &SchemaRegistry) -> Self {
+        self.archetype_visuals = schemas
+            .archetypes()
+            .into_iter()
+            .filter_map(|archetype| Some((archetype.name.clone(), archetype.visual?)))
+            .collect();
+        self
     }
 
     /// The scene's `[environment]` table: its `shadows` and
@@ -121,7 +140,9 @@ impl SceneRenderer {
     /// 2. no style history (#277), no bone buffers or motion holds (entity
     ///    ids are never reused, so the last scene's are garbage), and the
     ///    built-in ambient and lighting levers, then the scene's
-    ///    `[environment]` over them ([`SceneBinding::with_environment`]);
+    ///    `[environment]` over them ([`SceneBinding::with_environment`]),
+    ///    and the archetypes' placeholder boxes in place of the last
+    ///    scene's ([`SceneBinding::with_archetypes`]);
     /// 3. the last scene's terrain and grass unloaded, then this scene's
     ///    terrain (its chunks masked when the entity is styled, #310) and
     ///    grass loaded: a `grass_ground`'s, which replaces a terrain's (ADR
@@ -142,6 +163,7 @@ impl SceneRenderer {
         if let Some(env) = &binding.environment {
             self.set_environment(env);
         }
+        self.archetype_visuals = binding.archetype_visuals.clone();
         self.clear_terrain();
         self.unload_grass();
 

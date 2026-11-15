@@ -8,7 +8,7 @@ Panels are dev surface. They compile only when the player's `debug-hud` cargo fe
 
 | Key | What it toggles | Host |
 |-----|-----------------|------|
-| `F3` | Every scene-component panel the current scene created (ocean, day/time, weather, grass, camera, reality, visitor, dead calm, particles, styles, Living Props), and every panel a game added | player |
+| `F3` | Every scene-component panel the current scene created (ocean, grass, camera, particles, styles, Living Props), a [panel for each component whose schema asks for one](#a-panel-from-a-schema), and every panel a game added | player |
 | `F4` | The **Rendering & Effects** panel, on its own so it never flips out of phase with F3 | player and scene viewer |
 | `` ` `` (backquote) | **Music Guide**, only while a [music session](../concepts/music-sessions.md) runs | player |
 | `\` (backslash) | **Manifest Map** timeline strip, same condition | player |
@@ -24,7 +24,7 @@ The old per-effect function keys (F1 debug-mode cycle, F4 shadows, F5 to F10 per
 
 ## Layout
 
-Side panels are fold-open headers distributed across up to three columns. Column assignment is a greedy lightest-bin pass over a per-panel weight so the tall panels do not all land in one column: Rendering & Effects weighs 60, Ocean Debug 46, Living Props 40, Styles 24, Grass Debug 22, Reality 20, Weather 15, Particles 14, Day / Time 10, and anything else, including every game-supplied panel, 6. The assignment is deterministic and never produces an empty column.
+Side panels are fold-open headers distributed across up to three columns. Column assignment is a greedy lightest-bin pass over each panel's `weight()`, about how many rows tall it is, so the tall panels do not all land in one column: Rendering & Effects weighs 60, Ocean Debug 46, Living Props 40, Styles 24, Grass Debug 22, Particles 14, a schema's panel one for each row it draws, and anything else, including every panel a game's extension adds, 6. The assignment is deterministic and never produces an empty column.
 
 A panel can instead ask for the `Bottom` layout, a full-width strip. The Manifest Map uses it; timeline-shaped panels should.
 
@@ -39,13 +39,9 @@ Scene-component panels are created **only when their driving component is presen
 | Panel | Component | What it tunes |
 |-------|-----------|---------------|
 | Ocean Debug | `ocean` | Wave spectrum, colours, foam, contact foam, cel band edges, clarity and turbidity, grid, CPU/GPU parity probe |
-| Day / Time | `time_of_day` | Clock readout, 0 to 24 h scrub, preset hours, natural-advance toggle, day counter, day length, sun path tilt |
-| Weather | `weather` | Weather state, with one-shot triggers |
 | Camera | `camera_tuning` | Vertical FOV (the same component is applied even without the panel) |
 | Grass Debug | `terrain` with `grass.enabled`, or a `grass_ground` | Every field of the [grass](../concepts/terrain.md#grass) block, the [woozy grass](../concepts/procgen.md#woozy-grass) clock and comb included |
-| Reality | `reality` | Read-only status of a script-scheduled "reality tear" (active render mode, mix, time to next) plus trigger and end-now buttons |
-| Visitor | `raft_visitor` | Visitor state |
-| Dead Calm | `dead_calm` | Dead-calm state |
+| (its schema's title) | any component one of whose fields says `panel = ...` in its schema | Its status line, trigger buttons and tune fields. [Below](#a-panel-from-a-schema) |
 | Rendering & Effects | always, when a renderer exists | See below |
 | Particles | `particle_emitter` or `particle_effect` | Alive counts per effect instance, play / stop / burst, the global particle budget, and a draw toggle that keeps simulating while hiding the result |
 | Styles | a `[post_process.styles]` table, or a `style_mask` entity | The [style editor](../concepts/stylize-passes.md) F4 has, plus the scene's styled entities, each with its style and that style's mask-view hue |
@@ -53,7 +49,49 @@ Scene-component panels are created **only when their driving component is presen
 | Music Guide | active music session | Upcoming input windows and per-channel targets |
 | Manifest Map | active music session | Suite structure, playhead, this run's history |
 
-`time_of_day`, `weather`, `reality`, `raft_visitor` and `dead_calm` are game-side component conventions; the engine ships the panel, the game ships the schema.
+Before #744 the engine also shipped five panels for one game's components (Float's day/time, weather, reality tears, visitor and dead calm). They are schema lines in that game now, and any game's controller gets the same with no Rust.
+
+## A Panel From a Schema
+
+A script-driven controller usually wants the same three things on a debug panel: a status line saying what it is doing, a button or two to make it do something now, and a few dials. Say so beside its fields, in the component's schema, and every entity carrying the component gets an F3 panel:
+
+```toml
+[component.raft_visitor.panel]
+title = "Visitor"                          # optional; the default is "Raft visitor"
+
+[component.raft_visitor.fields]
+phase = { type = "f32", default = 0.0, panel = { role = "status", labels = ["Away", "Approaching", "Holding", "Departing"] } }
+day = { type = "f32", default = 0.0, panel = { role = "status", format = "day {:.0}" } }
+trigger_visit = { type = "f32", default = -1.0, panel = { role = "trigger", label = "Visit now" } }
+hold_duration_s = { type = "f32", default = 150.0, min = 1.0, panel = "tune" }
+```
+
+A field's `panel` is a role, or a table with a `role` and the keys below. The panel's rows are in the order the fields are written.
+
+| Role | On the panel |
+|------|--------------|
+| `status` | Read only: a part of the one status line at the top, the parts joined by `·` |
+| `trigger` | A button that writes `press` into the component once, for the script to act on and clear: `true` for a `bool` field, `1` for a number. With `labels`, a button per name, each writing its index |
+| `tune` | An editor: a checkbox for a `bool`, a choice for an `enum` or for a number with `labels`, a text box for a string, a drag value (or a slider) for a number. A tune field with a `format` is on the status line too |
+
+| Key | For | Means |
+|-----|-----|-------|
+| `label` | any | What the row is called (default: the field's name, so `hold_duration_s` reads "Hold duration s"). The field's `description` shows on hover |
+| `labels` | a number | Names for its values 0, 1, 2...: what the status line says, the choices a tune row offers, a trigger's buttons. An empty name is no button |
+| `format` | status | How the value reads: `{}` is the value (its label's name if it has labels), `{:.N}` the number to N places, `{:clock}` hours as `HH:MM` |
+| `scale` | status | The status line shows the value times this (`100` for a percentage) |
+| `unset` | a number | The value that means "not set" (`-1`: the script decides). The status line leaves it out; a tune row is a checkbox that writes it when cleared |
+| `from` | tune with `unset` | The field whose live value the row starts from when checked (the weather's state, for a forced state) |
+| `min`, `max` | tune | The editor's range, when it isn't the field's own `min` and `max`. A field with an `unset` outside its range keeps the range here, so validation doesn't refuse the `-1` |
+| `step` | tune | A drag value's speed |
+| `slider` | tune | A slider instead of a drag value; needs both ends |
+| `presets` | tune | Buttons under the editor that jump to a value: `[["Dawn", 6.0], ["Noon", 12.5]]` |
+| `commit` | tune | `false` keeps a field the script owns (a day counter) out of Commit to File and Reset |
+| `press` | trigger | What the button writes, when not `true` or `1` |
+
+`[component.<name>.panel]` holds only `title`, and is optional: a component is on a panel as soon as one field says so. A mistake (a role that is none, a key a field's panel doesn't hold, a `format` with no placeholder) is a `bad-panel` warning from `flint validate` and `flint check` naming the file and the field; that row is left off, and the rest of the schema loads as it did. An engine from before #744 ignores a field's `panel` key, so a game can write its panel lines before it updates its engine (the `[component.<name>.panel]` table it would refuse).
+
+The panel is a live view of the component. Each frame it writes what you changed and reads the component back, so a field the script moves (the time of day while it advances) is what the slider shows, and a trigger is one write that the script clears. Reset puts back the tune fields the scene loaded with, and Commit to File writes them into the scene file. When several entities carry the component, each gets a panel, titled with its name.
 
 ### Rendering & Effects (F4)
 
@@ -94,6 +132,8 @@ At the top is the warped clock, drawn as what it is: one step's worth of hold, t
 | Echoes | `count`, `spread` and `alpha`, with `count = 0` in reach to compare the grove without them |
 | Variance | `amount`, `steady` and `keep size`. **Unheld** sets 1, 0 and off: each pose exactly as it grew |
 | Silhouette | `softness`: the body's outline feathers at rest, 0 a hard edge; the cards keep theirs ([Softness](../concepts/procgen.md#softness)) |
+
+Hover a knob for a line on what it does; a `mixed` one says why it's mixed instead.
 
 **What a knob does right away.** Nothing here pops except stagger, which can't change without moving a part to its new place on the clock.
 
@@ -182,8 +222,8 @@ From a script: [`compare_living`](../concepts/scripting.md#living-props-api) and
 
 Every panel follows one ownership model:
 
-1. While the panel is **clean** the host refreshes it from live engine state every frame. What you see is the truth about the current value, including values a script is driving.
-2. When you **edit** a field the panel becomes dirty. The host applies the panel's state back to the engine, routing expensive work by per-group change flags (a post-config upload is cheap; a shadow-pass rebuild or a debug-mode pipeline swap is not), then clears the dirty flag.
+1. While the panel is **clean** its `sync` refreshes it from live engine state every frame. What you see is the truth about the current value, including values a script is driving.
+2. When you **edit** a field the panel becomes dirty. Its `sync` applies the panel's state back to the engine, routing expensive work by per-group change flags (a post-config upload is cheap; a shadow-pass rebuild or a debug-mode pipeline swap is not), then clears the dirty flag.
 3. Fields a script stamps each frame are visibly **reclaimed** on the next frame. The panel does not pretend to own a value it does not own.
 
 For the render panel the player adds **Freeze script post overrides**: while frozen, script and ladder stamps on the post fields are skipped so panel edits stick. It is a tuning aid, not a way to override a game.
@@ -226,6 +266,8 @@ pub trait DebugPanel {
     fn is_open(&self) -> bool;
     fn toggle(&mut self);
     fn layout(&self) -> PanelLayout { PanelLayout::SideRight }
+    fn sync(&mut self, ctx: &mut PanelCtx) {} // apply edits, read state back
+    fn weight(&self) -> u32 { 6 }           // rows tall, for the columns
     fn is_dirty(&self) -> bool;             // unapplied edits?
     fn clear_dirty(&mut self);
     fn as_any(&self) -> &dyn std::any::Any;
@@ -233,7 +275,7 @@ pub trait DebugPanel {
 }
 ```
 
-The player holds `Vec<Box<dyn DebugPanel>>` and renders them generically. Construction follows one pattern: look for the first entity carrying the driving component, build a config from that component, and push the panel with the scene path and entity name so Commit to File knows where to write. The host then downcasts through `as_any_mut` when it needs the concrete config to apply. Unknown panel names take the default column weight; nothing else needs registering.
+The player holds `Vec<Box<dyn DebugPanel>>` and renders them generically. Construction follows one pattern: look for the first entity carrying the driving component, build a config from that component, and push the panel with the scene path and entity name so Commit to File knows where to write. Each frame, before the panels draw, the player hands every panel one `PanelCtx` (the world, the renderer and its device, the camera, the particles, and a `PanelHost` for what a panel tells the player: F4's freeze switch and look, a style it committed, whether particles draw), and each panel's `sync` applies its own edits. The player never asks a panel its name to know what to do with it (#744). Nothing needs registering.
 
 The game's panels go through this trait too, on a small panel the player holds for each name, whose contents it draws by calling the extension.
 

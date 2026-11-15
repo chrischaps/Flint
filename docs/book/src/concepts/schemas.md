@@ -73,6 +73,7 @@ style = { type = "enum", values = ["hinged", "sliding"], required = true }
 - `min` / `max` --- numeric range bounds
 - `required` --- the field must be written (defaults to false). An archetype default or the field's own `default` counts as written
 - `values` --- valid options for enum types
+- `panel` --- what the field is on its component's F3 debug panel: `"status"`, `"tune"` or `"trigger"`, or a table of those keys ([A Panel From a Schema](../guides/debug-panels.md#a-panel-from-a-schema)). Validation ignores it
 
 A component schema with a name and **no fields** is open: the component is known and nothing in its table is checked. See [a component only scripts read](#a-component-only-scripts-read).
 
@@ -194,9 +195,10 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `old-type-name` | warning | a schema file of the game's spells a type the old way (`float` for `f32`); it still loads |
 | `unknown-type` | warning | a schema file of the game's names a type that is none, an `asset` with no `kind`, or a `kind` that is no asset kind; the field is checked as a string |
 | `ignored-schema-key` | warning | a schema file of the game's holds a key the loader ignores: a field written under `[component.x]` instead of `[component.x.fields]`, a misspelled key of a field, or a `[table.*]` in a component file |
+| `bad-panel` | warning | a component schema's fields say something about its [F3 panel](../guides/debug-panels.md#a-panel-from-a-schema) the loader can't use (a role that is none, a key a field's panel doesn't hold, a `format` with no placeholder); that row is left off the panel |
 | `unknown-table` | warning | a top-level table of the scene that no loaded schema directory declares as a [`[table.<name>]`](#scene-level-tables); the hint is the nearest table name. Not raised when no table schema is loaded at all |
 
-`old-type-name`, `unknown-type` and `ignored-schema-key` are about a schema file, not the scene: `flint validate` and `flint check` print them with the file's name, for the game's own schema directories only. A schema file inside a Flint engine checkout (the engine's repository, or the `engine/` subtree a game carries) is the engine's, and is not reported.
+`old-type-name`, `unknown-type`, `ignored-schema-key` and `bad-panel` are about a schema file, not the scene: `flint validate` and `flint check` print them with the file's name, for the game's own schema directories only. A schema file inside a Flint engine checkout (the engine's repository, or the `engine/` subtree a game carries) is the engine's, and is not reported.
 
 `flint check` adds the codes of the project around the scene:
 
@@ -426,6 +428,22 @@ max = [5, 4, 0.15]
 
 The `components` array lists which component schemas an entity of this archetype requires. The `defaults` section provides values used when a component field isn't explicitly set.
 
+### An Archetype's Placeholder Box
+
+An entity with a `bounds` box and nothing else to draw (no model, sprite or procedural shape) is drawn as that box. Its colour comes from its archetype's `visual` table:
+
+```toml
+# schemas/archetypes/crate.toml in a game
+[archetype.crate]
+components = ["transform", "bounds"]
+
+[archetype.crate.visual]
+color = [0.8, 0.55, 0.3]   # [r, g, b], or [r, g, b, a]: alpha under 1 is see-through
+wireframe = false          # true draws only the box's edges
+```
+
+An archetype with no `visual`, and an entity with no archetype, draws grey (`[0.5, 0.5, 0.5]`). The renderer knows no archetype by name: the colours the examples' `wall`, `room` and the rest draw in are in their own files under `schemas/examples/archetypes/`, and `character`'s is in `schemas/archetypes/character.toml`. An entity's own `material.color` still colours its box over the archetype's. A key in `visual` other than `color` and `wireframe`, or a colour that isn't three or four numbers, fails the schema load with the file named. `flint schema <archetype>` prints the table as `Placeholder:`, and the JSON export (`--format json`) has it as `visual`.
+
 ### Built-in Archetypes
 
 The engine's own set, `schemas/archetypes/`:
@@ -467,7 +485,7 @@ A game gets none of them by default: `flint schema furniture` in a game finds no
 schemas = ["engine/schemas", "engine/schemas/examples", "schemas"]
 ```
 
-Most games are better served by archetypes of their own. Every archetype with `bounds` draws a box, so `furniture` on an entity with no shape (a light, a script holder) draws a 1 m box where nothing was meant.
+Most games are better served by archetypes of their own, each with its [placeholder colour](#an-archetypes-placeholder-box). Every archetype with `bounds` draws a box, so `furniture` on an entity with no shape (a light, a script holder) draws a 1 m green box where nothing was meant.
 
 ## Introspecting Schemas
 

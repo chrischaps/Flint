@@ -1055,6 +1055,8 @@ pub(super) fn render(
     if schema_dirs.dirs.is_empty() {
         say!("Warning: No schemas directories found");
     }
+    // Its archetypes' placeholder boxes, from the same schemas (#751)
+    let binding = binding.with_archetypes(&registry);
 
     // Load scene
     let (mut world, mut scene_file) = load_settled(&args.scene, &registry)?;

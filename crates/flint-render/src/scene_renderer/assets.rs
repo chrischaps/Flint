@@ -76,14 +76,8 @@ impl SceneRenderer {
         name: &str,
         import_result: &ImportResult,
     ) {
-        let default_color = self
-            .archetype_visuals
-            .get("furniture")
-            .map(|v| v.color)
-            .unwrap_or([0.5, 0.5, 0.5, 1.0]);
-
         self.mesh_cache
-            .upload_imported(device, name, import_result, default_color);
+            .upload_imported(device, name, import_result, super::MODEL_FALLBACK_COLOR);
 
         // Upload textures referenced by materials, namespaced by asset name
         let both = self.upload_model_textures(device, queue, name, import_result);
@@ -104,18 +98,12 @@ impl SceneRenderer {
         name: &str,
         import_result: &ImportResult,
     ) {
-        let default_color = self
-            .archetype_visuals
-            .get("character")
-            .map(|v| v.color)
-            .unwrap_or([0.5, 0.5, 0.5, 1.0]);
-
         if let Some(sp) = &self.pipelines.skinned {
             self.mesh_cache.upload_skinned(
                 device,
                 name,
                 import_result,
-                default_color,
+                super::SKINNED_MODEL_FALLBACK_COLOR,
                 &sp.bone_bind_group_layout,
             );
         }

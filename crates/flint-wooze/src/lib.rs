@@ -12,6 +12,16 @@
 //! Sampling is free of side effects and allocates nothing. A scene with no
 //! `[wooze]` table has no field, so nothing samples and nothing pays.
 //!
+//! # What is wooze's own (#747, ADR 0123)
+//!
+//! Neither the clock nor the field is. The hold-and-glide clock is
+//! [`flint_core::step_clock`] ([`warp`], [`Cycle`] and [`STEP_MIN`] are
+//! re-exported here), the same one motion held on twos and a style's `boil`
+//! tick on. The zones, falloff and ramps are [`flint_core::field::ParamField`];
+//! a [`WoozeField`] is that field over [`WOOZE_KEYS`], the four knobs, with the
+//! presets below. What stays here is what makes them wooze: the knobs' ranges,
+//! the presets, the shading boil's film-frame cadence and the shallow clock.
+//!
 //! # Changing a knob without a pop
 //!
 //! Two things keep a change from reading as the very pop this system exists to
@@ -21,13 +31,14 @@
 //! until that cycle ends, because neither can change mid-cycle continuously:
 //! a new glide would move the eased weight, and a new amplitude the whole pose.
 
-use flint_core::toml_util::{toml_f32, toml_vec3};
+use flint_core::field::{FieldKeys, ParamField, Zone};
+use flint_core::step_clock::StepClock;
+
+pub use flint_core::field::SHAPE_KEYS;
+pub use flint_core::step_clock::{warp, Cycle, CycleNow, STEP_MIN};
 
 pub mod components;
 
-/// The shortest step, in seconds. A step under a frame can't be seen anyway, and
-/// it asks for poses far faster than any budget can make them.
-pub const STEP_MIN: f32 = 0.01;
 /// The largest `jitter`: enough to make a zone boil harder than its specs.
 pub const JITTER_MAX: f32 = 4.0;
 /// The largest `amplitude`: a consumer's whole authored motion.
@@ -56,11 +67,13 @@ impl WoozeSample {
         jitter: 1.0,
     };
 
-    fn to_array(self) -> [f32; KNOBS] {
+    /// The knobs in [`WOOZE_KEYS`]' order: what the general field holds.
+    pub fn to_array(self) -> [f32; KNOBS] {
         [self.amplitude, self.step, self.glide, self.jitter]
     }
 
-    fn from_array([amplitude, step, glide, jitter]: [f32; KNOBS]) -> Self {
+    /// A sample from the knobs in [`WOOZE_KEYS`]' order.
+    pub fn from_array([amplitude, step, glide, jitter]: [f32; KNOBS]) -> Self {
         Self {
             amplitude,
             step,
@@ -130,11 +143,25 @@ fn preset_names() -> String {
 }
 
 const KNOBS: usize = 4;
-const KNOB_NAMES: [&str; KNOBS] = ["amplitude", "step", "glide", "jitter"];
+
+/// The wooze field's key set: its four knobs, how each is checked, and the
+/// presets. A [`WoozeField`] is the general field over these.
+pub static WOOZE_KEYS: FieldKeys<KNOBS> = FieldKeys {
+    field: "wooze",
+    names: ["amplitude", "step", "glide", "jitter"],
+    check: check_knob,
+    preset: Some(preset_knobs),
+};
+
+fn preset_knobs(name: &str) -> Result<[f32; KNOBS], String> {
+    preset(name)
+        .map(WoozeSample::to_array)
+        .ok_or_else(|| format!("preset '{name}' isn't one of {}", preset_names()))
+}
 
 /// Check a knob's value, the same for the scene table, a zone and a script.
 fn check_knob(knob: usize, value: f32) -> Result<f32, String> {
-    let name = KNOB_NAMES[knob];
+    let name = WOOZE_KEYS.names[knob];
     let (ok, range) = match knob {
         0 => ((0.0..=AMPLITUDE_MAX).contains(&value), "0 to 1".to_string()),
         1 => (
@@ -157,111 +184,7 @@ fn check_knob(knob: usize, value: f32) -> Result<f32, String> {
 /// Check a knob by name (`amplitude`, `step`, `glide` or `jitter`), as the field
 /// checks its own: for anything else that holds one, such as a species (#246).
 pub fn check_knob_named(name: &str, value: f32) -> Result<f32, String> {
-    let knob = KNOB_NAMES.iter().position(|k| *k == name).ok_or_else(|| {
-        format!(
-            "'{name}' isn't a wooze knob; it takes {}",
-            KNOB_NAMES.join(", ")
-        )
-    })?;
-    check_knob(knob, value)
-}
-
-/// The hold-and-glide clock at `beats`, counted in steps: `(index, weight)` means
-/// `weight` of the way from target `index` to the next. The design's t', which
-/// holds for the first `1 - glide` of a step and eases over the rest. A glide of
-/// 0 never leaves the target and moves to the next on the beat.
-#[inline]
-pub fn warp(beats: f64, glide: f32) -> (u64, f32) {
-    let beats = beats.max(0.0);
-    let index = beats.floor();
-    (index as u64, eased(beats - index, glide))
-}
-
-/// How far toward the next target a part is, `frac` of the way through a step.
-#[inline]
-fn eased(frac: f64, glide: f32) -> f32 {
-    let glide = f64::from(glide);
-    if glide <= 1e-6 {
-        return 0.0;
-    }
-    let x = ((frac - (1.0 - glide)) / glide).clamp(0.0, 1.0);
-    (x * x * (3.0 - 2.0 * x)) as f32
-}
-
-/// One part's way through its current cycle, as of when the cycle began.
-///
-/// `step` bends the clock and can change at any moment, but a part must finish a
-/// cycle on the glide and amplitude it started it with, or its eased weight and
-/// its pose would jump. So a part reads the field once a cycle, on its own beat,
-/// which is also what lets a whole staggered tree take a change one part at a
-/// time and never all at once.
-///
-/// A grove reads tens of thousands of these a frame, a prop's parts and each of
-/// its echoes', so the read that finds the cycle still running has to be as cheap
-/// as working out the clock with no field at all.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Cycle {
-    /// The target being left, or [`Cycle::UNREAD`] before the first read.
-    index: u64,
-    glide: f32,
-    /// The amplitude the target being left is shown at.
-    from: f32,
-    /// The amplitude the next target will arrive at.
-    to: f32,
-}
-
-impl Default for Cycle {
-    fn default() -> Self {
-        Self {
-            index: Self::UNREAD,
-            glide: 0.0,
-            from: 0.0,
-            to: 0.0,
-        }
-    }
-}
-
-impl Cycle {
-    /// No step ever reaches this: at a step every frame, it's far past the sun.
-    const UNREAD: u64 = u64::MAX;
-
-    /// Where this part stands at `beats`: its target, and how far toward the
-    /// next. `sample` is only read when a cycle begins, so a part's value here can
-    /// only move as it would have anyway.
-    #[inline]
-    pub fn read(&mut self, beats: f64, sample: &WoozeSample) -> CycleNow {
-        let beats = beats.max(0.0);
-        let floor = beats.floor();
-        let index = floor as u64;
-        if self.index != index {
-            self.begin(index, sample);
-        }
-        CycleNow {
-            index,
-            weight: eased(beats - floor, self.glide),
-        }
-    }
-
-    /// How much of its pose this part shows, at a `weight` this cycle has read.
-    #[inline]
-    pub fn shown(&self, weight: f32) -> f32 {
-        self.from + (self.to - self.from) * weight
-    }
-
-    /// A new cycle. What's arriving keeps the amplitude it was on its way in with,
-    /// so the beat itself moves nothing. A part that has skipped a target, or just
-    /// started, has nothing to keep.
-    #[cold]
-    fn begin(&mut self, index: u64, sample: &WoozeSample) {
-        self.from = if self.index != Self::UNREAD && self.index + 1 == index {
-            self.to
-        } else {
-            sample.amplitude
-        };
-        self.to = sample.amplitude;
-        self.glide = sample.glide;
-        self.index = index;
-    }
+    WOOZE_KEYS.check_named(name, value)
 }
 
 /// Film frames to one beat of the field. Six is what ones, twos and threes all
@@ -282,27 +205,19 @@ pub struct BoilFrame {
     pub step: f32,
 }
 
-/// The shading boil's clock: beats of the field, like any other consumer's, so a
-/// change of step bends it from where it stands. It runs on game time, so a drawing
-/// lasts as long at 30 frames a second as at 144.
-///
-/// Whole beats are kept apart from the part of one, because a single running float
-/// loses precision as it grows, and after a couple of hours a drawing would start
-/// to land a frame late.
+/// The shading boil's clock: a [`StepClock`] on the field's step, like any
+/// other consumer's, so a change of step bends it from where it stands. It runs
+/// on game time, so a drawing lasts as long at 30 frames a second as at 144.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BoilClock {
-    beats: u64,
-    part: f64,
+    clock: StepClock,
 }
 
 impl BoilClock {
     /// `dt` seconds later, at the tempo of `sample`.
     #[inline]
     pub fn tick(&mut self, dt: f64, sample: &WoozeSample) {
-        self.part += dt / f64::from(sample.step.max(STEP_MIN));
-        let carried = self.part.floor();
-        self.part -= carried;
-        self.beats += carried as u64;
+        self.clock.advance(dt, sample.step);
     }
 
     /// The drawing now, held for `on` film frames: 1, 2 or 3, and anything else
@@ -311,8 +226,8 @@ impl BoilClock {
     /// one drawing for a frame too long and the next for a frame too few.
     pub fn drawing(&self, on: u32) -> u64 {
         let per_beat = u64::from(FILM_FRAMES_PER_BEAT);
-        let into_beat = (self.part * per_beat as f64 + 1e-9).floor() as u64;
-        (self.beats * per_beat + into_beat) / u64::from(on.clamp(1, 3))
+        let into_beat = (self.clock.part() * per_beat as f64 + 1e-9).floor() as u64;
+        (self.clock.whole() * per_beat + into_beat) / u64::from(on.clamp(1, 3))
     }
 
     /// What the passes need to know this frame, from the field where the viewer
@@ -327,15 +242,6 @@ impl BoilClock {
     }
 }
 
-/// What [`Cycle::read`] says.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CycleNow {
-    /// The target being held or left.
-    pub index: u64,
-    /// How far toward the next target, 0 to 1.
-    pub weight: f32,
-}
-
 /// The hold-and-glide clock of something with no poses of its own (#215), such
 /// as a hand-made mesh that shallow wooze displaces.
 ///
@@ -344,6 +250,9 @@ pub struct CycleNow {
 /// every change of step. It has no phase offset of its own: two clocks in the same
 /// place read the same target and weight, so the world-space noise they displace
 /// by is one continuous field, and a lantern set on a bench stays set on it.
+///
+/// Its count is one `f64`, as a living prop's is, not a [`StepClock`]'s whole
+/// and part: the two round differently, and these must keep the props' beat.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShallowClock {
     beats: f64,
@@ -365,7 +274,7 @@ impl ShallowClock {
     #[inline]
     pub fn advance(&mut self, dt: f64, sample: &WoozeSample) -> ShallowNow {
         self.beats += dt / f64::from(sample.step.max(STEP_MIN));
-        let now = self.cycle.read(self.beats, sample);
+        let now = self.cycle.read(self.beats, sample.glide, sample.amplitude);
         ShallowNow {
             index: now.index,
             weight: now.weight,
@@ -390,187 +299,56 @@ pub struct ShallowNow {
     pub amplitude: f32,
 }
 
-/// A value on its way from one number to another, so that a sample is a pure
-/// function of time however a script has moved things.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Ramp {
-    from: f32,
-    to: f32,
-    start: f64,
-    seconds: f64,
-}
+/// One part of the world woozier or calmer than the rest: a zone of the
+/// general field over the four knobs.
+pub type WoozeZone = Zone<KNOBS>;
 
-impl Ramp {
-    fn constant(value: f32) -> Self {
-        Self {
-            from: value,
-            to: value,
-            start: 0.0,
-            seconds: 0.0,
-        }
-    }
-
-    fn at(&self, time: f64) -> f32 {
-        if self.seconds <= 0.0 || time >= self.start + self.seconds {
-            return self.to;
-        }
-        let x = ((time - self.start) / self.seconds).max(0.0) as f32;
-        self.from + (self.to - self.from) * (x * x * (3.0 - 2.0 * x))
-    }
-
-    /// Head for `to` from wherever this stands at `time`, over `seconds`.
-    fn head_for(&mut self, to: f32, time: f64, seconds: f64) {
-        *self = Self {
-            from: self.at(time),
-            to,
-            start: time,
-            seconds: if seconds.is_finite() {
-                seconds.max(0.0)
-            } else {
-                0.0
-            },
-        };
-    }
-}
-
-/// What a zone covers.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum WoozeShape {
-    /// A ball of `radius` metres around the centre.
-    Sphere {
-        /// Metres from the centre to the edge.
-        radius: f32,
-    },
-    /// An axis-aligned box, `size` metres across on each axis.
-    Box {
-        /// Full width on each axis, in metres.
-        size: [f32; 3],
-    },
-}
-
-/// One part of the world woozier or calmer than the rest.
+/// The whole field: global values and zones, the general
+/// [`ParamField`] over [`WOOZE_KEYS`] read back as [`WoozeSample`]s.
 #[derive(Debug, Clone, PartialEq)]
-pub struct WoozeZone {
-    name: String,
-    shape: WoozeShape,
-    center: [f32; 3],
-    /// Metres past the edge over which the zone fades out. 0 is a hard edge.
-    falloff: f32,
-    /// The knobs it sets; a knob left `None` passes through what's below.
-    knobs: [Option<Ramp>; KNOBS],
-    /// How much of itself it applies, so it can fade in and out whole.
-    strength: Ramp,
-}
-
-impl WoozeZone {
-    /// Its name, which is how a script finds it. Unnamed ones get `zone <n>`.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// How far inside it `position` is: 1 inside, 0 past the falloff.
-    fn weight(&self, position: [f32; 3]) -> f32 {
-        let d = |axis: usize| position[axis] - self.center[axis];
-        let past_edge = match self.shape {
-            WoozeShape::Sphere { radius } => {
-                (d(0) * d(0) + d(1) * d(1) + d(2) * d(2)).sqrt() - radius
-            }
-            WoozeShape::Box { size } => {
-                let out = |axis: usize| (d(axis).abs() - size[axis] * 0.5).max(0.0);
-                (out(0) * out(0) + out(1) * out(1) + out(2) * out(2)).sqrt()
-            }
-        };
-        if past_edge <= 0.0 {
-            1.0
-        } else if past_edge >= self.falloff {
-            0.0
-        } else {
-            let x = 1.0 - past_edge / self.falloff;
-            x * x * (3.0 - 2.0 * x)
-        }
-    }
-}
-
-/// The whole field: global values and zones.
-#[derive(Debug, Clone, PartialEq)]
-pub struct WoozeField {
-    base: [Ramp; KNOBS],
-    zones: Vec<WoozeZone>,
-}
+pub struct WoozeField(ParamField<KNOBS>);
 
 impl WoozeField {
     /// A field with these global values everywhere and no zones.
     pub fn new(base: WoozeSample) -> Self {
-        Self {
-            base: base.to_array().map(Ramp::constant),
-            zones: Vec::new(),
-        }
+        Self(ParamField::new(&WOOZE_KEYS, base.to_array()))
+    }
+
+    /// The general field underneath, for reading a knob by name.
+    pub fn params(&self) -> &ParamField<KNOBS> {
+        &self.0
     }
 
     /// The zones, in the order they apply.
     pub fn zones(&self) -> &[WoozeZone] {
-        &self.zones
+        self.0.zones()
     }
 
     /// The field's global values at `time`, before any zone: what `set_global`
     /// moves, and what a debug panel shows.
     pub fn global(&self, time: f64) -> WoozeSample {
-        WoozeSample::from_array(self.base.map(|ramp| ramp.at(time)))
+        WoozeSample::from_array(self.0.global(time))
     }
 
     /// How woozy `position` is at `time`, in whichever clock the caller keeps
     /// this field on. A pure function: the same arguments give the same bits.
+    #[inline]
     pub fn sample(&self, position: [f32; 3], time: f64) -> WoozeSample {
-        let mut value = self.base.map(|ramp| ramp.at(time));
-        for zone in &self.zones {
-            let weight = zone.weight(position) * zone.strength.at(time);
-            if weight <= 0.0 {
-                continue;
-            }
-            for (out, knob) in value.iter_mut().zip(&zone.knobs) {
-                if let Some(knob) = knob {
-                    // Exact inside, so a zone's value is that value to the bit.
-                    let target = knob.at(time);
-                    *out = if weight >= 1.0 {
-                        target
-                    } else {
-                        *out + (target - *out) * weight
-                    };
-                }
-            }
-        }
-        WoozeSample::from_array(value)
+        WoozeSample::from_array(self.0.sample(position, time))
     }
 
     /// Which zone has the last word on each knob at `position` and `time`, in the
     /// order `amplitude`, `step`, `glide`, `jitter`: `None` where the global value
     /// stands. For saying where a value came from (#246), not for every frame.
     pub fn zones_at(&self, position: [f32; 3], time: f64) -> [Option<&str>; KNOBS] {
-        let mut said = [None; KNOBS];
-        for zone in &self.zones {
-            if zone.weight(position) * zone.strength.at(time) <= 0.0 {
-                continue;
-            }
-            for (said, knob) in said.iter_mut().zip(&zone.knobs) {
-                if knob.is_some() {
-                    *said = Some(zone.name.as_str());
-                }
-            }
-        }
-        said
+        self.0.zones_at(position, time)
     }
 
     /// The zones that reach `position` at `time`, in the order they apply, each
     /// with how much of itself it gives there, 0 to 1: what a tree picked in the
     /// world stands in (#248), whether or not one of them has the last word.
     pub fn zones_in(&self, position: [f32; 3], time: f64) -> Vec<(&str, f32)> {
-        self.zones
-            .iter()
-            .filter_map(|zone| {
-                let weight = zone.weight(position) * zone.strength.at(time);
-                (weight > 0.0).then_some((zone.name.as_str(), weight))
-            })
-            .collect()
+        self.0.zones_in(position, time)
     }
 
     /// Change global knobs from a table of any of `amplitude`, `step`, `glide`,
@@ -582,50 +360,13 @@ impl WoozeField {
         time: f64,
         seconds: f64,
     ) -> Result<(), String> {
-        let mut targets: [Option<f32>; KNOBS] = [None; KNOBS];
-        for (key, value) in table {
-            if key == "preset" {
-                continue;
-            }
-            let Some(knob) = KNOB_NAMES.iter().position(|k| k == key) else {
-                return Err(format!(
-                    "'{key}' isn't a wooze knob; it takes preset, {}",
-                    KNOB_NAMES.join(", ")
-                ));
-            };
-            targets[knob] = Some(read_knob(knob, value)?);
-        }
-        if let Some(value) = table.get("preset") {
-            let name = value
-                .as_str()
-                .ok_or_else(|| format!("preset = {value} must be a name"))?;
-            let found = preset(name).ok_or_else(|| unknown_preset(name))?;
-            for (target, value) in targets.iter_mut().zip(found.to_array()) {
-                target.get_or_insert(value);
-            }
-        }
-        for (ramp, target) in self.base.iter_mut().zip(targets) {
-            if let Some(target) = target {
-                ramp.head_for(target, time, seconds);
-            }
-        }
-        Ok(())
+        self.0.set_global(table, time, seconds)
     }
 
     /// Add a zone from a `[[wooze.zone]]` table, or an error saying what's wrong
     /// with it. An unnamed one takes a name from its place in the list.
     pub fn add_zone(&mut self, table: &toml::Table) -> Result<(), String> {
-        let name = match table.get("name") {
-            None => format!("zone {}", self.zones.len() + 1),
-            Some(toml::Value::String(name)) if !name.is_empty() => name.clone(),
-            Some(other) => return Err(format!("name = {other} must be a name")),
-        };
-        if self.zones.iter().any(|zone| zone.name == name) {
-            return Err("its name is already taken by another zone".to_string());
-        }
-        let zone = read_zone(name, table, None, &self.base, 0.0, 0.0)?;
-        self.zones.push(zone);
-        Ok(())
+        self.0.add_zone(table)
     }
 
     /// Change the named zone from a table, or add it if there's none yet, either
@@ -639,63 +380,18 @@ impl WoozeField {
         time: f64,
         seconds: f64,
     ) -> Result<(), String> {
-        if name.is_empty() {
-            return Err("a zone needs a name".to_string());
-        }
-        self.settle(time);
-        let found = self.zones.iter().position(|zone| zone.name == name);
-        let old = found.map(|i| &self.zones[i]);
-        // A new zone is all there and fades in whole, so only an edit ramps knobs.
-        let knob_seconds = if old.is_some() { seconds } else { 0.0 };
-        let mut zone = read_zone(name.to_string(), table, old, &self.base, time, knob_seconds)?;
-        match found {
-            Some(i) => {
-                zone.strength.head_for(1.0, time, seconds);
-                self.zones[i] = zone;
-            }
-            None => {
-                zone.strength = Ramp::constant(0.0);
-                zone.strength.head_for(1.0, time, seconds);
-                self.zones.push(zone);
-            }
-        }
-        Ok(())
+        self.0.set_zone(name, table, time, seconds)
     }
 
     /// Fade the named zone out over `seconds` and drop it. Returns whether there
     /// was one.
     pub fn remove_zone(&mut self, name: &str, time: f64, seconds: f64) -> bool {
-        self.settle(time);
-        let Some(i) = self.zones.iter().position(|zone| zone.name == name) else {
-            return false;
-        };
-        if seconds > 0.0 {
-            self.zones[i].strength.head_for(0.0, time, seconds);
-        } else {
-            self.zones.remove(i);
-        }
-        true
-    }
-
-    /// Drop the zones that have finished fading out.
-    fn settle(&mut self, time: f64) {
-        self.zones.retain(|zone| {
-            zone.strength.to > 0.0 || time < zone.strength.start + zone.strength.seconds
-        });
+        self.0.remove_zone(name, time, seconds)
     }
 }
 
-fn unknown_preset(name: &str) -> String {
-    format!("preset '{name}' isn't one of {}", preset_names())
-}
-
-fn read_knob(knob: usize, value: &toml::Value) -> Result<f32, String> {
-    let number = toml_f32(value)
-        .ok_or_else(|| format!("{} = {value} must be a number", KNOB_NAMES[knob]))?;
-    check_knob(knob, number)
-}
-
-/// Every key a `[[wooze.zone]]` table takes.
+/// Every key a `[[wooze.zone]]` table takes: the field's [`SHAPE_KEYS`], then
+/// the four knobs.
 pub const ZONE_KEYS: [&str; 10] = [
     "name",
     "shape",
@@ -708,119 +404,6 @@ pub const ZONE_KEYS: [&str; 10] = [
     "glide",
     "jitter",
 ];
-
-/// A zone from its table, with `old` filling in anything left out. A knob that's
-/// new starts from the global value, so a zone's new knob eases in from what
-/// that place was, save where zones overlap.
-fn read_zone(
-    name: String,
-    table: &toml::Table,
-    old: Option<&WoozeZone>,
-    base: &[Ramp; KNOBS],
-    time: f64,
-    seconds: f64,
-) -> Result<WoozeZone, String> {
-    for key in table.keys() {
-        if !ZONE_KEYS.contains(&key.as_str()) {
-            return Err(format!(
-                "'{key}' isn't a zone key; it takes {}",
-                ZONE_KEYS.join(", ")
-            ));
-        }
-    }
-
-    let center = match table.get("center") {
-        Some(value) => {
-            read_point(value).ok_or_else(|| format!("center = {value} must be [x, y, z]"))?
-        }
-        None => old
-            .map(|z| z.center)
-            .ok_or("it needs a center: [x, y, z]")?,
-    };
-    let falloff = match table.get("falloff") {
-        Some(value) => toml_f32(value)
-            .filter(|f| f.is_finite() && *f >= 0.0)
-            .ok_or_else(|| format!("falloff = {value} must be 0 metres or more"))?,
-        None => old.map_or(0.0, |z| z.falloff),
-    };
-    let shape = read_shape(table, old)?;
-
-    let mut knobs = old.map_or([None; KNOBS], |z| z.knobs);
-    for (i, slot) in knobs.iter_mut().enumerate() {
-        if let Some(value) = table.get(KNOB_NAMES[i]) {
-            let target = read_knob(i, value)?;
-            let mut ramp = slot.unwrap_or_else(|| Ramp::constant(base[i].at(time)));
-            ramp.head_for(target, time, seconds);
-            *slot = Some(ramp);
-        }
-    }
-    if knobs.iter().all(Option::is_none) {
-        return Err(format!(
-            "it changes nothing: it needs at least one of {}",
-            KNOB_NAMES.join(", ")
-        ));
-    }
-
-    Ok(WoozeZone {
-        name,
-        shape,
-        center,
-        falloff,
-        knobs,
-        strength: old.map_or(Ramp::constant(1.0), |z| z.strength),
-    })
-}
-
-fn read_shape(table: &toml::Table, old: Option<&WoozeZone>) -> Result<WoozeShape, String> {
-    let name = match table.get("shape") {
-        Some(toml::Value::String(name)) => name.as_str(),
-        Some(other) => return Err(format!("shape = {other} must be \"sphere\" or \"box\"")),
-        None => match old.map(|z| z.shape) {
-            Some(WoozeShape::Sphere { .. }) => "sphere",
-            Some(WoozeShape::Box { .. }) => "box",
-            None => return Err("it needs a shape: \"sphere\" or \"box\"".to_string()),
-        },
-    };
-    match name {
-        "sphere" => {
-            if table.contains_key("size") {
-                return Err("a sphere takes radius, not size".to_string());
-            }
-            let radius = match (table.get("radius"), old.map(|z| z.shape)) {
-                (Some(value), _) => toml_f32(value)
-                    .filter(|r| r.is_finite() && *r > 0.0)
-                    .ok_or_else(|| format!("radius = {value} must be more than 0 metres"))?,
-                (None, Some(WoozeShape::Sphere { radius })) => radius,
-                (None, _) => return Err("a sphere needs a radius".to_string()),
-            };
-            Ok(WoozeShape::Sphere { radius })
-        }
-        "box" => {
-            if table.contains_key("radius") {
-                return Err("a box takes size, not radius".to_string());
-            }
-            let size = match (table.get("size"), old.map(|z| z.shape)) {
-                (Some(value), _) => read_point(value)
-                    .filter(|s| s.iter().all(|a| a.is_finite() && *a > 0.0))
-                    .ok_or_else(|| {
-                        format!("size = {value} must be [x, y, z], each more than 0 metres")
-                    })?,
-                (None, Some(WoozeShape::Box { size })) => size,
-                (None, _) => return Err("a box needs a size: [x, y, z]".to_string()),
-            };
-            Ok(WoozeShape::Box { size })
-        }
-        other => Err(format!("shape = \"{other}\" must be \"sphere\" or \"box\"")),
-    }
-}
-
-/// Exactly three finite numbers, unlike [`toml_vec3`] alone, which takes more.
-fn read_point(value: &toml::Value) -> Option<[f32; 3]> {
-    if value.as_array()?.len() != 3 {
-        return None;
-    }
-    toml_vec3(value).filter(|p| p.iter().all(|a| a.is_finite()))
-}
 
 #[cfg(test)]
 mod boil_tests {
@@ -925,7 +508,9 @@ mod boil_tests {
     fn the_seed_wraps_rather_than_saturating() {
         let mut clock = BoilClock::default();
         // Past u32::MAX drawings: the pattern goes on changing.
-        clock.beats = ((1u64 << 32) + 2) / u64::from(FILM_FRAMES_PER_BEAT);
+        let beats = ((1u64 << 32) + 2) / u64::from(FILM_FRAMES_PER_BEAT);
+        // A quarter-second step, so the count lands on the beat exactly.
+        clock.tick(beats as f64 * 0.25, &at(0.25, 1.0));
         assert_eq!(clock.frame(&at(0.25, 1.0), 1).seed, 2);
     }
 }
@@ -1267,9 +852,8 @@ mod tests {
         assert_eq!(glide(&field, 22.0), 0.3);
 
         // Gone for good once it has faded: a name can come back.
-        field.settle(23.0);
-        assert!(field.zones().is_empty());
         assert!(!field.remove_zone("late", 23.0, 0.0));
+        assert!(field.zones().is_empty());
     }
 
     #[test]
@@ -1283,6 +867,18 @@ mod tests {
             .set_zone("new", &table("glide = 0.5"), 0.0, 0.0)
             .is_err());
         assert_eq!(field, before);
+    }
+
+    /// A part's read of the field, as a living prop makes it.
+    fn read_cycle(part: &mut Cycle, beats: f64, s: &WoozeSample) -> CycleNow {
+        part.read(beats, s.glide, s.amplitude)
+    }
+
+    #[test]
+    fn the_zone_keys_are_the_fields_and_the_knobs() {
+        let mut keys = SHAPE_KEYS.to_vec();
+        keys.extend(WOOZE_KEYS.names);
+        assert_eq!(keys, ZONE_KEYS);
     }
 
     fn sample(glide: f32, amplitude: f32) -> WoozeSample {
@@ -1313,30 +909,30 @@ mod tests {
     fn a_new_glide_waits_for_the_next_cycle_so_t_prime_never_jumps() {
         let mut part = Cycle::default();
         let calm = sample(0.3, 1.0);
-        part.read(0.0, &calm);
+        read_cycle(&mut part, 0.0, &calm);
 
         // At frac 0.5 a glide of 0.3 is holding and one of 0.8 would be well
         // under way. Nothing moves until the cycle ends.
-        let held = part.read(0.5, &calm);
+        let held = read_cycle(&mut part, 0.5, &calm);
         let dreamy = sample(0.8, 1.0);
-        assert_eq!(part.read(0.5, &dreamy), held);
-        assert_eq!(part.read(0.69, &dreamy).weight, 0.0);
+        assert_eq!(read_cycle(&mut part, 0.5, &dreamy), held);
+        assert_eq!(read_cycle(&mut part, 0.69, &dreamy).weight, 0.0);
 
         // And the cycle after it runs on the new glide.
-        assert_eq!(part.read(1.0, &dreamy).index, 1);
-        assert_eq!(part.read(1.5, &dreamy).weight, warp(1.5, 0.8).1);
+        assert_eq!(read_cycle(&mut part, 1.0, &dreamy).index, 1);
+        assert_eq!(read_cycle(&mut part, 1.5, &dreamy).weight, warp(1.5, 0.8).1);
     }
 
     #[test]
     fn t_prime_stays_continuous_through_any_change_of_glide() {
         let mut part = Cycle::default();
         let glides = [0.3, 0.8, 1.0, 0.5, 0.2, 0.9];
-        let mut last = t_prime(part.read(0.0, &sample(0.3, 1.0)));
+        let mut last = t_prime(read_cycle(&mut part, 0.0, &sample(0.3, 1.0)));
         for frame in 1..6000 {
             let beats = f64::from(frame) * 0.003;
             // A new value every 37 frames, whichever part of the cycle that is.
             let glide = glides[(frame / 37) as usize % glides.len()];
-            let now = t_prime(part.read(beats, &sample(glide, 1.0)));
+            let now = t_prime(read_cycle(&mut part, beats, &sample(glide, 1.0)));
             assert!(now >= last, "went back at frame {frame}: {last} to {now}");
             // A smoothstep's top speed at the shortest glide here, 0.2, a beat
             // and 0.003 beats a frame: about 0.0225. And a little for rounding.
@@ -1352,7 +948,7 @@ mod tests {
     fn a_new_amplitude_arrives_with_the_next_pose_and_the_beat_moves_nothing() {
         let mut part = Cycle::default();
         let shown = |part: &mut Cycle, beats: f64, s: &WoozeSample| {
-            let now = part.read(beats, s);
+            let now = read_cycle(part, beats, s);
             part.shown(now.weight)
         };
         assert_eq!(shown(&mut part, 0.0, &sample(0.5, 1.0)), 1.0);
@@ -1374,8 +970,8 @@ mod tests {
     #[test]
     fn a_part_that_skips_a_target_starts_clean() {
         let mut part = Cycle::default();
-        part.read(0.0, &sample(0.3, 1.0));
-        let after = part.read(5.0, &sample(0.3, 0.4));
+        read_cycle(&mut part, 0.0, &sample(0.3, 1.0));
+        let after = read_cycle(&mut part, 5.0, &sample(0.3, 0.4));
         assert_eq!(part.shown(after.weight), 0.4);
     }
 

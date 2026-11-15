@@ -522,7 +522,9 @@ fn stage_scene(
     binding: SceneBinding,
     config: &ModelLoadConfig,
 ) -> flint_render::BoundScene {
-    let binding = binding.with_environment(state.environment.as_ref());
+    let binding = binding
+        .with_environment(state.environment.as_ref())
+        .with_archetypes(&state.registry);
     let bound = renderer.bind_scene(device, queue, &state.world, &binding);
     model_loader::load_models_from_world(&mut state.world, renderer, device, queue, config);
     bound

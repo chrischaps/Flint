@@ -576,6 +576,7 @@ fn zone_schema(wooze: &flint_schema::TableSchema) -> Option<flint_schema::TableS
         name: "wooze.zone".to_string(),
         description: None,
         fields: fields.clone(),
+        panel: None,
     })
 }
 

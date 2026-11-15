@@ -9,6 +9,7 @@ description = "Component and archetype schema system for Flint"
 flint-core = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
+indexmap = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 

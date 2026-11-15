@@ -187,6 +187,35 @@ pub fn combo_str(ui: &mut egui::Ui, label: &str, value: &mut String, options: &[
     *value != before
 }
 
+/// A collapsing section of a panel, open at first if `default_open`.
+pub fn section(
+    ui: &mut egui::Ui,
+    title: &str,
+    default_open: bool,
+    add: impl FnOnce(&mut egui::Ui),
+) {
+    egui::CollapsingHeader::new(title)
+        .default_open(default_open)
+        .show(ui, add);
+}
+
+/// A slider that reads `mixed` when what it stands for disagrees (several
+/// props, several entities), saying `says` when hovered, as it does unmixed
+/// when `says` isn't empty. Returns whether a hand moved it.
+pub fn mixed_slider(ui: &mut egui::Ui, slider: egui::Slider<'_>, mixed: bool, says: &str) -> bool {
+    let slider = if mixed {
+        slider.custom_formatter(|_, _| "mixed".to_string())
+    } else {
+        slider
+    };
+    let response = ui.add(slider);
+    let changed = response.changed();
+    if !says.is_empty() {
+        response.on_hover_text(says);
+    }
+    changed
+}
+
 /// Labeled checkbox. Returns true if toggled.
 pub fn check(ui: &mut egui::Ui, label: &str, value: &mut bool) -> bool {
     ui.checkbox(value, label).changed()
