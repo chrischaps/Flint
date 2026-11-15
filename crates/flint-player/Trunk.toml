@@ -1,4 +1,4 @@
-# trunk's settings for the pages here (index.html, shims.html).
+# trunk's settings for the page here (index.html).
 
 [build]
 # The wasm loads only once the page says so (#103). index.html's doorway
@@ -6,16 +6,15 @@
 # play it on, and leaves it pending when it shows the game's film instead.
 # Trunk's default loader also preloads the wasm, which would cost a browser
 # that can't play 7 MB it never runs, so only the small JS glue is
-# preloaded. A page without a doorway (shims.html) awaits undefined and
-# starts at once.
+# preloaded. A page without a doorway would await undefined and start at
+# once.
 pattern_script = "<script type=\"module\">import init from '{base}{js}';await window.flintDoorway;await init({ module_or_path: '{base}{wasm}' });</script>"
 pattern_preload = "<link rel=\"modulepreload\" href=\"{base}{js}\" crossorigin=\"anonymous\">"
 
 # The AudioWorklet's mixer (#136): its own small wasm, kira and nothing else,
 # built for speed (the workspace's `worklet` profile) before every build of
-# these pages, into its own target dir so the path is fixed. index.html and
-# shims.html copy it next to the page, where flint-audio's worklet::WASM_URL
-# looks for it.
+# the page, into its own target dir so the path is fixed. index.html copies
+# it next to the page, where flint-audio's worklet::WASM_URL looks for it.
 [[hooks]]
 stage = "pre_build"
 command = "cargo"
