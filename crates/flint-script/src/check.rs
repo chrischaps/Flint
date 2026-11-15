@@ -38,7 +38,8 @@
 //! literals are judged, only in `on_update` and `on_draw_ui` and the
 //! file's functions they call, so it stays cheap and quiet.
 
-use crate::api::registry::{parse_signature, ApiEntry, ApiListing, CALLBACKS};
+use crate::api::registry::{parse_signature, ApiEntry, ApiListing};
+use crate::engine::instance::{callback_problems, CallbackProblem};
 use crate::module_resolver::ModuleBase;
 use flint_core::diagnostic::{self, codes, Diagnostic};
 use flint_core::vfs;
@@ -992,66 +993,31 @@ fn per_frame_fns(seen: &Seen) -> BTreeSet<String> {
 // ------------------------------------------------------------ callbacks ---
 
 /// A callback defined at the wrong arity, and an `fn` one edit from a
-/// callback that nothing calls: the engine never would.
+/// callback that nothing calls: the engine never would. The same problems,
+/// in the same words, as the engine warns of at load
+/// ([`callback_problems`], #700).
 fn callbacks(path: &Path, source: &str, ast: &AST, seen: &Seen) -> Vec<Diagnostic> {
-    let names: Vec<&str> = CALLBACKS.iter().map(|c| c.name).collect();
-    let fold = |s: &str| -> String {
-        s.chars()
-            .filter(|c| *c != '_')
-            .flat_map(char::to_lowercase)
-            .collect()
-    };
     let called: BTreeSet<&str> = seen
         .calls
         .iter()
         .filter(|c| c.namespace.is_none())
         .map(|c| c.name.as_str())
         .collect();
-    let mut out = Vec::new();
-    for f in ast.iter_functions() {
-        let at = |d: Diagnostic| {
-            let (line, col) = fn_position(source, f.name);
-            d.file(path).at(line, col)
-        };
-        if let Some(cb) = CALLBACKS.iter().find(|c| c.name == f.name) {
-            if f.params.len() != cb.params.len() {
-                let wanted = format!("fn {}({})", cb.name, cb.params.join(", "));
-                let hint = if cb.name == flint_core::callbacks::ON_UPDATE {
-                    format!("`{wanted}`: delta_time() is the frame's step")
-                } else {
-                    format!("`{wanted}`")
-                };
-                out.push(at(Diagnostic::error(
-                    codes::CALLBACK_ARITY,
-                    format!(
-                        "`fn {}` has {} parameter{}; the engine calls it with {}, so it never runs",
-                        f.name,
-                        f.params.len(),
-                        if f.params.len() == 1 { "" } else { "s" },
-                        cb.params.len()
-                    ),
-                )
-                .hint(hint)));
-            }
-            continue;
-        }
-        let looks_like_one =
-            f.name.starts_with("on_") || names.iter().any(|n| fold(n) == fold(f.name));
-        if !looks_like_one || called.contains(f.name) || seen.strings.contains(f.name) {
-            continue;
-        }
-        if let Some(near) = diagnostic::closest(f.name, names.iter().copied()) {
-            out.push(at(Diagnostic::error(
-                codes::UNKNOWN_CALLBACK,
-                format!(
-                    "`fn {}` is not a callback, and nothing in this script calls it",
-                    f.name
-                ),
-            )
-            .hint(format!("did you mean `{near}`?"))));
-        }
-    }
-    out
+    let named = |name: &str| called.contains(name) || seen.strings.contains(name);
+    callback_problems(ast, named)
+        .into_iter()
+        .map(|problem| {
+            let code = match problem {
+                CallbackProblem::Arity { .. } => codes::CALLBACK_ARITY,
+                CallbackProblem::Unknown { .. } => codes::UNKNOWN_CALLBACK,
+            };
+            let (line, col) = fn_position(source, problem.name());
+            Diagnostic::error(code, problem.message())
+                .hint(problem.hint())
+                .file(path)
+                .at(line, col)
+        })
+        .collect()
 }
 
 /// Where `fn <name>` is written: line and column of `fn`, from 1.

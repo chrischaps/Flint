@@ -11,7 +11,7 @@
 use super::interact::{get_interactable_config, is_near_player};
 use super::ScriptEngine;
 use crate::api;
-use flint_core::callbacks as cb;
+use flint_core::callbacks::{self as cb, Callback};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_runtime::GameEvent;
@@ -24,7 +24,7 @@ impl ScriptEngine {
         let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
             let script = self.scripts.get_mut(&entity_id).unwrap();
-            if script.has_on_init && !script.init_called {
+            if script.defines(Callback::Init) && !script.init_called {
                 {
                     let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity_id;
@@ -46,7 +46,7 @@ impl ScriptEngine {
 
         for &entity_id in entity_ids {
             if let Some(script) = self.scripts.get_mut(&entity_id) {
-                if script.has_on_init && !script.init_called {
+                if script.defines(Callback::Init) && !script.init_called {
                     {
                         let mut c = crate::lock_or_recover(&self.ctx);
                         c.current_entity = entity_id;
@@ -70,7 +70,7 @@ impl ScriptEngine {
         let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
             let script = self.scripts.get_mut(&entity_id).unwrap();
-            if script.has_on_update {
+            if script.defines(Callback::Update) {
                 {
                     let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity_id;
@@ -97,7 +97,7 @@ impl ScriptEngine {
         let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
             let script = self.scripts.get_mut(&entity_id).unwrap();
-            if script.has_on_draw_ui {
+            if script.defines(Callback::DrawUi) {
                 {
                     let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity_id;
@@ -149,7 +149,7 @@ impl ScriptEngine {
 
     fn call_collision(&mut self, entity: EntityId, other: EntityId) {
         if let Some(script) = self.scripts.get_mut(&entity) {
-            if script.has_on_collision {
+            if script.defines(Callback::Collision) {
                 {
                     let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity;
@@ -169,7 +169,7 @@ impl ScriptEngine {
 
     fn call_collision_exit(&mut self, entity: EntityId, other: EntityId) {
         if let Some(script) = self.scripts.get_mut(&entity) {
-            if script.has_on_collision_exit {
+            if script.defines(Callback::CollisionExit) {
                 {
                     let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity;
@@ -189,7 +189,7 @@ impl ScriptEngine {
 
     fn call_trigger_enter(&mut self, trigger: EntityId, entity: EntityId) {
         if let Some(script) = self.scripts.get_mut(&trigger) {
-            if script.has_on_trigger_enter {
+            if script.defines(Callback::TriggerEnter) {
                 {
                     let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = trigger;
@@ -209,7 +209,7 @@ impl ScriptEngine {
 
     fn call_trigger_exit(&mut self, trigger: EntityId, entity: EntityId) {
         if let Some(script) = self.scripts.get_mut(&trigger) {
-            if script.has_on_trigger_exit {
+            if script.defines(Callback::TriggerExit) {
                 {
                     let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = trigger;
@@ -232,7 +232,7 @@ impl ScriptEngine {
     /// deterministic. `data` always arrives as a map: a non-table payload
     /// is wrapped as `#{ value: .. }` (ADR 0072).
     fn call_event_on_all(&mut self, name: &str, data: &toml::Value) {
-        let entity_ids = self.in_order(|s| s.has_on_event);
+        let entity_ids = self.in_order(|s| s.defines(Callback::Event));
         if entity_ids.is_empty() {
             return;
         }
@@ -273,7 +273,7 @@ impl ScriptEngine {
             return;
         }
         let _world_scope = self.lend(world);
-        let entity_ids = self.in_order(|s| s.has_on_expression);
+        let entity_ids = self.in_order(|s| s.defines(Callback::Expression));
 
         for state in states {
             crate::lock_or_recover(&self.ctx).expression = state.clone();
@@ -298,7 +298,7 @@ impl ScriptEngine {
             let script = self.scripts.get_mut(&entity_id).unwrap();
 
             // on_action callback
-            if script.has_on_action {
+            if script.defines(Callback::Action) {
                 {
                     let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity_id;
@@ -315,7 +315,7 @@ impl ScriptEngine {
             }
 
             // on_interact sugar: ActionPressed("interact") + proximity + interactable check
-            if script.has_on_interact && action == "interact" {
+            if script.defines(Callback::Interact) && action == "interact" {
                 // Read range from interactable component, fall back to 3.0
                 let (range, enabled) = get_interactable_config(entity_id, world);
                 if !enabled {
@@ -358,7 +358,7 @@ impl ScriptEngine {
         let Some(from) = pending else {
             return;
         };
-        let entity_ids = self.in_order(|s| s.has_on_persist_migrate);
+        let entity_ids = self.in_order(|s| s.defines(Callback::PersistMigrate));
         if entity_ids.is_empty() {
             return;
         }
@@ -400,7 +400,7 @@ impl ScriptEngine {
         let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
             let script = self.scripts.get_mut(&entity_id).unwrap();
-            if script.has_on_scene_exit {
+            if script.defines(Callback::SceneExit) {
                 {
                     let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity_id;
@@ -424,7 +424,7 @@ impl ScriptEngine {
         let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
             let script = self.scripts.get_mut(&entity_id).unwrap();
-            if script.has_on_scene_enter {
+            if script.defines(Callback::SceneEnter) {
                 {
                     let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity_id;
@@ -456,7 +456,7 @@ impl ScriptEngine {
 
         for cue in cues {
             if let Some(script) = self.scripts.get_mut(&cue.entity_id) {
-                if script.has_on_sequence_cue {
+                if script.defines(Callback::SequenceCue) {
                     {
                         let mut c = crate::lock_or_recover(&self.ctx);
                         c.current_entity = cue.entity_id;
@@ -488,7 +488,7 @@ impl ScriptEngine {
 
         for event in events {
             if let Some(script) = self.scripts.get_mut(&event.entity_id) {
-                if script.has_on_animation_end {
+                if script.defines(Callback::AnimationEnd) {
                     {
                         let mut c = crate::lock_or_recover(&self.ctx);
                         c.current_entity = event.entity_id;
