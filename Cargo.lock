@@ -2123,6 +2123,7 @@ dependencies = [
  "rhai",
  "toml",
  "tracing",
+ "tracing-subscriber",
  "web-time",
 ]
 

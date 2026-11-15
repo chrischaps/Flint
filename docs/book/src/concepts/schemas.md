@@ -218,6 +218,7 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `bad-manifest` | error | `flint.toml` does not read |
 | `bad-schemas` | error | a schema directory is missing, or a schema file does not read |
 | `missing-cargo-patch` | warning | a game's Cargo workspace root lacks a `[patch.crates-io]` line of the engine it builds by path, or points it elsewhere; the hint is the line to add ([Upgrading the Engine](../guides/upgrading-the-engine.md#cargo)) |
+| `stale-cargo-lock` | warning | a game's `Cargo.lock` gives gpu-allocator a different `windows` crate from wgpu-hal's (a lock moved forward from before wgpu 30), so wgpu-hal fails on Windows with ``expected `ID3D12Device`, found a different `ID3D12Device` ``; the hint is the `cargo update` that mends it ([Upgrading the Engine](../guides/upgrading-the-engine.md#cargo)) |
 
 The scripts pass, which `flint check`, `flint validate` and [`flint script check`](scripting.md#checking-your-scripts) run, adds the codes of a script, each at a line and a column (`line` and `column` in the JSON):
 

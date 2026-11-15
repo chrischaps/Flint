@@ -33,6 +33,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use web_time::Instant;
 
+mod keyed;
+pub use keyed::KeyedPlay;
+
 /// `StaticSoundData::from_file`, read through the vfs: the bytes come from
 /// the active file source (the disk, or the web's bundle) and are decoded
 /// from memory. Not through kira's loader, which keeps a Vorbis stream's
@@ -251,12 +254,34 @@ struct OneShot {
     volume: f64,
     /// When a remote one has played out: the worklet reports no one-shots
     ends_at: Option<Instant>,
-    /// Stopped to make room. A local handle says `Playing` until the audio
-    /// thread reads the stop, which may be a buffer away.
+    /// Stopped to make room, or by its owner. A local handle says `Playing`
+    /// until the audio thread reads the stop, which may be a buffer away.
     stolen: bool,
+    /// The caller's key for it (a script's handle, #699), which
+    /// [`stop_keyed`](AudioEngine::stop_keyed) and
+    /// [`set_keyed_volume`](AudioEngine::set_keyed_volume) find it by.
+    key: Option<u64>,
+    /// Plays until stopped: never skipped for being out of earshot, never
+    /// stolen to make room.
+    looping: bool,
+    /// A fade to a new volume its owner asked for, which
+    /// [`pan_oneshots`](AudioEngine::pan_oneshots) follows.
+    ramp: Option<keyed::Ramp>,
 }
 
 impl OneShot {
+    /// Its volume now, before distance: along its ramp, if it has one.
+    fn volume_now(&mut self, now: Instant) -> f64 {
+        if let Some(ramp) = self.ramp {
+            let (volume, done) = ramp.at(now);
+            self.volume = volume;
+            if done {
+                self.ramp = None;
+            }
+        }
+        self.volume
+    }
+
     /// Heard, or about to be: not stolen, stopping or stopped.
     fn is_sounding(&self, now: Instant) -> bool {
         use kira::sound::PlaybackState::*;
@@ -305,6 +330,9 @@ pub struct AudioEngine {
     web_mixer: WebMixer,
     /// Placed one-shots that are playing, oldest first
     oneshots: Vec<OneShot>,
+    /// Sounds on a bus the caller keeps a key for (#699), oldest first;
+    /// the placed ones are in `oneshots`.
+    keyed: Vec<keyed::Keyed>,
     /// Where the listener was last put and which way it faces
     listener_position: Option<Vec3>,
     listener_orientation: glam::Quat,
@@ -369,6 +397,7 @@ impl AudioEngine {
             #[cfg(target_arch = "wasm32")]
             web_mixer: crate::worklet::requested(),
             oneshots: Vec::new(),
+            keyed: Vec::new(),
             listener_position: None,
             listener_orientation: glam::Quat::IDENTITY,
             skipped_oneshots: 0,
@@ -519,6 +548,7 @@ impl AudioEngine {
             if failed {
                 // The worklet's one-shots went with it.
                 self.oneshots.clear();
+                self.keyed.clear();
                 self.mixer = Mixer::Silent;
                 self.web_mixer = WebMixer::MainThread;
                 if self.start_local() {
@@ -1168,36 +1198,60 @@ impl AudioEngine {
         rolloff: f32,
         bus: Bus,
     ) -> Result<()> {
-        let sound_name = &*self.resolve_sound(sound_name);
-        self.ensure_decoded(sound_name)?;
         let falloff = Falloff {
             min: distances.0,
             max: distances.1,
             rolloff,
         };
-        if self.old_mix {
+        let play = KeyedPlay {
+            volume,
+            pitch,
+            looping: false,
+            bus,
+        };
+        self.place(sound_name, position, falloff, play, None)
+    }
+
+    /// Place a sound as a panned voice on its bus, steered each frame by
+    /// [`pan_oneshots`](Self::pan_oneshots): a one-shot when `key` is
+    /// `None`, else one its caller can stop or fade (#699), which never
+    /// takes the old mix (`?mix=old` has no handle in the worklet).
+    pub(crate) fn place(
+        &mut self,
+        sound_name: &str,
+        position: Vec3,
+        falloff: Falloff,
+        play: KeyedPlay,
+        key: Option<u64>,
+    ) -> Result<()> {
+        let sound_name = &*self.resolve_sound(sound_name);
+        self.ensure_decoded(sound_name)?;
+        let KeyedPlay {
+            volume,
+            pitch,
+            looping,
+            bus,
+        } = play;
+        if self.old_mix && key.is_none() {
             return self.play_oneshot_on_track(sound_name, position, volume, pitch, falloff, bus);
         }
         if !self.is_available() {
             return Err(flint_core::FlintError::AudioError("No audio device".into()));
         }
         // Past `max` it would be mixed in silence, at the full price of a
-        // voice.
-        if self.is_out_of_earshot(position, distances.1) {
+        // voice. A loop plays on, for when the listener comes nearer.
+        if !looping && self.is_out_of_earshot(position, falloff.max) {
             self.skipped_oneshots += 1;
             return Ok(());
         }
         let (gain, pan) = volume_and_pan(self.ears().gains(to_glam_vec3(position), &falloff));
-        let handle = self.play_panned(sound_name, volume * gain as f64, pan, pitch, false, bus)?;
+        let handle =
+            self.play_panned(sound_name, volume * gain as f64, pan, pitch, looping, bus)?;
         let now = Instant::now();
-        self.steal_beyond_cap(sound_name, now);
-        let ends_at = match &self.mixer {
-            Mixer::Remote(r) => r.sound(sound_name).ok().and_then(|id| {
-                let secs = r.lengths.get(&id)? / pitch.abs().max(1e-3);
-                Some(now + Duration::from_secs_f64(secs))
-            }),
-            _ => None,
-        };
+        if !looping {
+            self.steal_beyond_cap(sound_name, now);
+        }
+        let ends_at = self.remote_end(sound_name, pitch, looping, now);
         self.oneshots.push(OneShot {
             sound: sound_name.to_string(),
             handle,
@@ -1207,8 +1261,29 @@ impl AudioEngine {
             volume,
             ends_at,
             stolen: false,
+            key,
+            looping,
+            ramp: None,
         });
         Ok(())
+    }
+
+    /// When a sound started now in the remote mixer will have played out,
+    /// which that mixer doesn't say; `None` mixing here, or for a loop.
+    pub(crate) fn remote_end(
+        &self,
+        sound_name: &str,
+        pitch: f64,
+        looping: bool,
+        now: Instant,
+    ) -> Option<Instant> {
+        match &self.mixer {
+            Mixer::Remote(r) if !looping => r.sound(sound_name).ok().and_then(|id| {
+                let secs = r.lengths.get(&id)? / pitch.abs().max(1e-3);
+                Some(now + Duration::from_secs_f64(secs))
+            }),
+            _ => None,
+        }
     }
 
     /// A one-shot as before #138 (`?mix=old`): its own kira spatial track,
@@ -1256,6 +1331,9 @@ impl AudioEngine {
             volume,
             ends_at: None,
             stolen: false,
+            key: None,
+            looping: false,
+            ramp: None,
         });
         Ok(())
     }
@@ -1264,10 +1342,12 @@ impl AudioEngine {
     /// frame, after [`update_listener`](Self::update_listener).
     pub fn pan_oneshots(&mut self) {
         let ears = self.ears();
+        let now = Instant::now();
         for o in self.oneshots.iter_mut().filter(|o| o.track.is_none()) {
             let (gain, pan) = volume_and_pan(ears.gains(to_glam_vec3(o.position), &o.falloff));
+            let volume = o.volume_now(now);
             o.handle
-                .set_volume(amplitude_to_db(o.volume * gain as f64), FRAME_TWEEN);
+                .set_volume(amplitude_to_db(volume * gain as f64), FRAME_TWEEN);
             o.handle.set_panning(kira::Panning(pan), FRAME_TWEEN);
         }
     }
@@ -1297,7 +1377,7 @@ impl AudioEngine {
         let mut playing: Vec<&mut OneShot> = self
             .oneshots
             .iter_mut()
-            .filter(|o| o.sound == sound && o.is_sounding(now))
+            .filter(|o| o.sound == sound && !o.looping && o.is_sounding(now))
             .collect();
         let excess = (playing.len() + 1).saturating_sub(MAX_ONESHOTS_PER_SOUND);
         for oldest in playing.iter_mut().take(excess) {
@@ -1317,6 +1397,7 @@ impl AudioEngine {
     pub fn cleanup_finished_oneshots(&mut self) {
         let now = Instant::now();
         self.oneshots.retain(|o| !o.is_finished(now));
+        self.keyed.retain(|k| !k.is_finished(now));
     }
 
     /// What the mixer holds, for the perf readout: every voice and spatial
@@ -1340,7 +1421,7 @@ impl AudioEngine {
                 }
                 counts.voices += self.oneshots.iter().filter(|o| o.track.is_some()).count();
             }
-            Mixer::Remote(_) => counts.voices += self.oneshots.len(),
+            Mixer::Remote(_) => counts.voices += self.oneshots.len() + self.keyed.len(),
         }
         Some(counts)
     }

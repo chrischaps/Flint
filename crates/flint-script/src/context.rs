@@ -116,6 +116,39 @@ impl Default for MusicClock {
     }
 }
 
+/// How a script's sound plays (#699): `play_sound` / `play_sound_at`'s
+/// volume and pitch, and their opts map's `looping` and `bus`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SoundPlay {
+    /// 0..1.
+    pub volume: f64,
+    /// A playback-rate multiplier.
+    pub pitch: f64,
+    /// Plays until `stop_sound`, or the scene's end.
+    pub looping: bool,
+    /// The mixer bus by name: `sfx` (the default) or `music`.
+    pub bus: String,
+}
+
+impl Default for SoundPlay {
+    fn default() -> Self {
+        Self {
+            volume: 1.0,
+            pitch: 1.0,
+            looping: false,
+            bus: "sfx".into(),
+        }
+    }
+}
+
+/// Which sounds `stop_sound` stops: the one its handle names, or every one
+/// a script started by that name.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SoundRef {
+    Handle(u64),
+    Name(String),
+}
+
 /// Log severity levels
 #[derive(Debug, Clone)]
 pub enum LogLevel {
@@ -127,24 +160,37 @@ pub enum LogLevel {
 /// Deferred commands produced by scripts, processed by PlayerApp after script update
 #[derive(Debug, Clone)]
 pub enum ScriptCommand {
+    /// `play_sound`: `handle` is what it returned, for `stop_sound` and
+    /// `set_sound_volume` (#699).
     PlaySound {
+        handle: u64,
         name: String,
-        volume: f64,
-        pitch: f64,
+        play: SoundPlay,
     },
+    /// `play_sound_at`, with its handle as for `PlaySound`.
     PlaySoundAt {
+        handle: u64,
         name: String,
         position: (f64, f64, f64),
-        volume: f64,
-        pitch: f64,
+        play: SoundPlay,
         /// `(min, max)` metres from the listener; `None` is the engine's
         /// default (1 to 25).
         distances: Option<(f32, f32)>,
         /// The falloff curve between them; `None` is the engine's default.
         rolloff: Option<f32>,
     },
+    /// `stop_sound`: one sound by its handle, or every sound a script
+    /// started by that name, fading over `fade` seconds.
     StopSound {
-        name: String,
+        sound: SoundRef,
+        fade: f64,
+    },
+    /// `set_sound_volume`: fade a sound a script started to `volume` (0..1)
+    /// over `fade` seconds.
+    SetSoundVolume {
+        handle: u64,
+        volume: f64,
+        fade: f64,
     },
     FireEvent {
         name: String,

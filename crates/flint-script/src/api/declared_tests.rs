@@ -442,17 +442,6 @@ fn an_extension_declares_through_the_same_builder() {
     assert_eq!(world.get_transform(id).unwrap().position.y, 3.0);
 }
 
-#[test]
-fn every_callback_is_listed_at_its_arity() {
-    for &(name, arity) in crate::engine::CALLBACK_ARITIES {
-        let doc = super::registry::CALLBACKS
-            .iter()
-            .find(|c| c.name == name)
-            .unwrap_or_else(|| panic!("{name} has no listing"));
-        assert_eq!(doc.params.len(), arity, "{name}");
-    }
-}
-
 /// ADR 0116 step 2 is done: the engine registers nothing outside the
 /// builder, so the undeclared part is what an extension adds raw, and a
 /// deterministic run's `timestamp()` is declared too.

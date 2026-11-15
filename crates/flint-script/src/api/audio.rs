@@ -1,11 +1,34 @@
-//! The `audio` module: one-shot sounds, the music clock and the master
-//! low-pass (ADR 0116). The sounds are commands the host plays after the
-//! script batch.
+//! The `audio` module: sounds a script plays, stops and fades, the music
+//! clock and the master low-pass (ADR 0116). The sounds are commands the
+//! host plays after the script batch; each `play_sound*` returns a handle
+//! the script names it by later (#699).
 
-use super::builder::kind::{Any, Entity, Num, Str};
+use super::builder::kind::{Any, Entity, Int, Num, Str};
 use super::builder::{Call, CallResult, ScriptApi};
-use crate::context::ScriptCommand;
+use crate::context::{ScriptCallContext, ScriptCommand, SoundPlay, SoundRef};
 use rhai::Dynamic;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Handles for the sounds scripts start, never reused in a run (0 is none).
+static NEXT_SOUND_HANDLE: AtomicU64 = AtomicU64::new(1);
+
+/// The buses a script may name: the engine's two, until #730 makes buses
+/// data.
+const BUSES: &[&str] = &["sfx", "music"];
+
+/// What `play_sound`'s opts map takes, and `play_sound_at`'s.
+const PLAY_KEYS: &[&str] = &["volume", "pitch", "looping", "bus"];
+const PLACE_KEYS: &[&str] = &[
+    "volume",
+    "pitch",
+    "looping",
+    "bus",
+    "min_distance",
+    "max_distance",
+    "rolloff",
+];
+
+const HANDLE_NOTE: &str = "its handle, for stop_sound and set_sound_volume";
 
 pub(crate) fn register(api: &mut ScriptApi) {
     let mut m = api.module("audio");
@@ -15,15 +38,20 @@ pub(crate) fn register(api: &mut ScriptApi) {
         "Play a sound at full volume, not placed in the world.",
     )
     .arg("name", Str)
-    .run(|call, (name,)| play(call, &name, 1.0, 1.0));
+    .returns(Int, HANDLE_NOTE)
+    .run(|call, (name,)| play(call, &name, SoundPlay::default()));
 
     m.func(
         "play_sound",
-        "Play a sound at a volume (0..1), not placed in the world.",
+        "Play a sound, not placed in the world: a volume (0..1), or a map of any of volume, pitch, looping (until stop_sound), bus (sfx or music).",
     )
     .arg("name", Str)
-    .arg("volume", Num)
-    .run(|call, (name, volume)| play(call, &name, volume, 1.0));
+    .arg("volume_or_opts", Any)
+    .returns(Int, HANDLE_NOTE)
+    .run(|call, (name, last)| -> CallResult<i64> {
+        let opts = volume_or_opts(call, "play_sound", &last, PLAY_KEYS)?;
+        Ok(play(call, &name, opts.play))
+    });
 
     m.func(
         "play_sound",
@@ -32,35 +60,31 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("name", Str)
     .arg("volume", Num)
     .arg("pitch", Num)
-    .run(|call, (name, volume, pitch)| play(call, &name, volume, pitch));
+    .returns(Int, HANDLE_NOTE)
+    .run(|call, (name, volume, pitch)| {
+        let opts = SoundPlay {
+            volume,
+            pitch,
+            ..SoundPlay::default()
+        };
+        play(call, &name, opts)
+    });
 
     m.func(
         "play_sound_at",
-        "Play a sound at a point: a volume, or a map of any of volume, pitch, min_distance, max_distance, rolloff.",
+        "Play a sound at a point: a volume, or a map of any of volume, pitch, looping, bus, min_distance, max_distance, rolloff.",
     )
     .arg("name", Str)
     .arg("x", Num)
     .arg("y", Num)
     .arg("z", Num)
     .arg("volume_or_opts", Any)
-    .run(|call, (name, x, y, z, last)| -> CallResult<()> {
+    .returns(Int, HANDLE_NOTE)
+    .run(|call, (name, x, y, z, last)| -> CallResult<i64> {
         // One arity, two shapes: before the builder these were two
         // overloads, a float volume and an options map
-        let opts = if let Some(map) = last.read_lock::<rhai::Map>() {
-            SoundOpts::from_map(&map)
-        } else if let Some(volume) = number(&last) {
-            SoundOpts {
-                volume,
-                ..SoundOpts::default()
-            }
-        } else {
-            return Err(call.error(format_args!(
-                "argument `volume_or_opts` must be a number or a map of options, not {}",
-                last.type_name()
-            )));
-        };
-        play_at(call, &name, (x, y, z), opts);
-        Ok(())
+        let opts = volume_or_opts(call, "play_sound_at", &last, PLACE_KEYS)?;
+        Ok(play_at(call, &name, (x, y, z), opts))
     });
 
     m.func(
@@ -73,22 +97,50 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("z", Num)
     .arg("volume", Num)
     .arg("pitch", Num)
+    .returns(Int, HANDLE_NOTE)
     .run(|call, (name, x, y, z, volume, pitch)| {
         let opts = SoundOpts {
-            volume,
-            pitch,
+            play: SoundPlay {
+                volume,
+                pitch,
+                ..SoundPlay::default()
+            },
             ..SoundOpts::default()
         };
-        play_at(call, &name, (x, y, z), opts);
+        play_at(call, &name, (x, y, z), opts)
     });
 
-    m.func("stop_sound", "Stop a playing sound.")
-        .arg("name", Str)
-        .run(|call, (name,)| {
-            call.ctx().commands.push(ScriptCommand::StopSound {
-                name: name.to_string(),
-            });
-        });
+    m.func(
+        "stop_sound",
+        "Stop a sound a script started: its handle, or a name for every one playing it.",
+    )
+    .arg("sound", Any)
+    .run(|call, (sound,)| stop(call, &sound, 0.0));
+
+    m.func(
+        "stop_sound",
+        "Stop a sound a script started (a handle or a name), fading out over seconds.",
+    )
+    .arg("sound", Any)
+    .arg("fade", Num)
+    .run(|call, (sound, fade)| stop(call, &sound, fade));
+
+    m.func(
+        "set_sound_volume",
+        "Set the volume (0..1) of a sound a script started, by its handle.",
+    )
+    .arg("handle", Int)
+    .arg("volume", Num)
+    .run(|call, (h, volume)| set_volume(call, h, volume, 0.0));
+
+    m.func(
+        "set_sound_volume",
+        "Fade a sound a script started to a volume (0..1) over seconds, by its handle.",
+    )
+    .arg("handle", Int)
+    .arg("volume", Num)
+    .arg("fade", Num)
+    .run(|call, (h, volume, fade)| set_volume(call, h, volume, fade));
 
     m.func(
         "audio_position",
@@ -125,23 +177,99 @@ pub(crate) fn register(api: &mut ScriptApi) {
     });
 }
 
-fn play(call: &mut Call<'_>, name: &str, volume: f64, pitch: f64) {
-    call.ctx().commands.push(ScriptCommand::PlaySound {
-        name: name.to_string(),
-        volume,
-        pitch,
-    });
+fn next_handle() -> u64 {
+    NEXT_SOUND_HANDLE.fetch_add(1, Ordering::Relaxed)
 }
 
-fn play_at(call: &mut Call<'_>, name: &str, position: (f64, f64, f64), o: SoundOpts) {
+fn play(call: &mut Call<'_>, name: &str, play: SoundPlay) -> i64 {
+    let handle = next_handle();
+    call.ctx().commands.push(ScriptCommand::PlaySound {
+        handle,
+        name: name.to_string(),
+        play,
+    });
+    handle as i64
+}
+
+fn play_at(call: &mut Call<'_>, name: &str, position: (f64, f64, f64), o: SoundOpts) -> i64 {
+    let handle = next_handle();
     call.ctx().commands.push(ScriptCommand::PlaySoundAt {
+        handle,
         name: name.to_string(),
         position,
-        volume: o.volume,
-        pitch: o.pitch,
+        play: o.play,
         distances: o.distances,
         rolloff: o.rolloff,
     });
+    handle as i64
+}
+
+/// `stop_sound`'s first argument: a handle (an int) or a sound's name.
+fn stop(call: &mut Call<'_>, sound: &Dynamic, fade: f64) -> CallResult<()> {
+    let sound = if let Ok(h) = sound.as_int() {
+        SoundRef::Handle(h.max(0) as u64)
+    } else if let Some(name) = sound.read_lock::<rhai::ImmutableString>() {
+        SoundRef::Name(name.to_string())
+    } else {
+        return Err(call.error(format_args!(
+            "argument `sound` must be a handle from play_sound or a sound's name, not {}",
+            sound.type_name()
+        )));
+    };
+    call.ctx().commands.push(ScriptCommand::StopSound {
+        sound,
+        fade: fade.max(0.0),
+    });
+    Ok(())
+}
+
+fn set_volume(call: &mut Call<'_>, handle: i64, volume: f64, fade: f64) {
+    call.ctx().commands.push(ScriptCommand::SetSoundVolume {
+        handle: handle.max(0) as u64,
+        volume: volume.max(0.0),
+        fade: fade.max(0.0),
+    });
+}
+
+/// The last argument of `play_sound` / `play_sound_at`: a volume, or an
+/// opts map of `keys`, whose problems warn once per function and key.
+fn volume_or_opts(
+    call: &mut Call<'_>,
+    func: &'static str,
+    last: &Dynamic,
+    keys: &[&str],
+) -> CallResult<SoundOpts> {
+    if let Some(map) = last.read_lock::<rhai::Map>() {
+        let (opts, problems) = SoundOpts::from_map(&map, keys);
+        for p in problems {
+            warn_opts(call.ctx(), func, p);
+        }
+        Ok(opts)
+    } else if let Some(volume) = number(last) {
+        Ok(SoundOpts {
+            play: SoundPlay {
+                volume,
+                ..SoundPlay::default()
+            },
+            ..SoundOpts::default()
+        })
+    } else {
+        Err(call.error(format_args!(
+            "argument `volume_or_opts` must be a number or a map of options, not {}",
+            last.type_name()
+        )))
+    }
+}
+
+fn warn_opts(c: &mut ScriptCallContext, func: &'static str, p: OptsProblem) {
+    if !c.opts_warned.insert((func, p.key.clone())) {
+        return;
+    }
+    tracing::warn!(
+        "{func}: opts key \"{}\" {}; ignored. Warned once for this function and key",
+        p.key,
+        p.why
+    );
 }
 
 /// An int or a float.
@@ -151,39 +279,71 @@ fn number(v: &Dynamic) -> Option<f64> {
         .or_else(|| v.as_int().ok().map(|i| i as f64))
 }
 
-/// Parsed `play_sound_at` option map. Every key is optional: full volume,
-/// normal pitch, and the engine's falloff. Naming only one distance keeps
-/// the engine's default (1 or 25) for the other.
+/// A key of a sound's opts map that was ignored, and why.
 #[derive(Debug, Clone, PartialEq)]
+pub(crate) struct OptsProblem {
+    pub key: String,
+    pub why: String,
+}
+
+/// Parsed `play_sound` / `play_sound_at` option map. Every key is
+/// optional: full volume, normal pitch, once, on `sfx`, and the engine's
+/// falloff. Naming only one distance keeps the engine's default (1 or 25)
+/// for the other.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct SoundOpts {
-    pub volume: f64,
-    pub pitch: f64,
+    pub play: SoundPlay,
     pub distances: Option<(f32, f32)>,
     pub rolloff: Option<f32>,
 }
 
-impl Default for SoundOpts {
-    fn default() -> Self {
-        Self {
-            volume: 1.0,
-            pitch: 1.0,
-            distances: None,
-            rolloff: None,
-        }
-    }
-}
-
 impl SoundOpts {
-    pub(crate) fn from_map(opts: &rhai::Map) -> Self {
-        let get = |k: &str| opts.get(k).and_then(number).map(|v| v as f32);
-        let (min, max) = (get("min_distance"), get("max_distance"));
-        Self {
-            volume: get("volume").map_or(1.0, f64::from),
-            pitch: get("pitch").map_or(1.0, f64::from),
-            distances: (min.is_some() || max.is_some())
-                .then(|| (min.unwrap_or(1.0), max.unwrap_or(25.0))),
-            rolloff: get("rolloff"),
+    /// The options `opts` gives of `keys`, and what it got wrong: a key not
+    /// in `keys` (`loop` is a Rhai keyword, so the key is `looping`), a
+    /// value of the wrong shape, a bus that isn't one.
+    pub(crate) fn from_map(opts: &rhai::Map, keys: &[&str]) -> (Self, Vec<OptsProblem>) {
+        let mut problems = Vec::new();
+        let mut problem = |key: &str, why: String| {
+            problems.push(OptsProblem {
+                key: key.to_string(),
+                why,
+            })
+        };
+        let mut o = Self::default();
+        let (mut min, mut max) = (None, None);
+        for (key, value) in opts {
+            let key = key.as_str();
+            if !keys.contains(&key) {
+                problem(key, format!("is not one it takes ({})", keys.join(", ")));
+                continue;
+            }
+            match key {
+                "looping" => match value.as_bool() {
+                    Ok(b) => o.play.looping = b,
+                    Err(_) => problem(key, "should be true or false".into()),
+                },
+                "bus" => match value.read_lock::<rhai::ImmutableString>() {
+                    Some(bus) if BUSES.contains(&bus.as_str()) => o.play.bus = bus.to_string(),
+                    _ => problem(key, format!("should be one of {}", BUSES.join(", "))),
+                },
+                _ => {
+                    let Some(v) = number(value) else {
+                        problem(key, "should be a number".into());
+                        continue;
+                    };
+                    match key {
+                        "volume" => o.play.volume = v,
+                        "pitch" => o.play.pitch = v,
+                        "min_distance" => min = Some(v as f32),
+                        "max_distance" => max = Some(v as f32),
+                        _ => o.rolloff = Some(v as f32),
+                    }
+                }
+            }
         }
+        o.distances =
+            (min.is_some() || max.is_some()).then(|| (min.unwrap_or(1.0), max.unwrap_or(25.0)));
+        (o, problems)
     }
 }
 
@@ -245,16 +405,13 @@ mod tests {
                 ScriptCommand::PlaySoundAt {
                     name,
                     position,
-                    volume,
-                    pitch,
+                    play,
                     distances,
                     ..
-                } => (name, position, volume, pitch, distances),
-                ScriptCommand::PlaySound {
-                    name,
-                    volume,
-                    pitch,
-                } => (name, (0.0, 0.0, 0.0), volume, pitch, None),
+                } => (name, position, play.volume, play.pitch, distances),
+                ScriptCommand::PlaySound { name, play, .. } => {
+                    (name, (0.0, 0.0, 0.0), play.volume, play.pitch, None)
+                }
                 other => panic!("{other:?}"),
             })
             .collect();
@@ -268,5 +425,116 @@ mod tests {
                 ("e".into(), (0.0, 0.0, 0.0), 1.0, 1.0, None),
             ]
         );
+    }
+
+    /// #699: a sound a script starts comes back as a handle, which stops
+    /// it, fades it and sets its volume; a name stops every one by that
+    /// name; and the opts map loops it and picks its bus.
+    #[test]
+    fn a_handle_from_play_sound_stops_and_fades_it() {
+        use crate::context::{SoundPlay, SoundRef};
+        let engine = ScriptEngine::new();
+        let handles: rhai::Array = engine
+            .rhai_engine()
+            .eval(
+                r#"
+                let hum = play_sound("hum", #{ looping: true, bus: "music", volume: 0.5 });
+                let tap = play_sound_at("tap", 1, 2, 3, #{ looping: true, max_distance: 40 });
+                let once = play_sound("ding");
+                set_sound_volume(hum, 0.2, 1.5);
+                set_sound_volume(tap, 0);
+                stop_sound(hum, 2);
+                stop_sound(tap);
+                stop_sound("ding", 0.25);
+                [hum, tap, once]
+                "#,
+            )
+            .unwrap();
+        let h: Vec<u64> = handles.iter().map(|d| d.as_int().unwrap() as u64).collect();
+        assert!(
+            h[0] > 0 && h[1] > h[0] && h[2] > h[1],
+            "fresh handles: {h:?}"
+        );
+        let cmds = std::mem::take(&mut engine.ctx.lock().unwrap().commands);
+        let hum = SoundPlay {
+            volume: 0.5,
+            looping: true,
+            bus: "music".into(),
+            ..SoundPlay::default()
+        };
+        let tap = SoundPlay {
+            looping: true,
+            ..SoundPlay::default()
+        };
+        assert!(matches!(&cmds[0],
+            ScriptCommand::PlaySound { handle, name, play }
+                if *handle == h[0] && name == "hum" && *play == hum));
+        assert!(matches!(&cmds[1],
+            ScriptCommand::PlaySoundAt { handle, play, distances, .. }
+                if *handle == h[1] && *play == tap && *distances == Some((1.0, 40.0))));
+        assert!(matches!(&cmds[2],
+            ScriptCommand::PlaySound { handle, play, .. }
+                if *handle == h[2] && *play == SoundPlay::default()));
+        let rest: Vec<String> = cmds[3..].iter().map(|c| format!("{c:?}")).collect();
+        assert_eq!(
+            rest,
+            [
+                format!(
+                    "SetSoundVolume {{ handle: {}, volume: 0.2, fade: 1.5 }}",
+                    h[0]
+                ),
+                format!(
+                    "SetSoundVolume {{ handle: {}, volume: 0.0, fade: 0.0 }}",
+                    h[1]
+                ),
+                format!(
+                    "StopSound {{ sound: {:?}, fade: 2.0 }}",
+                    SoundRef::Handle(h[0])
+                ),
+                format!(
+                    "StopSound {{ sound: {:?}, fade: 0.0 }}",
+                    SoundRef::Handle(h[1])
+                ),
+                format!(
+                    "StopSound {{ sound: {:?}, fade: 0.25 }}",
+                    SoundRef::Name("ding".into())
+                ),
+            ]
+        );
+        let err = engine
+            .rhai_engine()
+            .run("stop_sound(#{})")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("stop_sound") && err.contains("handle"),
+            "{err}"
+        );
+    }
+
+    /// A wrong key (`loop` is Rhai's keyword: the key is `looping`), a
+    /// wrong shape or an unknown bus is ignored with a warning, once per
+    /// function and key; the rest of the map still counts.
+    #[test]
+    fn sound_opts_name_what_they_ignore() {
+        use super::{SoundOpts, PLACE_KEYS, PLAY_KEYS};
+        let engine = ScriptEngine::new();
+        let map: rhai::Map = engine
+            .rhai_engine()
+            .eval(r#"#{ "loop": true, looping: 1, bus: "voice", pitch: 2, max_distance: 9 }"#)
+            .unwrap();
+        let (o, problems) = SoundOpts::from_map(&map, PLAY_KEYS);
+        assert_eq!(o.play.pitch, 2.0);
+        assert!(!o.play.looping && o.play.bus == "sfx" && o.distances.is_none());
+        let mut keys: Vec<&str> = problems.iter().map(|p| p.key.as_str()).collect();
+        keys.sort();
+        assert_eq!(keys, ["bus", "loop", "looping", "max_distance"]);
+        let (o, problems) = SoundOpts::from_map(&map, PLACE_KEYS);
+        assert_eq!(o.distances, Some((1.0, 9.0)));
+        assert_eq!(problems.len(), 3, "max_distance is play_sound_at's");
+
+        let warn = r#"play_sound("a", #{ "loop": true }); play_sound("b", #{ "loop": true });"#;
+        engine.rhai_engine().run(warn).unwrap();
+        assert_eq!(engine.ctx.lock().unwrap().opts_warned.len(), 1, "once");
     }
 }

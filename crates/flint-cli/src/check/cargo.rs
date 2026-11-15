@@ -19,6 +19,11 @@
 //! lacks or points somewhere else, with the line to add. A project with no
 //! `Cargo.toml`, or the engine's own checkout, gets nothing.
 //!
+//! [`lock`] reads the same workspace's `Cargo.lock` for the one split a
+//! lock written under an older engine carries forward (#995): gpu-allocator
+//! on a different `windows` crate from wgpu-hal's, which breaks wgpu-hal's
+//! dx12 backend on Windows.
+//!
 //! Read from the disk: a bundle packs no `Cargo.toml`, so `flint bundle`
 //! never asks.
 
@@ -38,18 +43,9 @@ const DEPENDENCY_TABLES: &[&str] = &[
 /// What is wrong with the `[patch.crates-io]` of the workspace that builds
 /// the project at `project_root`, as warnings on its root `Cargo.toml`.
 pub fn patches(project_root: &Path) -> Vec<Diagnostic> {
-    let Some(start) = absolute(project_root) else {
+    let Some((project_root, manifest, root_dir, root)) = workspace(project_root) else {
         return Vec::new();
     };
-    // The package the project is in: its folder's Cargo.toml, or the
-    // nearest one above (a project in a crate's subfolder)
-    let Some((project_root, manifest)) = start
-        .ancestors()
-        .find_map(|dir| read_toml(&dir.join("Cargo.toml")).map(|m| (dir.to_path_buf(), m)))
-    else {
-        return Vec::new();
-    };
-    let (root_dir, root) = workspace_root(&project_root, manifest.clone());
 
     // Every path dependency the workspace names: in its root, the project's
     // own manifest, and the members the root lists by name
@@ -117,6 +113,132 @@ pub fn patches(project_root: &Path) -> Vec<Diagnostic> {
         }
     }
     found
+}
+
+/// Whether the workspace's `Cargo.lock` hands wgpu-hal's D3D12 objects to a
+/// gpu-allocator built on a different `windows` crate (#995), as a warning
+/// on the lock with the `cargo update` that mends it.
+///
+/// wgpu-hal 30 asks for `windows = "0.62"` and gpu-allocator 0.28 for
+/// `windows = ">=0.53, <=0.62"`. When cargo moves a lock written under an
+/// older engine forward, it keeps a `windows` the lock already holds for
+/// gpu-allocator (wgpu-hal 23's 0.58, or cpal's 0.54), and wgpu-hal's dx12
+/// backend then fails to compile with ten errors (``expected
+/// `ID3D12Device`, found a different `ID3D12Device` ``), on Windows only.
+/// The lock says exactly what each package was given, so the check is
+/// exact: no lock, no gpu-allocator, or one `windows` for both, and it says
+/// nothing. Unlocking every other `windows` leaves wgpu-hal's the only
+/// locked one in gpu-allocator's range, which cargo then picks; each other
+/// user of an unlocked one keeps its own minor version.
+pub fn lock(project_root: &Path) -> Vec<Diagnostic> {
+    let Some((_, _, root_dir, _)) = workspace(project_root) else {
+        return Vec::new();
+    };
+    let lock_path = root_dir.join("Cargo.lock");
+    let Some(lock) = read_toml(&lock_path) else {
+        return Vec::new();
+    };
+    let packages: Vec<Locked> = lock
+        .get("package")
+        .and_then(|p| p.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(Locked::from_toml)
+        .collect();
+
+    let mut found = Vec::new();
+    for hal in packages.iter().filter(|p| p.name == "wgpu-hal") {
+        let Some(allocator) = hal.dependency(&packages, "gpu-allocator") else {
+            continue;
+        };
+        let (Some(hal_windows), Some(allocator_windows)) = (
+            hal.dependency(&packages, "windows"),
+            allocator.dependency(&packages, "windows"),
+        ) else {
+            continue;
+        };
+        if hal_windows.version == allocator_windows.version {
+            continue;
+        }
+        let unlock: Vec<String> = packages
+            .iter()
+            .filter(|p| p.name == "windows" && p.version != hal_windows.version)
+            .map(|p| format!("-p windows@{}", p.version))
+            .collect();
+        let command = format!("cargo update {}", unlock.join(" "));
+        found.push(
+            Diagnostic::warning(
+                codes::STALE_CARGO_LOCK,
+                format!(
+                    "Cargo.lock gives wgpu-hal {} `windows {}` and its gpu-allocator {} \
+                     `windows {}`, a lock moved forward from an older engine: on Windows \
+                     wgpu-hal fails to compile with \"expected `ID3D12Device`, found a \
+                     different `ID3D12Device`\"",
+                    hal.version, hal_windows.version, allocator.version, allocator_windows.version
+                ),
+            )
+            .file(&lock_path)
+            .field(format!("package.gpu-allocator@{}", allocator.version))
+            .hint(format!(
+                "run `{command}` in this workspace's root: it moves gpu-allocator onto \
+                 wgpu-hal's `windows {}` and keeps the rest of the lock \
+                 (book: Upgrading the Engine, Cargo)",
+                hal_windows.version
+            )),
+        );
+    }
+    found
+}
+
+/// One `[[package]]` of a `Cargo.lock`: its name, version and dependencies
+/// as the lock spells them (`"windows"` when the lock holds one version of
+/// it, `"windows 0.58.0"` when it holds several).
+struct Locked {
+    name: String,
+    version: String,
+    dependencies: Vec<String>,
+}
+
+impl Locked {
+    fn from_toml(package: &toml::Value) -> Option<Self> {
+        Some(Self {
+            name: package.get("name")?.as_str()?.to_string(),
+            version: package.get("version")?.as_str()?.to_string(),
+            dependencies: package
+                .get("dependencies")
+                .and_then(|d| d.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|d| d.as_str().map(str::to_string))
+                .collect(),
+        })
+    }
+
+    /// The locked package this one depends on by `name`.
+    fn dependency<'a>(&self, packages: &'a [Locked], name: &str) -> Option<&'a Locked> {
+        let spelled = self
+            .dependencies
+            .iter()
+            .find(|d| d.split(' ').next() == Some(name))?;
+        let mut named = packages.iter().filter(|p| p.name == name);
+        match spelled.split(' ').nth(1) {
+            Some(version) => named.find(|p| p.version == version),
+            // No version: the lock holds just the one
+            None => named.next(),
+        }
+    }
+}
+
+/// The package the project is in (its folder's `Cargo.toml`, or the
+/// nearest one above, for a project in a crate's subfolder) and the root of
+/// the workspace it builds in: `(package dir, manifest, root dir, root)`.
+fn workspace(project_root: &Path) -> Option<(PathBuf, toml::Value, PathBuf, toml::Value)> {
+    let start = absolute(project_root)?;
+    let (project_root, manifest) = start
+        .ancestors()
+        .find_map(|dir| read_toml(&dir.join("Cargo.toml")).map(|m| (dir.to_path_buf(), m)))?;
+    let (root_dir, root) = workspace_root(&project_root, manifest.clone());
+    Some((project_root, manifest, root_dir, root))
 }
 
 /// The root of the workspace the package at `dir` builds in, and its
@@ -392,6 +514,106 @@ mod tests {
         let hint = found[1].hint.as_deref().unwrap();
         assert!(hint.contains("/flint/vendor/static-dxc\" }"), "{hint}");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A lock's `[[package]]` entry.
+    fn locked(name: &str, version: &str, deps: &[&str]) -> String {
+        let deps: Vec<String> = deps.iter().map(|d| format!(" \"{d}\",\n")).collect();
+        format!(
+            "[[package]]\nname = \"{name}\"\nversion = \"{version}\"\n\
+             dependencies = [\n{}]\n\n",
+            deps.concat()
+        )
+    }
+
+    /// The Capitol's lock at eafbec68 once cargo moved it to wgpu 30 (#995):
+    /// gpu-allocator kept wgpu-hal 23's `windows 0.58.0`, cpal holds 0.54.
+    fn stale_lock(allocator_windows: &str) -> String {
+        [
+            locked("cpal", "0.16.0", &["windows 0.54.0"]),
+            locked("gpu-allocator", "0.28.0", &["log", allocator_windows]),
+            locked(
+                "wgpu-hal",
+                "30.0.2",
+                &["gpu-allocator", "windows 0.62.2", "windows-core 0.62.2"],
+            ),
+            locked("windows", "0.54.0", &[]),
+            locked("windows", "0.58.0", &[]),
+            locked("windows", "0.62.2", &[]),
+        ]
+        .concat()
+    }
+
+    #[test]
+    fn a_lock_that_splits_windows_is_told_the_update_that_mends_it() {
+        let game = scratch("stale-lock");
+        engine(&game.join("engine"));
+        write(&game.join("Cargo.toml"), GAME);
+        write(&game.join("Cargo.lock"), &stale_lock("windows 0.58.0"));
+        let found = lock(&game);
+        assert_eq!(found.len(), 1, "{found:?}");
+        let warning = &found[0];
+        assert_eq!(warning.code, codes::STALE_CARGO_LOCK);
+        assert!(
+            warning.message.contains("found a different `ID3D12Device`"),
+            "{}",
+            warning.message
+        );
+        assert!(
+            warning.message.contains("`windows 0.62.2`")
+                && warning.message.contains("`windows 0.58.0`"),
+            "{}",
+            warning.message
+        );
+        // Every windows but wgpu-hal's, so cargo can't pick cpal's 0.54
+        // for gpu-allocator either (what `cargo update -p gpu-allocator` does)
+        assert!(
+            warning
+                .hint
+                .as_deref()
+                .unwrap()
+                .contains("`cargo update -p windows@0.54.0 -p windows@0.58.0`"),
+            "{:?}",
+            warning.hint
+        );
+        assert!(warning
+            .file
+            .as_ref()
+            .unwrap()
+            .to_string_lossy()
+            .ends_with("Cargo.lock"));
+        let _ = fs::remove_dir_all(&game);
+    }
+
+    #[test]
+    fn a_lock_with_one_windows_for_both_or_none_is_clean() {
+        let game = scratch("good-lock");
+        engine(&game.join("engine"));
+        write(&game.join("Cargo.toml"), GAME);
+        assert!(lock(&game).is_empty(), "no lock yet");
+        write(&game.join("Cargo.lock"), &stale_lock("windows 0.62.2"));
+        assert!(lock(&game).is_empty());
+        // A lock with a single windows spells the dependency without a
+        // version; the engine's own is like that apart from cpal's
+        write(
+            &game.join("Cargo.lock"),
+            &[
+                locked("gpu-allocator", "0.28.0", &["windows"]),
+                locked("wgpu-hal", "30.0.2", &["gpu-allocator", "windows"]),
+                locked("windows", "0.62.2", &[]),
+            ]
+            .concat(),
+        );
+        assert!(lock(&game).is_empty());
+        let _ = fs::remove_dir_all(&game);
+    }
+
+    /// The lock a game seeded from `engine/Cargo.lock` starts with.
+    #[test]
+    fn the_engines_own_lock_is_clean() {
+        let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        assert!(read_toml(&engine.join("Cargo.lock")).is_some());
+        assert!(lock(&engine).is_empty(), "{:?}", lock(&engine));
     }
 
     /// The engine's own checkout, and a project with no Cargo.toml.
