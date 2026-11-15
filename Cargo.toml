@@ -353,6 +353,14 @@ opt-level = 3
 # workflow (tools/dxc-static), in place of crates.io's crate and its
 # prebuilt from a 2023 fork. Not a temporary patch: keep it while Flint
 # links DXC.
+#
+# cargo reads [patch] only from the root of the workspace it builds, so a
+# game whose own workspace builds engine crates names both lines too, with
+# paths into its engine/ (#982; book: Upgrading the Engine). flint-render
+# asks for exactly vendor/static-dxc's version, which crates.io doesn't
+# have, so a game without the line stops in cargo's resolver and never
+# links mach's prebuilt. `flint check` on a game names any line it lacks
+# (`missing-cargo-patch`).
 [patch.crates-io]
 egui-winit = { path = "vendor/egui-winit" }
 mach-dxcompiler-rs = { path = "vendor/static-dxc" }

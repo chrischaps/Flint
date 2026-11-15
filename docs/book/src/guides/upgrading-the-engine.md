@@ -20,13 +20,39 @@ A game made only of scenes, scripts, schemas and user styles (`.shader.toml` and
 A game with Rust of its own ports the parts that call wgpu or egui:
 
 - a `PlayerExtension` that draws egui UI ([the game UI hook](#the-game-ui-hook) and [egui 0.30 to 0.36](#egui-030-to-036));
-- a Rust style built on `stylize::kit`, or a renderer or window of its own ([wgpu 23 to 30](#wgpu-23-to-30), [WGSL](#wgsl) and [Flint's shaders are trusted code](#flints-shaders-are-trusted-code)).
+- a Rust style built on `stylize::kit`, or a renderer or window of its own ([wgpu 23 to 30](#wgpu-23-to-30), [WGSL](#wgsl) and [Flint's shaders are trusted code](#flints-shaders-are-trusted-code));
+- and every game binary, whatever it calls: its `Cargo.toml` names the engine's patches ([Cargo](#cargo)), or it doesn't build.
 
-**Cargo.** Name the same versions as the engine (`wgpu = "30.0.2"`, `egui = "0.36.2"`) or take them from the engine's workspace. A subtree game that builds for the web also adds the engine's patched egui-winit to its workspace root's `Cargo.toml`, which adds the one function the web build needs:
+#### Cargo
+
+Name the same versions as the engine (`wgpu = "30.0.2"`, `egui = "0.36.2"`) or take them from the engine's workspace.
+
+A game whose own workspace builds engine crates (any game binary, with the engine at `engine/`) also names the engine's two patches in its workspace root's `Cargo.toml`, **on every platform**. cargo applies `[patch]` only from the root of the workspace it builds, so the engine's own lines don't reach a game's build ([#982](https://github.com/chrischaps/Flint/issues/982)):
 
 ```toml
 [patch.crates-io]
+mach-dxcompiler-rs = { path = "engine/vendor/static-dxc" }
 egui-winit = { path = "engine/vendor/egui-winit" }
+```
+
+- **`mach-dxcompiler-rs`** is Flint's static DXC ([#947](https://github.com/chrischaps/Flint/issues/947)), the DX12 shader compiler linked into every Windows build. flint-render asks for exactly its version, `=0.1.947`, which crates.io doesn't have. Without the line cargo stops before it builds anything, on Linux and macOS too:
+
+  ```
+  error: failed to select a version for the requirement `mach-dxcompiler-rs = "=0.1.947"`
+  candidate versions found which didn't match: 0.1.7+2026.10.26-141dd7f.1, 0.1.6+2026.09.16-48d5a66.1, ...
+  location searched: crates.io index
+  required by package `flint-render v0.1.0 (...\engine\crates\flint-render)`
+  ```
+
+  So a game never builds crates.io's mach-dxcompiler-rs (mach's prebuilt DXC, fetched through GitHub's API on every clean build) in Flint's place, and no adapter line names a DXC the game doesn't carry. With the line, the first build on a machine fetches Flint's archive once into `%LOCALAPPDATA%\flint\static-dxc`, and later builds work offline.
+- **`egui-winit`** adds the one function the web build needs ([#945](https://github.com/chrischaps/Flint/issues/945)). A native build compiles without it.
+
+`flint check` on the game warns about each line its root lacks or points elsewhere (`missing-cargo-patch`), with the line to add. Paths are from the root's folder: a root beside `engine/` writes `engine/vendor/...`.
+
+A new game, or one whose `Cargo.lock` has no `mach-dxcompiler-rs` in it (written with an engine from before #947), needs nothing more: the line is all. A lockfile that already holds crates.io's copy (written by a build of an engine from between #947 and #982) makes cargo say ``failed to select a version for `mach-dxcompiler-rs` `` and ``locked to 0.1.7+2026.10.26-141dd7f.1`` once the line is in. Unlock it once:
+
+```bash
+cargo update -p mach-dxcompiler-rs
 ```
 
 ### egui 0.30 to 0.36
@@ -59,35 +85,52 @@ A game that took `root_ui(&mut egui::Ui)`, the hook #946 added for panels before
 
 Don't show a `CentralPanel` from `ui`. It covers the whole window and takes every click from the game.
 
-The renames Flint's own code needed, checked against egui 0.36.2:
+The renames Flint's own code and The Capitol's client needed, checked against the egui 0.36.2 and egui_plot 0.37.0 sources, with each 0.36 form compiled against them. It's what two codebases hit, not every change in six releases: for a name it lacks, egui's [CHANGELOG](https://github.com/emilk/egui/blob/main/CHANGELOG.md) has a migration guide for each release from 0.31 to 0.36. rustc's "no method named" or "cannot find function" for a removed function doesn't name its replacement.
 
 | egui 0.30 | egui 0.36 |
 |---|---|
 | `ctx.run(input, \|ctx\| ..)` | `ctx.run_ui(input, \|ui\| ..)`; the closure gets the root `Ui` (`ui.ctx()` for the context). In a test, `flint_debug_ui::run_headless_frame(ctx, input, \|ui\| ..)` |
-| `SidePanel::left(id)`, `TopBottomPanel::top(id)` | `Panel::left(id)`, `Panel::top(id)` (and `right`, `bottom`), `.show(ui, ..)` |
+| `SidePanel::left(id)`, `TopBottomPanel::top(id)` | `Panel::left(id)`, `Panel::top(id)` (and `right`, `bottom`), `.show(ui, ..)`. A helper that took `&egui::Context` to show a panel takes `&mut egui::Ui` |
 | a panel's `default_width` / `default_height`, `min_`, `max_`, `exact_width` / `_height`, `width_range` / `height_range` | `default_size`, `min_size`, `max_size`, `exact_size`, `size_range` |
 | a panel's `show_animated(ctx, open, ..)` | `show_collapsible(ui, &mut open, ..)` |
 | `CentralPanel::default().show(ctx, ..)` | `CentralPanel::default().show(ui, ..)` |
 | `ctx.style()`, `ctx.set_style(..)`, `ctx.style_mut(..)` | `ctx.global_style()`, `ctx.set_global_style(..)`, `ctx.global_style_mut(..)` |
 | `ctx.screen_rect()`, `i.screen_rect()` | `ctx.content_rect()`, `i.content_rect()` |
-| `ctx.available_rect()` | none on the context: in `root_ui`, `ui.available_rect_before_wrap()` |
+| `ctx.available_rect()` | none on the context: in the `ui` hook, `ui.available_rect_before_wrap()` |
 | `ctx.fonts(\|f\| f.layout_no_wrap(..))` | `ctx.fonts_mut(\|f\| f.layout_no_wrap(..))`; laying text out needs the mutable view, and `fonts` reads only |
 | `ui.output_mut(\|o\| o.copied_text = text)` | `ui.ctx().copy_text(text)` |
 | `Frame::none()` | `Frame::NONE` |
-| `.rounding(r)`, `Rounding` | `.corner_radius(r)`, `CornerRadius` (a `u8` a corner) |
-| `Margin::same(10.0)`, `Margin::symmetric(12.0, 8.0)` | `Margin::same(10)`, `Margin::symmetric(12, 8)` (an `i8` a side) |
-| `painter.rect_stroke(rect, radius, stroke)` | `painter.rect_stroke(rect, radius, stroke, egui::StrokeKind::Middle)`; `Middle` is 0.30's placement |
+| `.rounding(r)`, `Rounding` | `.corner_radius(r)`, `CornerRadius` (a `u8` a corner). `Rounding` is gone, alias and all |
+| `Rounding { nw: 3.0, ne: 3.0, sw: 0.0, se: 0.0 }`, `Rounding::same(12.0)` | `CornerRadius { nw: 3, ne: 3, sw: 0, se: 0 }`, `CornerRadius::same(12)`. For `f32` corners, `egui::epaint::CornerRadiusF32 { nw: top, ne: top, sw: 3.0, se: 3.0 }`, which converts wherever a `CornerRadius` is taken |
+| `Visuals`' `window_rounding` and `menu_rounding`, `WidgetVisuals`' `rounding` (fields: `v.widgets.inactive.rounding = r`) | `window_corner_radius`, `menu_corner_radius`, `corner_radius` (`v.widgets.inactive.corner_radius = CornerRadius::same(6)`) |
+| `Margin::same(10.0)`, `Margin::symmetric(12.0, 8.0)` | `Margin::same(10)`, `Margin::symmetric(12, 8)` (an `i8` a side, in a `Margin { right: 10, ..Default::default() }` literal too) |
+| `Shadow { offset: vec2(0.0, 4.0), blur: 8.0, spread: 0.0, color }`, or `offset: [0.0, 4.0].into()` | `Shadow { offset: [0, 4], blur: 8, spread: 0, color }`: `offset` is `[i8; 2]`, `blur` and `spread` are `u8`. In `Frame::shadow`, `Visuals::window_shadow` and `popup_shadow` too |
+| `painter.rect_stroke(rect, radius, stroke)` | `painter.rect_stroke(rect, radius, stroke, egui::StrokeKind::Outside)`; `Outside` is 0.30's placement, and `Middle` draws half a stroke further in |
+| `painter.rect(rect, radius, fill, stroke)` | `painter.rect(rect, radius, fill, stroke, egui::StrokeKind::Outside)` |
+| `ui.allocate_new_ui(UiBuilder::new().max_rect(r), \|ui\| ..)`, `ui.allocate_ui_at_rect(r, \|ui\| ..)` | `ui.scope_builder(UiBuilder::new().max_rect(r), \|ui\| ..)` |
+| `egui::show_tooltip_at_pointer(ctx, layer, id, \|ui\| ..)` | `egui::Tooltip::always_open(ctx.clone(), layer, id, egui::PopupAnchor::Pointer).show(\|ui\| ..)`. It returns `Option<InnerResponse<R>>`: `.map(\|r\| r.inner)` for 0.30's `Option<R>` |
+| `ScrollArea::vertical().drag_to_scroll(false)` | `.scroll_source(ScrollSource { drag: DragScroll::Never, ..Default::default() })` (both in `egui::scroll_area`) |
+| `TextEdit::multiline(&mut s).frame(false)` | `.frame(Frame::NONE.inner_margin(Margin::symmetric(4, 2)))`. A frame of the game's own replaces the text edit's margin, so give it 0.30's: `Margin::symmetric(4, 2)`, or what the game passed to `.margin(..)` |
+| `sense.click`, `sense.drag`, `sense.focusable` (fields) | `sense.senses_click()`, `sense.senses_drag()`, `sense.is_focusable()`: `Sense` is bit flags |
+| `response.fake_primary_click` | `response.flags.contains(egui::response::Flags::FAKE_PRIMARY_CLICKED)` (both are `#[doc(hidden)]`) |
+| `d.insert_temp(id, value)` returns `()` | it returns a `RawKey`, so a `match` arm or closure that ends in it ends in `;`: `Some(h) => { d.insert_temp(id, h); }` |
 | `.id_source(..)`, `ComboBox::from_id_source(..)` | `.id_salt(..)`, `ComboBox::from_id_salt(..)` |
 | `ui.close_menu()` | `ui.close()` |
 | `egui::menu::bar(ui, ..)` | `egui::MenuBar::new().ui(ui, ..)` |
 | `egui_wgpu::Renderer::new(device, format, depth, samples, dithering)` | `Renderer::new(device, format, egui_wgpu::RendererOptions { depth_stencil_format, msaa_samples, dithering, ..Default::default() })` |
 | `for (id, delta) in &textures_delta.set` | `for (id, deltas) in &textures_delta.set { for delta in deltas { .. } }`: a list a texture |
 | egui-snarl's `show_input` / `show_output` return `PinInfo` | they return `impl SnarlPin` (`PinInfo` is one) |
+| egui_plot 0.30's `Line::new(points)`, `Points::new(points)`, `HLine::new(y)`, `VLine::new(x)`, `BarChart::new(bars)`, `BoxPlot::new(boxes)` | egui_plot 0.37's take a name first: `Line::new("close", points)`, `HLine::new("", y)`, and so on for every plot item. The name labels the item in a legend and seeds its `Id`, by which the legend hides it |
 
-Two changes in behaviour:
+A value computed as an `f32` casts: `blur: (r * 3.0) as u8`, `right: bar as i8`. `as` saturates, so a margin past 127 or a radius past 255 clamps. rustc names these mismatches (``expected `u8`, found floating-point number``), and an `[0.0, 4.0].into()` offset reads ``the trait bound `[i8; 2]: From<[{float}; 2]>` is not satisfied``.
+
+**Companion crates.** A crate built on egui names the egui it takes, and one that names another links a second egui, whose types don't line up with Flint's. egui's own crates share its number: egui-wgpu, egui-winit, egui_extras, egui_glow and eframe are 0.36.2. The rest number their own: egui_plot 0.37.0 is the release on egui 0.36 (egui_plot 0.36 is on egui 0.35, and 0.38 on 0.37), and egui-snarl's is 0.12.0. The `egui` line in a crate's `Cargo.toml` on crates.io says which.
+
+Three changes in behaviour:
 
 - **Modifier keys are keys.** egui-winit 0.36 sends `egui::Key::ShiftLeft`, `ControlRight` and the rest as key presses. A game that reads `ctx.input(|i| i.events)` sees them; `i.modifiers` still holds the state.
 - **A translucent colour blends in display space.** Since egui 0.31, `Color32::from_rgba_unmultiplied` and `from_white_alpha` premultiply the display values. egui 0.30 premultiplied in linear light, so a 50% white over black drew 188 there and draws 128 now. A game's own egui UI takes 0.36's blend, and since #958 so do scripts; to keep a light colour as it looked, raise its alpha to alpha^(1/2.2) ([HUD colours](#hud-colours)).
+- **A `ScrollArea` scrolls by dragging its content only on a touch screen.** egui 0.30 dragged it with the mouse too. 0.36's default `ScrollSource` drags once egui has seen a touch (`DragScroll::OnTouch`); `.scroll_source(ScrollSource::ALL)` is 0.30's.
 
 #### HUD colours
 
