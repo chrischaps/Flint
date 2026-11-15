@@ -209,6 +209,7 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `not-a-child` | error | an `ik_two_bone.tip` that is not a child of the entity naming it, so the chain is never solved |
 | `scene-load` | error | the scene parses and the engine still cannot build it |
 | `bad-spec` | error | the procgen spec a model or texture is made from does not parse |
+| `bad-spline` | error | a `.spline.toml` a scene's `spline.file` names does not parse, placed by line and column; at load, also a `spline_mesh.profile` that is no polygon |
 | `bad-input-config` | error | the input config the scene or the manifest names does not parse |
 | `bad-user-style` | error | a user style does not load or its shader does not compile (a warning for what the style's own check only warns about) |
 | `bad-style-setting` | warning | `[post_process.styles]` names a style, a key or a value there is not |

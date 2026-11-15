@@ -117,6 +117,7 @@ checked 2 scenes and 3 files: 6 errors, 1 warning
 | The scene builds | `scene-load` |
 | The assets a scene names by kind, through the [one search](../concepts/assets.md): `model.asset`, `material.texture`, `sprite.texture`, `audio_source.file`, `script.source`, `terrain.heightmap` / `splat_map`, `grass_ground.mask`, `spline.file`, `particle_emitter.texture`, `[environment] skybox`, `[scene] input_config` | `missing-asset` |
 | The procgen spec behind a model or texture parses | `bad-spec` |
+| The spline file behind a `spline.file` parses, its mistake placed by line and column | `bad-spline` |
 | The input config (the scene's, else `[project] input`, else `config/input.toml`) parses | `bad-input-config` |
 | Every other file a scene, prefab, particle effect, glyph set, chunk, user style or script names by path | `missing-file` |
 | User styles load and compile; `[post_process.styles]`; the look | `bad-user-style` `bad-style-setting` `bad-look` |

@@ -1,0 +1,41 @@
+# The loop the Sweep Garden's shapes follow (#750): a lap round a low
+# hill, banked through its turns, with a gap at the top where every sweep
+# stops and caps itself.
+
+[spline]
+name = "Sweep Garden"
+closed = true
+
+[sampling]
+spacing = 0.75
+
+[[control_points]]
+position = [0, 0, 14]
+
+[[control_points]]
+position = [10, 0.4, 10]
+twist = -6.0
+
+[[control_points]]
+position = [14, 1.4, 0]
+twist = -10.0
+
+[[control_points]]
+position = [10, 2.4, -10]
+twist = -4.0
+gap_after = true
+
+[[control_points]]
+position = [0, 2.6, -14]
+
+[[control_points]]
+position = [-10, 1.6, -10]
+twist = 6.0
+
+[[control_points]]
+position = [-14, 0.6, 0]
+twist = 10.0
+
+[[control_points]]
+position = [-10, 0, 10]
+twist = 4.0

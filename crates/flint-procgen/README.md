@@ -152,7 +152,7 @@ Every key, generated from the generators' own schemas by `cargo run -p flint-pro
 | `lean` | number -10–10 | `0.07000000029802322` | Sideways offset of the tip toward `facing_deg`, metres, growing with the square of the height |
 | `lift` | number 0–100 | `0.0` | How far the base stands above the prop's origin, metres: above 0 the form floats |
 | `lobes` | number 0–0.5 | `0.05999999865889549` | Depth of the slow lobes the lineage puts in the surface, as a fraction of the radius |
-| `profile` | list of strings | `[0.6000000238418579, 0.949999988079071, 1.0, 0.8500000238418579, 0.550000011920929, 0.15000000596046448]` | The section's radius as fractions of `radius`, evenly spaced from base to tip and joined smoothly: a flame narrows to 0 at the tip, a stone stays wide |
+| `profile` | list of numbers | `[0.6000000238418579, 0.949999988079071, 1.0, 0.8500000238418579, 0.550000011920929, 0.15000000596046448]` | The section's radius as fractions of `radius`, evenly spaced from base to tip and joined smoothly: a flame narrows to 0 at the tip, a stone stays wide |
 | `radius` | number >0 to 50 | `0.27000001072883606` | The section's radius where `profile` is 1, metres |
 | `rings` | integer 4–1024 | `96` | Rings of vertices along the body |
 | `ripple` | number 0–2 | `0.5` | Pose: a wave up the spine, as a share of `bend_deg` |
@@ -186,6 +186,24 @@ Only when `card_layout` is `scatter`:
 |---|---|---|---|
 | `card_rise` | number -0.9–10 | `0.0` | How cards crowd along the length: 0 by area alone, above 0 toward the tip, below 0 toward the base |
 | `card_tilt` | number 0–1 | `0.0` | How far cards stand up off the surface toward the tip: 0 flat like scales, 1 upright like a fringe, which boils the outline's edge |
+
+### `sweep_v1` (mesh, written as GLB)
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `closed` | bool | `false` | A loop: the last control point joins the first, and there are no end caps. A spline file's `[spline] closed` defaults to true; this to false, since a swept model is more often a run with two ends |
+| `color` | hex colour | `"#808080"` | Base colour, sRGB hex |
+| `control_points` | array of tables |  | The path, as `[[params.control_points]]` tables written as a `.spline.toml`'s are: `position = [x, y, z]` in metres, `twist` (banking, degrees, default 0) and `gap_after` (no geometry from here to the next point, default false) |
+| `height` | number >0 to 100 | `0.2` | Without a `profile`, the height of a box cross-section, metres |
+| `metallic` | number 0–1 | `0.0` | PBR metallic |
+| `offset` | list of numbers | `[0.0, 0.0]` | [right, up] metres from the path to the profile's centre, in the path's own frame |
+| `profile` | list of number lists |  | The cross-section as [right, up] points in metres from the path, in place of `width` and `height`: closed, a solid whose faces look outward whichever way round it goes; open, a surface facing the left of the way it is listed |
+| `profile_closed` | bool | `true` | False makes `profile` an open surface, with no closing edge and no caps |
+| `roughness` | number 0–1 | `0.5` | PBR roughness |
+| `smooth` | bool | `false` | Shade the profile round instead of faceted, with texture u once around it: a pipe or a rail |
+| `spacing` | number 0.01–100 | `0.5` | Metres between the path's samples: smaller is a smoother bend and more triangles |
+| `texture_length` | number >0 to 1000 |  | Metres of sweep per texture repeat (v); on a loop nudged so the repeats meet at the seam. Unset: the profile's width |
+| `width` | number >0 to 100 | `0.2` | Without a `profile`, the width of a box cross-section, metres |
 
 ### `texture_v1` (image set, written as PNGs)
 
@@ -319,6 +337,7 @@ Only when `branch_method` is `space_colonization`:
 | `kill_distance` | number > 0 | `0.5` | How close a branch must come to consume a point, metres; smaller fills the crown more finely |
 | `num_attraction_points` | integer ≥ 0 | `500` | Points scattered through the crown; branches grow until they have consumed them. More gives a denser crown |
 | `step_size` | number > 0 | `0.3` | Length of each growth step, metres |
+
 <!-- catalog:end -->
 
 The texture pipeline's ops (`brick_grid`, `noise_layer`, `domain_warp`, `wave_texture` and about 30 more) each have a schema of their own: `flint_procgen::op_param_schema("noise_layer")`, or the node editor's panel. The book's procgen page lists them.

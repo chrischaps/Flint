@@ -19,6 +19,7 @@ mod render_passes;
 mod selection;
 mod skinning;
 mod sky;
+mod splines;
 mod stats;
 mod style_mask;
 mod terrain;
@@ -31,6 +32,7 @@ pub use grass_ground::{load_grass_ground_in, load_scene_grass_ground, LoadedGras
 pub use particles::load_scene_particle_textures;
 use post::next_post_config_generation;
 use render_passes::RenderPhase;
+pub use splines::{load_scene_splines, LoadedSplines, SplineCollider};
 
 pub use lights::LightingLevers;
 use skinning::{CachedBoneBind, SHADOW_BONE_KEY};
