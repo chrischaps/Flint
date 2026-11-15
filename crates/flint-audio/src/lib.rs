@@ -82,6 +82,7 @@ impl AudioSystem {
         self.sync.clear();
         self.triggers = AudioTrigger::new();
         self.engine.clear_oneshots();
+        self.engine.stop_keyed_loops();
     }
 
     /// Update the listener position (called from PlayerApp after camera update)

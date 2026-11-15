@@ -56,6 +56,8 @@ mod scene_entry_tests;
 pub(crate) mod scene_loading;
 mod schemas;
 pub mod script_commands;
+#[cfg(test)]
+mod script_sound_tests;
 mod state;
 pub mod style_commands;
 pub(crate) mod subsystem;
