@@ -22,6 +22,10 @@ use crate::toml_util::{toml_f32, toml_vec3};
 /// The keys every zone table takes before the field's own.
 pub const SHAPE_KEYS: [&str; 6] = ["name", "shape", "center", "radius", "size", "falloff"];
 
+/// A preset by name, as all `N` values, or the message for a name that isn't
+/// one.
+pub type PresetFn<const N: usize> = fn(&str) -> Result<[f32; N], String>;
+
 /// What a field's numbers are.
 pub struct FieldKeys<const N: usize> {
     /// The field's name in messages: `'fog' isn't a wooze knob`.
@@ -33,7 +37,7 @@ pub struct FieldKeys<const N: usize> {
     pub check: fn(usize, f32) -> Result<f32, String>,
     /// A preset by name, as all `N` values, or the message for a name that
     /// isn't one. `None`: the field has no presets and takes no `preset` key.
-    pub preset: Option<fn(&str) -> Result<[f32; N], String>>,
+    pub preset: Option<PresetFn<N>>,
 }
 
 impl<const N: usize> FieldKeys<N> {
