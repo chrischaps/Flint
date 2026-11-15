@@ -31,12 +31,12 @@ use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
 #[cfg(feature = "living")]
 use flint_procgen::LivingProps;
-use flint_render::{Camera, PostProcessConfig, SceneRenderer};
+use flint_render::{Camera, FrameInputs, PostProcessConfig, SceneRenderer};
 use flint_runtime::{InputState, RuntimeSystem};
 use flint_script::context::ScriptCommand;
 use flint_script::{PostProcessOverrides, ScriptHost};
 #[cfg(feature = "living")]
-use flint_wooze::{BoilFrame, WoozeField};
+use flint_wooze::WoozeField;
 
 use super::expression_feed::{ExpressionFeed, ExpressionSubsystem, ExpressionTimeline};
 use super::game_core::{self, FrameHost, GameCore, Lent};
@@ -44,6 +44,7 @@ use super::headless_animation::HeadlessAnimation;
 #[cfg(feature = "living")]
 use super::living_subsystem::LivingSubsystem;
 use super::style_commands::SceneStyles;
+use super::subsystem::FrameCtx;
 
 /// The seed of `random()` in a headless run. One fixed value, so that every
 /// render of a scene draws the same numbers.
@@ -149,6 +150,8 @@ pub struct HeadlessGame {
     look_request: Option<Option<String>>,
     /// What a debug key would say (#367): nobody presses one in a capture.
     key_note: super::key_note::KeyNote,
+    /// What scripts are told the capture draws at (`--pixels-per-point`).
+    pixels_per_point: f32,
     #[cfg(feature = "debug-hud")]
     panels: Vec<Box<dyn flint_debug_ui::DebugPanel>>,
 }
@@ -171,6 +174,7 @@ impl HeadlessGame {
             look: ScriptLook::default(),
             look_request: None,
             key_note: Default::default(),
+            pixels_per_point: 1.0,
             #[cfg(feature = "debug-hud")]
             panels: Vec::new(),
         }
@@ -302,6 +306,10 @@ impl HeadlessGame {
 
     /// The particles the scripts' commands reach, to load and step. Until
     /// [`Self::set_particles_drawn`], what scripts emit is dropped with a note.
+    pub fn particles(&self) -> &ParticleSystem {
+        &self.core.particles
+    }
+
     pub fn particles_mut(&mut self) -> &mut ParticleSystem {
         &mut self.core.particles
     }
@@ -369,28 +377,20 @@ impl HeadlessGame {
         Some((living.wooze.as_ref()?, living.wooze_time))
     }
 
-    /// The shading boil's drawing where the field's clock stands, for a
-    /// viewer at `viewer`, with a field (#214).
-    #[cfg(feature = "living")]
-    pub fn boil(&self, viewer: [f32; 3], on: u32) -> Option<BoilFrame> {
-        let living = self.living()?;
-        let field = living.wooze.as_ref()?;
-        let sample = field.sample(viewer, living.wooze_time);
-        Some(living.boil_clock.frame(&sample, on))
+    /// The game's share of a capture's renderer inputs (#739), as the
+    /// player's subsystems give theirs: the shading boil's drawing where
+    /// the field's clock stands for a viewer at `camera` (#214), shallow
+    /// wooze's drift in a capture of a moment (#215), and woozy grass's
+    /// clock and comb (#252). What the game has none of is left as it is.
+    pub fn frame_inputs<'s>(&'s self, camera: &Camera, boil_on: u32, inputs: &mut FrameInputs<'s>) {
+        let frame = FrameCtx { camera, boil_on };
+        self.core.subsystems.frame_inputs(&frame, inputs);
     }
 
-    /// The grass's clock at `t`: the field's, for grass that woozes (#252),
-    /// else the wall clock's.
-    pub fn apply_grass(&self, renderer: &mut SceneRenderer, t: f64) {
-        #[cfg(not(feature = "living"))]
-        {
-            renderer.grass_time = t as f32;
-        }
-        #[cfg(feature = "living")]
-        match self.living().filter(|living| living.wooze.is_some()) {
-            Some(living) => living.grass_wooze.apply(renderer, t),
-            None => renderer.grass_time = t as f32,
-        }
+    /// The physical pixels per logical point scripts are told the capture
+    /// draws at (`--pixels-per-point`; 1 by default).
+    pub fn set_pixels_per_point(&mut self, pixels_per_point: f32) {
+        self.pixels_per_point = pixels_per_point;
     }
 
     /// Blend every prop where its clock stands and write what moved, as a
@@ -475,7 +475,7 @@ fn command_name(command: &ScriptCommand) -> Option<&'static str> {
 impl FrameHost for CaptureFrame<'_> {
     fn lend(&mut self) -> (&mut GameCore, Lent<'_>) {
         let game = &mut *self.game;
-        let pixels_per_point = self.renderer.as_ref().map_or(1.0, |r| r.pixels_per_point);
+        let pixels_per_point = game.pixels_per_point;
         (
             &mut game.core,
             Lent {

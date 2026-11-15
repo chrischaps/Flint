@@ -127,6 +127,7 @@ fn settle(renderer: &mut SceneRenderer, device: &wgpu::Device) {
 
 /// `src/stylize/*.wgsl` and `src/palette.wgsl` (which `../palette.wgsl`
 /// names) copied under `root`.
+#[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
 fn copy_shaders(root: &Path) -> PathBuf {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let dir = root.join("stylize");
@@ -154,6 +155,7 @@ fn write(path: &Path, text: &str) {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
 fn a_built_in_styles_shader_reloads_from_the_folder() {
     let Some(lease) = shared_gpu::lease_alone() else {
         flint_render::gpu_select::skip_without_gpu("no GPU adapter");

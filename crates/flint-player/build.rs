@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 // A build script runs on the host at compile time, never in the browser, so
-// the wasm check's ban on file reads (scripts/wasm-clippy) doesn't apply.
+// the vfs rule on file reads (the root clippy.toml, #97) doesn't apply.
 #[allow(clippy::disallowed_methods)]
 fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");

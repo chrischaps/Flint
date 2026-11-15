@@ -9,3 +9,6 @@ description = "CPU pixel loops for texture upload (RGBA expansion, mip chains), 
 # at opt-level 3 (#326), and a leaf with nothing under it rebuilds in a
 # second or two however it is optimized.
 [dependencies]
+
+[lints]
+workspace = true

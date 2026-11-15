@@ -39,7 +39,7 @@ use flint_core::project::Project;
 use flint_ecs::FlintWorld;
 #[cfg(feature = "procgen")]
 use flint_procgen::ProcGenResolver;
-use flint_render::{Camera, SceneRenderer};
+use flint_render::{Camera, FrameInputs, SceneRenderer};
 use flint_runtime::pad::Gilrs;
 use flint_runtime::{GameClock, GameStateMachine, InputState, StateConfig};
 use flint_script::context::ScriptCommand;
@@ -305,14 +305,13 @@ pub(crate) fn state_machine() -> GameStateMachine {
 /// A scene subsystem's builder: its subsystem, if the scene uses it.
 pub(crate) type BuildForScene = fn(&mut SceneCtx) -> Option<Box<dyn Subsystem>>;
 
-/// What a subsystem may touch before the frame is encoded.
-#[allow(dead_code)]
-pub(crate) struct RenderCtx<'a> {
-    pub renderer: &'a mut SceneRenderer,
-    pub device: &'a wgpu::Device,
-    pub queue: &'a wgpu::Queue,
+/// What a subsystem reads when it adds to the frame's inputs.
+pub(crate) struct FrameCtx<'a> {
+    /// The frame's camera, final by the renderer's sync.
     pub camera: &'a Camera,
-    pub clock: &'a GameClock,
+    /// The shading boil's cadence the config asks for (`[post_process]
+    /// boil_on`).
+    pub boil_on: u32,
 }
 
 /// Lines a subsystem adds to the `--exit-after` report, printed after the
@@ -379,8 +378,11 @@ pub(crate) trait Subsystem: Any {
         false
     }
 
-    /// Before the frame is encoded, with the renderer.
-    fn pre_render(&mut self, _ctx: &mut RenderCtx) {}
+    /// Its share of the frame's renderer inputs (#739): what it draws this
+    /// frame that the world doesn't say (the living subsystem's boil,
+    /// shallow wooze and woozy grass). Called once a frame, just before the
+    /// renderer's `prepare`; what it leaves at the default is off.
+    fn frame_inputs<'s>(&'s self, _ctx: &FrameCtx, _inputs: &mut FrameInputs<'s>) {}
 
     /// After the frame's scene is encoded, before the HUD.
     fn post_encode(&mut self, _ctx: &mut EncodeCtx) {}
@@ -501,9 +503,9 @@ impl Subsystems {
         }
     }
 
-    pub(crate) fn pre_render(&mut self, ctx: &mut RenderCtx) {
-        for s in &mut self.list {
-            s.pre_render(ctx);
+    pub(crate) fn frame_inputs<'s>(&'s self, ctx: &FrameCtx, inputs: &mut FrameInputs<'s>) {
+        for s in &self.list {
+            s.frame_inputs(ctx, inputs);
         }
     }
 

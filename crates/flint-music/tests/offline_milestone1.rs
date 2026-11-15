@@ -8,6 +8,7 @@
 //! transition to its bus. All tolerances trace to kira's chunk-granular
 //! clock advancement (one internal buffer = CHUNK frames) plus the scripted
 //! ramp and the analysis window.
+#![allow(clippy::disallowed_methods)] // a test: reads its files off the disk, not through the vfs
 
 use flint_music::analysis::{
     find_tone_transitions, goertzel_power, max_step, peak, tone_envelope, TransitionKind,

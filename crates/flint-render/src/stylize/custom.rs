@@ -4583,6 +4583,7 @@ fn style(p: StylePixel) -> vec4<f32> {
     /// constant-bound loops (orton's 13-tap blurs) are left as written;
     /// radial_blur's loop runs to a parameter, so it is still guarded.
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn example_styles_warn_about_nothing() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/styles");
         let mut checked = 0;
@@ -5107,6 +5108,28 @@ fn style(p: StylePixel) -> vec4<f32> {
         RELOAD_POLL.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// The part of a poll that is a test's own: the styles it added and
+    /// replaced whose `.shader.toml` is under `root`. Tests that load user
+    /// styles without polling don't take [`RELOAD_POLL`] (making them wait
+    /// for it made #598's driver deadlock likelier, #489), and a style one
+    /// of them loads while a poll runs is in that poll's `added`.
+    fn under(root: &Path, mut reload: Reload) -> Reload {
+        let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let root = canonical(root);
+        let mine = |name: &String| {
+            LOADED
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .any(|l| {
+                    &l.source.name == name && canonical(&l.source.toml_path).starts_with(&root)
+                })
+        };
+        reload.added.retain(|n| mine(n));
+        reload.replaced.retain(|n| mine(n));
+        reload
+    }
+
     #[test]
     fn the_nearest_styles_folder_wins_a_name() {
         let _poll = reload_poll();
@@ -5162,17 +5185,20 @@ fn style(p: StylePixel) -> vec4<f32> {
         assert_eq!(k(), 2.5);
 
         // A nearer one appears while the scene is open
-        assert!(!reload_changed_for(&cave_scope).changed());
+        assert!(!under(&root, reload_changed_for(&cave_scope)).changed());
         let in_act = write("levels/act", 3.5);
-        let reload = reload_changed_for(&cave_scope);
+        let reload = under(&root, reload_changed_for(&cave_scope));
         assert_eq!(reload.replaced, vec!["utest_near".to_string()]);
         assert!(reload.added.is_empty());
         assert_eq!(k(), 3.5);
         assert_eq!(index_of("utest_near"), index);
-        assert!(!reload_changed_for(&cave_scope).changed(), "settled");
+        assert!(
+            !under(&root, reload_changed_for(&cave_scope)).changed(),
+            "settled"
+        );
         // It goes: the next one out has the name again
         std::fs::remove_file(&in_act).unwrap();
-        let reload = reload_changed_for(&cave_scope);
+        let reload = under(&root, reload_changed_for(&cave_scope));
         assert_eq!(reload.replaced, vec!["utest_near".to_string()]);
         assert_eq!(k(), 2.5);
         let _ = std::fs::remove_dir_all(&root);
@@ -5336,7 +5362,7 @@ fn style(p: StylePixel) -> vec4<f32> {
             "version = 1\nname = \"utest_added\"\nshader = \"edit.wgsl\"\n",
         )
         .unwrap();
-        let reload = reload_changed(&dir);
+        let reload = under(&dir, reload_changed(&dir));
         assert_eq!(reload.added, vec!["utest_added".to_string()]);
         assert!(super::super::find("utest_added").is_some());
         let _ = std::fs::remove_dir_all(&dir);
@@ -5401,7 +5427,7 @@ fn style(p: StylePixel) -> vec4<f32> {
         // Fixed: it loads at the next poll and the error goes
         std::thread::sleep(std::time::Duration::from_millis(30));
         write("hdr");
-        let reload = reload_changed(&dir);
+        let reload = under(&dir, reload_changed(&dir));
         assert_eq!(reload.added, vec!["utest_unloaded".to_string()]);
         assert_eq!(error(), None);
         assert!(super::super::find("utest_unloaded").is_some());

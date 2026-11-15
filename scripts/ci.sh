@@ -2,8 +2,10 @@
 # What a change must pass before it lands (#757).
 #
 #   scripts/ci.sh          formatting, every cited ADR has a record
-#                          (scripts/adr-check.sh), the tree's shape (#760) and
-#                          its size budget (scripts/size-check.py, ADR 0122):
+#                          (scripts/adr-check.sh), every clippy.toml is the
+#                          root list's copy (scripts/clippy-conf.sh --check, #761),
+#                          the tree's shape (#760) and its size budget
+#                          (scripts/size-check.py, ADR 0122):
 #                          seconds, no build. `scripts/issue.sh
 #                          land` runs this (verify= in scripts/issue.conf), and
 #                          so does CI's rustfmt job.
@@ -33,6 +35,9 @@ fi
 
 echo "ci: scripts/adr-check.sh"
 bash scripts/adr-check.sh
+
+echo "ci: scripts/clippy-conf.sh --check"
+bash scripts/clippy-conf.sh --check
 
 # The tree (#760): a symlink checks out as a text file on Windows without the
 # symlink privilege, and the root is for manifests and docs (a render, spec

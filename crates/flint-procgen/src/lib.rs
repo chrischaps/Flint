@@ -4,7 +4,9 @@
 //! generation: deterministic seeding, mesh and image output formats,
 //! material descriptions, and error handling. Higher-level constructs
 //! (generator traits, registry, specs) build on these primitives.
-
+// Unit tests read their files off the disk and assert on TOML as written;
+// the lib build still holds the rules (#761).
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 // The tree generator's parameter schema is one large `json!` literal.
 #![recursion_limit = "256"]
 

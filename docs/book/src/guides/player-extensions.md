@@ -8,6 +8,23 @@ An extension is a type that implements `flint_player::PlayerExtension`. Every me
 
 The game crate depends on the engine crates by path, usually through a subtree at `engine/` (see [Building a Game Project](building-a-game-project.md)). Any third-party crate that crosses the engine boundary (`egui`, `winit`, `wgpu`, `rhai`, `glam`) must use the **same version as `engine/Cargo.toml`**. Otherwise two copies get linked and an `egui::Context` from one isn't the other's type. `rhai` needs its `sync` feature, as the engine uses it.
 
+The game's workspace root names the engine's two patches as well, on every platform. cargo applies `[patch]` only from the root of the workspace it builds, and a game's build has its own root, not the engine's:
+
+```toml
+[workspace]
+exclude = ["engine"]        # the subtree is a workspace of its own
+                            # (with `members = ["."]` added, cargo can't load the engine's crates)
+
+[dependencies]
+flint-player = { path = "engine/crates/flint-player" }
+
+[patch.crates-io]
+mach-dxcompiler-rs = { path = "engine/vendor/static-dxc" }   # Flint's DXC, linked into Windows builds
+egui-winit = { path = "engine/vendor/egui-winit" }            # the function the web build needs
+```
+
+Without the first line cargo stops before building anything, with ``failed to select a version for the requirement `mach-dxcompiler-rs = "=0.1.947"` ``. flint-render asks for exactly Flint's DXC, which crates.io doesn't have, so a game never links someone else's in its place. `flint check` on the game names any line its root lacks (`missing-cargo-patch`). [Upgrading the Engine](upgrading-the-engine.md#cargo) has the case of a lockfile that already holds crates.io's copy.
+
 ```rust
 use flint_player::{ExtensionCtx, PlayerApp, PlayerExtension};
 use winit::event_loop::{ControlFlow, EventLoop};

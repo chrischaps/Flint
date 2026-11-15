@@ -321,6 +321,8 @@ cargo run --manifest-path engine/Cargo.toml --bin flint -- play
 cargo run --manifest-path engine/Cargo.toml --bin flint-player -- scenes/level_1.scene.toml
 ```
 
+Built this way the engine's workspace is cargo's root, and its `[patch.crates-io]` applies. A game that builds a binary of its own (a [player extension](player-extensions.md#a-game-binary)) has a workspace of its own, whose root `Cargo.toml` names the engine's patches itself; `flint check` says when one is missing.
+
 ## Asset Resolution
 
 A game keeps each kind of asset in its folder at the project root: `scripts/`, `audio/`, `sprites/`, `models/` and the rest.

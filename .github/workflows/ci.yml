@@ -33,8 +33,9 @@ jobs:
   # Native clippy over the default members (#757). Warnings are printed and
   # don't fail the job; a deny-level lint does (clippy's correctness group and
   # anything a crate denies), and so does code that doesn't compile natively,
-  # tests and examples included, which nothing else in CI builds. Tightening
-  # the set of denied lints is #761.
+  # tests and examples included, which nothing else in CI builds. The root
+  # clippy.toml's vfs and `as_float` rules warn here in every runtime crate
+  # and fail in the five that deny them (#761).
   # Run it locally with `bash scripts/ci.sh --full`.
   clippy:
     name: clippy (native)

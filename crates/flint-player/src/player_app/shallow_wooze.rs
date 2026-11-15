@@ -241,7 +241,7 @@ impl GrassWooze {
         );
     }
 
-    /// What `SceneRenderer::grass_time` should be, or `None` for the wall clock.
+    /// The grass's clock (`FrameInputs::grass_time`), or `None` for the frame's.
     /// It holds for the first part of each beat and glides over the rest, as a
     /// tree's pose does, so the blades rest and then sweep on together.
     pub fn sway_time(&self) -> Option<f32> {
@@ -249,7 +249,7 @@ impl GrassWooze {
             .map(|now| ((now.index as f64 + f64::from(now.weight)) * self.seconds_per_beat) as f32)
     }
 
-    /// What `SceneRenderer::grass_wooze` should be.
+    /// The grass's comb (`FrameInputs::grass_wooze`).
     pub fn comb(&self) -> Option<ShallowWoozeDraw> {
         self.now.map(|now| ShallowWoozeDraw {
             amplitude: self.comb.0 * now.amplitude,
@@ -257,13 +257,6 @@ impl GrassWooze {
             index: now.index,
             weight: now.weight,
         })
-    }
-
-    /// Set the renderer's grass clock and comb from this, or `wall` seconds of the
-    /// wall clock when the grass isn't woozy.
-    pub fn apply(&self, renderer: &mut flint_render::SceneRenderer, wall: f64) {
-        renderer.grass_time = self.sway_time().unwrap_or(wall as f32);
-        renderer.grass_wooze = self.comb();
     }
 }
 

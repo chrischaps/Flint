@@ -21,3 +21,6 @@ toml = { workspace = true }
 winit = { workspace = true }
 serde = { workspace = true }
 gilrs = { workspace = true, optional = true }
+
+[lints]
+workspace = true
