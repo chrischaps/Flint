@@ -10,10 +10,9 @@ use flint_audio::decode::Need;
 use flint_audio::AudioSystem;
 use flint_core::components as comp;
 use flint_core::project::{AssetKind, Project};
-use flint_core::toml_util::{toml_f32, toml_f64, toml_vec3};
+use flint_core::toml_util::toml_f64;
 use flint_core::vfs;
 use flint_core::EntityId;
-use flint_core::Vec3 as FlintVec3;
 use flint_ecs::FlintWorld;
 use flint_physics::PhysicsSystem;
 use flint_render::model_loader::{self, ModelLoadConfig};
@@ -77,9 +76,8 @@ pub fn scene_post_process_in(
     }
 }
 
-/// Load terrain from world entities. Free function to avoid borrow conflicts.
-/// Info about loaded grass, returned from terrain loading for debug panel creation.
-/// The fields are only read by the `debug-hud` grass panel construction.
+/// The grass a scene loaded, for its debug panel. The fields are only read
+/// by the `debug-hud` grass panel construction.
 #[cfg_attr(not(feature = "debug-hud"), allow(dead_code))]
 pub(super) struct LoadedGrassInfo {
     pub config: flint_terrain::GrassConfig,
@@ -88,210 +86,19 @@ pub(super) struct LoadedGrassInfo {
     pub component: &'static str,
 }
 
-pub(super) fn load_terrain_from_world_inner(
-    world: &FlintWorld,
-    scene_path: &str,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    scene_renderer: &mut SceneRenderer,
+/// The static collider of a terrain `SceneRenderer::bind_scene` loaded: its
+/// chunks' triangles where its transform puts them.
+pub(super) fn register_terrain_collider(
     physics: &mut PhysicsSystem,
-    terrain_out: &mut Option<(flint_terrain::Terrain, flint_terrain::TerrainConfig)>,
-    grass_info_out: &mut Option<LoadedGrassInfo>,
+    loaded: &flint_render::LoadedTerrain,
 ) {
-    use flint_core::Transform;
-    use flint_terrain::{Heightmap, Terrain, TerrainConfig};
-
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-    let project = &Project::for_scene(Path::new(scene_path));
-
-    for entity in world.all_entities() {
-        let terrain_comp = match world.get_component(entity.id, comp::TERRAIN) {
-            Some(c) => c,
-            None => continue,
-        };
-
-        let heightmap_rel = match terrain_comp.get("heightmap").and_then(|v| v.as_str()) {
-            Some(s) if !s.is_empty() => s.to_string(),
-            _ => {
-                tracing::warn!("Terrain entity '{}': missing heightmap path", entity.name);
-                continue;
-            }
-        };
-
-        // A path found by the project's one search (`AssetKind::Files`)
-        let hm_path = project.file_or_beside("terrain heightmap", &heightmap_rel, scene_dir);
-
-        let heightmap = match Heightmap::from_png(&hm_path) {
-            Ok(hm) => hm,
-            Err(e) => {
-                tracing::warn!("Failed to load heightmap: {}", e);
-                continue;
-            }
-        };
-
-        let get_f32 = |key: &str, default: f32| -> f32 {
-            terrain_comp.get(key).and_then(toml_f32).unwrap_or(default)
-        };
-
-        let get_i32 = |key: &str, default: i32| -> i32 {
-            terrain_comp
-                .get(key)
-                .and_then(|v| v.as_integer())
-                .map(|i| i as i32)
-                .unwrap_or(default)
-        };
-
-        let get_str = |key: &str| -> String {
-            terrain_comp
-                .get(key)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string()
-        };
-
-        let config = TerrainConfig {
-            heightmap_path: heightmap_rel,
-            width: get_f32("width", 256.0),
-            depth: get_f32("depth", 256.0),
-            height_scale: get_f32("height_scale", 50.0),
-            chunk_resolution: get_i32("chunk_resolution", 64) as u32,
-            texture_tile: get_f32("texture_tile", 16.0),
-            splat_map_path: get_str("splat_map"),
-            layer_textures: [
-                get_str("layer0_texture"),
-                get_str("layer1_texture"),
-                get_str("layer2_texture"),
-                get_str("layer3_texture"),
-            ],
-            metallic: get_f32("metallic", 0.0),
-            roughness: get_f32("roughness", 0.85),
-            grass: None,
-        };
-
-        let terrain = Terrain::generate(&heightmap, &config);
-
-        // Get entity transform
-        let transform = world
-            .get_component(entity.id, comp::TRANSFORM)
-            .and_then(|t| {
-                let pos = t.get("position").and_then(toml_vec3).unwrap_or([0.0; 3]);
-                Some(Transform {
-                    position: FlintVec3 {
-                        x: pos[0],
-                        y: pos[1],
-                        z: pos[2],
-                    },
-                    ..Default::default()
-                })
-            })
-            .unwrap_or_default();
-
-        // Upload to GPU
-        scene_renderer.load_terrain(
-            device,
-            queue,
-            &terrain.chunks,
-            &transform,
-            config.texture_tile,
-            config.metallic,
-            config.roughness,
-            &config.splat_map_path,
-            &config.layer_textures,
-            scene_dir,
-        );
-        // A style_mask on the terrain entity masks its chunks (#310)
-        scene_renderer.set_terrain_entity(Some(entity.id));
-
-        // Register physics collider
-        let (verts, tris) = terrain.trimesh_data();
-        let offset = [
-            transform.position.x,
-            transform.position.y,
-            transform.position.z,
-        ];
-        let offset_verts: Vec<[f32; 3]> = verts
-            .iter()
-            .map(|v| [v[0] + offset[0], v[1] + offset[1], v[2] + offset[2]])
-            .collect();
-        physics.register_static_trimesh(entity.id, offset_verts, tris, 0.8, 0.1);
-
-        // Load grass if enabled
-        let grass_config = flint_terrain::GrassConfig::from_component(terrain_comp, false);
-
-        if grass_config.enabled {
-            // Get raw heightmap data and splat map data for GPU upload
-            let hm_data = heightmap.clone_heights();
-            let hm_w = heightmap.width;
-            let hm_d = heightmap.depth;
-
-            // Load splat map pixels for grass compute shader
-            let splat_path =
-                project.file_or_beside("terrain splat map", &config.splat_map_path, scene_dir);
-
-            if let Ok(splat_img) = flint_render::open_image(&splat_path) {
-                let splat_rgba = splat_img.to_rgba8();
-                let (sw, sh) = splat_rgba.dimensions();
-
-                scene_renderer.load_grass(
-                    device,
-                    queue,
-                    &grass_config,
-                    &hm_data,
-                    hm_w,
-                    hm_d,
-                    splat_rgba.as_raw(),
-                    sw,
-                    sh,
-                    offset,
-                    config.width,
-                    config.depth,
-                    config.height_scale,
-                );
-
-                tracing::info!(
-                    "Grass enabled: density={}, max_dist={}",
-                    grass_config.density,
-                    grass_config.max_distance
-                );
-
-                *grass_info_out = Some(LoadedGrassInfo {
-                    config: grass_config.clone(),
-                    terrain_entity_name: entity.name.clone(),
-                    component: comp::TERRAIN,
-                });
-            } else {
-                tracing::warn!("Grass enabled but splat map not found at {:?}", splat_path);
-            }
-        }
-
-        tracing::info!(
-            "Loaded terrain '{}': {}x{} heightmap, {} chunks, {}x{} world units",
-            entity.name,
-            heightmap.width,
-            heightmap.depth,
-            terrain.chunks.len(),
-            config.width,
-            config.depth,
-        );
-
-        *terrain_out = Some((terrain, config));
-        break; // Only one terrain entity for now
-    }
-
-    // Grass on a scene-authored mesh ground (ADR 0089). One grass field per
-    // scene: a grass_ground replaces a terrain's grass.
-    if let Some(info) = load_grass_ground(world, project, scene_dir, device, queue, scene_renderer)
-    {
-        if grass_info_out.is_some() {
-            tracing::warn!(
-                "grass_ground '{}' replaces the terrain's grass",
-                info.terrain_entity_name
-            );
-        }
-        *grass_info_out = Some(info);
-    }
+    let (verts, tris) = loaded.terrain.trimesh_data();
+    let [x, y, z] = loaded.offset;
+    let offset_verts: Vec<[f32; 3]> = verts
+        .iter()
+        .map(|v| [v[0] + x, v[1] + y, v[2] + z])
+        .collect();
+    physics.register_static_trimesh(loaded.entity, offset_verts, tris, 0.8, 0.1);
 }
 
 /// Load a scene's `grass_ground` into `scene_renderer`, as the player does
@@ -307,31 +114,6 @@ pub fn load_scene_grass_ground(
 ) -> bool {
     flint_render::load_scene_grass_ground(world, scene_path, device, queue, scene_renderer)
         .is_some()
-}
-
-/// The player's grass ground: `flint_render::load_grass_ground_in`, with
-/// what the grass debug panel needs.
-fn load_grass_ground(
-    world: &FlintWorld,
-    project: &Project,
-    scene_dir: &Path,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    scene_renderer: &mut SceneRenderer,
-) -> Option<LoadedGrassInfo> {
-    let loaded = flint_render::load_grass_ground_in(
-        world,
-        project,
-        scene_dir,
-        device,
-        queue,
-        scene_renderer,
-    )?;
-    Some(LoadedGrassInfo {
-        config: loaded.config,
-        terrain_entity_name: loaded.entity_name,
-        component: comp::GRASS_GROUND,
-    })
 }
 
 /// Build a ModelLoadConfig with catalog-resolved path overrides.

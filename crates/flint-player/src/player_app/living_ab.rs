@@ -20,7 +20,7 @@
 
 use flint_procgen::{BlendFrame, LivingProps, ProcGenResolver};
 use flint_render::{Camera, SceneRenderer, SplitView};
-use flint_wooze::{BoilClock, BoilFrame, WoozeField};
+use flint_wooze::{BoilClock, WoozeField};
 
 use super::living_subsystem::LivingSubsystem;
 use super::shallow_wooze::ShallowWooze;
@@ -449,17 +449,14 @@ pub struct OtherSide<'a> {
     pub blend: &'a mut BlendFrame,
     pub world: &'a flint_ecs::FlintWorld,
     pub camera: &'a Camera,
-    /// The scene's own boil drawing this frame, to put back.
-    pub own_boil: BoilFrame,
-    /// The scene's own shallow wooze, to put back.
-    pub own_shallow: &'a ShallowWooze,
 }
 
 /// The second half of a split frame: the hidden side's bones, boil and shallow
 /// wooze, drawn into the split view and copied over its half of `frame` (a view
 /// of the swapchain in `copy_format`). The scene's own first drawing must be
-/// submitted already. Leaves the renderer as the scene's own state wants it,
-/// with every one of its bones to be written again next frame.
+/// submitted already. Leaves the scene's own config, with every one of its
+/// bones to be written again next frame and its boil and shallow wooze taken
+/// again with the next frame's inputs.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_other_side(
     other: OtherSide<'_>,
@@ -478,8 +475,6 @@ pub fn draw_other_side(
         blend,
         world,
         camera,
-        own_boil,
-        own_shallow,
     } = other;
     let view = ab
         .view
@@ -505,9 +500,7 @@ pub fn draw_other_side(
         })
         .unwrap_or_default();
     renderer.set_post_process_config(config);
-    renderer.set_boil(boil);
-    renderer.set_shallow_wooze(side.shallow.draws().iter().copied());
-    renderer.update_from_world(world, device);
+    renderer.prepare_again(device, world, boil, side.shallow.draws());
     renderer.encode_again_to(
         device,
         queue,
@@ -525,10 +518,9 @@ pub fn draw_other_side(
         view.encode_copy(encoder, frame, seam, size.0);
     }
 
-    // Back as the scene's own state has it. Its bones get written next frame,
-    // and next frame's extraction rebuilds its draws.
+    // Back as the scene's own config has it. Its bones get written next
+    // frame, and next frame's `prepare` takes its boil and shallow wooze and
+    // rebuilds its draws.
     renderer.set_post_process_config(own_config);
-    renderer.set_boil(own_boil);
-    renderer.set_shallow_wooze(own_shallow.draws().iter().copied());
     resolver.living_props_mut().redraw_all();
 }

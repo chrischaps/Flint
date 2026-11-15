@@ -34,7 +34,7 @@ The camera mode is determined by the entry point: `edit` uses orbit, `play` uses
 
 ### World lines
 
-`SceneRenderer::set_world_lines(Vec<WorldLine>, pixels_per_point)` gives the renderer segments to draw in every following frame, until they're replaced. Each `flint_core::world_line::WorldLine` has two world points, a display-space RGBA colour and a width in logical points. The player sets them each frame from the scripts' `draw_world_line` calls.
+A frame's `FrameInputs::world_lines` are the segments the renderer draws that frame (a frame that passes none draws none), at the frame's `pixels_per_point`. Each `flint_core::world_line::WorldLine` has two world points, a display-space RGBA colour and a width in logical points. The player passes the scripts' `draw_world_line` calls each frame.
 
 They're drawn after the composite and FXAA, straight onto the final target, before the HUD. Each segment is projected with the frame's own camera and cut at the near plane. It's expanded on the CPU into a screen-space quad of the requested width, with a one-pixel feather that the fragment shader fades. That's the anti-aliasing, since the pass comes after MSAA and FXAA. The pass tests against the frame's resolved single-sample depth (`LessEqual`) and doesn't write depth. Each end is pulled toward the eye by 0.2% of its distance (`world_line_pipeline::DEPTH_SLACK`), so a line lying on a surface doesn't fight it for depth. The colours are display-space, like the HUD's, and they're linearised when the target is sRGB, so a ring keeps the colour it had as a HUD line. The pipeline is built on the first frame that has lines, and its vertex buffer grows to fit the busiest frame. A renderer without the HDR chain and with MSAA has no resolved depth, so it skips the pass.
 

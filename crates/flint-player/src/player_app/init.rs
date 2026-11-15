@@ -96,6 +96,7 @@ impl PlayerApp {
             schema_dirs: Default::default(),
             schemas: Default::default(),
             terrain: None,
+            scene_binding: None,
             #[cfg(feature = "debug-hud")]
             debug_panels: Vec::new(),
             particles_render_enabled: true,
@@ -217,7 +218,11 @@ impl PlayerApp {
         // User styles first: the post_process tables are read against the
         // registry, and a table for an unloaded style is dropped
         let scope = self.asset_scope();
-        super::scene_loading::load_user_styles_in(&scope);
+        let binding = flint_render::SceneBinding::new(scope);
+        for message in binding.style_messages() {
+            tracing::warn!("{message}");
+        }
+        self.scene_binding = Some(binding);
         // Living props' tables, with the preset `[wooze] preset` names
         // filled in (it can set the shading boil in `[post_process]` too).
         // `flint_scene::load_scene` did this until #686; a host that has

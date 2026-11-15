@@ -359,6 +359,11 @@ pub struct PlayerApp {
     // Terrain data for height queries
     terrain: Option<(flint_terrain::Terrain, flint_terrain::TerrainConfig)>,
 
+    /// The scene as the renderer binds it (#739): made when the scene's
+    /// settings are read, which registers its user styles, and taken by
+    /// `stage_scene`'s `bind_scene`.
+    scene_binding: Option<flint_render::SceneBinding>,
+
     // Debug overlay panels (F3 toggle)
     #[cfg(feature = "debug-hud")]
     debug_panels: Vec<Box<dyn flint_debug_ui::DebugPanel>>,
