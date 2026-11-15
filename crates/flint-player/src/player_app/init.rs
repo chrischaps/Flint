@@ -218,7 +218,7 @@ impl PlayerApp {
         // User styles first: the post_process tables are read against the
         // registry, and a table for an unloaded style is dropped
         let scope = self.asset_scope();
-        let binding = flint_render::SceneBinding::new(scope);
+        let binding = flint_render::SceneBinding::new(scope).with_environment(env);
         for message in binding.style_messages() {
             tracing::warn!("{message}");
         }

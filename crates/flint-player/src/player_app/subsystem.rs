@@ -305,7 +305,9 @@ pub(crate) fn state_machine() -> GameStateMachine {
 /// A scene subsystem's builder: its subsystem, if the scene uses it.
 pub(crate) type BuildForScene = fn(&mut SceneCtx) -> Option<Box<dyn Subsystem>>;
 
-/// What a subsystem reads when it adds to the frame's inputs.
+/// What a subsystem reads when it adds to the frame's inputs. Only the
+/// living subsystem reads it today.
+#[cfg_attr(not(feature = "living"), allow(dead_code))]
 pub(crate) struct FrameCtx<'a> {
     /// The frame's camera, final by the renderer's sync.
     pub camera: &'a Camera,
