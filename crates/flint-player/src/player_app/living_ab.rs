@@ -23,8 +23,8 @@ use flint_render::{Camera, SceneRenderer, SplitView};
 use flint_wooze::{BoilClock, WoozeField};
 
 use super::living_subsystem::LivingSubsystem;
-use super::shallow_wooze::ShallowWooze;
 use super::subsystem::StageCtx;
+use flint_render::shallow_wooze::ShallowWooze;
 
 /// What a side called "as it was" names: the knobs as they stood when the
 /// comparison began.

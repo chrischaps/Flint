@@ -172,7 +172,11 @@ fn terrain_world() -> (FlintWorld, flint_core::EntityId) {
         .set_component(ground, "transform", transform.into())
         .unwrap();
     let mut terrain = toml::Table::new();
-    terrain.insert("heightmap".into(), "terrain/heightmap.png".into());
+    // The path the fixture scene names (#985 keeps one copy, in examples/)
+    terrain.insert(
+        "heightmap".into(),
+        "../../../examples/terrain/heightmap.png".into(),
+    );
     terrain.insert("width".into(), 80.0.into());
     terrain.insert("depth".into(), 80.0.into());
     terrain.insert("height_scale".into(), 1.0.into());

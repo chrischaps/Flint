@@ -177,93 +177,10 @@ mod native {
         ),
     ];
 
-    /// A callback the engine calls on a script that defines it.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct CallbackDoc {
-        pub name: &'static str,
-        pub params: &'static [&'static str],
-        pub doc: &'static str,
-    }
-
-    /// The callbacks, as the book's scripting page describes them.
-    pub const CALLBACKS: &[CallbackDoc] = &[
-        cb("on_init", &[], "Once, when the script is first loaded."),
-        cb(
-            "on_update",
-            &[],
-            "Every frame the game isn't paused; delta_time() is the frame's step.",
-        ),
-        cb(
-            "on_draw_ui",
-            &[],
-            "Every frame after on_update, paused or not: the HUD's draw calls.",
-        ),
-        cb(
-            "on_collision",
-            &["other_id"],
-            "This entity collided with another.",
-        ),
-        cb(
-            "on_collision_exit",
-            &["other_id"],
-            "A contact with another entity ended.",
-        ),
-        cb(
-            "on_trigger_enter",
-            &["other_id"],
-            "Another entity entered this trigger volume.",
-        ),
-        cb(
-            "on_trigger_exit",
-            &["other_id"],
-            "Another entity left this trigger volume.",
-        ),
-        cb(
-            "on_action",
-            &["action_name"],
-            "An input action fired (\"jump\", \"interact\").",
-        ),
-        cb(
-            "on_interact",
-            &[],
-            "The player pressed Interact within this entity's interactable range.",
-        ),
-        cb("on_scene_exit", &[], "The scene is about to be left."),
-        cb("on_scene_enter", &[], "A scene was entered."),
-        cb(
-            "on_animation_end",
-            &["clip"],
-            "A once sprite clip finished.",
-        ),
-        cb(
-            "on_sequence_cue",
-            &["sequence", "cue"],
-            "An animation sequence passed a cue event.",
-        ),
-        cb(
-            "on_event",
-            &["name", "data"],
-            "A game event fired by a script, the engine or a player extension.",
-        ),
-        cb(
-            "on_expression",
-            &["state"],
-            "A new state arrived from outside the process (a timeline or a socket).",
-        ),
-        cb(
-            "on_persist_migrate",
-            &["from"],
-            "Save data loaded at a version below save_version; runs before on_init.",
-        ),
-    ];
-
-    const fn cb(
-        name: &'static str,
-        params: &'static [&'static str],
-        doc: &'static str,
-    ) -> CallbackDoc {
-        CallbackDoc { name, params, doc }
-    }
+    /// The callbacks, in the book's order: the one table, which lives in
+    /// `flint_core::callbacks` (#700) because the engine's load check
+    /// reads it too, and wasm keeps it.
+    pub use flint_core::callbacks::{CallbackSpec, CALLBACKS};
 
     /// A function Rhai has registered that the builder didn't declare: an
     /// extension's raw registration (every engine function is declared).
@@ -288,7 +205,7 @@ mod native {
         /// flint-script was built without its `metadata` feature, and the
         /// undeclared part is then unknown, not empty.
         pub undeclared_listed: bool,
-        pub callbacks: Vec<CallbackDoc>,
+        pub callbacks: Vec<CallbackSpec>,
         /// The modules an optional feature owns and when each is enabled
         /// (#698); every other module is core.
         pub gates: Vec<crate::module::Gate>,

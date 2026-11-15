@@ -51,6 +51,11 @@ impl ModuleBase {
 pub struct VfsModuleResolver {
     base: ModuleBase,
     cache: RwLock<HashMap<PathBuf, Shared<Module>>>,
+    /// The same modules by the name an `import` gave, so the import a
+    /// callback runs again before each call (#692: `instance::callable`)
+    /// is a lookup, not a search of the disk. A search's answer changes
+    /// only when a `lib/` does, which installs a fresh resolver.
+    by_name: RwLock<HashMap<String, Shared<Module>>>,
     /// Modules already read and compiled elsewhere (hot reload's worker,
     /// #633), by resolved path: used in place of reading the file, so an
     /// import after a lib change doesn't wait on the disk in a frame. An
@@ -67,6 +72,7 @@ impl VfsModuleResolver {
         Self {
             base,
             cache: RwLock::new(HashMap::new()),
+            by_name: RwLock::new(HashMap::new()),
             compiled: HashMap::new(),
         }
     }
@@ -88,6 +94,32 @@ impl ModuleResolver for VfsModuleResolver {
         &self,
         engine: &Engine,
         _source: Option<&str>,
+        path: &str,
+        pos: Position,
+    ) -> Result<Shared<Module>, Box<EvalAltResult>> {
+        if let Some(module) = self
+            .by_name
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(path)
+        {
+            return Ok(module.clone());
+        }
+        let module = self.resolve_file(engine, path, pos)?;
+        self.by_name
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(path.to_string(), Shared::clone(&module));
+        Ok(module)
+    }
+}
+
+impl VfsModuleResolver {
+    /// The module `path` names, searched for and read (or this resolver's
+    /// copy of that file's).
+    fn resolve_file(
+        &self,
+        engine: &Engine,
         path: &str,
         pos: Position,
     ) -> Result<Shared<Module>, Box<EvalAltResult>> {

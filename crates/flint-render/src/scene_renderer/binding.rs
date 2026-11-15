@@ -8,9 +8,8 @@
 //!   folder, forgets everything per entity and per scene the last one left
 //!   (style history, bone buffers and holds, the `[environment]` levers, the
 //!   terrain and its grass), then loads the scene's terrain and grass from
-//!   its world. The player and `flint render` call it; before #739 each
-//!   wired these by hand, and the viewer, which doesn't call it yet, loads
-//!   no terrain at all.
+//!   its world. The player, the viewer and `flint render` call it; before
+//!   #739 each wired these by hand, and the viewer loaded no terrain at all.
 //!
 //! What changes every frame is [`FrameInputs`](super::FrameInputs), in
 //! `frame.rs`.
@@ -30,6 +29,8 @@ use std::path::Path;
 pub struct SceneBinding {
     assets: AssetScope,
     style_messages: Vec<String>,
+    /// The scene's `[environment]`, whose lighting levers `bind_scene` sets.
+    environment: Option<flint_scene::EnvironmentDef>,
 }
 
 impl SceneBinding {
@@ -43,7 +44,17 @@ impl SceneBinding {
         Self {
             assets,
             style_messages,
+            environment: None,
         }
+    }
+
+    /// The scene's `[environment]` table: its `shadows` and
+    /// `default_lights` (#627), hemisphere ambient, diffuse wrap,
+    /// Oren-Nayar and sheen, set by `bind_scene` over the built-ins. None,
+    /// or a key left out, is the built-in. Its skybox is the host's.
+    pub fn with_environment(mut self, environment: Option<&flint_scene::EnvironmentDef>) -> Self {
+        self.environment = environment.cloned();
+        self
     }
 
     /// [`new`](Self::new) for the scene file at `scene_path`, its project
@@ -102,14 +113,15 @@ impl SceneRenderer {
     /// Bind the scene `binding` names, whose world is `world`, in place of
     /// whatever the last one left (ADR 0118 decision 5, #739). Call it once a
     /// scene load, after the world is loaded and before its first frame is
-    /// prepared, and set the scene's `[environment]` levers after it (it puts
-    /// the built-in ones back). In order:
+    /// prepared; a host's own lever overrides (a flag, a panel) go after it.
+    /// In order:
     ///
     /// 1. the project and folder fonts, glyph sets, palettes and looks are
     ///    found from ([`set_asset_scope`](Self::set_asset_scope));
     /// 2. no style history (#277), no bone buffers or motion holds (entity
     ///    ids are never reused, so the last scene's are garbage), and the
-    ///    built-in ambient and lighting levers;
+    ///    built-in ambient and lighting levers, then the scene's
+    ///    `[environment]` over them ([`SceneBinding::with_environment`]);
     /// 3. the last scene's terrain and grass unloaded, then this scene's
     ///    terrain (its chunks masked when the entity is styled, #310) and
     ///    grass loaded: a `grass_ground`'s, which replaces a terrain's (ADR
@@ -125,6 +137,11 @@ impl SceneRenderer {
         self.reset_style_history();
         self.clear_entity_bone_buffers();
         self.reset_ambient();
+        self.set_scene_shadows(true);
+        self.set_default_lights(true);
+        if let Some(env) = &binding.environment {
+            self.set_environment(env);
+        }
         self.clear_terrain();
         self.unload_grass();
 
@@ -161,6 +178,32 @@ impl SceneRenderer {
             });
         }
         BoundScene { terrain, grass }
+    }
+}
+
+impl SceneRenderer {
+    /// A scene's `[environment]` levers, over the built-ins: no shadows and
+    /// no built-in lights where it says so (#627), and each lever it names.
+    fn set_environment(&mut self, env: &flint_scene::EnvironmentDef) {
+        self.set_scene_shadows(env.casts_shadows());
+        self.set_default_lights(env.uses_default_lights());
+        if env.ambient_sky.is_some() || env.ambient_ground.is_some() {
+            self.set_ambient(
+                env.ambient_sky
+                    .unwrap_or(crate::LightUniforms::DEFAULT_AMBIENT_SKY),
+                env.ambient_ground
+                    .unwrap_or(crate::LightUniforms::DEFAULT_AMBIENT_GROUND),
+            );
+        }
+        if let Some(wrap) = env.diffuse_wrap {
+            self.set_diffuse_wrap(wrap);
+        }
+        if let Some(oren) = env.oren_nayar {
+            self.set_oren_nayar(oren);
+        }
+        if let Some(strength) = env.sheen_strength {
+            self.set_sheen(env.sheen_color.unwrap_or([1.0; 3]), strength);
+        }
     }
 }
 

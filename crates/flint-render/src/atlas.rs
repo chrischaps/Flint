@@ -11,6 +11,7 @@
 //! run_0  = [0, 64, 64, 64]
 //! ```
 
+use flint_core::toml_util::{check_keys, Shape};
 use flint_core::vfs;
 use std::collections::HashMap;
 use std::path::Path;
@@ -24,11 +25,31 @@ pub struct TextureAtlas {
     pub regions: HashMap<String, [u32; 4]>,
 }
 
+/// The keys a `.atlas.toml` may hold (#282); region names are free.
+const ATLAS_FILE: Shape = Shape::Table(&[(
+    "atlas",
+    Shape::Table(&[
+        ("texture", Shape::Value),
+        ("regions", Shape::Map(&Shape::Value)),
+    ]),
+)]);
+
 impl TextureAtlas {
-    /// Parse an atlas from a TOML string.
+    /// Parse an atlas from a TOML string, ignoring (silently) what it
+    /// can't read; [`TextureAtlas::parse`] says what that was.
     pub fn from_toml(toml_str: &str) -> Result<Self, String> {
+        Self::parse(toml_str).map(|(atlas, _)| atlas)
+    }
+
+    /// Parse an atlas: the atlas, and one warning for each key the format
+    /// doesn't know and each region that isn't `[x, y, w, h]` (skipped).
+    pub fn parse(toml_str: &str) -> Result<(Self, Vec<String>), String> {
         let value: toml::Value =
             toml::from_str(toml_str).map_err(|e| format!("Atlas TOML parse error: {e}"))?;
+        let mut warnings: Vec<String> = check_keys(&value, &ATLAS_FILE)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
 
         let atlas = value.get("atlas").ok_or("Missing [atlas] table")?;
 
@@ -41,28 +62,37 @@ impl TextureAtlas {
         let mut regions = HashMap::new();
         if let Some(regions_table) = atlas.get("regions").and_then(|v| v.as_table()) {
             for (name, val) in regions_table {
-                if let Some(arr) = val.as_array() {
-                    if arr.len() == 4 {
-                        let nums: Vec<u32> = arr
-                            .iter()
-                            .filter_map(|v| v.as_integer().map(|i| i as u32))
-                            .collect();
-                        if nums.len() == 4 {
-                            regions.insert(name.clone(), [nums[0], nums[1], nums[2], nums[3]]);
-                        }
+                let rect: Option<Vec<u32>> =
+                    val.as_array().filter(|a| a.len() == 4).and_then(|a| {
+                        a.iter()
+                            .map(|v| v.as_integer().and_then(|i| u32::try_from(i).ok()))
+                            .collect()
+                    });
+                match rect {
+                    Some(n) => {
+                        regions.insert(name.clone(), [n[0], n[1], n[2], n[3]]);
                     }
+                    None => warnings.push(format!(
+                        "region `{name}` in [atlas.regions] should be [x, y, w, h], four \
+                         whole pixels, not {val}; skipped"
+                    )),
                 }
             }
         }
 
-        Ok(Self { texture, regions })
+        Ok((Self { texture, regions }, warnings))
     }
 
-    /// Load an atlas from a `.atlas.toml` file.
+    /// Load an atlas from a `.atlas.toml` file, warning about keys and
+    /// regions it ignores.
     pub fn load(path: &Path) -> Result<Self, String> {
         let content =
             vfs::read_to_string(path).map_err(|e| format!("Failed to read atlas: {e}"))?;
-        Self::from_toml(&content)
+        let (atlas, warnings) = Self::parse(&content)?;
+        for warning in warnings {
+            tracing::warn!("{}: {warning}", path.display());
+        }
+        Ok(atlas)
     }
 }
 
@@ -139,6 +169,36 @@ run_1 = [128, 0, 64, 64]
         assert_eq!(atlas.regions.len(), 3);
         assert_eq!(atlas.regions["idle_0"], [0, 0, 64, 64]);
         assert_eq!(atlas.regions["run_1"], [128, 0, 64, 64]);
+    }
+
+    #[test]
+    fn misplaced_and_malformed_atlas_keys_are_named() {
+        // #282: `texure` and `[atlas.region]` were ignored without a word
+        let toml = r#"
+[atlas]
+texture = "sheet.png"
+texure = "other.png"
+
+[atlas.region]
+idle_0 = [0, 0, 64, 64]
+
+[atlas.regions]
+run_0 = [0, 64, 64]
+run_1 = [0, 64, 64, 64]
+"#;
+        let (atlas, warnings) = TextureAtlas::parse(toml).unwrap();
+        assert_eq!(atlas.regions.len(), 1);
+        assert_eq!(warnings.len(), 3, "{warnings:#?}");
+        let all = warnings.join("\n");
+        assert!(
+            all.contains("`region` in [atlas]") && all.contains("`regions`"),
+            "{all}"
+        );
+        assert!(
+            all.contains("`texure` in [atlas]") && all.contains("`texture`"),
+            "{all}"
+        );
+        assert!(all.contains("region `run_0`"), "{all}");
     }
 
     #[test]

@@ -15,10 +15,11 @@ use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_core::components as comp;
 use flint_ecs::FlintWorld;
 use flint_render::model_loader::{self, ModelLoadConfig};
+use flint_render::shallow_wooze::{GrassWooze, ShallowWooze};
 use flint_render::AcquireFrame;
 use flint_render::{
-    post_process_config_from_def, Camera, PostProcessConfig, RenderContext, RendererConfig,
-    SceneRenderer,
+    post_process_config_from_def, Camera, FrameInputs, PostProcessConfig, RenderContext,
+    RendererConfig, SceneBinding, SceneRenderer,
 };
 use flint_scene::{load_scene, CameraDef, PostProcessDef, SceneDocument};
 use flint_schema::{SchemaDirs, SchemaRegistry};
@@ -54,6 +55,9 @@ struct ViewerState {
     /// on load (and on Space reset) so the viewer opens on the authored
     /// framing instead of the generic default.
     scene_camera: Option<CameraDef>,
+    /// The scene's `[environment]`, whose lighting levers binding the scene
+    /// sets (#739: the viewer never read it before).
+    environment: Option<flint_scene::EnvironmentDef>,
 }
 
 /// `flint edit scene.toml --style ... --style-time ...` (#328): style words
@@ -171,7 +175,7 @@ pub fn run(
 ) -> Result<()> {
     let (registry, constraint_registry, schema_dirs) = load_schemas(scene_path, schemas)?;
 
-    load_user_styles(scene_path);
+    let binding = scene_binding(scene_path);
     // A word may name one of the scene's styles, registered just now
     flint_render::stylize::check_style_specs(&style.specs).map_err(anyhow::Error::msg)?;
     let (world, mut scene_file) = load_scene(scene_path, &registry)?;
@@ -197,6 +201,7 @@ pub fn run(
             .map(|d| flint_render::look::resolve_scene(d, scene_path)),
         wooze: field_of(&scene_file),
         scene_camera: scene_file.camera.clone(),
+        environment: scene_file.environment.clone(),
     }));
 
     let _watcher = if watch {
@@ -216,6 +221,7 @@ pub fn run(
     app.style_time = style.time;
     app.motion_hold = style.motion_hold.map(|rate| rate.max(0.0));
     app.window_opts = window;
+    app.scene_binding = Some(binding);
     event_loop.run_app(&mut app)?;
 
     Ok(())
@@ -243,6 +249,7 @@ pub fn run_with_world(
         scene_post: None,
         wooze: None,
         scene_camera: None,
+        environment: None,
     }));
 
     let event_loop = EventLoop::new()?;
@@ -265,7 +272,7 @@ pub fn run_editor(
 ) -> Result<()> {
     let (registry, constraint_registry, schema_dirs) = load_schemas(scene_path, schemas)?;
 
-    load_user_styles(scene_path);
+    let binding = scene_binding(scene_path);
     let (world, mut scene_file) = load_scene(scene_path, &registry)?;
     flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))?;
 
@@ -286,6 +293,7 @@ pub fn run_editor(
         wooze: field_of(&scene_file),
         // Editor mode overrides the camera with its birds-eye view; never seeded.
         scene_camera: None,
+        environment: scene_file.environment.clone(),
     }));
 
     let _watcher = if watch {
@@ -302,6 +310,7 @@ pub fn run_editor(
     let editor = SplineEditor::from_config(editor_config);
     let mut app = ViewerApp::new_editor(state, editor);
     app.window_opts = window;
+    app.scene_binding = Some(binding);
     event_loop.run_app(&mut app)?;
 
     Ok(())
@@ -428,6 +437,17 @@ pub struct ViewerApp {
     boil_clock: flint_wooze::BoilClock,
     boil_time: f64,
     last_boil_tick: Instant,
+    /// This frame's boil drawing, for the frame's inputs.
+    frame_boil: flint_wooze::BoilFrame,
+    /// Shallow wooze's and woozy grass's clocks (#215, #252), on the same
+    /// field clock as the boil, as the player's living subsystem keeps them.
+    shallow_wooze: ShallowWooze,
+    grass_wooze: GrassWooze,
+    /// Seconds the last frame took, for styles whose history is a rate (#342).
+    frame_dt: f32,
+    /// The scene as the renderer binds it (#739): made when its user styles
+    /// were registered, bound at load and at each hot reload.
+    scene_binding: Option<SceneBinding>,
 }
 
 /// The style settings a scene authors: its `[post_process.styles]`, or
@@ -487,13 +507,37 @@ fn watch_scene(
     Ok(debouncer)
 }
 
-/// Register the user-authored styles (`styles/*.shader.toml`, ADR 0112)
-/// the scene can see, before its `[post_process]` is read, so its tables
-/// for them aren't dropped as unknown (#275).
-fn load_user_styles(scene_path: &str) {
-    for message in flint_render::stylize::custom::load_dir(scene_dir_of(scene_path)) {
+/// The renderer's share of the scene, at load and at each hot reload
+/// (#739), as the player and `flint render` take it: the scene bound (its
+/// project and folder, which glyph sets, palettes and papers are found
+/// from, #265, ADR 0114; nothing of a last load; its `[environment]`
+/// levers; its terrain, masked when styled, and its grass, a grass_ground's
+/// over a terrain's, #332), then its models. The viewer loaded no terrain
+/// and read no `[environment]` before.
+fn stage_scene(
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    state: &mut ViewerState,
+    binding: SceneBinding,
+    config: &ModelLoadConfig,
+) -> flint_render::BoundScene {
+    let binding = binding.with_environment(state.environment.as_ref());
+    let bound = renderer.bind_scene(device, queue, &state.world, &binding);
+    model_loader::load_models_from_world(&mut state.world, renderer, device, queue, config);
+    bound
+}
+
+/// The scene as the renderer binds it (#739), which registers the
+/// user-authored styles (`styles/*.shader.toml`, ADR 0112) the scene can
+/// see, before its `[post_process]` is read, so its tables for them aren't
+/// dropped as unknown (#275).
+fn scene_binding(scene_path: &str) -> SceneBinding {
+    let binding = SceneBinding::for_scene(Path::new(scene_path));
+    for message in binding.style_messages() {
         eprintln!("Warning: {message}");
     }
+    binding
 }
 
 /// `config` with the `--style` words (#328) and `--motion-hold` (#871)
@@ -611,6 +655,11 @@ impl ViewerApp {
             boil_clock: Default::default(),
             boil_time: 0.0,
             last_boil_tick: Instant::now(),
+            frame_boil: Default::default(),
+            shallow_wooze: Default::default(),
+            grass_wooze: Default::default(),
+            frame_dt: 1.0 / 60.0,
+            scene_binding: None,
         }
     }
 
@@ -674,6 +723,11 @@ impl ViewerApp {
             boil_clock: Default::default(),
             boil_time: 0.0,
             last_boil_tick: Instant::now(),
+            frame_boil: Default::default(),
+            shallow_wooze: Default::default(),
+            grass_wooze: Default::default(),
+            frame_dt: 1.0 / 60.0,
+            scene_binding: None,
         }
     }
 
@@ -802,20 +856,14 @@ impl ViewerApp {
         {
             let mut state = self.state.lock().unwrap();
             let config = ModelLoadConfig::from_scene_path(&state.scene_path);
-            // Glyph sets, palettes and papers (ASCII's `font`, #265) are
-            // found from the scene's project and folder (ADR 0114)
-            scene_renderer.set_asset_scope(flint_core::project::AssetScope::new(
-                config.project.clone(),
-                config.scene_dir.clone(),
-            ));
-            model_loader::load_models_from_world(
-                &mut state.world,
+            stage_scene(
                 &mut scene_renderer,
                 &render_context.device,
                 &render_context.queue,
+                &mut state,
+                self.bound_scene(&config),
                 &config,
             );
-            scene_renderer.update_from_world(&state.world, &render_context.device);
 
             // Particles (ADR 0068): effects next to the scene, then textures.
             let project = &config.project;
@@ -832,17 +880,6 @@ impl ViewerApp {
                 &self.particles.sync,
                 project,
                 scene_dir_of(&state.scene_path),
-            );
-
-            // Grass on a mesh ground (ADR 0089), as the player and
-            // `flint render` load it (#332)
-            flint_render::load_grass_ground_in(
-                &state.world,
-                project,
-                scene_dir_of(&state.scene_path),
-                &render_context.device,
-                &render_context.queue,
-                &mut scene_renderer,
             );
         }
 
@@ -872,9 +909,6 @@ impl ViewerApp {
             }
             if let Some(rate) = self.motion_hold {
                 println!("--motion-hold applied: the whole frame drawn {rate} times a second");
-            }
-            if let Some(t) = self.style_time {
-                scene_renderer.ocean_time = t as f64;
             }
             // The F4 style editor marks edits against these (#268)
             self.render_panel
@@ -973,18 +1007,11 @@ impl ViewerApp {
         // Particles: step, pack, upload (ADR 0068)
         self.tick_particles();
 
-        // Motion on twos: the clock held drawings turn on (#871)
-        self.tick_motion_hold();
-
-        // Render the 3D scene
+        // The frame's inputs and the world (#739), then the 3D scene
+        self.prepare_frame();
         {
             let context = self.render_context.as_ref().unwrap();
             let renderer = self.scene_renderer.as_mut().unwrap();
-            renderer.set_selected_entity(self.scene_tree.selected_entity());
-            // Styles sized in points (ASCII cells, #265) follow the window
-            if let Some(window) = &self.window {
-                renderer.pixels_per_point = window.scale_factor() as f32;
-            }
             renderer.render(context, &self.camera, &view).ok();
         }
 
@@ -1051,36 +1078,66 @@ impl ViewerApp {
         self.render_context.as_ref().unwrap().queue.present(output);
     }
 
-    /// Stamp the hold's clock (#871), and while anything is drawn on ticks
-    /// re-read the world every frame. The viewer otherwise re-reads it only
-    /// on an edit, so a held entity dragged with the gizmo would be left
-    /// drawn where the last tick of the drag caught it, not where it was
-    /// dropped. A scene with no hold re-reads nothing more than it did.
-    fn tick_motion_hold(&mut self) {
+    /// The scene as the renderer binds it: the one made when its user styles
+    /// were registered, or, for a world with no scene file, one for the
+    /// models' project and folder.
+    fn bound_scene(&self, config: &ModelLoadConfig) -> SceneBinding {
+        self.scene_binding.clone().unwrap_or_else(|| {
+            SceneBinding::new(flint_core::project::AssetScope::new(
+                config.project.clone(),
+                config.scene_dir.clone(),
+            ))
+        })
+    }
+
+    /// Hand the renderer this frame's inputs and the world (#739), as the
+    /// player does once a frame: the clock motion on twos ticks by (#871),
+    /// the viewer's own wall clock, which the grass's wind and the shallow
+    /// wooze also run on; the post time held where it stands (0, or
+    /// `--style-time`); the boil, shallow wooze and woozy grass from the
+    /// field's clock; the particles; the window's scale. The world is read
+    /// every frame, so an edit, a drag or a held entity's tick shows on the
+    /// next frame without asking.
+    fn prepare_frame(&mut self) {
         let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer)
         else {
             return;
         };
-        renderer.set_motion_time(self.motion_clock.elapsed().as_secs_f64());
-        if renderer.motion_held() {
-            let state = self.state.lock().unwrap();
-            renderer.update_from_world(&state.world, &context.device);
-        }
+        renderer.set_selected_entity(self.scene_tree.selected_entity());
+        let state = self.state.lock().unwrap();
+        let woozy = state.wooze.is_some();
+        let inputs = FrameInputs {
+            time: self.motion_clock.elapsed().as_secs_f64(),
+            // History styles decay by the frame's time (#342)
+            dt: self.frame_dt,
+            look_time: Some(self.style_time.map_or(0.0, f64::from)),
+            grass_time: self.grass_wooze.sway_time(),
+            grass_wooze: self.grass_wooze.comb(),
+            shallow_wooze: if woozy {
+                self.shallow_wooze.draws()
+            } else {
+                &[]
+            },
+            boil: self.frame_boil,
+            // Styles sized in points (ASCII cells, #265) follow the window
+            pixels_per_point: self
+                .window
+                .as_ref()
+                .map_or(1.0, |w| w.scale_factor() as f32),
+            particles: self.show_particles.then_some(&self.particles.sync),
+            ..Default::default()
+        };
+        renderer.prepare(&context.device, &context.queue, &state.world, &inputs);
     }
 
-    /// Advance the particle simulation by real time (scaled), then pack and
-    /// upload. Runs every frame so inspector edits show live; paused keeps
-    /// the last frame on screen.
+    /// Advance the particle simulation by real time (scaled), then pack it
+    /// for the frame's inputs. Runs every frame so inspector edits show
+    /// live; paused keeps the last frame on screen.
     fn tick_particles(&mut self) {
         let now = Instant::now();
         let dt = (now - self.last_particle_tick).as_secs_f32().min(0.1);
         self.last_particle_tick = now;
-        let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer)
-        else {
-            return;
-        };
-        if !self.show_particles {
-            renderer.update_particles(&context.device, &context.queue, &[]);
+        if self.scene_renderer.is_none() || !self.show_particles {
             return;
         }
         {
@@ -1094,7 +1151,6 @@ impl ViewerApp {
         }
         self.particle_alive = self.particles.sync.total_alive();
         self.particles.pack(Some(self.camera.position_array()));
-        renderer.update_particles_from(&context.device, &context.queue, &self.particles.sync);
     }
 
     /// View depth of the DoF focus entity along the camera forward axis, as
@@ -1153,31 +1209,36 @@ impl ViewerApp {
         renderer.set_post_process_config(config);
     }
 
-    /// Advance the shading boil and tell the renderer which drawing it's on.
-    /// The post passes' resources (styles, FXAA) follow the config by
-    /// themselves: the renderer builds them each frame (#262, #297), however
-    /// the viewer set it (load, scene/default toggle, hot reload, F4).
+    /// Advance the field's clocks: the shading boil's drawing (#214), and
+    /// shallow wooze's and woozy grass's (#215, #252), which the viewer
+    /// skipped before #739. The post passes' resources (styles, FXAA) follow
+    /// the config by themselves: the renderer builds them each frame (#262,
+    /// #297), however the viewer set it (load, scene/default toggle, hot
+    /// reload, F4).
     fn tick_boil(&mut self) {
         let now = Instant::now();
         let dt = (now - self.last_boil_tick).as_secs_f64().min(0.1);
         self.last_boil_tick = now;
-        let Some(renderer) = &mut self.scene_renderer else {
+        let Some(renderer) = &self.scene_renderer else {
             return;
         };
 
         let eye = self.camera.position_array();
         let state = self.state.lock().unwrap();
-        let boil = match &state.wooze {
+        self.frame_boil = match &state.wooze {
             Some(field) => {
                 self.boil_time += dt;
                 let sample = field.sample(eye, self.boil_time);
                 self.boil_clock.tick(dt, &sample);
+                self.shallow_wooze
+                    .advance(&state.world, field, self.boil_time, dt);
+                self.grass_wooze
+                    .advance(renderer.grass_config(), field, eye, self.boil_time, dt);
                 self.boil_clock
                     .frame(&sample, renderer.post_process_config().boil_on)
             }
             None => Default::default(),
         };
-        renderer.set_boil(boil);
     }
 
     /// Restore DoF params to the active base config (authored scene post if
@@ -1331,8 +1392,6 @@ impl ViewerApp {
             }
             if flags.mode_changed {
                 renderer.set_debug_mode(rp.debug_mode);
-                let state = self.state.lock().unwrap();
-                renderer.update_from_world(&state.world, &context.device);
             }
             if flags.fov_changed {
                 self.camera.fov = rp.fov_deg;
@@ -1356,9 +1415,7 @@ impl ViewerApp {
         let dt = (now - self.last_frame_time).as_secs_f32().min(0.1);
         self.last_frame_time = now;
         // ASCII's smoothing is per 60 Hz frame of this (#342)
-        if let Some(renderer) = self.scene_renderer.as_mut() {
-            renderer.style_dt = dt;
-        }
+        self.frame_dt = dt;
 
         // Keyboard orbit: WASD to orbit, Q/E to zoom
         {
@@ -1864,10 +1921,6 @@ impl ViewerApp {
                     components.set_field(&edit.component, &edit.field, edit.new_value.clone());
                 }
             }
-            // Update renderer
-            if let (Some(ctx), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
-                renderer.update_from_world(&st.world, &ctx.device);
-            }
             self.dirty = true;
         }
 
@@ -1965,14 +2018,6 @@ impl ViewerApp {
                 if let Some(components) = st.world.get_components_mut(edit.entity_id) {
                     components.set_field(&edit.component, &edit.field, edit.new_value.clone());
                 }
-            }
-        }
-
-        // Update renderer
-        {
-            let st = self.state.lock().unwrap();
-            if let (Some(ctx), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
-                renderer.update_from_world(&st.world, &ctx.device);
             }
         }
 
@@ -2074,7 +2119,6 @@ impl ViewerApp {
                 }
             }
             drop(st);
-            self.refresh_renderer();
             println!("Undo: {}", cmd.description);
         }
     }
@@ -2093,7 +2137,6 @@ impl ViewerApp {
                 }
             }
             drop(st);
-            self.refresh_renderer();
             println!("Redo: {}", cmd.description);
         }
     }
@@ -2206,13 +2249,6 @@ impl ViewerApp {
         }
     }
 
-    fn refresh_renderer(&mut self) {
-        let st = self.state.lock().unwrap();
-        if let (Some(ctx), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
-            renderer.update_from_world(&st.world, &ctx.device);
-        }
-    }
-
     /// Handle mouse click picking in the viewport
     fn try_pick_entity(&mut self, x: f64, y: f64) {
         let context = match &self.render_context {
@@ -2300,8 +2336,9 @@ impl ViewerApp {
             match reload_result {
                 Ok((new_world, scene_file)) => {
                     println!("Reloaded scene: {}", scene_file.scene.name);
-                    // The picture no longer follows on from the last one
-                    self.reset_style_history();
+                    // Its entities are new: the field's clocks start over
+                    self.shallow_wooze = Default::default();
+                    self.grass_wooze = Default::default();
 
                     {
                         let mut state = self.state.lock().unwrap();
@@ -2321,6 +2358,7 @@ impl ViewerApp {
                             self.picked_look.as_ref(),
                         );
                         state.wooze = field_of(&scene_file);
+                        state.environment = scene_file.environment.clone();
                         // Refresh authored camera too; applied on the next
                         // Space reset (the live camera is never yanked).
                         state.scene_camera = scene_file.camera.clone();
@@ -2331,14 +2369,21 @@ impl ViewerApp {
                     {
                         let mut state = self.state.lock().unwrap();
                         let config = ModelLoadConfig::from_scene_path(&state.scene_path);
-                        model_loader::load_models_from_world(
-                            &mut state.world,
+                        // Bound again (#739): no style history (the picture
+                        // no longer follows on from the last one, #474), no
+                        // bones or levers of the last load, and its terrain
+                        // and grass, which may have changed or gone
+                        let binding = self.scene_binding.clone().unwrap_or_else(|| {
+                            SceneBinding::new((*renderer.asset_scope()).clone())
+                        });
+                        stage_scene(
                             renderer,
                             &context.device,
                             &context.queue,
+                            &mut state,
+                            binding,
                             &config,
                         );
-                        renderer.update_from_world(&state.world, &context.device);
 
                         // Particles: effects may have changed on disk too
                         // (the watcher covers the scene dir recursively).
@@ -2357,18 +2402,6 @@ impl ViewerApp {
                             &self.particles.sync,
                             project,
                             scene_dir_of(&state.scene_path),
-                        );
-
-                        // Grass: the scene's grass_ground (or its mask) may
-                        // have changed, or gone; drop the old field first
-                        renderer.unload_grass();
-                        flint_render::load_grass_ground_in(
-                            &state.world,
-                            project,
-                            scene_dir_of(&state.scene_path),
-                            &context.device,
-                            &context.queue,
-                            renderer,
                         );
 
                         // Re-derive the authored post-process so [post_process]
@@ -2817,11 +2850,6 @@ impl ApplicationHandler for ViewerApp {
                             if let Some(renderer) = &mut self.scene_renderer {
                                 let on = renderer.toggle_normal_arrows();
                                 println!("Normal arrows: {}", if on { "ON" } else { "OFF" });
-
-                                if let Some(context) = &self.render_context {
-                                    let state = self.state.lock().unwrap();
-                                    renderer.update_from_world(&state.world, &context.device);
-                                }
                             }
                         }
                         // Rendering & Effects menu (ADR 0053): the one home
@@ -3045,3 +3073,7 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats) 
                 });
         });
 }
+
+#[cfg(test)]
+#[path = "app_binding_tests.rs"]
+mod binding_tests;

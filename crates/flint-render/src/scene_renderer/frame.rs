@@ -16,8 +16,8 @@
 //! `style_mask`, `water`, `skinning`, `grass`) and this file orchestrates
 //! them.
 //!
-//! The host protocol (ADR 0118 decision 5, #739), the same for every host
-//! (the player and `flint render`; the viewer moves onto it next):
+//! The host protocol (ADR 0118 decision 5, #739), the same for the player,
+//! the viewer and `flint render`:
 //!
 //! ```text
 //! bind_scene(world, &SceneBinding)        once a scene load (binding.rs)

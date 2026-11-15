@@ -359,6 +359,30 @@ fn no_world_is_a_script_error_not_a_panic() {
         .unwrap();
 }
 
+/// #692: no declared function can panic for want of a world. Each is
+/// called at every arity it has, with a sample of each kind and nothing
+/// lent (as a script's top level was, before it ran inside a lending): an
+/// answer or a script error, never a panic.
+#[test]
+fn no_function_panics_without_a_world() {
+    let engine = ScriptEngine::new();
+    let entries = engine.api_registry().entries().to_vec();
+    let mut panicked = Vec::new();
+    for e in &entries {
+        let args: Vec<String> = e.params.iter().map(|p| sample(p.kind, 1)).collect();
+        let src = format!("{}({})", e.name, args.join(", "));
+        let rhai = engine.rhai_engine();
+        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = rhai.eval::<Dynamic>(&src);
+        }));
+        if ran.is_err() {
+            panicked.push(src);
+        }
+    }
+    assert!(entries.len() > 300, "{} functions", entries.len());
+    assert!(panicked.is_empty(), "panicked with no world: {panicked:#?}");
+}
+
 #[test]
 fn an_extension_declares_through_the_same_builder() {
     let mut system = crate::ScriptSystem::new();
@@ -416,17 +440,6 @@ fn an_extension_declares_through_the_same_builder() {
         let _: Dynamic = system.rhai_engine_mut().eval(&src).unwrap();
     }
     assert_eq!(world.get_transform(id).unwrap().position.y, 3.0);
-}
-
-#[test]
-fn every_callback_is_listed_at_its_arity() {
-    for &(name, arity) in crate::engine::CALLBACK_ARITIES {
-        let doc = super::registry::CALLBACKS
-            .iter()
-            .find(|c| c.name == name)
-            .unwrap_or_else(|| panic!("{name} has no listing"));
-        assert_eq!(doc.params.len(), arity, "{name}");
-    }
 }
 
 /// ADR 0116 step 2 is done: the engine registers nothing outside the

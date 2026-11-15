@@ -6,6 +6,7 @@
 use crate::context::{InputSnapshot, ScriptCommand};
 use crate::engine::test_support::*;
 use crate::engine::ScriptEngine;
+use flint_core::callbacks::Callback;
 use flint_ecs::FlintWorld;
 
 #[test]
@@ -370,7 +371,7 @@ fn test_persist_api_without_store() {
 
     probe_component(&mut world, id);
     engine.add_script(id, ast, "test.rhai".into());
-    assert!(engine.scripts[&id].has_on_persist_migrate);
+    assert!(engine.scripts[&id].defines(Callback::PersistMigrate));
     // Should not panic, and with no store in scope migrates nothing
     engine.migrate_persistent_store(&mut world);
     engine.call_inits(&mut world);

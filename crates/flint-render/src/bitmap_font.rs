@@ -22,13 +22,37 @@
 use crate::glyph_atlas::{GlyphAtlas, GlyphError, GlyphSetCache, BUILTIN_SET};
 use crate::sprite2d_pipeline::Sprite2dInstanceGpu;
 use flint_core::project::{shown, AssetKind, AssetScope};
-use flint_core::toml_util::toml_f32;
+use flint_core::toml_util::{check_keys, toml_f32, KeyIssue, Shape};
 use flint_core::vfs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// The suffix of the older bitmap-font description.
 pub const FONT_TOML_SUFFIX: &str = ".font.toml";
+
+/// The keys a `.font.toml` may hold (#282).
+const FONT_FILE: Shape = Shape::Table(&[(
+    "font",
+    Shape::Table(&[
+        ("glyphs", Shape::Value),
+        ("texture", Shape::Value),
+        ("glyph_width", Shape::Value),
+        ("glyph_height", Shape::Value),
+        ("columns", Shape::Value),
+        ("first_char", Shape::Value),
+        ("char_count", Shape::Value),
+        ("spacing", Shape::Value),
+    ]),
+)]);
+
+/// The keys of a `.font.toml` document that a load ignores (misspelled,
+/// misplaced or unknown), as it warns about them. Empty for a document
+/// that doesn't parse: the load says why.
+pub fn font_toml_issues(text: &str) -> Vec<KeyIssue> {
+    text.parse::<toml::Value>()
+        .map(|doc| check_keys(&doc, &FONT_FILE))
+        .unwrap_or_default()
+}
 
 /// Prefix of the `TextureCache` names fonts upload under, so a font never
 /// shares a name with an image file.
@@ -80,6 +104,9 @@ impl BitmapFont {
         let table: toml::Value = text
             .parse()
             .map_err(|e: toml::de::Error| parse_error(path, e.to_string().trim_end()))?;
+        for issue in check_keys(&table, &FONT_FILE) {
+            tracing::warn!("{}: {issue}", shown(path));
+        }
         let font = table
             .get("font")
             .ok_or_else(|| parse_error(path, "no [font] table"))?;
@@ -411,6 +438,25 @@ mod tests {
             assert_eq!(wide.spacing, 2.0);
             assert_eq!(wide.atlas().cell_size(), [8, 8]);
         });
+    }
+
+    #[test]
+    fn font_toml_keys_it_ignores_are_named() {
+        // #282: `spacng` used to be ignored and the spacing stayed 1.0
+        assert!(font_toml_issues(LEGACY).is_empty());
+        assert!(font_toml_issues("[font]\nglyphs = \"builtin\"\nspacing = 2.0\n").is_empty());
+        let typo = font_toml_issues(&LEGACY.replace("spacing", "spacng"));
+        assert_eq!(typo.len(), 1);
+        let message = typo[0].to_string();
+        assert!(message.contains("`spacng` in [font]"), "{message}");
+        assert!(message.contains("did you mean `spacing`?"), "{message}");
+        // A glyph set named in the wrong spelling would draw the grid's font
+        let glyph = font_toml_issues("[font]\nglyph = \"kana\"\n");
+        assert!(
+            glyph[0].to_string().contains("did you mean `glyphs`?"),
+            "{}",
+            glyph[0]
+        );
     }
 
     #[test]

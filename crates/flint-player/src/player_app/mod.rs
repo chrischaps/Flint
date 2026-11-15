@@ -58,8 +58,6 @@ mod schemas;
 pub mod script_commands;
 #[cfg(test)]
 mod script_sound_tests;
-#[cfg(feature = "living")]
-mod shallow_wooze;
 mod state;
 pub mod style_commands;
 pub(crate) mod subsystem;
