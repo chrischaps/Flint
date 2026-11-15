@@ -3,7 +3,7 @@ name = "flint-geometry"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Geometry above the core: the Gerstner ocean surface, spline paths and rays against drawn meshes"
+description = "Geometry above the core: the Gerstner ocean surface, spline paths, profiles swept along them and rays against drawn meshes"
 
 # Moved out of flint-core (#754) so that an edit here rebuilds only the
 # crates that sample a wave, walk a spline or cast a ray.
@@ -11,6 +11,9 @@ description = "Geometry above the core: the Gerstner ocean surface, spline paths
 [dependencies]
 flint-core = { workspace = true }
 toml = { workspace = true }
+# A `.spline.toml` is read through serde, so a mistake carries its line
+# and column (#750)
+serde = { workspace = true }
 
 [lints]
 workspace = true

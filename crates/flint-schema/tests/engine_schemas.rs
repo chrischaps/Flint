@@ -531,15 +531,18 @@ fn the_four_schemas_say_what_their_readers_take() {
     );
     // `model_loader` and `is_runtime_model`
     assert_eq!(fields("model"), set(&["asset", "runtime"]));
-    // `spline_gen::load_splines`
+    // flint-render's `load_scene_splines`
     assert_eq!(fields("spline"), set(&["file"]));
-    // `spline_gen::parse_spline_mesh_component`
+    // flint-render's `splines::mesh_def`
     assert_eq!(
         fields("spline_mesh"),
         set(&[
             "spline",
             "width",
             "height",
+            "profile",
+            "profile_closed",
+            "smooth",
             "offset",
             "color",
             "stripe_color",

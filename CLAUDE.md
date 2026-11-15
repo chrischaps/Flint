@@ -114,7 +114,7 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
   ├── flint-ecs      hecs wrapper with stable EntityId mapping (BiMap)
   ├── flint-schema   Component/archetype schema system
   ├── flint-wooze    The wooze field (how woozy a place is, as a function of position and time) and the boil clock
-  ├── flint-geometry Gerstner ocean spectrum, spline sampling, rays against drawn meshes; their component names
+  ├── flint-geometry Gerstner ocean spectrum, spline sampling and `.spline.toml` files, profiles swept along them, rays against drawn meshes; their component names
   └── flint-core     EntityId, ContentHash, Transform, Vec3, Color, FlintError, vfs (read-only file layer)
 ```
 

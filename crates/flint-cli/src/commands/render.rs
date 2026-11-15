@@ -24,9 +24,7 @@ use super::render_report::{self, CaptureReport};
 use anyhow::{anyhow, Context, Result};
 use flint_core::components as comp;
 use flint_core::Vec3;
-use flint_player::{
-    spline_gen, ExpressionTimeline, GpuSink, HeadlessAnimation, HeadlessGame, ScriptLook,
-};
+use flint_player::{ExpressionTimeline, GpuSink, HeadlessAnimation, HeadlessGame, ScriptLook};
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{
     Camera, DebugMode, FrameInputs, HeadlessContext, RendererConfig, SceneRenderer,
@@ -1235,12 +1233,12 @@ pub(super) fn render(
         &config,
     );
 
-    // Generate procedural geometry from spline + spline_mesh entities
-    spline_gen::load_splines(
+    // Meshes swept along the scene's splines (#750); a still has no
+    // physics, so their colliders are dropped
+    flint_render::load_scene_splines(
         &args.scene,
         &mut world,
         &mut renderer,
-        None,
         &ctx.device,
         &ctx.queue,
     );
@@ -3629,12 +3627,11 @@ impl Stage {
             &config,
         );
 
-        // Generate procedural geometry from spline + spline_mesh entities
-        spline_gen::load_splines(
+        // Meshes swept along the scene's splines (#750)
+        flint_render::load_scene_splines(
             &args.scene,
             game.world_mut(),
             &mut renderer,
-            None,
             &ctx.device,
             &ctx.queue,
         );

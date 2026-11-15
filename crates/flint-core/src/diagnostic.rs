@@ -139,6 +139,9 @@ pub mod codes {
     pub const BAD_INPUT_CONFIG: &str = "bad-input-config";
     /// A procgen spec a scene's model or texture is made from does not parse.
     pub const BAD_SPEC: &str = "bad-spec";
+    /// A `.spline.toml` a scene names does not parse, or a `spline_mesh`
+    /// profile is no polygon (#750). Placed by line and column.
+    pub const BAD_SPLINE: &str = "bad-spline";
 
     /// A game's Cargo workspace lacks a `[patch.crates-io]` line the engine
     /// it builds by path has (#982): cargo applies `[patch]` only from the
@@ -329,6 +332,11 @@ pub mod codes {
             BAD_SPEC,
             Severity::Error,
             "a procgen spec a scene's model or texture is made from does not parse",
+        ),
+        (
+            BAD_SPLINE,
+            Severity::Error,
+            "a spline file a scene names does not parse, or a spline_mesh profile is no polygon",
         ),
         (
             MISSING_CARGO_PATCH,
@@ -770,7 +778,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 43);
+        assert_eq!(seen.len(), 44);
     }
 
     /// A problem in a scene-level table names the table as its header is

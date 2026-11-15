@@ -1744,6 +1744,7 @@ dependencies = [
  "flint-core",
  "flint-debug-ui",
  "flint-ecs",
+ "flint-geometry",
  "flint-import",
  "flint-input-capture",
  "flint-music",
@@ -1841,6 +1842,7 @@ name = "flint-geometry"
 version = "0.1.0"
 dependencies = [
  "flint-core",
+ "serde",
  "toml",
 ]
 

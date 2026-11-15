@@ -527,7 +527,22 @@ fn type_cell(prop: &Value) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        ParamFieldType::StringArray { item_enum: None } => "list of strings".into(),
+        // The items' own type, when they say one (#750: a list of numbers,
+        // or of [right, up] points, read "list of strings")
+        ParamFieldType::StringArray { item_enum: None } => {
+            let items = prop.get("items");
+            fn ty(v: Option<&Value>) -> Option<&str> {
+                v.and_then(|i| i.get("type")).and_then(|t| t.as_str())
+            }
+            match ty(items) {
+                Some("number") | Some("integer") => "list of numbers".into(),
+                Some("array") => match ty(items.and_then(|i| i.get("items"))) {
+                    Some("number") | Some("integer") => "list of number lists".into(),
+                    _ => "list of lists".into(),
+                },
+                _ => "list of strings".into(),
+            }
+        }
         ParamFieldType::ObjectArray => "array of tables".into(),
         ParamFieldType::ObjectMap => "table".into(),
     }
