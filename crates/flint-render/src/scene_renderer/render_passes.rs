@@ -1387,7 +1387,7 @@ impl SceneRenderer {
         // frame (#297); both Options are still checked, falling back to the
         // direct path.
         let fxaa_active = self.postprocess_config.enabled
-            && self.postprocess_config.fxaa_enabled
+            && self.postprocess_config.fxaa
             && pp.fxaa.is_some()
             && resources.fxaa.is_some();
         let final_target = if fxaa_active {

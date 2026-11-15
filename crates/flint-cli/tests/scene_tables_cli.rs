@@ -209,11 +209,12 @@ fn a_wrong_value_in_a_table_is_an_error() {
 fn flint_schema_lists_shows_and_exports_tables() {
     let dir = project("schema");
     let list = stdout(&flint(&dir, &["schema", "--list"]));
-    assert!(list.contains("\nScene tables (6):\n"), "{list}");
+    assert!(list.contains("\nScene tables (7):\n"), "{list}");
     for name in [
         "camera",
         "environment",
         "living",
+        "panels",
         "post_process",
         "weather",
         "wooze",
@@ -225,8 +226,8 @@ fn flint_schema_lists_shows_and_exports_tables() {
         );
     }
     let names = json(&flint(&dir, &["schema", "--list", "--json"]));
-    assert_eq!(names["tables"].as_array().unwrap().len(), 6);
-    assert_eq!(names["tables"][4]["name"], "weather");
+    assert_eq!(names["tables"].as_array().unwrap().len(), 7);
+    assert_eq!(names["tables"][5]["name"], "weather");
 
     let text = stdout(&flint(&dir, &["schema", "weather"]));
     assert!(

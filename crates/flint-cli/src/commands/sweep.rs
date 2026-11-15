@@ -93,7 +93,7 @@ impl Sweep {
         let key = if key == "look" {
             SweepKey::Look
         } else if let Some(field) = key.strip_prefix("post.") {
-            parse_post(field)?
+            parse_post(field, &values)?
         } else if let Some(knob) = key.strip_prefix("wooze.") {
             parse_wooze(knob, &values)?
         } else if let Some((style, k)) = key.split_once('.') {
@@ -496,12 +496,24 @@ impl CellView {
     }
 }
 
-fn parse_post(field: &str) -> Result<SweepKey, String> {
+fn parse_post(field: &str, values: &[String]) -> Result<SweepKey, String> {
     if !PostProcessDef::field_names().iter().any(|k| k == field) {
         return Err(format!(
             "--sweep: [post_process] has no field '{field}'{}",
             did_you_mean(PostProcessDef::closest_field(field))
         ));
+    }
+    // A built-in effect's value past what it is tuned for is refused, as a
+    // style sweep's is (#355, #741)
+    if let Some(param) = flint_schema::post_effects::param(field) {
+        for value in values {
+            if let Some(e) = param.range_error(&parse_value(value)) {
+                return Err(format!(
+                    "--sweep post.{field}={value}: {e} (`flint render --list-effects` lists \
+                     every key's range)"
+                ));
+            }
+        }
     }
     Ok(SweepKey::Post {
         field: field.to_string(),
@@ -760,6 +772,12 @@ mod tests {
             s("post.exposure=1,2"),
         ]);
         assert!(three.unwrap_err().contains("one (a row) or two"));
+        // #741: a post value past its range is refused, naming it
+        let hot = Sweep::parse("post.bloom_intensity=0.1,3").unwrap_err();
+        assert!(
+            hot.contains("bloom_intensity=3 is outside its range 0..1"),
+            "{hot}"
+        );
         let big = ["1"; 12].join(",");
         let many = SweepGrid::new(&[
             s(&format!("post.exposure={big}")),

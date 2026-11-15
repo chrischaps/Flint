@@ -104,6 +104,9 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                          `--style edges_view` shows them)
    #   --list-styles [--json] (#303: every registered style, its stage, table, and each
    #                          param's default/range/help; with a scene, its user styles too)
+   #   --list-effects [--json] (#741: every built-in post effect and its [post_process] keys,
+   #                          kind/default/range/help, from flint_schema::post_effects::EFFECTS;
+   #                          --sweep post.<key> refuses a value past the key's range)
    #   --watch                (#432, commands/render_watch.rs: run, then write -o again on each save.
    #                          Watches the scene's folder (recursive), custom::style_dirs, the schema dirs
    #                          and the files flags name; the render's outputs (`Written`: -o and files named

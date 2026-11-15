@@ -383,13 +383,38 @@ vignette_intensity = 0.3
 exposure = 1.0
 ```
 
-All fields are optional --- omitted values use their defaults. The full key list with defaults is in [File Formats](../formats/overview.md).
+All fields are optional --- omitted values use their defaults. The full key list with defaults is in [File Formats](../formats/overview.md), and `flint render --list-effects` prints it from the engine itself (below).
 
 A key that is no field is ignored, so its field keeps its default, and the load warns with the file and the closest known name (#354). The scene still loads, and `flint validate` shows the same line:
 
 ```text
 WARN levels/demo.scene.toml: [post_process] has no field 'bloom_intensty', did you mean 'bloom_intensity'? (ignored)
 ```
+
+### Listing the keys
+
+Every key above belongs to one built-in effect (bloom, SSAO, fog, the grade...), and each is declared once, in the effects' descriptors (`flint_schema::post_effects`, #741): its kind, default, the range the effect is tuned for, the F4 widget and its help. Everything else is made from that one line: the scene's parse, the renderer's config and the copy between them, the `[table.post_process]` schema (`flint schema post_process`), `--sweep post.<key>`, the F4 menu's sections and this list:
+
+```bash
+flint render --list-effects           # by effect: key, kind, default, range, help
+flint render --list-effects --json    # the same, for an agent
+```
+
+```text
+bloom  (Bloom): Bright areas bleed light
+  bloom_enabled            bool true                              Whether bright areas bleed light
+  bloom_intensity          f32  0.04               0..1           How much bloom is added
+  bloom_threshold          f32  1                  0..4           The brightness above which a pixel blooms
+  bloom_soft_threshold     f32  0.5                0..1           How softly blooming starts below the threshold: 0 is a hard cut
+```
+
+A value outside its key's range still draws, as a style value past its range does (#355), and says so: the load, `flint validate` and `flint check` warn with `post-range` and name the range. A look's value, or a `--sweep post.<key>` value, past its range is refused instead, as a style value there is:
+
+```text
+warning[post-range] [post_process] bloom_intensity: bloom_intensity=3 is outside its range 0..1
+```
+
+`bloom_soft_threshold` and `ssao_bias` became scene keys with the descriptors; they had been the renderer's (F4 and scripts) alone. Adding a key to an effect is its line in the descriptors, its field in the composite's uniform struct and the WGSL that reads it.
 
 When the pipeline is disabled (`--no-postprocess` or the menu checkbox), most effects are zeroed: bloom, vignette, fog, dither, desaturate, film grain, DoF, render mode and grade. Two are not: `chromatic_aberration` and `radial_blur` predate the gate and stay live even with post-processing off.
 
@@ -484,19 +509,14 @@ CLI flags take precedence over scene TOML settings.
 
 There are no longer per-effect function keys. [ADR 0053](https://github.com/chrischaps/Flint/blob/main/docs/adr/0053-one-rendering-and-effects-menu-on-f4.md) consolidated every render and post-process debug control into one egui window, opened with **F4** in both the player and the scene viewer. Every toggle above appears there with its non-binary parameters, and changes write straight through to the renderer.
 
+The effect sections are drawn from the effects' descriptors (#741), one a built-in effect in `--list-effects` order, each key its widget over the range it is tuned for, with its help on hover; a value a scene set past the range shows as written until the slider moves.
+
 | Section | Controls |
 |---------|----------|
-| Post chain | Post-processing on/off, exposure, vignette + intensity + smoothness, chromatic aberration, radial blur, desaturate. Player only: **Freeze script post overrides**, so a running script cannot fight your edits |
-| SSAO | Enabled, radius, intensity, bias, samples |
-| Depth of field | Strength, focus distance, focus range |
-| Fog | Enabled, color, density, start, end, height fog + falloff + origin + density, tint color + strength + start + end |
-| Bloom | Enabled, intensity, threshold, soft threshold |
-| Grade / Grain / FXAA | Lift, gamma, gain, Neutral grade button, film grain, FXAA |
-| Styles | A section per registered style (Kuwahara among them), drawn from its declaration, with Defaults, Authored, Copy TOML and Commit to scene |
-| Contour | Enabled, width, threshold, strength, luma, ink colour, fade, boil |
-| Shading boil | Paint boil (Kuwahara's), hold each drawing (ones, twos, threes), and what the wooze field says now: step, jitter and the drawing |
+| Post chain | Post-processing on/off. Player only: **Freeze script post overrides**, so a running script cannot fight your edits |
+| Exposure, Vignette, Lens, Bloom, SSAO, Depth of field, Fog, Volumetric light, Grade, Dither, FXAA, Shared edges, Held drawings | Every key of the effect (`flint render --list-effects`). Fog adds ground fog's density, colour, falloff and steps (the game's, ADR 0106); Grade adds a Neutral grade button; Held drawings adds what the wooze field says now (step, jitter and the drawing) |
+| Styles | A section per registered style (Kuwahara and Contour among them, the shading boil's amounts in their `boil`), drawn from its declaration, with Defaults, Authored, Copy TOML and Commit to scene |
 | Render mode | Mode combo (None, Matrix, Blood, Drunk, Tron, Underwater, Tear (props)), mix, params |
-| Dither / Volumetric | Dither + intensity, volumetric + samples + density + max distance + decay |
 | Shadows | Enabled, resolution (512 / 1024 / 2048 / 4096; rebuilds the shadow pass) |
 | Lighting | Ambient sky, ambient ground, diffuse wrap, Oren-Nayar, sheen color, sheen strength, Reset lighting |
 | Camera | Vertical FOV |

@@ -138,7 +138,7 @@ impl SceneRenderer {
     /// frame that draws FXAA. No-op when `fxaa` is disabled — the
     /// default-off path allocates nothing (ADR 0050, Kuwahara lazy pattern).
     pub fn ensure_fxaa_resources(&mut self, device: &wgpu::Device) {
-        if !self.postprocess_config.fxaa_enabled {
+        if !self.postprocess_config.fxaa {
             return;
         }
         if let Some(pp) = &mut self.postprocess_pipeline {

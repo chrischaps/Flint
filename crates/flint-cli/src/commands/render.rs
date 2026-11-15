@@ -55,10 +55,11 @@ const REPORT_TO_STDOUT: &str = "json";
 #[command(group(clap::ArgGroup::new("sequence").multiple(true).args(["frames", "mesh"])))]
 #[command(group(clap::ArgGroup::new("span").multiple(true).args(["time", "script_time", "mesh"])))]
 #[command(group(clap::ArgGroup::new("clock").multiple(true).args(["time", "script_time"])))]
+#[command(group(clap::ArgGroup::new("listing").args(["list_styles", "list_effects"])))]
 pub struct RenderArgs {
     /// Path to scene file
     #[arg(
-        required_unless_present_any = ["list_gpus", "look", "list_styles"],
+        required_unless_present_any = ["list_gpus", "look", "list_styles", "list_effects"],
         default_value = ""
     )]
     pub scene: String,
@@ -776,8 +777,14 @@ pub struct RenderArgs {
     #[arg(long)]
     pub list_styles: bool,
 
-    /// With --list-styles: print the list as JSON
-    #[arg(long, requires = "list_styles")]
+    /// List every built-in post effect (#741): each `[post_process]` key
+    /// with its kind, default, the range its effect is tuned for and its
+    /// help, by effect, then exit
+    #[arg(long, conflicts_with = "list_styles")]
+    pub list_effects: bool,
+
+    /// With --list-styles or --list-effects: print the list as JSON
+    #[arg(long, requires = "listing")]
     pub json: bool,
 
     /// Keep running and write -o again on every save (#432): the scene,
@@ -787,7 +794,7 @@ pub struct RenderArgs {
     /// pipelines, and a user style's WGSL is built again on them; anything
     /// else loads the scene again on the same GPU. One line a render, with
     /// its time and any style error. Ctrl-C stops it
-    #[arg(long, conflicts_with_all = ["ai_refine", "list_gpus", "list_styles"])]
+    #[arg(long, conflicts_with_all = ["ai_refine", "list_gpus", "list_styles", "list_effects"])]
     pub watch: bool,
 }
 
@@ -836,6 +843,17 @@ fn list_styles(args: &RenderArgs) -> Result<()> {
         );
     } else {
         print!("{}", catalog::catalog_text_in(&assets));
+    }
+    Ok(())
+}
+
+/// `--list-effects [--json]`: every built-in post effect's keys (#741).
+fn list_effects(args: &RenderArgs) -> Result<()> {
+    use flint_schema::post_effects;
+    if args.json {
+        say!("{}", serde_json::to_string_pretty(post_effects::EFFECTS)?);
+    } else {
+        print!("{}", post_effects::catalog_text());
     }
     Ok(())
 }
@@ -939,6 +957,9 @@ pub(super) fn render(
     }
     if args.list_styles {
         return list_styles(args);
+    }
+    if args.list_effects {
+        return list_effects(args);
     }
     if args.look.as_deref() == Some("help") {
         print!("{}", super::look::help(&args.scene));
@@ -2362,7 +2383,7 @@ fn post_process_config(
             pp_config.grade_gain = gain;
         }
         if args.fxaa {
-            pp_config.fxaa_enabled = true;
+            pp_config.fxaa = true;
         }
         apply_ascii_style_flags(args, &mut pp_config)?;
         // `--style name[:k=v,...]` (#271) last: an explicit word wins

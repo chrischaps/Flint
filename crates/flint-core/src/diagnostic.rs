@@ -108,6 +108,10 @@ pub mod codes {
     /// it, so the scene plays as if it were not there); `--strict` makes it
     /// an error.
     pub const UNKNOWN_TABLE: &str = "unknown-table";
+    /// A `[post_process]` value outside what its built-in effect is tuned
+    /// for (#741), as a style value past its range warns (#355): it still
+    /// draws, maybe badly.
+    pub const POST_RANGE: &str = "post-range";
 
     // What `flint check` adds (#687): the project around the scene.
 
@@ -402,6 +406,11 @@ pub mod codes {
             UNKNOWN_TABLE,
             Severity::Warning,
             "a top-level scene table no loaded schema directory declares",
+        ),
+        (
+            POST_RANGE,
+            Severity::Warning,
+            "a [post_process] value outside what its effect is tuned for",
         ),
     ];
 }
@@ -787,7 +796,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 45);
+        assert_eq!(seen.len(), 46);
     }
 
     /// A problem in a scene-level table names the table as its header is
