@@ -29,11 +29,6 @@ path = "examples/cyanotype/main.rs"
 name = "flint-web"
 path = "src/bin/flint_web.rs"
 
-# The web shim check (#100): `trunk serve shims.html`.
-[[bin]]
-name = "flint-web-shims"
-path = "src/bin/flint_web_shims.rs"
-
 [features]
 default = ["debug-hud", "audio", "gamepad", "music", "rhythm", "living"]
 # The sound card (kira's cpal backend: ALSA on Linux). Off, the player runs
@@ -131,19 +126,17 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 # backend. Pinned here rather than inherited so its defaults can go.
 egui-winit = { version = "0.36.2", default-features = false }
 # Async startup (player_app/web_startup.rs), the flint-web entry
-# (src/bin/flint_web.rs, index.html), the shim page and its Begin gate for
-# sound (flint_web_shims.rs, shims.html; #101), and localStorage for user
-# files (player_app/user_files.rs).
+# (src/bin/flint_web.rs, index.html) and its Begin gate for sound (#101),
+# and localStorage for user files (player_app/user_files.rs).
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 # Game bundles stream in chunk by chunk for the progress bar (#98).
 js-sys = "0.3"
 kira = { workspace = true }
 web-sys = { version = "0.3", features = [
-    "console", "CssStyleDeclaration", "Document", "DomTokenList", "Element", "HtmlButtonElement",
-    "HtmlCanvasElement", "HtmlElement", "Location", "MediaQueryList", "Navigator", "Performance",
-    "ReadableStream", "ReadableStreamDefaultReader", "Request", "Response",
-    "Storage", "Url", "UrlSearchParams", "Window",
+    "console", "Document", "Element", "HtmlCanvasElement", "HtmlElement", "Location",
+    "MediaQueryList", "Navigator", "Performance", "ReadableStream", "ReadableStreamDefaultReader",
+    "Request", "Response", "Storage", "Url", "UrlSearchParams", "Window",
 ] }
 console_error_panic_hook = "0.1"
 tracing-wasm = "0.2"
