@@ -2,12 +2,15 @@
 //! `on_update`, `on_draw_ui`, the collision, trigger, action and custom
 //! events, `on_expression`, `on_scene_exit` / `on_scene_enter`, sequence cues,
 //! animation ends and `on_persist_migrate`. Each call lends the world for its
-//! scope (`WorldScope`) and goes through the scripts in [`ScriptEngine::in_order`].
+//! scope ([`ScriptEngine::lend`], which first runs the top level of any
+//! script added since) and goes through the scripts in
+//! [`ScriptEngine::in_order`]. A callback is called on the script's
+//! functions and imports (`ScriptInstance::calls`), so its top-level
+//! statements are not run again first (#692).
 
 use super::interact::{get_interactable_config, is_near_player};
 use super::ScriptEngine;
 use crate::api;
-use crate::context::WorldScope;
 use flint_core::callbacks as cb;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -16,7 +19,7 @@ use flint_runtime::GameEvent;
 impl ScriptEngine {
     /// Call on_init() for all scripts that haven't been initialized yet
     pub fn call_inits(&mut self, world: &mut FlintWorld) {
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
         let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
@@ -29,7 +32,7 @@ impl ScriptEngine {
                 script.init_called = true;
                 if let Err(e) =
                     self.engine
-                        .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_INIT, ())
+                        .call_fn::<()>(&mut script.scope, &script.calls, cb::ON_INIT, ())
                 {
                     tracing::warn!("on_init error ({}): {}", script.source_path, e);
                 }
@@ -39,7 +42,7 @@ impl ScriptEngine {
 
     /// Call on_init() for specific entities (chunk loading)
     pub fn call_inits_for(&mut self, world: &mut FlintWorld, entity_ids: &[EntityId]) {
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
         for &entity_id in entity_ids {
             if let Some(script) = self.scripts.get_mut(&entity_id) {
@@ -51,7 +54,7 @@ impl ScriptEngine {
                     script.init_called = true;
                     if let Err(e) =
                         self.engine
-                            .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_INIT, ())
+                            .call_fn::<()>(&mut script.scope, &script.calls, cb::ON_INIT, ())
                     {
                         tracing::warn!("on_init error ({}): {}", script.source_path, e);
                     }
@@ -62,7 +65,7 @@ impl ScriptEngine {
 
     /// Call on_update() for all scripts
     pub fn call_updates(&mut self, world: &mut FlintWorld) {
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
         let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
@@ -75,7 +78,7 @@ impl ScriptEngine {
                 let began = self.update_times.is_some().then(web_time::Instant::now);
                 if let Err(e) =
                     self.engine
-                        .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_UPDATE, ())
+                        .call_fn::<()>(&mut script.scope, &script.calls, cb::ON_UPDATE, ())
                 {
                     tracing::warn!("on_update error ({}): {}", script.source_path, e);
                 }
@@ -89,7 +92,7 @@ impl ScriptEngine {
 
     /// Call on_draw_ui() for all scripts that define it
     pub fn call_draw_uis(&mut self, world: &mut FlintWorld) {
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
         let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
@@ -101,7 +104,7 @@ impl ScriptEngine {
                 }
                 if let Err(e) =
                     self.engine
-                        .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_DRAW_UI, ())
+                        .call_fn::<()>(&mut script.scope, &script.calls, cb::ON_DRAW_UI, ())
                 {
                     tracing::warn!("on_draw_ui error ({}): {}", script.source_path, e);
                 }
@@ -115,7 +118,7 @@ impl ScriptEngine {
             return;
         }
 
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
         for event in events {
             match event {
@@ -154,7 +157,7 @@ impl ScriptEngine {
                 let other_id = other.raw() as i64;
                 if let Err(e) = self.engine.call_fn::<()>(
                     &mut script.scope,
-                    &script.ast,
+                    &script.calls,
                     cb::ON_COLLISION,
                     (other_id,),
                 ) {
@@ -174,7 +177,7 @@ impl ScriptEngine {
                 let other_id = other.raw() as i64;
                 if let Err(e) = self.engine.call_fn::<()>(
                     &mut script.scope,
-                    &script.ast,
+                    &script.calls,
                     cb::ON_COLLISION_EXIT,
                     (other_id,),
                 ) {
@@ -194,7 +197,7 @@ impl ScriptEngine {
                 let entity_id = entity.raw() as i64;
                 if let Err(e) = self.engine.call_fn::<()>(
                     &mut script.scope,
-                    &script.ast,
+                    &script.calls,
                     cb::ON_TRIGGER_ENTER,
                     (entity_id,),
                 ) {
@@ -214,7 +217,7 @@ impl ScriptEngine {
                 let entity_id = entity.raw() as i64;
                 if let Err(e) = self.engine.call_fn::<()>(
                     &mut script.scope,
-                    &script.ast,
+                    &script.calls,
                     cb::ON_TRIGGER_EXIT,
                     (entity_id,),
                 ) {
@@ -251,7 +254,7 @@ impl ScriptEngine {
             }
             if let Err(e) = self.engine.call_fn::<()>(
                 &mut script.scope,
-                &script.ast,
+                &script.calls,
                 cb::ON_EVENT,
                 (name.to_string(), data.clone()),
             ) {
@@ -269,7 +272,7 @@ impl ScriptEngine {
         if states.is_empty() {
             return;
         }
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
         let entity_ids = self.in_order(|s| s.has_on_expression);
 
         for state in states {
@@ -279,7 +282,7 @@ impl ScriptEngine {
                 crate::lock_or_recover(&self.ctx).current_entity = entity_id;
                 if let Err(e) = self.engine.call_fn::<()>(
                     &mut script.scope,
-                    &script.ast,
+                    &script.calls,
                     cb::ON_EXPRESSION,
                     (rhai::Dynamic::from_map(state.clone()),),
                 ) {
@@ -303,7 +306,7 @@ impl ScriptEngine {
                 let action_str = action.to_string();
                 if let Err(e) = self.engine.call_fn::<()>(
                     &mut script.scope,
-                    &script.ast,
+                    &script.calls,
                     cb::ON_ACTION,
                     (action_str,),
                 ) {
@@ -326,7 +329,7 @@ impl ScriptEngine {
                     }
                     if let Err(e) = self.engine.call_fn::<()>(
                         &mut script.scope,
-                        &script.ast,
+                        &script.calls,
                         cb::ON_INTERACT,
                         (),
                     ) {
@@ -359,7 +362,7 @@ impl ScriptEngine {
         if entity_ids.is_empty() {
             return;
         }
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
         for entity_id in entity_ids {
             let script = self.scripts.get_mut(&entity_id).unwrap();
             {
@@ -368,7 +371,7 @@ impl ScriptEngine {
             }
             if let Err(e) = self.engine.call_fn::<()>(
                 &mut script.scope,
-                &script.ast,
+                &script.calls,
                 cb::ON_PERSIST_MIGRATE,
                 (from,),
             ) {
@@ -392,7 +395,7 @@ impl ScriptEngine {
 
     /// Call on_scene_exit() for all scripts that define it
     pub fn call_scene_exits(&mut self, world: &mut FlintWorld) {
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
         let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
@@ -402,10 +405,12 @@ impl ScriptEngine {
                     let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity_id;
                 }
-                if let Err(e) =
-                    self.engine
-                        .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_SCENE_EXIT, ())
-                {
+                if let Err(e) = self.engine.call_fn::<()>(
+                    &mut script.scope,
+                    &script.calls,
+                    cb::ON_SCENE_EXIT,
+                    (),
+                ) {
                     tracing::warn!("on_scene_exit error ({}): {}", script.source_path, e);
                 }
             }
@@ -414,7 +419,7 @@ impl ScriptEngine {
 
     /// Call on_scene_enter() for all scripts that define it
     pub fn call_scene_enters(&mut self, world: &mut FlintWorld) {
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
         let entity_ids = self.in_order(|_| true);
         for entity_id in entity_ids {
@@ -426,7 +431,7 @@ impl ScriptEngine {
                 }
                 if let Err(e) = self.engine.call_fn::<()>(
                     &mut script.scope,
-                    &script.ast,
+                    &script.calls,
                     cb::ON_SCENE_ENTER,
                     (),
                 ) {
@@ -447,7 +452,7 @@ impl ScriptEngine {
             return;
         }
 
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
         for cue in cues {
             if let Some(script) = self.scripts.get_mut(&cue.entity_id) {
@@ -458,7 +463,7 @@ impl ScriptEngine {
                     }
                     if let Err(e) = self.engine.call_fn::<()>(
                         &mut script.scope,
-                        &script.ast,
+                        &script.calls,
                         cb::ON_SEQUENCE_CUE,
                         (cue.sequence.clone(), cue.cue.clone()),
                     ) {
@@ -479,7 +484,7 @@ impl ScriptEngine {
             return;
         }
 
-        let _world_scope = WorldScope::new(&self.ctx, world);
+        let _world_scope = self.lend(world);
 
         for event in events {
             if let Some(script) = self.scripts.get_mut(&event.entity_id) {
@@ -491,7 +496,7 @@ impl ScriptEngine {
                     let clip_name = event.clip_name.clone();
                     if let Err(e) = self.engine.call_fn::<()>(
                         &mut script.scope,
-                        &script.ast,
+                        &script.calls,
                         cb::ON_ANIMATION_END,
                         (clip_name,),
                     ) {

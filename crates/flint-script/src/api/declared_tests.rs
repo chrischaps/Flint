@@ -359,6 +359,30 @@ fn no_world_is_a_script_error_not_a_panic() {
         .unwrap();
 }
 
+/// #692: no declared function can panic for want of a world. Each is
+/// called at every arity it has, with a sample of each kind and nothing
+/// lent (as a script's top level was, before it ran inside a lending): an
+/// answer or a script error, never a panic.
+#[test]
+fn no_function_panics_without_a_world() {
+    let engine = ScriptEngine::new();
+    let entries = engine.api_registry().entries().to_vec();
+    let mut panicked = Vec::new();
+    for e in &entries {
+        let args: Vec<String> = e.params.iter().map(|p| sample(p.kind, 1)).collect();
+        let src = format!("{}({})", e.name, args.join(", "));
+        let rhai = engine.rhai_engine();
+        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = rhai.eval::<Dynamic>(&src);
+        }));
+        if ran.is_err() {
+            panicked.push(src);
+        }
+    }
+    assert!(entries.len() > 300, "{} functions", entries.len());
+    assert!(panicked.is_empty(), "panicked with no world: {panicked:#?}");
+}
+
 #[test]
 fn an_extension_declares_through_the_same_builder() {
     let mut system = crate::ScriptSystem::new();

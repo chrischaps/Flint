@@ -10,10 +10,10 @@ description = "Rhai scripting system for Flint engine"
 # tools only; the player and the web build leave it off.
 [features]
 metadata = ["rhai/metadata"]
-# `check`: `flint script check` (#694) walks a script's syntax tree, which
-# Rhai exposes under `internals`, and needs `metadata` for its packages'
-# functions. Native tools only, like `metadata`.
-check = ["metadata", "rhai/internals"]
+# `check`: `flint script check` (#694) walks a script's syntax tree (Rhai's
+# `internals`, which every build has now, #692), and needs `metadata` for
+# its packages' functions. Native tools only, like `metadata`.
+check = ["metadata"]
 
 [dependencies]
 web-time = { workspace = true }
@@ -24,7 +24,10 @@ flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
 flint-animation = { workspace = true }
 flint-terrain = { workspace = true }
-rhai = { workspace = true }
+# `internals` for the top-level statements (#692): a callback is called on
+# the script's `import`s and functions alone (`instance::callable`), which
+# needs the AST's statements. It only makes Rhai's own types public.
+rhai = { workspace = true, features = ["internals"] }
 toml = { workspace = true }
 tracing = { workspace = true }
 

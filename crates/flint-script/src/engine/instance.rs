@@ -3,12 +3,24 @@
 //! load.
 
 use flint_core::callbacks as cb;
-use rhai::{Scope, AST};
+use rhai::{Scope, Stmt, AST};
 
 /// Per-entity script instance
 pub struct ScriptInstance {
+    /// The whole script, top-level statements and all: what runs once, at
+    /// the first lending of the world after it is added
+    /// ([`ScriptEngine::lend`](super::ScriptEngine::lend)), and at a reload.
     pub ast: AST,
+    /// What a callback is called on (#692): the script's functions and its
+    /// top-level `import`s, nothing else ([`callable`]). Rhai runs an AST's
+    /// statements before every `call_fn`, so calling on `ast` ran a
+    /// top-level `log` or `get_entity` again before each callback.
+    pub(crate) calls: AST,
     pub scope: Scope<'static>,
+    /// Whether the top-level statements are still to run. They run at the
+    /// next lending of the world, before any callback, with `self_entity()`
+    /// this script's entity.
+    pub(crate) top_level_pending: bool,
     pub source_path: String,
     pub has_on_init: bool,
     pub has_on_update: bool,
@@ -59,8 +71,10 @@ impl ScriptInstance {
         let completes_transition = may_complete_transition(&ast);
 
         Self {
+            calls: callable(&ast),
             ast,
             scope: Scope::new(),
+            top_level_pending: true,
             source_path,
             has_on_init,
             has_on_update,
@@ -104,9 +118,33 @@ impl ScriptInstance {
         self.has_on_expression = has_function(&ast, cb::ON_EXPRESSION);
         self.has_on_persist_migrate = has_function(&ast, cb::ON_PERSIST_MIGRATE);
         self.completes_transition = may_complete_transition(&ast);
+        self.calls = callable(&ast);
         self.ast = ast;
         // Don't reset init_called — hot-reload preserves state
     }
+}
+
+/// What a callback is called on (#692): `ast`'s functions and those of its
+/// top-level statements that are `import`s, which Rhai has to run before a
+/// call for `alias::f()` to resolve in the callback (an import is an entry
+/// in the call's global state, not a variable in the scope). The rest of
+/// the top level (`let`s, `log`, `get_entity`, `play_sound`) ran once, into
+/// the scope the callbacks are handed. An imported module is the
+/// resolver's cached one, so its own top level runs once too
+/// (`VfsModuleResolver`). An import inside a block was scoped to that block
+/// and never reached a callback.
+pub(crate) fn callable(ast: &AST) -> AST {
+    let imports: Vec<Stmt> = ast
+        .statements()
+        .iter()
+        .filter(|s| matches!(s, Stmt::Import(..)))
+        .cloned()
+        .collect();
+    let mut calls = AST::new(imports, ast.shared_lib().clone());
+    if let Some(source) = ast.source() {
+        calls.set_source(source);
+    }
+    calls
 }
 
 /// Check if an AST contains a function definition with the given name
@@ -119,9 +157,9 @@ fn has_function(ast: &AST, name: &str) -> bool {
 /// script, function bodies and closures included; or an `import`, since a
 /// module is resolved only when the script runs and could make the call.
 ///
-/// Rhai walks an AST only under its `internals` feature, which the player
-/// and the web build leave off (`check` turns it on for `flint script
-/// check`), so this reads the AST's `Debug` form, which names every call,
+/// Written when Rhai's `internals` (its AST walk) was on for `flint script
+/// check` alone; every build has it since #692, so this could become a
+/// walk. It reads the AST's `Debug` form, which names every call,
 /// string and statement, and stops at the first match. Once a load or
 /// reload, never a frame. `engine::tests` holds it to the shapes above, so
 /// a Rhai upgrade that changes the form fails there, not in a game.
