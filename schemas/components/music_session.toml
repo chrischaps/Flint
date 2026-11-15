@@ -1,0 +1,23 @@
+# A scene's music (flint-player `music/`, #745): a suite whose stems play on
+# its buses, with the beat for scripts (`music_beat()`, `music_bar()`,
+# `music_section()`). With a `chart`, and a player built with the `rhythm`
+# feature, the rhythm layer judges the player against it (ADR 0019). Paths
+# are from the project root. Every default below is the value the reader
+# falls back to (#792).
+[component.music_session]
+description = "The scene's music: a suite's stems on their buses, and the beat for scripts"
+
+[component.music_session.fields]
+manifest = { type = "string", required = true, description = "Suite manifest (.suite.toml), from the project root" }
+events = { type = "string", description = "Event script (.events.toml) of bus changes on the musical grid" }
+chart = { type = "string", description = "Beatmap chart (.chart.toml): judge the player against it (the rhythm layer)" }
+lean_mode = { type = "enum", values = ["arrival", "track"], default = "arrival", description = "How a chart's lean is judged (rhythm)" }
+input_map = { type = "enum", values = ["prototype", "full"], description = "Which pad controls make the chart's verbs (rhythm; prototype when absent)" }
+coherence_config = { type = "string", description = "Coherence config (rhythm; config/coherence.toml if present)" }
+ladder_config = { type = "string", description = "Degradation ladder config (rhythm; config/ladder.toml if present)" }
+gradient_config = { type = "string", description = "Audio gradient config (rhythm; config/gradient.toml if present)" }
+haptics_config = { type = "string", description = "Haptics config (rhythm; config/haptics.toml if present)" }
+bars = { type = "i32", min = 1, description = "Stop a chart after this many bars (rhythm)" }
+quit_on_finish = { type = "bool", default = false, description = "Exit the player when a chart's session ends (rhythm)" }
+tuning_config = { type = "string", description = "Declared, not read yet (rhythm)" }
+bindings = { type = "string", description = "Declarative: the script that binds the conducted values, loaded through a script component (rhythm)" }

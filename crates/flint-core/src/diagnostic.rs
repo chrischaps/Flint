@@ -1,0 +1,847 @@
+//! One shape for everything that is wrong with a scene (ADR 0115).
+//!
+//! A [`Diagnostic`] says how bad, which rule ([`codes`], stable kebab-case
+//! strings an agent can act on), and where: file, entity, component and the
+//! dotted path of the field. Schema validation (`flint-schema`) and the scene
+//! pass (`flint_scene::diagnose`) both produce it, `flint validate` prints the
+//! whole list as text or JSON, and the player prints a summary at load.
+//!
+//! ```
+//! use flint_core::diagnostic::{codes, Diagnostic, Severity};
+//!
+//! let d = Diagnostic::error(codes::BAD_TYPE, "expected f32, got string")
+//!     .entity("crate")
+//!     .component("collider")
+//!     .field("friction");
+//! assert_eq!(d.severity, Severity::Error);
+//! assert_eq!(
+//!     d.to_string(),
+//!     "error[bad-type] entity 'crate' collider.friction: expected f32, got string"
+//! );
+//! ```
+
+use serde::Serialize;
+use std::fmt;
+use std::path::{Path, PathBuf};
+
+/// How bad a [`Diagnostic`] is. `flint validate` fails on any `Error`; the
+/// player runs either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Error,
+    Warning,
+}
+
+impl Severity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        }
+    }
+}
+
+impl fmt::Display for Severity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// The stable codes. A code never changes its meaning; a new problem gets a
+/// new code and a row in [`ALL`](codes::ALL) (which the book's table and
+/// `every_code_is_listed_once` follow).
+pub mod codes {
+    use super::Severity;
+
+    /// A field the component's schema doesn't declare. A warning (games add
+    /// fields that scripts read); `--strict` makes it an error.
+    pub const UNKNOWN_FIELD: &str = "unknown-field";
+    /// A value of the wrong TOML type for its field.
+    pub const BAD_TYPE: &str = "bad-type";
+    /// A string that is none of an enum field's values.
+    pub const BAD_ENUM_VALUE: &str = "bad-enum-value";
+    /// A number outside the field's `min`/`max`.
+    pub const OUT_OF_RANGE: &str = "out-of-range";
+    /// A `required` field that is not written.
+    pub const MISSING_FIELD: &str = "missing-field";
+    /// A component table no loaded schema directory declares.
+    pub const UNKNOWN_COMPONENT: &str = "unknown-component";
+    /// An `archetype = "..."` no loaded schema directory declares.
+    pub const UNKNOWN_ARCHETYPE: &str = "unknown-archetype";
+    /// The file is not TOML, or not a scene.
+    pub const TOML_PARSE: &str = "toml-parse";
+    /// The file could not be read.
+    pub const FILE_UNREADABLE: &str = "file-unreadable";
+    /// A `[prefabs.<name>]` that could not be expanded.
+    pub const BAD_PREFAB: &str = "bad-prefab";
+    /// No schema was loaded, so nothing could be checked.
+    pub const NO_SCHEMAS: &str = "no-schemas";
+    /// A component that does nothing without another the entity lacks: a
+    /// `collider` with no `rigidbody`. Found by the system that reads it,
+    /// while the game runs (#685).
+    pub const NEEDS_COMPONENT: &str = "needs-component";
+    /// An `entity` field (or an entity's `parent`) that names no entity of
+    /// the scene. An empty string is "not set" and passes.
+    pub const UNKNOWN_ENTITY: &str = "unknown-entity";
+    /// An `asset` field (or, in `flint check`, an asset of a known kind) that
+    /// names no file the project's asset search finds; the hint, or `tried`,
+    /// lists the paths.
+    pub const MISSING_ASSET: &str = "missing-asset";
+    /// A schema file spells a type the old way (`float` for `f32`). Raised
+    /// about a game's schema layer; the engine's own files are held by a test.
+    pub const OLD_TYPE_NAME: &str = "old-type-name";
+    /// A schema file names a type (or an asset kind) the engine doesn't
+    /// know, so the field is checked as a string.
+    pub const UNKNOWN_TYPE: &str = "unknown-type";
+    /// A schema file holds a key the loader ignores: a field written under
+    /// `[component.x]` instead of `[component.x.fields]`, or a misspelled
+    /// key of a field.
+    pub const IGNORED_SCHEMA_KEY: &str = "ignored-schema-key";
+    /// A top-level table of a scene that no loaded schema directory declares
+    /// as a `[table.<name>]` (#686): a misspelled `[enviroment]`, or a
+    /// game's own table before its schema says so. A warning (nothing reads
+    /// it, so the scene plays as if it were not there); `--strict` makes it
+    /// an error.
+    pub const UNKNOWN_TABLE: &str = "unknown-table";
+
+    // What `flint check` adds (#687): the project around the scene.
+
+    /// A file a scene, prefab, effect, glyph set, style or script names by
+    /// path that is in none of the asset folders. `tried` has the paths.
+    pub const MISSING_FILE: &str = "missing-file";
+    /// An `ik_two_bone.tip` that is not a child of the entity naming it, so
+    /// the chain is never solved.
+    pub const NOT_A_CHILD: &str = "not-a-child";
+    /// The scene parses and its load still fails.
+    pub const SCENE_LOAD: &str = "scene-load";
+    /// `flint.toml` does not read.
+    pub const BAD_MANIFEST: &str = "bad-manifest";
+    /// A schema directory is missing, or a schema file does not read.
+    pub const BAD_SCHEMAS: &str = "bad-schemas";
+    /// A constraint file does not read, or a constraint's query does not
+    /// parse or does not select entities.
+    pub const BAD_CONSTRAINT: &str = "bad-constraint";
+    /// A constraint the scene breaks, at the constraint's own severity.
+    pub const CONSTRAINT: &str = "constraint";
+    /// A user style (`styles/*.shader.toml`) that does not load or compile.
+    pub const BAD_USER_STYLE: &str = "bad-user-style";
+    /// `[post_process.styles]` names a style, key or value there is not.
+    pub const BAD_STYLE_SETTING: &str = "bad-style-setting";
+    /// The look a scene names is not found, or does not fit.
+    pub const BAD_LOOK: &str = "bad-look";
+    /// The scene's `[wooze]` table, or its preset, is wrong.
+    pub const BAD_WOOZE: &str = "bad-wooze";
+    /// A `[living.species.<spec>]` table is wrong, or no living prop grows
+    /// from that spec.
+    pub const BAD_SPECIES: &str = "bad-species";
+    /// An input config a scene or the manifest names does not parse.
+    pub const BAD_INPUT_CONFIG: &str = "bad-input-config";
+    /// A procgen spec a scene's model or texture is made from does not parse.
+    pub const BAD_SPEC: &str = "bad-spec";
+
+    /// A game's Cargo workspace lacks a `[patch.crates-io]` line the engine
+    /// it builds by path has (#982): cargo applies `[patch]` only from the
+    /// workspace root. A warning (a native build compiles without the web's
+    /// egui-winit, and cargo itself stops on a missing static DXC).
+    pub const MISSING_CARGO_PATCH: &str = "missing-cargo-patch";
+
+    // What `flint script check` adds (#694): the scripts, at a line and
+    // column.
+
+    /// A script does not compile.
+    pub const SCRIPT_SYNTAX: &str = "script-syntax";
+    /// A call names no script function, built-in, own function or import.
+    pub const UNKNOWN_FUNCTION: &str = "unknown-function";
+    /// A call passes a number of arguments the function is not declared at.
+    pub const WRONG_ARITY: &str = "wrong-arity";
+    /// A literal argument no declaration of the function accepts (a string
+    /// where a number goes, `0.5` where an int goes).
+    pub const BAD_ARGUMENT: &str = "bad-argument";
+    /// An `fn on_...` that is no callback, one edit from one that is.
+    pub const UNKNOWN_CALLBACK: &str = "unknown-callback";
+    /// A callback defined with a parameter count the engine does not call.
+    pub const CALLBACK_ARITY: &str = "callback-arity";
+    /// `import "name"` names no module the project's search finds.
+    pub const MISSING_MODULE: &str = "missing-module";
+    /// A call of a function the API marks deprecated (ADR 0116 decision 3).
+    pub const DEPRECATED_FUNCTION: &str = "deprecated-function";
+    /// A per-frame call of a many-number function mixing int and float
+    /// literals, which takes Rhai's slow signature search (ADR 0116
+    /// decision 5).
+    pub const MIXED_NUMBERS: &str = "mixed-numbers";
+
+    /// Every code, the severity it is raised with, and what it means.
+    pub const ALL: &[(&str, Severity, &str)] = &[
+        (
+            UNKNOWN_FIELD,
+            Severity::Warning,
+            "a field the component's schema does not declare",
+        ),
+        (
+            BAD_TYPE,
+            Severity::Error,
+            "a value of the wrong type for its field",
+        ),
+        (
+            BAD_ENUM_VALUE,
+            Severity::Error,
+            "a string that is none of the field's allowed values",
+        ),
+        (
+            OUT_OF_RANGE,
+            Severity::Error,
+            "a number outside the field's min/max",
+        ),
+        (
+            MISSING_FIELD,
+            Severity::Error,
+            "a required field that is not written",
+        ),
+        (
+            UNKNOWN_COMPONENT,
+            Severity::Error,
+            "a component no loaded schema directory declares",
+        ),
+        (
+            UNKNOWN_ARCHETYPE,
+            Severity::Error,
+            "an archetype no loaded schema directory declares",
+        ),
+        (
+            TOML_PARSE,
+            Severity::Error,
+            "the file is not valid TOML, or not a scene",
+        ),
+        (
+            FILE_UNREADABLE,
+            Severity::Error,
+            "the file could not be read",
+        ),
+        (
+            BAD_PREFAB,
+            Severity::Error,
+            "a prefab instance that could not be expanded",
+        ),
+        (
+            NO_SCHEMAS,
+            Severity::Warning,
+            "no schema was loaded, so components were not checked",
+        ),
+        (
+            NEEDS_COMPONENT,
+            Severity::Warning,
+            "a component that does nothing without another the entity lacks",
+        ),
+        (
+            UNKNOWN_ENTITY,
+            Severity::Error,
+            "an entity reference that names no entity in the scene",
+        ),
+        (
+            MISSING_ASSET,
+            Severity::Error,
+            "an asset reference that names no file the project's search finds",
+        ),
+        (
+            OLD_TYPE_NAME,
+            Severity::Warning,
+            "a schema file spells a type the old way (float for f32)",
+        ),
+        (
+            UNKNOWN_TYPE,
+            Severity::Warning,
+            "a schema file names a type or asset kind the engine does not know",
+        ),
+        (
+            IGNORED_SCHEMA_KEY,
+            Severity::Warning,
+            "a schema file holds a key the loader ignores",
+        ),
+        (
+            MISSING_FILE,
+            Severity::Error,
+            "a file named by path that is in none of the asset folders",
+        ),
+        (
+            NOT_A_CHILD,
+            Severity::Error,
+            "an ik_two_bone.tip that is not a child of the entity naming it",
+        ),
+        (
+            SCENE_LOAD,
+            Severity::Error,
+            "the scene parses and its load still fails",
+        ),
+        (BAD_MANIFEST, Severity::Error, "flint.toml does not read"),
+        (
+            BAD_SCHEMAS,
+            Severity::Error,
+            "a schema directory is missing, or a schema file does not read",
+        ),
+        (
+            BAD_CONSTRAINT,
+            Severity::Error,
+            "a constraint file does not read, or a constraint's query does not parse",
+        ),
+        (
+            CONSTRAINT,
+            Severity::Error,
+            "a constraint the scene breaks (at the constraint's own severity)",
+        ),
+        (
+            BAD_USER_STYLE,
+            Severity::Error,
+            "a user style that does not load or compile",
+        ),
+        (
+            BAD_STYLE_SETTING,
+            Severity::Warning,
+            "a style, key or value [post_process.styles] names that there is not",
+        ),
+        (
+            BAD_LOOK,
+            Severity::Error,
+            "the look a scene names is not found, or does not fit",
+        ),
+        (
+            BAD_WOOZE,
+            Severity::Error,
+            "the scene's [wooze] table or its preset is wrong",
+        ),
+        (
+            BAD_SPECIES,
+            Severity::Error,
+            "a [living.species] table is wrong, or names a spec no living prop grows from",
+        ),
+        (
+            BAD_INPUT_CONFIG,
+            Severity::Error,
+            "an input config the scene or the manifest names does not parse",
+        ),
+        (
+            BAD_SPEC,
+            Severity::Error,
+            "a procgen spec a scene's model or texture is made from does not parse",
+        ),
+        (
+            MISSING_CARGO_PATCH,
+            Severity::Warning,
+            "a game's Cargo workspace lacks a [patch.crates-io] line of the engine it builds",
+        ),
+        (SCRIPT_SYNTAX, Severity::Error, "a script does not compile"),
+        (
+            UNKNOWN_FUNCTION,
+            Severity::Error,
+            "a script calls a function that is not there",
+        ),
+        (
+            WRONG_ARITY,
+            Severity::Error,
+            "a script calls a function with a number of arguments it does not take",
+        ),
+        (
+            BAD_ARGUMENT,
+            Severity::Error,
+            "a literal argument no declaration of the function accepts",
+        ),
+        (
+            UNKNOWN_CALLBACK,
+            Severity::Error,
+            "an fn on_... that is no callback, close to one that is, so it never runs",
+        ),
+        (
+            CALLBACK_ARITY,
+            Severity::Error,
+            "a callback with a parameter count the engine does not call it with",
+        ),
+        (
+            MISSING_MODULE,
+            Severity::Error,
+            "an import names a module the project's search does not find",
+        ),
+        (
+            DEPRECATED_FUNCTION,
+            Severity::Warning,
+            "a script calls a function the API marks deprecated",
+        ),
+        (
+            MIXED_NUMBERS,
+            Severity::Warning,
+            "a per-frame call mixes int and float literals where numbers go, the slow lookup",
+        ),
+        (
+            UNKNOWN_TABLE,
+            Severity::Warning,
+            "a top-level scene table no loaded schema directory declares",
+        ),
+    ];
+}
+
+/// One thing wrong with a scene: see the module docs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Diagnostic {
+    pub severity: Severity,
+    /// One of [`codes`].
+    pub code: &'static str,
+    pub file: Option<PathBuf>,
+    pub entity: Option<String>,
+    pub component: Option<String>,
+    /// The scene-level table it is in (`post_process`, a game's `weather`),
+    /// for a problem that is in no entity (#686).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<String>,
+    /// Dotted path inside the component or the table: `friction`,
+    /// `points[2]`, `shear.xz`.
+    pub field: Option<String>,
+    pub message: String,
+    /// What to do about it: "did you mean `light`?", the allowed values.
+    pub hint: Option<String>,
+    /// Every path the engine looked at for a file that is not there, in the
+    /// order tried (the project's one search, ADR 0114). Empty for a
+    /// diagnostic that is not about a missing file.
+    pub tried: Vec<PathBuf>,
+    /// The line in `file`, from 1, for a problem at a place in a text file
+    /// (a script's call, #694).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    /// The column on `line`, from 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<usize>,
+}
+
+impl Diagnostic {
+    pub fn new(severity: Severity, code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            severity,
+            code,
+            file: None,
+            entity: None,
+            component: None,
+            table: None,
+            field: None,
+            message: message.into(),
+            hint: None,
+            tried: Vec::new(),
+            line: None,
+            column: None,
+        }
+    }
+
+    pub fn error(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(Severity::Error, code, message)
+    }
+
+    pub fn warning(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(Severity::Warning, code, message)
+    }
+
+    pub fn file(mut self, file: impl Into<PathBuf>) -> Self {
+        self.file = Some(file.into());
+        self
+    }
+
+    pub fn entity(mut self, entity: impl Into<String>) -> Self {
+        self.entity = Some(entity.into());
+        self
+    }
+
+    pub fn component(mut self, component: impl Into<String>) -> Self {
+        self.component = Some(component.into());
+        self
+    }
+
+    /// The scene-level table the problem is in.
+    pub fn table(mut self, table: impl Into<String>) -> Self {
+        self.table = Some(table.into());
+        self
+    }
+
+    pub fn field(mut self, field: impl Into<String>) -> Self {
+        self.field = Some(field.into());
+        self
+    }
+
+    pub fn hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
+    }
+
+    /// Where the engine looked for the file that is missing.
+    pub fn tried(mut self, tried: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.tried = tried.into_iter().collect();
+        self
+    }
+
+    /// The line and column in the file, each from 1.
+    pub fn at(mut self, line: usize, column: usize) -> Self {
+        self.line = Some(line);
+        self.column = Some(column);
+        self
+    }
+
+    /// The hint, if there is something to suggest.
+    pub fn hint_opt(mut self, hint: Option<String>) -> Self {
+        self.hint = hint;
+        self
+    }
+
+    pub fn is_error(&self) -> bool {
+        self.severity == Severity::Error
+    }
+
+    /// Where it is, without the file: `entity 'crate' collider.friction`,
+    /// or `[post_process] bloom_intensity` for a scene-level table. Empty
+    /// when the diagnostic is about the file as a whole.
+    pub fn location(&self) -> String {
+        if let Some(table) = &self.table {
+            return match &self.field {
+                Some(field) => format!("[{table}] {field}"),
+                None => format!("[{table}]"),
+            };
+        }
+        let mut parts = Vec::new();
+        if let Some(line) = self.line {
+            parts.push(match self.column {
+                Some(column) => format!("{line}:{column}"),
+                None => format!("line {line}"),
+            });
+        }
+        if let Some(entity) = &self.entity {
+            parts.push(format!("entity '{entity}'"));
+        }
+        match (&self.component, &self.field) {
+            (Some(component), Some(field)) => parts.push(format!("{component}.{field}")),
+            (Some(component), None) => parts.push(format!("component '{component}'")),
+            (None, Some(field)) => parts.push(format!("field '{field}'")),
+            (None, None) => {}
+        }
+        parts.join(" ")
+    }
+
+    /// The whole thing on one line, file first, hint last: what a log prints.
+    pub fn one_line(&self) -> String {
+        let mut line = String::new();
+        if let Some(file) = &self.file {
+            line.push_str(&shown(file));
+            line.push_str(": ");
+        }
+        line.push_str(&self.to_string());
+        if let Some(hint) = &self.hint {
+            line.push_str(&format!(" ({hint})"));
+        }
+        line
+    }
+}
+
+/// `error[bad-type] entity 'crate' collider.friction: expected f32, got
+/// string`: severity, code, place and message. The file and the hint are the
+/// printer's to place ([`Diagnostic::one_line`], `flint validate`).
+impl fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}[{}]", self.severity, self.code)?;
+        let location = self.location();
+        if !location.is_empty() {
+            write!(f, " {location}")?;
+        }
+        write!(f, ": {}", self.message)
+    }
+}
+
+fn shown(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// How many of `diagnostics` are of `severity`.
+pub fn count(diagnostics: &[Diagnostic], severity: Severity) -> usize {
+    diagnostics
+        .iter()
+        .filter(|d| d.severity == severity)
+        .count()
+}
+
+/// Whether any of `diagnostics` is an error: what `flint validate` fails on.
+pub fn has_errors(diagnostics: &[Diagnostic]) -> bool {
+    diagnostics.iter().any(Diagnostic::is_error)
+}
+
+/// `--strict` (and `[project] strict = true`): an unknown field is an error,
+/// and so is an unknown scene table (#686). Both are the scene saying
+/// something no schema declares.
+pub fn promote_strict(diagnostics: &mut [Diagnostic]) {
+    for d in diagnostics {
+        if d.code == codes::UNKNOWN_FIELD || d.code == codes::UNKNOWN_TABLE {
+            d.severity = Severity::Error;
+        }
+    }
+}
+
+/// Errors first, each group in the order it was found.
+pub fn sort_errors_first(diagnostics: &mut [Diagnostic]) {
+    diagnostics.sort_by_key(|d| d.severity);
+}
+
+/// `2 errors, 1 warning`, or `no problems`.
+pub fn counts_line(diagnostics: &[Diagnostic]) -> String {
+    let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
+    let errors = count(diagnostics, Severity::Error);
+    let warnings = count(diagnostics, Severity::Warning);
+    match (errors, warnings) {
+        (0, 0) => "no problems".to_string(),
+        (e, 0) => plural(e, "error"),
+        (0, w) => plural(w, "warning"),
+        (e, w) => format!("{}, {}", plural(e, "error"), plural(w, "warning")),
+    }
+}
+
+/// What a loader prints once per load (ADR 0115 decision 2): one summary
+/// line, then the first `limit` diagnostics, errors first, and how many were
+/// left out. Empty when there is nothing to say. `scene` names what was
+/// loaded.
+pub fn summary_lines(scene: &str, diagnostics: &[Diagnostic], limit: usize) -> Vec<String> {
+    if diagnostics.is_empty() {
+        return Vec::new();
+    }
+    let mut ordered = diagnostics.to_vec();
+    sort_errors_first(&mut ordered);
+    let mut lines = vec![format!(
+        "{scene}: {} (the full list: flint validate {scene})",
+        counts_line(diagnostics)
+    )];
+    for d in ordered.iter().take(limit) {
+        let mut line = format!("  {d}");
+        if let Some(hint) = &d.hint {
+            line.push_str(&format!(" ({hint})"));
+        }
+        lines.push(line);
+    }
+    if ordered.len() > limit {
+        lines.push(format!("  ... and {} more", ordered.len() - limit));
+    }
+    lines
+}
+
+/// How many diagnostics a load prints after its summary line.
+pub const SUMMARY_LIMIT: usize = 5;
+
+/// [`summary_lines`] through `tracing::warn!`, [`SUMMARY_LIMIT`] of them:
+/// what every scene load does with what it found. The scene still loads.
+pub fn log_summary(scene: &str, diagnostics: &[Diagnostic]) {
+    for line in summary_lines(scene, diagnostics, SUMMARY_LIMIT) {
+        tracing::warn!("{line}");
+    }
+}
+
+/// The candidate closest to `name`, if one is close enough to be what was
+/// meant: the same letters in another case or with `-`/`_` moved wins, then
+/// the smallest edit distance, within a third of the name's length (1 to 3).
+pub fn closest<'a>(name: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+    let fold = |s: &str| -> String {
+        s.chars()
+            .filter(|c| *c != '_' && *c != '-')
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    let folded = fold(name);
+    let limit = (name.chars().count() / 3).clamp(1, 3);
+    let mut best: Option<(usize, &str)> = None;
+    for candidate in candidates {
+        if candidate == name {
+            continue;
+        }
+        let distance = if fold(candidate) == folded {
+            0
+        } else {
+            edit_distance(name, candidate)
+        };
+        if distance > limit {
+            continue;
+        }
+        // Ties go to the name that sorts first, so the answer never depends
+        // on a map's iteration order
+        let better = match best {
+            None => true,
+            Some((d, held)) => distance < d || (distance == d && candidate < held),
+        };
+        if better {
+            best = Some((distance, candidate));
+        }
+    }
+    best.map(|(_, candidate)| candidate)
+}
+
+/// "did you mean `light`?" for the closest candidate, if any.
+pub fn did_you_mean<'a>(
+    name: &str,
+    candidates: impl IntoIterator<Item = &'a str>,
+) -> Option<String> {
+    closest(name, candidates).map(|c| format!("did you mean `{c}`?"))
+}
+
+/// Edit distance where swapping two neighbouring letters counts once
+/// (`lihgt` is one step from `light`), small and good enough for names.
+pub fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut before: Vec<usize> = vec![0; b.len() + 1];
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for i in 1..=a.len() {
+        let mut row = vec![i; b.len() + 1];
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            row[j] = (prev[j] + 1).min(row[j - 1] + 1).min(prev[j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                row[j] = row[j].min(before[j - 2] + 1);
+            }
+        }
+        before = std::mem::replace(&mut prev, row);
+    }
+    prev[b.len()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_names_entity_component_and_field() {
+        let d = Diagnostic::warning(codes::UNKNOWN_FIELD, "no field `frction`")
+            .file("scenes/a.scene.toml")
+            .entity("crate")
+            .component("collider")
+            .field("frction")
+            .hint("did you mean `friction`?");
+        assert_eq!(
+            d.to_string(),
+            "warning[unknown-field] entity 'crate' collider.frction: no field `frction`"
+        );
+        assert_eq!(
+            d.one_line(),
+            "scenes/a.scene.toml: warning[unknown-field] entity 'crate' collider.frction: \
+             no field `frction` (did you mean `friction`?)"
+        );
+        let whole_file = Diagnostic::error(codes::TOML_PARSE, "expected `=`");
+        assert_eq!(whole_file.to_string(), "error[toml-parse]: expected `=`");
+        let component = Diagnostic::error(codes::UNKNOWN_COMPONENT, "no such component")
+            .entity("lamp")
+            .component("lihgt");
+        assert_eq!(
+            component.to_string(),
+            "error[unknown-component] entity 'lamp' component 'lihgt': no such component"
+        );
+    }
+
+    #[test]
+    fn json_is_flat_and_lowercase() {
+        let d = Diagnostic::error(codes::BAD_TYPE, "expected f32, got string")
+            .entity("crate")
+            .component("collider")
+            .field("friction");
+        let text = toml::to_string(&d).unwrap();
+        assert!(text.contains("severity = \"error\""), "{text}");
+        assert!(text.contains("code = \"bad-type\""), "{text}");
+        assert!(text.contains("field = \"friction\""), "{text}");
+        assert!(text.contains("tried = []"), "{text}");
+        let missing = Diagnostic::error(codes::MISSING_ASSET, "model 'whale' not found")
+            .tried([PathBuf::from("models/whale.glb")]);
+        let text = toml::to_string(&missing).unwrap();
+        assert!(text.contains("tried = [\"models/whale.glb\"]"), "{text}");
+    }
+
+    #[test]
+    fn every_code_is_listed_once() {
+        let mut seen = std::collections::HashSet::new();
+        for (code, _, what) in codes::ALL {
+            assert!(seen.insert(*code), "{code} is listed twice");
+            assert!(!what.is_empty());
+            assert!(
+                code.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+                "{code} is not kebab-case"
+            );
+        }
+        assert_eq!(seen.len(), 42);
+    }
+
+    /// A problem in a scene-level table names the table as its header is
+    /// written, and its serialized form has `table` only then.
+    #[test]
+    fn a_scene_table_is_named_by_its_header() {
+        let field = Diagnostic::warning(codes::UNKNOWN_FIELD, "no field `bloom_intesity`")
+            .table("post_process")
+            .field("bloom_intesity");
+        assert_eq!(
+            field.to_string(),
+            "warning[unknown-field] [post_process] bloom_intesity: no field `bloom_intesity`"
+        );
+        let table = Diagnostic::warning(codes::UNKNOWN_TABLE, "no scene table").table("enviroment");
+        assert_eq!(
+            table.to_string(),
+            "warning[unknown-table] [enviroment]: no scene table"
+        );
+        let text = toml::to_string(&table).unwrap();
+        assert!(text.contains("table = \"enviroment\""), "{text}");
+        let entity = Diagnostic::error(codes::BAD_TYPE, "x").entity("e");
+        assert!(!toml::to_string(&entity).unwrap().contains("table"));
+    }
+
+    #[test]
+    fn strict_promotes_only_unknown_fields_and_tables() {
+        let mut list = vec![
+            Diagnostic::warning(codes::UNKNOWN_FIELD, "a"),
+            Diagnostic::warning(codes::NO_SCHEMAS, "b"),
+            Diagnostic::error(codes::BAD_TYPE, "c"),
+            Diagnostic::warning(codes::UNKNOWN_TABLE, "d"),
+        ];
+        assert_eq!(counts_line(&list), "1 error, 3 warnings");
+        promote_strict(&mut list);
+        assert_eq!(count(&list, Severity::Error), 3);
+        assert_eq!(list[1].severity, Severity::Warning);
+        assert!(has_errors(&list));
+        assert_eq!(counts_line(&[]), "no problems");
+    }
+
+    #[test]
+    fn the_summary_is_one_line_then_the_first_few_errors_first() {
+        let mut list: Vec<Diagnostic> = (0..7)
+            .map(|i| Diagnostic::warning(codes::UNKNOWN_FIELD, format!("w{i}")))
+            .collect();
+        list.push(Diagnostic::error(codes::BAD_TYPE, "the error").hint("fix it"));
+        let lines = summary_lines("a.scene.toml", &list, 3);
+        assert_eq!(lines.len(), 5);
+        assert_eq!(
+            lines[0],
+            "a.scene.toml: 1 error, 7 warnings (the full list: flint validate a.scene.toml)"
+        );
+        assert_eq!(lines[1], "  error[bad-type]: the error (fix it)");
+        assert_eq!(lines[2], "  warning[unknown-field]: w0");
+        assert_eq!(lines[4], "  ... and 5 more");
+        assert!(summary_lines("a", &[], 3).is_empty());
+    }
+
+    #[test]
+    fn closest_finds_typos_and_leaves_strangers() {
+        let names = ["light", "collider", "rigidbody", "body_type", "transform"];
+        let near = |name: &str| closest(name, names);
+        assert_eq!(near("lihgt"), Some("light"));
+        assert_eq!(near("colider"), Some("collider"));
+        assert_eq!(near("bodyType"), Some("body_type"));
+        assert_eq!(near("rigid_body"), Some("rigidbody"));
+        assert_eq!(near("health"), None);
+        assert_eq!(near("light"), None, "never suggests the name itself");
+        assert_eq!(
+            did_you_mean("trasnform", names).as_deref(),
+            Some("did you mean `transform`?")
+        );
+        // A tie goes to the first by name, whatever the order given
+        assert_eq!(closest("bat", ["cat", "bar"]), Some("bar"));
+        assert_eq!(closest("bat", ["bar", "cat"]), Some("bar"));
+    }
+
+    #[test]
+    fn edit_distance_counts_a_swap_once() {
+        assert_eq!(edit_distance("light", "light"), 0);
+        assert_eq!(edit_distance("lihgt", "light"), 1);
+        assert_eq!(edit_distance("", "abc"), 3);
+        assert_eq!(edit_distance("kitten", "sitting"), 3);
+    }
+}

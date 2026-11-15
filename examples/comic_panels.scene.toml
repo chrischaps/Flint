@@ -1,0 +1,160 @@
+# Comic Panels: one beat told in two shots at once (#880, ADR 0120). The
+# wide panel is the clearing as it is; the close panel follows the dancer
+# and draws it in pencil, traced on a blank sheet. The page is warm paper
+# with an inked border round each panel, and the HUD is still free to draw
+# over the top (scripts/comic_panels.rhai letters a caption).
+#
+#   cargo run --bin flint -- render examples/comic_panels.scene.toml -o page.png
+#   cargo run --bin flint -- render examples/comic_panels.scene.toml --scripts --time 0..10 --fps 12 -o cuts.gif
+#   cargo run --bin flint-player -- examples/comic_panels.scene.toml
+#
+# Without --scripts the page is the [panels] below. With them the script
+# cuts between layouts:
+#
+#   0 s    one panel: the wide shot alone
+#   2 s    two: the wide shot and the close-up, side by side
+#   5 s    three: an overhead inset drops into the corner of the wide shot
+#   8 s    back to one
+#
+# Each panel draws the whole frame again with its own camera at its own
+# size, so a style in a panel sees that panel's size, depth and camera.
+
+[scene]
+name = "Comic Panels"
+version = "1.0"
+description = "A live wide shot beside a pencil close-up of the same world, laid out as a comic page (#880)"
+
+[camera]
+position = [3.9, 1.7, 7.4]
+target = [0.7, 0.95, 2.4]
+fov = 46.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.05
+bloom_threshold = 1.2
+exposure = 1.25
+vignette_enabled = true
+vignette_intensity = 0.2
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+
+# The page. Points, so it is the same on any display
+[panels]
+gutter = 12
+gutter_color = [0.953, 0.929, 0.875]
+border = 3
+border_color = [0.086, 0.071, 0.055]
+
+[panels.panel.wide]
+rect = [0.0, 0.0, 0.6, 1.0]
+
+# The close-up: framed from the dancer's own origin, wherever it goes, in
+# the rotoscope look (pencil lines on a blank sheet)
+[panels.panel.close]
+rect = [0.6, 0.0, 0.4, 1.0]
+follow = "dancer"
+position = [1.5, 1.05, 2.9]
+target = [0.0, 0.92, 0.0]
+fov = 38.0
+look = "rotoscope"
+
+[entities.director]
+[entities.director.story]
+beat = -1
+[entities.director.script]
+source = "comic_panels.rhai"
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.16, 0.30, 0.58, 1.0]
+horizon_color = [0.86, 0.72, 0.52, 1.0]
+haze_color = [0.95, 0.80, 0.60, 0.7]
+cloud_tint = [1.0, 0.90, 0.78, 0.8]
+cloud_coverage = 0.3
+sun_glow = 1.4
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [-0.75, 0.38, -0.35]
+color = [1.0, 0.86, 0.66]
+intensity = 2.4
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.light]
+type = "directional"
+direction = [0.4, 0.8, 0.4]
+color = [0.55, 0.65, 0.85]
+intensity = 0.35
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-60, -0.2, -60]
+max = [60, 0, 60]
+[entities.ground.material]
+color = [0.30, 0.36, 0.17, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+# --- The clearing ---
+
+[entities.dancer]
+[entities.dancer.transform]
+position = [0.4, 0.0, 2.2]
+rotation = [0, 25, 0]
+[entities.dancer.model]
+asset = "YBotWithIdle"
+[entities.dancer.skeleton]
+skin = "Armature"
+[entities.dancer.animator]
+clip = "mixamo.com.001"
+autoplay = true
+loop = true
+playing = true
+
+[entities.bench]
+archetype = "furniture"
+[entities.bench.transform]
+position = [-1.2, 0.22, 3.2]
+rotation = [0, 15, 0]
+scale = [0.01, 0.01, 0.01]
+[entities.bench.model]
+asset = "wooden_bench"
+
+[entities.barrel]
+archetype = "furniture"
+[entities.barrel.transform]
+position = [2.6, 0.48, 1.2]
+scale = [0.5, 0.5, 0.5]
+[entities.barrel.model]
+asset = "barrel"
+
+[entities.crate]
+archetype = "furniture"
+[entities.crate.transform]
+position = [2.3, 0.0, 3.4]
+rotation = [0, 30, 0]
+[entities.crate.bounds]
+min = [-0.4, 0.0, -0.4]
+max = [0.4, 0.8, 0.4]
+[entities.crate.material]
+color = [0.55, 0.38, 0.22, 1.0]
+roughness = 0.8
+
+[entities.lantern]
+archetype = "furniture"
+parent = "crate"
+[entities.lantern.transform]
+position = [0.0, 0.8, 0.0]
+scale = [0.035, 0.035, 0.035]
+[entities.lantern.model]
+asset = "Lantern"

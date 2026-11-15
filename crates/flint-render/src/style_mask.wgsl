@@ -11,6 +11,11 @@
 // A transparent or a particle in front of a styled entity (glass, fire)
 // unmasks it by its coverage (#290): the veil pass drew that coverage just
 // before, and the blend written here is the entity's times what's left.
+//
+// An entity whose style has `blend_source = "tear"` (#397) is drawn at its
+// blend times the reality tear's mask at the pixel (tear_mask.wgsl, which
+// Rust prepends to this file, as it does to the composite's), so its
+// style shows only where reality tears.
 
 struct TransformUniforms {
     view_proj: mat4x4<f32>,
@@ -25,8 +30,28 @@ struct MaskDraw {
     // How far behind the scene's depth a fragment may be, in depth slopes
     slope_tolerance: f32,
     blend: u32,
-    _pad: f32,
+    // 1: the blend follows the tear (#397); 0: the entity's own
+    torn: u32,
+    // The composite's tear, this frame: mode_params, then mix, post time
+    // and the mask target's size in pixels
+    tear_params: vec4<f32>,
+    tear_mix: f32,
+    tear_time: f32,
+    size: vec2<f32>,
 };
+
+// The blend to write at pixel `frag_xy`: the draw's, scaled by what the
+// veil leaves (`covered`) and, for a torn draw, by the tear there. The
+// mask's pixel centres give the same uv as the composite's at any render
+// scale, so the tear lands where the composite draws it.
+fn written_blend(frag_xy: vec2<f32>, covered: f32) -> u32 {
+    var blend = f32(draw.blend) * (1.0 - covered);
+    if draw.torn != 0u {
+        let uv = frag_xy / draw.size;
+        blend *= tear_mask_at(uv, draw.size.x / draw.size.y, draw.tear_mix, draw.tear_params, draw.tear_time);
+    }
+    return u32(round(blend));
+}
 
 @group(0) @binding(0) var<uniform> transform: TransformUniforms;
 @group(1) @binding(0) var<uniform> draw: MaskDraw;
@@ -80,8 +105,7 @@ fn fs_main(@builtin(position) frag: vec4<f32>) -> @location(0) vec2<u32> {
         discard;
     }
     let covered = clamp(textureLoad(veil, vec2<i32>(frag.xy), 0).r, 0.0, 1.0);
-    let blend = u32(round(f32(draw.blend) * (1.0 - covered)));
-    return vec2<u32>(draw.id, blend);
+    return vec2<u32>(draw.id, written_blend(frag.xy, covered));
 }
 
 // Under MSAA (#306) the mask is drawn 4x, into a target with the scene's
@@ -120,7 +144,7 @@ fn fs_msaa(
     }
     let veiled = clamp(textureLoad(veil, px, 0).r, 0.0, 1.0);
     var out: MsaaOut;
-    out.value = vec2<u32>(draw.id, u32(round(f32(draw.blend) * (1.0 - veiled))));
+    out.value = vec2<u32>(draw.id, written_blend(frag.xy, veiled));
     out.samples = keep;
     return out;
 }

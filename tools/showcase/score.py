@@ -183,7 +183,7 @@ def _phrase(bar: int) -> tuple[str, int]:
 
 def _clicks(beat_id: str) -> list[float]:
     """Mouse clicks and key taps of a beat's input script, in take seconds."""
-    path = Path(__file__).resolve().parents[2] / "demo/film/beats" / f"{beat_id}.input.txt"
+    path = Path(__file__).resolve().parents[2] / "examples/film/beats" / f"{beat_id}.input.txt"
     out = []
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -582,18 +582,16 @@ def suite_toml(cut: Cut, stems_dir: str) -> str:
         "time_signature = [4, 4]",
         "",
     ]
-    names, seen = [], set()
+    # Sections and buses only: the film's music is played, never judged, so
+    # it has no judgment windows and no [reintegration] (#745).
+    seen = set()
     for i, s in enumerate(cut.shots):
         if abs(s.start / BAR - round(s.start / BAR)) > 1e-9 or s.beat in seen and s.beat == "10_looks":
             continue
         seen.add(s.beat)
         name = f"{i + 1:02d}_{s.beat}" if s.beat != "tail" else "tail"
-        names.append(name)
         lines += ["[[sections]]", f'name = "{name}"',
-                  f"start_sample = {int(round(s.start / BAR)) * bar_samples}",
-                  "pulse_window_ms = 100", ""]
-    lines += ["[reintegration]", f're_entry_sections = ["{names[0]}"]',
-              'lead_bus = "home_theme"', "reassembly_bars = 2", ""]
+                  f"start_sample = {int(round(s.start / BAR)) * bar_samples}", ""]
     for b in BUSES:
         lines += [f"[buses.{b}]", f'file = "{stems_dir}/{b}.wav"', ""]
     return "\n".join(lines)

@@ -6,8 +6,9 @@
 //! like every other style's (#298); a scene's older `kuwahara_enabled`,
 //! `kuwahara_radius`... keys are folded into that table when it loads
 //! (`flint_scene::fold_legacy_style_keys`). In a scene with a `[wooze]`
-//! field the paint also boils (#214): `[post_process] kuwahara_boil` moves
-//! the kernel and turns the strokes a little on each drawing of the field.
+//! field the paint also boils (#214): `boil` moves the kernel and turns the
+//! strokes a little on each drawing of the field (the flat
+//! `[post_process] kuwahara_boil` before #599, folded in the same way).
 
 use super::kit;
 use super::{
@@ -28,6 +29,7 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
     StyleParam::new("sharpness", 8.0, 1.0..=16.0),
     StyleParam::new("hardness", 8.0, 1.0..=16.0),
     StyleParam::new("anisotropy", 1.0, 0.0..=2.0),
+    StyleParam::new("boil", 0.0, 0.0..=1.0),
 ])
 .hints(&[
     StyleHint::new(
@@ -51,6 +53,11 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
         "Anisotropy",
         "How far strokes stretch along the image's edges; 0 is round",
     ),
+    StyleHint::new(
+        "boil",
+        "Boil",
+        "How far each drawing of the wooze field moves the paint, as a share of the radius; needs a [wooze] table",
+    ),
 ]);
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {
@@ -64,6 +71,13 @@ struct TexelUniforms {
     texel_size: [f32; 2],
     _pad: [f32; 2],
 }
+
+/// The largest radius the filter takes, in pixels (#945). A scene's radius
+/// is kept as written past its tuned 1..8, but the shader's sector loops run
+/// `-radius..=radius` with loop bounding off (built-in WGSL is trusted), so
+/// it is capped here: a radius near `i32::MAX` would wrap and never end. At
+/// 32 a pixel already reads 65 x 65 x 8 taps.
+const MAX_RADIUS: f32 = 32.0;
 
 /// The filter pass's uniforms.
 #[repr(C)]
@@ -93,11 +107,11 @@ mod tests {
 struct Kuwahara {
     uniform_bgl: wgpu::BindGroupLayout,
     sampled_bgl: wgpu::BindGroupLayout,
-    tensor_pipeline: wgpu::RenderPipeline,
+    tensor_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     tensor_uniforms: wgpu::Buffer,
-    blur_pipeline: wgpu::RenderPipeline,
+    blur_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     blur_uniforms: wgpu::Buffer,
-    pipeline: wgpu::RenderPipeline,
+    pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniforms: wgpu::Buffer,
 }
 
@@ -114,7 +128,7 @@ impl Kuwahara {
             &kit::shader(
                 device,
                 "Kuwahara Tensor Shader",
-                include_str!("kuwahara_tensor.wgsl"),
+                kit::wgsl!("kuwahara_tensor.wgsl"),
             ),
             &layouts,
             HDR_FORMAT,
@@ -125,7 +139,7 @@ impl Kuwahara {
             &kit::shader(
                 device,
                 "Kuwahara Tensor Blur Shader",
-                include_str!("kuwahara_tensor_blur.wgsl"),
+                kit::wgsl!("kuwahara_tensor_blur.wgsl"),
             ),
             &layouts,
             HDR_FORMAT,
@@ -133,7 +147,7 @@ impl Kuwahara {
         let pipeline = kit::fullscreen_pipeline(
             device,
             "Kuwahara Pipeline",
-            &kit::shader(device, "Kuwahara Shader", include_str!("kuwahara.wgsl")),
+            &kit::shader(device, "Kuwahara Shader", kit::wgsl!("kuwahara.wgsl")),
             &[&uniform_bgl, &sampled_bgl, &sampled_bgl],
             d.format,
         );
@@ -216,15 +230,16 @@ impl StylePass for Kuwahara {
         // Pass 3: the filter, oriented by the blurred tensor
         let uniforms = KuwaharaUniforms {
             texel_size,
-            // Whole pixels, as the old `kuwahara_radius: u32` was
-            radius: frame.param("radius").round().max(1.0),
+            // Whole pixels, as the old `kuwahara_radius: u32` was, and at
+            // most MAX_RADIUS so the shader's `y <= radius` loops end
+            radius: frame.param("radius").round().max(1.0).min(MAX_RADIUS),
             sharpness: frame.param("sharpness"),
             hardness: frame.param("hardness"),
             anisotropy: frame.param("anisotropy"),
-            // The shading boil (#214): `[post_process] kuwahara_boil`, scaled
-            // by this frame's drawing from the wooze field (0 with no field)
+            // The shading boil (#214): `boil`, scaled by this frame's
+            // drawing from the wooze field (0 with no field)
             boil_seed: frame.config.boil.seed,
-            boil: frame.config.kuwahara_boil.max(0.0) * frame.config.boil.amount,
+            boil: frame.param("boil").max(0.0) * frame.config.boil.amount,
         };
         frame
             .queue

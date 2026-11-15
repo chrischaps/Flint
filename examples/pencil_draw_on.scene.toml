@@ -1,0 +1,157 @@
+# Pencil Drawn On: the clearing as it is, until a hand draws three props
+# into it (#879). Each prop has its pencil look at blend 0 with
+# `transition = "draw"`, and scripts/pencil_draw_on.rhai moves only the
+# blend:
+#
+#   cargo run --bin flint-player -- examples/pencil_draw_on.scene.toml
+#   cargo run --bin flint -- render examples/pencil_draw_on.scene.toml --scripts --time 1 --output half.png
+#
+#   0 s  the crate's outline starts to grow, its hatching after it, the
+#        paper's wash last; drawn by 2 s
+#   1 s  the barrel, drawn by 3 s
+#   2 s  the bench, drawn by 4 s
+#   6 s  all three rubbed out again by 8 s (the same front, backwards)
+#  10 s  it starts over
+#
+# A blend of 0.5 under draw is about half of each outline and nothing
+# faint where the drawing hasn't reached; under fade (the default) it is
+# the whole drawing at half strength. The whole frame draws on the same
+# way: `--style pencil:transition=draw,blend=0.5`.
+
+[scene]
+name = "Pencil Drawn On"
+version = "1.0"
+description = "Three props drawn into the live clearing stroke by stroke, outlines first, then hatching, then paper (#879)"
+
+[camera]
+position = [3.6, 1.7, 9.4]
+target = [1.6, 0.5, 4.0]
+fov = 50.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.05
+bloom_threshold = 1.2
+exposure = 1.25
+vignette_enabled = true
+vignette_intensity = 0.25
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+
+# The preset each drawn prop starts from; scope = "entities" keeps it off
+# the rest of the frame
+[post_process.styles.pencil]
+scope = "entities"
+transition = "draw"
+layers = 3
+contour = 1.4
+grazing = 1.0
+
+[entities.director]
+[entities.director.script]
+source = "pencil_draw_on.rhai"
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.16, 0.30, 0.58, 1.0]
+horizon_color = [0.86, 0.72, 0.52, 1.0]
+haze_color = [0.95, 0.80, 0.60, 0.7]
+cloud_tint = [1.0, 0.90, 0.78, 0.8]
+cloud_coverage = 0.3
+sun_glow = 1.4
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [-0.75, 0.38, -0.35]
+color = [1.0, 0.86, 0.66]
+intensity = 2.4
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.light]
+type = "directional"
+direction = [0.4, 0.8, 0.4]
+color = [0.55, 0.65, 0.85]
+intensity = 0.35
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-60, -0.2, -60]
+max = [60, 0, 60]
+[entities.ground.material]
+color = [0.13, 0.09, 0.055, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+[entities.meadow]
+[entities.meadow.transform]
+position = [-48, 0, -48]
+[entities.meadow.grass_ground]
+mask = "mesh_meadow/mask.png"
+width = 96.0
+depth = 96.0
+scale_by_mask = true
+"grass.density" = 40.0
+"grass.max_distance" = 70.0
+"grass.fade_start" = 50.0
+"grass.blade_width" = 0.2
+"grass.blade_height" = 0.45
+"grass.height_variation" = 0.4
+"grass.color_base" = [0.12, 0.38, 0.08]
+"grass.color_tip" = [0.42, 0.70, 0.20]
+"grass.color_dry" = [0.62, 0.54, 0.24]
+"grass.dry_amount" = 0.3
+"grass.wind_direction" = [0.8, 0.0, 0.6]
+"grass.wind_speed" = 0.6
+"grass.wind_strength" = 0.1
+"grass.density_threshold" = 0.05
+
+# --- The clearing ---
+
+[entities.bench]
+archetype = "furniture"
+[entities.bench.transform]
+position = [0.4, 0.22, 3.0]
+rotation = [0, 15, 0]
+scale = [0.01, 0.01, 0.01]
+[entities.bench.model]
+asset = "wooden_bench"
+
+[entities.barrel]
+archetype = "furniture"
+[entities.barrel.transform]
+position = [2.4, 0.48, 5.4]
+scale = [0.5, 0.5, 0.5]
+[entities.barrel.model]
+asset = "barrel"
+
+
+
+[entities.crate]
+archetype = "furniture"
+[entities.crate.transform]
+position = [2.1, 0.0, 2.6]
+rotation = [0, 30, 0]
+[entities.crate.bounds]
+min = [-0.4, 0.0, -0.4]
+max = [0.4, 0.8, 0.4]
+[entities.crate.material]
+color = [0.55, 0.38, 0.22, 1.0]
+roughness = 0.8
+
+[entities.lantern]
+archetype = "furniture"
+parent = "crate"
+[entities.lantern.transform]
+position = [0.0, 0.8, 0.0]
+scale = [0.035, 0.035, 0.035]
+[entities.lantern.model]
+asset = "Lantern"

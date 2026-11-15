@@ -1,3 +1,8 @@
+# Clips a 2D sprite to a fraction, for bars (flint-render `extract.rs`).
+# Every default below is the value the reader falls back to (#792).
 [component.ui_fill]
+description = "Shows a fraction of a 2D sprite, for health and progress bars"
+
+[component.ui_fill.fields]
 value = { type = "f32", default = 1.0, description = "Fill amount from 0.0 (empty) to 1.0 (full)" }
-direction = { type = "string", default = "left_to_right", description = "Fill direction: left_to_right, right_to_left, bottom_to_top, top_to_bottom" }
+direction = { type = "enum", values = ["left_to_right", "right_to_left", "bottom_to_top", "top_to_bottom"], default = "left_to_right", description = "Fill direction" }

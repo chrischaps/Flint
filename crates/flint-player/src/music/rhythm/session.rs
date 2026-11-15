@@ -1,0 +1,699 @@
+//! The chart session itself (Phase 4 F3, ADR 0019), which
+//! [`super::RhythmSubsystem`] drives: a flint-rhythm [`ChartSession`] on
+//! the shared kira `AudioManager` (ADR 0017), the gamepad handed to the 1 kHz
+//! capture thread for the session's duration, and the same capture drain
+//! down-sampled into `InputState` so the script/action surface keeps working
+//! frame-quantized (ADR 0018). Headless (no audio device) degrades to no
+//! session, matching the engine's Option-audio convention.
+//!
+//! While a session is active only lean + pulse reach `InputState` — every
+//! other pad control is dropped inside the capture crate (accepted gap,
+//! ADR 0018). Keyboard stays winit throughout.
+
+use anyhow::{anyhow, Result};
+use flint_audio::engine::AudioEngine;
+use flint_core::vfs;
+use flint_rhythm::chart_session::{
+    judgment_offset_samples, parse_lean_mode, ChartSession, ChartSessionConfig,
+};
+use flint_rhythm::{InputEvent, Tick, VisualFrame};
+use flint_runtime::InputState;
+use std::path::Path;
+use web_time::Instant;
+
+/// Gamepad slot the down-sampled events claim in `InputState`.
+const GAMEPAD_SLOT: u32 = 0;
+/// The pulse verb's button name in `InputState`'s gamepad vocabulary.
+const PULSE_BUTTON: &str = "South";
+/// Teardown fade: long enough to avoid a click, short enough to feel like
+/// the world simply lets go.
+const STOP_FADE_MS: f64 = crate::music::STOP_FADE_MS;
+
+/// Ladder visuals → engine post params (ADR 0021; F4/F6 move authorship into
+/// scripts via conducted params, superseding this direct path script-wins).
+/// The scales are provisional, owned by the Phase 4 [H] look-check: the
+/// ladder's `blur` becomes zoom-style radial blur (world-losing-focus),
+/// `chromatic` and `desaturate` map 1:1 (rung values are authored 0..1 and
+/// the composite shader's ash-grey formula does its own darkening).
+pub const MUSIC_BLUR_SCALE: f32 = 0.6;
+pub const MUSIC_CHROMATIC_SCALE: f32 = 1.0;
+pub const MUSIC_DESATURATE_SCALE: f32 = 1.0;
+
+/// The scene's authored values for the three ladder-driven post params,
+/// captured at session start. The merge writes `base + rung × scale` every
+/// frame (not only when a rung is active) so a ladder that recovers to clean
+/// actually restores the authored look — the renderer config is sticky, and
+/// an only-when-degraded write would leave the last degraded values applied
+/// forever (ADR 0021).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LadderPostBase {
+    pub radial_blur: f32,
+    pub chromatic_aberration: f32,
+    pub desaturate: f32,
+}
+
+/// Merge the ladder visuals into this frame's post overrides. Script
+/// overrides win (only `None` slots are filled); preroll leaves the world
+/// untouched.
+pub fn merge_ladder_postprocess(
+    radial_blur: &mut Option<f32>,
+    chromatic_aberration: &mut Option<f32>,
+    desaturation: &mut Option<f32>,
+    vf: &VisualFrame,
+    base: LadderPostBase,
+) {
+    if vf.preroll {
+        return;
+    }
+    if radial_blur.is_none() {
+        *radial_blur = Some(base.radial_blur + vf.blur * MUSIC_BLUR_SCALE);
+    }
+    if chromatic_aberration.is_none() {
+        *chromatic_aberration =
+            Some(base.chromatic_aberration + vf.chromatic * MUSIC_CHROMATIC_SCALE);
+    }
+    if desaturation.is_none() {
+        *desaturation = Some((base.desaturate + vf.desaturate * MUSIC_DESATURATE_SCALE).min(1.0));
+    }
+}
+
+/// One-shot restore of the authored values after session teardown, so the
+/// config does not end stuck mid-ladder. Script overrides still win.
+pub fn restore_ladder_postprocess(
+    radial_blur: &mut Option<f32>,
+    chromatic_aberration: &mut Option<f32>,
+    desaturation: &mut Option<f32>,
+    base: LadderPostBase,
+) {
+    if radial_blur.is_none() {
+        *radial_blur = Some(base.radial_blur);
+    }
+    if chromatic_aberration.is_none() {
+        *chromatic_aberration = Some(base.chromatic_aberration);
+    }
+    if desaturation.is_none() {
+        *desaturation = Some(base.desaturate);
+    }
+}
+
+/// One scene's music session: the reactive loop on the shared manager plus
+/// the InputState down-sampling state and permanent, near-free evidence
+/// counters (the F2 pass criteria, re-checked on every real run).
+///
+/// `ChartSession`'s internal field order drops the capture guard before the
+/// kira handles; the subsystem list, in `GameCore` and declared before the
+/// player's `audio`, drops those handles before the
+/// shared manager (ADR 0017).
+pub struct MusicSession {
+    session: ChartSession,
+    /// A down-sampled pulse press is released at the start of the *next*
+    /// tick so action edge detection sees a full down/up pair (ADR 0018).
+    pulse_release_pending: bool,
+    events_total: u64,
+    monotonic_violations: u64,
+    last_event_sample: i64,
+    /// Max stem skew that survived the ADR 0017 re-read discriminator
+    /// (a one-callback-buffer reporting transient collapses on re-read).
+    max_confirmed_skew_ms: f64,
+    last_skew_check: Instant,
+    /// Component's `quit_on_finish`: when the session ends on its own the
+    /// player exits instead of idling in the post-session neutral world.
+    quit_on_finish: bool,
+    /// Armed only when no gamepad was visible at session start.
+    #[cfg(feature = "debug-hud")]
+    debug_keys: Option<DebugKeyInput>,
+}
+
+/// Debug keyboard input (P5, 2026-08-27, `debug-hud` builds only): when a
+/// session starts with NO gamepad visible, arrows = lean and Space = pulse
+/// feed the session's ordinary input channel, stamped through the same
+/// ClockBridge arithmetic as the capture thread (compensated clock sample,
+/// monotonic-guarded). A stand-in for seam/feedback iteration when no pad is
+/// at hand — digital lean at a fixed radius, frame-quantized stamps, no
+/// keyboard-specific calibration — never an [H] feel surface. Covers the
+/// prototype verbs only (lean + pulse); sway/pressure/flick stay silent.
+#[cfg(feature = "debug-hud")]
+struct DebugKeyInput {
+    tx: std::sync::mpsc::Sender<InputEvent>,
+    bridge: flint_music::ClockBridge,
+    offset_samples: i64,
+    last_sample: i64,
+    last_lean: (f64, f64),
+}
+
+/// Digital lean radius: matches the chart's authored target radii (~0.8–0.85)
+/// so a held arrow scores like a landed lean rather than a rail-pinned one.
+#[cfg(feature = "debug-hud")]
+const KEY_LEAN_R: f64 = 0.85;
+
+#[cfg(feature = "debug-hud")]
+impl DebugKeyInput {
+    fn feed(&mut self, input: &InputState) {
+        use winit::keyboard::KeyCode;
+        let mut x: f64 = 0.0;
+        let mut y: f64 = 0.0;
+        if input.is_key_down(KeyCode::ArrowRight) {
+            x += 1.0;
+        }
+        if input.is_key_down(KeyCode::ArrowLeft) {
+            x -= 1.0;
+        }
+        if input.is_key_down(KeyCode::ArrowUp) {
+            y += 1.0;
+        }
+        if input.is_key_down(KeyCode::ArrowDown) {
+            y -= 1.0;
+        }
+        let mag = (x * x + y * y).sqrt();
+        if mag > 0.0 {
+            x = x / mag * KEY_LEAN_R;
+            y = y / mag * KEY_LEAN_R;
+        }
+        let pulse = input.is_key_just_pressed(KeyCode::Space);
+        let lean_dirty = (x, y) != self.last_lean;
+        if !lean_dirty && !pulse {
+            return;
+        }
+        let Some(clock_sample) = self.bridge.sample_at(Instant::now()) else {
+            return; // bridge not fed yet (session preroll warm-up)
+        };
+        // Same monotonic guard as the capture thread: a bridge refit can
+        // step the mapping backwards by a hair; judgment requires
+        // nondecreasing stamps.
+        let sample = (clock_sample - self.offset_samples).max(self.last_sample);
+        self.last_sample = sample;
+        if lean_dirty {
+            let _ = self
+                .tx
+                .send(InputEvent::Lean(flint_rhythm::LeanSample { sample, x, y }));
+            self.last_lean = (x, y);
+        }
+        if pulse {
+            let _ = self.tx.send(InputEvent::Pulse(flint_rhythm::PulseEvent {
+                sample,
+                kind: "pulse".into(),
+                direction: None,
+            }));
+        }
+    }
+}
+
+/// A string field of the component; empty/whitespace counts as absent.
+fn comp_str(comp: &toml::Value, key: &str) -> Option<String> {
+    comp.get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
+impl MusicSession {
+    /// Parse the component, start the suite on the player's shared manager,
+    /// and spawn capture. `Ok(None)` when no audio device exists (headless —
+    /// no session, everything else runs).
+    pub fn start(
+        base_dir: &Path,
+        comp: &toml::Value,
+        audio: &mut AudioEngine,
+    ) -> Result<Option<Self>> {
+        let manifest = comp_str(comp, "manifest")
+            .ok_or_else(|| anyhow!("music_session component: `manifest` is required"))?;
+        let chart = comp_str(comp, "chart")
+            .ok_or_else(|| anyhow!("music_session component: `chart` is required"))?;
+        // Declared-for-later field (F7): parsed so a populated field is
+        // never a silent lie, but this lifecycle does not read it yet.
+        if let Some(t) = comp_str(comp, "tuning_config") {
+            tracing::debug!("music_session: tuning_config `{t}` declared; not read until F7");
+        }
+        // `bindings` is declarative (ADR 0020): scripts load through the one
+        // script-discovery owner — a `script` component on a scene entity —
+        // never through this field. Validate it so a typo is loud.
+        if let Some(b) = comp_str(comp, "bindings") {
+            let path = base_dir.join(&b);
+            if vfs::exists(&path) {
+                tracing::info!(
+                    "music_session: bindings `{b}` present (load it via a `script` component)"
+                );
+            } else {
+                tracing::warn!(
+                    "music_session: bindings `{b}` does not exist at {} — this field is \
+                     declarative; the script loads via a `script` component on a scene entity",
+                    path.display()
+                );
+            }
+        }
+        let lean_mode = comp_str(comp, "lean_mode").unwrap_or_else(|| "arrival".to_string());
+        let lean_mode =
+            parse_lean_mode(&lean_mode).map_err(|e| anyhow!("music_session component: {e}"))?;
+        // Coercion helper because TOML `16` and `16.0` are different types.
+        let bars = comp
+            .get("bars")
+            .and_then(flint_core::toml_util::toml_f64)
+            .map(|b| b.max(0.0).round() as u64)
+            .filter(|&b| b > 0);
+        let quit_on_finish = comp
+            .get("quit_on_finish")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        // Timing offsets from the committed logs in <base_dir>/logs/latency/.
+        // Shared resolver (one wording with the CLI harness); operator-facing
+        // session diagnostics stay on println deliberately — tracing's
+        // default level filters info, and the Phase-3 double-failure lesson
+        // is that input/timing liveness must be LOUD.
+        let offsets = flint_rhythm::chart_session::resolve_timing_offsets(base_dir);
+        for n in &offsets.notices {
+            println!("[music] {n}");
+        }
+        let (latency_ms, calibration_ms) = (offsets.latency_ms, offsets.calibration_ms);
+
+        let cfg = ChartSessionConfig {
+            manifest: base_dir.join(&manifest),
+            chart: base_dir.join(&chart),
+            base_dir: base_dir.to_path_buf(),
+            coherence_config: comp_str(comp, "coherence_config").map(|p| base_dir.join(p)),
+            ladder_config: comp_str(comp, "ladder_config").map(|p| base_dir.join(p)),
+            gradient_config: comp_str(comp, "gradient_config").map(|p| base_dir.join(p)),
+            haptics_config: comp_str(comp, "haptics_config").map(|p| base_dir.join(p)),
+            record: None,
+            bars,
+            lean_mode,
+            latency_ms,
+            calibration_ms,
+        };
+
+        // The shared manager (ADR 0017): the borrow ends at start — the
+        // session keeps only kira handles, the manager stays in the engine.
+        let Some(manager) = audio.manager_mut() else {
+            println!("[music] no audio device — session skipped");
+            return Ok(None);
+        };
+        let (mut session, notices) =
+            ChartSession::open_shared(&cfg, manager).map_err(|e| anyhow!("{e}"))?;
+        for n in notices {
+            println!("[music] {n}");
+        }
+
+        // Gamepad handoff (ADR 0018): the capture thread owns the pad for the
+        // run. Capture failure is non-fatal — the session plays without input
+        // (and the bar-2 NO INPUT notice will not fire: no receiver attached).
+        let offset_samples =
+            judgment_offset_samples(latency_ms, calibration_ms, session.sample_rate());
+        let verb_map = match comp_str(comp, "input_map") {
+            Some(m) => flint_input_capture::VerbMap::parse(&m)
+                .map_err(|e| anyhow!("music_session component: {e}"))?,
+            None => flint_input_capture::VerbMap::default(),
+        };
+        // Debug keyboard fallback (debug-hud builds): with no pad visible,
+        // arm arrows/Space instead of spawning capture — the session gets a
+        // live receiver either way, so the NO INPUT diagnostics stay honest.
+        #[cfg(feature = "debug-hud")]
+        let debug_keys = match flint_input_capture::connected_gamepads() {
+            Ok(pads) if pads.is_empty() => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let bridge = session.bridge();
+                session.set_input(rx, Box::new(()));
+                println!(
+                    "[music] *** NO GAMEPADS VISIBLE — debug KEYBOARD input armed \
+                     (debug-hud build): arrows = lean, Space = pulse. Prototype \
+                     verbs only; not a feel surface."
+                );
+                Some(DebugKeyInput {
+                    tx,
+                    bridge,
+                    offset_samples,
+                    last_sample: i64::MIN,
+                    last_lean: (0.0, 0.0),
+                })
+            }
+            _ => None,
+        };
+        #[cfg(feature = "debug-hud")]
+        let attach_pad = debug_keys.is_none();
+        #[cfg(not(feature = "debug-hud"))]
+        let attach_pad = true;
+        if attach_pad {
+            for n in
+                flint_input_capture::attach_session_input(&mut session, verb_map, offset_samples)
+            {
+                println!("[music] {n}");
+            }
+        }
+
+        Ok(Some(Self {
+            session,
+            pulse_release_pending: false,
+            events_total: 0,
+            monotonic_violations: 0,
+            last_event_sample: i64::MIN,
+            max_confirmed_skew_ms: 0.0,
+            last_skew_check: Instant::now(),
+            quit_on_finish,
+            #[cfg(feature = "debug-hud")]
+            debug_keys,
+        }))
+    }
+
+    /// One player frame. Returns `true` when the session is over (naturally
+    /// or on error) — the caller tears down via [`MusicSession::stop`].
+    pub fn tick(&mut self, input: &mut InputState) -> bool {
+        if self.pulse_release_pending {
+            input.process_gamepad_button_up(GAMEPAD_SLOT, PULSE_BUTTON);
+            self.pulse_release_pending = false;
+        }
+
+        // Debug keyboard stand-in: synthesize this frame's events BEFORE the
+        // drain so they judge on this tick. The events then round-trip into
+        // InputState through the ordinary down-sample tap below, exactly
+        // like gamepad events.
+        #[cfg(feature = "debug-hud")]
+        if let Some(dk) = self.debug_keys.as_mut() {
+            dk.feed(input);
+        }
+
+        // Split borrows: the tap closure feeds InputState and the evidence
+        // counters while `session` runs the drain (ADR 0018 down-sample).
+        let Self {
+            session,
+            pulse_release_pending,
+            events_total,
+            monotonic_violations,
+            last_event_sample,
+            ..
+        } = self;
+        let outcome = session.tick_with(|ev| {
+            *events_total += 1;
+            let sample = ev.sample();
+            if sample < *last_event_sample {
+                *monotonic_violations += 1;
+            }
+            *last_event_sample = sample;
+            match ev {
+                InputEvent::Lean(l) => {
+                    input.process_gamepad_axis(GAMEPAD_SLOT, "LeftStickX", l.x as f32);
+                    input.process_gamepad_axis(GAMEPAD_SLOT, "LeftStickY", l.y as f32);
+                }
+                InputEvent::Pulse(_) => {
+                    input.process_gamepad_button_down(GAMEPAD_SLOT, PULSE_BUTTON);
+                    *pulse_release_pending = true;
+                }
+                // The InputState down-sample carries the prototype verbs
+                // only; sway/pressure reach scripts via the conducted
+                // surface, not InputState (ADR 0018 scope).
+                InputEvent::Sway(_) | InputEvent::Pressure(_) => {}
+            }
+        });
+        let outcome = match outcome {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::warn!("music session tick failed, ending session: {e}");
+                return true;
+            }
+        };
+        for n in &outcome.notices {
+            println!("[music] {n}");
+        }
+
+        // Once per second: stem-skew evidence with the ADR 0017 re-read
+        // discriminator (an exactly-one-buffer transient collapses on
+        // re-read; real de-sync persists and grows).
+        if self.last_skew_check.elapsed().as_secs_f64() >= 1.0 {
+            self.last_skew_check = Instant::now();
+            let mut skew_ms = self.session.max_stem_skew() * 1000.0;
+            if skew_ms > 0.5 {
+                // NOT a no-op: max_stem_skew() live-queries kira playback
+                // positions, so this second call is a genuine re-read taken
+                // one instant later. A reporting transient (exactly one
+                // audio-callback buffer of handle-position staleness, ADR
+                // 0017) collapses to ~0 on the re-read and the min() keeps
+                // the smaller value; real de-sync survives both reads.
+                skew_ms = skew_ms.min(self.session.max_stem_skew() * 1000.0);
+                if skew_ms > 0.5 {
+                    tracing::warn!("stem skew {skew_ms:.3} ms survived a re-read");
+                }
+            }
+            self.max_confirmed_skew_ms = self.max_confirmed_skew_ms.max(skew_ms);
+        }
+
+        outcome.state == Tick::Finished
+    }
+
+    /// Whether the scene asked the player to exit when this session ends on
+    /// its own (`quit_on_finish` on the component).
+    pub fn quit_on_finish(&self) -> bool {
+        self.quit_on_finish
+    }
+
+    /// Ladder/reintegration visuals for the post-override merge.
+    pub fn visual_frame(&self) -> VisualFrame {
+        self.session.visual_frame()
+    }
+
+    /// Debug: force the full reintegration on the next tick (F9; ADR 0064
+    /// follow-up) — seam iteration without playing to a fail.
+    #[cfg(feature = "debug-hud")]
+    pub fn debug_force_fail(&mut self) {
+        self.session.debug_force_fail();
+    }
+
+    /// Debug-guide snapshot for the Music Guide panel (ADR 0035).
+    #[cfg(feature = "debug-hud")]
+    pub fn guide_frame(&self, horizon_beats: f64) -> flint_rhythm::chart_session::GuideFrame {
+        self.session.guide_frame(horizon_beats)
+    }
+
+    /// Static suite structure for the Manifest Map panel (cloned once at
+    /// panel registration).
+    #[cfg(feature = "debug-hud")]
+    pub fn timeline_map(&self) -> flint_rhythm::chart_session::TimelineMap {
+        self.session.timeline_map().clone()
+    }
+
+    /// Per-frame playhead + this-run history for the Manifest Map panel.
+    #[cfg(feature = "debug-hud")]
+    pub fn timeline_frame(&self) -> flint_rhythm::chart_session::TimelineFrame {
+        self.session.timeline_frame()
+    }
+
+    /// The frame → script-POD conversion (ADR 0020): the only place
+    /// flint-rhythm types meet the `conducted` module's (`music/conducted.rs`,
+    /// which needs no rhythm).
+    pub(crate) fn conducted_snapshot(&self) -> crate::music::conducted::ConductedSnapshot {
+        let vf = self.session.visual_frame();
+        // Next-window telegraph (P5 immediate-feedback pass): the nearest
+        // unconsumed judgment window inside a short horizon, so the scene
+        // can telegraph that input is expected. Read-only guide-frame query,
+        // per-frame cost is a filter over the window list — cheap.
+        let (next_pulse_beats, pulse_window_open) = {
+            let gf = self.session.guide_frame(16.0);
+            let beats = gf
+                .windows
+                .iter()
+                .map(|w| w.beats_until)
+                .fold(f64::INFINITY, f64::min);
+            (
+                if beats.is_finite() { beats } else { 1e6 },
+                gf.windows.iter().any(|w| w.open_now),
+            )
+        };
+        crate::music::conducted::ConductedSnapshot {
+            next_pulse_beats,
+            pulse_window_open,
+            lean: [vf.lean[0] as f64, vf.lean[1] as f64],
+            sway: [vf.sway[0] as f64, vf.sway[1] as f64],
+            pressure_l: vf.pressure_l as f64,
+            pressure_r: vf.pressure_r as f64,
+            cues: vf
+                .cues
+                .iter()
+                .map(|c| crate::music::conducted::ConductedCue {
+                    name: c.name.clone(),
+                    age: c.age_s,
+                    // Flatten to primitives; nested tables/arrays dropped
+                    // (author flat params — ADR 0033).
+                    params: c
+                        .params
+                        .iter()
+                        .filter_map(|(k, v)| {
+                            let p = match v {
+                                toml::Value::Float(f) => {
+                                    crate::music::conducted::CueParam::Number(*f)
+                                }
+                                toml::Value::Integer(i) => {
+                                    crate::music::conducted::CueParam::Number(*i as f64)
+                                }
+                                toml::Value::String(s) => {
+                                    crate::music::conducted::CueParam::Text(s.clone())
+                                }
+                                toml::Value::Boolean(b) => {
+                                    crate::music::conducted::CueParam::Flag(*b)
+                                }
+                                _ => return None,
+                            };
+                            Some((k.clone(), p))
+                        })
+                        .collect(),
+                })
+                .collect(),
+            target: [vf.target[0] as f64, vf.target[1] as f64],
+            next_target: [vf.next_target[0] as f64, vf.next_target[1] as f64],
+            next_target_beats: vf.next_target_beats,
+            coherence: vf.coherence as f64,
+            beat_phase: vf.beat_phase as f64,
+            bar_phase: vf.bar_phase as f64,
+            bar: vf.bar,
+            beat: vf.beat,
+            section: vf.section,
+            pulses: vf
+                .pulses
+                .iter()
+                .map(|p| crate::music::conducted::ConductedPulse {
+                    age: p.age_s,
+                    err_ms: p.err_ms,
+                    kind: p.kind.as_str().to_string(),
+                })
+                .collect(),
+            desaturate: vf.desaturate as f64,
+            blur: vf.blur as f64,
+            chromatic: vf.chromatic as f64,
+            reassembly: vf.reassembly as f64,
+            rewind: vf.rewind as f64,
+            no_input: vf.no_input,
+            preroll: vf.preroll,
+        }
+    }
+
+    /// Teardown: stop the stems with a fade FIRST — on the shared manager,
+    /// dropping handles does not stop sounds — then finish (which drops the
+    /// capture guard before anything else). Prints the summary plus the
+    /// F2-criteria evidence line.
+    pub fn stop(mut self) {
+        self.session.stop_audio(STOP_FADE_MS);
+        let evidence = format!(
+            "[music] session evidence: max confirmed skew {:.3} ms | events {} | \
+             monotonic violations {}",
+            self.max_confirmed_skew_ms, self.events_total, self.monotonic_violations,
+        );
+        match self.session.finish() {
+            Ok(notices) => {
+                for n in notices {
+                    println!("[music] {n}");
+                }
+            }
+            Err(e) => tracing::warn!("music session finish failed: {e}"),
+        }
+        println!("{evidence}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(desaturate: f32, blur: f32, chromatic: f32, preroll: bool) -> VisualFrame {
+        VisualFrame {
+            desaturate,
+            blur,
+            chromatic,
+            preroll,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn merge_fills_all_three_from_rung_values() {
+        // Rung 3 of the built-in ladder at base 0.
+        let (mut rb, mut ca, mut de) = (None, None, None);
+        merge_ladder_postprocess(
+            &mut rb,
+            &mut ca,
+            &mut de,
+            &frame(0.85, 0.8, 0.35, false),
+            LadderPostBase::default(),
+        );
+        assert!((rb.unwrap() - 0.8 * MUSIC_BLUR_SCALE).abs() < 1e-6);
+        assert!((ca.unwrap() - 0.35).abs() < 1e-6);
+        assert!((de.unwrap() - 0.85).abs() < 1e-6);
+    }
+
+    #[test]
+    fn merge_script_override_wins() {
+        let (mut rb, mut ca, mut de) = (Some(0.1), None, Some(0.2));
+        merge_ladder_postprocess(
+            &mut rb,
+            &mut ca,
+            &mut de,
+            &frame(0.85, 0.8, 0.35, false),
+            LadderPostBase::default(),
+        );
+        assert_eq!(rb, Some(0.1));
+        assert_eq!(de, Some(0.2));
+        assert!(ca.is_some());
+    }
+
+    #[test]
+    fn merge_preroll_leaves_overrides_untouched() {
+        let (mut rb, mut ca, mut de) = (None, None, None);
+        merge_ladder_postprocess(
+            &mut rb,
+            &mut ca,
+            &mut de,
+            &frame(0.85, 0.8, 0.35, true),
+            LadderPostBase::default(),
+        );
+        assert_eq!((rb, ca, de), (None, None, None));
+    }
+
+    #[test]
+    fn merge_clean_ladder_writes_back_the_base() {
+        // The stickiness fix (ADR 0021): recovery to a clean ladder must
+        // actively restore the authored values, not stop writing.
+        let base = LadderPostBase {
+            radial_blur: 0.05,
+            chromatic_aberration: 0.1,
+            desaturate: 0.0,
+        };
+        let (mut rb, mut ca, mut de) = (None, None, None);
+        merge_ladder_postprocess(
+            &mut rb,
+            &mut ca,
+            &mut de,
+            &frame(0.0, 0.0, 0.0, false),
+            base,
+        );
+        assert_eq!(rb, Some(0.05));
+        assert_eq!(ca, Some(0.1));
+        assert_eq!(de, Some(0.0));
+    }
+
+    #[test]
+    fn merge_desaturate_clamps_to_one() {
+        let base = LadderPostBase {
+            desaturate: 0.5,
+            ..Default::default()
+        };
+        let (mut rb, mut ca, mut de) = (None, None, None);
+        merge_ladder_postprocess(
+            &mut rb,
+            &mut ca,
+            &mut de,
+            &frame(0.85, 0.0, 0.0, false),
+            base,
+        );
+        assert_eq!(de, Some(1.0));
+    }
+
+    #[test]
+    fn restore_writes_base_where_scripts_are_silent() {
+        let base = LadderPostBase {
+            radial_blur: 0.05,
+            chromatic_aberration: 0.1,
+            desaturate: 0.0,
+        };
+        let (mut rb, mut ca, mut de) = (None, Some(0.9), None);
+        restore_ladder_postprocess(&mut rb, &mut ca, &mut de, base);
+        assert_eq!(rb, Some(0.05));
+        assert_eq!(ca, Some(0.9));
+        assert_eq!(de, Some(0.0));
+    }
+}

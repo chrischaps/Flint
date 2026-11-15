@@ -5,6 +5,7 @@
 
 use super::PlayerApp;
 use crate::extension::{ExtensionCtx, PlayerExtension};
+use flint_debug_ui::run_headless_frame;
 use flint_ecs::FlintWorld;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -70,6 +71,7 @@ fn add_extension_registers_script_api_in_order() {
     assert_eq!(*log.lock().unwrap(), ["a register", "b register"]);
 
     let n: i64 = app
+        .core
         .script
         .rhai_engine_mut()
         .eval("a_frame() + b_frame()")
@@ -89,7 +91,8 @@ fn pre_update_runs_in_add_order_before_on_update() {
     let seen = Arc::new(Mutex::new(Vec::<(i64, i64)>::new()));
     {
         let seen = seen.clone();
-        app.script
+        app.core
+            .script
             .rhai_engine_mut()
             .register_fn("record", move |a: i64, b: i64| {
                 seen.lock().unwrap().push((a, b))
@@ -99,8 +102,8 @@ fn pre_update_runs_in_add_order_before_on_update() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("reader.rhai");
     std::fs::write(&path, "fn on_update() { record(a_frame(), b_frame()); }").unwrap();
-    let id = app.world.spawn("reader").unwrap();
-    app.script.load_script_for_entity(id, &path);
+    let id = app.core.world.spawn("reader").unwrap();
+    app.core.script.load_script_for_entity(id, &path);
     let _ = std::fs::remove_dir_all(&dir);
 
     app.tick();
@@ -120,6 +123,50 @@ fn pre_update_runs_in_add_order_before_on_update() {
     );
 }
 
+/// Declares `kart_speed(id)` through the builder (ADR 0116).
+struct Declarer;
+
+impl PlayerExtension for Declarer {
+    fn declare_script_api(&mut self, api: &mut flint_script::api::ScriptApi) {
+        use flint_script::api::builder::kind::{Entity, Num};
+        let mut m = api.module("kart");
+        m.func("kart_speed", "The kart's speed times a factor.")
+            .arg("kart", Entity)
+            .arg("factor", Num)
+            .returns(Num, "m/s; 0 for no kart")
+            .run(|call, (kart, factor)| {
+                let world = call.world()?;
+                Ok(world.get_name(kart).map_or(0.0, |n| n.len() as f64) * factor)
+            });
+    }
+}
+
+#[test]
+fn an_extension_declares_functions_that_are_listed_and_called() {
+    let mut app = headless_app();
+    app.add_extension(Box::new(Declarer));
+    let listing = app.core.script.api_listing();
+    let entry = listing
+        .declared
+        .iter()
+        .find(|e| e.name == "kart_speed")
+        .expect("listed");
+    assert_eq!(entry.module, "kart");
+    assert_eq!(
+        entry.signature(),
+        "kart_speed(kart: entity, factor: num) -> num"
+    );
+    assert!(listing.declared.iter().any(|e| e.name == "set_position"));
+
+    let log = attach_recording_script(
+        &mut app,
+        "declared",
+        r#"fn on_update() { record(`${kart_speed(get_entity("listener"), 2)}`); }"#,
+    );
+    app.tick();
+    assert_eq!(*log.lock().unwrap(), ["16.0"], "an int for a num, too");
+}
+
 /// Fires `pinged` with the frame count in every `pre_update`.
 struct Pinger {
     frame: i64,
@@ -136,11 +183,12 @@ impl PlayerExtension for Pinger {
 
 /// Registers `record(s)` on the app's script engine and attaches `src` to a
 /// new entity. Returns the log `record` appends to.
-fn attach_recording_script(app: &mut PlayerApp, test: &str, src: &str) -> Log {
+pub(super) fn attach_recording_script(app: &mut PlayerApp, test: &str, src: &str) -> Log {
     let log = Log::default();
     {
         let log = log.clone();
-        app.script
+        app.core
+            .script
             .rhai_engine_mut()
             .register_fn("record", move |s: &str| log.lock().unwrap().push(s.into()));
     }
@@ -148,8 +196,8 @@ fn attach_recording_script(app: &mut PlayerApp, test: &str, src: &str) -> Log {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("listener.rhai");
     std::fs::write(&path, src).unwrap();
-    let id = app.world.spawn("listener").unwrap();
-    app.script.load_script_for_entity(id, &path);
+    let id = app.core.world.spawn("listener").unwrap();
+    app.core.script.load_script_for_entity(id, &path);
     let _ = std::fs::remove_dir_all(&dir);
     log
 }
@@ -214,15 +262,18 @@ impl PlayerExtension for Attacher {
 #[test]
 fn attach_mesh_names_a_runtime_model_and_keeps_other_fields() {
     let mut app = headless_app();
-    let id = app.world.spawn("plot").unwrap();
+    let id = app.core.world.spawn("plot").unwrap();
     let mut model = toml::Table::new();
     model.insert("asset".into(), "placeholder".into());
     model.insert("note".into(), "kept".into());
-    app.world.set_component(id, "model", model.into()).unwrap();
+    app.core
+        .world
+        .set_component(id, "model", model.into())
+        .unwrap();
     app.add_extension(Box::new(Attacher));
     app.tick();
 
-    let model = app.world.get_component(id, "model").unwrap();
+    let model = app.core.world.get_component(id, "model").unwrap();
     assert_eq!(model.get("asset").unwrap().as_str(), Some("ground"));
     assert_eq!(model.get("runtime").unwrap().as_bool(), Some(true));
     assert_eq!(model.get("note").unwrap().as_str(), Some("kept"));
@@ -259,7 +310,7 @@ fn the_fonts_hook_runs_on_every_install_and_its_families_reach_scripts() {
 
     app.refresh_project_fonts();
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert!(app.ui_fonts.contains("game"), "scripts can draw in it");
+    assert!(app.hud.fonts.contains("game"), "scripts can draw in it");
 
     // Same project root: nothing to reload.
     app.refresh_project_fonts();
@@ -273,12 +324,13 @@ fn the_fonts_hook_runs_on_every_install_and_its_families_reach_scripts() {
     }));
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(late.load(Ordering::SeqCst), 1);
-    assert!(app.ui_fonts.contains("game"));
+    assert!(app.hud.fonts.contains("game"));
 
     // egui has the family on the next pass, so laying text out in it from
     // `ui` doesn't panic.
-    let _ = app.egui_ctx.run(egui::RawInput::default(), |ctx| {
-        ctx.fonts(|f| {
+    let _ = run_headless_frame(&app.hud.egui_ctx, egui::RawInput::default(), |ui| {
+        let ctx = &ui.ctx().clone();
+        ctx.fonts_mut(|f| {
             f.layout_no_wrap(
                 "Capitol".into(),
                 egui::FontId::new(14.0, egui::FontFamily::Name("game".into())),
@@ -354,18 +406,16 @@ impl PlayerExtension for Greeter {
 fn an_extension_write_starts_the_save_debounce() {
     let mut app = headless_app();
     app.add_extension(Box::new(Greeter { done: false }));
-    assert!(!app.persist_debounce.is_pending());
+    assert!(!app.saves.debounce.is_pending());
 
     app.tick();
 
     // Dirty, and waiting out the debounce: no script wrote anything, so
     // the extension's write alone is what the next save will carry.
-    assert!(app.persistent_store.is_dirty());
-    assert!(app.persist_debounce.is_pending());
+    assert!(app.core.store.is_dirty());
+    assert!(app.saves.debounce.is_pending());
     assert_eq!(
-        app.persistent_store
-            .get("greeting")
-            .and_then(|v| v.as_str()),
+        app.core.store.get("greeting").and_then(|v| v.as_str()),
         Some("hello")
     );
 }
@@ -401,7 +451,7 @@ fn scripted_keys_reach_on_key_and_one_taken_stays_out_of_the_game() {
         InputScript::parse("0 down ShiftLeft\n0 tap Slash\n0.5 up ShiftLeft\n0.5 tap KeyW\n")
             .unwrap(),
     );
-    app.clock.frame_step = Some(0.25);
+    app.core.clock.frame_step = Some(0.25);
 
     app.tick();
     assert!(app.input.is_key_down(KeyCode::ShiftLeft));
@@ -436,7 +486,7 @@ struct PanelGame {
 
 #[cfg(feature = "debug-hud")]
 impl PlayerExtension for PanelGame {
-    fn ui(&mut self, _ctx: &egui::Context) {
+    fn ui(&mut self, _ui: &mut egui::Ui) {
         self.frame += 1;
     }
     fn debug_panels(&self) -> Vec<String> {
@@ -480,10 +530,9 @@ fn a_game_names_debug_panels_that_f3_opens_and_it_draws() {
         )),
         ..Default::default()
     };
-    let _ = ctx.run(input, |ctx| {
-        for ext in extensions.iter_mut() {
-            ext.ui(ctx);
-        }
+    let _ = run_headless_frame(&ctx, input, |ui| {
+        let ctx = &ui.ctx().clone();
+        crate::extension::draw_ui(&mut extensions, ui);
         super::debug_panels::show_debug_panels(ctx, &mut app.debug_panels, &mut |panel, ui| {
             super::debug_panels::draw_panel(panel, &mut extensions, ui)
         });
@@ -504,4 +553,440 @@ fn a_game_names_debug_panels_that_f3_opens_and_it_draws() {
         .map(|p| (p.name(), p.is_open()))
         .collect();
     assert_eq!(open, [("Net", true), ("Town", false)]);
+}
+
+/// A game's own scene-level setting, end to end (#686): its schema layer
+/// declares `[table.weather]`, a scene writes `[weather]`, and an extension
+/// reads it from `ExtensionCtx`. A typo in the table, or in its name, is a
+/// diagnostic of the load.
+mod scene_tables {
+    use super::*;
+    use flint_core::diagnostic::codes;
+    use flint_schema::SchemaRegistry;
+
+    /// What the game's extension keeps of the scene's weather.
+    #[derive(Debug, Default, Clone, PartialEq, serde::Deserialize)]
+    #[serde(default)]
+    struct Weather {
+        rain: f32,
+        wind: [f32; 3],
+        kind: String,
+    }
+
+    #[derive(Default)]
+    struct WeatherReader {
+        seen: Arc<Mutex<Vec<Option<Weather>>>>,
+        raw_rain: Arc<Mutex<Option<f64>>>,
+    }
+
+    impl PlayerExtension for WeatherReader {
+        #[allow(clippy::disallowed_methods)] // a test asserts on the TOML exactly as written
+        fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
+            let weather = ctx
+                .scene_table_as::<Weather>("weather")
+                .map(|read| read.expect("[weather] fits the game's type"));
+            self.seen.lock().unwrap().push(weather);
+            *self.raw_rain.lock().unwrap() = ctx
+                .scene_table("weather")
+                .and_then(|weather| weather.get("rain")?.as_float());
+            assert!(ctx.scene_table("nothing_here").is_none());
+        }
+    }
+
+    const WEATHER_SCHEMA: &str = r#"
+[table.weather]
+description = "What the sky is doing in this scene"
+
+[table.weather.fields]
+rain = { type = "f32", min = 0.0, max = 1.0, default = 0.0, description = "How hard it rains" }
+wind = { type = "vec3", description = "Metres a second, in world space" }
+kind = { type = "enum", values = ["clear", "storm"], default = "clear" }
+"#;
+
+    const STORM: &str = r#"
+[scene]
+name = "Storm"
+
+[weather]
+rain = 0.7
+wind = [3.0, 0.0, -1.0]
+kind = "storm"
+
+[entities.rock.transform]
+position = [0, 0, 0]
+"#;
+
+    /// A game project in a temp folder: a manifest naming its schema layer,
+    /// that layer's `scene/weather.toml`, and `scene` as its one scene.
+    struct Game(std::path::PathBuf);
+
+    impl Game {
+        fn new(test: &str, scene: &str) -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("flint_scene_table_{test}_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(dir.join("schemas/scene")).unwrap();
+            std::fs::create_dir_all(dir.join("schemas/components")).unwrap();
+            std::fs::create_dir_all(dir.join("scenes")).unwrap();
+            std::fs::write(
+                dir.join("flint.toml"),
+                "[project]\nschemas = [\"schemas\"]\n",
+            )
+            .unwrap();
+            std::fs::write(dir.join("schemas/scene/weather.toml"), WEATHER_SCHEMA).unwrap();
+            std::fs::write(
+                dir.join("schemas/components/transform.toml"),
+                "[component.transform.fields]\nposition = \"vec3\"\n",
+            )
+            .unwrap();
+            std::fs::write(dir.join("scenes/storm.scene.toml"), scene).unwrap();
+            Self(dir)
+        }
+
+        fn scene(&self) -> std::path::PathBuf {
+            self.0.join("scenes/storm.scene.toml")
+        }
+
+        /// The scene loaded as the player loads it: schemas by the one
+        /// resolver, from the project's manifest.
+        fn load(
+            &self,
+        ) -> (
+            FlintWorld,
+            flint_scene::SceneFile,
+            Vec<flint_core::diagnostic::Diagnostic>,
+        ) {
+            let none: &[&str] = &[];
+            let (registry, dirs) = SchemaRegistry::resolve(Some(&self.scene()), none).unwrap();
+            assert_eq!(dirs.source.name(), "manifest");
+            assert!(registry.get_table("weather").is_some());
+            flint_scene::load_scene_diagnosed(self.scene(), &registry).unwrap()
+        }
+    }
+
+    impl Drop for Game {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_games_table_is_declared_read_by_an_extension_and_checked() {
+        let game = Game::new("read", STORM);
+        let (world, scene_file, found) = game.load();
+        assert_eq!(found, [], "a scene that fits its schemas says nothing");
+
+        let mut app = PlayerApp::new(
+            world,
+            game.scene().to_string_lossy().into_owned(),
+            false,
+            None,
+            None,
+        );
+        app.apply_scene_settings(&scene_file);
+        let reader = WeatherReader::default();
+        let (seen, raw_rain) = (reader.seen.clone(), reader.raw_rain.clone());
+        app.add_extension(Box::new(reader));
+        app.tick();
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [Some(Weather {
+                rain: 0.7,
+                wind: [3.0, 0.0, -1.0],
+                kind: "storm".into(),
+            })]
+        );
+        assert_eq!(*raw_rain.lock().unwrap(), Some(0.7));
+
+        // A scene with no [weather] reads as none, and the next scene's
+        // tables replace this one's
+        app.scene.tables = flint_scene::SceneFile::new("calm").scene_tables();
+        app.tick();
+        assert_eq!(seen.lock().unwrap()[1], None);
+    }
+
+    #[test]
+    fn a_typo_in_a_games_table_is_diagnosed() {
+        let game = Game::new(
+            "typo",
+            &STORM
+                .replace("rain = 0.7", "rian = 0.7")
+                .replace("kind = \"storm\"", "kind = \"strom\""),
+        );
+        let (_, _, found) = game.load();
+        let said: Vec<String> = found
+            .iter()
+            .map(|d| match &d.hint {
+                Some(hint) => format!("{d} ({hint})"),
+                None => d.to_string(),
+            })
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "error[bad-enum-value] [weather] kind: \"strom\" is not a value of `kind` \
+                 (did you mean `storm`? allowed values: clear, storm)",
+                "warning[unknown-field] [weather] rian: `weather` has no field `rian` (did you \
+                 mean `rain`?)",
+            ]
+        );
+
+        // ...and so is a typo in its name
+        let game = Game::new("name", &STORM.replace("[weather]", "[wether]"));
+        let (_, scene_file, found) = game.load();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].code, codes::UNKNOWN_TABLE);
+        assert_eq!(found[0].hint.as_deref(), Some("did you mean `weather`?"));
+        // The table is kept all the same: the load drops nothing
+        assert!(scene_file.tables.contains_key("wether"));
+    }
+}
+
+/// A game's Rust styles (#419): `PlayerExtension::styles` registers them at
+/// `add_extension`, so a scene's `[post_process.styles.<name>]` and a
+/// `--style` word read after it find the style. Headless, so nothing builds
+/// the passes; `create` is never called.
+mod game_styles {
+    use super::*;
+    use flint_render::stylize::{
+        self, StyleDescriptor, StyleDevice, StyleParam, StylePass, StyleStage,
+    };
+
+    fn never_built(_: &StyleDevice) -> Box<dyn StylePass> {
+        unreachable!("a headless test builds no style")
+    }
+
+    static SEPIA: StyleDescriptor = StyleDescriptor::new(
+        "utest_ext_sepia",
+        "Sepia (test)",
+        StyleStage::Display,
+        never_built,
+    )
+    .params(&[StyleParam::new("warmth", 0.5, 0.0..=1.0)]);
+
+    /// Takes a built-in's name: refused, and the extension's other style
+    /// still registers.
+    static TAKEN: StyleDescriptor =
+        StyleDescriptor::new("invert", "Not invert", StyleStage::Display, never_built);
+
+    struct Sepia;
+
+    impl PlayerExtension for Sepia {
+        fn styles(&self) -> Vec<&'static StyleDescriptor> {
+            vec![&TAKEN, &SEPIA]
+        }
+    }
+
+    #[test]
+    fn an_extensions_style_is_read_from_the_scene_and_from_style_words() {
+        let mut app = headless_app();
+        // The scene is read before the extension is added, as the example
+        // games do: its tables are kept as written and read against the
+        // registry only when the config is made
+        let scene = flint_scene::SceneFile::parse(
+            "[scene]\nname = \"t\"\n\
+             [post_process.styles.utest_ext_sepia]\nwarmth = 0.8\n",
+        )
+        .unwrap();
+        app.apply_scene_settings(&scene);
+        app.add_extension(Box::new(Sepia));
+
+        let sepia = stylize::find("utest_ext_sepia").expect("registered by add_extension");
+        assert!(std::ptr::eq(sepia, &SEPIA));
+        assert!(stylize::is_game_style("utest_ext_sepia"));
+        // The built-in kept its place
+        assert_eq!(stylize::find("invert").unwrap().label, "Invert");
+        assert!(!stylize::is_game_style("invert"));
+
+        let config = app.scene_post_config();
+        assert!(config.styles.is_enabled("utest_ext_sepia"));
+        assert_eq!(config.styles.param("utest_ext_sepia", "warmth"), Some(0.8));
+
+        // A `--style` word over it
+        app.launch.style_specs = vec!["utest_ext_sepia:warmth=0.25".into()];
+        let config = app.scene_post_config();
+        assert_eq!(config.styles.param("utest_ext_sepia", "warmth"), Some(0.25));
+
+        // A second player in the process, the same extension: no error, one
+        // entry
+        let mut again = headless_app();
+        again.add_extension(Box::new(Sepia));
+        let entries = stylize::registry()
+            .iter()
+            .filter(|d| d.name == "utest_ext_sepia")
+            .count();
+        assert_eq!(entries, 1);
+    }
+}
+
+/// A game's side panel through `ui` (ADR 0121): shown on the frame's root
+/// `Ui`, it takes its room from the whole window.
+struct SidePanelGame {
+    log: Log,
+}
+
+impl PlayerExtension for SidePanelGame {
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        let panel = egui::Panel::left("inventory")
+            .exact_size(200.0)
+            .show(ui, |ui| ui.label("Inventory"));
+        self.log.lock().unwrap().push(format!(
+            "panel {} {:?}",
+            panel.response.rect.width(),
+            panel.response.layer_id.order
+        ));
+        // What the panel leaves is what's left of the window
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("left {}", ui.available_rect_before_wrap().left()));
+    }
+}
+
+/// Takes `&egui::Context` the way an extension did before ADR 0121.
+fn install_theme(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("theme"), true));
+}
+
+/// A game's floating window through `ui`, written as a pre-0121 body with
+/// only the parameter's type changed: `ctx` is the root `Ui`, and every use
+/// of it as a `Context` goes through the `Deref`.
+struct WindowGame {
+    log: Log,
+    kept: Option<egui::Context>,
+    left: f32,
+}
+
+impl PlayerExtension for WindowGame {
+    fn ui(&mut self, ctx: &mut egui::Ui) {
+        install_theme(ctx);
+        self.kept.get_or_insert_with(|| ctx.clone());
+        let seen_time = ctx.input(|i| i.time) >= 0.0;
+        let window = egui::Window::new("Quests")
+            .default_pos(egui::pos2(400.0, 100.0))
+            .show(ctx, |ui| ui.label("none yet"))
+            .expect("open");
+        self.log.lock().unwrap().push(format!(
+            "window {:?} input={seen_time}",
+            window.response.layer_id.order
+        ));
+        self.left = window.response.rect.left();
+    }
+}
+
+/// Overrides the deprecated `root_ui`, as a game written against #946 did.
+struct RootUiGame {
+    log: Log,
+}
+
+// rustc doesn't warn on implementing a deprecated trait method (only on
+// calling one), so this compiles clean, as such a game does.
+impl PlayerExtension for RootUiGame {
+    fn root_ui(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::top("status")
+            .exact_size(30.0)
+            .show(ui, |ui| ui.label("Status"));
+        self.log.lock().unwrap().push("root_ui".into());
+    }
+}
+
+/// Two headless egui frames at 800x600 through `draw_ui`, the call the
+/// frame makes, as the player would run them: a window's first frame is
+/// egui's invisible sizing pass. Returns the texts the second drew, and
+/// leaves only its entries in `log`.
+fn draw_extensions(extensions: &mut [Box<dyn PlayerExtension>], log: &Log) -> Vec<String> {
+    let ctx = egui::Context::default();
+    let input = || egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(800.0, 600.0),
+        )),
+        ..Default::default()
+    };
+    let _ = run_headless_frame(&ctx, input(), |ui| {
+        crate::extension::draw_ui(extensions, ui)
+    });
+    log.lock().unwrap().clear();
+    let out = run_headless_frame(&ctx, input(), |ui| {
+        crate::extension::draw_ui(extensions, ui)
+    });
+    out.shapes
+        .iter()
+        .filter_map(|c| match &c.shape {
+            egui::Shape::Text(t) => Some(t.galley.text().to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_games_side_panel_is_shown_through_ui_on_the_root_ui() {
+    let log = Log::default();
+    let mut extensions: Vec<Box<dyn PlayerExtension>> =
+        vec![Box::new(SidePanelGame { log: log.clone() })];
+    let texts = draw_extensions(&mut extensions, &log);
+    // On the background layer, the root Ui's, with the rest of the window
+    // left to the right of it
+    assert_eq!(*log.lock().unwrap(), ["panel 200 Background", "left 200"]);
+    assert!(texts.iter().any(|t| t == "Inventory"), "{texts:?}");
+}
+
+#[test]
+fn a_games_floating_window_is_shown_through_ui() {
+    let log = Log::default();
+    let mut game = WindowGame {
+        log: log.clone(),
+        kept: None,
+        left: 0.0,
+    };
+    // Two frames on one Context: the game keeps what it cloned
+    let ctx = egui::Context::default();
+    for _ in 0..2 {
+        let _ = run_headless_frame(&ctx, egui::RawInput::default(), |ui| game.ui(ui));
+    }
+    assert!(
+        game.kept.as_ref() == Some(&ctx),
+        "ctx.clone() is the Context"
+    );
+    let themed = ctx.data(|d| d.get_temp::<bool>(egui::Id::new("theme")));
+    assert_eq!(themed, Some(true), "passed on as a &Context");
+    // A window floats on Middle, over the panels and under the debug panels
+    assert_eq!(log.lock().unwrap()[0], "window Middle input=true");
+    assert_eq!(game.left, 400.0, "where the game put it");
+
+    let mut extensions: Vec<Box<dyn PlayerExtension>> = vec![Box::new(game)];
+    let texts = draw_extensions(&mut extensions, &log);
+    assert!(texts.iter().any(|t| t == "Quests"), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "none yet"), "{texts:?}");
+}
+
+/// Kept from #946, which added `root_ui`: a game's panel on the root `Ui`,
+/// a game's window, and a game still overriding `root_ui` all draw in one
+/// pass, in the order they were added.
+#[test]
+fn a_games_panel_is_shown_on_the_root_ui_and_ui_still_runs() {
+    let log = Log::default();
+    let mut extensions: Vec<Box<dyn PlayerExtension>> = vec![
+        Box::new(SidePanelGame { log: log.clone() }),
+        Box::new(WindowGame {
+            log: log.clone(),
+            kept: None,
+            left: 0.0,
+        }),
+        Box::new(RootUiGame { log: log.clone() }),
+    ];
+    let texts = draw_extensions(&mut extensions, &log);
+    assert_eq!(
+        *log.lock().unwrap(),
+        [
+            "panel 200 Background",
+            "left 200",
+            "window Middle input=true",
+            "root_ui"
+        ]
+    );
+    for text in ["Inventory", "Quests", "none yet", "Status"] {
+        assert!(texts.iter().any(|t| t == text), "{text} in {texts:?}");
+    }
 }

@@ -6,7 +6,7 @@
 //! via the shared [`ClockBridge`] with a **compensated suite sample**
 //! (bridged clock sample minus the caller's total judgment offset — output
 //! latency plus tap calibration), then sent over an `mpsc` channel as
-//! flint-music [`InputEvent`]s. Downstream code never touches gilrs; the
+//! flint-rhythm [`InputEvent`]s. Downstream code never touches gilrs; the
 //! replay path constructs the identical stream from a file.
 //!
 //! Verb mapping (physical → chart verb space) is a [`VerbMap`] profile:
@@ -30,16 +30,28 @@
 //! has no threads to spawn), and [`spawn_with_rumble`] reports capture as
 //! unavailable. The verb maps, deadzone and rumble scheduling still build, so
 //! the loop's helpers go unused there.
+//!
+//! Without the `gamepad` feature (#221) the same goes natively: [`pad`] is a
+//! stand-in that never finds a backend, so capture, the granularity probe
+//! and the rumble spike each fail at their start, and nothing links libudev.
+//!
+//! [`pad`] is flint-runtime's (#748): the ordinary gamepad path and a
+//! script's general `rumble()` live there, and this crate is the rhythm
+//! layer's alone.
 
-#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+#![cfg_attr(
+    any(target_arch = "wasm32", not(feature = "gamepad")),
+    allow(dead_code, unused_imports)
+)]
 
+pub use flint_runtime::pad;
 pub mod rumble;
 
 use flint_music::clock_bridge::ClockBridge;
-use flint_music::input_stream::{
+use flint_rhythm::input_stream::{
     InputEvent, LeanSample, PressureSample, PressureSide, PulseEvent, SwaySample,
 };
-use gilrs::{Axis, Button, EventType, Gilrs};
+use pad::{Axis, Button, EventType, Gilrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -175,7 +187,7 @@ pub fn spawn(
 ///
 /// On wasm32 there is no thread to spawn, so this is always `Err` and a
 /// session plays without high-rate capture (see [`attach_session_input`]).
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(feature = "gamepad", not(target_arch = "wasm32"))))]
 pub fn spawn_with_rumble(
     _bridge: ClockBridge,
     _cfg: CaptureConfig,
@@ -184,12 +196,15 @@ pub fn spawn_with_rumble(
     mpsc::Receiver<InputEvent>,
     mpsc::Sender<rumble::RumbleCommand>,
 )> {
-    Err(flint_core::FlintError::InputError(
-        "the 1 kHz capture thread is native only; a browser has no threads to spawn".into(),
-    ))
+    let why = if cfg!(target_arch = "wasm32") {
+        "the 1 kHz capture thread is native only; a browser has no threads to spawn"
+    } else {
+        "gamepad backend unavailable: built without the `gamepad` feature"
+    };
+    Err(flint_core::FlintError::InputError(why.into()))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "gamepad", not(target_arch = "wasm32")))]
 pub fn spawn_with_rumble(
     bridge: ClockBridge,
     cfg: CaptureConfig,
@@ -235,7 +250,7 @@ pub fn spawn_with_rumble(
 /// sink/prefix (CLI bare, player `[music] `-prefixed). Lines never embed
 /// newlines so prefixes apply cleanly.
 pub fn attach_session_input(
-    session: &mut flint_music::chart_session::ChartSession,
+    session: &mut flint_rhythm::chart_session::ChartSession,
     verb_map: VerbMap,
     offset_samples: i64,
 ) -> Vec<String> {
@@ -304,7 +319,7 @@ pub fn connected_gamepads() -> flint_core::Result<Vec<String>> {
         .collect())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "gamepad", not(target_arch = "wasm32")))]
 fn capture_loop(
     bridge: ClockBridge,
     cfg: CaptureConfig,

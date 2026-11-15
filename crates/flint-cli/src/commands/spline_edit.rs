@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use flint_core::toml_util::toml_f32;
 use flint_scene::load_scene;
-use flint_schema::SchemaRegistry;
 use flint_viewer::spline_editor::{ControlPoint, SplineEditorConfig};
 use std::path::Path;
 
@@ -12,33 +11,27 @@ pub struct EditArgs {
     /// Path to scene file
     pub scene: String,
 
-    /// Paths to schemas directories (can specify multiple)
-    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+    /// Schema directories, later ones overriding earlier (repeatable).
+    /// Without it: the project's flint.toml `schemas`, else schemas/ in the
+    /// working directory, beside the scene and one level up
+    #[arg(long, action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
 }
 
 pub fn run(args: EditArgs) -> Result<()> {
-    // Merge explicit schemas with auto-discovered dirs from scene path
-    let mut all_schemas = args.schemas.clone();
-    for dir in flint_schema::discover_schema_dirs(&args.scene) {
-        let s = dir.to_string_lossy().into_owned();
-        if !all_schemas.contains(&s) {
-            all_schemas.push(s);
-        }
-    }
+    launch(args, flint_viewer::app::ViewerWindow::default())
+}
 
-    // Load schemas from all directories
-    let existing: Vec<&str> = all_schemas
-        .iter()
-        .map(|s| s.as_str())
-        .filter(|p| Path::new(p).exists())
-        .collect();
-    let registry = if !existing.is_empty() {
-        SchemaRegistry::load_from_directories(&existing).context("Failed to load schemas")?
-    } else {
+/// `run` with the window's size and grid: `flint edit <scene> --spline`
+/// passes its `--width` / `--height` / `--no-grid` (#423).
+pub fn launch(args: EditArgs, window: flint_viewer::app::ViewerWindow) -> Result<()> {
+    // The one resolver (ADR 0114): --schemas, else the manifest, else discovery
+    let (registry, schema_dirs) =
+        super::common_args::load_schemas(Some(&args.scene), &args.schemas)?;
+    super::common_args::warn_dropped_schemas(&schema_dirs);
+    if schema_dirs.dirs.is_empty() {
         println!("Warning: No schemas directories found");
-        SchemaRegistry::new()
-    };
+    }
 
     // Load scene
     let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
@@ -60,22 +53,9 @@ pub fn run(args: EditArgs) -> Result<()> {
             .and_then(|s| s.get("file").and_then(|v| v.as_str().map(String::from)));
 
         if let Some(file_rel) = spline_file {
-            // Resolve path: scene dir, then parent
-            let full_path = {
-                let p = scene_dir.join(&file_rel);
-                if p.exists() {
-                    p
-                } else if let Some(parent) = scene_dir.parent() {
-                    let pp = parent.join(&file_rel);
-                    if pp.exists() {
-                        pp
-                    } else {
-                        p
-                    }
-                } else {
-                    p
-                }
-            };
+            // A path found by the project's one search (`AssetKind::Files`)
+            let full_path = flint_core::project::Project::for_scene(Path::new(&args.scene))
+                .file_or_beside("spline file", &file_rel, scene_dir);
 
             if full_path.exists() {
                 spline_file_path = Some(full_path.to_string_lossy().to_string());
@@ -160,6 +140,5 @@ pub fn run(args: EditArgs) -> Result<()> {
     };
 
     // Launch viewer in editor mode with file watching enabled
-    let schemas_refs: Vec<&str> = args.schemas.iter().map(|s| s.as_str()).collect();
-    flint_viewer::app::run_editor(&args.scene, true, &schemas_refs, editor_config)
+    flint_viewer::app::run_editor(&args.scene, true, &args.schemas, editor_config, window)
 }

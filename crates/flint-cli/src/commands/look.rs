@@ -1,16 +1,16 @@
 //! Looks (#279): named post-processing presets an agent can put over any
 //! scene. Sweeps of one setting at several values live in `sweep.rs`.
 //!
-//! A look is a `styles/<name>.look.toml`, beside the `*.style.toml`
+//! A look is a `styles/<name>.look.toml`, beside the `*.styleguide.toml`
 //! generation guides: a `[look]` table that says what it is and what to tune,
 //! and a `[post_process]` block in exactly the scene format. The block is
 //! merged into the scene's own `[post_process]` key by key (tables merge,
 //! everything else replaces), so a look changes only what it names.
 //!
 //! ```text
-//! flint render demo/pbr_test.scene.toml --look ascii_noir -o noir.png
-//! flint render demo/pbr_test.scene.toml --look ascii_noir --sweep ascii.cell=6,9,14 -o cells.png
-//! flint render demo/pbr_test.scene.toml --sweep look=ascii_noir,matrix,ink_wash,graphite -o looks.png
+//! flint render examples/pbr_test.scene.toml --look ascii_noir -o noir.png
+//! flint render examples/pbr_test.scene.toml --look ascii_noir --sweep ascii.cell=6,9,14 -o cells.png
+//! flint render examples/pbr_test.scene.toml --sweep look=ascii_noir,matrix,ink_wash,graphite -o looks.png
 //! flint render --look help
 //! ```
 

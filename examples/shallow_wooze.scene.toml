@@ -1,0 +1,340 @@
+# Shallow wooze (#215): does a hand-made bench belong next to a boiling tree?
+#
+# Two sets of props stand under the same oaks. The set on the left has a
+# `shallow_wooze` component and the set on the right doesn't: a bench built by hand
+# from boards, and an imported lantern and barrel. On the left they hold and glide on
+# the field's beat, with their shadows, and the set on the right shows what they look
+# like pasted in. The figure is imported and skinned, and rides the same field.
+#
+#   cargo run --release -p flint-player -- examples/shallow_wooze.scene.toml
+#
+# A box at the far left of the clearing is a calm zone, where the field's amplitude
+# drops to a fifth: the crate inside it barely moves, through no setting of its own.
+# `--exit-after` prints how many entities are on how many clocks.
+
+[scene]
+name = "Shallow Wooze"
+version = "1.0"
+description = "Hand-made and imported props on the wooze field's clock, beside still twins and living oaks"
+
+[wooze]
+step = 0.5
+glide = 0.4
+
+[[wooze.zone]]
+name = "hush"
+shape = "box"
+center = [-6.6, 0, 2]
+size = [2, 6, 4]
+falloff = 0.5
+amplitude = 0.2
+
+[camera]
+position = [0.0, 1.7, 12.0]
+target = [0.0, 1.9, 0.0]
+fov = 46.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.06
+bloom_threshold = 1.2
+exposure = 1.2
+vignette_enabled = true
+vignette_intensity = 0.3
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+
+# --- Late afternoon, low from behind the left shoulder, so shadows lie long ---
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.16, 0.30, 0.58, 1.0]
+horizon_color = [0.86, 0.72, 0.52, 1.0]
+haze_color = [0.95, 0.80, 0.60, 0.7]
+cloud_tint = [1.0, 0.90, 0.78, 0.8]
+cloud_coverage = 0.3
+sun_glow = 1.4
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [-0.62, 0.52, 0.45]
+color = [1.0, 0.86, 0.66]
+intensity = 2.6
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.light]
+type = "directional"
+direction = [0.4, 0.8, -0.4]
+color = [0.55, 0.65, 0.85]
+intensity = 0.4
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-60, -0.2, -60]
+max = [60, 0, 60]
+[entities.ground.material]
+color = [0.15, 0.17, 0.07, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+# --- The oaks everything has to keep up with ---
+
+[entities.oak_left]
+[entities.oak_left.transform]
+position = [-5.5, 0, -6]
+[entities.oak_left.model]
+asset = "oak_living"
+[entities.oak_left.living_prop]
+lineage_seed = 3
+
+[entities.oak_mid]
+[entities.oak_mid.transform]
+position = [0.5, 0, -9]
+[entities.oak_mid.model]
+asset = "oak_living"
+[entities.oak_mid.living_prop]
+lineage_seed = 5
+
+[entities.oak_right]
+[entities.oak_right.transform]
+position = [6, 0, -6.5]
+[entities.oak_right.model]
+asset = "oak_living"
+[entities.oak_right.living_prop]
+lineage_seed = 8
+
+# --- On the field: a bench of boards, a lantern, a barrel, a figure ---
+
+[entities.bench]
+[entities.bench.transform]
+position = [-2.6, 0, 1]
+[entities.bench.shallow_wooze]
+amplitude = 0.03
+wavelength = 0.8
+
+[entities.bench_seat]
+parent = "bench"
+archetype = "furniture"
+[entities.bench_seat.transform]
+position = [0, 0, 0]
+[entities.bench_seat.bounds]
+min = [-1.1, 0.42, -0.24]
+max = [1.1, 0.48, 0.24]
+[entities.bench_seat.material]
+color = [0.50, 0.32, 0.17, 1.0]
+roughness = 0.8
+
+[entities.bench_back]
+parent = "bench"
+archetype = "furniture"
+[entities.bench_back.transform]
+position = [0, 0, 0]
+[entities.bench_back.bounds]
+min = [-1.1, 0.68, -0.26]
+max = [1.1, 0.92, -0.22]
+[entities.bench_back.material]
+color = [0.50, 0.32, 0.17, 1.0]
+roughness = 0.8
+
+[entities.bench_leg_left]
+parent = "bench"
+archetype = "furniture"
+[entities.bench_leg_left.transform]
+position = [0, 0, 0]
+[entities.bench_leg_left.bounds]
+min = [-0.98, 0.0, -0.24]
+max = [-0.88, 0.42, 0.24]
+[entities.bench_leg_left.material]
+color = [0.30, 0.19, 0.11, 1.0]
+roughness = 0.85
+
+[entities.bench_leg_right]
+parent = "bench"
+archetype = "furniture"
+[entities.bench_leg_right.transform]
+position = [0, 0, 0]
+[entities.bench_leg_right.bounds]
+min = [0.88, 0.0, -0.24]
+max = [0.98, 0.42, 0.24]
+[entities.bench_leg_right.material]
+color = [0.30, 0.19, 0.11, 1.0]
+roughness = 0.85
+
+[entities.bench_post_left]
+parent = "bench"
+archetype = "furniture"
+[entities.bench_post_left.transform]
+position = [0, 0, 0]
+[entities.bench_post_left.bounds]
+min = [-0.98, 0.42, -0.26]
+max = [-0.88, 0.92, -0.22]
+[entities.bench_post_left.material]
+color = [0.30, 0.19, 0.11, 1.0]
+roughness = 0.85
+
+[entities.bench_post_right]
+parent = "bench"
+archetype = "furniture"
+[entities.bench_post_right.transform]
+position = [0, 0, 0]
+[entities.bench_post_right.bounds]
+min = [0.88, 0.42, -0.26]
+max = [0.98, 0.92, -0.22]
+[entities.bench_post_right.material]
+color = [0.30, 0.19, 0.11, 1.0]
+roughness = 0.85
+
+[entities.lantern]
+[entities.lantern.transform]
+position = [-3.9, 0, 0.3]
+scale = [0.09, 0.09, 0.09]
+[entities.lantern.model]
+asset = "Lantern"
+[entities.lantern.shallow_wooze]
+amplitude = 0.03
+wavelength = 0.8
+
+[entities.barrel]
+[entities.barrel.transform]
+position = [-5.0, 0.52, 0.9]
+scale = [0.5, 0.5, 0.5]
+[entities.barrel.model]
+asset = "barrel"
+[entities.barrel.shallow_wooze]
+amplitude = 0.03
+wavelength = 0.8
+
+[entities.figure]
+[entities.figure.transform]
+position = [-0.55, 0, 1.6]
+scale = [1.0, 1.0, 1.0]
+[entities.figure.model]
+asset = "YBotWithIdle"
+[entities.figure.skeleton]
+skin = "Armature"
+[entities.figure.animator]
+clip = "mixamo.com.001"
+autoplay = true
+loop = true
+speed = 1.0
+playing = true
+[entities.figure.shallow_wooze]
+amplitude = 0.03
+wavelength = 0.8
+
+# --- Inside the calm box: the same setting, a fifth of the motion ---
+
+[entities.crate_calm]
+archetype = "furniture"
+[entities.crate_calm.transform]
+position = [-6.6, 0, 2]
+[entities.crate_calm.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 0.8, 0.4]
+[entities.crate_calm.material]
+color = [0.42, 0.30, 0.18, 1.0]
+roughness = 0.9
+[entities.crate_calm.shallow_wooze]
+amplitude = 0.03
+wavelength = 0.8
+
+# --- Still twins, pasted in ---
+
+[entities.bench_still]
+[entities.bench_still.transform]
+position = [2.6, 0, 1]
+
+[entities.bench_still_seat]
+parent = "bench_still"
+archetype = "furniture"
+[entities.bench_still_seat.transform]
+position = [0, 0, 0]
+[entities.bench_still_seat.bounds]
+min = [-1.1, 0.42, -0.24]
+max = [1.1, 0.48, 0.24]
+[entities.bench_still_seat.material]
+color = [0.50, 0.32, 0.17, 1.0]
+roughness = 0.8
+
+[entities.bench_still_back]
+parent = "bench_still"
+archetype = "furniture"
+[entities.bench_still_back.transform]
+position = [0, 0, 0]
+[entities.bench_still_back.bounds]
+min = [-1.1, 0.68, -0.26]
+max = [1.1, 0.92, -0.22]
+[entities.bench_still_back.material]
+color = [0.50, 0.32, 0.17, 1.0]
+roughness = 0.8
+
+[entities.bench_still_leg_left]
+parent = "bench_still"
+archetype = "furniture"
+[entities.bench_still_leg_left.transform]
+position = [0, 0, 0]
+[entities.bench_still_leg_left.bounds]
+min = [-0.98, 0.0, -0.24]
+max = [-0.88, 0.42, 0.24]
+[entities.bench_still_leg_left.material]
+color = [0.30, 0.19, 0.11, 1.0]
+roughness = 0.85
+
+[entities.bench_still_leg_right]
+parent = "bench_still"
+archetype = "furniture"
+[entities.bench_still_leg_right.transform]
+position = [0, 0, 0]
+[entities.bench_still_leg_right.bounds]
+min = [0.88, 0.0, -0.24]
+max = [0.98, 0.42, 0.24]
+[entities.bench_still_leg_right.material]
+color = [0.30, 0.19, 0.11, 1.0]
+roughness = 0.85
+
+[entities.bench_still_post_left]
+parent = "bench_still"
+archetype = "furniture"
+[entities.bench_still_post_left.transform]
+position = [0, 0, 0]
+[entities.bench_still_post_left.bounds]
+min = [-0.98, 0.42, -0.26]
+max = [-0.88, 0.92, -0.22]
+[entities.bench_still_post_left.material]
+color = [0.30, 0.19, 0.11, 1.0]
+roughness = 0.85
+
+[entities.bench_still_post_right]
+parent = "bench_still"
+archetype = "furniture"
+[entities.bench_still_post_right.transform]
+position = [0, 0, 0]
+[entities.bench_still_post_right.bounds]
+min = [0.88, 0.42, -0.26]
+max = [0.98, 0.92, -0.22]
+[entities.bench_still_post_right.material]
+color = [0.30, 0.19, 0.11, 1.0]
+roughness = 0.85
+
+[entities.lantern_still]
+[entities.lantern_still.transform]
+position = [1.3, 0, 0.3]
+scale = [0.09, 0.09, 0.09]
+[entities.lantern_still.model]
+asset = "Lantern"
+
+[entities.barrel_still]
+[entities.barrel_still.transform]
+position = [5.0, 0.52, 0.9]
+scale = [0.5, 0.5, 0.5]
+[entities.barrel_still.model]
+asset = "barrel"

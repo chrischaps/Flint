@@ -23,7 +23,7 @@ Only one agent closes out an epic, so claim it like any issue. If any sub-issue 
 
 For each box in the epic's **Done when**, write down how you'll test it, then do exactly that against the real system:
 
-- **The running app, from the user's side.** Start it on current main (the base branch, freshly pulled), not a sub-issue's branch. Drive it as the user would: the browser pane, the CLI, the skill in a plain session. A box that says "from Signal" means clicking in Signal, not calling the route the click calls.
+- **The running app, from the user's side.** Start it on current main (the base branch, freshly pulled), not a sub-issue's branch. Drive it as the user would: the browser pane, the CLI, the skill in a plain session. A box that says "in the player" means playing it in `flint-player`, not calling the function the key press calls.
 - **Real data, not fixtures.** The real repo, the real GitHub, a real screenshot. Fixtures are where tickets agree with themselves.
 - **Somewhere it wasn't built.** If the feature serves other projects, try one of those too. Installed copies, paths and config differ from the repo the work happened in.
 - **The whole path.** A box that spans tickets (request → proposal → filed issue) is tested across all of them in one go. That is the point of the pass.

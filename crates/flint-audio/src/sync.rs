@@ -4,10 +4,11 @@
 //! starts their sounds, and steers placed ones to the listener each frame.
 //! Also propagates per-frame pitch/volume changes from ECS to Kira sound handles.
 
+use crate::clock::{Observation, PlayClock};
 use crate::engine::{amplitude_to_db, AudioEngine, Bus, SoundHandle, SpatialTrack, FRAME_TWEEN};
 use crate::pan::{volume_and_pan, Ears, Falloff};
+use crate::remote::protocol::state;
 use flint_core::components as comp;
-use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use kira::Tween;
@@ -31,6 +32,8 @@ struct SpatialEntry {
     sent: (f32, f32),
     /// Paused because nobody can hear it (#138)
     culled: bool,
+    /// Where its sound is (#658)
+    clock: PlayClock,
 }
 
 /// Non-spatial entry: sound handles + cached parameters
@@ -41,6 +44,8 @@ struct NonSpatialEntry {
     looping: bool,
     /// Paused because it's at volume 0 (#138)
     culled: bool,
+    /// Where its sound is (#658)
+    clock: PlayClock,
 }
 
 /// At or below this `audio_source.volume` a loop is paused: `amplitude_to_db`
@@ -82,7 +87,14 @@ pub struct AudioSync {
     /// Mix as before #138 (the web's `?mix=old`): every loop on, heard or
     /// not, and new placed sources on kira spatial tracks
     old_mix: bool,
+    /// Seconds into its sound for each source whose sound is playing, as
+    /// of the last [`sample_positions`](Self::sample_positions) (#658).
+    positions: HashMap<EntityId, f64>,
 }
+
+/// How far a desktop source's clock follows each new kira position: those
+/// are stamped when a frame first sees them, up to a frame late.
+const LOCAL_CLOCK_GAIN: f64 = 0.15;
 
 /// Smooth tween duration for parameter changes (avoids clicks)
 const PARAM_TWEEN: Tween = Tween {
@@ -99,6 +111,7 @@ impl AudioSync {
             synced_entities: HashSet::new(),
             waiting: HashSet::new(),
             old_mix: false,
+            positions: HashMap::new(),
         }
     }
 
@@ -131,6 +144,7 @@ impl AudioSync {
         self.non_spatial_map.clear();
         self.synced_entities.clear();
         self.waiting.clear();
+        self.positions.clear();
     }
 
     /// Discover entities with `audio_source` components and start their sounds
@@ -144,46 +158,21 @@ impl AudioSync {
                 continue;
             }
 
-            let components = match world.get_components(entity_id) {
-                Some(c) => c,
-                None => continue,
-            };
+            // Read audio_source fields through the typed view (ADR 0115): a
+            // wrong type or an unknown bus is reported once and reads as the
+            // default (an unknown bus used to be sfx in silence)
+            let source = world.view(entity_id, comp::AUDIO_SOURCE);
+            if !source.exists() {
+                continue;
+            }
 
-            let audio_data = match components.get(comp::AUDIO_SOURCE) {
-                Some(v) => v,
-                None => continue,
-            };
-
-            // Read audio_source fields
-            let spatial = audio_data
-                .get("spatial")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-
-            let autoplay = audio_data
-                .get("autoplay")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-
-            let looping = audio_data
-                .get("loop")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-
-            let volume = audio_data.get("volume").and_then(toml_f64).unwrap_or(1.0);
-
-            let pitch = audio_data.get("pitch").and_then(toml_f64).unwrap_or(1.0);
-
-            let file = audio_data
-                .get("file")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-
-            let bus = audio_data
-                .get("bus")
-                .and_then(|v| v.as_str())
-                .map(Bus::from_name)
-                .unwrap_or_default();
+            let spatial = source.bool("spatial", true);
+            let autoplay = source.bool("autoplay", true);
+            let looping = source.bool("loop", false);
+            let volume = source.f64("volume", 1.0);
+            let pitch = source.f64("pitch", 1.0);
+            let file = source.str("file", "");
+            let bus = Bus::from_name(source.choice("bus", Bus::NAMES, "sfx"));
 
             if file.is_empty() {
                 self.synced_entities.insert(entity_id);
@@ -200,21 +189,26 @@ impl AudioSync {
             if self.waiting.remove(&entity_id) {
                 tracing::info!("audio_source {file} starts: its sound has loaded");
             }
+            let clock = PlayClock::new(
+                if looping {
+                    engine.sound_length(file).unwrap_or(0.0)
+                } else {
+                    0.0
+                },
+                if engine.is_remote() {
+                    1.0
+                } else {
+                    LOCAL_CLOCK_GAIN
+                },
+            );
 
             if spatial {
                 let position = world
                     .get_world_position(entity_id)
                     .unwrap_or_else(|| world.get_transform(entity_id).unwrap_or_default().position);
 
-                let min_distance = audio_data
-                    .get("min_distance")
-                    .and_then(toml_f32)
-                    .unwrap_or(1.0);
-
-                let max_distance = audio_data
-                    .get("max_distance")
-                    .and_then(toml_f32)
-                    .unwrap_or(25.0);
+                let min_distance = source.f32("min_distance", 1.0);
+                let max_distance = source.f32("max_distance", 25.0);
 
                 let falloff = Falloff {
                     min: min_distance,
@@ -231,6 +225,7 @@ impl AudioSync {
                     falloff,
                     sent: (0.0, 0.0),
                     culled: false,
+                    clock,
                 };
                 if self.old_mix {
                     match engine.create_spatial_track(position, min_distance, max_distance, bus) {
@@ -239,7 +234,10 @@ impl AudioSync {
                                 match engine
                                     .play_on_spatial_track(file, &mut track, volume, pitch, looping)
                                 {
-                                    Ok(handle) => entry.handles.push(handle),
+                                    Ok(mut handle) => {
+                                        handle.watch();
+                                        entry.handles.push(handle);
+                                    }
                                     Err(e) => tracing::warn!("Failed to play '{}': {:?}", file, e),
                                 }
                             }
@@ -255,7 +253,8 @@ impl AudioSync {
                         volume_and_pan(engine.ears().gains(to_glam_vec3(position), &falloff));
                     let amplitude = volume as f32 * gain;
                     match engine.play_panned(file, amplitude as f64, pan, pitch, looping, bus) {
-                        Ok(handle) => {
+                        Ok(mut handle) => {
+                            handle.watch();
                             entry.handles.push(handle);
                             entry.sent = (amplitude, pan);
                         }
@@ -268,7 +267,10 @@ impl AudioSync {
                 let mut handles = Vec::new();
                 if autoplay && engine.has_sound(file) {
                     match engine.play_non_spatial(file, volume, pitch, looping, bus) {
-                        Ok(handle) => handles.push(handle),
+                        Ok(mut handle) => {
+                            handle.watch();
+                            handles.push(handle);
+                        }
                         Err(e) => {
                             tracing::warn!("Failed to play non-spatial '{}': {:?}", file, e)
                         }
@@ -282,6 +284,7 @@ impl AudioSync {
                         last_pitch: pitch,
                         looping,
                         culled: false,
+                        clock,
                     },
                 );
             }
@@ -390,7 +393,7 @@ impl AudioSync {
     /// [`AudioEngine::mix_counts`] filled: the voices on their own spatial
     /// tracks (`?mix=old`), which a bus doesn't count as its sounds, and
     /// which voices are paused. A `remote` mixer (the browser's worklet)
-    /// says nothing back, so there every voice held here is counted.
+    /// reports only watched voices, so there every voice held here is counted.
     pub fn add_mix_counts(&self, counts: &mut crate::engine::MixCounts, remote: bool) {
         for entry in self.spatial_map.values() {
             if remote || entry.track.is_some() {
@@ -466,6 +469,63 @@ impl AudioSync {
         }
     }
 
+    /// Read where each source's sound is (#658): once a frame, before
+    /// anything asks [`position`](Self::position). Reads only, so call it
+    /// whether or not the game is paused: a loop plays on under a pause
+    /// menu, and its clock has to keep up with it.
+    pub fn sample_positions(&mut self, engine: &AudioEngine) {
+        let now = engine.clock_now();
+        self.positions.clear();
+        let entries = self
+            .spatial_map
+            .iter_mut()
+            .map(|(id, e)| (*id, &e.handles, &mut e.clock, e.last_pitch))
+            .chain(
+                self.non_spatial_map
+                    .iter_mut()
+                    .map(|(id, e)| (*id, &e.handles, &mut e.clock, e.last_pitch)),
+            );
+        for (id, handles, clock, pitch) in entries {
+            let Some((position, playback, at)) = handles.first().and_then(|h| h.observe()) else {
+                continue;
+            };
+            if playback == state::STOPPED {
+                continue;
+            }
+            // kira's handle reads 0 until its first callback has mixed it:
+            // that sound hasn't started yet. (The worklet reports a voice
+            // only once it has.)
+            if at.is_none() && !clock.started() && position == 0.0 {
+                continue;
+            }
+            let Some(at) = at.or(now) else { continue };
+            clock.observe(
+                Observation {
+                    position,
+                    moving: state::moving(playback),
+                    at,
+                },
+                pitch,
+            );
+            if let Some(p) = clock.position(now.unwrap_or(at)) {
+                self.positions.insert(id, p);
+            }
+        }
+    }
+
+    /// Seconds into the sound `entity`'s `audio_source` is playing (wrapped,
+    /// for a loop), as of the last [`sample_positions`](Self::sample_positions);
+    /// `None` until that sound has started (on the web, until the late
+    /// bundle's sound has arrived and been mixed), and once it has ended.
+    pub fn position(&self, entity: EntityId) -> Option<f64> {
+        self.positions.get(&entity).copied()
+    }
+
+    /// Every source [`position`](Self::position) knows.
+    pub fn positions(&self) -> &HashMap<EntityId, f64> {
+        &self.positions
+    }
+
     /// Check if an entity has been synced
     pub fn is_synced(&self, entity_id: EntityId) -> bool {
         self.synced_entities.contains(&entity_id)
@@ -479,21 +539,8 @@ impl AudioSync {
 
 /// Read volume and pitch from an entity's audio_source component
 fn read_audio_params(world: &FlintWorld, entity_id: EntityId) -> (f64, f64) {
-    let components = match world.get_components(entity_id) {
-        Some(c) => c,
-        None => return (1.0, 1.0),
-    };
-
-    let audio_data = match components.get(comp::AUDIO_SOURCE) {
-        Some(v) => v,
-        None => return (1.0, 1.0),
-    };
-
-    let volume = audio_data.get("volume").and_then(toml_f64).unwrap_or(1.0);
-
-    let pitch = audio_data.get("pitch").and_then(toml_f64).unwrap_or(1.0);
-
-    (volume, pitch)
+    let source = world.view(entity_id, comp::AUDIO_SOURCE);
+    (source.f64("volume", 1.0), source.f64("pitch", 1.0))
 }
 
 /// Convert Flint Vec3 to glam Vec3
@@ -688,11 +735,147 @@ mod tests {
         );
     }
 
+    /// The web's path end to end (#658): a looping `audio_source` whose
+    /// sound arrives late, mixed by the worklet's own mixer, which reports
+    /// back through the link with the audio time of each report.
+    #[test]
+    fn a_remote_source_reports_its_place_only_once_its_late_sound_is_mixed() {
+        use crate::remote::Link;
+        use flint_audio_worklet::Mixer;
+        use std::sync::{Arc, Mutex};
+
+        const RATE: u32 = 48_000;
+        let audio_time = Arc::new(Mutex::new(0.0f64));
+        let link = Link::default();
+        {
+            let t = audio_time.clone();
+            link.set_clock(Box::new(move || [*t.lock().unwrap(), 0.04]));
+        }
+        let mut engine = AudioEngine::silent();
+        engine.start_remote(link.clone());
+        engine.create_listener(Vec3::new(0.0, 0.0, 0.0)).unwrap();
+        let mut mixer = Mixer::new(RATE).unwrap();
+        let mut rendered = 0usize;
+        // A frame: what the page posted reaches the processor, which
+        // renders 1024 frames in quanta and reports at the end of them.
+        let frame = |mixer: &mut Mixer, rendered: &mut usize| {
+            let out = link.take();
+            for l in &out.loads {
+                mixer.load_sound(l.id, l.sample_rate, l.channels, &l.samples);
+            }
+            mixer.apply(&out.batch);
+            for _ in 0..8 {
+                mixer.render(128);
+            }
+            *rendered += 1024;
+            // kira's position is where its last 128-frame chunk began, so a
+            // report is stamped with that quantum's start, as the processor
+            // stamps it with `currentTime`.
+            let at = (*rendered - 128) as f64 / RATE as f64;
+            link.receive_report(at, mixer.report());
+            *audio_time.lock().unwrap() = *rendered as f64 / RATE as f64;
+        };
+
+        let mut world = FlintWorld::new();
+        let id = world.spawn("click_track").unwrap();
+        for (field, value) in [
+            ("file", toml::Value::String("click".into())),
+            ("loop", toml::Value::Boolean(true)),
+            ("spatial", toml::Value::Boolean(false)),
+        ] {
+            world.set_field(id, "audio_source", field, value).unwrap();
+        }
+        let mut sync = AudioSync::new();
+        // The sound isn't in yet: the source waits, and has no place.
+        for _ in 0..5 {
+            sync.sync_new_sources(&world, &mut engine);
+            frame(&mut mixer, &mut rendered);
+            sync.sample_positions(&engine);
+            assert_eq!(sync.position(id), None);
+        }
+        // The late bundle lands: a 0.5 s loop.
+        let click = vec![0.1f32; 24_000];
+        engine
+            .load_sound_from_samples("click", RATE, &[&click])
+            .unwrap();
+        sync.sync_new_sources(&world, &mut engine);
+        sync.sample_positions(&engine);
+        assert_eq!(sync.position(id), None, "not mixed yet");
+        let started = rendered;
+        for _ in 0..200 {
+            frame(&mut mixer, &mut rendered);
+            sync.sample_positions(&engine);
+            let heard = (rendered - started) as f64 / RATE as f64;
+            let p = sync.position(id).expect("reported once mixed");
+            let off = (p - heard.rem_euclid(0.5) + 0.25).rem_euclid(0.5) - 0.25;
+            assert!(off.abs() < 1e-3, "{p} vs {heard}");
+        }
+        assert_eq!(mixer.errors, 0);
+        // Between reports the clock runs on at the sound's rate.
+        *audio_time.lock().unwrap() += 0.01;
+        sync.sample_positions(&engine);
+        let heard = (rendered - started) as f64 / RATE as f64 + 0.01;
+        let p = sync.position(id).unwrap();
+        assert!(((p - heard.rem_euclid(0.5)).abs()) < 1e-3, "{p} vs {heard}");
+        assert_eq!(engine.output_latency(), Some(0.04));
+    }
+
     #[test]
     fn test_read_audio_params_defaults() {
         let world = FlintWorld::new();
         let (vol, pitch) = read_audio_params(&world, EntityId::new());
         assert_eq!(vol, 1.0);
         assert_eq!(pitch, 1.0);
+    }
+
+    /// #685: an unknown bus was sfx in silence, and a wrong-typed volume 1.0.
+    /// Both still are, and now say so, once, naming the entity. No device:
+    /// the engine mixes "elsewhere" into a link nobody reads.
+    #[test]
+    fn an_unknown_bus_and_a_wrong_volume_are_reported_once() {
+        let mut engine = AudioEngine::silent();
+        engine.start_remote(crate::remote::Link::default());
+
+        let mut world = FlintWorld::new();
+        let spawn = |world: &mut FlintWorld, name: &str, text: &str| {
+            let id = world.spawn(name).unwrap();
+            let data: toml::Value = toml::from_str(text).unwrap();
+            world.set_component(id, "audio_source", data).unwrap();
+            id
+        };
+        // Neither sound is loaded, so both sources wait and are read again
+        // on every pass, as a late bundle's are on the web
+        spawn(
+            &mut world,
+            "radio",
+            "file = \"hum\"\nbus = \"musik\"\nvolume = \"loud\"",
+        );
+        spawn(
+            &mut world,
+            "bell",
+            "file = \"ding\"\nbus = \"music\"\nvolume = 1\nmax_distance = 40",
+        );
+        let mut sync = AudioSync::new();
+        for _ in 0..5 {
+            sync.sync_new_sources(&world, &mut engine);
+        }
+
+        let mut said: Vec<String> = world
+            .read_reports()
+            .snapshot()
+            .iter()
+            .map(|d| d.one_line())
+            .collect();
+        said.sort();
+        assert_eq!(
+            said,
+            [
+                "error[bad-enum-value] entity 'radio' audio_source.bus: \"musik\" is not a value \
+                 of `bus` (did you mean `music`? allowed values: sfx, music; the default \"sfx\" \
+                 is used)",
+                "error[bad-type] entity 'radio' audio_source.volume: expected a number, got \
+                 string \"loud\" (the default 1 is used)",
+            ]
+        );
     }
 }

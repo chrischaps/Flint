@@ -5,6 +5,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/build-space.sh\" session",
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/issue-session.sh\"",
             "timeout": 30
           }
@@ -12,6 +21,23 @@
       }
     ],
     "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(scripts/issue.sh claim *)",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/build-space.sh\" check --hook",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "if": "Bash(bash scripts/issue.sh claim *)",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/build-space.sh\" check --hook",
+            "timeout": 30
+          }
+        ]
+      },
       {
         "matcher": "Bash",
         "hooks": [

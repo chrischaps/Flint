@@ -1,0 +1,15 @@
+# What the engine and its tools write while you work
+/dist/
+/save/
+/screenshots/
+.flint/procgen-cache/
+.flint/input.user.toml
+
+# Rust build output (the engine's, when it is carried at engine/)
+target/
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

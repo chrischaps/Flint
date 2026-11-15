@@ -1,0 +1,31 @@
+[package]
+# Flint's static DXC (#947), patched in for crates.io's mach-dxcompiler-rs
+# (the root Cargo.toml's [patch.crates-io]): wgpu-hal's `static-dxc` calls
+# `mach_dxcompiler_rs::DxcCreateInstance`, so this crate keeps that name and
+# that function. It links DXC built from Microsoft's source by Flint's own
+# workflow (tools/dxc-static, .github/workflows/dxc-static.yml) instead of
+# mach's prebuilt. The version stays semver-compatible with wgpu-hal's
+# `mach-dxcompiler-rs = "0.1.4"`.
+#
+# 0.1.947 (#982) is a version crates.io doesn't have (mach's are 0.1.4 to
+# 0.1.7), and flint-render asks for exactly it (`=0.1.947`). So a workspace
+# that builds flint-render without this patch at its root, a game carrying
+# the engine, fails at once in cargo's resolver, naming flint-render,
+# instead of downloading mach's prebuilt and failing to compile. The patch
+# goes in the root Cargo.toml of whatever workspace builds flint-render.
+# Keep the 947 when DXC moves: only the build metadata names the release.
+name = "mach-dxcompiler-rs"
+version = "0.1.947+flint.dxc-static-v1.9.2609-1"
+edition = "2021"
+description = "Flint's static DXC: Microsoft's DirectXShaderCompiler v1.9.2609, linked in"
+license = "MIT"
+publish = false
+build = "build.rs"
+links = "flint_dxcompiler"
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+sha2 = "0.10"
+cc = "1.2"

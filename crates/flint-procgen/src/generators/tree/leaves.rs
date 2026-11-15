@@ -19,8 +19,8 @@ use crate::generators::util::srgb_to_linear;
 use crate::types::{BranchSegment, MaterialData, MeshData, Vertex};
 use crate::Result;
 use crate::SeededRng;
-use flint_core::spline::rotate_around_axis;
 use flint_core::Vec3;
+use flint_geometry::spline::rotate_around_axis;
 
 use super::LeafParams;
 use super::LeafStyle;

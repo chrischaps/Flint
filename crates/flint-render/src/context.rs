@@ -8,7 +8,9 @@ use winit::window::Window;
 pub enum RenderError {
     #[error("Failed to create surface: {0}")]
     SurfaceCreation(String),
-    #[error("Failed to get adapter")]
+    // `flint goldens` and its test read "Failed to get adapter" as no GPU:
+    // keep those words first (#220 added the hint after them)
+    #[error("Failed to get adapter: {}", crate::gpu_select::no_adapter_hint())]
     AdapterNotFound,
     #[error("Failed to create device: {0}")]
     DeviceCreation(String),
@@ -48,6 +50,32 @@ pub struct RenderContext {
     /// it is configured plain with an sRGB view format (#102) and the frame
     /// is drawn through that view (see [`Self::frame_view`]).
     pub view_format: wgpu::TextureFormat,
+    /// The present modes the surface offers, kept so
+    /// [`Self::present_mode_in_use`] can say which one an `Auto` mode
+    /// became (#380).
+    pub supported_present_modes: Vec<wgpu::PresentMode>,
+}
+
+/// The present mode wgpu configures for `requested` on a surface offering
+/// `supported`: an `Auto` mode is the first of its list the surface has,
+/// as wgpu-core picks it (`AutoVsync`: FifoRelaxed, Fifo; `AutoNoVsync`:
+/// Immediate, Mailbox, Fifo; `device/surface_config.rs` in wgpu-core 30,
+/// the same lists as 23's). Any other mode is used as asked.
+pub fn resolve_present_mode(
+    requested: wgpu::PresentMode,
+    supported: &[wgpu::PresentMode],
+) -> wgpu::PresentMode {
+    use wgpu::PresentMode as P;
+    let order: &[P] = match requested {
+        P::AutoVsync => &[P::FifoRelaxed, P::Fifo],
+        P::AutoNoVsync => &[P::Immediate, P::Mailbox, P::Fifo],
+        other => return other,
+    };
+    order
+        .iter()
+        .copied()
+        .find(|m| supported.contains(m))
+        .unwrap_or(P::Fifo)
 }
 
 impl RenderContext {
@@ -78,17 +106,15 @@ impl RenderContext {
         let limits = wgpu::Limits::default();
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("Flint Device"),
-                    // Timestamps where the adapter has them, so the
-                    // renderer's GPU timing can be turned on (ADR 0108).
-                    required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
-                    required_limits: limits,
-                    memory_hints: Default::default(),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Flint Device"),
+                // Timestamps where the adapter has them, so the
+                // renderer's GPU timing can be turned on (ADR 0108).
+                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+                required_limits: limits,
+                memory_hints: Default::default(),
+                ..Default::default()
+            })
             .await
             .map_err(|e| RenderError::DeviceCreation(e.to_string()))?;
 
@@ -145,6 +171,8 @@ impl RenderContext {
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode,
+            // sRGB, as every wgpu before 30 chose (#945)
+            color_space: wgpu::SurfaceColorSpace::Auto,
             alpha_mode: surface_caps.alpha_modes[0],
             // A non-sRGB view of the swapchain for the HUD pass: egui expects to
             // write sRGB-encoded values itself, so blending a translucent panel
@@ -180,6 +208,7 @@ impl RenderContext {
             surface_copyable,
             hud_format: surface_format.remove_srgb_suffix(),
             view_format,
+            supported_present_modes: surface_caps.present_modes.clone(),
         })
     }
 
@@ -192,9 +221,24 @@ impl RenderContext {
         })
     }
 
+    /// The view of a swapchain texture that an egui pass draws into, in
+    /// [`Self::hud_format`]. egui-wgpu picks its shader by the target's
+    /// format: into this plain view it writes gamma-encoded colour and the
+    /// blend happens in display space, as egui's colours are authored. Into
+    /// an sRGB view it writes linear colour and the GPU blends in linear
+    /// light, which lifts every translucent dark panel towards grey (#428:
+    /// the style-error card read lighter in the scene viewer than in the
+    /// player). Build the egui renderer for `hud_format` too.
+    pub fn hud_view(&self, texture: &wgpu::Texture) -> wgpu::TextureView {
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(self.hud_format),
+            ..Default::default()
+        })
+    }
+
     /// Read a surface-sized texture back as tightly packed RGBA8 bytes.
     ///
-    /// Blocks on the GPU (`Maintain::Wait`). The texture must have been
+    /// Blocks on the GPU ([`crate::wait_for_gpu`]). The texture must have been
     /// created with `COPY_SRC` and be in the surface format; Bgra formats are
     /// swizzled to RGBA on the way out. Mirrors `HeadlessContext::read_pixels`.
     pub fn read_surface_rgba(&self, texture: &wgpu::Texture) -> Result<Vec<u8>, RenderError> {
@@ -223,15 +267,15 @@ impl RenderContext {
                 label: Some("Surface Readback Encoder"),
             });
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &staging,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded_bytes_per_row),
                     rows_per_image: Some(height),
@@ -250,12 +294,12 @@ impl RenderContext {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = crate::wait_for_gpu(&self.device);
         rx.recv()
             .map_err(|e| RenderError::BufferReadFailed(e.to_string()))?
             .map_err(|e| RenderError::BufferReadFailed(e.to_string()))?;
 
-        let data = slice.get_mapped_range();
+        let data = slice.get_mapped_range().expect("mapped buffer range");
         let mut pixels = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
         for row in 0..height {
             let start = (row * padded_bytes_per_row) as usize;
@@ -334,6 +378,14 @@ impl RenderContext {
         )
     }
 
+    /// The present mode the swapchain runs in: `config.present_mode` with
+    /// an `Auto` mode resolved as wgpu resolves it. The perf readout names
+    /// it, since under Fifo an idle GPU clocks down and its pass times read
+    /// high (#380).
+    pub fn present_mode_in_use(&self) -> wgpu::PresentMode {
+        resolve_present_mode(self.config.present_mode, &self.supported_present_modes)
+    }
+
     /// The depth view with its id, for
     /// [`SceneRenderer::encode_to`](crate::SceneRenderer::encode_to).
     pub fn depth_target(&self) -> crate::bind_cache::DepthTarget<'_> {
@@ -381,4 +433,29 @@ fn create_depth_texture(
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     (texture, view)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_present_mode;
+    use wgpu::PresentMode as P;
+
+    #[test]
+    fn auto_modes_resolve_as_wgpu_picks_them() {
+        // Windows DX12/Vulkan offer all three; vsync is Fifo there.
+        let all = [P::Fifo, P::Mailbox, P::Immediate];
+        assert_eq!(resolve_present_mode(P::AutoVsync, &all), P::Fifo);
+        assert_eq!(resolve_present_mode(P::AutoNoVsync, &all), P::Immediate);
+        // Relaxed Fifo is wgpu's first choice for vsync where it exists.
+        let relaxed = [P::Fifo, P::FifoRelaxed];
+        assert_eq!(resolve_present_mode(P::AutoVsync, &relaxed), P::FifoRelaxed);
+        // No Immediate: unlocked falls to Mailbox, then to Fifo.
+        assert_eq!(
+            resolve_present_mode(P::AutoNoVsync, &[P::Fifo, P::Mailbox]),
+            P::Mailbox
+        );
+        assert_eq!(resolve_present_mode(P::AutoNoVsync, &[P::Fifo]), P::Fifo);
+        // A named mode is used as asked.
+        assert_eq!(resolve_present_mode(P::Mailbox, &all), P::Mailbox);
+    }
 }

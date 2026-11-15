@@ -178,6 +178,9 @@ pub fn quat_slerp(a: &[f32], b: &[f32], t: f32) -> Vec<f32> {
 }
 
 #[cfg(test)]
+// The quaternions here are written as a file would hold them (0.7071 for a
+// quarter turn), which clippy reads as an approximate FRAC_1_SQRT_2.
+#[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
     use crate::clip::Interpolation;

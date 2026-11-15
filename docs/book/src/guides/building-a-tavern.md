@@ -11,7 +11,9 @@ flint init tavern-game
 cd tavern-game
 ```
 
-This creates a project directory with `schemas/` containing default component and archetype definitions.
+This creates a game project: a `flint.toml` manifest that names the engine's schemas (so no command below needs a `--schemas` flag), a first scene of its own at `scenes/main.scene.toml`, and an empty `schemas/` for components of your own. See [Your First Project](../getting-started/first-project.md).
+
+The tavern is built from `room`, `door` and `furniture`, archetypes of the examples' room-builder layer and not of the engine's own set. Add the layer to `flint.toml` before going on, as [Your First Project](../getting-started/first-project.md#add-the-room-builder-layer) shows: the Flint checkout's `schemas/examples`, after its `schemas`.
 
 ## 2. Create the Scene
 
@@ -149,7 +151,7 @@ loop = true
 spatial = false
 ```
 
-Place audio files (OGG, WAV, MP3, or FLAC) in the `audio/` directory next to the scene.
+Place audio files (`.ogg`, `.wav`, `.mp3` or `.flac`, in lower case) in the `audio/` directory next to the scene, or in the project's own `audio/` ([where the engine looks](../concepts/assets.md#where-the-engine-looks-for-a-file)).
 
 ## 8. Add Animations
 
@@ -263,19 +265,24 @@ flint play levels/tavern.scene.toml
 
 ## 12. The Finished Result
 
-The `demo/phase4_runtime.scene.toml` in the Flint repository is a complete implementation of this tavern, with:
+The `examples/phase4_runtime.scene.toml` in the Flint repository is a complete implementation of this tavern, with:
 
-- Three rooms (main hall, kitchen, storage) with physics colliders on all surfaces
-- A bar counter, tables, fireplace, and barrels
+![The Rusty Flint Tavern, as a bare `flint render` frames it from its [camera]](../images/rusty-flint-tavern.png)
+
+- A half-timbered hall: fieldstone below the chair rail, lime plaster above, a beamed ceiling, a great hearth with a particle fire, and a bar with shelves of bottles
+- Every model and texture made from code: `examples/tools/tavern_build.py` writes the glTF models, `examples/specs/tavern_*.procgen.toml` the textures (`python examples/tools/tavern_build.py --textures` rebuilds them all)
+- The room is one prefab, `examples/prefabs/rusty_flint.prefab.toml`, which `examples/showcase_tavern.scene.toml` places too
+- Moonlight through leaded west windows: the scene's one shadow-casting light, with god rays (`volumetric_*`) and dust in them; every flame is a point light with its own flicker script
 - Four NPCs: bartender, two patrons, and a mysterious stranger with scripted behaviors
 - Spatial audio: fire crackle, ambient tavern noise, door sounds, glass clinks
-- Property animations: bobbing platform, door swings
+- Property animations: a chandelier swaying on its chain, door swings
 - Interactable doors and NPCs with HUD prompts
 - Footstep sounds synced to player movement
+- A `[camera]` inside the room, so `flint render examples/phase4_runtime.scene.toml` with no camera flags shows the interior
 
 ```bash
 # Try the finished demo
-cargo run --bin flint -- play demo/phase4_runtime.scene.toml
+cargo run --bin flint -- play examples/phase4_runtime.scene.toml
 ```
 
 ## Further Reading

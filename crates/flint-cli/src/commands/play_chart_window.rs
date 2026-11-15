@@ -21,7 +21,9 @@
 //! reloads the coherence config, `q`/Escape quits.
 
 use anyhow::{Context, Result};
+use flint_render::AcquireFrame;
 use flint_render::RenderContext;
+use flint_render::TrustedShader;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -30,7 +32,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-use flint_music::chart_session::{ChartSession, Tick};
+use flint_rhythm::chart_session::{ChartSession, Tick};
 
 pub fn run_windowed(session: ChartSession) -> Result<()> {
     let event_loop = EventLoop::new().context("creating event loop")?;
@@ -188,7 +190,7 @@ struct Gfx {
 impl Gfx {
     fn new(window: Arc<Window>, ctx: RenderContext) -> Self {
         let device = &ctx.device;
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("play-chart-window"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
@@ -221,8 +223,8 @@ impl Gfx {
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("play-chart-pl"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bgl)],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("play-chart-pipeline"),
@@ -246,7 +248,7 @@ impl Gfx {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         Self {
@@ -260,7 +262,7 @@ impl Gfx {
 
     fn render(
         &mut self,
-        frame: &flint_music::chart_session::VisualFrame,
+        frame: &flint_rhythm::chart_session::VisualFrame,
         time_s: f32,
     ) -> Result<()> {
         let aspect = self.ctx.aspect_ratio();
@@ -290,9 +292,9 @@ impl Gfx {
             .queue
             .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&data));
 
-        let surface = match self.ctx.surface.get_current_texture() {
+        let surface = match self.ctx.surface.acquire() {
             Ok(s) => s,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => {
                 self.ctx.resize(self.ctx.size);
                 return Ok(()); // retry next frame
             }
@@ -313,6 +315,7 @@ impl Gfx {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,
@@ -321,13 +324,14 @@ impl Gfx {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
         self.ctx.queue.submit([encoder.finish()]);
-        surface.present();
+        self.ctx.queue.present(surface);
         Ok(())
     }
 }

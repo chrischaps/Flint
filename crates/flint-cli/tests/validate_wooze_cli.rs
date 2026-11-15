@@ -17,7 +17,14 @@ fn validate(name: &str, table: &str, format: &str) -> Output {
         .join("validate_wooze_cli")
         .join(name);
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    // The spec the species scenes' oak is grown from: `model.asset` is
+    // checked to name a model file or a spec (#684)
+    std::fs::create_dir_all(dir.join("specs")).unwrap();
+    std::fs::write(
+        dir.join("specs/grove_oak.procgen.toml"),
+        "generator = \"tree\"\n\n[meta]\nname = \"grove_oak\"\n",
+    )
+    .unwrap();
     let path = dir.join("grove.scene.toml");
     std::fs::write(&path, format!("[scene]\nname = \"grove\"\n{table}")).unwrap();
     std::process::Command::new(FLINT)

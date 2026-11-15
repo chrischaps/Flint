@@ -9,8 +9,23 @@ description = "CLI application for Flint engine"
 name = "flint"
 path = "src/main.rs"
 
+# The device crates are default-on features (#221). Off, `cargo build -p
+# flint-cli --no-default-features` builds every command with no ALSA or
+# libudev headers, and without rfd's async D-Bus stack; `flint render`,
+# `gen`, `bundle` and the rest never needed them. What each costs when off:
+#   audio    `play` runs silent; `calibrate` and `play-chart` won't start
+#            (`render-suite` renders offline either way)
+#   gamepad  no pads; `spike-rumble` reports it
+#   dialogs  the editors' Save As / Export / Browse buttons say so instead
+[features]
+default = ["audio", "gamepad", "dialogs"]
+audio = ["flint-player/audio", "flint-music/device", "flint-rhythm/device"]
+gamepad = ["flint-player/gamepad", "flint-input-capture/gamepad"]
+dialogs = ["dep:rfd"]
+
 [dependencies]
 flint-core = { workspace = true }
+flint-wooze = { workspace = true }
 flint-schema = { workspace = true }
 flint-ecs = { workspace = true }
 flint-scene = { workspace = true }
@@ -23,14 +38,20 @@ flint-import = { workspace = true }
 flint-animation = { workspace = true }
 flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
-flint-player = { workspace = true }
+flint-player = { workspace = true, features = ["debug-hud", "music", "rhythm", "living"] }
+# `metadata`: `flint script api` lists the functions not yet declared
+# through the builder from Rhai's metadata (ADR 0116); `check` (which has
+# it) is `flint script check` (#694). Both stay on with
+# `--no-default-features`
+flint-script = { workspace = true, features = ["metadata", "check"] }
 flint-terrain = { workspace = true }
 flint-particles = { workspace = true }
 flint-procgen = { workspace = true }
 flint-procgen-ai = { workspace = true }
 flint-viewer = { workspace = true }
-flint-debug-ui = { workspace = true }
+flint-debug-ui = { workspace = true, features = ["living"] }
 flint-music = { workspace = true }
+flint-rhythm = { workspace = true }
 flint-input-capture = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
@@ -43,11 +64,14 @@ notify-debouncer-mini = { workspace = true }
 winit = { workspace = true }
 wgpu = { workspace = true }
 pollster = { workspace = true }
+glam = { workspace = true }
 image = { workspace = true, features = ["gif"] }
 # Already in the tree through `image`. Used directly so that a GIF can share one
 # palette across its frames, which `image`'s encoder doesn't do (gif_writer.rs).
 gif = "0.14"
 color_quant = "1"
+# Also in the tree through `image`: a long GIF's frames wait on disk deflated (#588).
+miniz_oxide = "0.8"
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
@@ -55,7 +79,17 @@ bytemuck = { workspace = true }
 egui-snarl = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-rfd = { workspace = true }
+rfd = { workspace = true, optional = true }
 
 [dev-dependencies]
-naga = { version = "23", features = ["wgsl-in"] }
+naga = { version = "30.0.2", features = ["wgsl-in"] }
+# A JSON Schema validator, for the test that `flint schema --format json-schema`
+# describes every example scene (#684). Tests only.
+boon = "0.6"
+# Reads the WAV `render-suite` writes, for the music-suite test (#745).
+hound = { workspace = true }
+
+# Built-in shader modules and frame acquisition go through flint-render's
+# seams; the list is the workspace clippy.toml (#944).
+[lints.clippy]
+disallowed_methods = "deny"

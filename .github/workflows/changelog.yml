@@ -1,0 +1,65 @@
+# Assembles the changelog (#788). A pull request adds its entry as one file,
+# changelog.d/<issue>-<slug>.md, so two PRs never conflict over it. After a
+# merge to main, this moves every fragment into changelog/YYYY-MM.md under the
+# date of the merge, updates CHANGELOG.md's list of months, deletes the
+# fragments, and pushes that as one commit.
+#
+# - It can't retrigger itself: a push made with GITHUB_TOKEN starts no
+#   workflow run, and the commit says [skip ci] for anything else.
+# - It doesn't fight the checks: main's ruleset only forbids deletion and
+#   force pushes, and this push is a fast-forward. If main moved meanwhile, it
+#   starts over from the new main (three tries).
+# - Runs queue rather than overlap (one concurrency group, never cancelled),
+#   and a run that finds no fragments does nothing.
+# - An open branch made before an assembly still merges cleanly: it adds its
+#   own fragment, and the assembly touched only other files.
+#
+# By hand, the same thing: `bash scripts/changelog.sh assemble` on main.
+name: Changelog
+
+on:
+  push:
+    branches: [main]
+    paths: ['changelog.d/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: changelog-assemble
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Full history: a fragment's date is the merge that added it.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Assemble and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for try in 1 2 3; do
+            git fetch origin main
+            git reset --hard origin/main
+            bash scripts/changelog.sh assemble
+            git add -A changelog changelog.d CHANGELOG.md
+            if git diff --cached --quiet; then
+              echo "nothing to assemble"
+              exit 0
+            fi
+            n=$(git diff --cached --name-only --diff-filter=D -- changelog.d | wc -l)
+            git commit -m "Changelog: assemble $n entries [skip ci]" \
+                       -m "Changelog: none (moves existing entries into their month)"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "main moved; starting over"
+          done
+          exit 1

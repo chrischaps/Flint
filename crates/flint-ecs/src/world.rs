@@ -2,6 +2,7 @@
 
 use crate::component::DynamicComponents;
 use crate::entity::EntityInfo;
+use crate::view::ReadReports;
 use bimap::BiMap;
 use flint_core::toml_util::{toml_to_vec3, toml_vec4};
 use flint_core::{mat4_mul, EntityId, FlintError, Result, Transform, Vec3};
@@ -32,6 +33,8 @@ pub struct FlintWorld {
     parents: HashMap<EntityId, EntityId>,
     /// Reverse index: component name -> set of entities that have it
     component_index: HashMap<String, HashSet<EntityId>>,
+    /// What the typed readers ([`FlintWorld::view`]) have reported, once each
+    read_reports: ReadReports,
 }
 
 impl FlintWorld {
@@ -44,7 +47,14 @@ impl FlintWorld {
             components: HashMap::new(),
             parents: HashMap::new(),
             component_index: HashMap::new(),
+            read_reports: ReadReports::new(),
         }
+    }
+
+    /// What the typed readers have found wrong so far: a wrong type or an
+    /// unknown choice, each (entity, component, field) once (ADR 0115).
+    pub fn read_reports(&self) -> &ReadReports {
+        &self.read_reports
     }
 
     /// Spawn a new entity with a name
@@ -334,6 +344,7 @@ impl FlintWorld {
         self.components.clear();
         self.parents.clear();
         self.component_index.clear();
+        self.read_reports.clear();
     }
 
     /// Get transform from an entity's components
@@ -355,12 +366,16 @@ impl FlintWorld {
             .and_then(toml_to_vec3)
             .unwrap_or(Vec3::ONE);
         let rotation_quat = transform_data.get("rotation_quat").and_then(toml_vec4);
+        let shear = transform_data
+            .get("shear")
+            .and_then(flint_core::Shear::from_toml);
 
         Some(Transform {
             position: pos,
             rotation: rot,
             scale,
             rotation_quat,
+            shear,
         })
     }
 
@@ -394,6 +409,50 @@ impl FlintWorld {
     pub fn get_world_position(&self, id: EntityId) -> Option<Vec3> {
         let mat = self.get_world_matrix(id)?;
         Some(Vec3::new(mat[3][0], mat[3][1], mat[3][2]))
+    }
+
+    /// The entity's own `visibility.visible`: false only when it says so,
+    /// true with no `visibility` component (#628). An ancestor's switch isn't
+    /// counted here; [`Self::hidden_entities`] is what the renderer skips.
+    pub fn is_visible(&self, id: EntityId) -> bool {
+        self.components
+            .get(&id)
+            .and_then(|c| c.get(flint_core::components::VISIBILITY))
+            .and_then(|v| v.get("visible"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    }
+
+    /// Every entity a `visibility { visible = false }` hides: those that say
+    /// so and all their descendants, so hiding a model's root hides its
+    /// expanded nodes too (#628). Empty, with nothing walked, while no entity
+    /// is hidden, which is what keeps a scene without the switch at no cost.
+    pub fn hidden_entities(&self) -> HashSet<EntityId> {
+        let roots: HashSet<EntityId> = self
+            .entities_with_component(flint_core::components::VISIBILITY)
+            .iter()
+            .copied()
+            .filter(|id| !self.is_visible(*id))
+            .collect();
+        if roots.is_empty() {
+            return roots;
+        }
+        let mut hidden = roots.clone();
+        for &child in self.parents.keys() {
+            let mut at = child;
+            // Depth-capped: a parent chain never loops, but a cap costs nothing
+            for _ in 0..256 {
+                match self.parents.get(&at) {
+                    Some(parent) if roots.contains(parent) => {
+                        hidden.insert(child);
+                        break;
+                    }
+                    Some(parent) => at = *parent,
+                    None => break,
+                }
+            }
+        }
+        hidden
     }
 
     /// Get all entity IDs that have a given component. O(1) lookup.
@@ -490,6 +549,39 @@ impl FlintWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hidden_entities_take_descendants() {
+        // #628: a hidden root hides its subtree; nothing hidden is empty
+        let mut world = FlintWorld::new();
+        let root = world.spawn("car").unwrap();
+        let wheel = world.spawn("wheel").unwrap();
+        let hub = world.spawn("hub").unwrap();
+        let other = world.spawn("tree").unwrap();
+        world.set_parent(wheel, root).unwrap();
+        world.set_parent(hub, wheel).unwrap();
+        assert!(world.hidden_entities().is_empty());
+
+        world
+            .set_field(other, "visibility", "visible", toml::Value::Boolean(true))
+            .unwrap();
+        assert!(
+            world.hidden_entities().is_empty(),
+            "visible = true hides nothing"
+        );
+
+        world
+            .set_field(root, "visibility", "visible", toml::Value::Boolean(false))
+            .unwrap();
+        let hidden = world.hidden_entities();
+        assert_eq!(hidden.len(), 3);
+        assert!(hidden.contains(&root) && hidden.contains(&wheel) && hidden.contains(&hub));
+        assert!(!world.is_visible(root));
+        assert!(
+            world.is_visible(wheel),
+            "is_visible is the entity's own switch"
+        );
+    }
 
     #[test]
     fn test_spawn_and_get() {
@@ -1002,24 +1094,38 @@ intensity = 1.0
             let mut m = toml::map::Map::new();
             m.insert(
                 "position".into(),
-                toml::Value::Array(vec![(x as f64).into(), (y as f64).into(), (z as f64).into()]),
+                toml::Value::Array(vec![
+                    (x as f64).into(),
+                    (y as f64).into(),
+                    (z as f64).into(),
+                ]),
             );
             toml::Value::Table(m)
         };
         let group = world.spawn("group").unwrap();
         let child = world.spawn("child").unwrap();
-        world.set_component(child, "transform", make_pos(1.0, 2.0, 0.0)).unwrap();
+        world
+            .set_component(child, "transform", make_pos(1.0, 2.0, 0.0))
+            .unwrap();
         world.set_parent(child, group).unwrap();
 
         let pos = world.get_world_position(child).unwrap();
-        assert!((pos - Vec3::new(1.0, 2.0, 0.0)).length() < 1e-5, "under a bare parent: {pos:?}");
+        assert!(
+            (pos - Vec3::new(1.0, 2.0, 0.0)).length() < 1e-5,
+            "under a bare parent: {pos:?}"
+        );
 
         // The chain goes on through the bare parent to a placed grandparent.
         let root = world.spawn("root").unwrap();
-        world.set_component(root, "transform", make_pos(10.0, 0.0, 0.0)).unwrap();
+        world
+            .set_component(root, "transform", make_pos(10.0, 0.0, 0.0))
+            .unwrap();
         world.set_parent(group, root).unwrap();
         let pos = world.get_world_position(child).unwrap();
-        assert!((pos - Vec3::new(11.0, 2.0, 0.0)).length() < 1e-5, "through it: {pos:?}");
+        assert!(
+            (pos - Vec3::new(11.0, 2.0, 0.0)).length() < 1e-5,
+            "through it: {pos:?}"
+        );
 
         // The bare parent itself still has no world matrix, but it has a frame.
         assert!(world.get_world_matrix(group).is_none());

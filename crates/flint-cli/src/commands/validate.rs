@@ -1,13 +1,33 @@
-//! Scene validation command
+//! Scene validation command: one scene against its schemas and the
+//! project's constraints, with `--fix` for what a constraint can fix.
+//!
+//! What it checks of the scene itself is `crate::check`'s
+//! ([`Checks::VALIDATE`]: that it loads, its entities against the schemas,
+//! its style tables and look, its `[wooze]` and `[living]` tables), the
+//! same code `flint check` and `flint bundle` run. What is its own is the
+//! constraint report and the fixes. `flint check` is the wider gate: it
+//! adds every asset and file the scene names.
 
-use anyhow::{Context, Result};
+use crate::check::{self, Checks, SceneSchemas};
+use anyhow::Result;
 use flint_constraint::{
-    compute_scene_diff, ConstraintEvaluator, ConstraintFixer, ConstraintRegistry, Severity,
+    compute_scene_diff, ConstraintEvaluator, ConstraintFixer, FixReport, Severity,
     ValidationReport, Violation,
 };
+use flint_core::diagnostic::{self, codes, Diagnostic};
 use flint_core::EntityId;
-use flint_scene::{load_scene, save_scene_string, SceneFile};
-use flint_schema::SchemaRegistry;
+use flint_scene::{load_scene_diagnosed, SceneDocument};
+use std::path::Path;
+
+/// How the report is printed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum Format {
+    /// For a person
+    #[default]
+    Text,
+    /// One JSON document on stdout
+    Json,
+}
 
 #[derive(clap::Args)]
 pub struct ValidateArgs {
@@ -26,294 +46,349 @@ pub struct ValidateArgs {
     #[arg(long)]
     pub output_diff: bool,
 
-    /// Paths to schemas directories (can specify multiple)
-    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+    /// Schema directories, later ones overriding earlier (repeatable).
+    /// Without it: the project's flint.toml `schemas`, else schemas/ in the
+    /// working directory, beside the scene and one level up
+    #[arg(long, action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
 
-    /// Output format (json or toml)
-    #[arg(long, default_value = "text")]
-    pub format: String,
+    /// Output format
+    #[arg(long, value_enum, default_value_t = Format::Text)]
+    pub format: Format,
+
+    /// A field no schema declares is an error, not a warning (as
+    /// `[project] strict = true` in flint.toml makes it for every run)
+    #[arg(long)]
+    pub strict: bool,
+
+    /// A game's own script functions, for the script check
+    #[command(flatten)]
+    pub script: check::scripts::ScriptApiArgs,
 }
 
-/// What a scene load would warn about its `[post_process.styles]` (#318):
-/// unknown styles, keys and closed options' values, after its own user
-/// styles are registered. Warnings, not violations: the scene still loads.
-fn style_warnings(scene: &str) -> Vec<String> {
-    let Ok(text) = std::fs::read_to_string(scene) else {
-        return Vec::new();
-    };
-    let Ok(file) = toml::from_str::<flint_scene::SceneFile>(&text) else {
-        return Vec::new(); // load_scene below says what is wrong with it
-    };
-    let Some(mut post) = file.post_process else {
-        return Vec::new();
-    };
-    let tables = post.style_tables();
-    if tables.is_empty() && post.look.is_none() {
-        return Vec::new();
-    }
-    let scene_dir = std::path::Path::new(scene)
-        .parent()
-        .unwrap_or(std::path::Path::new("."));
-    let mut warnings = flint_render::stylize::custom::load_dir(scene_dir);
-    warnings.extend(flint_render::stylize::StyleSettings::from_tables(&tables).1);
-    // The scene's look (#356) must be found and fit under its keys
-    if let Some(name) = post.look.clone() {
-        post.authored = flint_scene::PostProcessDef::authored_table(&text);
-        if let Err(e) = flint_render::look::resolve(&post, Some(&name), scene) {
-            warnings.push(format!("[post_process] look = \"{name}\": {e}"));
+/// What the shared pass found in a scene, in the three lists `flint
+/// validate` has always printed.
+#[derive(Default)]
+struct Found {
+    /// The style tables' and the look's problems: a scene still loads
+    /// without them, and they have never failed `validate` (they fail
+    /// `flint check`).
+    warnings: Vec<String>,
+    /// `[wooze]` and `[living.species]` problems, as violations of a
+    /// constraint that isn't about any entity.
+    violations: Vec<Violation>,
+    /// Everything else (ADR 0115).
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl Found {
+    fn from(found: Vec<Diagnostic>) -> Self {
+        let mut out = Self::default();
+        let violation = |constraint: &str, entity: String, d: &Diagnostic| Violation {
+            constraint_name: constraint.to_string(),
+            entity_name: entity,
+            entity_id: EntityId::from_raw(0),
+            severity: Severity::Error,
+            message: d.message.clone(),
+            has_auto_fix: false,
+        };
+        for d in found {
+            match d.code {
+                codes::BAD_LOOK => out.warnings.push(format!("[post_process] {}", d.message)),
+                codes::BAD_USER_STYLE | codes::BAD_STYLE_SETTING => {
+                    out.warnings.push(match (&d.file, d.code) {
+                        (Some(file), codes::BAD_USER_STYLE) => {
+                            format!("{}: {}", flint_core::project::shown(file), d.message)
+                        }
+                        _ => d.message.clone(),
+                    })
+                }
+                codes::BAD_WOOZE => {
+                    let zone = d.field.clone().unwrap_or_else(|| "[wooze]".to_string());
+                    out.violations.push(violation("wooze", zone, &d));
+                }
+                codes::BAD_SPECIES => {
+                    let table = format!("[living.{}]", d.field.clone().unwrap_or_default());
+                    out.violations.push(violation("living_species", table, &d));
+                }
+                // A query that doesn't parse is in the constraint report,
+                // from the evaluator; a constraint file that doesn't read
+                // has no constraint to hang on and stays a diagnostic
+                codes::BAD_CONSTRAINT if d.field.is_some() => {}
+                _ => out.diagnostics.push(d),
+            }
         }
+        out
     }
-    warnings
+}
+
+/// The schemas and constraints for `scene`, from the one resolver (ADR
+/// 0114). A directory a flag or the manifest names that isn't there is the
+/// error, by name.
+fn load_schemas(scene: &str, flags: &[String]) -> Result<SceneSchemas> {
+    use anyhow::Context;
+    match SceneSchemas::resolve(Some(Path::new(scene)), flags) {
+        Ok(loaded) => Ok(loaded),
+        Err(flint_core::FlintError::SchemaDirs(e)) => Err(e.into()),
+        Err(e) => Err(e).context("Failed to load schemas"),
+    }
+}
+
+/// Everything `flint validate <scene>` checks, returned instead of printed:
+/// the style warnings, the violations (constraints, `[wooze]`, species),
+/// and the scene's diagnostics (ADR 0115). A scene that doesn't load is an
+/// `Err`. `flint examples --check` (#763) runs it on every example.
+pub fn check(
+    scene: &str,
+    schemas: &[String],
+) -> Result<(Vec<String>, ValidationReport, Vec<Diagnostic>)> {
+    let schemas = load_schemas(scene, schemas)?;
+    let found = Found::from(check::scene(
+        Path::new(scene),
+        &schemas,
+        Checks::VALIDATE,
+        false,
+        check::scripts::engine_api(),
+    ));
+    if let Some(fatal) = found
+        .diagnostics
+        .iter()
+        .find(|d| d.is_error() && d.entity.is_none() && d.table.is_none())
+    {
+        anyhow::bail!("{}", fatal.one_line());
+    }
+    let (world, _, _) = load_scene_diagnosed(scene, &schemas.registry)?;
+    let mut report =
+        ConstraintEvaluator::new(&world, &schemas.registry, &schemas.constraints).validate();
+    report.violations.extend(found.violations);
+    Ok((found.warnings, report, found.diagnostics))
+}
+
+/// What `--fix` or `--dry-run` did, for the report.
+struct Fixed {
+    dry_run: bool,
+    report: FixReport,
+    /// The file was rewritten.
+    saved: bool,
+    /// What a fix changed in the world and the file could not hold.
+    not_written: Vec<String>,
+    /// The file's diff, for `--output-diff`.
+    diff: Option<String>,
 }
 
 pub fn run(args: ValidateArgs) -> Result<()> {
-    // Style tables first: they are checked whether or not any constraints
-    // exist, on stderr so `--format json` stays one document
-    for warning in style_warnings(&args.scene) {
+    // The one resolver (ADR 0114): --schemas, else the manifest, else discovery
+    let schemas = load_schemas(&args.scene, &args.schemas)?;
+    let script_api = args.script.api()?;
+    super::common_args::warn_dropped_schemas(&schemas.dirs);
+    let json = args.format == Format::Json;
+
+    // What the scene has wrong with it, from the pass `flint check` runs:
+    // it needs no constraint files, so a project with none is still checked
+    let Found {
+        warnings,
+        violations: table_violations,
+        mut diagnostics,
+    } = Found::from(check::scene(
+        Path::new(&args.scene),
+        &schemas,
+        Checks::VALIDATE,
+        args.strict,
+        &script_api,
+    ));
+    // On stderr, so `--format json` stays one document
+    for warning in &warnings {
         eprintln!("warning: {warning}");
     }
 
-    // Merge explicit schemas with auto-discovered dirs from scene path
-    let mut all_schemas = args.schemas.clone();
-    for dir in flint_schema::discover_schema_dirs(&args.scene) {
-        let s = dir.to_string_lossy().into_owned();
-        if !all_schemas.contains(&s) {
-            all_schemas.push(s);
-        }
-    }
-
-    let existing: Vec<&str> = all_schemas
-        .iter()
-        .map(|s| s.as_str())
-        .filter(|p| std::path::Path::new(p).exists())
-        .collect();
-    let schema_registry = SchemaRegistry::load_from_directories(&existing)?;
-    let mut wooze = wooze_violations(&args.scene, &schema_registry)?;
-    wooze.extend(species_violations(&args.scene, &schema_registry)?);
-    let mut constraint_registry = ConstraintRegistry::new();
-
-    if existing.is_empty() {
-        // Preserve existing single-directory fallback behavior
-        let loaded = ConstraintRegistry::load_from_directory("schemas")?;
-        for constraint in loaded.all() {
-            constraint_registry.register(constraint.clone());
-        }
-    } else {
-        // Merge constraints from all schema directories (later directories are additive)
-        for path in &existing {
-            let loaded = ConstraintRegistry::load_from_directory(path)?;
-            for constraint in loaded.all() {
-                constraint_registry.register(constraint.clone());
+    // A scene that doesn't load has nothing else to check
+    let world = match load_scene_diagnosed(&args.scene, &schemas.registry) {
+        Ok((world, _, _)) => world,
+        Err(e) => {
+            if !diagnostic::has_errors(&diagnostics) {
+                diagnostics
+                    .push(Diagnostic::error(codes::SCENE_LOAD, e.to_string()).file(&args.scene));
             }
+            if json {
+                let nothing = ValidationReport::new();
+                print_json(report_json(&nothing, &diagnostics, None));
+            } else {
+                print!("{}", diagnostics_text(&args.scene, &diagnostics));
+                println!("The scene does not load, so nothing else was checked.");
+            }
+            std::process::exit(1);
         }
-    }
+    };
+    let no_constraints = schemas.constraints.is_empty();
+    let evaluate = |world: &flint_ecs::FlintWorld| {
+        let mut report =
+            ConstraintEvaluator::new(world, &schemas.registry, &schemas.constraints).validate();
+        report.violations.extend(table_violations.iter().cloned());
+        report
+    };
 
-    if constraint_registry.is_empty() {
-        if !wooze.is_empty() {
-            print_and_fail(wooze, &args.format);
-        }
-        if existing.is_empty() {
-            println!("No constraints found in schemas/constraints/");
+    if !(args.fix || args.dry_run) {
+        let report = evaluate(&world);
+        if json {
+            print_json(report_json(&report, &diagnostics, None));
         } else {
-            println!("No constraints found in provided schema directories.");
+            print_report_text(&args.scene, &report, &diagnostics, no_constraints);
         }
-        println!("Create constraint files to enable validation.");
+        if !report.is_valid() || diagnostic::has_errors(&diagnostics) {
+            std::process::exit(1);
+        }
         return Ok(());
     }
 
-    let (world, _scene_file) = load_scene(&args.scene, &schema_registry)?;
-
-    if args.fix || args.dry_run {
-        // Save before state for diff
-        let before_toml = if args.output_diff {
-            Some(save_scene_string(&world, "scene")?)
-        } else {
-            None
-        };
-
-        let fixer = ConstraintFixer::new(&schema_registry, &constraint_registry);
-
-        if args.dry_run {
-            let report = fixer.dry_run(&world)?;
-            println!("Dry run results ({} iteration(s)):", report.iterations);
-
-            if report.actions.is_empty() {
-                println!("  No fixes would be applied.");
-            } else {
-                for action in &report.actions {
-                    println!(
-                        "  [{}] {} — {}",
-                        action.strategy, action.entity_name, action.description
-                    );
-                }
-            }
-
-            if report.remaining_violations > 0 {
-                println!(
-                    "\n  {} violation(s) would remain after fixes.",
-                    report.remaining_violations
-                );
-            }
-
-            if report.cycle_detected {
-                println!("  Warning: Fix cycle detected.");
-            }
-        } else {
-            // Actually fix by reloading, modifying, and saving
-            let (mut world, _) = load_scene(&args.scene, &schema_registry)?;
-            let report = fixer.fix(&mut world)?;
-
-            println!("Fix results ({} iteration(s)):", report.iterations);
-
-            for action in &report.actions {
-                println!(
-                    "  [{}] {} — {}",
-                    action.strategy, action.entity_name, action.description
-                );
-            }
-
-            if report.remaining_violations > 0 {
-                println!(
-                    "\n  {} violation(s) remain after fixes.",
-                    report.remaining_violations
-                );
-            }
-
-            if report.cycle_detected {
-                println!("  Warning: Fix cycle detected.");
-            }
-
-            if !report.actions.is_empty() {
-                // Save the fixed scene
-                flint_scene::save_scene(&args.scene, &world, "scene")?;
-                println!("\nScene saved to {}", args.scene);
-
-                if args.output_diff {
-                    if let Some(before) = before_toml {
-                        let after = save_scene_string(&world, "scene")?;
-                        let diff = compute_scene_diff(&before, &after);
-                        println!("\nDiff:");
-                        print!("{}", diff);
-                    }
-                }
-            }
-        }
-        // Nothing here fixes a zone, so a fixed scene can still be a bad one.
-        if !wooze.is_empty() {
-            print_and_fail(wooze, &args.format);
-        }
+    let fixer = ConstraintFixer::new(&schemas.registry, &schemas.constraints);
+    let mut fixed = Fixed {
+        dry_run: args.dry_run,
+        report: FixReport {
+            actions: Vec::new(),
+            remaining_violations: 0,
+            cycle_detected: false,
+            iterations: 0,
+        },
+        saved: false,
+        not_written: Vec::new(),
+        diff: None,
+    };
+    // What is wrong with the file as this run leaves it: a dry run leaves
+    // it as it was
+    let report = if args.dry_run {
+        fixed.report = fixer.dry_run(&world)?;
+        evaluate(&world)
     } else {
-        // Validation only
-        let evaluator = ConstraintEvaluator::new(&world, &schema_registry, &constraint_registry);
-        let mut report = evaluator.validate();
-        report.violations.extend(wooze);
-
-        if args.format == "json" {
-            print_report_json(&report);
-        } else {
-            print_report_text(&report);
+        // Fix a second copy of the world, so what the fixes changed is the
+        // difference between the two
+        let (mut fixed_world, _, _) = load_scene_diagnosed(&args.scene, &schemas.registry)?;
+        fixed.report = fixer.fix(&mut fixed_world)?;
+        if !fixed.report.actions.is_empty() {
+            // Write only what the fixes changed (#677): the file keeps its
+            // name, look, camera, wooze field, prefabs and comments.
+            let mut doc = SceneDocument::from_file(&args.scene).map_err(anyhow::Error::msg)?;
+            let before_text = doc.to_string();
+            fixed.not_written = doc.apply_world_diff(&world, &fixed_world);
+            doc.save(&args.scene).map_err(anyhow::Error::msg)?;
+            fixed.saved = true;
+            if args.output_diff {
+                fixed.diff = Some(compute_scene_diff(&before_text, &doc.to_string()));
+            }
         }
+        evaluate(&fixed_world)
+    };
 
-        if !report.is_valid() {
-            std::process::exit(1);
+    if json {
+        print_json(report_json(&report, &diagnostics, Some(&fixed)));
+    } else {
+        print!("{}", fix_text(&args.scene, &fixed));
+        for problem in &fixed.not_written {
+            eprintln!("  not written: {problem}");
+        }
+        // Nothing here fixes a zone, a misspelled field or a constraint
+        // with no fix, so a fixed scene can still be a bad one
+        if !report.violations.is_empty() || !diagnostics.is_empty() {
+            println!();
+            print_report_text(&args.scene, &report, &diagnostics, no_constraints);
         }
     }
-
+    if !report.is_valid() || diagnostic::has_errors(&diagnostics) {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
-/// What's wrong with the scene's `[wooze]` table, as violations of a constraint
-/// that isn't about any entity. A table that doesn't parse at all, such as one
-/// with a misspelt key, is an error here, with the parser's words for it.
-fn wooze_violations(scene: &str, schemas: &SchemaRegistry) -> Result<Vec<Violation>> {
-    let text = std::fs::read_to_string(scene).with_context(|| format!("reading {scene}"))?;
-    let mut file: SceneFile = toml::from_str(&text).with_context(|| format!("parsing {scene}"))?;
-    let preset_issues = flint_scene::apply_preset_file(&mut file, std::path::Path::new(scene));
-    let Some(table) = file.wooze else {
-        return Ok(Vec::new());
-    };
-    let issues = preset_issues.into_iter().chain(table.check(schemas));
-    Ok(issues
-        .map(|issue| Violation {
-            constraint_name: "wooze".to_string(),
-            entity_name: issue.zone.clone().unwrap_or_else(|| "[wooze]".to_string()),
-            entity_id: EntityId::from_raw(0),
-            severity: Severity::Error,
-            message: issue.to_string(),
-            has_auto_fix: false,
-        })
-        .collect())
-}
-
-/// What's wrong with the scene's `[living.species.<spec>]` tables (#246): a value
-/// the player would leave out, and a species no living prop in the scene grows
-/// from, which is most likely a misspelt spec name and would change nothing.
-fn species_violations(scene: &str, schemas: &SchemaRegistry) -> Result<Vec<Violation>> {
-    let text = std::fs::read_to_string(scene).with_context(|| format!("reading {scene}"))?;
-    let mut file: SceneFile = toml::from_str(&text).with_context(|| format!("parsing {scene}"))?;
-    // A preset the scene names can hold species too, laid under its own.
-    flint_scene::apply_preset_file(&mut file, std::path::Path::new(scene));
-    let Some(living) = file.living.filter(|living| !living.species.is_empty()) else {
-        return Ok(Vec::new());
-    };
-    let (world, _) = load_scene(scene, schemas)?;
-    let mut grown: Vec<String> = world
-        .all_entities()
-        .iter()
-        .filter_map(|entity| {
-            let comps = world.get_components(entity.id)?;
-            comps.get(flint_core::components::LIVING_PROP)?;
-            let asset = comps.get(flint_core::components::MODEL)?.get("asset")?;
-            Some(asset.as_str()?.to_string())
-        })
-        .collect();
-    grown.sort();
-    grown.dedup();
-
-    let violation = |name: &str, message: String| Violation {
-        constraint_name: "living_species".to_string(),
-        entity_name: format!("[living.species.{name}]"),
-        entity_id: EntityId::from_raw(0),
-        severity: Severity::Error,
-        message,
-        has_auto_fix: false,
-    };
-    let mut violations = Vec::new();
-    for (name, def) in &living.species {
-        for problem in flint_player::species_problems(def) {
-            violations.push(violation(name, problem));
-        }
-        if !grown.contains(name) {
-            let species = if grown.is_empty() {
-                "it has no living props".to_string()
-            } else {
-                format!("its living props grow from {}", grown.join(", "))
-            };
-            violations.push(violation(
-                name,
-                format!(
-                    "no living prop in this scene grows from '{name}', \
-                     so it changes nothing; {species}"
-                ),
-            ));
-        }
-    }
-    Ok(violations)
-}
-
-/// Report violations with no constraint run to go with them, and fail.
-fn print_and_fail(violations: Vec<Violation>, format: &str) -> ! {
-    let report = ValidationReport { violations };
-    if format == "json" {
-        print_report_json(&report);
+/// What `--fix` or `--dry-run` did, as text.
+fn fix_text(scene: &str, fixed: &Fixed) -> String {
+    let report = &fixed.report;
+    let mut out = if fixed.dry_run {
+        format!("Dry run results ({} iteration(s)):\n", report.iterations)
     } else {
-        print_report_text(&report);
+        format!("Fix results ({} iteration(s)):\n", report.iterations)
+    };
+    if fixed.dry_run && report.actions.is_empty() {
+        out.push_str("  No fixes would be applied.\n");
     }
-    std::process::exit(1)
+    for action in &report.actions {
+        out.push_str(&format!(
+            "  [{}] {} — {}\n",
+            action.strategy, action.entity_name, action.description
+        ));
+    }
+    if report.remaining_violations > 0 {
+        let verb = if fixed.dry_run {
+            "would remain"
+        } else {
+            "remain"
+        };
+        out.push_str(&format!(
+            "\n  {} violation(s) {verb} after fixes.\n",
+            report.remaining_violations
+        ));
+    }
+    if report.cycle_detected {
+        out.push_str("  Warning: Fix cycle detected.\n");
+    }
+    if fixed.saved {
+        out.push_str(&format!("\nScene saved to {scene}\n"));
+    }
+    if let Some(diff) = &fixed.diff {
+        out.push_str(&format!("\nDiff:\n{diff}"));
+    }
+    out
 }
 
-fn print_report_text(report: &flint_constraint::ValidationReport) {
+/// The whole report as text: the scene's diagnostics (if any), then the
+/// constraint violations.
+fn print_report_text(
+    scene: &str,
+    report: &ValidationReport,
+    diagnostics: &[Diagnostic],
+    no_constraints: bool,
+) {
+    print!("{}", diagnostics_text(scene, diagnostics));
+    if no_constraints && report.violations.is_empty() {
+        if diagnostics.is_empty() {
+            println!("No problems found.");
+        }
+        println!("No constraints found in the schema directories; schemas were checked.");
+    } else {
+        print_violations_text(report);
+    }
+}
+
+/// The full list (ADR 0115 decision 2), errors first: a count line, then
+/// each diagnostic with its hint on the line below. Empty when there are
+/// none.
+fn diagnostics_text(scene: &str, diagnostics: &[Diagnostic]) -> String {
+    if diagnostics.is_empty() {
+        return String::new();
+    }
+    let mut ordered = diagnostics.to_vec();
+    diagnostic::sort_errors_first(&mut ordered);
+    let mut out = format!("{scene}: {}\n\n", diagnostic::counts_line(diagnostics));
+    for d in &ordered {
+        // One about another file (a schema file's lint) names it
+        let elsewhere = d
+            .file
+            .as_deref()
+            .filter(|file| !flint_core::project::same_path(file, std::path::Path::new(scene)))
+            .map(|file| format!("{}: ", flint_core::project::shown(file)))
+            .unwrap_or_default();
+        // A parse error's message runs over several lines
+        out.push_str(&format!(
+            "  {elsewhere}{}\n",
+            d.to_string().replace('\n', "\n    ")
+        ));
+        if let Some(hint) = &d.hint {
+            out.push_str(&format!("      hint: {hint}\n"));
+        }
+    }
+    out.push('\n');
+    out
+}
+
+fn print_violations_text(report: &ValidationReport) {
     if report.violations.is_empty() {
         println!("All constraints passed.");
         return;
@@ -342,7 +417,18 @@ fn print_report_text(report: &flint_constraint::ValidationReport) {
     }
 }
 
-fn print_report_json(report: &flint_constraint::ValidationReport) {
+fn print_json(document: serde_json::Value) {
+    println!("{}", serde_json::to_string_pretty(&document).unwrap());
+}
+
+/// The report as one JSON document. With `--fix` or `--dry-run` it also has
+/// a `fix` object, and `violations` are those of the file as the run left
+/// it.
+fn report_json(
+    report: &ValidationReport,
+    diagnostics: &[Diagnostic],
+    fixed: Option<&Fixed>,
+) -> serde_json::Value {
     let violations: Vec<serde_json::Value> = report
         .violations
         .iter()
@@ -357,14 +443,57 @@ fn print_report_json(report: &flint_constraint::ValidationReport) {
         })
         .collect();
 
-    let output = serde_json::json!({
-        "valid": report.is_valid(),
-        "summary": report.summary(),
-        "errors": report.error_count(),
-        "warnings": report.warning_count(),
+    // One count over both lists: `valid` is "no error of either kind"
+    let errors = report.error_count() + diagnostic::count(diagnostics, diagnostic::Severity::Error);
+    let warnings =
+        report.warning_count() + diagnostic::count(diagnostics, diagnostic::Severity::Warning);
+    let summary = if diagnostics.is_empty() {
+        report.summary()
+    } else if report.violations.is_empty() {
+        format!(
+            "schema diagnostics: {}",
+            diagnostic::counts_line(diagnostics)
+        )
+    } else {
+        format!(
+            "{}; schema diagnostics: {}",
+            report.summary(),
+            diagnostic::counts_line(diagnostics)
+        )
+    };
+    let mut output = serde_json::json!({
+        "valid": errors == 0,
+        "summary": summary,
+        "errors": errors,
+        "warnings": warnings,
         "info": report.info_count(),
         "violations": violations,
+        "diagnostics": diagnostics,
     });
-
-    println!("{}", serde_json::to_string_pretty(&output).unwrap());
+    if let Some(fixed) = fixed {
+        let actions: Vec<serde_json::Value> = fixed
+            .report
+            .actions
+            .iter()
+            .map(|a| {
+                serde_json::json!({
+                    "constraint": a.constraint_name,
+                    "entity": a.entity_name,
+                    "strategy": a.strategy,
+                    "description": a.description,
+                })
+            })
+            .collect();
+        output["fix"] = serde_json::json!({
+            "dry_run": fixed.dry_run,
+            "iterations": fixed.report.iterations,
+            "actions": actions,
+            "remaining_violations": fixed.report.remaining_violations,
+            "cycle_detected": fixed.report.cycle_detected,
+            "saved": fixed.saved,
+            "not_written": fixed.not_written,
+            "diff": fixed.diff,
+        });
+    }
+    output
 }

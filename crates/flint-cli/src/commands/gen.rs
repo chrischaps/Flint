@@ -51,7 +51,8 @@ pub enum ReportFormat {
 ))]
 pub struct GenArgs {
     /// Path to a .procgen.toml spec file (not needed with --ai-create or
-    /// --cost-report)
+    /// --cost-report), or a .glyphs.toml glyph set to preview: its atlas,
+    /// ramps and a specimen as one sheet (-o x.png) or every piece (-o dir/)
     #[arg(required_unless_present_any = ["ai_create", "cost_report"])]
     pub spec: Option<String>,
 
@@ -296,6 +297,13 @@ pub fn run(args: GenArgs) -> Result<()> {
             args.since.as_deref(),
         );
     }
+    if args
+        .spec
+        .as_deref()
+        .is_some_and(super::glyph_preview::is_glyph_set)
+    {
+        return super::glyph_preview::run(&args);
+    }
     let json = args.report == Some(ReportFormat::Json);
     HUMAN_TO_STDERR.store(args.print_spec || json, Ordering::Relaxed);
 
@@ -496,8 +504,9 @@ pub fn run(args: GenArgs) -> Result<()> {
     let batch_total = args.batch;
 
     // The project's store, wherever in the project this runs from (#179).
-    let store = args.register.then(|| {
-        let project = flint_asset::Project::current();
+    let store = if args.register {
+        use flint_asset::ProjectStore;
+        let project = flint_asset::Project::current()?;
         let store = gen_store::Store::open_project(&project);
         say!(
             "Store:      {} (project {}, by {})",
@@ -505,8 +514,10 @@ pub fn run(args: GenArgs) -> Result<()> {
             flint_asset::Project::display(&project.root),
             project.found.describe()
         );
-        store
-    });
+        Some(store)
+    } else {
+        None
+    };
     let spec_hash = match (args.register, &ai_spec_text, &args.spec) {
         (false, _, _) => None,
         (true, Some(text), _) => Some(ContentHash::from_bytes(text.as_bytes())),

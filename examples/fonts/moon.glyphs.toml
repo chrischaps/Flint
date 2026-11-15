@@ -1,0 +1,21 @@
+# Moon (#935): Noto Emoji, the monochrome emoji, which has no letters at all.
+# Tone is the phase of the moon, or the weather from a clear sky to a storm.
+default_ramp = "phases"
+
+[font]
+file = "ofl/NotoEmoji/NotoEmoji-Regular.ttf"   # OFL 1.1, subset, pinned to weight 400: beside it, OFL.txt
+size = 16
+
+[ramps.phases]
+glyphs = " 🌕🌔🌓🌒🌑"
+map = "coverage"
+
+[ramps.weather]
+glyphs = " ☀🌤⛅☁🌧⛈"
+map = "coverage"
+
+[edges]
+horizontal = "✨"
+vertical = "✨"
+diagonal = "✨"
+antidiagonal = "✨"

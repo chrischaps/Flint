@@ -1,0 +1,216 @@
+# Sun Prints (#430): a garden printed in sunlight, after Anna Atkins'
+# "Photographs of British Algae" (1843), the first book of photographs.
+#
+# Everything you see is the game's own cyanotype (styles/cyanotype.*), a
+# user-authored style: a .shader.toml and two WGSL functions, loaded at run
+# time, which on play.chaps.dev the browser compiles. The sky is the light
+# that reached the paper and turned it Prussian blue; the palms, the stones
+# and their shadows are what lay on it and stayed white.
+#
+# The print develops as you stand in the sun (scripts/sun_prints.rhai
+# eases the exposure up), and E turns the negative over.
+#
+#   flint render tools/play-site/sunprint/sun_prints.scene.toml --output print.png
+#   flint render tools/play-site/sunprint/sun_prints.scene.toml --style cyanotype:strength=0
+#   cargo run --bin flint -- play tools/play-site/sunprint/sun_prints.scene.toml
+#   flint export web tools/play-site/sunprint     # the site's build: tools/play-site/games.toml
+
+[scene]
+name = "Sun Prints"
+version = "1.0"
+description = "A garden printed in sunlight by a user-authored cyanotype style"
+# The touch layout: a stick and the negative's button
+input_config = "config/input.toml"
+
+[camera]
+position = [0.0, 1.6, -9.0]
+target = [0.0, 2.4, 0.0]
+fov = 62.0
+
+[post_process]
+exposure = 1.05
+bloom_enabled = false
+vignette_enabled = false
+ssao_enabled = true
+ssao_radius = 0.8
+ssao_intensity = 0.6
+
+[post_process.styles.cyanotype]
+process = "photogram"
+exposure = 1.3
+bleed = 0.45
+coating = 0.07
+grain = 0.55
+
+[entities.darkroom]
+[entities.darkroom.script]
+source = "sun_prints.rhai"
+
+# A pale sky: the light that prints
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.62, 0.72, 0.86, 1.0]
+horizon_color = [0.98, 0.92, 0.84, 1.0]
+haze_color = [1.0, 0.95, 0.88, 0.6]
+cloud_coverage = 0.22
+star_opacity = 0.0
+ambient_sky = [0.16, 0.17, 0.20]
+ambient_ground = [0.10, 0.09, 0.08]
+
+# Low sun ahead, so the fronds stand against the bright sky and every shadow
+# runs back toward the walker
+[entities.sun]
+[entities.sun.light]
+type = "directional"
+direction = [0.2, 0.42, 0.88]
+color = [1.0, 0.93, 0.82]
+intensity = 2.2
+
+# A middling ground: it prints a pale blue, and the shadows on it stay paper
+[entities.ground]
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-40, -0.4, -40]
+max = [40, 0, 40]
+[entities.ground.material]
+color = [0.42, 0.40, 0.36, 1.0]
+roughness = 0.95
+[entities.ground.rigidbody]
+body_type = "static"
+[entities.ground.collider]
+shape = "box"
+size = [80, 0.4, 80]
+friction = 0.8
+
+[entities.walker]
+archetype = "player"
+[entities.walker.transform]
+position = [0.0, 1.0, -9.0]
+[entities.walker.character_controller]
+move_speed = 2.6
+jump_force = 4.5
+camera_mode = "first_person"
+
+# --- The palms: an avenue toward the sun, then a grove around a clearing ---
+
+[entities.palm_a]
+[entities.palm_a.transform]
+position = [-2.6, 0, -3.0]
+rotation = [0, 20, 0]
+[entities.palm_a.model]
+asset = "palm_two_sided"
+
+[entities.palm_b]
+[entities.palm_b.transform]
+position = [2.8, 0, -1.6]
+rotation = [0, 140, 0]
+scale = [0.85, 0.85, 0.85]
+[entities.palm_b.model]
+asset = "palm_two_sided"
+
+[entities.palm_c]
+[entities.palm_c.transform]
+position = [-3.4, 0, 3.2]
+rotation = [0, 250, 0]
+scale = [1.2, 1.2, 1.2]
+[entities.palm_c.model]
+asset = "palm_two_sided"
+
+[entities.palm_d]
+[entities.palm_d.transform]
+position = [3.6, 0, 4.6]
+rotation = [0, 75, 0]
+scale = [1.05, 1.05, 1.05]
+[entities.palm_d.model]
+asset = "palm_two_sided"
+
+[entities.palm_e]
+[entities.palm_e.transform]
+position = [-0.8, 0, 9.5]
+rotation = [0, 310, 0]
+scale = [1.4, 1.4, 1.4]
+[entities.palm_e.model]
+asset = "palm_two_sided"
+
+[entities.palm_f]
+[entities.palm_f.transform]
+position = [6.5, 0, 11.0]
+rotation = [0, 190, 0]
+scale = [0.75, 0.75, 0.75]
+[entities.palm_f.model]
+asset = "palm_two_sided"
+
+[entities.palm_g]
+[entities.palm_g.transform]
+position = [-7.0, 0, 8.0]
+rotation = [0, 35, 0]
+scale = [0.95, 0.95, 0.95]
+[entities.palm_g.model]
+asset = "palm_two_sided"
+
+[entities.palm_h]
+[entities.palm_h.transform]
+position = [-6.2, 0, -6.5]
+rotation = [0, 100, 0]
+scale = [0.7, 0.7, 0.7]
+[entities.palm_h.model]
+asset = "palm_two_sided"
+
+[entities.palm_i]
+[entities.palm_i.transform]
+position = [7.2, 0, -5.0]
+rotation = [0, 285, 0]
+scale = [1.1, 1.1, 1.1]
+[entities.palm_i.model]
+asset = "palm_two_sided"
+
+# --- Stones in the clearing: slabs that cast long paper shadows ---
+
+[entities.stone_tall]
+[entities.stone_tall.transform]
+position = [0.9, 0, 5.0]
+rotation = [0, 12, 0]
+[entities.stone_tall.bounds]
+min = [-0.35, 0, -0.18]
+max = [0.35, 2.3, 0.18]
+[entities.stone_tall.material]
+color = [0.30, 0.28, 0.26, 1.0]
+roughness = 0.9
+[entities.stone_tall.rigidbody]
+body_type = "static"
+[entities.stone_tall.collider]
+shape = "box"
+size = [0.7, 2.3, 0.36]
+
+[entities.stone_low]
+[entities.stone_low.transform]
+position = [-1.4, 0, 6.2]
+rotation = [0, -25, 0]
+[entities.stone_low.bounds]
+min = [-0.6, 0, -0.25]
+max = [0.6, 1.1, 0.25]
+[entities.stone_low.material]
+color = [0.30, 0.28, 0.26, 1.0]
+roughness = 0.9
+[entities.stone_low.rigidbody]
+body_type = "static"
+[entities.stone_low.collider]
+shape = "box"
+size = [1.2, 1.1, 0.5]
+
+[entities.stone_lintel]
+[entities.stone_lintel.transform]
+position = [2.2, 0, 7.4]
+rotation = [0, 40, 0]
+[entities.stone_lintel.bounds]
+min = [-0.25, 0, -0.25]
+max = [0.25, 1.6, 0.25]
+[entities.stone_lintel.material]
+color = [0.30, 0.28, 0.26, 1.0]
+roughness = 0.9
+[entities.stone_lintel.rigidbody]
+body_type = "static"
+[entities.stone_lintel.collider]
+shape = "box"
+size = [0.5, 1.6, 0.5]

@@ -1,0 +1,69 @@
+# The one list of methods Flint's code may not call (#761). Clippy reads it
+# for every workspace crate without a clippy.toml of its own, so the
+# `cargo clippy` an agent already runs reports a broken rule at once, and the
+# wasm check (scripts/wasm-check.sh) reads this same file. Nothing here is
+# written twice: scripts/clippy-conf.sh makes every other list from this one,
+# and `bash scripts/ci.sh` fails when a copy is stale.
+#
+# Two groups, between the marker lines the script reads:
+#
+#   every-crate   wgpu and egui seams, held in every crate that draws: denied
+#                 (`[lints.clippy]`) in flint-render, flint-player,
+#                 flint-viewer, flint-cli and flint-debug-ui. The tool crates
+#                 (TOOL_CRATES in scripts/clippy-conf.sh: the CLI, the viewer,
+#                 asset-gen, procgen-ai, arch-analyzer) get a copy of this
+#                 group alone as their own clippy.toml.
+#   runtime       what a crate the player links must not do on any target:
+#                 read the disk past flint_core::vfs (#97), which a bundle
+#                 (`flint-player --bundle`, the web) and a test's
+#                 `vfs::scoped` stand in for natively too, and read a TOML
+#                 number with `as_float` (#685). Warned in every runtime crate
+#                 (`[workspace.lints]`), denied in the ones above.
+#
+# A third group can't be checked natively: on native `web_time::Instant` IS
+# `std::time::Instant`, so a ban on `Instant::now` would flag every correct
+# call. Those rules (the clock calls that panic on wasm32, and winit's cursor
+# grab, which throws on iOS) are scripts/wasm-clippy/wasm-only.toml, added to
+# this list for the wasm check alone.
+#
+# Writes, hot reload's polling, the OS user directory, the procgen disk cache,
+# tests and examples stay on std::fs: each allowed site says why
+# (`#[allow(clippy::disallowed_methods)] // <reason>`), a test file or module
+# once at its top.
+disallowed-methods = [
+    # >>> every-crate
+    # #944/#945: built-in WGSL goes through flint_render::TrustedShader, which
+    # is create_shader_module_trusted without loop bounding. User styles
+    # (stylize/custom.rs) keep the checked call.
+    { path = "wgpu::Device::create_shader_module", reason = "built-in WGSL: use flint_render::TrustedShader::create_trusted_shader_module; user style WGSL keeps the checked call (#944)" },
+    { path = "wgpu::Device::create_shader_module_trusted", reason = "built-in WGSL: use flint_render::TrustedShader::create_trusted_shader_module, the one place that picks the checks (#945)" },
+    { path = "wgpu::Device::create_shader_module_unchecked", reason = "built-in WGSL: use flint_render::TrustedShader::create_trusted_shader_module; bounds and division checks stay on (#945)" },
+    # #944: wgpu 29 changed what this returns; flint_render::AcquireFrame is the one place that knows.
+    { path = "wgpu::Surface::get_current_texture", reason = "take the frame with flint_render::AcquireFrame::acquire (#944)" },
+    # #944: egui 0.36 asserts when a FullOutput drops with texture updates in it.
+    # Tests run frames with flint_debug_ui::run_headless_frame; a real frame
+    # uploads its deltas, clears them, and allows this.
+    # #948: wgpu 30 waits without a limit unless asked; flint_render::wait_for_gpu
+    # gives every wait FLINT_GPU_WAIT_TIMEOUT, so a hung GPU on CI fails fast.
+    { path = "wgpu_types::PollType::wait_indefinitely", reason = "block on the GPU with flint_render::wait_for_gpu, which takes FLINT_GPU_WAIT_TIMEOUT (#948)" },
+    { path = "egui::Context::run_ui", reason = "a test's frame is flint_debug_ui::run_headless_frame; a host that uploads its texture updates allows this (#944)" },
+    # <<< every-crate
+    # >>> runtime
+    # #685, ADR 0115: `as_float` reads a TOML integer as nothing, so
+    # `speed = 8` silently became the default. Read a component through
+    # `FlintWorld::view`, any other table through `flint_core::toml_util`.
+    { path = "toml::Value::as_float", reason = "reads an integer as nothing, so `speed = 8` falls back to the default; use FlintWorld::view / ComponentView for a component, flint_core::toml_util::toml_f64 otherwise (#685)" },
+    # #97: every runtime read goes through flint_core::vfs, which the web
+    # player and `flint-player --bundle` back with a bundle and a test with
+    # `vfs::scoped`. A read past it finds the disk, or nothing on wasm32.
+    { path = "std::fs::read", reason = "reads past the vfs, so a bundle or vfs::scoped never sees it and wasm32 has no disk; use flint_core::vfs::read (#97)" },
+    { path = "std::fs::read_to_string", reason = "reads past the vfs, so a bundle or vfs::scoped never sees it and wasm32 has no disk; use flint_core::vfs::read_to_string (#97)" },
+    { path = "std::fs::read_dir", reason = "reads past the vfs, so a bundle or vfs::scoped never sees it and wasm32 has no disk; use flint_core::vfs::read_dir (#97)" },
+    { path = "std::fs::File::open", reason = "reads past the vfs, so a bundle or vfs::scoped never sees it and wasm32 has no disk; read the bytes with flint_core::vfs::read (#97)" },
+    { path = "std::path::Path::exists", reason = "asks the disk, not the vfs, so a bundle or vfs::scoped never answers; use flint_core::vfs::exists (#97)" },
+    { path = "std::path::Path::is_file", reason = "asks the disk, not the vfs, so a bundle or vfs::scoped never answers; use flint_core::vfs::is_file (#97)" },
+    { path = "std::path::Path::is_dir", reason = "asks the disk, not the vfs, so a bundle or vfs::scoped never answers; use flint_core::vfs::is_dir (#97)" },
+    { path = "image::open", reason = "reads the disk past the vfs; use flint_render::open_image (#97)" },
+    { path = "gltf::import", reason = "reads the disk past the vfs; use flint_import::import_gltf (#97)" },
+    # <<< runtime
+]

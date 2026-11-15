@@ -1,4 +1,9 @@
+# Pins a 2D sprite or text to the screen (flint-render `extract.rs`). Every
+# default below is the value the reader falls back to (#792).
 [component.screen_anchor]
-anchor = { type = "string", default = "center", description = "Screen anchor point: top-left, top-center, top-right, center-left, center, center-right, bottom-left, bottom-center, bottom-right" }
+description = "Pins a 2D sprite or ui_text to a point on the screen"
+
+[component.screen_anchor.fields]
+anchor = { type = "enum", values = ["top-left", "top-center", "top-right", "center-left", "center", "center-right", "bottom-left", "bottom-center", "bottom-right"], default = "center", description = "Screen anchor point" }
 offset_x = { type = "f32", default = 0.0, description = "Horizontal offset from anchor point in world units" }
 offset_y = { type = "f32", default = 0.0, description = "Vertical offset from anchor point in world units" }

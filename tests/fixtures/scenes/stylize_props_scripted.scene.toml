@@ -1,0 +1,48 @@
+# Stylize props, styled by a script (#371): tests/fixtures/scenes/stylize_props_ascii.scene.toml's
+# clearing, with the same two props authored in ASCII, and a director whose
+# script (scripts/story_beat.rhai) takes their style off at the first frame
+# and gives it back at 2 s. So:
+#
+#   --script-time 1   the props are smooth: the script has cleared them
+#   --script-time 3   the props are glyphs again, put back by the script
+#   --time 3          the props are glyphs as authored: no script ran
+#
+# and the goldens hold the last two equal, pixel for pixel: a style a script
+# sets is the style the scene could have said. The clearing is
+# tests/fixtures/scenes/prefabs/stylize_props.prefab.toml.
+#
+#   cargo run --bin flint -- render tests/fixtures/scenes/stylize_props_scripted.scene.toml --no-grid --script-time 3 --output beat.png
+
+[scene]
+name = "Stylize Props (scripted)"
+version = "1.0"
+description = "The ASCII props, held smooth by a script until a beat at 2 s, for the scripted-render goldens (#371)"
+
+[camera]
+position = [3.4, 1.7, 9.0]
+target = [0.7, 0.7, 4.2]
+fov = 50.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.05
+bloom_threshold = 1.2
+exposure = 1.25
+vignette_enabled = true
+vignette_intensity = 0.25
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+
+[prefabs.props]
+template = "stylize_props"
+prefix = "props"
+
+[prefabs.props.overrides.barrel.style_mask]
+style = "ascii"
+[prefabs.props.overrides.ybot.style_mask]
+style = "ascii"
+
+[entities.director]
+[entities.director.script]
+source = "story_beat.rhai"

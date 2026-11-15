@@ -12,6 +12,9 @@
 //!
 //! `blend` (0 to 1) is a setting every style takes: how much of its result
 //! shows over what it read. Ramping it is a cross-fade into the style.
+//! `reveal` (0 to 1, #406) is another: how much of the screen the style
+//! shows on, a ragged region (`reveal_shape`) with a drawn edge. Ramping it
+//! tears the frame open into the style.
 
 use crate::postprocess::PostProcessConfig;
 use crate::stylize::{self, StyleDescriptor, StyleStage};
@@ -39,9 +42,10 @@ pub fn set_post_style(
 /// Set one setting of style `name`: a parameter (a number, clamped to the
 /// style's range), an option (a string, one of its choices when the list is
 /// closed), a colour (`tint`: three numbers or `"#rrggbb"`), `enabled`
-/// (true or false), `blend` (0 to 1), `order` (a number) or, for an HDR
-/// style, `feeds_bloom` (true or false). Setting a parameter doesn't switch
-/// the style on.
+/// (true or false), `blend` (0 to 1), `order` (a number), the reveal's
+/// keys (#406: `reveal` 0 to 1, `reveal_shape`, `reveal_ink`,
+/// `reveal_rim_color`, the `reveal_*` numbers) or, for an HDR style, `feeds_bloom` (true or
+/// false). Setting a parameter doesn't switch the style on.
 pub fn set_post_style_param(
     config: &mut PostProcessConfig,
     name: &str,
@@ -49,10 +53,7 @@ pub fn set_post_style_param(
     value: toml::Value,
 ) -> Result<(), String> {
     let d = style(name)?;
-    let number = value
-        .as_float()
-        .or_else(|| value.as_integer().map(|i| i as f64))
-        .filter(|n| n.is_finite());
+    let number = flint_core::toml_util::toml_f64(&value).filter(|n| n.is_finite());
     let wrong = |want: &str| {
         Err(format!(
             "`{name}` setting `{param}` takes {want}, not {}",
@@ -82,6 +83,12 @@ pub fn set_post_style_param(
             Some(feeds) => styles.set_feeds_bloom(d.name, Some(feeds)),
             None => return wrong("true or false"),
         },
+        _ if stylize::reveal::is_key(param) => {
+            // Clamped, as a parameter is
+            styles
+                .set_reveal(d.name, param, &value, false)
+                .map_err(|e| format!("`{name}` setting {e}"))?;
+        }
         _ => {
             if let Some(p) = d.params.iter().find(|p| p.name == param) {
                 match number {
@@ -113,7 +120,7 @@ pub fn set_post_style_param(
             } else {
                 let known = d.setting_keys();
                 return Err(format!(
-                    "`{name}` has no setting `{param}`; it takes enabled, blend, {}",
+                    "`{name}` has no setting `{param}`; it takes enabled, blend, reveal, {}",
                     if known.is_empty() {
                         "nothing else".to_string()
                     } else {
@@ -124,6 +131,45 @@ pub fn set_post_style_param(
         }
     }
     Ok(())
+}
+
+/// The number style `name`'s setting `param` has in `config` now, where a
+/// tween of it starts (#406, `tween_post_style_param`): `blend`, `reveal`
+/// (0 when the style has none, so a tween from there is a tear opening), a
+/// `reveal_*` number, or a parameter. Not a number setting: an error naming
+/// what it is.
+pub fn post_style_number(
+    config: &PostProcessConfig,
+    name: &str,
+    param: &str,
+) -> Result<f32, String> {
+    let d = style(name)?;
+    let styles = &config.styles;
+    if param == "blend" {
+        return Ok(styles.blend(d.name));
+    }
+    if param == "reveal" {
+        return Ok(styles.reveal(d.name).and_then(|r| r.amount).unwrap_or(0.0));
+    }
+    if stylize::reveal::NUMBERS.iter().any(|n| n.key == param) {
+        let reveal = styles
+            .get(d.name)
+            .map(|s| s.reveal.clone())
+            .unwrap_or_default();
+        return Ok(reveal.number(param));
+    }
+    if d.params.iter().any(|p| p.name == param) {
+        return Ok(d.param(config, param));
+    }
+    Err(format!(
+        "`{name}` setting `{param}` isn't a number to ease; numbers: blend, reveal, {}",
+        d.params
+            .iter()
+            .map(|p| p.name)
+            .chain(stylize::reveal::NUMBERS.iter().map(|n| n.key))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
 }
 
 /// Put style `name` back to what `authored` (the scene's own config) says:

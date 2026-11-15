@@ -1,0 +1,13 @@
+# Packing rules for {{name}}'s web build.
+#
+#   flint bundle .    # checks every reference, then writes dist/{{id}}.flintpack
+#
+# The bundle's name and start scene come from flint.toml ([project] id and
+# scene). Everything in the project is packed except build output, renders,
+# dot-files and what an `exclude = ["pattern/**"]` list here drops.
+{{bundle_engine}}
+# What the web page says while the game loads.
+[web]
+title = "{{name}}"
+line = "A new game on the Flint engine."
+controls = "{{controls}}"

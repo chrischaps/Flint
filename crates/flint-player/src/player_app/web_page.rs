@@ -62,7 +62,9 @@ pub(super) fn safe_area_insets() -> [f32; 4] {
 
 /// Read the probe's padding into [`safe_area_insets`].
 fn measure_safe_area() {
-    let Some(window) = web_sys::window() else { return };
+    let Some(window) = web_sys::window() else {
+        return;
+    };
     let style = document()
         .and_then(|d| d.get_element_by_id(SAFE_AREA_PROBE_ID))
         .and_then(|probe| window.get_computed_style(&probe).ok().flatten());
@@ -185,6 +187,36 @@ pub(super) fn exit_lock() {
     }
 }
 
+/// A script's `quit_game()` on the web (#659): a page has no window to
+/// close, so it lets go of full screen and goes back to its doorway, when
+/// there is one. The page's `window.flintQuit` does both (`index.html`);
+/// without it (a page of a game's own) full screen is left here. The
+/// pointer lock is let go of before either, by the caller.
+pub(super) fn quit() {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    if let Ok(quit) = js_sys::Reflect::get(&window, &"flintQuit".into())
+        .and_then(|f| f.dyn_into::<js_sys::Function>())
+    {
+        if let Err(e) = quit.call0(&window) {
+            tracing::warn!("flintQuit: {e:?}");
+        }
+        return;
+    }
+    let Some(document) = document() else { return };
+    // Looked up as `exitPointerLock` is: not every browser has it.
+    let held = js_sys::Reflect::get(&document, &"fullscreenElement".into())
+        .is_ok_and(|e| !e.is_null() && !e.is_undefined());
+    if let (true, Ok(exit)) = (
+        held,
+        js_sys::Reflect::get(&document, &"exitFullscreen".into())
+            .and_then(|f| f.dyn_into::<js_sys::Function>()),
+    ) {
+        let _ = exit.call0(&document);
+    }
+}
+
 impl PlayerApp {
     /// At a resize: how the canvas's pixels compare with the CSS pixels
     /// times `devicePixelRatio` that winit puts touches in.
@@ -232,7 +264,7 @@ impl PlayerApp {
             self.pointer_lock.requested_at = None;
             return;
         }
-        if !self.cursor_captured {
+        if !self.focus.cursor_captured {
             return;
         }
         if was_held {

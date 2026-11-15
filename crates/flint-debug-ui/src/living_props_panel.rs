@@ -8,7 +8,7 @@
 
 use crate::DebugPanel;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
-use flint_scene::{
+use flint_procgen::{
     BoilDef, LivingDef, LivingEchoesDef, LivingVarianceDef, WoozeKnobs, WoozePreset,
 };
 
@@ -51,6 +51,8 @@ pub struct LivingKnobs {
     pub variance_amount: f32,
     pub variance_steady: f32,
     pub keep_size: bool,
+    /// How soft the silhouette is (#582): 0 a hard edge.
+    pub softness: f32,
 }
 
 impl Default for LivingKnobs {
@@ -85,6 +87,7 @@ impl LivingKnobs {
             variance_amount: variance.amount.unwrap_or(0.35),
             variance_steady: variance.steady.unwrap_or(0.8),
             keep_size: variance.keep_size.unwrap_or(true),
+            softness: preset.living.softness.unwrap_or(0.0),
         }
     }
 
@@ -110,6 +113,7 @@ impl LivingKnobs {
                     steady: Some(self.variance_steady),
                     keep_size: Some(self.keep_size),
                 }),
+                softness: Some(self.softness),
                 ..Default::default()
             },
             boil: Some(BoilDef {
@@ -167,6 +171,7 @@ impl LivingKnobs {
                 stagger: pick(&self.stagger, &before.stagger, t.stagger),
                 echoes: (echoes != LivingEchoesDef::default()).then_some(echoes),
                 variance: (variance != LivingVarianceDef::default()).then_some(variance),
+                softness: pick(&self.softness, &before.softness, t.softness),
                 ..Default::default()
             },
             boil: (boil != BoilDef::default()).then_some(boil),
@@ -189,6 +194,7 @@ pub struct KnobFlags {
     pub variance_amount: bool,
     pub variance_steady: bool,
     pub keep_size: bool,
+    pub softness: bool,
 }
 
 impl KnobFlags {
@@ -206,6 +212,7 @@ impl KnobFlags {
             Knob::VarianceAmount => self.variance_amount,
             Knob::VarianceSteady => self.variance_steady,
             Knob::KeepSize => self.keep_size,
+            Knob::Softness => self.softness,
         }
     }
 
@@ -223,6 +230,7 @@ impl KnobFlags {
             Knob::VarianceAmount => &mut self.variance_amount,
             Knob::VarianceSteady => &mut self.variance_steady,
             Knob::KeepSize => &mut self.keep_size,
+            Knob::Softness => &mut self.softness,
         };
         *flag = on;
     }
@@ -248,6 +256,7 @@ impl KnobFlags {
             variance_amount: variance.amount.is_some(),
             variance_steady: variance.steady.is_some(),
             keep_size: variance.keep_size.is_some(),
+            softness: preset.living.softness.is_some(),
         }
     }
 
@@ -265,6 +274,7 @@ impl KnobFlags {
             variance_amount: self.variance_amount && !other.variance_amount,
             variance_steady: self.variance_steady && !other.variance_steady,
             keep_size: self.keep_size && !other.keep_size,
+            softness: self.softness && !other.softness,
         }
     }
 }
@@ -283,10 +293,11 @@ pub enum Knob {
     VarianceAmount,
     VarianceSteady,
     KeepSize,
+    Softness,
 }
 
 impl Knob {
-    pub const ALL: [Knob; 11] = [
+    pub const ALL: [Knob; 12] = [
         Knob::Amplitude,
         Knob::Step,
         Knob::Glide,
@@ -298,6 +309,7 @@ impl Knob {
         Knob::VarianceAmount,
         Knob::VarianceSteady,
         Knob::KeepSize,
+        Knob::Softness,
     ];
 
     /// Its key in `[living.species.<spec>]`, in `clear_living` and in `flint
@@ -315,6 +327,7 @@ impl Knob {
             Knob::VarianceAmount => "variance.amount",
             Knob::VarianceSteady => "variance.steady",
             Knob::KeepSize => "variance.keep_size",
+            Knob::Softness => "softness",
         }
     }
 
@@ -327,7 +340,7 @@ impl Knob {
 /// each layer once, by the label `flint render --report json` gives it, `spec`,
 /// `entity`, `global`, `zone:<name>` or `species`.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct KnobSources([Vec<String>; 11]);
+pub struct KnobSources([Vec<String>; 12]);
 
 impl KnobSources {
     pub fn of(&self, knob: Knob) -> &[String] {
@@ -1030,6 +1043,15 @@ impl LivingPropsDebugPanel {
             }
         });
 
+        section(ui, "Silhouette", true, |ui| {
+            let knob = Knob::Softness;
+            let moved = row(ui, knob, &mut |ui| {
+                control(ui, knob, &mut k, mixed.get(knob), says, "living_panel")
+            });
+            touched.set_flag(knob, moved);
+            ui.weak("Feathers the body's outline at rest; the cards keep their edges.");
+        });
+
         // A touch says a knob moved where its number alone can't: a `mixed` one
         // set to the value it showed, or Unheld on a knob already there.
         let moved = k.moved(&before, &touched);
@@ -1356,7 +1378,7 @@ impl LivingPropsDebugPanel {
             egui::Order::Background,
             egui::Id::new("living_pose_overlay"),
         ));
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         let mut placed: Vec<(f32, Pos2, &LivingPropRow)> = self
             .state
             .rows
@@ -1391,7 +1413,7 @@ impl LivingPropsDebugPanel {
             self.picked_on_screen = None;
             return;
         };
-        let screen = ctx.screen_rect();
+        let screen = ctx.content_rect();
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
             egui::Id::new("living_picked_marks"),
@@ -1542,7 +1564,7 @@ impl LivingPropsDebugPanel {
 }
 
 /// The knobs in the order the panel's sections give them.
-const PANEL_ORDER: [Knob; 11] = [
+const PANEL_ORDER: [Knob; 12] = [
     Knob::Step,
     Knob::Glide,
     Knob::Amplitude,
@@ -1554,6 +1576,7 @@ const PANEL_ORDER: [Knob; 11] = [
     Knob::VarianceAmount,
     Knob::VarianceSteady,
     Knob::KeepSize,
+    Knob::Softness,
 ];
 
 /// The zones a tree stands in, as its window says it.
@@ -1859,6 +1882,12 @@ fn control(
             mixed,
             says,
         ),
+        Knob::Softness => knob(
+            ui,
+            Slider::new(&mut k.softness, 0.0..=1.0).text("softness"),
+            mixed,
+            says,
+        ),
         Knob::KeepSize => {
             let keep =
                 ui.add(egui::Checkbox::new(&mut k.keep_size, "keep size").indeterminate(mixed));
@@ -1941,9 +1970,9 @@ fn paint_mark(ui: &mut egui::Ui, mark: &Mark) -> bool {
 }
 
 /// How far toward the next pose a part is, `frac` of the way through a step: the
-/// design's t', as `flint_core::wooze::warp` works it out.
+/// design's t', as `flint_wooze::warp` works it out.
 fn eased(frac: f64, glide: f32) -> f32 {
-    flint_core::wooze::warp(frac.clamp(0.0, 0.999_999), glide).1
+    flint_wooze::warp(frac.clamp(0.0, 0.999_999), glide).1
 }
 
 /// The warped clock as what it is: a step's worth of hold, then the ease to the
@@ -2107,6 +2136,7 @@ impl Label {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::run_headless_frame;
 
     fn row(name: &str, position: [f32; 3]) -> LivingPropRow {
         LivingPropRow {
@@ -2144,8 +2174,8 @@ mod tests {
             events,
             ..Default::default()
         };
-        let _ = ctx.run(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
+        let _ = run_headless_frame(ctx, input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| panel.ui(ui));
         });
     }
 
@@ -2167,6 +2197,7 @@ mod tests {
             variance_amount: 1.0,
             variance_steady: 0.0,
             keep_size: false,
+            softness: 0.4,
         };
         assert_eq!(LivingKnobs::from_preset(&knobs.to_preset()), knobs);
     }
@@ -2227,6 +2258,7 @@ mod tests {
             f.variance_amount,
             f.variance_steady,
             f.keep_size,
+            f.softness,
             boil.enabled.is_some(),
             boil.kuwahara.is_some(),
             boil.contour.is_some(),
@@ -2243,7 +2275,10 @@ mod tests {
     fn pressing_down_the_sliders_moves_every_knob_one_at_a_time() {
         let mut panel = LivingPropsDebugPanel::new();
         panel.refresh(state());
-        let asked = press_down(&mut panel, 60.0);
+        // On the sliders' rails, right of every section header's text: on
+        // egui 0.36 a press at x = 60 folds the Clock, Shading boil and
+        // Echoes sections away before their sliders are reached (#945)
+        let asked = press_down(&mut panel, 110.0);
         let sets: Vec<WoozePreset> = asked
             .iter()
             .filter_map(|action| match action {
@@ -2265,11 +2300,13 @@ mod tests {
                 echo_alpha: all.echo_alpha || f.echo_alpha,
                 variance_amount: all.variance_amount || f.variance_amount,
                 variance_steady: all.variance_steady || f.variance_steady,
+                softness: all.softness || f.softness,
                 ..all
             };
         }
         assert!(all.step && all.echo_count && all.echo_spread && all.echo_alpha);
         assert!(all.variance_amount && all.variance_steady, "{sets:?}");
+        assert!(all.softness, "the Silhouette slider: {sets:?}");
     }
 
     #[test]
@@ -2315,11 +2352,11 @@ mod tests {
                 ..Default::default()
             };
             // Collapsing headers open on the second frame.
-            let _ = ctx.run(input.clone(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
+            let _ = run_headless_frame(&ctx, input.clone(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| panel.ui(ui));
             });
-            let output = ctx.run(input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
+            let output = run_headless_frame(&ctx, input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| panel.ui(ui));
             });
             texts(&output)
         };
@@ -2421,7 +2458,8 @@ mod tests {
                 overlay: true,
                 ..Default::default()
             });
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ui| {
+                let ctx = &ui.ctx().clone();
                 panel.paint_overlay(ctx, &view_proj);
             });
             output.shapes.len()
@@ -2450,7 +2488,8 @@ mod tests {
         with_prop.rows = vec![row("oak_1", [0.0, 0.0, -20.0])];
         panel.refresh(with_prop.clone());
         let shapes = |ctx: &egui::Context, panel: &mut LivingPropsDebugPanel| {
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let output = run_headless_frame(ctx, egui::RawInput::default(), |ui| {
+                let ctx = &ui.ctx().clone();
                 panel.paint_overlay(ctx, &view_proj);
             });
             output.shapes.len()
@@ -2519,26 +2558,41 @@ mod tests {
     }
 
     /// Every piece of text the panel draws, and where, once its headers are open.
+    /// What the panel draws once it has settled. egui 0.36 leaves out of
+    /// a frame's shapes what its clip hides, so a header still animating open
+    /// draws only the rows uncovered so far (0.30 culled them later, when
+    /// painting): frames until egui stops asking for the next at once (#945).
     fn shown(ctx: &egui::Context, panel: &mut LivingPropsDebugPanel) -> Vec<(String, Rect)> {
         frame(ctx, panel, Vec::new());
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(420.0, 1400.0))),
             ..Default::default()
         };
-        let output = ctx.run(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| panel.ui(ui));
-        });
-        output
-            .shapes
-            .iter()
-            .filter_map(|clipped| match &clipped.shape {
-                Shape::Text(text) => Some((
-                    text.galley.text().to_string(),
-                    Rect::from_min_size(text.pos, text.galley.size()),
-                )),
-                _ => None,
-            })
-            .collect()
+        let mut last = Vec::new();
+        for _ in 0..64 {
+            let output = run_headless_frame(ctx, input.clone(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| panel.ui(ui));
+            });
+            let animating = output
+                .viewport_output
+                .get(&egui::ViewportId::ROOT)
+                .is_some_and(|v| v.repaint_delay.is_zero());
+            last = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    Shape::Text(text) => Some((
+                        text.galley.text().to_string(),
+                        Rect::from_min_size(text.pos, text.galley.size()),
+                    )),
+                    _ => None,
+                })
+                .collect();
+            if !animating {
+                break;
+            }
+        }
+        last
     }
 
     /// Click the first text that reads `text`, and return what that asked for.
@@ -2684,7 +2738,8 @@ mod tests {
         on.overlay = true;
         panel.refresh(on);
         let labels = |panel: &mut LivingPropsDebugPanel| {
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ui| {
+                let ctx = &ui.ctx().clone();
                 panel.paint_overlay(ctx, &view_proj);
             });
             texts(&output)
@@ -2765,6 +2820,7 @@ mod tests {
                 "variance.amount",
                 "variance.steady",
                 "variance.keep_size",
+                "softness",
             ]
         );
         for knob in Knob::ALL {
@@ -2872,7 +2928,7 @@ mod tests {
             events,
             ..Default::default()
         };
-        ctx.run(input, |ctx| panel.paint_overlay(ctx, view))
+        run_headless_frame(ctx, input, |ui| panel.paint_overlay(ui.ctx(), view))
     }
 
     /// Two frames of it, since a new window is laid out unseen on its first.

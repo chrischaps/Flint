@@ -1,11 +1,11 @@
 # Particle Editor
 
-`flint edit <file>.particles.toml` opens a dedicated editor for one effect asset: a viewport with the effect playing at the origin, an emitter list and per-emitter sections on the left, and a scrub timeline along the bottom (ADR 0068). It edits the same `*.particles.toml` format the player loads from `particles/` next to a scene, so what you tune here is exactly what `particle_effect = "name"` shows in game.
+`flint edit <file>.particles.toml` opens a dedicated editor for one effect asset: a viewport with the effect playing at the origin, an emitter list and per-emitter sections on the left, and a scrub timeline along the bottom ([ADR 0068](https://github.com/chrischaps/Flint/blob/main/docs/adr/0068-particle-effect-assets-and-deterministic-sim.md)). It edits the same `*.particles.toml` format the player loads from `particles/` next to a scene, so what you tune here is exactly what `particle_effect = "name"` shows in game.
 
 ![The campfire effect in the editor's viewport](../images/particle-editor-campfire.png)
 
 ```bash
-flint edit demo/particles/campfire.particles.toml          # open an effect
+flint edit examples/particles/campfire.particles.toml          # open an effect
 flint edit fx/torch.particles.toml --preset fire            # create from a preset, then open
 flint edit fx/torch.particles.toml --render out.png --anim-time 1.5   # headless snapshot
 ```

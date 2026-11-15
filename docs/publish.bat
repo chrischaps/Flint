@@ -1,6 +1,4 @@
 @echo off
-REM Launcher for Flint docs build+publish. All logic lives in build.ps1.
-REM Usage: docs\publish.bat [--skip-rustdoc]
-set PS_FLAGS=-Publish
-if /i "%~1"=="--skip-rustdoc" set PS_FLAGS=-Publish -SkipRustdoc
-powershell -ExecutionPolicy Bypass -File "%~dp0build.ps1" %PS_FLAGS%
+REM Build and publish the book. All the logic is in publish.sh (#764).
+REM Usage: docs\publish.bat [--skip-rustdoc] [--docs-repo <dir>]
+call "%~dp0..\scripts\sh.cmd" "%~dp0publish.sh" --publish %*

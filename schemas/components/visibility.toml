@@ -1,0 +1,5 @@
+[component.visibility]
+description = "Whether an entity is drawn (#628). visible = false keeps it and every descendant out of the scene, shadow and style-mask passes, its lights and the ray targets; it still simulates, collides and runs its scripts, and its particles still draw (stop_effect for those). Scripts: set_visible(id, bool) / is_visible(id)."
+
+[component.visibility.fields]
+visible = { type = "bool", default = true, description = "False hides this entity and its descendants; a hidden parent hides a visible child." }

@@ -26,6 +26,18 @@ glyphs = " .oO@"
 glyphs = " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"
 sort = "coverage"
 
+# Chunky pixels (#285): quarter, half and three-quarter blocks, each step
+# the last plus one quadrant, so a fade grows by corners rather than shades.
+[ramps.quadrants]
+glyphs = " ▖▞▟█"
+
+# Braille (#285): one dot more each step, laid in a scattered order so the
+# dots spread over the cell before they fill it. A full cell is a quarter
+# ink, so braille reads as a fine, light texture; the patterns ⠀..⣿ are all
+# in the atlas for a set or a later sub-cell pick to choose from.
+[ramps.braille]
+glyphs = " ⠁⠡⠩⠭⠯⢯⢿⣿"
+
 # Glyphs for silhouette edges, chosen from depth/normal gradients (#267).
 # The built-in set uses its box-drawing glyphs, which fill their cells so
 # an edge reads as one unbroken line; a set that names none gets - | / \.
@@ -34,3 +46,8 @@ horizontal = "─"
 vertical = "│"
 diagonal = "╱"
 antidiagonal = "╲"
+# Where lines meet (#348), drawn by a cell whose edge has no one direction
+# from the line glyphs beside it: the corners ┌┐└┘, then the tees and the
+# cross. Their arms run on the same row and column as ─ and │, so a box's
+# outline closes. A set without them keeps its line glyphs at corners.
+corners = "┌┐└┘├┤┬┴┼"

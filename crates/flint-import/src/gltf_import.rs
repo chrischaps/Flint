@@ -16,7 +16,7 @@ static MEMO: std::sync::Mutex<Option<HashMap<PathBuf, ImportResult>>> = std::syn
 /// Keep every import in memory, by path, and hand out copies (#329), or
 /// (`false`) drop them and decode each time again. For a process that
 /// loads the same files over and over and knows they won't change under
-/// it: `flint render-suite` renders dozens of cases that share a few
+/// it: `flint goldens` renders dozens of cases that share a few
 /// models, and decoding a model's textures is most of a debug build's
 /// time a case. Off by default; a watcher reloading a file must not get
 /// its old copy.
@@ -233,6 +233,10 @@ fn decode_gltf(path: &Path) -> Result<ImportResult> {
         root_nodes.push(idx);
     }
 
+    // `LOD_0`, `LOD_1`, ... at the root are one model's levels, not parts:
+    // band them so one draws at a time (#193).
+    crate::lod_chain::band_lod_chain(&mut meshes, &imported_nodes, &root_nodes);
+
     // Name each texture the same way the material references below do
     // (`texture_name`), so embedded textures resolve by name after upload.
     let mut textures = Vec::new();
@@ -277,21 +281,21 @@ fn decode_gltf(path: &Path) -> Result<ImportResult> {
         let metallic = pbr.metallic_factor();
         let roughness = pbr.roughness_factor();
 
-        let base_color_texture = pbr.base_color_texture().map(|info| {
-            texture_name(info.texture())
-        });
+        let base_color_texture = pbr
+            .base_color_texture()
+            .map(|info| texture_name(info.texture()));
 
-        let normal_texture = material.normal_texture().map(|info| {
-            texture_name(info.texture())
-        });
+        let normal_texture = material
+            .normal_texture()
+            .map(|info| texture_name(info.texture()));
 
-        let metallic_roughness_texture = pbr.metallic_roughness_texture().map(|info| {
-            texture_name(info.texture())
-        });
+        let metallic_roughness_texture = pbr
+            .metallic_roughness_texture()
+            .map(|info| texture_name(info.texture()));
 
-        let emissive_texture = material.emissive_texture().map(|info| {
-            texture_name(info.texture())
-        });
+        let emissive_texture = material
+            .emissive_texture()
+            .map(|info| texture_name(info.texture()));
 
         let alpha_mode = match material.alpha_mode() {
             gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
@@ -315,6 +319,7 @@ fn decode_gltf(path: &Path) -> Result<ImportResult> {
             emissive_strength: material.emissive_strength().unwrap_or(1.0),
             emissive_texture,
             vertex_emission: false,
+            double_sided: material.double_sided(),
         });
     }
 
@@ -395,6 +400,14 @@ fn extract_skeletons(
 ) -> Vec<ImportedSkeleton> {
     let mut skeletons = Vec::new();
 
+    let nodes: Vec<gltf::Node> = document.nodes().collect();
+    let mut node_parent: HashMap<usize, usize> = HashMap::new();
+    for node in &nodes {
+        for child in node.children() {
+            node_parent.insert(child.index(), node.index());
+        }
+    }
+
     for skin in document.skins() {
         let skin_name = skin
             .name()
@@ -424,8 +437,10 @@ fn extract_skeletons(
                 .map(String::from)
                 .unwrap_or_else(|| format!("joint_{}", joint_idx));
 
-            // Find parent: walk up the glTF node tree and check if the parent is also a joint
-            let parent = find_parent_joint(document, node.index(), &node_to_joint);
+            // Walk up to the nearest ancestor that is a joint, keeping the
+            // non-joint nodes passed on the way (#294).
+            let (parent, parent_offset) =
+                find_parent_joint(&node_parent, &nodes, node.index(), &node_to_joint);
 
             let ibm = ibms.get(joint_idx).copied().unwrap_or_else(identity_4x4);
             let (rest_translation, rest_rotation, rest_scale) = node.transform().decomposed();
@@ -438,6 +453,7 @@ fn extract_skeletons(
                 rest_translation,
                 rest_rotation,
                 rest_scale,
+                parent_offset,
             });
         }
 
@@ -450,22 +466,46 @@ fn extract_skeletons(
     skeletons
 }
 
-/// Find the parent joint index for a given node, if the parent is within the skin's joint set
+/// The nearest ancestor of `node_index` that is one of the skin's joints,
+/// and the transform of the non-joint nodes between the two (or between the
+/// node and the scene root when no ancestor is a joint), `None` when that is
+/// identity. See `ImportedJoint::parent_offset`.
 fn find_parent_joint(
-    document: &gltf::Document,
+    node_parent: &HashMap<usize, usize>,
+    nodes: &[gltf::Node],
     node_index: usize,
     node_to_joint: &HashMap<usize, usize>,
-) -> Option<usize> {
-    // Walk all nodes to find the parent of node_index
-    for node in document.nodes() {
-        for child in node.children() {
-            if child.index() == node_index {
-                // Found the parent node — check if it's a joint
-                return node_to_joint.get(&node.index()).copied();
-            }
+) -> (Option<usize>, Option<[[f32; 4]; 4]>) {
+    let identity = identity_4x4();
+    let mut offset: Option<[[f32; 4]; 4]> = None;
+    let mut cur = node_parent.get(&node_index).copied();
+    // A parent map from a valid glTF is a forest; the bound stops a cycle.
+    for _ in 0..nodes.len() {
+        let Some(index) = cur else { break };
+        if let Some(&joint) = node_to_joint.get(&index) {
+            return (Some(joint), offset);
+        }
+        let m = nodes[index].transform().matrix();
+        if m != identity {
+            offset = Some(match offset {
+                Some(below) => mat4_mul(&m, &below),
+                None => m,
+            });
+        }
+        cur = node_parent.get(&index).copied();
+    }
+    (None, offset)
+}
+
+/// Multiply two column-major 4x4 matrices (`m[col][row]`).
+fn mat4_mul(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    let mut out = [[0.0f32; 4]; 4];
+    for col in 0..4 {
+        for row in 0..4 {
+            out[col][row] = (0..4).map(|k| a[k][row] * b[col][k]).sum();
         }
     }
-    None
+    out
 }
 
 /// Extract skeletal animation clips from glTF animations
@@ -931,6 +971,25 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert_eq!((first.as_str(), kept.as_str()), ("first", "first"));
         assert_eq!(fresh, "second");
+    }
+
+    /// glTF `doubleSided` reaches the material (#623), and a material that
+    /// doesn't say stays single-sided, glTF's default. The fixture is
+    /// `tools/test-models/double_sided_card.py`'s.
+    #[test]
+    fn double_sided_is_read() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/models/DoubleSidedCard.glb"
+        );
+        let model = import_gltf(path).unwrap();
+        let sides: Vec<_> = model
+            .materials
+            .iter()
+            .map(|m| (m.name.as_str(), m.double_sided))
+            .collect();
+        assert_eq!(sides, [("two_sided", true), ("one_sided", false)]);
+        assert!(!ImportedMaterial::default().double_sided);
     }
 
     /// A material with painted-on lights keeps its emissive map's name, the

@@ -1,4 +1,8 @@
+# Sounds played on physics and interaction events (flint-audio `trigger.rs`).
 [component.audio_trigger]
+description = "Sounds played on collision, interaction or entering a trigger"
+
+[component.audio_trigger.fields]
 on_collision = { type = "string", description = "Sound on collision start" }
 on_interact = { type = "string", description = "Sound on player interact" }
 on_enter = { type = "string", description = "Sound when entering trigger" }

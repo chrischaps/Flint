@@ -30,7 +30,7 @@ pub const NONE: u32 = u32::MAX;
 pub const MAX_IDS: usize = 256;
 
 pub(crate) struct OwnershipPass {
-    module: wgpu::ShaderModule,
+    module: kit::Shader,
     uniform_bgl: wgpu::BindGroupLayout,
     input_bgl: wgpu::BindGroupLayout,
     mask_bgl: wgpu::BindGroupLayout,
@@ -49,7 +49,7 @@ impl OwnershipPass {
             module: kit::shader(
                 device,
                 "Style Ownership Shader",
-                include_str!("ownership.wgsl"),
+                kit::wgsl!("ownership.wgsl"),
             ),
             uniform_bgl: kit::uniform_layout(device, "Style Ownership Uniform BGL"),
             input_bgl: kit::sampled_layout(device, "Style Ownership Input BGL"),
@@ -88,15 +88,18 @@ impl OwnershipPass {
                 operation: wgpu::BlendOperation::Add,
             },
         };
-        let p = std::sync::Arc::new(kit::fullscreen_pipeline_with(
-            device,
-            "Style Ownership Pipeline",
-            &self.module,
-            "fs_main",
-            &[&self.uniform_bgl, &self.input_bgl, &self.mask_bgl],
-            format,
-            Some(blend),
-        ));
+        let p: std::sync::Arc<wgpu::RenderPipeline> =
+            crate::pipeline_cache::in_scope(("Style Ownership", format), || {
+                kit::fullscreen_pipeline_with(
+                    device,
+                    "Style Ownership Pipeline",
+                    &self.module,
+                    "fs_main",
+                    &[&self.uniform_bgl, &self.input_bgl, &self.mask_bgl],
+                    format,
+                    Some(blend),
+                )
+            });
         pipelines.push((format, p.clone()));
         p
     }
@@ -142,6 +145,7 @@ impl OwnershipPass {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: output,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -150,6 +154,7 @@ impl OwnershipPass {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &*uniform, &[]);

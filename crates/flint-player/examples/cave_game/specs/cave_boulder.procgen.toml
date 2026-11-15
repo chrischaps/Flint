@@ -1,0 +1,25 @@
+# The grotto's big stone: wide, low, struck deep. `rock_v1` is the cave
+# game's own generator (rock.rs beside main.rs); the engine doesn't know it.
+# The stock flint-player shows this name as a placeholder, and the game's
+# binary, which registers rock_v1 through its extension, shows the rock:
+#
+#   cargo run -p flint-player --example cave_game
+
+generator = "rock_v1"
+
+[meta]
+name = "cave_boulder"
+description = "A wide, low boulder, deeply chiselled"
+version = "1.0.0"
+tags = ["rock", "cave"]
+
+[seed]
+mode = "fixed"
+value = 1957
+
+[params]
+radius = 0.9
+cuts = 11
+depth = 0.38
+squash = 0.62
+color = "#6B645B"

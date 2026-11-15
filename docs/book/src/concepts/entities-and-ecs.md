@@ -87,7 +87,7 @@ The ECS layer tracks these relationships, enabling:
 An archetype is a named bundle of components that defines an entity "type":
 
 ```toml
-# schemas/archetypes/door.toml
+# schemas/examples/archetypes/door.toml (the examples' layer)
 [archetype.door]
 description = "A door entity"
 components = ["transform", "door"]
@@ -110,8 +110,11 @@ flint entity create --archetype door --name "vault_door" \
     --schemas schemas \
     --props '{"transform":{"position":[0,0,0]},"door":{"locked":true}}'
 
-# Delete an entity
-flint entity delete --name "vault_door" --scene levels/dungeon.scene.toml
+# Delete an entity (refused while it has children)
+flint entity delete vault_door --scene levels/dungeon.scene.toml
+
+# Delete an entity and everything under it
+flint entity delete vault_room --recursive --scene levels/dungeon.scene.toml
 
 # List entities in a scene
 flint query "entities" --scene levels/dungeon.scene.toml
@@ -119,6 +122,8 @@ flint query "entities" --scene levels/dungeon.scene.toml
 # Filter by archetype
 flint query "entities where archetype == 'door'" --scene levels/dungeon.scene.toml
 ```
+
+`create` and `delete` change one table in the file and leave every other line as it was, comments, order and `[prefabs]` included, so `git diff` shows only the entity added or removed. `create` writes the archetype, the parent and the `--props` you gave; the archetype's defaults are filled in when the scene loads, as for an entity written by hand. Both commands load the edited text before writing it, so an edit that would break the scene (a parent that isn't there, a field of the wrong type for its schema) is refused and the file is left alone. An entity made by a prefab instance has no table of its own: delete the `[prefabs.<instance>]` entry instead.
 
 ## Further Reading
 

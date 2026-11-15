@@ -9,6 +9,7 @@
 
 use crate::SceneRenderer;
 use flint_core::components as comp;
+use flint_core::project::{AssetKind, NotFound, Project};
 use flint_core::vfs;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -37,25 +38,55 @@ pub struct ModelLoadResult {
     pub skinned_entities: HashMap<EntityId, String>,
 }
 
-/// Configuration for model and texture path resolution.
+/// Where a scene's models and textures are found: the project's one asset
+/// search (ADR 0114) from the scene's directory, after anything a host
+/// resolved by other means.
 pub struct ModelLoadConfig {
+    /// The project the scene belongs to. Its resolver does the file search.
+    pub project: Project,
     pub scene_dir: PathBuf,
     /// Pre-resolved paths for specific asset names (e.g. from catalog lookup).
-    /// Checked before the standard scene_dir/models/ search.
+    /// Checked before the file search.
     pub overrides: HashMap<String, PathBuf>,
+    /// What the host asked before the file search, for a not-found warning
+    /// to name beside the paths tried: "the asset catalog", "a procgen spec
+    /// of the same name".
+    pub asked_first: Vec<&'static str>,
 }
 
 impl ModelLoadConfig {
-    /// Create a config from a scene file path, with no overrides.
+    /// A config for a scene file, with no overrides, in the project found
+    /// from the scene. A host that already holds the scene's [`Project`]
+    /// uses [`in_project`](Self::in_project) rather than discover it again.
     pub fn from_scene_path(scene_path: &str) -> Self {
+        Self::in_project(Project::for_scene(Path::new(scene_path)), scene_path)
+    }
+
+    /// A config for a scene file in `project`, with no overrides.
+    pub fn in_project(project: Project, scene_path: &str) -> Self {
         let scene_dir = Path::new(scene_path)
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf();
         Self {
+            project,
             scene_dir,
             overrides: HashMap::new(),
+            asked_first: Vec::new(),
         }
+    }
+
+    /// A not-found warning's text: every path tried, and what was asked
+    /// before the files.
+    pub fn not_found_text(&self, missing: &NotFound) -> String {
+        if self.asked_first.is_empty() {
+            return missing.to_string();
+        }
+        format!(
+            "{missing}
+  and before the files: {}",
+            self.asked_first.join(", ")
+        )
     }
 }
 
@@ -86,74 +117,29 @@ pub fn is_runtime_model(model: &toml::Value) -> bool {
         .unwrap_or(false)
 }
 
-/// Resolve the file path for a model asset name: the catalog override, then
-/// `<name>.glb`/`.gltf` in `models/` beside the scene or one directory up.
-pub fn resolve_model_path(config: &ModelLoadConfig, asset_name: &str) -> Option<PathBuf> {
-    if let Some(path) = config.overrides.get(asset_name) {
-        if vfs::exists(path) {
-            return Some(path.clone());
-        }
-    }
-    // Try both .glb and .gltf in each search directory
-    for ext in &["glb", "gltf"] {
-        let p = config
-            .scene_dir
-            .join("models")
-            .join(format!("{}.{}", asset_name, ext));
-        if vfs::exists(&p) {
-            return Some(p);
-        }
-    }
-    if let Some(parent) = config.scene_dir.parent() {
-        for ext in &["glb", "gltf"] {
-            let p = parent
-                .join("models")
-                .join(format!("{}.{}", asset_name, ext));
-            if vfs::exists(&p) {
-                return Some(p);
-            }
-        }
-    }
-    None
+/// The file for a model asset name: the catalog override, then the
+/// project's search for a model (`models/<name>.glb`, then `.gltf`, beside
+/// the scene and beside each directory up to the project root, then in the
+/// mounted engine). The error lists every path tried.
+pub fn resolve_model_path(config: &ModelLoadConfig, asset_name: &str) -> Result<PathBuf, NotFound> {
+    resolve_for(config, AssetKind::Models, asset_name)
 }
 
-/// Resolve the file path for a texture name.
-pub fn resolve_texture_path(config: &ModelLoadConfig, tex_name: &str) -> Option<PathBuf> {
-    if let Some(path) = config.overrides.get(tex_name) {
+/// The file for a texture name: the catalog override, then the project's
+/// search for a texture (each directory of the walk and its `textures/`; a
+/// name with an extension as written, a bare one also as `<name>.png` and
+/// `<name>_color.png`, which is how procgen textures are saved).
+pub fn resolve_texture_path(config: &ModelLoadConfig, tex_name: &str) -> Result<PathBuf, NotFound> {
+    resolve_for(config, AssetKind::Textures, tex_name)
+}
+
+fn resolve_for(config: &ModelLoadConfig, kind: AssetKind, name: &str) -> Result<PathBuf, NotFound> {
+    if let Some(path) = config.overrides.get(name) {
         if vfs::exists(path) {
-            return Some(path.clone());
+            return Ok(path.clone());
         }
     }
-
-    // Candidate names: the bare name, then with common extensions (for procgen textures)
-    let candidates: Vec<String> = if tex_name.contains('.') {
-        vec![tex_name.to_string()]
-    } else {
-        vec![
-            tex_name.to_string(),
-            format!("{}.png", tex_name),
-            format!("{}_color.png", tex_name),
-        ]
-    };
-
-    // Search directories: scene_dir, scene_dir/textures, parent, parent/textures
-    let mut search_dirs: Vec<PathBuf> = vec![config.scene_dir.clone()];
-    search_dirs.push(config.scene_dir.join("textures"));
-    if let Some(parent) = config.scene_dir.parent() {
-        search_dirs.push(parent.to_path_buf());
-        search_dirs.push(parent.join("textures"));
-    }
-
-    for dir in &search_dirs {
-        for name in &candidates {
-            let p = dir.join(name);
-            if vfs::exists(&p) {
-                return Some(p);
-            }
-        }
-    }
-
-    None
+    config.project.resolve(kind, name, &config.scene_dir)
 }
 
 /// Create child entities preserving the glTF parent-child hierarchy.
@@ -391,10 +377,19 @@ pub fn load_models_from_world(
             // if this is a multi-node model that needs per-entity expansion.
             // Not for a mesh made at runtime (procgen): a file of the same
             // name must not replace it (catalog > procgen > file, #32).
-            let file = if renderer.mesh_cache().is_procedural(asset_name) {
+            // Nor for a skinned model: the first entity to load it drew it
+            // skinned, and so does every other one (below). Expanding the
+            // second into nodes took its model away, so of five figures one
+            // drew, in its bind pose (#624). A scene reload (`flint edit
+            // --watch`) is the same case for a lone figure: the cache keeps
+            // the GLB from the first load, and expanding it there made the
+            // figure vanish (#331).
+            let file = if renderer.mesh_cache().is_procedural(asset_name)
+                || renderer.mesh_cache().contains_skinned(asset_name)
+            {
                 None
             } else {
-                resolve_model_path(config, asset_name)
+                resolve_model_path(config, asset_name).ok()
             };
             if let Some(model_path) = file {
                 if let Ok(import_result) = import_gltf(&model_path) {
@@ -443,9 +438,9 @@ pub fn load_models_from_world(
         }
 
         let model_path = match resolve_model_path(config, asset_name) {
-            Some(p) => p,
-            None => {
-                tracing::warn!("Model file not found: {}", asset_name);
+            Ok(p) => p,
+            Err(missing) => {
+                tracing::warn!("{}", config.not_found_text(&missing));
                 continue;
             }
         };
@@ -480,6 +475,23 @@ pub fn load_models_from_world(
                     },
                     bounds_info,
                 );
+                if let Some(chain) =
+                    flint_import::lod_chain(&import_result.nodes, &import_result.root_nodes)
+                {
+                    // The importer banded it (#193), unless the file did.
+                    let switches: Vec<String> = chain
+                        .iter()
+                        .skip(1)
+                        .filter_map(|&n| import_result.nodes[n].mesh_primitive_indices.first())
+                        .filter_map(|&p| import_result.meshes[p].lod)
+                        .map(|band| format!("{:.1}", band.near))
+                        .collect();
+                    eprintln!(
+                        "  LOD chain: {} levels, switching at {} m",
+                        chain.len(),
+                        switches.join(", ")
+                    );
+                }
 
                 let was_expanded;
                 let kept_result;
@@ -584,16 +596,16 @@ pub fn load_textures_from_world(
                     }
                 }
             }
-            // Load font textures referenced by ui_text components
+            // Fonts ui_text names: built into glyph atlases and uploaded
+            // here, so extraction only lays text out (ADR 0113)
             if let Some(ui_text) = comps.get(comp::UI_TEXT) {
-                if let Some(font_path_str) = ui_text.get("font").and_then(|v| v.as_str()) {
-                    if !font_path_str.is_empty() {
-                        let font_file = config.scene_dir.join(font_path_str);
-                        if let Some(font) = crate::bitmap_font::BitmapFont::load(&font_file) {
-                            if !font.texture.is_empty() {
-                                tex_names.push(font.texture);
-                            }
-                        }
+                if let Some(font) = ui_text.get("font").and_then(|v| v.as_str()) {
+                    if !font.is_empty() {
+                        let scope = flint_core::project::AssetScope::new(
+                            config.project.clone(),
+                            config.scene_dir.clone(),
+                        );
+                        renderer.load_ui_font(device, queue, font, &scope);
                     }
                 }
             }
@@ -615,9 +627,9 @@ pub fn load_textures_from_world(
             }
 
             let tex_path = match resolve_texture_path(config, &tex_name) {
-                Some(p) => p,
-                None => {
-                    tracing::warn!("Texture file not found: {}", tex_name);
+                Ok(p) => p,
+                Err(missing) => {
+                    tracing::warn!("{}", config.not_found_text(&missing));
                     continue;
                 }
             };
@@ -638,7 +650,7 @@ pub fn load_textures_from_world(
                 if loaded.contains(&companion_name) {
                     continue;
                 }
-                if let Some(companion_path) = resolve_texture_path(config, &companion_name) {
+                if let Ok(companion_path) = resolve_texture_path(config, &companion_name) {
                     loaded.insert(companion_name.clone());
                     match renderer.load_texture_file(
                         device,

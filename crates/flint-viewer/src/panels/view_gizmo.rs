@@ -91,9 +91,15 @@ impl ViewGizmo {
         }
     }
 
-    /// Draw the gizmo and return any user interaction
-    pub fn draw(&mut self, ctx: &egui::Context, cam: &CameraView) -> Option<GizmoAction> {
-        let central_rect = ctx.available_rect();
+    /// Draw the gizmo and return any user interaction. `central_rect` is
+    /// what the side panels leave (egui 0.36 has no
+    /// `Context::available_rect`; the caller's root `Ui` knows it).
+    pub fn draw(
+        &mut self,
+        ctx: &egui::Context,
+        cam: &CameraView,
+        central_rect: egui::Rect,
+    ) -> Option<GizmoAction> {
         let gizmo_pos = egui::pos2(
             central_rect.right() - GIZMO_DIAMETER - MARGIN,
             central_rect.top() + MARGIN,
@@ -120,7 +126,11 @@ impl ViewGizmo {
 
         // Background circle with subtle border
         painter.circle_filled(center, bg_radius, BG_FILL);
-        painter.circle_stroke(center, bg_radius, egui::Stroke::new(1.0f32, BG_STROKE_COLOR));
+        painter.circle_stroke(
+            center,
+            bg_radius,
+            egui::Stroke::new(1.0f32, BG_STROKE_COLOR),
+        );
 
         // Define all six axis endpoints
         let axes = [

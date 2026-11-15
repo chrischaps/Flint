@@ -35,7 +35,9 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    eprintln!("flint-web-shims is a browser page; run `trunk serve shims.html` in crates/flint-player");
+    eprintln!(
+        "flint-web-shims is a browser page; run `trunk serve shims.html` in crates/flint-player"
+    );
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -46,10 +48,11 @@ fn main() {
 #[cfg(target_arch = "wasm32")]
 mod web {
     use flint_player::user_files;
+    use flint_render::AcquireFrame;
+    use flint_runtime::pad::{Axis, EventType, Gilrs};
     use flint_runtime::{
         ActionConfig, ActionKind, Binding, GamepadSelector, InputConfig, InputState, RebindMode,
     };
-    use gilrs::{Axis, EventType, Gilrs};
     use std::cell::RefCell;
     use std::path::PathBuf;
     use std::rc::Rc;
@@ -387,7 +390,7 @@ mod web {
     async fn init_gpu(window: Arc<Window>) -> Result<Gpu, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let surface = instance
             .create_surface(window.clone())
@@ -399,24 +402,23 @@ mod web {
                 power_preference: wgpu::PowerPreference::None,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
             })
             .await
-            .ok_or("no WebGPU adapter (is WebGPU enabled in this browser?)")?;
+            .map_err(|e| format!("no WebGPU adapter (is WebGPU enabled in this browser?): {e}"))?;
         let info = adapter.get_info();
         log(&format!(
             "[flint-web] adapter: {:?} via {:?}",
             info.name, info.backend
         ));
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("flint-web"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: wgpu::MemoryHints::default(),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("flint-web"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: wgpu::MemoryHints::default(),
+                ..Default::default()
+            })
             .await
             .map_err(|e| format!("request_device: {e}"))?;
 
@@ -434,6 +436,7 @@ mod web {
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode: wgpu::PresentMode::Fifo,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
@@ -459,9 +462,9 @@ mod web {
         }
 
         fn draw(&mut self, phase: f64) {
-            let frame = match self.surface.get_current_texture() {
+            let frame = match self.surface.acquire() {
                 Ok(frame) => frame,
-                Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => {
                     self.surface.configure(&self.device, &self.config);
                     return;
                 }
@@ -477,6 +480,7 @@ mod web {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(sky_at(phase, self.config.format.is_srgb())),
                         store: wgpu::StoreOp::Store,
@@ -485,7 +489,7 @@ mod web {
                 ..Default::default()
             });
             self.queue.submit([encoder.finish()]);
-            frame.present();
+            self.queue.present(frame);
         }
     }
 
@@ -756,7 +760,9 @@ mod sound {
         // A heavy frame, on purpose: hold the main thread this long every
         // 2 s, to see where buffers start arriving late.
         if let Some(stall) = param("stall").and_then(|s| s.parse::<f64>().ok()) {
-            log(&format!("[flint-web] stalling the main thread {stall:.0} ms every 2 s"));
+            log(&format!(
+                "[flint-web] stalling the main thread {stall:.0} ms every 2 s"
+            ));
             let hold = Closure::<dyn FnMut()>::new(move || {
                 let until = now_ms() + stall;
                 while now_ms() < until {}

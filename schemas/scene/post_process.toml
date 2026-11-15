@@ -1,0 +1,96 @@
+# A scene's `[post_process]` table: what happens to the picture after the
+# scene is drawn. Every key is optional; an absent table is the defaults.
+#
+#   [post_process]
+#   exposure = 1.2
+#   bloom_intensity = 0.08
+#   fog_enabled = true
+#
+#   [post_process.styles.kuwahara]     # a stylize pass, by name
+#   radius = 5
+#
+# `flint_scene::PostProcessDef` reads it, and a test holds this file to that
+# struct's fields. The styles' own parameters are checked by the renderer
+# against its style registry (`flint render --list-styles`).
+
+[table.post_process]
+description = "A scene's [post_process] table: exposure, bloom, SSAO, fog, grading and the stylize passes."
+
+[table.post_process.fields]
+exposure = { type = "f32", default = 1.0, description = "Exposure multiplier before tone mapping" }
+
+bloom_enabled = { type = "bool", default = true, description = "Whether bright areas bleed light" }
+bloom_intensity = { type = "f32", default = 0.04, description = "How much bloom is added" }
+bloom_threshold = { type = "f32", default = 1.0, description = "The brightness above which a pixel blooms" }
+
+vignette_enabled = { type = "bool", default = false, description = "Whether the corners darken" }
+vignette_intensity = { type = "f32", default = 0.3, description = "How dark the corners get" }
+vignette_smoothness = { type = "f32", default = 2.0, description = "How gradually the vignette falls off" }
+
+ssao_enabled = { type = "bool", default = true, description = "Screen-space ambient occlusion" }
+ssao_radius = { type = "f32", default = 0.5, description = "The reach of the occlusion in world units" }
+ssao_intensity = { type = "f32", default = 1.0, description = "How dark occluded corners get" }
+ssao_samples = { type = "i32", default = 64, min = 0.0, description = "Hemisphere samples per pixel, 1 to 64 (64 is full quality). The heaviest per-pixel cost in the post stack; 16 is usually indistinguishable on soft or matte scenes and about 4x cheaper" }
+
+fog_enabled = { type = "bool", default = false, description = "Distance fog" }
+fog_color = { type = "vec3", default = [0.7, 0.75, 0.82], description = "The fog's colour [r, g, b]" }
+fog_density = { type = "f32", default = 0.02, description = "How thick the fog is" }
+fog_start = { type = "f32", default = 5.0, description = "Metres from the eye where fog begins" }
+fog_end = { type = "f32", default = 100.0, description = "Metres from the eye where fog is full" }
+fog_height_enabled = { type = "bool", default = false, description = "Fog that thins with height" }
+fog_height_falloff = { type = "f32", default = 0.1, description = "How fast height fog thins going up" }
+fog_height_origin = { type = "f32", default = 0.0, description = "The height the height fog is densest at" }
+fog_height_density = { type = "f32", default = 0.0, description = "Height fog's density at fog_height_origin; 0 adds none" }
+fog_tint_color = { type = "vec3", default = [0.42, 0.50, 0.65], description = "Aerial tint: the colour far things take" }
+fog_tint_strength = { type = "f32", default = 0.0, description = "How much of the aerial tint far things take; 0 is off" }
+fog_tint_start = { type = "f32", default = 100.0, description = "Metres where the aerial tint begins" }
+fog_tint_end = { type = "f32", default = 1000.0, description = "Metres where the aerial tint is full" }
+
+dither_enabled = { type = "bool", default = false, description = "Dither the final image against banding" }
+dither_intensity = { type = "f32", default = 0.03, description = "How strong the dither is" }
+
+volumetric_enabled = { type = "bool", default = false, description = "Volumetric light shafts" }
+volumetric_samples = { type = "i32", default = 32, min = 0.0, description = "Ray-march samples per pixel" }
+volumetric_density = { type = "f32", default = 1.0, description = "How thick the lit air is" }
+volumetric_max_distance = { type = "f32", default = 100.0, description = "How far the shafts are marched, in metres" }
+volumetric_decay = { type = "f32", default = 0.98, description = "How fast a shaft fades along its length" }
+
+chromatic_aberration = { type = "f32", default = 0.0, description = "Colour fringing toward the edges; 0 is off" }
+radial_blur = { type = "f32", default = 0.0, description = "Blur outward from the centre; 0 is off" }
+desaturate = { type = "f32", default = 0.0, description = "How much colour is drained, 0 to 1" }
+film_grain = { type = "f32", default = 0.0, description = "Animated film grain; 0 is off, about 0.02 to 0.05 is subtle" }
+fxaa = { type = "bool", default = false, description = "FXAA anti-aliasing on the final composite" }
+
+dof_strength = { type = "f32", default = 0.0, description = "Depth of field blur; 0 is off" }
+dof_focus_distance = { type = "f32", default = 10.0, description = "Metres from the eye that are sharp" }
+dof_focus_range = { type = "f32", default = 5.0, description = "Metres either side of the focus that stay sharp" }
+
+grade_lift = { type = "vec3", default = [0.0, 0.0, 0.0], description = "Colour grade lift: per-channel add after tone mapping. Neutral is [0, 0, 0]" }
+grade_gamma = { type = "vec3", default = [1.0, 1.0, 1.0], description = "Colour grade gamma: per-channel midtone curve. Neutral is [1, 1, 1]" }
+grade_gain = { type = "vec3", default = [1.0, 1.0, 1.0], description = "Colour grade gain: per-channel multiply. Neutral is [1, 1, 1]" }
+
+edge_depth = { type = "f32", default = 0.6, description = "The relative view-distance step that is a silhouette, for every style that reads the shared geometry edges" }
+edge_normal = { type = "f32", default = 2.5, description = "The normal change that is a crease, for every style that reads the shared geometry edges" }
+boil_on = { type = "i32", default = 2, min = 0.0, description = "Film frames each drawing of the shading boil is held: 1, 2 or 3 (on twos). Shared by both styles' boils" }
+motion_hold = { type = "f32", default = 0.0, min = 0.0, description = "Motion on twos for the whole frame: entities with no motion_hold of their own are drawn on ticks, this many a second, and the post time styles read holds to them (12 = on twos at 24 fps). 0 = off" }
+
+look = { type = "string", description = "A look laid under this table's own keys: a styles/<name>.look.toml beside the scene or its parent, or a built-in (ascii_noir, graphite, ...)" }
+styles = { type = "table", description = "Stylize passes by name: [post_process.styles.<style>] with enabled (default true) and the style's parameters, which the renderer checks against its registry" }
+
+# The spellings from before the style tables (#298, #599). They still load,
+# folded into [post_process.styles.kuwahara] and [post_process.styles.contour];
+# a key the style table also sets is the table's.
+kuwahara_enabled = { type = "bool", description = "Old spelling of [post_process.styles.kuwahara] enabled" }
+kuwahara_radius = { type = "i32", min = 0.0, description = "Old spelling of [post_process.styles.kuwahara] radius" }
+kuwahara_sharpness = { type = "f32", description = "Old spelling of [post_process.styles.kuwahara] sharpness" }
+kuwahara_hardness = { type = "f32", description = "Old spelling of [post_process.styles.kuwahara] hardness" }
+kuwahara_anisotropy = { type = "f32", description = "Old spelling of [post_process.styles.kuwahara] anisotropy" }
+kuwahara_boil = { type = "f32", description = "Old spelling of [post_process.styles.kuwahara] boil" }
+contour_enabled = { type = "bool", description = "Old spelling of [post_process.styles.contour] enabled" }
+contour_width = { type = "f32", description = "Old spelling of [post_process.styles.contour] width" }
+contour_threshold = { type = "f32", description = "Old spelling of [post_process.styles.contour] threshold" }
+contour_strength = { type = "f32", description = "Old spelling of [post_process.styles.contour] strength" }
+contour_luma = { type = "f32", description = "Old spelling of [post_process.styles.contour] luma" }
+contour_color = { type = "vec3", description = "Old spelling of [post_process.styles.contour] color" }
+contour_fade = { type = "f32", description = "Old spelling of [post_process.styles.contour] fade" }
+contour_boil = { type = "f32", description = "Old spelling of [post_process.styles.contour] boil" }

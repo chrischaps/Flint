@@ -1596,8 +1596,8 @@ branch_levels = 2
                 include_str!("../../../../../specs/oak_tree.procgen.toml"),
             ),
             (
-                "oak_tree2",
-                include_str!("../../../../../specs/oak_tree.procgen2.toml"),
+                "oak_tree_deep",
+                include_str!("../../../../../specs/oak_tree_deep.procgen.toml"),
             ),
             (
                 "weeping_willow",

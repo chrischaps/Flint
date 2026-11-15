@@ -15,8 +15,8 @@
 description = "Two-bone IK: rotates this entity and its parent so the `tip` child reaches the `target` entity, bending toward `pole`. Runs every frame after animation; entities carrying rigidbody/joint must not use it."
 
 [component.ik_two_bone.fields]
-target = { type = "string", description = "Entity whose world position the tip reaches", default = "" }
-pole = { type = "string", description = "Entity whose world position the mid joint bends toward", default = "" }
-tip = { type = "string", description = "Child entity of this one at the chain's end (its rest offset is the second bone)", default = "" }
-weight = { type = "float", description = "Blend from the rest pose (0) to the solve (1)", default = 1.0, min = 0.0, max = 1.0 }
+target = { type = "entity", description = "Entity whose world position the tip reaches", default = "" }
+pole = { type = "entity", description = "Entity whose world position the mid joint bends toward", default = "" }
+tip = { type = "entity", description = "Child entity of this one at the chain's end (its rest offset is the second bone)", default = "" }
+weight = { type = "f32", description = "Blend from the rest pose (0) to the solve (1)", default = 1.0, min = 0.0, max = 1.0 }
 enabled = { type = "bool", description = "Run the solve", default = true }

@@ -90,14 +90,7 @@ pub fn compose(cells: &[RgbaImage], text: &SheetText) -> RgbaImage {
         TITLE,
         &text.title,
     );
-    if !text.time.is_empty() {
-        // Right-aligned on the title's line, clipped at the left margin
-        let advance = GLYPH * title_scale;
-        let fit = fit_text(&text.time, width - 2 * MARGIN, title_scale);
-        let w = fit.chars().count() as u32 * advance;
-        let x = (width - MARGIN).saturating_sub(w).max(MARGIN);
-        draw_text(&mut sheet, &font, x, y, title_scale, LABEL, &fit);
-    }
+    draw_time(&mut sheet, &font, &text.time, title_scale);
     y += GLYPH * title_scale + 6 * scale;
     for (k, part) in subtitle.iter().enumerate() {
         let y = y + k as u32 * (line + 3 * scale);
@@ -157,6 +150,19 @@ pub fn cell_origin(cell_w: u32, cell_h: u32, text: &SheetText, i: usize) -> (u32
     )
 }
 
+/// The moment a sheet shows, right-aligned on the title's line and clipped at
+/// the left margin; nothing when `time` is empty.
+fn draw_time(sheet: &mut RgbaImage, font: &GlyphAtlas, time: &str, title_scale: u32) {
+    if time.is_empty() {
+        return;
+    }
+    let width = sheet.width();
+    let fit = fit_text(time, width - 2 * MARGIN, title_scale);
+    let w = fit.chars().count() as u32 * GLYPH * title_scale;
+    let x = (width - MARGIN).saturating_sub(w).max(MARGIN);
+    draw_text(sheet, font, x, MARGIN, title_scale, LABEL, &fit);
+}
+
 /// A two-key sheet's words (#358): the first key's values over the columns,
 /// the second's down the left of the rows.
 pub struct GridText {
@@ -166,6 +172,9 @@ pub struct GridText {
     pub row_key: String,
     pub column_labels: Vec<String>,
     pub row_labels: Vec<String>,
+    /// Top right, or nothing when empty: the moment the cells show, as
+    /// [`SheetText::time`].
+    pub time: String,
 }
 
 /// Lay `cells` (all one size, a row at a time) out as a grid of
@@ -207,6 +216,7 @@ pub fn compose_grid(cells: &[RgbaImage], text: &GridText) -> RgbaImage {
         TITLE,
         &text.title,
     );
+    draw_time(&mut sheet, &font, &text.time, title_scale);
     let y = MARGIN + GLYPH * title_scale + 6 * scale;
     for (k, part) in subtitle.iter().enumerate() {
         let y = y + k as u32 * (line + 3 * scale);
@@ -550,6 +560,7 @@ mod tests {
             row_key: "b".into(),
             column_labels: columns.iter().map(|l| l.to_string()).collect(),
             row_labels: rows.iter().map(|l| l.to_string()).collect(),
+            time: String::new(),
         }
     }
 

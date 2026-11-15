@@ -6,14 +6,35 @@ use flint_ecs::FlintWorld;
 use std::fs;
 use std::path::Path;
 
-/// Save a world to a scene file
+/// Write a world to a new scene file. Refuses a path that's already there
+/// (#677): the world holds only entities, so a file written from it has no
+/// `[camera]`, `[environment]`, `[post_process]`, no table of a feature's or
+/// a game's (`[living]`, `[wooze]`, `[weather]`), no prefabs, description or
+/// comments. An existing scene is changed through
+/// [`crate::SceneDocument`] (`patch_field`, `apply_world_diff`), which writes
+/// only what changed.
 pub fn save_scene<P: AsRef<Path>>(
     path: P,
     world: &FlintWorld,
     name: impl Into<String>,
 ) -> Result<()> {
+    let path = path.as_ref();
     let content = save_scene_string(world, name)?;
-    fs::write(path, content)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => flint_core::FlintError::IoError(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "{} already exists: a scene is rewritten from its world only when it's new (#677); change one through SceneDocument",
+                    path.display()
+                ),
+            )),
+            _ => e.into(),
+        })?;
+    std::io::Write::write_all(&mut file, content.as_bytes())?;
     Ok(())
 }
 
@@ -37,10 +58,10 @@ pub fn world_to_scene_file(world: &FlintWorld, name: impl Into<String>) -> Scene
         camera: None,
         environment: None,
         post_process: None,
-        living: None,
-        wooze: None,
+        tables: toml::Table::new(),
         prefabs: std::collections::HashMap::new(),
         entities: std::collections::HashMap::new(),
+        written: toml::Table::new(),
     };
 
     for info in world.all_entities() {
@@ -83,6 +104,29 @@ pub fn update_scene_file(world: &FlintWorld, existing: &mut SceneFile) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_scene_refuses_to_overwrite_a_scene() {
+        // #677: a world-only file would lose everything but the entities
+        let dir = std::env::temp_dir().join(format!("flint-save-scene-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("kept.scene.toml");
+        let original = "# mine\n[scene]\nname = \"kept\"\n\n[camera]\nfov = 40.0\n";
+        std::fs::write(&path, original).unwrap();
+        let mut world = FlintWorld::new();
+        world.spawn("e").unwrap();
+        let err = save_scene(&path, &world, "kept").unwrap_err();
+        assert!(err.to_string().contains("already exists"), "{err}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+
+        let new = dir.join("new.scene.toml");
+        let _ = std::fs::remove_file(&new);
+        save_scene(&new, &world, "new").unwrap();
+        assert!(std::fs::read_to_string(&new)
+            .unwrap()
+            .contains("[entities.e]"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn test_save_scene_string() {

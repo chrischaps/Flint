@@ -1,0 +1,25 @@
+# Brush (#935): Yuji Syuku, kanji and kana in a brush hand. Each glyph is a
+# few wet strokes with dry ends: sumi ink on paper.
+default_ramp = "kanji"
+
+[font]
+file = "ofl/YujiSyuku/YujiSyuku-Regular.ttf"   # OFL 1.1, subset: beside it, OFL.txt
+size = 20
+
+[ramps.kanji]
+glyphs = " 丶一二三川口日目田品画雷鬱"
+map = "coverage"
+
+[ramps.strokes]
+glyphs = " 丶一二三川口日目田品画雷鬱"
+
+[ramps.hiragana]
+glyphs = " ・へくしつこいのさもあぬ"
+map = "coverage"
+
+[edges]
+horizontal = "─"
+vertical = "│"
+diagonal = "╱"
+antidiagonal = "╲"
+corners = "┌┐└┘├┤┬┴┼"

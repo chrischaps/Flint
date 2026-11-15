@@ -1,0 +1,4 @@
+# Declared by name only: an open schema (ADR 0115). The component is known
+# and its table is not checked.
+[component.orbit]
+description = "An orbiting camera rig's settings. Read by examples/scripts/ascii_orbit.rhai; open"

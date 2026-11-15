@@ -192,8 +192,8 @@ struct PaintUniforms {
 }
 
 struct Watercolor {
-    wash_pipeline: wgpu::RenderPipeline,
-    paint_pipeline: wgpu::RenderPipeline,
+    wash_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    paint_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniform_bgl: wgpu::BindGroupLayout,
     sampled_bgl: wgpu::BindGroupLayout,
     entity_bgl: wgpu::BindGroupLayout,
@@ -242,7 +242,7 @@ impl Watercolor {
         let wash_module = kit::shader(
             device,
             "Watercolor Wash Shader",
-            include_str!("watercolor_wash.wgsl"),
+            kit::wgsl!("watercolor_wash.wgsl"),
         );
         // A one-texel mask of id 0, bound while no entity asks
         let no_mask = device.create_texture(&wgpu::TextureDescriptor {
@@ -322,9 +322,9 @@ impl Watercolor {
     }
 }
 
-const PAINT_SHADER: &str = concat!(
-    include_str!("watercolor.wgsl"),
-    include_str!("style_image.wgsl")
+const PAINT_SHADER: kit::Wgsl = kit::wgsl!(
+    "watercolor.wgsl",
+    "style_image.wgsl"
 );
 
 /// A row from a settings source: the scene's (`param` = the frame's) or a
@@ -396,7 +396,7 @@ impl StylePass for Watercolor {
         let paper = self.paper.lock().unwrap_or_else(|e| e.into_inner()).get(
             frame.device,
             frame.queue,
-            &super::ChoiceScope::defaults(frame.scene_dir).search(),
+            frame.assets,
             &chosen,
             frame.frame.is_multiple_of(15),
         );
@@ -500,8 +500,8 @@ mod tests {
 
     #[test]
     fn the_paint_shader_validates_and_its_uniforms_match_rust() {
-        let module = naga::front::wgsl::parse_str(PAINT_SHADER)
-            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(PAINT_SHADER)));
+        let module = naga::front::wgsl::parse_str(PAINT_SHADER.text)
+            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(PAINT_SHADER.text)));
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::default(),

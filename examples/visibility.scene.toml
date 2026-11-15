@@ -1,0 +1,137 @@
+# Visibility bench (#628): `visibility { visible = false }` hides an entity
+# and everything under it, its light included, without parking it out of view.
+#
+#   slab_c, slab_f ..... two tiles of a pooled road, hidden one by one
+#   cart ............... a parent hidden with its two child wheels
+#   lamp ............... a hidden post whose warm point light goes out with it
+#
+#   cargo run --bin flint -- render examples/visibility.scene.toml --no-grid -o vis.png
+#
+# Scripts flip the same switch: set_visible(id, false) / is_visible(id).
+
+[scene]
+name = "Visibility"
+version = "1.0"
+description = "Hidden entities, subtrees and lights (#628)"
+
+[camera]
+position = [6.5, 4.2, 7.5]
+target = [0.0, 0.4, 0.0]
+fov = 45.0
+
+[post_process]
+exposure = 1.1
+ssao_enabled = true
+ssao_radius = 0.5
+ssao_intensity = 0.6
+
+[entities.sun]
+[entities.sun.light]
+type = "directional"
+direction = [-0.4, 0.8, 0.45]
+color = [0.75, 0.8, 1.0]
+intensity = 1.2
+
+[entities.ground]
+[entities.ground.transform]
+position = [0, -0.05, 0]
+[entities.ground.bounds]
+min = [-10, 0, -10]
+max = [10, 0.05, 10]
+[entities.ground.material]
+roughness = 0.95
+
+# ── A pooled road: six slabs, two not in use ──────────────────
+
+[entities.slab_a]
+[entities.slab_a.transform]
+position = [-1.5, 0, -5.0]
+[entities.slab_a.bounds]
+min = [0, 0, 0]
+max = [3, 0.12, 1.5]
+
+[entities.slab_b]
+[entities.slab_b.transform]
+position = [-1.5, 0, -3.3]
+[entities.slab_b.bounds]
+min = [0, 0, 0]
+max = [3, 0.12, 1.5]
+
+[entities.slab_c]
+[entities.slab_c.transform]
+position = [-1.5, 0, -1.6]
+[entities.slab_c.bounds]
+min = [0, 0, 0]
+max = [3, 0.12, 1.5]
+[entities.slab_c.visibility]
+visible = false
+
+[entities.slab_d]
+[entities.slab_d.transform]
+position = [-1.5, 0, 0.1]
+[entities.slab_d.bounds]
+min = [0, 0, 0]
+max = [3, 0.12, 1.5]
+
+[entities.slab_e]
+[entities.slab_e.transform]
+position = [-1.5, 0, 1.8]
+[entities.slab_e.bounds]
+min = [0, 0, 0]
+max = [3, 0.12, 1.5]
+
+[entities.slab_f]
+[entities.slab_f.transform]
+position = [-1.5, 0, 3.5]
+[entities.slab_f.bounds]
+min = [0, 0, 0]
+max = [3, 0.12, 1.5]
+[entities.slab_f.visibility]
+visible = false
+
+# ── A cart, hidden at its root: the wheels go with it ─────────
+
+[entities.cart]
+[entities.cart.transform]
+position = [3.2, 0.45, -1.0]
+[entities.cart.bounds]
+min = [-0.9, 0, -0.5]
+max = [0.9, 0.5, 0.5]
+[entities.cart.visibility]
+visible = false
+
+[entities.cart_wheel_l]
+parent = "cart"
+[entities.cart_wheel_l.transform]
+position = [0, -0.2, -0.6]
+[entities.cart_wheel_l.bounds]
+min = [-0.35, -0.25, -0.08]
+max = [0.35, 0.25, 0.08]
+
+[entities.cart_wheel_r]
+parent = "cart"
+[entities.cart_wheel_r.transform]
+position = [0, -0.2, 0.6]
+[entities.cart_wheel_r.bounds]
+min = [-0.35, -0.25, -0.08]
+max = [0.35, 0.25, 0.08]
+# ── A lamp whose light goes out with it ───────────────────────
+
+[entities.lamp]
+[entities.lamp.transform]
+position = [-3.0, 0, 1.0]
+[entities.lamp.bounds]
+min = [-0.08, 0, -0.08]
+max = [0.08, 1.8, 0.08]
+[entities.lamp.visibility]
+visible = false
+
+[entities.lamp_glow]
+parent = "lamp"
+[entities.lamp_glow.transform]
+position = [0, 1.95, 0]
+[entities.lamp_glow.light]
+type = "point"
+color = [1.0, 0.62, 0.3]
+intensity = 9.0
+range = 7.0

@@ -34,11 +34,12 @@ flint render levels/tavern.scene.toml \
 | `--target <x,y,z>` | scene `[camera]` or auto | Camera look-at point (comma-separated) |
 | `--fov <degrees>` | scene `[camera]` or auto | Field of view in degrees |
 | `--no-grid` | `false` | Disable ground grid |
-| `--schemas <path>` | `schemas` | Path to schemas directory (repeatable) |
+| `--schemas <path>` | manifest, else discovered | Schema directories (repeatable). Without it: the project's `flint.toml` `schemas`, else discovery ([the rule](../concepts/assets.md#schemas-the-rule-beside-it)) |
 | `--msaa <1\|4>` | `1` | Scene-pass MSAA sample count |
 | `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image (0.25--1), upscaled |
 | `--gpu-time <frames>` | (none) | Render this many frames with GPU timing and print each pass's ms |
 | `--frames <n>` | (none) | Draw a moving sequence of `n` frames ([Frame sequences](#frame-sequences)) |
+| `--mesh <entity>=<files>` | (none) | Draw a frame per mesh file on that entity, one renderer for all ([Mesh sequences](#mesh-sequences)) |
 
 ## Post-Processing Flags
 
@@ -94,14 +95,14 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--contour-boil <f32>` | `0.0` | How far each drawing moves the lines (enables contour) |
 | `--boil-on <u32>` | `2` | Film frames each drawing is held: 1, 2 or 3 |
 | `--boil-time <f64>` | `0` | Seconds of the wooze field to run, which picks the drawing |
-| `--render-mode <0-5>` | `0` | Stylized render mode |
+| `--render-mode <0-6>` | `0` | Stylized render mode (6: the tear alone, for `blend_source = "tear"` props) |
 | `--mode-mix <f32>` | `0` | Render mode blend, 0--1 |
 | `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters |
 | `--film-grain <f32>` | `0` | Film grain intensity |
 | `--grain-time <f32>` | `0` | Post time driving grain and mode animation |
-| `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene, e.g. `ascii:cell=12,ramp=blocks`, `invert`, `kuwahara:radius=6`, `ascii:off`; repeatable; `--style help` lists them, `--list-styles [--json]` with stages and ranges ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
+| `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene, e.g. `ascii:cell=12,ramp=blocks`, `invert`, `kuwahara:radius=6`, `ascii:off` (off everywhere, entities' own included, #376); repeatable; `--style help` lists them, `--list-styles [--json]` with stages and ranges ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
 | `--style-time <f32>` | `0` | Post time animated styles read (the same clock as `--grain-time`) |
-| `--look <name\|path>` | (none) | A preset `[post_process]` block merged over the scene's (and over a look the scene names itself with `look = "<name>"`, which goes under its keys): `ascii_noir`, `matrix`, `ink_wash`, `graphite`, `watercolor`, `coloured_pencil`, `blueprint`, `charcoal`, or a `styles/<name>.look.toml`; other flags apply over it; `--look help` lists them ([Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps)) |
+| `--look <name\|path>` | (none) | A preset `[post_process]` block merged over the scene's (and over a look the scene names itself with `look = "<name>"`, which goes under its keys): `ascii_noir`, `matrix`, `ink_wash`, `graphite`, `watercolor`, `coloured_pencil`, `blueprint`, `charcoal`, `rotoscope`, or a `styles/<name>.look.toml`; other flags apply over it; `--look help` lists them ([Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps)) |
 | `--sweep <key=v1,v2,...>` | (none) | One labelled contact sheet of the frame at each value: `ascii.cell=6,8,12`, `post.exposure=0.8,1.2`, `look=a,b`, or `wooze.glide=0,1` ([below](#sweeping-a-knob)); cells default to 640x360, and pixel-identical neighbours are warned about. Give it twice for a grid: the first key across, the second down (#358) |
 | `--sweep-crop <x,y,w,h>` | (none) | Draw each sweep cell at `--width`x`--height` (default 1920x1080) and keep this region 1:1, so point-sized styles show their final glyph size ([Cells at the final scale](../concepts/stylize-passes.md#cells-at-the-final-scale)) |
 | `--sweep-scale <cell\|full>` | `cell` | `full`: draw each sweep cell at the full size and shrink it to 640 wide, so the cell shows the final composition |
@@ -126,9 +127,9 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 An ASCII render is a real character grid, so it can also be read rather than looked at. `--ascii-text` writes the grid the frame drew: one line per cell row, one character per cell, the same cells as the PNG (part cells at the borders included). A cell the picture passes through, under `scope = "entities"` or where a later style draws its own entity, is a space.
 
 ```bash
-flint render demo/pbr_test.scene.toml --ascii --ascii-text frame.txt
+flint render examples/pbr_test.scene.toml --ascii --ascii-text frame.txt
 #   Wrote 240x135 ASCII grid to frame.txt
-flint render demo/pbr_test.scene.toml --ascii --ascii-text-ansi frame.ans && cat frame.ans
+flint render examples/pbr_test.scene.toml --ascii --ascii-text-ansi frame.ans && cat frame.ans
 ```
 
 The text fits in a prompt, diffs line by line between two runs, and lets a test say "the box is `#`" without pixel tolerances. The ANSI file paints each glyph in its ink over its ground, for a 24-bit terminal. The grid comes from the GPU: a pass of one fragment a cell records which glyph the glyph pass draws at the cell's centre, and the frame copies it back. It runs only while capture is on (`SceneRenderer::set_style_text_capture` / `style_text`). A cell on a styled entity's silhouette holds that glyph plus the outline ink the entity draws (#288), so there the text names the centre's glyph.
@@ -178,7 +179,7 @@ flint render scene.toml --no-tonemapping --output linear.png
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--debug-mode <mode>` | (none) | `wireframe`, `normals`, `depth`, `uv`, `unlit`, `metalrough`, `style`, `edges` |
+| `--debug-mode <mode>` | (none) | `wireframe`, `wireframe-overlay`, `normals`, `depth`, `uv`, `unlit`, `metalrough`, `style`, `edges` |
 | `--wireframe-overlay` | `false` | Draw wireframe edges over solid shading |
 | `--show-normals` | `false` | Draw face-normal direction arrows |
 | `--no-tonemapping` | `false` | Disable tonemapping for raw linear output |
@@ -191,16 +192,16 @@ Both wireframe modes include skinned meshes, drawn in their bind pose.
 
 - **Time is pinned.** Film grain, render-mode animation and animated styles read a post time that headless render fixes at 0. Pass `--style-time` (or `--grain-time`) to pick a different but equally repeatable frame; two renders at the same value match, different values differ.
 - **MSAA and FXAA default off** precisely so the default path stays single-sample and single-pass. Turn them on for hero shots, not for baselines.
-- **Animation does not run.** Skinned meshes render at bind pose. For a posed headless frame use the model previewer's render mode instead: `flint edit model.glb --render out.png --anim-time 1.5`, or `--sequence file.sequence.toml --anim-time 2.0` to replay a timed sequence deterministically, or `--pose-bone joint:x,y,z` to turn a joint by hand.
+- **Animation runs only when asked.** Without a flag skinned meshes render at bind pose. `--anim-time <s>` runs the scene's animation to that time first, as the player has it there ([Posed Characters](#posed-characters)). For one model on its own, the model previewer's render mode does the same: `flint edit model.glb --render out.png --anim-time 1.5`, or `--sequence file.sequence.toml --anim-time 2.0` to replay a timed sequence deterministically, or `--pose-bone joint:x,y,z` to turn a joint by hand.
 - **Particles start at t = 0**, so emitters appear empty unless you pass `--particle-time <s>`, which steps them deterministically before the capture. `--time` does this too.
-- **Cost levers are free to change** without affecting geometry: `--ssao-samples 16` is roughly four times cheaper than the default 64 and usually indistinguishable on matte scenes (ADR 0052), which matters when a CI job renders dozens of frames.
+- **Cost levers are free to change** without affecting geometry: `--ssao-samples 16` is roughly four times cheaper than the default 64 and usually indistinguishable on matte scenes ([ADR 0052](https://github.com/chrischaps/Flint/blob/main/docs/adr/0052-authorable-ssao-sample-count.md)), which matters when a CI job renders dozens of frames.
 
 ## Frame sequences
 
 One render is one frame, so a style that remembers the frame before (the ASCII style's per-cell history, #277) never gets to use its memory. `--frames <n>` draws a sequence on one renderer instead, `--frame-dt` apart (default 1/60 s), moving the camera between frames. The styles see consecutive frames and their history runs as it does in the player, without a window, a script or a capture tool (#345):
 
 ```bash
-flint render demo/ascii_motion.scene.toml --schemas schemas --no-grid \
+flint render examples/ascii_motion.scene.toml --no-grid \
     --width 1280 --height 720 --frames 181 --orbit 6.8755 --output out/seq.png
 #   Sequence: 181 frames, 0.016667 s apart, orbiting 6.8755 deg/s
 #   Rendered 181 1280x720 frames to out/seq_0000.png .. out/seq_0180.png
@@ -209,12 +210,13 @@ flint render demo/ascii_motion.scene.toml --schemas schemas --no-grid \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--frames <n>` | (none) | Frames to draw, written as `<stem>_0000.png`... beside `--output` (with `--ascii-text`, numbered grids too) |
-| `--frame-dt <s>` | `1/60` | Seconds between frames. Post time (`--style-time` is the start), grass wind, `--particle-time` particles and the ASCII history's smoothing (#342) advance by it |
+| `--frame-dt <s>` | `1/60` | Seconds between frames. Post time (`--style-time` is the start), grass wind, `--particle-time` particles, `--anim-time` animation and the ASCII history's smoothing (#342) advance by it |
 | `--orbit <deg/s>` | (still camera) | Turn the camera about its target, from the scene's `[camera]` or the orbit flags |
 | `--camera-path <file>` | (still camera) | Follow keys instead, position and target interpolated linearly |
 | `--flip-stats` | `false` | Count the ASCII style's glyph flips and reversals, per frame and in sum |
 | `--flip-json <file>` | (none) | Write the counts as JSON (per-frame arrays and the means) |
 | `--no-images` | `false` | Skip the PNGs, for a measurement |
+| `--last-frame` | `false` | Write only the last frame, to `--output` itself (not numbered): where the sequence ends, the history settled |
 
 A camera path is a TOML list of keys, in seconds from the first frame:
 
@@ -237,57 +239,124 @@ target = [0.6, 0.6, 4.2]
 The #277 bench, with the history on and off and with and without the edge glyphs (#267):
 
 ```bash
-flint render demo/ascii_motion.scene.toml --schemas schemas --no-grid \
+flint render examples/ascii_motion.scene.toml --no-grid \
     --width 1280 --height 720 --frames 181 --orbit 6.8755 --no-images --flip-stats \
     --style ascii:temporal=off --style ascii:edges=0
-#   Flips: 181 frames, 14400 cells: 321.1 flips/frame (2.23%), 57.8 reversals/frame (0.40%)
+#   Flips: 181 frames, 14400 cells: 203.7 flips/frame (1.41%), 36.2 reversals/frame (0.25%)
 ```
 
-| `demo/ascii_motion`, 181 frames | flips/frame | reversals/frame |
+| `examples/ascii_motion`, 181 frames | flips/frame | reversals/frame |
 |---|---|---|
-| `temporal = "off"`, `edges = 0` | 321.1 (2.23%) | 57.8 (0.40%) |
-| `temporal = "on"`, `edges = 0` | 105.1 (0.73%) | **0.0** |
-| `temporal = "off"`, edges on (default) | 389.7 (2.71%) | 69.1 (0.48%) |
-| `temporal = "on"`, edges on (default) | 227.7 (1.58%) | 30.3 (0.21%) |
+| `temporal = "off"`, `edges = 0` | 203.7 (1.41%) | 36.2 (0.25%) |
+| `temporal = "on"`, `edges = 0` | 54.6 (0.38%) | **0.0** |
+| `temporal = "off"`, edges on (default) | 319.2 (2.22%) | 58.9 (0.41%) |
+| `temporal = "on"`, edges on (default) | 101.9 (0.71%) | **0.9** (0.01%) |
 
-The history removes the tone glyphs' shimmer completely, as the player capture in #277 found (0.1 reversals a frame). The edge glyphs, added after that measurement, are still picked fresh every frame, and they are what's left (#477). The scene's `[camera]` is the first pose of its orbit script, so `--orbit 6.8755` (the script's 0.12 rad/s) follows the same path as the player's capture.
+The history removes the tone glyphs' shimmer completely, as the player capture in #277 found (0.1 reversals a frame), and nearly all the edge glyphs' since they got one of their own (#477; 30.3 a frame before it). What's left is a line glyph showing in a cell for a single frame, almost never the same cell twice ([Temporal stability](../concepts/stylize-passes.md#temporal-stability), #481). Measured 2026-11-13. The scene's `[camera]` is the first pose of its orbit script, so `--orbit 6.8755` (the script's 0.12 rad/s) follows the same path as the player's capture.
 
-A sequence is byte-identical run to run: the same flags give the same PNGs, which the player's `--frame-step` captures don't quite manage (#341). A debug build draws this bench at about a second a frame; `--no-images` and `--ssao-samples 16` are the cheap ways to make it quicker. A `render-suite` gate on a reversal budget is #478.
+A sequence is byte-identical run to run: the same flags give the same PNGs, which the player's `--frame-step` captures don't quite manage (#341). A debug build draws this bench at about a second a frame; `--no-images` and `--ssao-samples 16` are the cheap ways to make it quicker. At the goldens' 640 x 360 it takes about a twentieth of a second a frame, and `flint goldens` holds it to a reversal budget ([sequence cases](#sequence-cases-a-shimmer-budget)).
+
+### Mesh sequences
+
+A procgen look test often has its frames already, as mesh files: one GLB per seed, per pose or per setting. `--mesh <entity>=<files>` draws a frame per file on one renderer, showing each file in turn on that entity, so twelve files cost one start-up instead of twelve (#222). The files are one GLB, a folder of them, or a wildcard in the file name, taken in natural order (`f2` before `f10`):
+
+```bash
+for s in $(seq 1 12); do flint gen specs/oak_tree.procgen.toml --seed $s -o out/oaks/oak_seed$s.glb; done
+flint render examples/mesh_sequence.scene.toml --mesh tree_a=out/oaks --sheet -o oaks.png --no-grid
+#   Sequence: 12 frames, 0.083333 s apart
+#   Rendered 12 640x360 frames as one 2664x1346 sheet to oaks.png
+```
+
+![Twelve seeds of one oak spec on a labelled contact sheet, one cell per GLB, drawn in one flint render run](../images/mesh-sequence-oaks.png)
+
+| Output | What it writes |
+|--------|----------------|
+| `-o seq.png` | `seq_0000.png`... as `--frames` numbers them |
+| `-o frames/f-%03d.png` | a PNG a frame, numbered as the pattern says |
+| `-o oaks.gif` | one GIF at `--fps` (default 12; at most 50) |
+| `--sheet -o oaks.png` | one contact sheet, each cell labelled with its file's name (cells 640x360 unless `--width`/`--height`) |
+
+Repeat `--mesh` to move several entities at once, frame for frame: `--mesh tree_a=out/oaks --mesh tree_b='out/willows/w*.glb'` gives frame *n* the *n*th file of each, and refuses lists of different lengths. Frames are 1/`--fps` apart (or `--frame-dt`), so `--orbit`, `--camera-path`, post time and particles move as in any sequence. `examples/mesh_sequence.scene.toml` has three slots (`tree_a` in the middle, `tree_b` and `tree_c` either side) and a bench for scale.
+
+The bound entity's `model` is pointed at an asset of its own (`mesh-seq/<entity>`) and marked `runtime`, so the scene's loader leaves it alone and other entities naming the same asset keep theirs. An entity with no model gets one. A GLB of several mesh nodes, or one moved by its node, is baked into one mesh, so a swap is one upload. Skinned files draw their rest pose. A mesh sequence draws on the still path, so it refuses `--time`, `--scripts`, `--sweep` and scenes with living props or a `[wooze]` table. On a shared machine, release build, 960x540: 12 oaks in one run took 2.05 s, and 12 runs of one file each took 24.2 s (the minimum of three alternating rounds). `crates/flint-cli/tests/render_mesh_cli.rs` checks that the last frame of a sequence is byte-identical to that file rendered alone.
 ## A Chosen Moment
 
 `--time` captures a scene at a game time, so that two settings can be compared at the same instant:
 
 ```bash
-flint render demo/living_props.scene.toml --time 3.5 -o at-3.5.png
+flint render examples/living_props.scene.toml --time 3.5 -o at-3.5.png
 ```
 
 [Living props](../concepts/procgen.md#in-a-scene-the-living_prop-component), shallow wooze, the [shading boil](../concepts/post-processing.md) and the [wooze field](../concepts/procgen.md#the-wooze-field) they all read run from zero to that time, and so do the other clocks the player keeps: grass, ocean and post time (`--grain-time` overrides the post time), particles (`--particle-time` overrides those), and `--boil-time` holds the boil on one drawing. The grid stays off, as it is in the player. The same value gives a byte-identical PNG on the same machine and driver.
 
 It also matches the player. `flint render --time T` and `flint-player --frame-step S --screenshot-at T` at the same window size drew the same pixels on both of Flint's living demo scenes, at four times from 0 to 11.75 s and at steps of 1/16 and 1/60 s: not one pixel of 921,600 differed. Clocks step 1/60 s at a time, or `--frame-step S` if you want to name a player run's step. Scenes whose field doesn't change over time get the same pixels from any step.
 
-Physics and animation clips don't run, and nor do scripts unless you ask (next section). That's where the match ends. `demo/wooze_field.scene.toml` has a script that changes the step at 12 s, so without `--scripts` a capture agrees with the player up to there and not after (about 50,000 pixels differ at 13 s). When a scene has scripts it isn't running, or `animator` components, the render names those entities in a warning. In `demo/shallow_wooze.scene.toml`, whose figure is on an idle clip, everything but the figure matches.
+Several moments of one run are a list, each later than the one before:
+
+```bash
+flint render examples/living_props.scene.toml --time 2,5,9.5 -o at.png
+```
+
+That writes a still a moment beside `--output`, numbered as a [`--frames`](#frame-sequences) sequence is (`at_0000.png`, `at_0001.png`, `at_0002.png`). It's one run: the scene loads once and the clocks step through the moments in order, so it simulates to the last moment once, where three renders would simulate to each. A moment that falls on the step (1/60 s, or `--frame-step`) gets the same bytes it gets rendered alone. Between moments off the step, the clocks take one short step to land on each, as a span's frames do. `--report json` has a capture a moment, and a `--sweep` writes a sheet a moment.
+
+Physics doesn't run, and nor do animation clips or scripts unless you ask (`--anim-time`, [below](#posed-characters), and `--scripts`, next section). That's where the match ends. `examples/wooze_field.scene.toml` has a script that changes the step at 12 s, so without `--scripts` a capture agrees with the player up to there and not after (about 50,000 pixels differ at 13 s). When a scene has scripts it isn't running, or `animator` components and no `--anim-time`, the render names those entities in a warning. In `examples/shallow_wooze.scene.toml`, whose figure is on an idle clip, everything but the figure matches without `--anim-time`.
+
+## Posed Characters
+
+`flint render` draws a skinned character in its bind pose unless it is told a time to pose it at. `--anim-time <s>` loads the scene's animation as the player does when the scene comes up (each skinned model's skeleton and clips, `.anim.toml` property tweens, sprite clips and sequences, found by the project's asset search) and steps it to `s` before the capture, in fixed 1/60 s steps that land on `s` exactly: every tier (skeletal clips with their crossfades and layers, sequences, property tweens, node and sprite clips), each `bone_probe` written, then [two-bone IK](../concepts/animation.md) over the posed world, as the player's frame runs them (#307).
+
+```bash
+flint render examples/skeletal_test.scene.toml --anim-time 1.5 -o idle.png
+#   Animation: ybot at t = 1.500s (1 skinned, 90 step(s) of 0.016667s)
+```
+
+The same value gives a byte-identical PNG. With `--time` the animation starts at `s` and runs on with the clock, `--frame-step` a step, so `--anim-time 0 --time 0..4 -o walk.gif` is four seconds of a walk cycle, and `--anim-time 0 --time 1` is the same picture as `--anim-time 1 --time 0`. With `--frames` each frame steps it `--frame-dt` on, and frame 0 is `--anim-time` itself.
+
+Measured against the player on a copy of `examples/skeletal_test.scene.toml` with a fixed `[camera]`, at 960x540 (`flint-player --frame-step 0.0166667 --screenshot-at T` against `flint render --anim-time T --time 0 --frame-step 0.0166667`): at T = 0 not one pixel differed; at 0.5, 1.0 and 1.5 s, 235 to 296 pixels on the figure differed by 1 of 255 and none by more. The frames either side of 1.5 s differ by about 3,500 pixels each, so it is the same frame of the clip. The same scene with no animator matched to the pixel, so the last bit is in the animation path, and its cause wasn't found.
+
+What doesn't run: physics, so a ragdoll or a character pushed by its controller stands where the scene put it; and scripts' `on_sequence_cue` and `on_animation_end`, since nothing hears a cue headless (scripts run with `--scripts`, but cues and sprite ends are counted and dropped). A skinned entity needs a `skeleton` component beside its `animator` for its clip to play, in the player too: `--anim-time` names one that has none. A scene with nothing animated says so, and draws as it would without the flag.
 
 ## Scripts and an Expression Timeline
 
-`--scripts` runs the scene's Rhai scripts as the player does, so what they do to the scene is in the capture. `--expression-timeline` feeds them [expression states](../concepts/scripting.md#expression-api) from a file and implies `--scripts`:
+`--scripts` runs the scene's Rhai scripts as the player does, so what they do to the scene is in the capture. `--script-time <t>` is `--scripts --time <t>` in one flag (#371), named like `--particle-time` and `--anim-time`: the scripts run to game time `t` and the capture is taken there. `examples/ascii_story.scene.toml` styles nothing until its script does, so a still of it is a plain clearing; at its beats it isn't:
+
+```bash
+flint render examples/ascii_story.scene.toml --script-time 3 -o barrel.png   # the barrel in glyphs
+flint render examples/ascii_story.scene.toml --script-time 5 -o bench.png    # the bench in amber blocks
+flint render examples/ascii_story.scene.toml --script-time 0..8 -o story.gif # the whole loop
+```
+
+A render that doesn't run a scene's scripts, a still included, names them in a warning and the flag that would. The stylize goldens hold it (`script-beat-is-the-authored-style`): a scene whose script takes its props' authored ASCII off at the first frame and gives it back at 2 s renders, at `--script-time 3`, the same bytes as `--time 3` with no script run.
+
+`--expression-timeline` feeds scripts [expression states](../concepts/scripting.md#expression-api) from a file and implies `--scripts`:
 
 ```bash
 flint render scenes/stage.scene.toml --expression-timeline timelines/one-turn.timeline.json \
   --time 0..12 --fps 12 -o one-turn.gif
 ```
 
-Scripts start once the models are loaded, as in the player, and tick once per clock step (1/60 s, or `--frame-step`), in the player's frame order: the timeline's states that have come due, `on_expression` then `on_update`, `on_draw_ui`, then what the scripts asked for, then the wooze field and living props. Time 0 is the player's first frame: its `dt` is 0, and a state at `t = 0` is heard before anything is drawn. A state is due once the clock reaches its `t`, to within a microsecond, since 120 steps of 1/60 add up to a hair under 2.
+Scripts start once the models are loaded, as in the player, and the scene steps once per clock step (1/60 s, or `--frame-step`) through the player's own frame, the same code (`flint_player::GameCore`, #725): the timeline's states that have come due, `on_expression` then `on_update`, the style tweens, what `on_update` asked for, the camera, `on_draw_ui` and what it asked for, animation, then the wooze field and living props. A script's style reads (`get_style_param`, `get_entity_style`) see the frame's styles as the scripts have left them, the step after they change, as in the player. Time 0 is the player's first frame: its `dt` is 0, and a state at `t = 0` is heard before anything is drawn. A state is due once the clock reaches its `t`, to within a microsecond, since 120 steps of 1/60 add up to a hair under 2.
 
 It's deterministic, so a review can diff two renders:
 
 - The clock is the step, and it is the only one: `timestamp()`, Rhai's wall clock, fails and says to use `total_time()`.
-- `random()` and `random_range()` draw from a seeded sequence, the same every run. The player's are unchanged.
+- `random()` and `random_range()` draw from a seeded sequence, the same every run. A player run with `--frame-step` draws the same one (#635), unless its `--seed N` picks another.
 - Scripts run in the order of their entities' names, here and in the player. That order used to come from ids, which differ run to run.
 - There is no input.
 
-What changes the picture runs: everything scripts write to the world (`set_field`, `set_position`, a light's colour, a material), `tune_living`, `freeze_living`, `set_wooze`, `set_wooze_zone`, `remove_wooze_zone`, `fire_event` between scripts, the `set_camera_*` overrides and the post-processing ones (`set_exposure`, `set_vignette`, `set_fog_color`, ...). Sound is dropped quietly. Everything else a script asks for (physics, particles, a scene change, `tune_living`'s boil, the HUD, render modes) is named once on stderr and in the report's `warnings`, so whoever reads the capture knows what it isn't showing. Each capture in `--report json` also says the `expression` state the scripts had then.
+A capture carries out what scripts ask through the same dispatcher as the player (`flint_script::host`, #697), and the same code does each command that changes the game (#725): only sound, the window, other scenes and the like are each host's own, so a command reads the same in both and the capture differs only in what it can do. What changes the picture runs:
 
-`crates/flint-cli/tests/render_scripts_cli.rs` keeps this true: a script tints a light by `expression().state`, each state's colour is on the frames at its time, two renders are byte-identical, and a tune and a freeze reach living props.
+- everything scripts write to the world (`set_field`, `set_position`, a light's colour, a material);
+- entity styles: `set_entity_style`, `set_style_param`, `clear_entity_style`, and `tween_style_param`, whose tweens step on the scripts' clock as the player's do; `get_entity_style` and `get_style_param` read the config the capture draws with;
+- whole-frame styles (`set_post_style`, `set_post_style_param`, `reset_post_style`), `set_look` and `clear_look`, and `reset_style_history`;
+- the `set_camera_*` overrides, `set_camera_roll` included, the post-processing ones (`set_exposure`, `set_vignette`, `set_fog_color`, ...), render modes (`set_render_mode`, for the steps that ask), `set_lod_scale`, `set_draw_distance_scale` and `set_quality`;
+- `tune_living` (its `boil` too: `kuwahara`, `contour`, `on`, `enabled`), `clear_living`, `freeze_living`, `step_living` (a whole beat for every prop, the boil and shallow wooze, frozen or not), `load_living_preset`, `set_wooze`, `set_wooze_zone`, `remove_wooze_zone`, in a scene with living props or a wooze field, where their modules are enabled as in the player (#698);
+- `push_state`, `pop_state` and `replace_state` (a state that pauses scripts pauses their `on_update`, as in the player), and `fire_event` between scripts;
+- particles (#579): `play_effect`, `stop_effect`, `set_effect_param` and `emit_burst` reach the capture's particles, which step on the scripts' clock in the fixed 1/60 s steps `--time` already took. A still with no `--time` or `--particle-time` draws no particles, and says so.
+
+What a capture can't do is a named list, `flint_player::PRESENTATION_ONLY`, and a test fails on a command that is neither done nor on it. Sound, the low-pass, the cursor and the touch controls have nothing to show and are dropped quietly. The rest (`set_time_scale`, since the capture's clock is its fixed step; `set_camera_cut_detection`; `save_living_preset` and `commit_living`, which write files; the A/B view; `load_scene`, `reload_scene` and chunks; `quit_game`; `set_velocity_2d`, since physics doesn't step) is named once on stderr and in the report's `warnings`, as are the HUD and world lines, so whoever reads the capture knows what it isn't showing. Each capture in `--report json` also says the `expression` state the scripts had then.
+
+`crates/flint-cli/tests/render_scripts_cli.rs` keeps this true: a script tints a light by `expression().state`, each state's colour is on the frames at its time, two renders are byte-identical, a tune, a freeze, a step and a preset reach living props, a script switches the boil off and on, and an effect it plays and stops is drawn only between the two.
 
 A scene with `living_prop` entities draws them in any `flint render`, at time 0 without `--time`. Procgen assets resolve as in the player only in those scenes. Other scenes draw exactly as they did.
 
@@ -296,24 +365,87 @@ A scene with `living_prop` entities draws them in any `flint render`, at time 0 
 A wooze key on `--sweep` renders the same moment once per value of a wooze knob, side by side on one image:
 
 ```bash
-flint render demo/living_props.scene.toml --time 3.5 --sweep wooze.glide=0,0.25,0.5,1 -o glide.png
+flint render examples/living_props.scene.toml --time 3.5 --sweep wooze.glide=0,0.25,0.5,1 -o glide.png
 ```
 
 ![The same moment in the living oak bench at four values of glide, as labelled columns on a strip of film](../images/render-sweep-glide.png)
 
 It takes `wooze.amplitude`, `wooze.step`, `wooze.glide`, `wooze.jitter` and `wooze.preset` (`wooze.preset=boil,morph,calm`). Each column is a whole run of its own from time 0, since a prop's state at a moment depends on what the knob was all the way there. `--width` and `--height` are each column's size, 640 x 360 by default, as for every sweep.
 
-A render with clocks (a `--time`, a wooze key, `--scripts`, `--report json`, or a scene with living props or a `[wooze]` table) draws a world and renderer a column like this whatever its key, so `--sweep ascii.cell=6,8 --time 0..1 -o cells.gif` animates a style sweep and `--report json` gives each of its captures a `column`. Those renders take one `--sweep` (no grid) and don't yet take `--sweep-crop`, `--sweep-scale`, `--reference`, a `--report` file, `--ascii-text`, `--gpu-time`, `--frames` or `--ai-refine`; each says so.
+A render with clocks (a `--time`, a wooze key, `--scripts`, `--report json`, or a scene with living props or a `[wooze]` table) draws a world and renderer a column like this whatever its key, so `--sweep ascii.cell=6,8 --time 0..1 -o cells.gif` animates a style sweep and `--report json` gives each of its captures a `column`. They take what a still render takes, cell for cell (#596):
+
+- Two `--sweep` flags make a grid, a world and renderer a cell, the first key across and the second down: `--time 3.5 --sweep wooze.glide=0,0.5,1 --sweep wooze.step=0.25,0.5,1` judges the two knobs together on one sheet, with the moment top right. A cell that turns two wooze knobs takes both, and a preset file's knobs go under the other key's, so a `wooze.glide` row turns the glide a preset column set. `--report json` gives each capture a `row` as well as a `column`.
+- `--sweep-crop` and `--sweep-scale` draw each cell at the full size and keep a region or shrink it, as in [Cells at the final scale](../concepts/stylize-passes.md#cells-at-the-final-scale).
+- `--reference` and a `--report` file measure each cell at one moment, with the labels' distances and the nearest starred; with `--report json`, each capture carries its `distance` too. A span or a `--time` list is refused, since its frames would each measure differently: measure a moment with `--time T`.
+- `--ascii-text` / `--ascii-text-ansi` write the grid of a moment, or one file a frame (`grid_0000.txt`...) for a span, a list or `--frames`. A sweep is refused, as on a still.
+- `--gpu-time N` times the first cell's last capture, drawn N times more.
+- `--frames N` steps the clocks `--frame-dt` a frame (default 1/60 s) and writes `seq_0000.png`..., with `--orbit`, `--camera-path`, `--flip-stats` and `--no-images` as in [frame sequences](#frame-sequences); the camera's move goes over where any script left it. It's refused with `--time` (both draw a span) and with `--sweep`, as on a still.
+- `--ai-refine` redraws the one moment under each candidate look, the clocks never rewound, so a look can be tuned on the Woozy Grove at 3.5 s. A span or a list is refused (it refines one frame), and so is `--report json` (the refine writes its own log).
 
 A sweep sets the scene's global value, the same one a `[wooze]` table would, and a scene without a table gets an empty one. Zones still apply on top. If a zone keeps any prop off the value, the column says what the props really read (`PROPS READ 0.25-0.80`). If two neighbouring columns come out pixel-identical, a warning says so: at this moment, nothing on screen is listening to that knob.
+
+## Variants Side by Side
+
+A sweep turns one key. To compare things that aren't one key (two looks against a style, MSAA on and off, three palettes at two cell sizes), give each its own flags with `--variant "label: --flag value ..."`, as often as needed, and every one is drawn at the same camera onto one labelled sheet:
+
+```bash
+flint render examples/ascii_entities.scene.toml --no-grid -o scope.png \
+  --variant "smooth: --style ascii:blend=0" \
+  --variant "per entity, screen grid:" \
+  --variant "full screen: --ascii-scope screen" \
+  --variant "per entity, object grid: --ascii-grid object" \
+  --zoom 860,380,1380,620@2
+#   [1/4] smooth: --style ascii:blend=0
+#   [2/4] per entity, screen grid: (the base command)
+#   [3/4] full screen: --ascii-scope screen
+#   [4/4] per entity, object grid: --ascii-grid object
+#   Wrote 4 variants as one 3944x842 sheet to scope.png (each variant's frame beside it as .\scope-<label>.png)
+#   Wrote zoom 860,380,1380,620@2 as a 4264x782 sheet to .\scope-zoom.png
+```
+
+![The ASCII meadow four ways: smooth, per entity on the screen grid, full screen, and per entity on each object's grid, each labelled with its flags](../images/render-variants-scope.png)
+
+![The same four at 2x nearest neighbour: the bench, the lantern on its crate and the barrel, glyph for glyph](../images/render-variants-scope-zoom.png)
+
+A per-entity style's props switch it on themselves, so a scene table's `enabled = false` leaves them in glyphs. `--style ascii:off` is off everywhere, props included (#376), with the rest of the post-processing as authored; `ascii:blend=0`, as the first variant has it, draws the same frame. Before #376 `ascii:off` left the props in glyphs, and the warning about pixel-identical neighbours (below) is what showed it.
+
+Each variant is the whole command line (every flag but `--variant`, `--variants`, `--zoom` and `--output`) with its own flags after it. A flag given in both takes the variant's value, and a repeatable one (`--style`) adds to the base's, so `--width 1280 --look graphite` before the variants applies to all of them. The label is the text before the first `:`; `"label:"` alone is the command as given, and a variant that starts with `-` is labelled with its flags. Each label's flags are written dim under it on the sheet, cut short with `~` when they don't fit the cell (the terminal prints them whole). Without `--no-grid` the editor grid is in every variant, as in a plain `flint render`.
+
+What gets written, for `-o scope.png`:
+
+- `scope.png`: the sheet, its frames shrunk to 960 wide when they're larger (the subtitle says so), each zoom's region outlined in amber.
+- `scope-<label>.png`: each variant's own frame at full size, exactly what `flint render` with those flags writes alone.
+- `scope-zoom.png` and `scope-<label>-zoom.png`: with `--zoom X0,Y0,X1,Y1@N`, the region (in pixels of the frame) of every variant, N times larger with nearest neighbour, so each pixel is an N x N block and a glyph's strokes can be counted. Without `@N` the crop is as large as fits 640 across, up to 8x. A second `--zoom` writes `-zoom2`.
+
+Lists worth keeping go in a file, `--variants file.toml`:
+
+```toml
+title = "ASCII: per entity, full screen, object grid"   # the sheet's title (default: the scene)
+zoom = ["860,380,1380,620@2"]                         # as --zoom; the command line's add to these
+
+[[variant]]
+label = "full screen"
+flags = "--ascii-scope screen"          # a line, split as a shell would, or
+# flags = ["--ascii-scope", "screen"]   # the words themselves
+```
+
+`examples/variants/` has two: `ascii_scope.variants.toml` puts the ASCII spike's (#261) three routes side by side on `examples/ascii_entities.scene.toml`, and `ascii_rounds.variants.toml` redraws the spike's two rounds of full-screen glyphs on any scene, one command a scene:
+
+```bash
+flint render examples/mesh_meadow.scene.toml --no-grid --variants examples/variants/ascii_rounds.variants.toml -o meadow.png --zoom 760,400,1160,625@2
+```
+
+![The meadow's lantern at 2x through the spike's rounds: smooth, the continuous ramp, banded tone, and banded tone with edge glyphs](../images/render-variants-rounds-zoom.png)
+
+Every variant renders in the one process on one GPU device, with glTF files decoded once and texture mip chains built once, as `flint goldens` runs its cases. Each still builds its own renderer, since a variant can change what a renderer is built with (MSAA, shadows, the scene's styles). A variant is one still: one that draws `--frames`, a mesh sequence or a `--time` span is refused. Variants that come out a different size are refused too (a sheet has one cell size), and two neighbours that come out pixel-identical are named in a warning, since the flags that differ changed nothing this frame shows.
 
 ## A Span of Time as a GIF
 
 Stills can't show motion. Give `--time` a span and `--output` a `.gif`:
 
 ```bash
-flint render demo/living_props.scene.toml --time 0..4 --fps 12 -o grove.gif
-flint render demo/living_props.scene.toml --time 0..4 --sweep wooze.glide=0,1 -o glide.gif
+flint render examples/living_props.scene.toml --time 0..4 --fps 12 -o grove.gif
+flint render examples/living_props.scene.toml --time 0..4 --sweep wooze.glide=0,1 -o glide.gif
 flint gen specs/examples/oak_living.procgen.toml --strip --frames 48 --fps 24 -o oak.gif
 ```
 
@@ -321,12 +453,25 @@ The span leaves out its last moment, so that a span one cycle long loops cleanly
 
 Nothing moves in the file that didn't move in the render. All the frames share one palette with no dithering, and a pixel the render left alone is written as transparent over the last frame. On 24 frames of the bench, in which 75.5% of the pixels never change, this keeps all of them still, where the `image` crate's encoder, with a new palette every frame, shimmers 81% of them by as much as 22 levels. That shimmer would look just like the boil you're trying to judge. It also comes out smaller: 1.8 MB to its 2.5 MB.
 
+### Long spans
+
+A span of any length renders in about the memory of one frame. The palette is learned from every frame, so the GIF can't be encoded until the last one is in, and until then each frame waits on disk beside the output (`x.gif.frames~`, removed when the GIF is written, or if the render fails) as its difference from the frame before, deflated. Footage that is mostly still costs almost nothing there. The GIF comes out the same, byte for byte, as when all the frames were held at once.
+
+To edit the footage, or to encode it yourself, give `--output` a numbered PNG path instead. Each frame is written as it's captured, and nothing waits:
+
+```bash
+flint render live.scene.toml --scripts --time 0..900 --fps 8 -o frames/live-%05d.png
+ffmpeg -framerate 8 -i frames/live-%05d.png -pix_fmt yuv420p live.mp4
+```
+
+`%d` numbers from 0 at its natural width, and `%05d` pads to five digits. A span's clocks, and its scripts, run on to the span's end, though the end itself is never a frame, so a script's log covers all of `0..900` rather than stopping at the last capture.
+
 ## What a Prop Was Doing
 
 `--report json` writes one JSON object on stdout, and moves everything else to stderr:
 
 ```bash
-flint render demo/wooze_field.scene.toml --time 3.5 -o at-3.5.png --report json
+flint render examples/wooze_field.scene.toml --time 3.5 -o at-3.5.png --report json
 ```
 
 ```json
@@ -353,7 +498,7 @@ flint render demo/wooze_field.scene.toml --time 3.5 -o at-3.5.png --report json
     }]
   }],
   "still_props": [],
-  "warnings": ["scripts don't run without --scripts, so what director would do to this scene isn't in it"]
+  "warnings": ["scripts don't run without --scripts, so what director would do to this scene isn't in it (--script-time T runs them to game time T)"]
 }
 ```
 
@@ -365,7 +510,7 @@ Why the runtime values are here and not in `flint query`: query reads scene file
 
 ## CI Pipeline Integration
 
-Headless rendering works on machines without a display. Use it in CI to catch visual regressions:
+Headless rendering works on machines without a display. On one without a GPU, it needs a software adapter: lavapipe (`mesa-vulkan-drivers`) on Linux, WARP on Windows. [Linux and Headless Setup](../getting-started/installation.md#linux-and-headless-setup) has the packages. Use it in CI to catch visual regressions:
 
 ```yaml
 # Example GitHub Actions step
@@ -384,14 +529,14 @@ Headless rendering works on machines without a display. Use it in CI to catch vi
 
 ## Golden Suites
 
-`flint render-suite` given a `*.goldens.toml` renders a list of cases as `flint render` would and compares each with a golden PNG (#271). It exits non-zero when any case moves past its tolerance, so it works as a gate in a script or a test:
+`flint goldens` renders a `*.goldens.toml`, a list of cases, as `flint render` would and compares each with a golden PNG (#271). Before #327 this was `flint render-suite <x>.goldens.toml`, which still works and runs the same command. It exits non-zero when any case moves past its tolerance, so it works as a gate in a script or a test:
 
 ```bash
-flint render-suite crates/flint-cli/tests/golden/stylize.goldens.toml
+flint goldens crates/flint-cli/tests/golden/stylize.goldens.toml
 #   PASS  ascii-full      0.00% past 48 (limit 2.00%), mean 0.00 (limit 3.00), max 0, 1316 ms
 #   ...
-flint render-suite my.goldens.toml --case tavern --out-dir out/goldens
-flint render-suite my.goldens.toml --bless          # write the renders over the goldens
+flint goldens my.goldens.toml --case tavern --out-dir out/goldens
+flint goldens my.goldens.toml --bless          # write the renders over the goldens
 ```
 
 ```toml
@@ -409,7 +554,7 @@ mean = 3.0                      # ...or the mean difference passes this
 
 [[case]]
 name = "ascii-full"
-scene = "demo/pbr_test.scene.toml"
+scene = "examples/pbr_test.scene.toml"
 golden = "ascii_pbr_test.png"   # beside the manifest; default "<name>.png"
 args = ["--style", "ascii"]     # any flint render flags
 # width, height and tolerance = { ... } override the suite's
@@ -445,11 +590,46 @@ error = "broken.wgsl:9:9"                   # and say where it failed
 
 The stylize suite's broken-style case is stricter than it looks. A display-stage user style reads its input through the prelude's sRGB-to-display curve and writes through the inverse, and the passthrough does too. So the frame equals the unstyled one only while the two curves undo each other. With `flint_to_linear`'s exponent changed from 2.4 to 2.2, 98% of the pixels move (mean 7 levels), and the case fails.
 
+### Sequence cases: a shimmer budget
+
+A golden image pins a frame, and shimmer isn't in any one frame: it is a glyph that changes and changes back. A case with `frames` is a sequence instead (#478). It has no golden file. It draws that many frames on one renderer, as [`flint render --frames`](#frame-sequences) does, with the camera moving by `orbit` (degrees a second) or along `camera_path` (a camera path file, from the suite's root), `frame_dt` apart (default 1/60 s). Then it counts the ASCII style's glyph flips and [reversals](#measuring-shimmer) from its own grid, and fails when the mean reversals a frame pass `max_reversals`, or the mean flips pass `max_flips` when it gives one:
+
+```toml
+[[case]]
+name = "ascii-motion-tone"
+scene = "tests/fixtures/scenes/ascii_motion.scene.toml"
+args = ["--no-grid", "--style", "ascii:edges=0"]   # any flint render flags but the sequence's own
+frames = 60
+orbit = 6.8755                  # or camera_path = "path/to/cam.toml"
+max_reversals = 0.5             # A-B-A reversals a frame, the mean; required
+max_flips = 15.0                # glyph changes a frame, the mean; optional
+```
+
+```text
+  PASS  ascii-motion-tone   0.00 reversals/frame (limit 0.50), 9.4 flips/frame (limit 15.0), 60 frames, orbit 6.8755 deg/s, 3152 ms
+  PASS  ascii-motion-edges  0.16 reversals/frame (limit 1.00), 19.1 flips/frame (limit 30.0), 60 frames, orbit 6.8755 deg/s, 1153 ms
+```
+
+The stylize suite has two, on a frozen copy of `examples/ascii_motion` under the #277 bench's slow orbit: `ascii-motion-tone` (the tone glyphs alone, `edges=0`) and `ascii-motion-edges` (the default look, whose line glyphs keep a history of their own since #477). Each budget sits well under what a broken history measures. These are the numbers at 640 x 360 on an RTX 4070, with DX12 within 0.1:
+
+| `ascii_motion`, 60 frames | tone: reversals | tone: flips | edges: reversals | edges: flips |
+|---|---|---|---|---|
+| history on (the cases) | 0.0 | 9.4 | 0.16 | 19.1 |
+| `hysteresis = 0` | 2.2 | 24.1 | 3.5 | 41.7 |
+| `temporal = "off"` | 10.5 | 39.9 | 18.8 | 76.7 |
+| the budget | 0.5 | 15 | 1.0 | 30 |
+
+Each case catches its own regression. With the tone glyphs' hold taken out of `ascii_cells.wgsl`, both cases fail (2.21 and 1.84 reversals a frame). With the edge cells' history taken out of `ascii_edge_cells.wgsl`, `ascii-motion-tone` still passes at 0.00 and `ascii-motion-edges` fails at 10.0. `tests/render_goldens.rs` runs the tone case again with `hysteresis=0` and requires it to fail, so a budget loosened past that regression fails the test.
+
+A sequence case takes no `golden`, `text`, `matches`, `error` or `tolerance`, and its `args` can't repeat what its keys say (`--frames`, `--orbit`, `--camera-path`, `--frame-dt`, `--flip-json`, `--output`...): the manifest is refused with the case's name. Its frames are drawn with `--flip-json <case>.flips.json --last-frame`, so the out dir has the per-frame counts and `<case>.png`, the last frame. Its `report.json` entry has a `sequence` object (`reversals_per_frame`, `flips_per_frame`, the budget, and the per-frame `flips` and `reversals`), and it never drifts or blesses: a budget changes only by editing the manifest, with the measurement that justifies it. Sequences are deterministic, so the counts are the same run to run on one adapter.
+
 ### The contact sheet
 
 Every run writes `index.html` to the out dir (#329): one card a case with the golden, the render and the diff side by side, then a meter for each number against its limit (the tick is the limit), the case's scene and flags, and the text diff when its grid moved. Cases that failed come first, then the ones where any pixel moved, then the identical ones, each group in manifest order; the buttons at the top filter by group. **blink** flips a render with its golden in place, which shows a one-pixel shift that a side-by-side hides. The page reads its images beside itself (`<case>.png`, `<case>.diff.png`, and `golden/<case>.png`, a copy of the golden as it was before the run), so the out dir can be zipped or uploaded whole.
 
 A `--bless` still compares before it writes. Its sheet shows each case's old golden as **was** and the diff as what the bless changes: review that page, not the folder.
+
+A [sequence case](#sequence-cases-a-shimmer-budget) has no golden or diff. Its card charts every frame instead: the reversals as bars against the dashed budget and the solid mean, red when the case is over, and the flips as a faint line on a scale of its own behind them. Beside the chart is the sequence's last frame, and under it are meters for the two means against their limits. The **sequences** filter shows only these cases.
 
 ### Drift
 
@@ -472,7 +652,7 @@ or `drift: none, every passing case is byte-identical with its golden`. The cont
 
 ### One process
 
-Cases run in the `render-suite` process itself (#329). Each one's flags are parsed as `flint render` parses them and go to the same function, on one GPU device kept for the whole run. Every glTF is decoded once (`flint_import::memoize_imports`) and every texture's mip chain is built once (`flint_render::memoize_mip_chains`). Each case still builds its own renderer, so it shares only the device and those decoded bytes with the case before it. For the 41 stylize cases in a debug build, the run's CPU time went from about 120 s to 55 s. Summing each case's best time over several runs, the suite went from 115 s to 45 s, and a props-scene case from about 3.2 s to 1.1 s.
+Cases run in the `flint goldens` process itself (#329). Each one's flags are parsed as `flint render` parses them and go to the same function, on one GPU device kept for the whole run. Every glTF is decoded once (`flint_import::memoize_imports`) and every texture's mip chain is built once (`flint_render::memoize_mip_chains`). Each case still builds its own renderer, so it shares only the device and those decoded bytes with the case before it. For the 41 stylize cases in a debug build, the run's CPU time went from about 120 s to 55 s. Summing each case's best time over several runs, the suite went from 115 s to 45 s, and a props-scene case from about 3.2 s to 1.1 s.
 
 The cost is crash isolation. A case that panics is run again in its own `flint render` process (the device is dropped and made again for the next case), and its log is the case's message. `--isolate` spawns every case, as before #329.
 
@@ -492,7 +672,17 @@ Without a GPU adapter every case is skipped and the suite passes, unless `--requ
 
 Two adapters never render exactly alike. The difference is usually small, but a backend can be as far off as a real regression, so a golden can carry a **variant** per adapter beside it: `kuwahara.warp.png` next to `kuwahara.png`. The suite prints the adapter it found and its key: `warp` (WARP, the software DX12 adapter), `lavapipe` (Mesa's software Vulkan), or else the backend's name (`vulkan`, `dx12`, `metal`, `gl`). A case compares with its adapter's variant when there is one, and with the plain golden otherwise. `--bless` rewrites whichever of the two the case compared with, and `--bless-variant` creates the variant. Each case in `report.json` records `adapter`, the `golden` it compared with, and `variant`, the path where this adapter's variant would go.
 
-On CI, the `GPU tests (WARP)` job (`.github/workflows/ci.yml`) runs the stylize GPU tests and the engine goldens on WARP, with `FLINT_REQUIRE_GPU=1` set. Its summary lists every case's margin, and its `stylize-goldens-warp` artifact holds the renders and diffs, with the contact sheet: open its `index.html`. To bless a WARP variant, copy the case's render from that artifact to its report's `variant` path. wgpu hides WARP on a machine that has a GPU, so WARP variants can't be rendered locally. Engine styles are pinned by `crates/flint-cli/tests/golden/stylize.goldens.toml` ([Stylize Passes](../concepts/stylize-passes.md#goldens)).
+On CI, the `GPU tests (WARP)` job (`.github/workflows/ci.yml`) runs the stylize GPU tests and the engine goldens on WARP, with `FLINT_REQUIRE_GPU=1` set. Its summary lists every case's margin, and its `stylize-goldens-warp` artifact holds the renders and diffs, with the contact sheet: open its `index.html`. To bless a WARP variant, copy the case's render from that artifact to its report's `variant` path. Since wgpu 30, WARP is listed on a machine that has a GPU too, so `WGPU_BACKEND=dx12 WGPU_ADAPTER_NAME="Microsoft Basic Render Driver"` runs a case on it locally. A local WARP render is not always byte for byte the runner's: on one Windows 11 machine `kuwahara` matched its WARP variant exactly and `invert` had 20 pixels off. So bless WARP variants from the artifact, and use a local run to find a WARP difference before pushing. The job compiles shaders with the DXC linked into every binary, its archive kept in an Actions cache, and fails if `flint dxc status` doesn't say `DXC (static, ...)` ([DX12's shader compiler](../cli-reference/overview.md#dx12s-shader-compiler)). A last step keeps the FXC fallback tested. It runs a few cases with `WGPU_DX12_COMPILER=fxc` (`invert`, `edges-view`, `pencil-full`, `watercolor`; not `kuwahara`, whose WARP variant is DXC's and which FXC draws 1.1% of pixels away) and uploads them as `stylize-goldens-warp-fxc`. Engine styles are pinned by `crates/flint-cli/tests/golden/stylize.goldens.toml` ([Stylize Passes](../concepts/stylize-passes.md#goldens)).
+
+The engine's goldens run as `cargo test -p flint-cli --test render_goldens`. Each run writes to its own `target/tmp/stylize-goldens-<pid>`, so two runs in one target directory don't read each other's half-written output. The folder is removed when the run passes and kept when it fails, and the test prints its path. `FLINT_GOLDENS_OUT=<dir>` names a folder that is kept either way: CI sets it to `target/tmp/stylize-goldens`, the folder its summary and artifact read.
+
+flint-render's own GPU tests (`stylize`, `runtime_mesh`, `quality`, `shading_boil`, `panels`, `pipeline_cache`, `dev_shader`) share one device per test binary, made on first use by `tests/shared_gpu`. Each test made its own device until a run hung for hours: on Windows with an NVIDIA card, creating a Vulkan device while a finished test's thread exits can deadlock the driver against the Windows loader lock. A test borrows the shared device alongside the others. It takes it alone only when it counts objects across the whole device or switches something the whole process shares (the pipeline cache, the shader folder). Error scopes are no reason to: since wgpu 28 each thread has its own. `FLINT_GPU_TEST_PARALLEL=0` lends the device to one test at a time. That was the default while wgpu 23 stalled DX12 tests that waited side by side; on wgpu 30, sharing is faster on every backend (stylize: 8.8 s to 3.4 s on Vulkan, 13.1 s to 6.6 s on DX12, 18.9 s to 13.2 s on WARP, on an RTX 4070 machine). A watchdog aborts the binary and names the test once any test has held the device longer than `FLINT_GPU_TEST_TIMEOUT` seconds (300 by default), so a hang ends in minutes with a name, not in hours with none.
+
+A GPU wait outside the tests has no watchdog. wgpu 30 waits for as long as the GPU takes (wgpu 23 gave up after 60 s), so Flint's waits go through `flint_render::wait_for_gpu`, which stops at `FLINT_GPU_WAIT_TIMEOUT` seconds when that is set and panics with a message naming it. CI's GPU job sets 120, so a hung GPU in the goldens fails the step in two minutes instead of running to the job's 60-minute limit:
+
+```text
+the GPU didn't finish its work within 2 s (FLINT_GPU_WAIT_TIMEOUT): the device is hung (#948)
+```
 
 ## Visual Regression Testing
 

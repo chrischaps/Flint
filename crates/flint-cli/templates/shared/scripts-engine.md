@@ -1,0 +1,1 @@
+Every function a script can call is described in `{{engine}}/docs/book/src/concepts/scripting.md` (the same page is published at https://docs.chaps.dev/flint/concepts/scripting.html). The functions are registered in `{{engine}}/crates/flint-script/src/api.rs`, which is the last word when the two differ. No command lists them yet.

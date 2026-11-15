@@ -2,9 +2,11 @@
 //!
 //! This crate provides asset management with content-addressed storage,
 //! metadata catalogs, and reference resolution.
+#![cfg_attr(test, allow(clippy::disallowed_methods))] // unit tests read their files off the disk and assert on TOML as written; the lib build still holds the rules (#761)
 
 mod catalog;
-// Tooling only (it reads the real disk); the player never asks. #179
+// The store paths are tooling (the real disk); the player never asks. #179
+// The project itself is flint_core::project, which the runtime can use.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod project;
 mod resolver;
@@ -13,7 +15,7 @@ mod types;
 
 pub use catalog::AssetCatalog;
 #[cfg(not(target_arch = "wasm32"))]
-pub use project::Project;
+pub use project::{Project, ProjectError, ProjectStore};
 pub use resolver::{AssetResolver, ResolutionStrategy, ResolveResult};
 pub use store::ContentStore;
 pub use types::{AssetFile, AssetMeta, AssetRef, AssetType};

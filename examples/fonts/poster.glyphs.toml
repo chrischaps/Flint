@@ -1,0 +1,16 @@
+# Poster (#935): Rubik Mono One, a heavy all-caps monospace. Every glyph is a
+# fat block of ink, so tone climbs in big steps and the frame reads loud,
+# like a screen-printed gig poster.
+default_ramp = "shout"
+
+[font]
+file = "ofl/RubikMonoOne/RubikMonoOne-Regular.ttf"   # OFL 1.1: ofl/RubikMonoOne/OFL.txt
+size = 16
+
+[ramps.shout]
+glyphs = " .:-+=*oOX#@"
+map = "coverage"
+
+[ramps.letters]
+glyphs = " .-ILTHXWM"
+map = "coverage"

@@ -6,7 +6,7 @@ A scannable cheat sheet for daily Flint development.
 
 | Command | Description |
 |---------|-------------|
-| `flint init <name>` | Initialize a new project |
+| `flint init <name> [--template walk\|blank\|2d] [--engine path\|subtree\|none]` | Start a game project: manifest, lit scene, HUD, input config, agent guide |
 | `flint scene create <path>` | Create a new scene file |
 | `flint scene list` | List scene files |
 | `flint scene info` | Show scene metadata |
@@ -14,7 +14,8 @@ A scannable cheat sheet for daily Flint development.
 | `flint entity delete` | Delete an entity from a scene |
 | `flint query "<expr>"` | Query entities (e.g., `"entities where archetype == 'door'"`) |
 | `flint schema <name>` | Inspect a component or archetype schema |
-| `flint validate <scene>` | Validate scene against constraints (`--fix` to auto-fix) |
+| `flint check [dir\|scene]` | The pre-flight: every problem of a project or a scene in one run (`--json`) |
+| `flint validate <scene>` | Validate one scene against its schemas and constraints (`--fix` to auto-fix) |
 | `flint edit <file>` | Unified interactive editor (auto-detects file type) |
 | `flint play <scene>` | First-person gameplay with physics + scripting |
 | `flint render <scene> -o out.png` | Headless render to PNG |
@@ -28,7 +29,7 @@ A scannable cheat sheet for daily Flint development.
 | `flint play-chart <manifest> --chart <chart>` | Play a chart with live gamepad capture (`--record`, `--window`) |
 | `flint replay-chart <manifest> --chart <chart>` | Replay a recorded or synthetic session headless |
 | `flint render-suite <manifest> -o out.wav` | Render a scripted suite session to WAV |
-| `flint render-suite <file>.goldens.toml` | Render scenes and gate them against golden PNGs (`--bless` rewrites) |
+| `flint goldens <file>.goldens.toml` | Render scenes and gate them against golden PNGs (`--bless` rewrites) |
 | `flint render <scene> --style ascii:cell=12` | Preview any registered style over a scene |
 | `flint spike-rumble` | Time the gamepad rumble paths |
 
@@ -49,14 +50,14 @@ Music commands are detailed in [Music Commands](cli-reference/music.md).
 | R | Reload |
 | 1 / 2 | Weapon slots |
 | F2 | Toggle render stats overlay (with the GPU's time per phase, where the device can time) |
-| F3 | Toggle scene debug panels (ocean, day/time, camera, grass, weather… — only those the scene uses; never the F4 menu) and the game's own (ADR 0107) |
+| F3 | Toggle scene debug panels (ocean, day/time, camera, grass, weather… — only those the scene uses; never the F4 menu) and the game's own ([ADR 0107](https://github.com/chrischaps/Flint/blob/main/docs/adr/0107-debug-panels-from-the-game.md)) |
 | F4 | Toggle the **Rendering & Effects** menu (all render/post toggles and parameters, debug shading mode, shadows, lighting levers) |
 | F9 | Force a music-session full-fail (debug builds, session running) |
 | `` ` `` / `\` | Music Guide overlay / Manifest Map strip (debug builds, session running) |
 | F11 | Toggle fullscreen |
 
 The old per-effect keys (F1 debug mode, F4 shadows, F5 bloom, F6 post) are gone; everything is in the F4 menu.
-| Escape | Release cursor / Exit |
+| Escape | Release cursor / Exit (the game's own key when its input config binds it, see [Escape](concepts/physics-and-runtime.md#escape)) |
 
 ### Scene Viewer (`flint edit <scene.toml>`)
 
@@ -178,21 +179,21 @@ desaturate = 0.0                # 0 = full colour, 1 = ash-grey
 dof_strength = 0.0              # 0 = sharp
 dof_focus_distance = 10.0       # view metres
 dof_focus_range = 5.0
-kuwahara_boil = 0.0             # with [wooze]: how far each drawing moves the paint
-contour_enabled = false         # ink lines from depth and luminance
-contour_width = 1.25            # half a line, in pixels at 1080p
-contour_threshold = 0.08        # lower draws more
-contour_strength = 0.9
-contour_luma = 0.5              # 0 = silhouettes only
-contour_color = [0.015, 0.012, 0.02]
-contour_fade = 30.0             # metres to fade by half; 0 never
-contour_boil = 0.0              # with [wooze]: how far each drawing moves the lines
-boil_on = 2                     # film frames a drawing holds: 1, 2 or 3
+boil_on = 2                     # with [wooze]: film frames a boil's drawing holds: 1, 2 or 3
 film_grain = 0.0                # 0.02-0.05 is subtle
 grade_lift = [0.0, 0.0, 0.0]    # after ACES; neutral 0,0,0
 grade_gamma = [1.0, 1.0, 1.0]
 grade_gain = [1.0, 1.0, 1.0]
 fxaa = false                    # off by default so pixel gates stay single-path
+
+[post_process.styles.contour]   # ink lines from depth and luminance (a table switches it on)
+width = 1.25                    # half a line, in pixels at 1080p
+threshold = 0.08                # lower draws more
+strength = 0.9
+luma = 0.5                      # 0 = silhouettes only
+color = [0.015, 0.012, 0.02]
+fade = 30.0                     # metres to fade by half; 0 never
+boil = 0.0                      # with [wooze]: how far each drawing moves the lines
 ```
 
 ### Lighting Levers
@@ -310,13 +311,17 @@ position = [0, 0, 0]
 | `set_field(id, comp, field, val)` | --- | Write a component field |
 | `get_position(id)` | `#{x,y,z}` | Entity position |
 | `set_position(id, x, y, z)` | --- | Set entity position |
+| `set_scale(id, x, y, z)` / `get_scale(id)` | --- / `#{x,y,z}` | Entity scale |
+| `set_visible(id, bool)` / `is_visible(id)` | --- / `bool` | Hide an entity and its children from every draw, or show it |
 | `distance(a, b)` | `f64` | Distance between two entities |
 | `is_action_pressed(action)` | `bool` | Check if action is held |
 | `is_action_just_pressed(action)` | `bool` | Check if action pressed this frame |
 | `last_input_device()` / `gamepad_connected()` | `String` / `bool` | `"keyboard"` \| `"mouse"` \| `"gamepad"` \| `"touch"` latch for prompt glyphs; whether a pad is attached |
+| `rumble(pad, strength, seconds)` | --- | Buzz a pad (`-1` every pad) at 0..1 for up to 10 s; `0` stops it. No music session needed |
+| `is_touch_device()` / `safe_area()` | `bool` / `Map` | touch-first device (`pointer: coarse` page, Android) from frame one; `#{ left, top, right, bottom }` insets in points, zeros where none |
 | `mouse_x()` / `mouse_y()` | `f64` | Cursor in logical points; `is_mouse_pressed(b)` / `is_mouse_just_pressed(b)` (0 left, 1 right, 2 middle) |
 | `screen_to_ground(x, y, plane_y)` | `[x, z]`/`()` | Ground point under a screen point (e.g. the cursor); `world_to_screen(x, y, z)` is the inverse |
-| `screen_to_heightfield(x, y)` / `ground_height(x, z)` | `[x, y, z]`/`()`, `f64`/`()` | The host's registered ground field under a screen point, and its height (ADR 0095) |
+| `screen_to_heightfield(x, y)` / `ground_height(x, z)` | `[x, y, z]`/`()`, `f64`/`()` | The host's registered ground field under a screen point, and its height ([ADR 0095](https://github.com/chrischaps/Flint/blob/main/docs/adr/0095-ray-against-placed-height-field.md)) |
 | `draw_world_line(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)` | `()` | World-space line in the 3D frame, hidden behind nearer geometry (unlike `draw_line_3d`, which is HUD) |
 | `draw_world_text(x, y, z, text, size, opts)` | `()` | Text at a world point, hidden behind nearer geometry: a billboard in points, or painted on a plane (`facing`) in world units |
 | `delta_time()` | `f64` | Seconds since last frame |
@@ -324,21 +329,25 @@ position = [0, 0, 0]
 | `set_dof(strength)` / `set_dof_focus(dist, range)` | --- | Drive depth of field from a script |
 | `set_desaturation(amount)` | --- | Drain colour toward ash-grey (0–1) |
 | `set_camera_roll(radians)` | --- | Roll the camera about its view axis |
-| `conducted_lean()` / `conducted_coherence()` | `#{x,y}` / `f64` | Read the running music session (neutral values when none) |
+| `conducted_lean()` / `conducted_coherence()` | `#{x,y}` / `f64` | Read the running music session (neutral until it runs; a charted scene only, #698) |
 | `play_clip(id, clip)` | --- | Play an animation clip |
 | `set_anim_layer(id, idx, clip, w)` | --- | Play a clip on an animation layer |
 | `set_anim_layer_weight(id, idx, w)` | --- | Set a layer's weight instantly |
 | `fade_anim_layer(id, idx, w, secs)` | --- | Ramp a layer's weight over `secs` |
 | `play_sequence(id, name)` / `stop_sequence(id)` | --- | Drive the animator from `animations/*.sequence.toml` (cues → `on_sequence_cue`) |
 | `raycast(ox,oy,oz, dx,dy,dz, dist)` | `Map`/`()` | Cast a ray, get hit info |
-| `raycast_meshes(ox,oy,oz, dx,dy,dz, dist)` / `screen_to_mesh(x, y)` | `Map`/`()` | The same against the meshes drawn as ray targets, no physics needed: a wall in the camera's way, the roof under the cursor (ADR 0105) |
+| `raycast_meshes(ox,oy,oz, dx,dy,dz, dist)` / `screen_to_mesh(x, y)` | `Map`/`()` | The same against the meshes drawn as ray targets, no physics needed: a wall in the camera's way, the roof under the cursor ([ADR 0105](https://github.com/chrischaps/Flint/blob/main/docs/adr/0105-rays-against-drawn-meshes.md)) |
 | `move_character(id, dx, dy, dz)` | `#{x,y,z,grounded}` | Collision-corrected movement |
 | `spawn_entity(name)` | `i64` | Create a new entity |
 | `load_scene(path)` | --- | Transition to a new scene |
+| `quit_game()` | --- | End the run as closing the window does (exit code 0; on the web, back to the page's doorway) |
 | `push_state("paused")` | --- | Push a game state (e.g., pause) |
 | `pop_state()` | --- | Pop to previous game state |
-| `persist_set(key, val)` | --- | Store data across scene transitions; auto-saved to `save/persist.toml` 1 s later, on transitions and on exit |
-| `persist_save()` | --- | Write `save/persist.toml` now |
+| `persist_set(key, val)` | --- | Store data across scene transitions; auto-saved to the game's save file (`<config>/<id>/saves/default.toml`) 1 s later, on transitions and on exit |
+| `persist_save()` | --- | Write the save file now |
+| `persist_slot(name)` / `persist_slots()` | `bool` / `Array` | Switch to another save slot (saving the one held first); list the slots saved |
+| `persist_version()` | `i64` | The version of the save loaded; `on_persist_migrate(from)` runs when it is below `[project] save_version` |
+| `persist_corrupt()` | `Map`/`()` | Set when the save file didn't parse and was kept as `.bak` |
 | `load_data(path)` | `Map`/`()` | Read a TOML data file relative to the project root (cached; `load_data(path, true)` re-reads) |
 | `load_ui(path)` | `i64` | Load a `.ui.toml` document (returns handle) |
 | `ui_set_text(id, text)` | --- | Set element text content |
@@ -347,12 +356,12 @@ position = [0, 0, 0]
 | `ui_set_style_array(id, prop, [..])` | --- | Override `color` / `bg_color` / `stroke_color` / `padding` / `uv` / `shadow` |
 | `ui_token(name)` | value or `()` | Read a style token (`"accent"`, `"$accent"`, `"color.accent"`) as float / float array / string |
 | `ui_hit(id, x, y)` | `bool` | Point-in-rect against the element's resolved layout (logical points) |
-| `draw_text_opts(x, y, text, size, #{font, color, align, stroke, spacing, layer, shadow})` | --- | HUD text in a project font (`fonts/*.ttf`, family = file stem) |
-| `measure_text_ex(text, size, font, spacing)` | `#{width,height}` | Real laid-out text size (also `measure_text(text, size)`) |
+| `draw_text(x, y, text, size, #{font, color, align, stroke, spacing, layer, shadow, glow})` | --- | HUD text in a project font (`fonts/*.ttf`, family = file stem) |
+| `measure_text(text, size, #{font, spacing})` | `#{width,height}` | Real laid-out text size (also `measure_text(text, size)`) |
 | `draw_ring(cx, cy, r_in, r_out, start_deg, end_deg, r, g, b, a, layer)` | --- | Annular sector; degrees from 12 o'clock, clockwise (`draw_arc(cx, cy, radius, a0, a1, r, g, b, a, thickness, layer)` for a stroke) |
 | `draw_polygon(points, r, g, b, a, layer)` | --- | Convex fill from `[[x,y],...]` or flat `[x0,y0,...]`; `draw_polygon_outline(points, r, g, b, a, thickness, closed, layer)` |
-| `draw_rect_gradient(x, y, w, h, r1,g1,b1,a1, r2,g2,b2,a2, vertical, layer)` | --- | Two-colour linear gradient fill |
-| `draw_rect_ex4(x, y, w, h, r, g, b, a, tl, tr, br, bl, layer)` | --- | Filled rect with per-corner rounding; `draw_rect_outline_ex(..., thickness, rounding, layer)` |
+| `draw_rect_gradient(x, y, w, h, #{from, to, vertical, layer})` | --- | Two-colour linear gradient fill |
+| `draw_rect(x, y, w, h, #{color, rounding: [tl, tr, br, bl], layer})` | --- | Filled rect with per-corner rounding; `draw_rect_outline(x, y, w, h, #{color, thickness, rounding, layer})` |
 | `push_clip(x, y, w, h)` / `pop_clip()` | --- | Clip following draw calls to a rect (nests by intersection; reset each frame) |
 | `push_over_ui()` / `pop_over_ui()` | --- | Draw following calls above the game's egui panels and windows (nests; reset each frame) |
 | `import "ui_kit" as ui;` | --- | Load `scripts/lib/ui_kit.rhai`; call `ui::fn_name(...)`. Edits under `scripts/lib/` hot-reload every script |

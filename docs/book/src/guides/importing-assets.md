@@ -45,7 +45,7 @@ Asset 'tavern_door' registered.
 
 Extracted data includes:
 - **Meshes** --- vertex positions, normals, texture coordinates, indices, and optionally joint indices/weights for skeletal meshes
-- **Materials** --- PBR properties (base color, roughness, metallic, emissive)
+- **Materials** --- PBR properties (base color, roughness, metallic, emissive) and whether the material is `doubleSided`. A double-sided material is drawn from both sides, which thin cards such as leaves and flat figures need; a material that doesn't say is single-sided and its back faces are culled ([Double-sided materials](../concepts/rendering.md#double-sided-materials))
 - **Textures** --- embedded or referenced image files
 - **Skeletons** --- joint hierarchy and inverse bind matrices (if the model has skins)
 - **Animations** --- per-joint keyframe channels (translation, rotation, scale)

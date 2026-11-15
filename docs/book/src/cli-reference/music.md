@@ -17,16 +17,19 @@ flint validate-suite music/prototype.suite.toml --chart music/prototype.chart.to
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `<manifest>` | (required) | Path to the suite manifest |
+| `<manifest>` | (required) | Path to the suite manifest (`.suite.toml`) |
 | `--chart <path>` | (none) | Chart to cross-check: channels, pulse kinds, interpolation modes, beats inside the suite |
 | `--no-assets` | `false` | Skip the asset pass (stem file existence, sample rate, duration) |
 | `--base-dir <path>` | cwd | Manifest path root |
+| `--rhythm` | `false` | Hold the suite to the rhythm contract even without `[reintegration]` or a chart |
+
+A suite that only plays music (any buses, named as it likes, no `[reintegration]`) is checked against the general contract. One that declares `[reintegration]`, or is given `--chart` or `--rhythm`, is also held to the rhythm contract: the six buses, the seam and a judgment window per section ([The rhythm contract](../concepts/music-sessions.md#the-rhythm-contract)). The `OK` line says which (`, rhythm contract`) and counts the buses.
 
 Validation is shape-tolerant: unknown channels or pulse kinds parse fine and are reported here rather than rejected at load.
 
 ## `flint play-suite`
 
-Play a validated suite's stems on the six fixed buses, sample-locked, with no chart and no judgment. This is the "does the music itself work" check.
+Play a validated suite's stems on its buses, sample-locked, with no chart and no judgment. This is the "does the music itself work" check.
 
 ```bash
 flint play-suite music/prototype.suite.toml --bars 8
@@ -34,7 +37,7 @@ flint play-suite music/prototype.suite.toml --bars 8
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `<manifest>` | (required) | Path to the suite manifest |
+| `<manifest>` | (required) | Path to the suite manifest (`.suite.toml`) |
 | `--bars <n>` | (to the end) | Stop after this many bars |
 | `--base-dir <path>` | cwd | Manifest path root |
 
@@ -48,7 +51,7 @@ flint calibrate music/prototype.suite.toml --taps 24
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `<manifest>` | (required) | Path to the suite manifest |
+| `<manifest>` | (required) | Path to the suite manifest (`.suite.toml`) |
 | `--taps <n>` | `16` | Number of taps to collect |
 | `--base-dir <path>` | cwd | Manifest path root |
 
@@ -64,7 +67,7 @@ flint play-chart music/prototype.suite.toml --chart music/prototype.chart.toml \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `<manifest>` | (required) | Path to the suite manifest |
+| `<manifest>` | (required) | Path to the suite manifest (`.suite.toml`) |
 | `--chart <path>` | (required) | Beatmap chart for the suite |
 | `--base-dir <path>` | cwd | Manifest path root |
 | `--bars <n>` | (to the end) | Stop after this many bars |
@@ -96,7 +99,7 @@ flint replay-chart music/prototype.suite.toml --chart music/prototype.chart.toml
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `<manifest>` | (required) | Path to the suite manifest |
+| `<manifest>` | (required) | Path to the suite manifest (`.suite.toml`) |
 | `--chart <path>` | (required) | Beatmap chart for the suite |
 | `--base-dir <path>` | cwd | Manifest path root |
 | `--session <path>` | (none) | Session file to replay. Conflicts with `--synthetic` |
@@ -111,7 +114,7 @@ flint replay-chart music/prototype.suite.toml --chart music/prototype.chart.toml
 
 ## `flint render-suite`
 
-Given a `*.goldens.toml` instead of a suite manifest, `render-suite` gates scenes against golden PNGs; see [Golden Suites](../guides/headless-rendering.md#golden-suites).
+Golden image suites (`*.goldens.toml`) have their own command, `flint goldens`; see [Golden Suites](../guides/headless-rendering.md#golden-suites). Given one, `render-suite` runs that command instead, as it did before #327, so its flags below are the music suite's only.
 
 Render a scripted suite session to a 32-bit float stereo WAV, offline and deterministic. The event script schedules bus gain, low-pass and detune changes on bars or beats, so a whole arrangement can be auditioned or diffed without playing it.
 
@@ -122,8 +125,8 @@ flint render-suite music/prototype.suite.toml -o out/full.wav --duration-bars 32
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `<manifest>` | (required) | Path to the suite manifest |
-| `-o`, `--output <path>` | (required for music) | Output WAV path |
+| `<manifest>` | (required) | Path to the suite manifest (`.suite.toml`) |
+| `-o`, `--output <path>` | (required) | Output WAV path |
 | `--script <path>` | (none) | Event script (`*.events.toml`) of scheduled bus changes and markers |
 | `--base-dir <path>` | cwd | Manifest path root |
 | `--duration-bars <n>` | length of the longest stem | Render this many bars. Conflicts with `--duration-seconds` |

@@ -17,6 +17,11 @@ pub enum FlintError {
     #[error("Schema not found: {0}")]
     SchemaNotFound(String),
 
+    /// The schema directories could not be named (a missing one, or a
+    /// manifest that doesn't read): [`crate::project::schema_dirs`].
+    #[error(transparent)]
+    SchemaDirs(#[from] crate::project::SchemaDirsError),
+
     #[error("Validation error: {0}")]
     ValidationError(String),
 
@@ -44,8 +49,13 @@ pub enum FlintError {
     #[error("Duplicate entity name: {0}")]
     DuplicateEntityName(String),
 
-    #[error("Invalid field type: expected {expected}, got {got}")]
-    InvalidFieldType { expected: String, got: String },
+    /// `field` is the dotted path inside the component (ADR 0115).
+    #[error("Invalid field type: `{field}` expected {expected}, got {got}")]
+    InvalidFieldType {
+        field: String,
+        expected: String,
+        got: String,
+    },
 
     #[error("Missing required field: {0}")]
     MissingRequiredField(String),
@@ -58,8 +68,12 @@ pub enum FlintError {
         value: f64,
     },
 
-    #[error("Invalid enum value: {value} is not one of {allowed:?}")]
-    InvalidEnumValue { value: String, allowed: Vec<String> },
+    #[error("Invalid enum value: `{field}` = \"{value}\" is not one of {allowed:?}")]
+    InvalidEnumValue {
+        field: String,
+        value: String,
+        allowed: Vec<String>,
+    },
 
     #[error("Constraint violation: {0}")]
     ConstraintViolation(String),
@@ -93,6 +107,9 @@ pub enum FlintError {
 
     #[error("Generation error: {0}")]
     GenerationError(String),
+
+    #[error("Project error: {0}")]
+    ProjectError(#[from] crate::project::ProjectError),
 }
 
 /// Result type alias for Flint operations

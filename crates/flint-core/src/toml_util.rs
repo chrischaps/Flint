@@ -15,6 +15,11 @@ pub use keys::{
 };
 
 /// Coerce a TOML integer or float to `f64`.
+///
+/// The one place runtime code may call `toml::Value::as_float`, which reads
+/// an integer as nothing: clippy denies it everywhere else in the crates the
+/// player links (the root `clippy.toml`, #685, #761).
+#[allow(clippy::disallowed_methods)] // the one sanctioned call
 pub fn toml_f64(v: &toml::Value) -> Option<f64> {
     v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
 }
@@ -99,8 +104,8 @@ mod tests {
 
     #[test]
     fn f64_from_float() {
-        let v: Value = 3.14.into();
-        assert_eq!(toml_f64(&v), Some(3.14));
+        let v: Value = 3.25.into();
+        assert_eq!(toml_f64(&v), Some(3.25));
     }
 
     #[test]

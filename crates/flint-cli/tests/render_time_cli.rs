@@ -1,6 +1,7 @@
 //! End-to-end tests for `flint render --time`, `--sweep`, `--report json` and GIF
-//! output (#216): run the real binary on a two-sapling scene and hold what it writes
-//! to the ticket. Those that need a GPU skip themselves on a machine without one.
+//! output (#216), and the one-renderer flags the clocked path takes since #596:
+//! run the real binary on a two-sapling scene and hold what it writes to the
+//! ticket. Those that need a GPU skip themselves on a machine without one.
 //!
 //! What this can't test is the ticket's other half, that a capture matches the
 //! player's at the same game time, since the player needs a window. The book's
@@ -318,6 +319,372 @@ fn a_strip_can_be_a_gif() {
     assert_eq!(frames[0].buffer().width(), 64);
 }
 
+/// The flags the one-renderer path took and the clocked one refused until #596.
+/// A grid of two wooze knobs: a stage a cell, each cell reporting both its
+/// values, and each value reaching the props.
+#[test]
+fn two_sweeps_on_the_clock_make_a_grid() {
+    let dir = project("clock_grid");
+    let o = render(
+        &dir,
+        "grid.png",
+        &[
+            "--time",
+            "1.3",
+            "--sweep",
+            "wooze.glide=0,1",
+            "--sweep",
+            "wooze.step=0.25,1",
+            "--report",
+            "json",
+        ],
+    );
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let report: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(report["sweep"], "wooze.glide x wooze.step");
+    let captures = report["captures"].as_array().unwrap();
+    let cells: Vec<(&str, &str)> = captures
+        .iter()
+        .map(|c| (c["column"].as_str().unwrap(), c["row"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        cells,
+        [("0", "0.25"), ("1", "0.25"), ("0", "1"), ("1", "1")]
+    );
+    for capture in captures {
+        let wooze = &capture["props"][0]["wooze"];
+        let glide: f64 = capture["column"].as_str().unwrap().parse().unwrap();
+        let step: f64 = capture["row"].as_str().unwrap().parse().unwrap();
+        assert!((wooze["glide"].as_f64().unwrap() - glide).abs() < 1e-6);
+        assert!((wooze["step"].as_f64().unwrap() - step).abs() < 1e-6);
+    }
+    // Two columns of 64 beside a row-label band, two rows down
+    let sheet = image::open(dir.join("grid.png")).unwrap().into_rgb8();
+    assert!(sheet.width() > sheet_width(2, 64), "{}", sheet.width());
+    assert!(sheet.height() > 2 * 48);
+}
+
+/// A crop keeps a region of each full-size frame, 1:1.
+#[test]
+fn a_clocked_sweep_can_be_cropped() {
+    let dir = project("clock_crop");
+    let o = render(
+        &dir,
+        "crop.png",
+        &[
+            "--time",
+            "1.3",
+            "--sweep",
+            "wooze.glide=0,1",
+            "--sweep-crop",
+            "16,12,32,24",
+        ],
+    );
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let sheet = image::open(dir.join("crop.png")).unwrap().into_rgb8();
+    assert_eq!(sheet.width(), sheet_width(2, 32));
+}
+
+/// A still of the moment is its own reference: distance 0, and in a sweep the
+/// column that draws it is the nearest, in the measures file and the JSON.
+#[test]
+fn a_clocked_render_is_measured_against_a_reference() {
+    let dir = project("clock_reference");
+    let o = render(&dir, "ref.png", &["--time", "1.3"]);
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let reference = dir.join("ref.png");
+    let reference = reference.to_str().unwrap();
+    let measures = dir.join("m.json");
+    let o = render(
+        &dir,
+        "sweep.png",
+        &[
+            "--time",
+            "1.3",
+            "--sweep",
+            "wooze.glide=0,0.7",
+            "--reference",
+            reference,
+            "--report",
+            measures.to_str().unwrap(),
+        ],
+    );
+    ok(&o);
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&measures).unwrap()).unwrap();
+    assert_eq!(report["sweep"], "wooze.glide");
+    assert_eq!(report["nearest"], 1, "{report}");
+    let score = report["columns"][1]["distance"]["score"].as_f64().unwrap();
+    assert!(
+        score < 0.01,
+        "the scene's own glide drew {score} from its still"
+    );
+    assert!(
+        report["columns"][0]["image"]["mean_luminance"].is_number(),
+        "{report}"
+    );
+
+    let o = render(
+        &dir,
+        "sweep.png",
+        &[
+            "--time",
+            "1.3",
+            "--sweep",
+            "wooze.glide=0,0.7",
+            "--reference",
+            reference,
+            "--report",
+            "json",
+        ],
+    );
+    ok(&o);
+    let report: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    let far = report["captures"][0]["distance"].as_f64().unwrap();
+    let near = report["captures"][1]["distance"].as_f64().unwrap();
+    assert!(near < far, "{near} {far}");
+}
+
+/// The ASCII grid as text: one file for a moment, a file a frame for a span.
+#[test]
+fn a_clocked_render_writes_its_ascii_grid() {
+    let dir = project("clock_text");
+    let text = dir.join("grid.txt");
+    let o = render(
+        &dir,
+        "a.png",
+        &[
+            "--time",
+            "1.3",
+            "--ascii",
+            "--ascii-text",
+            text.to_str().unwrap(),
+        ],
+    );
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let grid = std::fs::read_to_string(&text).unwrap();
+    assert!(grid.lines().count() >= 2, "{grid:?}");
+
+    let o = render(
+        &dir,
+        "span.gif",
+        &[
+            "--time",
+            "0..1",
+            "--fps",
+            "2",
+            "--ascii",
+            "--ascii-text",
+            text.to_str().unwrap(),
+        ],
+    );
+    ok(&o);
+    for frame in ["grid_0000.txt", "grid_0001.txt"] {
+        assert!(dir.join(frame).is_file(), "{frame} missing: {}", stderr(&o));
+    }
+}
+
+/// `--frames` on the clock: a PNG a frame `--frame-dt` of game time apart, the
+/// camera orbiting, and the ASCII flips counted.
+#[test]
+fn frames_on_the_clock_move_the_props_and_count_flips() {
+    let dir = project("clock_frames");
+    let flips = dir.join("flips.json");
+    let o = render(
+        &dir,
+        "seq.png",
+        &[
+            "--frames",
+            "3",
+            "--frame-dt",
+            "0.5",
+            "--orbit",
+            "20",
+            "--ascii",
+            "--flip-json",
+            flips.to_str().unwrap(),
+        ],
+    );
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
+    assert_ne!(read("seq_0000.png"), read("seq_0002.png"), "nothing moved");
+    let stats: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&flips).unwrap()).unwrap();
+    assert_eq!(stats["frames"], 3, "{stats}");
+}
+
+/// `--last-frame` (#478) writes only where a sequence ends, to `-o` itself,
+/// and it is the numbered run's last frame byte for byte: on the clock (this
+/// grove's living props) and on the still path (a plain fixture scene).
+#[test]
+fn last_frame_is_the_sequences_last_frame_alone() {
+    let dir = project("last_frame");
+    let seq = [
+        "--frames",
+        "3",
+        "--frame-dt",
+        "0.5",
+        "--orbit",
+        "20",
+        "--ascii",
+    ];
+    let o = render(&dir, "seq.png", &seq);
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    ok(&render(
+        &dir,
+        "last.png",
+        &[&seq[..], &["--last-frame"]].concat(),
+    ));
+    let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
+    assert_eq!(read("last.png"), read("seq_0002.png"), "on the clock");
+    assert!(!dir.join("last_0000.png").exists(), "a numbered frame too");
+
+    let still = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/pbr_test.scene.toml");
+    let plain = |out: &str, last: bool| {
+        let o = std::process::Command::new(FLINT)
+            .arg("render")
+            .arg(&still)
+            .args(["--width", "64", "--height", "48", "--no-grid"])
+            .args(seq)
+            .args(last.then_some("--last-frame"))
+            .arg("-o")
+            .arg(dir.join(out))
+            .output()
+            .expect("run flint");
+        ok(&o);
+    };
+    plain("plain.png", false);
+    plain("plain_last.png", true);
+    assert_eq!(read("plain_last.png"), read("plain_0002.png"), "still path");
+    assert!(!dir.join("plain_last_0000.png").exists());
+
+    // Nothing to write and only the last frame to write contradict
+    let o = render(
+        &dir,
+        "x.png",
+        &[&seq[..], &["--last-frame", "--no-images"]].concat(),
+    );
+    assert!(!o.status.success());
+    assert!(stderr(&o).contains("--no-images"), "{}", stderr(&o));
+}
+
+/// `--gpu-time` times the first cell's capture: a spread a pass (#292), and
+/// with `--gpu-time-json` every kept frame's raw time beside it.
+#[test]
+fn a_clocked_render_can_be_timed_on_the_gpu() {
+    let dir = project("clock_gpu_time");
+    let json = dir.join("gpu.json");
+    let o = render(
+        &dir,
+        "a.png",
+        &[
+            "--time",
+            "1.3",
+            "--gpu-time",
+            "20",
+            "--gpu-time-json",
+            json.to_str().unwrap(),
+        ],
+    );
+    if no_gpu(&o) {
+        return;
+    }
+    if stderr(&o).contains("TIMESTAMP_QUERY") {
+        eprintln!("no GPU timestamps: skipped");
+        return;
+    }
+    ok(&o);
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(out.contains("GPU time over 20 frames"), "{out}");
+    assert!(
+        out.contains("20 frames timed, the first 2 dropped"),
+        "{out}"
+    );
+    let header = out.lines().find(|l| l.trim_start().starts_with("pass"));
+    let header: Vec<&str> = header.expect(&out).split_whitespace().collect();
+    assert_eq!(header, ["pass", "min", "p50", "p90", "max", "ms"]);
+
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+    assert_eq!(doc["frames_drawn"], 20);
+    assert_eq!(doc["frames_kept"], 18);
+    assert!(doc["adapter"]["backend"].is_string(), "{doc}");
+    let passes = doc["passes"].as_array().unwrap();
+    assert!(passes.iter().any(|p| p["label"] == "Scene"), "{doc}");
+    for p in passes.iter().chain([&doc["frame"]]) {
+        let at = |k: &str| p[k].as_f64().unwrap();
+        assert!(at("min_ms") <= at("p50_ms") && at("p50_ms") <= at("p90_ms"));
+        assert!(at("p90_ms") <= at("max_ms"), "{p}");
+        let samples = p["samples_ms"].as_array().unwrap().len();
+        assert!((1..=18).contains(&samples), "{p}");
+    }
+    assert_eq!(doc["frame"]["samples_ms"].as_array().unwrap().len(), 18);
+}
+
+/// `--gpu-time-json` means nothing without `--gpu-time`; clap says so.
+#[test]
+fn gpu_time_json_needs_gpu_time() {
+    let dir = project("gpu_time_json_alone");
+    let o = render(&dir, "a.png", &["--gpu-time-json", "x.json"]);
+    assert!(!o.status.success());
+    assert!(stderr(&o).contains("--gpu-time"), "{}", stderr(&o));
+}
+
+/// `--ai-refine` on the clock, with the free offline agent: each candidate is
+/// the moment redrawn under its look.
+#[test]
+fn a_look_is_refined_at_a_moment() {
+    let dir = project("clock_refine");
+    let o = render(&dir, "ref.png", &["--time", "1.3"]);
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let reference = dir.join("ref.png");
+    let o = render(
+        &dir,
+        "rounds.png",
+        &[
+            "--time",
+            "1.3",
+            "--look",
+            "ascii_noir",
+            "--reference",
+            reference.to_str().unwrap(),
+            "--ai-refine",
+            "--ai-provider",
+            "mock",
+            "--refine-rounds",
+            "1",
+            "--refine-candidates",
+            "2",
+        ],
+    );
+    ok(&o);
+    assert!(dir.join("rounds.png").is_file());
+    assert!(dir.join("ascii_noir_refined.look.toml").is_file());
+    assert!(dir.join("ascii_noir_refined.look.json").is_file());
+}
+
 /// These fail before anything is loaded, so they need no GPU.
 #[test]
 fn what_cant_be_written_is_refused_and_says_why() {
@@ -339,4 +706,39 @@ fn what_cant_be_written_is_refused_and_says_why() {
     refused("a.png", &["--sweep", "fog.density=1"], "at least two");
     refused("a.png", &["--time", "soon"], "'soon'");
     refused("a.png", &["--frame-step", "0.1"], "--time");
+
+    // What a clocked render can't mean (#596)
+    let reference = dir.join("tiny.png");
+    image::RgbImage::new(4, 4).save(&reference).unwrap();
+    let reference = reference.to_str().unwrap();
+    let span = ["--time", "0..1", "--reference", reference];
+    refused("a.gif", &span, "one moment");
+    refused(
+        "a.png",
+        &["--time", "1,2", "--report", "m.json"],
+        "one moment",
+    );
+    refused(
+        "a.png",
+        &[
+            "--time",
+            "1,2",
+            "--look",
+            "ascii_noir",
+            "--reference",
+            reference,
+            "--ai-refine",
+        ],
+        "one moment",
+    );
+    refused(
+        "a.png",
+        &["--sweep", "wooze.glide=0,1", "--ascii-text", "t.txt"],
+        "drop --sweep",
+    );
+    refused(
+        "a.png",
+        &["--sweep", "wooze.glide=0,1", "--frames", "2"],
+        "drop --sweep",
+    );
 }

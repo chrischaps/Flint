@@ -1,0 +1,138 @@
+# ADR 0122: What a game's `engine/` carries: one tree under a budget, no binary twice
+
+Status: accepted, 2026-11-14 (#759)
+
+## Context
+
+A game carries the engine as a subtree (`git subtree add --prefix=engine ...
+--squash`, [Building a Game Project](../book/src/guides/building-a-game-project.md)),
+and a subtree is the whole tree. So every byte tracked here is a byte in every
+game clone, every game worktree and every CI checkout of a game, and in every
+agent worktree of the engine itself (#762).
+
+On 2026-11-14, before this change, the tree was 390 MB in 2,187 files:
+`examples/` 130 MB, `docs/` 89 MB, `tests/` 78 MB, `testModels/` 37 MB,
+`crates/` 38 MB, `showcase_game/` 16 MB. Only 275 MB of that was distinct
+bytes: 54 groups of byte-identical files held 115 MB. `testModels/`
+duplicated the examples' bench and YBots, and #763 had copied 40 example
+binaries into `tests/fixtures/scenes/` on purpose, so the goldens stay frozen
+while the examples improve. The largest single files were textures: the
+wooden bench at 4096 texels (32 MB, three copies), `wood_planks.png` at 4096
+(28 MB, two copies, and a PNG re-save of `worn_planks_diff_4k.jpg`, which no
+scene read). Unread too: a TIFF the `image` dependency can't decode, four of
+the five Poliigon concrete maps, `mug2.glb`, `CubeWithTexture.glb`. The
+book's PNGs were saved with fast compression.
+
+The issue asked for three things: no binary tracked twice, the largest
+textures under an agreed cap, and a written budget for what a game's `engine/`
+carries, with a decision on moving the heavy part out of the subtree.
+
+## Decision
+
+1. **One tree, one subtree, for now.** No Git LFS, no CI-published game
+   branch, no second repository in this change. The larger split is decided
+   in direction: **examples move to a `flint-examples` repository**, pulled
+   separately, as its own issue (#984, under epic #676). Since #763 no golden or CLI
+   test loads `examples/`, so the move costs the engine's CI little. What it
+   costs is cross-repo work: a feature PR that adds an example bench becomes
+   two PRs, and the book's citations of `examples/`, `flint examples --check`,
+   `flint export web` and the play site need to point across.
+2. **A budget, checked on every PR.** `scripts/size-check.py` (standard
+   library; `scripts/ci.sh` runs it, so CI's rustfmt job and `issue.sh land`
+   do too) holds the tree to:
+
+   | What | Budget | Measured at the decision |
+   |---|---|---|
+   | The whole tree, which a game's `engine/` is | 185 MB | 168.8 MB |
+   | `examples/` | 52 MB | 45.3 MB |
+   | the book (`docs/`) | 78 MB | 70.2 MB |
+   | tests (`tests/`, the golden PNGs) | 27 MB | 23.4 MB |
+   | `showcase_game/` | 16 MB | 13.8 MB |
+   | the engine proper (crates, schemas, styles, scripts, tools) | 20 MB | 16.1 MB |
+   | one file | 8 MB | `MetalRoughSpheres.glb` excepted (11 MB of Khronos geometry) |
+   | one texture, loose or in a `.glb` | 2048 texels a side, 3 MB | |
+
+   The budgets are the measurement plus about a tenth. A breach is a reason
+   to shrink something or to argue the budget here, not to raise it in
+   passing.
+3. **No binary is tracked twice.** The check hashes every tracked binary.
+   The frozen fixtures **borrow** the example files they share, by path
+   (`asset = "../../../examples/models/YBot.glb"`; the asset search's
+   as-written step, ADR 0114), and `tests/fixtures/borrowed.toml` pins each
+   one's SHA-256. The check fails when a pinned file changes, when a fixture
+   names an `examples/` binary that isn't pinned, and when a pin has no
+   borrower left. Changing a borrowed example file is copy on write: first
+   copy the old bytes into the fixtures and point the fixture there, then
+   change the example. Two kinds of copy are kept on purpose, each named with
+   its reason in `DUPLICATE_EXCEPTIONS`: Sun Prints' 10 KB palm (a web game
+   whose bundle packs only its own folder) and the showcase game's ten sounds
+   (#760; its scripts build their names at run time, inside its own project).
+4. **Textures are capped** at 2048 texels a side and 3 MB encoded.
+   `tools/assets/cap_textures.py` halves an image over the side cap with
+   `flint_pixels::mip_chain`'s own filter (2x2 box, colour in linear light),
+   so the result is the renderer's next mip level up to one rounding; it
+   writes colour maps (glTF base colour, emissive) as JPEG at quality 92 with
+   no chroma subsampling, keeps data maps (normal, metallic-roughness,
+   occlusion) PNG, drops alpha only where every material using it is
+   `OPAQUE`, and rewrites a GLB's chunks and buffer views whole. Book images
+   and golden renders are pictures, not textures, and are not held to it; a
+   PNG anywhere is saved compressed.
+5. **A game's worktrees can leave the heavy part out.** A sparse checkout
+   keeps `engine/examples`, `engine/docs`, `engine/tests` and
+   `engine/showcase_game` out of a game's working tree. Nothing a game
+   builds reads them (no `include_bytes!` or build script reaches outside
+   the crates), the engine workspace still resolves, and `git subtree pull`
+   still works. The recipe is in the game-project guide.
+
+## Alternatives considered
+
+- **Keep #763's fixture copies, exempt `tests/fixtures/`.** The simplest
+  rule, and about 15 MB of duplicates after the textures were capped. Turned
+  down: the duplicate rule would have a directory-sized hole, and the copies
+  would still double whatever an example and a fixture share next.
+- **A shared root asset pool** both find through the asset search. The walk
+  reaches the root from both `examples/` and `tests/fixtures/scenes/`, but a
+  game's search also falls back to `engine/`, so every game would see those
+  models.
+- **A CI-published game branch** (main without examples, docs and tests).
+  Games would carry about 40 MB, but `git subtree push` back to `main`, which
+  games do (Vault: Git Subtree Branch Conventions), would push trees missing
+  those folders.
+- **Git LFS.** A subtree copies the pointer files, which the game's own
+  remote can't serve, and every CI checkout spends GitHub's LFS bandwidth.
+- **Moving examples out in this change.** A bigger change touching the book,
+  the play site and every example PR, for the issue's whole budget at once;
+  decided as the direction instead (decision 1).
+
+## Consequences
+
+- An agent adding a texture over 2048 texels, a second copy of a file, or a
+  file over 8 MB gets told by `scripts/ci.sh`, with the fix (the tool, or
+  pointing at the one copy).
+- Editing a borrowed example file fails CI until the fixture keeps its old
+  bytes. The message says how.
+- Twelve of 116 golden renders moved, by at most 30 levels in one pixel and
+  0.03 on average (the selection outline's planks, the Lantern and bench in
+  the meadow scenes); the moved goldens were re-blessed with the change.
+- `testModels/` is gone. Its one unique file, `DoubleSidedCard.glb`, is
+  `tests/fixtures/models/`; the other tests read `examples/models/`.
+- When examples move out, `borrowed.toml` lists exactly which bytes the
+  fixtures must take back.
+
+## Measured
+
+| | Before (main, 2026-11-14) | After |
+|---|---|---|
+| Tracked tree (git's blob sizes) | 390.4 MB, 2,195 files | 168.3 MB, 2,149 files |
+| Bytes in duplicate files, past the first copy | 117.3 MB | 1.8 MB (11 named groups) |
+| A game's working tree, full | 378 MB | 166 MB |
+| A game's working tree, sparse recipe | 76 MB | 41 MB |
+| A game's `.git` after `subtree add --squash` and `gc` | 210 MB | 123 MB |
+| The book's images | 85.6 MB | 67.5 MB (same pixels) |
+| Wooden bench / planks / Lantern | 32.1 / 27.7 / 9.6 MB | 3.6 / 1.9 / 6.2 MB |
+
+"Before" is main at the merge (#760 had just added the showcase's sounds);
+the Context's 390 MB and 115 MB are the same tree a few commits earlier.
+`size-check.py` measures files on disk, so its 168.8 MB counts a Windows
+checkout's line endings. The game numbers are a throwaway repository with the engine added as a
+squashed subtree from this checkout, before and after.

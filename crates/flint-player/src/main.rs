@@ -30,8 +30,10 @@ use winit::event_loop::{ControlFlow, EventLoop};
 #[command(name = "flint-player")]
 #[command(about = "Flint game player - run scenes with physics and first-person controls")]
 struct Args {
-    /// Path to scene file (with --bundle: optional, a path inside the bundle)
-    #[arg(required_unless_present_any = ["list_gpus", "bundle"], default_value = "")]
+    /// Path to scene file. Without it: the project's default scene,
+    /// flint.toml's `[project] scene` (with --bundle: the bundle's start
+    /// scene; a path given is one inside the bundle)
+    #[arg(default_value = "")]
     scene: String,
 
     /// Play a game bundle made by `flint bundle` (#98) instead of the disk.
@@ -40,8 +42,10 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     bundle: Option<std::path::PathBuf>,
 
-    /// Paths to schemas directories (can specify multiple)
-    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+    /// Schema directories, later ones overriding earlier (repeatable).
+    /// Without it: the project's flint.toml `schemas`, else schemas/ in the
+    /// working directory, beside the scene and one level up
+    #[arg(long, action = clap::ArgAction::Append)]
     schemas: Vec<String>,
 
     /// Launch in fullscreen mode
@@ -90,6 +94,17 @@ struct Args {
     #[arg(long, value_name = "auto|always|never", default_value = "auto")]
     touch_controls: String,
 
+    /// Stand-in safe-area insets in points, `left,top,right,bottom` (#660):
+    /// what a notch or home bar would cover, for trying a HUD that reads
+    /// `safe_area()` on a desktop. The touch controls keep inside them too
+    #[arg(long, value_name = "L,T,R,B")]
+    safe_area: Option<String>,
+
+    /// Report a touch-first device to scripts (`is_touch_device()`, #660),
+    /// as a phone's page or Android does from the first frame
+    #[arg(long)]
+    touch_device: bool,
+
     /// Turn on a registered style over the scene's post-processing, as
     /// `flint render --style` does (#328): `name[:key=value,...]`, e.g.
     /// `ascii`, `ascii:cell=12,ramp=blocks`, `pencil:spacing=5`,
@@ -104,6 +119,13 @@ struct Args {
     #[arg(long, value_name = "SECONDS")]
     style_time: Option<f32>,
 
+    /// Motion on twos for the whole frame (#405): every entity's drawn
+    /// position and pose change only this many times a second, as does the
+    /// post time styles read (12 = on twos at 24 fps; 0 = off). Over every
+    /// scene's `[post_process] motion_hold`, kept through transitions
+    #[arg(long, value_name = "RATE")]
+    motion_hold: Option<f32>,
+
     /// GPU adapter to use (case-insensitive substring of the adapter name,
     /// e.g. "NVIDIA"). Overrides WGPU_ADAPTER_NAME; default prefers the
     /// high-performance adapter. Use --list-gpus to see names.
@@ -114,13 +136,10 @@ struct Args {
     #[arg(long)]
     list_gpus: bool,
 
-    /// Initial window width in pixels (ignored with --fullscreen)
-    #[arg(long, default_value_t = 1280)]
-    width: u32,
-
-    /// Initial window height in pixels (ignored with --fullscreen)
-    #[arg(long, default_value_t = 720)]
-    height: u32,
+    /// `--width`/`--height`, `--position`, `--borderless`, `--always-on-top`
+    /// and `--no-activate` (#611)
+    #[command(flatten)]
+    window: flint_player::WindowArgs,
 
     /// Write a PNG of the presented frame (scene + HUD) to this path.
     /// With --screenshot-every the path becomes a numbered base name
@@ -157,6 +176,13 @@ struct Args {
     /// written: smooth offline video however slow the capture runs.
     #[arg(long, value_name = "SECS")]
     frame_step: Option<f64>,
+
+    /// Seed scripts' `random()` and `random_range()`: one sequence, the same
+    /// every run (#635). `--frame-step` seeds them too, with the seed
+    /// `flint render --scripts` uses, unless this names another; without
+    /// either they draw from the wall clock
+    #[arg(long, value_name = "N")]
+    seed: Option<u64>,
 
     /// Play every scene under a look (#279, #435): a built-in
     /// (ascii_noir, matrix, ink_wash, graphite, watercolor), a
@@ -198,6 +224,19 @@ struct Args {
     /// and each pass's GPU time, as the web page's `?perf=1` copies it
     #[arg(long)]
     perf: bool,
+
+    /// Don't watch the game's files for changes (#633): scripts, UI
+    /// documents, user styles, glyph sets and palettes load once and never
+    /// reload, and nothing polls the disk. For captures and shipped builds
+    #[arg(long)]
+    no_hot_reload: bool,
+
+    /// Keep this run's save data in DIR, as DIR/<slot>.toml, and read no
+    /// other save (#726). Without it: the OS user directory,
+    /// <config>/<game id>/saves/, or the project's save/ for a game with
+    /// no id
+    #[arg(long, value_name = "DIR")]
+    save_dir: Option<std::path::PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -210,40 +249,62 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
     if args.list_gpus {
-        for a in flint_render::list_adapters() {
+        let adapters = flint_render::list_adapters();
+        if adapters.is_empty() {
+            eprintln!("No GPU adapters found: {}", flint_render::no_adapter_hint());
+        }
+        for a in adapters {
             println!("{a}");
         }
         return Ok(());
     }
     flint_render::set_gpu_override(args.gpu.clone());
+    if args.no_hot_reload {
+        flint_core::file_watch::disable();
+    }
 
     let mut args = args;
     let late_bundles = match args.bundle.clone() {
         Some(path) => Some(open_bundle(&path, &mut args)?),
         None => None,
     };
-
-    // Merge explicit schemas with auto-discovered dirs from scene path
-    let mut all_schemas = args.schemas.clone();
-    for dir in flint_schema::discover_schema_dirs(&args.scene) {
-        let s = dir.to_string_lossy().into_owned();
-        if !all_schemas.contains(&s) {
-            all_schemas.push(s);
-        }
+    // No scene named: the manifest's default (ADR 0114), or an error that
+    // says what to pass
+    if args.scene.is_empty() {
+        let project = flint_core::project::Project::current()?;
+        let scene = project.default_scene()?;
+        args.scene = flint_core::project::shown(&scene);
+        println!(
+            "Opening the project's default scene: {} (`[project] scene` in {})",
+            args.scene,
+            flint_core::project::shown(&project.manifest_path())
+        );
     }
 
-    // Load schemas from all directories
-    let existing: Vec<&str> = all_schemas
-        .iter()
-        .map(|s| s.as_str())
-        .filter(|p| vfs::exists(p))
-        .collect();
-    let registry = if !existing.is_empty() {
-        SchemaRegistry::load_from_directories(&existing).context("Failed to load schemas")?
+    // The one resolver (ADR 0114): --schemas, else the manifest, else
+    // discovery. A bundle settled its list when it was packed
+    // (`args.schemas` holds it by now), plus what lies beside the scene.
+    let scene = std::path::Path::new(&args.scene);
+    let (registry, schema_dirs) = if args.bundle.is_some() {
+        let dirs = flint_core::project::host_schema_dirs(&args.schemas, Some(scene));
+        let registry =
+            SchemaRegistry::load_from_directories(&dirs.dirs).context("Failed to load schemas")?;
+        (registry, dirs)
     } else {
-        println!("Warning: No schemas directories found");
-        SchemaRegistry::new()
+        match SchemaRegistry::resolve(Some(scene), &args.schemas) {
+            Ok(loaded) => loaded,
+            // Says which directory and who named it: nothing to add
+            Err(flint_core::FlintError::SchemaDirs(e)) => return Err(e.into()),
+            Err(e) => return Err(e).context("Failed to load schemas"),
+        }
     };
+    // TEMPORARY, for one release (ADR 0114 decision 3, #765)
+    for warning in schema_dirs.dropped_warnings() {
+        eprintln!("{warning}");
+    }
+    if schema_dirs.dirs.is_empty() {
+        println!("Warning: No schemas directories found");
+    }
 
     // --style words, checked once the scene's own styles are registered
     // (a user style is known only then, #274) so a typo stops here
@@ -253,7 +314,13 @@ fn main() -> Result<()> {
     }
 
     // Load scene
-    let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
+    #[cfg_attr(not(feature = "living"), allow(unused_mut))]
+    let (world, mut scene_file) =
+        load_scene(&args.scene, &registry).context("Failed to load scene")?;
+    // Living props' tables: checked, and the preset [wooze] names filled in (#686)
+    #[cfg(feature = "living")]
+    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(&args.scene))
+        .context("Failed to load scene")?;
 
     println!("Loaded scene: {}", scene_file.scene.name);
     println!("Entities: {}", world.entity_count());
@@ -263,7 +330,7 @@ fn main() -> Result<()> {
     println!("  Mouse    - Look");
     println!("  Space    - Jump");
     println!("  Shift    - Sprint");
-    println!("  Escape   - Release cursor / Exit");
+    println!("  Escape   - Release cursor / Exit (the game's, if it binds Escape)");
     println!("  F2       - Rendering stats overlay");
     println!("  F3       - Scene debug panels");
     println!("  F4       - Rendering & Effects menu");
@@ -287,15 +354,16 @@ fn main() -> Result<()> {
         scene_file.scene.input_config.clone(),
     );
 
-    app.msaa_sample_count = args.msaa;
+    app.launch.msaa_sample_count = args.msaa;
+    app.launch.save_dir = args.save_dir.clone();
     // A bundle's files aren't on the disk: nothing to key a disk cache by.
-    app.procgen_disk_cache = args.bundle.is_none();
-    app.scene_file_writable = args.bundle.is_none();
+    app.launch.procgen_disk_cache = args.bundle.is_none();
+    app.launch.scene_file_writable = args.bundle.is_none();
     if args.procgen_defer {
-        app.procgen_mode = flint_player::ProcGenMode::Deferred;
+        app.launch.procgen_mode = flint_player::ProcGenMode::Deferred;
     }
     if let Some(value) = &args.render_scale {
-        app.render_scale = flint_player::RenderScaleSetting::default()
+        app.launch.render_scale = flint_player::RenderScaleSetting::default()
             .parse(value)
             .ok_or_else(|| anyhow::anyhow!("--render-scale {value}: a number or auto"))?;
     }
@@ -305,26 +373,43 @@ fn main() -> Result<()> {
         if let Some(e) = errors.first() {
             anyhow::bail!("--quality: {e}");
         }
-        app.quality_overrides = quality.clone();
+        app.launch.quality_overrides = quality.clone();
     }
     let touch_mode = flint_runtime::TouchControlsMode::parse(&args.touch_controls)
         .ok_or_else(|| anyhow::anyhow!("--touch-controls: auto, always or never"))?;
     app.input.touch_controls_mut().set_mode(touch_mode);
-    app.pixels_per_point = args.pixels_per_point.filter(|p| *p > 0.0);
+    if let Some(spec) = &args.safe_area {
+        let sides: Vec<f32> = spec
+            .split(',')
+            .map(|v| v.trim().parse::<f32>())
+            .collect::<Result<_, _>>()
+            .map_err(|_| anyhow::anyhow!("--safe-area: four numbers, left,top,right,bottom"))?;
+        let [l, t, r, b] = sides[..] else {
+            anyhow::bail!("--safe-area: four numbers, left,top,right,bottom");
+        };
+        if sides.iter().any(|v| !v.is_finite() || *v < 0.0) {
+            anyhow::bail!("--safe-area: insets are points, 0 or more");
+        }
+        app.launch.safe_area = Some([l, t, r, b]);
+    }
+    app.launch.touch_device = args.touch_device;
+    app.launch.pixels_per_point = args.pixels_per_point.filter(|p| *p > 0.0);
     if let Some(name) = &args.look {
         // Refuse a bad name now. The scene's user styles first: a look may
         // name one (they are loaded again, harmlessly, with the scene)
-        flint_player::load_user_styles(&app.scene_path);
-        let look = flint_render::look::find(name, &app.scene_path)
+        flint_player::load_user_styles(&app.core.scene_path);
+        let look = flint_render::look::find(name, &app.core.scene_path)
             .map_err(|e| anyhow::anyhow!("--look: {e}"))?;
         println!("Look: {} ({})", look.name, look.source);
-        app.look = Some(name.clone());
+        app.launch.look = Some(name.clone());
     }
-    app.style_specs = args.styles.clone();
-    app.style_time = args.style_time;
+    app.launch.style_specs = args.styles.clone();
+    app.launch.style_time = args.style_time;
+    app.launch.motion_hold = args.motion_hold;
     // Skybox, ambient, shading levers, camera and post from the scene file
     app.apply_scene_settings(&scene_file);
-    app.window_size = (args.width, args.height);
+    app.launch.window_size = args.window.size();
+    app.launch.window_options = args.window.clone();
     app.capture = flint_player::CaptureConfig::new(
         args.screenshot.map(std::path::PathBuf::from),
         args.screenshot_at,
@@ -334,7 +419,7 @@ fn main() -> Result<()> {
     if let Some(path) = &args.input_script {
         app.capture.input_script = Some(flint_player::InputScript::load(path)?);
     }
-    app.expression_feed = flint_player::ExpressionFeed::open(
+    app.launch.expression_feed = flint_player::ExpressionFeed::open(
         args.expression_timeline.as_deref(),
         args.expression_listen.as_deref(),
     )?;
@@ -346,12 +431,25 @@ fn main() -> Result<()> {
         if b.trim().is_empty() {
             anyhow::bail!("--compare {compare}: B needs a preset's name");
         }
+        #[cfg(feature = "living")]
         app.compare_living_at_start(a.trim(), b.trim(), args.split);
+        #[cfg(not(feature = "living"))]
+        println!(
+            "[living] --compare {}: this player is built without the `living` feature",
+            a.trim().to_owned() + "," + b.trim()
+        );
     }
     if args.perf {
         app.enable_perf(true);
     }
-    app.clock.frame_step = args.frame_step.filter(|s| *s > 0.0);
+    app.core.clock.frame_step = args.frame_step.filter(|s| *s > 0.0);
+    // A stepped run is meant to repeat, so its scripts' randomness does too
+    if let Some(seed) = args
+        .seed
+        .or(app.core.clock.frame_step.map(|_| flint_player::SCRIPT_SEED))
+    {
+        app.core.script.seed_random(seed);
+    }
 
     // Apply initial mixer bus volumes from CLI (e.g. --music-volume 0)
     app.audio
@@ -359,10 +457,15 @@ fn main() -> Result<()> {
     app.audio
         .set_bus_volume(flint_audio::Bus::Sfx, args.sfx_volume);
 
-    // Preserve schema paths for scene transitions (includes auto-discovered)
-    app.set_schema_paths(all_schemas);
+    // The registry and its directories, kept for transitions and chunks
+    app.set_schemas(registry, schema_dirs);
 
     event_loop.run_app(&mut app)?;
+    // A failed start or a screenshot that never reached the disk exits
+    // non-zero, never as a clean run (#639).
+    if let Some(failure) = app.run_failure() {
+        anyhow::bail!(failure);
+    }
 
     Ok(())
 }

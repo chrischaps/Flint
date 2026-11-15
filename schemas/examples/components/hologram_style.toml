@@ -1,0 +1,4 @@
+# Declared by name only: an open schema (ADR 0115). The component is known
+# and its table is not checked.
+[component.hologram_style]
+description = "Per-entity settings of the user style examples/styles/hologram.shader.toml. A user style's `<name>_style` component is read by the renderer, which checks its keys; open here so the name is known"

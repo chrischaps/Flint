@@ -173,6 +173,8 @@ pub struct ImportedMesh {
 /// `extras = { flint_lod = { near, far, draw_distance, ref_min, ref_max } }`
 /// (every key optional). Keep a model's levels as primitives of one mesh on
 /// one node: several mesh nodes are expanded into a child entity each.
+/// (Root nodes named `LOD_0`, `LOD_1`, ... without bands get them from
+/// [`band_lod_chain`](crate::band_lod_chain), #193.)
 ///
 /// The distance is measured from the camera to the closest point of the
 /// reference box `ref_min..ref_max` (model space; the mesh's own bounds when
@@ -271,6 +273,16 @@ pub struct ImportedJoint {
     /// Quaternion xyzw
     pub rest_rotation: [f32; 4],
     pub rest_scale: [f32; 3],
+    /// The transform of the non-joint glTF nodes between this joint and
+    /// `parent` (column-major), or between it and the scene root when
+    /// `parent` is `None`. `None` when there are none, or they're identity.
+    ///
+    /// A glTF joint's world matrix includes every ancestor, and the inverse
+    /// bind matrices are written against it. A Mixamo export puts its root
+    /// joint under an `Armature` node that holds the centimetre-to-metre
+    /// scale and the Z-up turn, so a pose that skips that node comes out
+    /// 100 times too large and lying down (#294).
+    pub parent_offset: Option<[[f32; 4]; 4]>,
 }
 
 /// A complete skeleton extracted from a glTF skin
@@ -400,6 +412,11 @@ pub struct ImportedMaterial {
     /// Vertex alpha is then no longer opacity; the entity material's
     /// `opacity` still applies. Needs `use_vertex_color`.
     pub vertex_emission: bool,
+    /// Whether both faces of the surface are drawn (glTF `doubleSided`).
+    /// False culls back faces, as glTF's default does; true draws thin cards
+    /// (leaves, fronds, flat figures) from either side, lights a back face
+    /// with its normal turned toward the viewer, and casts shadows from both.
+    pub double_sided: bool,
 }
 
 impl Default for ImportedMaterial {
@@ -420,6 +437,7 @@ impl Default for ImportedMaterial {
             emissive_strength: 1.0,
             emissive_texture: None,
             vertex_emission: false,
+            double_sided: false,
         }
     }
 }

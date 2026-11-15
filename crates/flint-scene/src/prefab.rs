@@ -1,19 +1,40 @@
 //! Prefab expansion — loads .prefab.toml templates and expands instances into scene entities
 
 use crate::format::{PrefabFile, SceneFile};
+use flint_core::project::{AssetKind, Project};
+use flint_core::vfs;
 use flint_core::{FlintError, Result};
 use std::collections::HashMap;
-use flint_core::vfs;
 use std::path::Path;
 
 /// Expand all prefab instances in a scene file, inserting their entities into `scene.entities`.
 /// Must be called before entity creation (two-pass load).
+///
+/// A template is found by the project's one asset search
+/// (`AssetKind::Prefabs`, ADR 0114): `prefabs/<name>.prefab.toml` beside the
+/// scene, in each directory above it up to the project root, then in the
+/// engine. The project is the one the scene file is found in.
 pub fn expand_prefabs(scene: &mut SceneFile, scene_path: &Path) -> Result<()> {
     if scene.prefabs.is_empty() {
         return Ok(());
     }
+    expand_prefabs_in(scene, scene_path, &Project::for_scene(scene_path))
+}
 
-    let scene_dir = scene_path.parent().unwrap_or_else(|| Path::new("."));
+/// [`expand_prefabs`] for a host that already holds the scene's project.
+pub fn expand_prefabs_in(
+    scene: &mut SceneFile,
+    scene_path: &Path,
+    project: &Project,
+) -> Result<()> {
+    if scene.prefabs.is_empty() {
+        return Ok(());
+    }
+
+    let scene_dir = scene_path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
 
     // Cache loaded prefab templates by template name
     let mut cache: HashMap<String, PrefabFile> = HashMap::new();
@@ -26,7 +47,9 @@ pub fn expand_prefabs(scene: &mut SceneFile, scene_path: &Path) -> Result<()> {
         let prefab = if let Some(cached) = cache.get(&instance.template) {
             cached.clone()
         } else {
-            let prefab_path = resolve_prefab_path(scene_dir, &instance.template)?;
+            let prefab_path = project
+                .resolve(AssetKind::Prefabs, &instance.template, scene_dir)
+                .map_err(|not_found| FlintError::ParseError(not_found.to_string()))?;
             let content = vfs::read_to_string(&prefab_path).map_err(|e| {
                 FlintError::ParseError(format!(
                     "Failed to read prefab '{}': {}",
@@ -88,32 +111,6 @@ pub fn expand_prefabs(scene: &mut SceneFile, scene_path: &Path) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Search for a prefab file: tries `scene_dir/prefabs/{name}.prefab.toml`
-/// then `scene_dir/../prefabs/{name}.prefab.toml` (project root pattern).
-fn resolve_prefab_path(scene_dir: &Path, template_name: &str) -> Result<std::path::PathBuf> {
-    let filename = format!("{}.prefab.toml", template_name);
-
-    // Try scene_dir/prefabs/
-    let path1 = scene_dir.join("prefabs").join(&filename);
-    if vfs::exists(&path1) {
-        return Ok(path1);
-    }
-
-    // Try scene_dir/../prefabs/ (project root when scenes/ is a subdirectory)
-    if let Some(parent) = scene_dir.parent() {
-        let path2 = parent.join("prefabs").join(&filename);
-        if vfs::exists(&path2) {
-            return Ok(path2);
-        }
-    }
-
-    Err(FlintError::ParseError(format!(
-        "Prefab template '{}' not found (searched {}/prefabs/ and parent)",
-        template_name,
-        scene_dir.display()
-    )))
 }
 
 /// Recursively substitute `${VAR}` patterns in string values within a toml::Value tree.
@@ -253,10 +250,10 @@ mod tests {
             camera: None,
             environment: None,
             post_process: None,
-            living: None,
-            wooze: None,
+            tables: toml::Table::new(),
             prefabs: HashMap::new(),
             entities: HashMap::new(),
+            written: toml::Table::new(),
         };
 
         // Add an entity named "p_kart" that would collide
@@ -268,5 +265,71 @@ mod tests {
         // but we can verify the collision detection logic by testing
         // that the entities map already has the key
         assert!(scene.entities.contains_key("p_kart"));
+    }
+
+    const LAMP: &str = "[prefab]\nname = \"lamp\"\n\n[entities.bulb]\n";
+    const SCENE: &str =
+        "[scene]\nname = \"cave\"\n\n[prefabs.porch]\ntemplate = \"lamp\"\nprefix = \"porch\"\n";
+
+    fn expanded(files: &[(&str, &str)], scene_path: &str) -> Result<SceneFile> {
+        let mut source = flint_core::vfs::MemorySource::new();
+        for (path, text) in files {
+            source.insert(path, *text);
+        }
+        flint_core::vfs::scoped(std::sync::Arc::new(source), || {
+            let mut scene: SceneFile = toml::from_str(SCENE).unwrap();
+            expand_prefabs(&mut scene, Path::new(scene_path))?;
+            Ok(scene)
+        })
+    }
+
+    #[test]
+    fn a_scene_two_folders_deep_finds_the_projects_prefab() {
+        // Before the one resolver (ADR 0114) a prefab was looked for beside
+        // the scene and one level up, and no further.
+        let scene = "game/scenes/act1/cave/a.scene.toml";
+        let found = expanded(
+            &[
+                ("game/flint.toml", ""),
+                ("game/prefabs/lamp.prefab.toml", LAMP),
+                (scene, SCENE),
+            ],
+            scene,
+        )
+        .unwrap();
+        assert!(found.entities.contains_key("porch_bulb"));
+    }
+
+    #[test]
+    fn the_nearest_prefab_of_a_name_wins() {
+        let scene = "game/scenes/a.scene.toml";
+        let near = "[prefab]\nname = \"lamp\"\n\n[entities.wick]\n";
+        let found = expanded(
+            &[
+                ("game/flint.toml", ""),
+                ("game/prefabs/lamp.prefab.toml", LAMP),
+                ("game/scenes/prefabs/lamp.prefab.toml", near),
+                (scene, SCENE),
+            ],
+            scene,
+        )
+        .unwrap();
+        assert!(found.entities.contains_key("porch_wick"));
+        assert!(!found.entities.contains_key("porch_bulb"));
+    }
+
+    #[test]
+    fn a_missing_prefab_lists_every_path_tried() {
+        let scene = "game/scenes/act1/a.scene.toml";
+        let err = expanded(&[("game/flint.toml", ""), (scene, SCENE)], scene).unwrap_err();
+        let text = err.to_string();
+        assert!(text.contains("prefab 'lamp' not found. Tried:"), "{text}");
+        for tried in [
+            "game/scenes/act1/prefabs/lamp.prefab.toml",
+            "game/scenes/prefabs/lamp.prefab.toml",
+            "game/prefabs/lamp.prefab.toml",
+        ] {
+            assert!(text.contains(tried), "{tried} in {text}");
+        }
     }
 }

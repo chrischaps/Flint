@@ -1,0 +1,3 @@
+# Pins the edition for `rustfmt <file>` run without cargo, so it parses and
+# formats as `cargo fmt` does. Style is rustfmt's defaults (#757).
+edition = "2021"

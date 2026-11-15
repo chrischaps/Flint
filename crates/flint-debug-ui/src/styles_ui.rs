@@ -22,6 +22,7 @@
 //! Both the F4 Rendering & Effects panel and the F3 Styles panel draw this
 //! editor; it edits a [`PostProcessConfig`]'s `styles` and nothing else.
 
+use flint_render::stylize::reveal::{self, RevealShape, StyleReveal};
 use flint_render::stylize::{
     self, ChoiceScope, StyleControl, StyleDescriptor, StyleOption, StyleSettings, StyleStage,
 };
@@ -102,6 +103,10 @@ pub struct StylesEditor {
     /// The scene's folder, where options find their run-time choices (its
     /// palettes and glyph sets, #322); set by the host on scene load.
     scene_dir: Option<PathBuf>,
+    /// The scene's project and folder, which the choices are searched from
+    /// by the one asset rule (ADR 0114): found when the folder is set, or
+    /// handed over by a host that holds the project.
+    assets: Option<flint_core::project::AssetScope>,
     /// Each option's run-time choices, by (style, option) and the other
     /// options' values they were found under, so a combo lists the folder
     /// once rather than every frame. Dropped when the scene changes.
@@ -115,6 +120,10 @@ pub struct StylesEditor {
     /// The last commit's note beside the buttons: the style, when, and its
     /// error if it failed.
     commit_note: Option<(&'static str, f64, Option<String>)>,
+    /// Each style's reveal as it was when its Reveal toggle went off
+    /// (#875), so switching it back on brings the tuned tear back while
+    /// the config (and Copy TOML) say nothing of it in between.
+    reveal_stash: HashMap<&'static str, StyleReveal>,
 }
 
 impl StylesEditor {
@@ -122,7 +131,19 @@ impl StylesEditor {
     /// sets (#322); `None` offers the built-ins only. Calling it again (a
     /// scene load or reload) finds new files.
     pub fn set_scene_dir(&mut self, scene_dir: Option<PathBuf>) {
+        self.assets = scene_dir
+            .as_deref()
+            .map(flint_core::project::AssetScope::for_dir);
         self.scene_dir = scene_dir;
+        self.choices.clear();
+    }
+
+    /// [`set_scene_dir`](Self::set_scene_dir) for a host that holds the
+    /// scene's project: the choices are searched from `assets` and no
+    /// project is looked for.
+    pub fn set_asset_scope(&mut self, assets: Option<flint_core::project::AssetScope>) {
+        self.scene_dir = assets.as_ref().map(|a| a.scene_dir.clone());
+        self.assets = assets;
         self.choices.clear();
     }
 
@@ -189,7 +210,7 @@ impl StylesEditor {
         }
         let option = |name: &str| style.option(pp, name).to_string();
         let scope = ChoiceScope {
-            scene_dir: self.scene_dir.as_deref(),
+            assets: self.assets.as_ref(),
             option: &option,
         };
         let found = o.choices_in(&scope);
@@ -255,6 +276,13 @@ impl StylesEditor {
                         "Runs on the finished picture at output resolution, before FXAA"
                     }
                 });
+                // A game binary's own Rust style (#419)
+                if stylize::is_game_style(style.name) {
+                    ui.weak("game").on_hover_text(
+                        "Written in Rust by this game and registered with \
+                         stylize::register; not part of the engine",
+                    );
+                }
                 // A user-authored style (ADR 0112, #275): where it lives, and
                 // whether it compiles
                 if let Some(source) = stylize::custom::source(style.name) {
@@ -309,6 +337,7 @@ impl StylesEditor {
                             }
                         });
                     edit.changed |= feeds_bloom_checkbox(ui, style, pp);
+                    edit.changed |= self.reveal_group(ui, style, pp, authored);
                 });
                 ui.horizontal(|ui| {
                     if ui
@@ -317,6 +346,7 @@ impl StylesEditor {
                         .clicked()
                     {
                         pp.styles.reset(style.name);
+                        self.reveal_stash.remove(style.name);
                         edit.changed = true;
                     }
                     if let Some(authored) = authored {
@@ -328,6 +358,7 @@ impl StylesEditor {
                         {
                             let was_on = pp.styles.is_enabled(style.name);
                             pp.styles.restore(style.name, authored);
+                            self.reveal_stash.remove(style.name);
                             edit.changed = true;
                             edit.needs_resources |= !was_on && pp.styles.is_enabled(style.name);
                         }
@@ -418,6 +449,104 @@ impl StylesEditor {
             }
         }
         edit
+    }
+
+    /// The style's Reveal group (#875): a toggle in its header (on writes
+    /// `reveal = 1`, off drops every reveal key and keeps them to bring
+    /// back), then the amount, the shape, the edge's ink and each of
+    /// [`reveal::NUMBERS`], in the style grid's four cells. The reveal is
+    /// the framework's, like `blend`, so no descriptor lists it and every
+    /// style gets it. True when it changed.
+    fn reveal_group(
+        &mut self,
+        ui: &mut egui::Ui,
+        style: &'static StyleDescriptor,
+        pp: &mut PostProcessConfig,
+        authored: Option<&StyleSettings>,
+    ) -> bool {
+        let reveal_of = |s: &StyleSettings| {
+            s.get(style.name)
+                .map(|s| s.reveal.clone())
+                .unwrap_or_default()
+        };
+        let current = reveal_of(&pp.styles);
+        let scene = authored.map(reveal_of);
+        // What an unset rim colour starts from, as the renderer draws it
+        let paper = reveal::style_paper(style, pp);
+        let mut next = current.clone();
+        let mut on = next.amount.is_some();
+        let mut opened = false;
+        let id = ui.make_persistent_id(("style reveal", style.name));
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, on)
+            .show_header(ui, |ui| {
+                if ui
+                    .checkbox(&mut on, "Reveal")
+                    .on_hover_text(
+                        "Show the style only inside a region that grows from nothing (0) to \
+                         the whole frame (1), the frame it read around it and an inked line \
+                         on the edge. On writes reveal = 1; off takes every reveal key out",
+                    )
+                    .changed()
+                {
+                    next = self.toggled_reveal(style.name, &current, on);
+                    opened = on;
+                }
+                if let Some(amount) = next.amount {
+                    ui.weak(format!(
+                        "{} at {}",
+                        next.shape().name(),
+                        number(amount, false)
+                    ));
+                }
+            })
+            .body(|ui| {
+                ui.add_enabled_ui(on, |ui| {
+                    egui::Grid::new(("reveal grid", style.name))
+                        .num_columns(4)
+                        .spacing([8.0, 4.0])
+                        .show(ui, |ui| {
+                            self.marked +=
+                                reveal_rows(ui, style.name, &mut next, scene.as_ref(), paper);
+                        });
+                });
+            });
+        if opened {
+            let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+                ui.ctx(),
+                id,
+                true,
+            );
+            state.set_open(true);
+            state.store(ui.ctx());
+        }
+        if next == current {
+            return false;
+        }
+        pp.styles.replace_reveal(style.name, next);
+        true
+    }
+
+    /// Style `name`'s reveal once its Reveal toggle is flipped `on` or off
+    /// from `current`. On: what it was when last switched off, else
+    /// `current`, at `reveal = 1`. Off: nothing, with `current` kept for
+    /// the next time it goes on.
+    fn toggled_reveal(
+        &mut self,
+        name: &'static str,
+        current: &StyleReveal,
+        on: bool,
+    ) -> StyleReveal {
+        if on {
+            let mut next = self
+                .reveal_stash
+                .remove(name)
+                .unwrap_or_else(|| current.clone());
+            next.amount = Some(1.0);
+            next
+        } else {
+            self.reveal_stash.insert(name, current.clone());
+            StyleReveal::default()
+        }
     }
 
     /// One setting's row of four grid cells (label, widget, reset,
@@ -706,6 +835,227 @@ fn chain_ui(ui: &mut egui::Ui, pp: &mut PostProcessConfig) -> bool {
     changed
 }
 
+/// The rows of a style's Reveal group (#875), editing `next` in place;
+/// `scene` is the scene's reveal for the style, when the host knows it;
+/// `paper` the style's paper, which an unset rim colour starts from (#876).
+/// Returns how many values differ from it (the dots drawn).
+fn reveal_rows(
+    ui: &mut egui::Ui,
+    style: &str,
+    next: &mut StyleReveal,
+    scene: Option<&StyleReveal>,
+    paper: [f32; 3],
+) -> usize {
+    let mut marked = 0;
+    // A row's label and widget take its help on hover; a row the shape
+    // doesn't read is greyed out and says why first
+    let help = |r: egui::Response, help: &str, unused: Option<&str>| {
+        let r = r.on_hover_text(help);
+        match unused {
+            Some(why) => r.on_disabled_hover_text(format!("{why}\n{help}")),
+            None => r.on_disabled_hover_text(help),
+        }
+    };
+
+    // The amount: the toggle in the header puts it there or takes it away
+    let amount_help = "How much of the frame shows the style: 0 none of it (the style leaves \
+                       the chain, so the frame is the live one), 1 all of it. Scripts ease it \
+                       with tween_post_style_param. Scene key: reveal";
+    help(ui.label("Amount"), amount_help, None);
+    let mut amount = next.amount.unwrap_or(1.0);
+    if help(
+        ui.add(egui::Slider::new(&mut amount, 0.0..=1.0)),
+        amount_help,
+        None,
+    )
+    .changed()
+    {
+        next.amount = Some(amount);
+    }
+    ui.label("");
+    marked += dot_cell(
+        ui,
+        scene.filter(|s| s.amount != next.amount).map(|s| {
+            s.amount
+                .map_or_else(|| "no reveal".into(), |a| number(a, false))
+        }),
+    );
+    ui.end_row();
+
+    // The shape
+    let shape_help = "The region's shape: a tear rips open from Start x, y; a wipe crosses the \
+                      frame toward Angle; an iris is a circle from Start x, y; a panel is a \
+                      rectangle the frame's shape. Scene key: reveal_shape";
+    help(ui.label("Shape"), shape_help, None);
+    let shown = next.shape();
+    let combo = egui::ComboBox::from_id_salt(("reveal shape", style))
+        .selected_text(shown.name())
+        .show_ui(ui, |ui| {
+            for name in RevealShape::NAMES {
+                if ui.selectable_label(shown.name() == *name, *name).clicked() {
+                    next.shape = RevealShape::from_name(name);
+                }
+            }
+        });
+    help(combo.response, shape_help, None);
+    if reset_cell(
+        ui,
+        next.shape.is_some_and(|s| s != RevealShape::default()),
+        &format!("{:?}", RevealShape::default().name()),
+    ) {
+        next.shape = None;
+    }
+    marked += dot_cell(
+        ui,
+        scene.filter(|s| s.shape != next.shape).map(|s| {
+            s.shape.map_or_else(
+                || format!("nothing ({})", RevealShape::default().name()),
+                |shape| format!("{:?}", shape.name()),
+            )
+        }),
+    );
+    ui.end_row();
+
+    // The ink the edge is drawn in, a display colour as styles' colours are
+    let ink_help = "The colour of the line drawn along the edge. Scene key: reveal_ink";
+    help(ui.label("Ink"), ink_help, None);
+    let ink = next.ink();
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let mut srgb = ink.map(byte);
+    ui.horizontal(|ui| {
+        if help(ui.color_edit_button_srgb(&mut srgb), ink_help, None).changed() {
+            next.ink = Some(srgb.map(|b| b as f32 / 255.0));
+        }
+        let ink = next.ink();
+        ui.weak(format!("{:.2} {:.2} {:.2}", ink[0], ink[1], ink[2]));
+    });
+    if reset_cell(
+        ui,
+        next.ink.is_some_and(|i| i != reveal::DEFAULT_INK),
+        &rgb_text(reveal::DEFAULT_INK),
+    ) {
+        next.ink = None;
+    }
+    marked += dot_cell(
+        ui,
+        scene
+            .filter(|s| s.ink != next.ink)
+            .map(|s| rgb_text(s.ink())),
+    );
+    ui.end_row();
+
+    // The numbers, with their ranges and help from the reveal itself
+    let wipe = next.shape() == RevealShape::Wipe;
+    for n in reveal::NUMBERS {
+        let unused = match n.key {
+            "reveal_angle" if !wipe => {
+                Some("Only a wipe travels: the other shapes grow from Start x, y")
+            }
+            "reveal_x" | "reveal_y" if wipe => {
+                Some("A wipe starts from the frame's edge and crosses toward Angle")
+            }
+            _ => None,
+        };
+        let text = number_help(n);
+        let integer = n.key == "reveal_seed";
+        let default = n.default.unwrap_or_else(|| next.shape().default_ragged());
+        let mut value = next.number(n.key);
+        help(
+            ui.add_enabled(unused.is_none(), egui::Label::new(reveal_label(n.key))),
+            &text,
+            unused,
+        );
+        let mut slider = egui::Slider::new(&mut value, n.min..=n.max);
+        if integer {
+            slider = slider.step_by(1.0).fixed_decimals(0);
+        }
+        let mut changed = help(ui.add_enabled(unused.is_none(), slider), &text, unused).changed();
+        if reset_cell(
+            ui,
+            next.numbers.contains_key(n.key) && value != default,
+            &number(default, integer),
+        ) {
+            next.numbers.remove(n.key);
+            changed = false;
+        }
+        if changed {
+            next.numbers.insert(n.key, value);
+        }
+        marked += dot_cell(
+            ui,
+            scene
+                .filter(|s| s.numbers.get(n.key) != next.numbers.get(n.key))
+                .map(|s| number(s.number(n.key), integer)),
+        );
+        ui.end_row();
+    }
+
+    // The rim's paper (#876), after the numbers that draw it; greyed out
+    // while there is no rim
+    let rim_help = "The colour of the bare paper along the drawn side of the edge; unset, \
+                    the style's paper lifted halfway to white. Scene key: reveal_rim_color";
+    let no_rim = (next.number("reveal_rim") <= 0.0).then_some("No rim: Rim is 0");
+    help(
+        ui.add_enabled(no_rim.is_none(), egui::Label::new("Rim colour")),
+        rim_help,
+        no_rim,
+    );
+    let mut srgb = next.rim_color(paper).map(byte);
+    ui.add_enabled_ui(no_rim.is_none(), |ui| {
+        ui.horizontal(|ui| {
+            if help(ui.color_edit_button_srgb(&mut srgb), rim_help, no_rim).changed() {
+                next.rim_color = Some(srgb.map(|b| b as f32 / 255.0));
+            }
+            let rim = next.rim_color(paper);
+            ui.weak(format!("{:.2} {:.2} {:.2}", rim[0], rim[1], rim[2]));
+        });
+    });
+    if reset_cell(
+        ui,
+        next.rim_color.is_some(),
+        &rgb_text(StyleReveal::default().rim_color(paper)),
+    ) {
+        next.rim_color = None;
+    }
+    marked += dot_cell(
+        ui,
+        scene
+            .filter(|s| s.rim_color != next.rim_color)
+            .map(|s| rgb_text(s.rim_color(paper))),
+    );
+    ui.end_row();
+    marked
+}
+
+/// A reveal number's row label in F4.
+fn reveal_label(key: &str) -> &'static str {
+    match key {
+        "reveal_scale" => "Lobes",
+        "reveal_ragged" => "Ragged",
+        "reveal_edge" => "Edge width",
+        "reveal_angle" => "Angle",
+        "reveal_x" => "Start x",
+        "reveal_y" => "Start y",
+        "reveal_boil" => "Boil",
+        "reveal_seed" => "Seed",
+        "reveal_rim" => "Rim",
+        "reveal_shadow" => "Shadow",
+        _ => "?",
+    }
+}
+
+/// A reveal number's hover text: its help as a sentence, and its key.
+fn number_help(n: &reveal::RevealNumber) -> String {
+    let mut chars = n.help.chars();
+    let first = chars.next().map(|c| c.to_uppercase().to_string());
+    format!(
+        "{}{}. Scene key: {}",
+        first.unwrap_or_default(),
+        chars.as_str(),
+        n.key
+    )
+}
+
 /// The id of a free-text option's field.
 fn text_id(style: &str, option: &str) -> egui::Id {
     egui::Id::new(("style option text", style, option))
@@ -762,6 +1112,7 @@ fn rgb_text(rgb: [f32; 3]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::run_headless_frame;
 
     /// Every piece of text the editor drew in one frame.
     fn drawn_text(
@@ -773,8 +1124,8 @@ mod tests {
         let mut out = Vec::new();
         // Two passes: collapsing state settles on the first
         for _ in 0..2 {
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
+            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     editor.ui(ui, pp, authored);
                 });
             });
@@ -842,10 +1193,10 @@ mod tests {
     fn drawn_strength(editor: &mut StylesEditor, pp: &mut PostProcessConfig) -> Vec<(String, f32)> {
         let ctx = egui::Context::default();
         let mut out = Vec::new();
-        let panel = ctx.style().visuals.panel_fill;
+        let panel = ctx.global_style().visuals.panel_fill;
         for _ in 0..2 {
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
+            let output = run_headless_frame(&ctx, egui::RawInput::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     editor.ui(ui, pp, None);
                 });
             });
@@ -961,8 +1312,8 @@ mod tests {
                 events,
                 ..Default::default()
             };
-            let _ = ctx.run(input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
+            let _ = run_headless_frame(&ctx, input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     edit.merge(editor.section(ui, &TEXT_STYLE, pp, None));
                 });
             });
@@ -986,11 +1337,11 @@ mod tests {
     fn the_scene_folder_adds_its_palettes_fonts_and_ramps() {
         let mut src = flint_core::vfs::MemorySource::new();
         src.insert(
-            "demo/palettes/tidepool.palette.toml",
+            "examples/palettes/tidepool.palette.toml",
             "colors = [\"#0a3d62\", \"#3c6382\"]\n",
         );
         src.insert(
-            "demo/fonts/plain.glyphs.toml",
+            "examples/fonts/plain.glyphs.toml",
             "[ramps.dots]\nglyphs = \" .:\"\n",
         );
         flint_core::vfs::scoped(std::sync::Arc::new(src), || {
@@ -1001,7 +1352,7 @@ mod tests {
             // No scene: the built-ins
             let palettes = editor.choices(ascii, option("palette"), &pp);
             assert!(!palettes.iter().any(|p| p == "tidepool"), "{palettes:?}");
-            editor.set_scene_dir(Some(PathBuf::from("demo")));
+            editor.set_scene_dir(Some(PathBuf::from("examples")));
             let palettes = editor.choices(ascii, option("palette"), &pp);
             assert!(palettes.iter().any(|p| p == "tidepool"), "{palettes:?}");
             assert!(palettes.iter().any(|p| p == "phosphor"), "built-ins stay");
@@ -1052,6 +1403,7 @@ mod tests {
     }
 
     /// A scene's `[post_process.styles]` as a fresh load reads it.
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn styles_in_file(path: &Path) -> StyleSettings {
         let text = std::fs::read_to_string(path).unwrap();
         let file: toml::Table = toml::from_str(&text).unwrap();
@@ -1071,6 +1423,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn commit_writes_the_look_and_clears_the_marks() {
         let dir = std::env::temp_dir().join(format!("flint-commit-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1143,6 +1496,180 @@ mod tests {
         let text = drawn_text(&mut StylesEditor::default(), &mut pp, None);
         assert!(!text.contains(&"Commit to scene".to_string()));
         assert!(text.contains(&"Copy TOML".to_string()));
+    }
+
+    /// Pencil on, torn halfway by a wipe, as a scene's table would say.
+    fn pencil_wiped(amount: f64) -> PostProcessConfig {
+        let mut pp = PostProcessConfig::default();
+        pp.styles.set_enabled("pencil", true);
+        for (key, value) in [
+            ("reveal", toml::Value::Float(amount)),
+            ("reveal_shape", toml::Value::String("wipe".into())),
+            ("reveal_angle", toml::Value::Float(90.0)),
+        ] {
+            assert!(pp.styles.set_reveal("pencil", key, &value, true).unwrap());
+        }
+        pp
+    }
+
+    #[test]
+    fn every_style_has_a_reveal_group_with_a_row_per_key() {
+        // #875: the reveal is the framework's, so each style gets the group
+        let mut pp = pencil_wiped(0.5);
+        for s in stylize::registry().iter() {
+            pp.styles.set_enabled(s.name, true);
+        }
+        let shown = pp.clone();
+        let mut editor = StylesEditor::default();
+        let text = drawn_text(&mut editor, &mut pp, None);
+        let groups = text.iter().filter(|t| *t == "Reveal").count();
+        assert_eq!(groups, stylize::registry().len(), "{text:?}");
+        // Pencil's is open, since it has a reveal: every row, and the
+        // header's summary
+        assert!(text.contains(&"wipe at 0.5".to_string()), "{text:?}");
+        for label in ["Amount", "Shape", "Ink", "Rim colour"]
+            .into_iter()
+            .chain(reveal::NUMBERS.iter().map(|n| reveal_label(n.key)))
+        {
+            assert_ne!(label, "?");
+            assert!(text.contains(&label.to_string()), "{label} not drawn");
+        }
+        // Drawing changes nothing by itself
+        assert_eq!(pp.styles, shown.styles);
+    }
+
+    #[test]
+    fn the_rim_colour_is_greyed_out_until_there_is_a_rim() {
+        // #876: with no rim there is no paper to colour
+        let mut editor = StylesEditor::default();
+        let mut pp = pencil_wiped(0.5);
+        let none = drawn_strength(&mut editor, &mut pp);
+        assert!(strength_of(&none, "Rim colour") < strength_of(&none, "Ink") * 0.9);
+        pp.styles
+            .set_reveal("pencil", "reveal_rim", &3.0.into(), true)
+            .unwrap();
+        let rim = drawn_strength(&mut editor, &mut pp);
+        assert!(strength_of(&rim, "Rim colour") >= strength_of(&rim, "Ink") * 0.9);
+        // Its default is the renderer's: pencil's paper, lifted
+        let paper = reveal::style_paper(stylize::find("pencil").unwrap(), &pp);
+        let shown = pp.styles.reveal("pencil").unwrap().rim_color(paper);
+        assert!(shown.iter().zip(paper).all(|(r, p)| *r > p), "{shown:?}");
+    }
+
+    #[test]
+    fn a_row_the_shape_doesnt_read_is_greyed_out() {
+        // A wipe travels toward Angle and has no start point
+        let mut editor = StylesEditor::default();
+        let mut pp = pencil_wiped(0.5);
+        let wipe = drawn_strength(&mut editor, &mut pp);
+        assert!(strength_of(&wipe, "Start x") < strength_of(&wipe, "Angle") * 0.9);
+        let value = toml::Value::String("tear".into());
+        pp.styles
+            .set_reveal("pencil", "reveal_shape", &value, true)
+            .unwrap();
+        let tear = drawn_strength(&mut editor, &mut pp);
+        assert!(strength_of(&tear, "Angle") < strength_of(&tear, "Start x") * 0.9);
+    }
+
+    #[test]
+    fn the_toggle_writes_reveal_1_and_keeps_the_tuning_while_off() {
+        let mut editor = StylesEditor::default();
+        let mut pp = pencil_wiped(0.3);
+        let tuned = pp.styles.reveal("pencil").unwrap().clone();
+        // Off: no reveal in the config, so none in Copy TOML
+        let off = editor.toggled_reveal("pencil", &tuned, false);
+        pp.styles.replace_reveal("pencil", off);
+        assert!(pp.styles.reveal("pencil").is_none());
+        let pencil = stylize::find("pencil").unwrap();
+        assert!(!stylize::style_toml(pencil, &pp).contains("reveal"));
+        // On again: the wipe comes back, at reveal = 1
+        let on = editor.toggled_reveal("pencil", &StyleReveal::default(), true);
+        assert_eq!(on.amount, Some(1.0));
+        assert_eq!(on.shape, Some(RevealShape::Wipe));
+        assert_eq!(on.number("reveal_angle"), 90.0);
+        // A style never revealed starts at 1 with the defaults
+        let fresh = editor.toggled_reveal("ascii", &StyleReveal::default(), true);
+        assert_eq!(
+            fresh,
+            StyleReveal {
+                amount: Some(1.0),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn copy_toml_gives_the_reveal_keys_back() {
+        let mut pp = pencil_wiped(0.42);
+        let value = toml::Value::Float(3.5);
+        pp.styles
+            .set_reveal("pencil", "reveal_edge", &value, true)
+            .unwrap();
+        let text = stylize::style_toml(stylize::find("pencil").unwrap(), &pp);
+        for line in [
+            "reveal = 0.42",
+            "reveal_shape = \"wipe\"",
+            "reveal_angle = 90.0",
+            "reveal_edge = 3.5",
+        ] {
+            assert!(text.contains(line), "{line} not in\n{text}");
+        }
+    }
+
+    #[test]
+    fn a_reveal_edited_against_the_scene_is_marked() {
+        let mut editor = StylesEditor::default();
+        let authored = pencil_wiped(0.5).styles;
+        let mut pp = pencil_wiped(0.5);
+        drawn_text(&mut editor, &mut pp, Some(&authored));
+        assert_eq!(editor.marked, 0);
+        let mut pp = pencil_wiped(0.8);
+        let text = drawn_text(&mut editor, &mut pp, Some(&authored));
+        assert!(text.contains(&"edited".to_string()));
+        assert_eq!(editor.marked, 1, "the amount's dot");
+    }
+
+    #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
+    fn commit_writes_the_reveal_and_takes_it_out_when_off() {
+        let dir = std::env::temp_dir().join(format!("flint-reveal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tear.scene.toml");
+        std::fs::write(
+            &path,
+            "[scene]\nname = \"Tear\"\n\n[post_process.styles.pencil]\nreveal = 0 # start live\n\
+             reveal_x = 0.56\nboil = 4.0\n",
+        )
+        .unwrap();
+        let pencil = stylize::find("pencil").unwrap();
+        let mut editor = StylesEditor::default();
+        editor.set_scene_file(Some(path.clone()));
+
+        // Dragged to 0.6 and turned into a wipe
+        let mut pp = PostProcessConfig {
+            styles: styles_in_file(&path),
+            ..Default::default()
+        };
+        for (key, value) in [
+            ("reveal", toml::Value::Float(0.6)),
+            ("reveal_shape", toml::Value::String("wipe".into())),
+        ] {
+            pp.styles.set_reveal("pencil", key, &value, true).unwrap();
+        }
+        editor.commit(pencil, &mut pp).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("reveal = 0.6 # start live"), "{text}");
+        assert!(text.contains("reveal_shape = \"wipe\""), "{text}");
+        assert!(styles_in_file(&path).same_style("pencil", &pp.styles));
+
+        // Switched off: every reveal key leaves the file, the rest stays
+        let off = editor.toggled_reveal("pencil", pp.styles.reveal("pencil").unwrap(), false);
+        pp.styles.replace_reveal("pencil", off);
+        editor.commit(pencil, &mut pp).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("reveal"), "{text}");
+        assert!(text.contains("boil = 4"), "{text}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

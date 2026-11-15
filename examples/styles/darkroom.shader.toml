@@ -1,0 +1,65 @@
+# A user-authored style that reads images (#413): the picture graded
+# through a 3D LUT and printed on paper. Both are files beside this one,
+# picked by the scene; save either PNG while the game runs and the next
+# frames draw it.
+#
+#   flint render examples/user_styles.scene.toml --style darkroom
+#   flint render examples/user_styles.scene.toml --style darkroom:grade=luts/cyanotype.png,paper=papers/washi.png
+#   flint render examples/user_styles.scene.toml --sweep darkroom.grade=luts/neutral.png,luts/warm_print.png,luts/bleach.png,luts/cyanotype.png
+#
+# The LUTs and papers come from tools/darkroom_images.py.
+version = 1
+name = "darkroom"
+label = "Darkroom print"
+stage = "display"
+shader = "darkroom.wgsl"
+
+# An image option: the scene names a file, the shader reads it as
+# flint_image_grade / flint_lut_grade. With no `choices`, it offers every
+# image in its default's folder (luts/), found when the style loads.
+[options.grade]
+kind = "image"
+default = "luts/warm_print.png"
+label = "Grade (LUT)"
+help = "A 3D LUT as a strip: N slices of N x N, blue left to right"
+
+[options.paper]
+kind = "image"
+default = "papers/cotton.png"
+label = "Paper"
+help = "A tileable paper the print sits on"
+
+# A choice option: params.finish is a u32 index, with FLINT_FINISH_MATTE
+# and FLINT_FINISH_GLOSS defined for it.
+[options.finish]
+default = "matte"
+choices = ["matte", "gloss"]
+label = "Finish"
+help = "Matte lifts the blacks into the paper; gloss keeps them deep"
+
+[params.grade_mix]
+default = 1.0
+min = 0.0
+max = 1.0
+label = "Grade"
+help = "How much of the LUT: 0 is the picture as it was"
+
+[params.paper_strength]
+default = 0.7
+min = 0.0
+max = 1.0
+label = "Paper strength"
+
+[params.paper_scale]
+default = 1.0
+min = 0.25
+max = 4.0
+label = "Paper scale"
+help = "Texels of paper per point"
+
+[params.border]
+default = 0.6
+min = 0.0
+max = 1.0
+label = "Border"
+help = "The unexposed paper at the edge of the print"

@@ -1,0 +1,19 @@
+# Bus changes on the musical grid for examples/music/clock.suite.toml (#745).
+# Bars are counted from 1, as the console counts them.
+schema_version = 0
+
+# The pad starts muffled...
+[[events]]
+at = "bar:1"
+bus = "pad"
+action = "set_lpf"
+hz = 700.0
+ramp_ms = 10.0
+
+# ...and opens over the last bar of dawn, into rise
+[[events]]
+at = "bar:4"
+bus = "pad"
+action = "set_lpf"
+hz = 16000.0
+ramp_ms = 2500.0

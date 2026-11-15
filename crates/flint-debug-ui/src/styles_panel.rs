@@ -77,6 +77,13 @@ impl StylesDebugPanel {
         self
     }
 
+    /// [`with_scene_dir`](Self::with_scene_dir) for a host that holds the
+    /// scene's project (ADR 0114).
+    pub fn with_asset_scope(mut self, assets: Option<flint_core::project::AssetScope>) -> Self {
+        self.editor.set_asset_scope(assets);
+        self
+    }
+
     /// The scene file the editor's Commit to scene writes (#364); `None`
     /// hides the button (a scene from a bundle has no file).
     pub fn with_scene_file(mut self, scene_file: Option<std::path::PathBuf>) -> Self {

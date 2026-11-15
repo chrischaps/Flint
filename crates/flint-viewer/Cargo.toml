@@ -7,8 +7,11 @@ description = "egui-based validation viewer for Flint scenes"
 
 [dependencies]
 flint-core = { workspace = true }
+flint-wooze = { workspace = true }
+flint-geometry = { workspace = true }
 flint-ecs = { workspace = true }
 flint-scene = { workspace = true }
+flint-procgen = { workspace = true }
 flint-schema = { workspace = true }
 flint-render = { workspace = true }
 flint-particles = { workspace = true }
@@ -26,3 +29,8 @@ egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
 tracing = { workspace = true }
+
+# Built-in shader modules and frame acquisition go through flint-render's
+# seams; the list is the workspace clippy.toml (#944).
+[lints.clippy]
+disallowed_methods = "deny"

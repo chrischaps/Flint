@@ -42,7 +42,7 @@ struct Owners {
 }
 
 pub(crate) struct FadePass {
-    module: wgpu::ShaderModule,
+    module: super::kit::Shader,
     owners_bgl: wgpu::BindGroupLayout,
     input_bgl: wgpu::BindGroupLayout,
     mask_bgl: wgpu::BindGroupLayout,
@@ -67,7 +67,7 @@ impl FadePass {
             }],
         });
         Self {
-            module: super::kit::shader(device, "Style Fade Shader", include_str!("fade.wgsl")),
+            module: super::kit::shader(device, "Style Fade Shader", super::kit::wgsl!("fade.wgsl")),
             input_bgl: super::kit::texture_layout(device, "Style Fade Input BGL"),
             mask_bgl: super::kit::mask_layout(device, "Style Fade Mask BGL"),
             owners_bgl,
@@ -114,7 +114,7 @@ impl FadePass {
             return;
         };
         let me = me as u32 + 1;
-        let table = owner_table(frame.style_ids, registry);
+        let table = owner_table(frame.config, frame.style_ids, registry);
         let owners_bind = {
             let mut owners = self.owners.lock().unwrap_or_else(|e| e.into_inner());
             if owners.capacity < table.len() {
@@ -164,6 +164,7 @@ impl FadePass {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: output,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -172,6 +173,7 @@ impl FadePass {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &*owners_bind, &[]);
@@ -191,27 +193,29 @@ impl FadePass {
         pipelines
             .entry(format)
             .or_insert_with(|| {
-                Arc::new(super::kit::fullscreen_pipeline_with(
-                    device,
-                    "Style Fade Pipeline",
-                    &self.module,
-                    "fs_main",
-                    &[&self.owners_bgl, &self.input_bgl, &self.mask_bgl],
-                    format,
-                    Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::SrcAlpha,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        // The output's alpha stays the style's
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::Zero,
-                            dst_factor: wgpu::BlendFactor::One,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                ))
+                crate::pipeline_cache::in_scope(("Style Fade", format), || {
+                    super::kit::fullscreen_pipeline_with(
+                        device,
+                        "Style Fade Pipeline",
+                        &self.module,
+                        "fs_main",
+                        &[&self.owners_bgl, &self.input_bgl, &self.mask_bgl],
+                        format,
+                        Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::SrcAlpha,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            // The output's alpha stays the style's
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::Zero,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                        }),
+                    )
+                })
             })
             .clone()
     }
@@ -228,8 +232,11 @@ fn owners_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
 
 /// Each mask id's owner, indexed by id: the registry index + 1 of the
 /// style its variant names, or 0 for no id, an opt-out (`enabled = false`
-/// leaves its pixels alone) or a style that isn't registered.
+/// leaves its pixels alone), a style that isn't registered, or a variant
+/// whose style draws its blend itself (#879, pencil's `transition =
+/// "draw"`), so the cross-fade passes over it.
 pub(crate) fn owner_table(
+    config: &crate::postprocess::PostProcessConfig,
     ids: &crate::style_mask::StyleIds,
     registry: &[&'static StyleDescriptor],
 ) -> Vec<u32> {
@@ -242,7 +249,9 @@ pub(crate) fn owner_table(
             continue;
         }
         if let Some(i) = registry.iter().position(|d| d.name == v.style) {
-            *slot = i as u32 + 1;
+            if !registry[i].draws_own_blend(config, Some(v)) {
+                *slot = i as u32 + 1;
+            }
         }
     }
     table
@@ -268,7 +277,8 @@ mod tests {
         ]);
         let registry = super::super::registry();
         let index = |name: &str| registry.iter().position(|d| d.name == name).unwrap() as u32 + 1;
-        let table = owner_table(&ids, registry);
+        let config = crate::postprocess::PostProcessConfig::default();
+        let table = owner_table(&config, &ids, registry);
         assert_eq!(table.len(), 5);
         assert_eq!(table[0], 0, "id 0 is unstyled");
         assert_eq!(table[ids.id("pencil").unwrap() as usize], index("pencil"));

@@ -8,7 +8,7 @@ Property animations are the simplest form --- animate any transform property (po
 
 ### Animation Clips
 
-Clips are `.anim.toml` files stored in the `demo/animations/` directory:
+Clips are `.anim.toml` files in an `animations/` directory the scene can see ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)); the demos' are in `examples/animations/`:
 
 ```toml
 # animations/door_swing.anim.toml
@@ -110,6 +110,8 @@ glTF file (.glb)
 3. **Render** --- bone matrices are uploaded to a per-entity GPU storage buffer. The skinned vertex shader transforms each vertex by its weighted bone influences. Because each entity owns its buffer, two entities instancing the same skinned asset animate independently: a crowd of the same model no longer shows whichever skeleton uploaded last.
 
 The importer handles all three glTF interpolation modes. `CUBICSPLINE` samplers store three outputs per timestamp (`in_tangent`, `value`, `out_tangent`) and are consumed as triples; a sampler with fewer than `3 x timestamps` outputs warns and degrades to `LINEAR`. Rotation tracks are also made hemisphere-continuous at clip load: Blender exports adjacent keys as `q` then `-q` on large joint rotations, and the Hermite curve between them would collapse through zero and snap the joint. Such keys (value and both tangents) are negated so the curve stays on one side of the sphere.
+
+A clip starts at its first key. glTF keys need not begin at 0: Blender writes frame N at N / fps, so an action on frames 1 to 250 (every Mixamo clip that went through Blender) has its first key at 1/30 s. Played from 0, the sampler clamped to that first key, so the first frame of a capture held still while physics moved, and every loop paused for a frame on its seam. At load every track of a clip moves back by the clip's earliest key, as Blender's "slide to zero" export would write it, and `duration` runs from the first key to the last. The tracks keep their places relative to each other, and the joint and node halves of one glTF animation move together. A clip that deliberately waits before its first key loses the wait: key a still pose at 0 to keep one.
 
 ### Skinned Vertices
 
@@ -334,8 +336,11 @@ during playback print `[sequence] cue '<name>' at <t>s`.
 
 #### Sequences at runtime
 
-The player loads every `*.sequence.toml` from the scene's `animations/`
-directory (or `../animations/`) and registers it by `name`. Scripts start one
+The player loads every `*.sequence.toml` from each `animations/` the scene
+can see ([beside the scene, beside each directory above it up to the project
+root, then the engine's](assets.md#where-the-engine-looks-for-a-file)) and registers it by `name`; a nearer file hides
+a farther one of the same file name. A `sequence` no loaded file gives is
+warned about with the folders that were read. Scripts start one
 with `play_sequence(entity, name)` and stop it with `stop_sequence(entity)`;
 both just write `animator.sequence`, so a scene can also autoplay one:
 
@@ -363,6 +368,19 @@ This matters for sparse clips: a clip that keys only an arm would otherwise
 collapse every un-keyed limb onto its parent, and your character would fold up
 the moment it played.
 
+### Nodes Above the Skeleton
+
+A joint's pose includes every glTF node above it, joints or not, as the glTF
+spec says. A Mixamo export keeps its root joint under an `Armature` node that
+holds the centimetre-to-metre scale and the Z-up turn, so an animated character
+stands at the size and on the axis its mesh was modelled at: a metre-scale
+model takes `scale = 1` and no `rotation = [90, ...]`, in the player and in
+`flint render` alike. Before #294 those nodes were skipped while a clip played,
+and scenes made up for it with `rotation = [90, yaw, 0]` and a scale of about
+`0.01`; such a scene now draws its character a hundred times too small and
+lying down. Take the `90` out and multiply the scale by 100 to keep the size it
+had in the player.
+
 ### Skeleton Schema
 
 The `skeleton` component references a glTF skin:
@@ -376,7 +394,7 @@ Entities with both `animator` and `skeleton` components use the skeletal animati
 
 ## Two-Bone IK
 
-`ik_two_bone` (ADR 0070) pins the end of a two-segment transform chain to a
+`ik_two_bone` ([ADR 0070](https://github.com/chrischaps/Flint/blob/main/docs/adr/0070-two-bone-ik-on-transform-chains.md)) pins the end of a two-segment transform chain to a
 target entity every frame, after scripts, physics and clip playback have posed
 the world. It works on *entities*, not skeleton joints, so it suits models whose
 articulation is a glTF node hierarchy expanded by an `animator` (a driver's
@@ -432,7 +450,7 @@ The `animator` component controls playback for both tiers:
 - **SkeletalSync** --- bridges ECS to skeletal animation, manages per-entity skeleton state and bone matrix computation
 - **AnimationSystem** --- top-level `RuntimeSystem` implementation that ticks both tiers
 
-Animation runs in `update()` (variable-rate), not `fixed_update()`, because smooth interpolation benefits from matching the rendering frame rate rather than the physics tick rate.
+Animation runs in `update()` (variable-rate), not at the fixed physics rate, because smooth interpolation benefits from matching the rendering frame rate rather than the physics tick rate.
 
 ## Scripting Integration
 
@@ -445,7 +463,7 @@ Animations can be controlled from [Rhai scripts](scripting.md) by writing direct
 | `blend_to(entity_id, clip, duration)` | Crossfade to another clip over the given duration |
 | `set_anim_speed(entity_id, speed)` | Set animation playback speed |
 | `set_anim_layer(entity_id, index, clip, weight)` | Play `clip` on a layer (additive, unmasked) |
-| `set_anim_layer_ex(entity_id, index, clip, weight, mode, mask)` | Same with `"additive"`/`"override"` and a root-joint mask |
+| `set_anim_layer(entity_id, index, clip, weight, #{mode, mask})` | Same with a `mode` (`"additive"`/`"override"`) and a root-joint `mask` |
 | `set_anim_layer_weight(entity_id, index, weight)` | Set a layer's weight instantly (cancels a fade) |
 | `fade_anim_layer(entity_id, index, weight, seconds)` | Ramp a layer's weight over `seconds` |
 | `clear_anim_layer(entity_id, index)` | Leave an inactive slot |

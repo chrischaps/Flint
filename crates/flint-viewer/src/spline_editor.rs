@@ -1,8 +1,8 @@
 //! Spline editor state, overlay rendering, and TOML serialization.
 
 use crate::projection::*;
-use flint_core::spline::{sample_closed_spline, sample_open_spline, SplineControlPoint};
 use flint_core::Vec3;
+use flint_geometry::spline::{sample_closed_spline, sample_open_spline, SplineControlPoint};
 use flint_render::Camera;
 
 /// A single editable control point.

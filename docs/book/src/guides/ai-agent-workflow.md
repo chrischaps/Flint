@@ -25,8 +25,8 @@ An agent building a scene follows a create-validate-query-render cycle:
 Before creating entities, the agent learns what's available:
 
 ```bash
-# List available archetypes
-flint schema --list-archetypes --schemas schemas
+# List every component and archetype (--json for data)
+flint schema --list --schemas schemas
 
 # Inspect a specific archetype
 flint schema player --schemas schemas
@@ -254,6 +254,7 @@ echo "Scene built successfully. Preview: preview.png"
 
 ## Best Practices
 
+- **Run `flint check` before playing or rendering** --- it lists every problem of the project in one run, with the file, entity and field of each, as JSON with `--json`: schemas, entity references, missing assets and files (with the paths tried), styles, constraints
 - **Always validate after creating entities** --- catch problems early
 - **Use JSON output** --- easier to parse than text
 - **Use `--dry-run` before `--fix`** --- preview changes before applying

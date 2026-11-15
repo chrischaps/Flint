@@ -6,19 +6,24 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 
 | Command | Description |
 |---------|-------------|
-| `flint init <name>` | Initialize a new project |
+| `flint init <name>` | Start a game project: manifest, lit scene, HUD script, input config, agent guide ([below](#the-init-command)) |
 | `flint entity create` | Create an entity in a scene |
 | `flint entity delete` | Delete an entity from a scene |
 | `flint scene create` | Create a new scene file |
 | `flint scene list` | List scene files |
 | `flint scene info` | Show scene metadata and entity count |
 | `flint query "<query>"` | Query entities with the Flint query language |
-| `flint schema <name>` | Inspect a component or archetype schema |
-| `flint validate <scene>` | Validate a scene against constraints, and its `[wooze]` table against its schema |
+| `flint schema <name>` | Inspect a component or archetype schema; an unknown name exits 1. `--list` names every one loaded (`--json`); `--format json` is the schemas as data; `--format json-schema [--output file]` is a JSON Schema for a `.scene.toml`, for editor completion ([Introspecting Schemas](../concepts/schemas.md#introspecting-schemas)) |
+| `flint script api` | Every function a script can call, with its parameters and a one-line doc, and the callbacks; `--json` for the same as data, `--filter <text>` for names or modules containing it. A function a game's extension registers on the Rhai engine directly is listed with its parameter types only. `--book` writes the book's [Script API Reference](../reference/script-api.md) and the generated tables in its chapters; `--check-book` fails when they are stale or a chapter calls a function that doesn't exist (CI runs it) ([Scripting](../concepts/scripting.md#api-reference)) |
+| `flint script check [dir\|scene\|file.rhai]` | Compile every script and the modules it imports, and check each call's name and argument count against the script API, each callback's name and parameters, and each import, reported as `file:line:col`. Exits 1 on an error; `--json`; `--allow` / `--api` for a game's own functions ([Checking your scripts](../concepts/scripting.md#checking-your-scripts)) |
+| `flint check [dir\|scene]` | The pre-flight: everything wrong with a project, or with one scene, in one run. Schemas, entity references, every asset and file a scene names (with the paths tried), styles and looks, constraints, scripts. Exits 1 on any error; `--json` ([The `check` Command](#the-check-command)) |
+| `flint validate <scene>` | Check one scene against its schemas (every unknown archetype, component and field, every value of the wrong type, every entity reference to nothing and every missing asset, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format text\|json`; `--fix` applies what a constraint can fix |
+| `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from `examples/index.toml` or fails validation |
 | `flint asset import` | Import a file into the asset store |
 | `flint asset list` | List assets in the catalog |
 | `flint asset info` | Show details for a specific asset |
 | `flint asset resolve` | Check asset references in a scene |
+| `flint asset where <kind> <name> [--scene x] [--json]` | Print the file the engine would load for an asset name and the paths it tried first; exits 1 with the list when there is none. See [Assets](../concepts/assets.md#where-the-engine-looks-for-a-file) |
 | `flint asset generate` | Generate an asset using AI providers |
 | `flint asset validate` | Validate a generated model against style constraints |
 | `flint asset manifest` | Generate a build manifest of all generated assets |
@@ -26,47 +31,156 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint asset job status` | Check status of an async generation job |
 | `flint asset job list` | List all generation jobs |
 | `flint edit <file>` | Unified interactive editor (auto-detects file type) |
-| `flint play <scene>` | Play a scene with first-person controls and physics |
+| `flint play [scene]` | Play a scene with first-person controls and physics; with no scene, the project's default (`flint.toml`'s `[project] scene`) |
 | `flint render <scene>` | Render a scene to PNG (headless) |
+| `flint dxc status` | What DX12 compiles shaders with here, and why: DXC is linked into the binary ([DX12's shader compiler](#dx12s-shader-compiler)); `flint dxc notices` writes DXC's licence and notices for a Windows build you ship |
+| `flint goldens <file>.goldens.toml` | Render a list of scenes and gate each against its golden PNG; `--bless` rewrites them ([Golden Suites](../guides/headless-rendering.md#golden-suites)) |
 | `flint gen <spec>` | Run a procedural generation spec to produce meshes or textures |
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
+| `flint bundle <game>` | Pack a game folder into `.flintpack` bundles for the web player, running `flint check`'s file and load checks over the packed files first. Given a `.scene.toml`, it packs that scene alone with only what it reaches ([One scene](../guides/publishing-to-the-web.md#one-scene-flint-bundle-scene)) |
+| `flint export web <game>` | A folder any static server plays the game from: the web player, the bundles and `games.json` ([Publishing to the Web](../guides/publishing-to-the-web.md)) |
 | `flint validate-suite <manifest>` | Validate a musical suite manifest and optional chart ([music commands](music.md)) |
 | `flint play-suite <manifest>` | Play a suite's stems sample-locked, no judgment |
 | `flint calibrate <manifest>` | Tap-to-beat latency calibration, written to `logs/latency/` |
 | `flint play-chart <manifest>` | Play a suite against its chart with live gamepad capture |
 | `flint replay-chart <manifest>` | Replay a recorded or synthetic session through judgment, headless |
-| `flint render-suite <manifest>` | Render a suite offline and deterministically: a music `.suite.toml` to WAV, or a `.goldens.toml` of scenes gated against golden PNGs ([Headless Rendering](../guides/headless-rendering.md#golden-suites)) |
+| `flint render-suite <manifest>` | Render a music `.suite.toml` to WAV, offline and deterministically |
 | `flint spike-rumble` | Time the gamepad rumble command paths |
 
 The seven music commands are documented on their own page: [Music Commands](music.md).
+
+## The `init` Command
+
+```bash
+flint init my_game                       # the walk template, naming this engine checkout by path
+flint init my_game --template 2d         # walk | blank | 2d
+flint init my_game --engine subtree      # engine/ inside the game: prints the git subtree add to run
+flint init my_game --engine-path ../Flint
+flint init . --force                     # into a directory with files; existing files are kept
+```
+
+It writes a game project from templates compiled into the binary: `flint.toml` (`[project] id`, `schemas`, `scene`, `input`), `scenes/main.scene.toml` (lit, with a `[camera]`), `scripts/hud.rhai` on a `hud_controller` entity, `config/input.toml`, `bundle.toml`, `.gitignore`, an empty `schemas/` for the game's own components, `renders/`, and `CLAUDE.md` + `AGENTS.md` for coding agents. Then it prints the commands to run next, none of which needs `--schemas`.
+
+| Flag | Description |
+|------|-------------|
+| `--template walk\|blank\|2d` | The first scene. `walk` (default): a first-person player facing a lit ring of stones. `blank`: a lit ground, one box, no player. `2d`: sprites under an orthographic camera, one steered by a script |
+| `--engine path\|subtree\|none` | Where the engine's schemas come from. `path` (default): a Flint checkout on this machine, named by absolute path in `flint.toml`; the printed commands work at once. `subtree`: `engine/schemas`, the game-repo pattern; `flint init` runs no git, so it prints the `git subtree add`, and commands stop with `schema directory not found` until it has run. `none`: only the game's own `schemas/`; scenes validate and render, engine archetypes resolve to nothing, and `flint play` is not offered |
+| `--engine-path <dir>` | With `--engine path`: the checkout to name (default: the one this `flint` was built from) |
+| `--force` | Write into a directory that already holds files. A file already there is kept; nothing is overwritten or deleted |
+
+No engine schema is copied into the game. See [Your First Project](../getting-started/first-project.md) and [Building a Game Project](../guides/building-a-game-project.md).
+
+## The `check` Command
+
+```bash
+flint check                          # the project in the working directory
+flint check examples/                # every scene under a folder
+flint check scenes/dock.scene.toml   # one scene, and the files it names
+flint check . --json                 # one JSON document on stdout
+```
+
+`flint check` is the gate to run before playing, rendering or bundling. It reads the project and reports **every** problem it finds in one run; it never stops at the first. Each problem is a [diagnostic](../concepts/schemas.md#scene-diagnostics): a severity, a code, the file, the entity and the field when there is one, a message, a hint, and for a missing file every path the engine tried.
+
+```
+$ flint check
+scenes/dock.scene.toml: 4 errors, 1 warning
+  error[unknown-component] entity 'buoy' component 'lihgt': no component named `lihgt`, so nothing checks it
+      hint: a component a game adds is declared in its schema layer, as components/lihgt.toml
+  error[unknown-archetype] entity 'crate' field 'archetype': no archetype named `porp`, so the entity gets no defaults
+      hint: did you mean `prop`?
+  error[unknown-entity] entity 'gate' joint.parent: no entity named `frame`
+      hint: it names an entity of this scene (a prefab's are `<prefix>_<name>`); leave it "" when a script fills it at run time
+  error[missing-asset] entity 'boat' model.asset: model `boat` is not found (also named by 'spare')
+      hint: `flint asset where models boat --scene scenes/dock.scene.toml` shows the search; the asset catalog and a procgen spec named `boat` were asked first
+      tried:
+        scenes/models/boat.glb
+        scenes/models/boat.gltf
+        models/boat.glb
+        models/boat.gltf
+  warning[constraint] entity 'lantern': Lamp 'lantern' is too bright (constraint `lamps_are_not_blinding`)
+
+schemas/constraints/rules.toml: 1 error
+  error[bad-constraint] field 'query': constraint `lit_props_have_a_place`: `entities where archetype == 'prop' and lamp.brightness > 0` can't be evaluated: Parse error: ...
+      hint: a query is one resource and at most one condition: `entities where archetype == 'door'`; the constraint is not checked until it parses
+
+scenes/torn.scene.toml: 1 error
+  error[toml-parse]: TOML parse error at line 4, column 15
+
+checked 2 scenes and 3 files: 6 errors, 1 warning
+```
+
+| What it checks | Codes |
+|---|---|
+| Each scene reads, parses and expands its prefabs | `file-unreadable` `toml-parse` `bad-prefab` |
+| Archetypes, components and fields against the schemas | `unknown-archetype` `unknown-component` `unknown-field` `bad-type` `bad-enum-value` `out-of-range` `missing-field` `no-schemas` |
+| References: every `parent`, every field a schema types `entity` (`joint.parent`, `ik_two_bone.target` / `pole` / `tip`, a game's own) or `asset`; an `ik_two_bone.tip` must be a child of the entity naming it | `unknown-entity` `missing-asset` `not-a-child` |
+| The scene builds | `scene-load` |
+| The assets a scene names by kind, through the [one search](../concepts/assets.md): `model.asset`, `material.texture`, `sprite.texture`, `audio_source.file`, `script.source`, `terrain.heightmap` / `splat_map`, `grass_ground.mask`, `spline.file`, `particle_emitter.texture`, `[environment] skybox`, `[scene] input_config` | `missing-asset` |
+| The procgen spec behind a model or texture parses | `bad-spec` |
+| The input config (the scene's, else `[project] input`, else `config/input.toml`) parses | `bad-input-config` |
+| Every other file a scene, prefab, particle effect, glyph set, chunk, user style or script names by path | `missing-file` |
+| User styles load and compile; `[post_process.styles]`; the look | `bad-user-style` `bad-style-setting` `bad-look` |
+| `[wooze]` and `[living.species]` | `bad-wooze` `bad-species` |
+| Constraints, and that each one can be evaluated | `constraint` `bad-constraint` |
+| `flint.toml` reads, its schema directories exist, its start scene is there | `bad-manifest` `bad-schemas` `missing-asset` |
+| A folder's `Cargo.toml` (a game with a Rust binary) names every `[patch.crates-io]` line of the engine it builds by path, since cargo applies only the root workspace's ([Upgrading the Engine](../guides/upgrading-the-engine.md#cargo)) | `missing-cargo-patch` |
+| Every script compiles, and its calls, callbacks and imports fit the script API ([`flint script check`](../concepts/scripting.md#checking-your-scripts)) | `script-syntax` `unknown-function` `wrong-arity` `bad-argument` `unknown-callback` `callback-arity` `missing-module` `deprecated-function` `mixed-numbers` |
+
+A model or texture name counts as found when the asset catalog holds it, when a procgen spec the scene can see is named that, or when the file search finds it, in that order, as at run time. A `model` with `runtime = true` has no file to find. A script is checked for the files its string literals name, and held to the script API as `flint script check` holds it; a script problem has a line and a column (`error[wrong-arity] 82:9: ...`).
+
+For a folder, every `*.scene.toml` under it is checked, and every prefab, particle effect, glyph set, chunk, music suite, user style and script there is read for the files it names, and every glTF model for the textures and buffers it keeps beside it (a model missing one is skipped whole by the player). `target/`, `dist/`, dot-folders, `docs/` and an `engine/` subtree are skipped (the folders `flint bundle` never packs); what a game's `bundle.toml` excludes from the web build is still checked, since it is still part of the game on disk. For one scene, the scene and the scripts and prefabs it names are checked.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Print one JSON document on stdout and nothing else: `valid`, `summary`, `errors`, `warnings`, `scenes`, `files` and `diagnostics`, each diagnostic with `severity`, `code`, `file`, `entity`, `component`, `field`, `message`, `hint` and `tried` |
+| `--strict` | A field no schema declares is an error, not a warning (as `[project] strict = true` does for every run) |
+| `--schemas <dir>` | Schema directories, repeatable; without it the project's `flint.toml` names them |
+| `--allow <name>` | A script function the game's binary registers (an extension's): calls of it pass the script check. Repeatable. `flint validate` takes it too |
+| `--api <file>` | The game binary's own script API listing, in `flint script api --json`'s shape: its functions pass at their argument counts. Repeatable. `flint validate` takes it too |
+
+The exit code is 1 when there is an error and 0 otherwise. A warning does not fail it.
+
+`flint bundle` runs the same code over the files it is about to pack, and `flint validate` over one scene, so the three never disagree about what a problem is. They differ in what they ask: `flint bundle` asks whether the bundle is whole (every scene loads, every file named is packed, styles and looks load), `flint validate` asks about one scene's schemas and constraints and can `--fix`, and `flint check` asks everything. `flint bundle` leaves the scripts' calls alone; `flint validate` checks the scene's scripts.
 
 ## The `play` Command
 
 Launch a scene as an interactive first-person experience with physics:
 
 ```bash
-flint play demo/phase4_runtime.scene.toml
+flint play examples/phase4_runtime.scene.toml
 flint play levels/tavern.scene.toml --schemas schemas --fullscreen
+# in a game whose flint.toml names `scene = "scenes/main.scene.toml"`: no argument
+flint play
+# a small companion window in a corner that stays up and leaves the keyboard alone
+flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560   --borderless --always-on-top --no-activate
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--schemas <path>` | Path to schemas directory (repeatable; later paths override earlier). Default: `schemas` |
+| `--schemas <path>` | Schema directory (repeatable; later paths override earlier). Without it: the project's `flint.toml` `schemas`, else `schemas/` in the working directory, beside the scene and one level up ([Common Flags](#common-flags)) |
 | `--fullscreen` | Launch in fullscreen mode |
+| `--width <px>` / `--height <px>` | Initial window size in physical pixels (default `1280`x`720`; ignored with `--fullscreen`). A narrow or square window keeps the camera's aspect: it shows less to the sides, never a stretched scene |
+| `--position <x,y>` | Put the window's outer top-left corner here, in physical desktop pixels. Negative values reach a monitor left of or above the main one; write them with `=` (`--position=-1920,0`). Default: wherever the system puts it |
+| `--borderless` | No title bar or frame. Esc still exits (unless the game binds it) and Alt+F4 still closes it |
+| `--always-on-top` | Keep the window above other windows |
+| `--no-activate` | Open without taking the keyboard from the window that has it, for a companion window beside a terminal. Clicking the window still focuses it. Not with `--fullscreen`, whose path takes the foreground on Windows |
 | `--input-config <path>` | Input config overlay path (highest priority, overrides all other layers) |
+| `--save-dir <dir>` | Keep this run's save data in `<dir>`, as `<dir>/<slot>.toml`, and read no other save. Without it: `<config>/<game id>/saves/` under the OS user directory, or the project's `save/` for a game with no id (see [Where saves live](../concepts/scripting.md#where-saves-live)). Also on `flint-player` |
 | `--music-volume <f32>` | Initial gain for the `music` mixer bus |
 | `--sfx-volume <f32>` | Initial gain for the `sfx` mixer bus |
 | `--gpu <name>` | GPU adapter to use (case-insensitive substring, e.g. `NVIDIA`). See [GPU Selection](#gpu-selection) |
 | `--list-gpus` | Print available GPU adapters and exit |
-| `--style <name[:k=v,...]>` | Turn a registered style on over the scene's post-processing, as `flint render --style` does: `ascii`, `ascii:cell=12,ramp=blocks`, `ascii:off`. Repeatable; a later word wins. Written over every scene again after a transition, so it survives them (#328) |
+| `--style <name[:k=v,...]>` | Turn a registered style on over the scene's post-processing, as `flint render --style` does: `ascii`, `ascii:cell=12,ramp=blocks`, `ascii:off` (off everywhere, entities' own included, #376). Repeatable; a later word wins. Written over every scene again after a transition, so it survives them (#328) |
 | `--style-time <s>` | Hold the post time animated styles see (shared with the ocean, grain and render modes) at this many seconds |
+| `--motion-hold <rate>` | Motion on twos for the whole frame (#405): every entity's drawn position and pose, and the post time styles read, change only this many times a second (12 = on twos at 24 fps). Over every scene's `[post_process] motion_hold`, kept through transitions. See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
 | `--expression-timeline <file>` | Play expression states from a JSON timeline on the game clock, for scripts' `expression()` and `on_expression` (see [Expression API](../concepts/scripting.md#expression-api)) |
 | `--expression-listen <ip:port>` | Take expression states as newline-delimited JSON over TCP at a loopback address, e.g. `127.0.0.1:7777`. Off unless given |
 
 `--music-volume 0` is the quickest way to audition a scene's sound design
 without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).
 
-The standalone `flint-player` binary takes the same flags plus `--msaa <1|4>`
+The standalone `flint-player` binary takes the same flags (the window ones
+too, #611) plus `--msaa <1|4>`
 (default `1`) for multisample anti-aliasing of the scene passes; `flint play`
 does not expose `--msaa`. Its `--procgen-defer` shows placeholders for a
 scene's procgen assets at once and generates them over the following frames
@@ -80,7 +194,7 @@ actually presents — scene *and* egui overlay — and exit on its own, which
 makes it the tool for verifying `on_draw_ui` output:
 
 ```bash
-flint-player scenes/race.scene.toml --schemas engine/schemas --schemas schemas   --width 1280 --height 720   --screenshot renders/hud.png --screenshot-at 6 --exit-after 6.5
+flint-player scenes/race.scene.toml   --width 1280 --height 720   --screenshot renders/hud.png --screenshot-at 6 --exit-after 6.5
 ```
 
 With `--screenshot`, `--exit-after` or `--input-script`, the run is a capture
@@ -88,19 +202,38 @@ and ignores the real keyboard, mouse and pads, so a stray scroll over its
 window can't change the shot. Only the input script drives it (see
 [input gates](../concepts/input-gates.md#during-a-capture)).
 
+A run that asks for a screenshot either writes it or fails (#639). A read-back
+or save that fails is warned about and tried again on the next frames (up to
+30), and `--exit-after` waits for those retries. If the file still isn't on
+disk when the run ends, the player prints `Error: --screenshot <path> was
+never written: <why>` and exits with status 1. The reason can be the failure,
+or that the run ended before `--screenshot-at`. With `--screenshot-every`, a
+lost frame fails the run the same way. A player that fails to start (no GPU
+adapter, no window) also exits 1 now, from `flint play` too.
+
 | Flag | Description |
 |------|-------------|
-| `--width <px>` / `--height <px>` | Initial window size in physical pixels (default `1280`x`720`; ignored with `--fullscreen`) |
 | `--screenshot <path>` | Write a PNG of the presented frame (scene + HUD). Parent directories are created |
 | `--screenshot-at <secs>` | Game time at which to capture: the first frame whose clock reaches this value (default `0`, the first frame) |
 | `--screenshot-every <secs>` | Keep capturing every N seconds after `--screenshot-at` until exit; files are numbered `hud_0001.png`, `hud_0002.png`, ... next to `--screenshot` |
 | `--exit-after <secs>` | Exit once game time reaches this value, printing the average frame time and the average draw calls, entity draws, culled draws and triangles per frame (both skip the first 2 s) |
-| `--frame-step <secs>` | Advance the clock exactly this much per frame, whatever the wall time. With `--screenshot-every` the same build on the same machine writes byte-identical frames run after run (grass included since #341). egui's clock steps with it, so a menu opening animates the same on every run |
+| `--frame-step <secs>` | Advance the clock exactly this much per frame, whatever the wall time. With `--screenshot-every` the same build on the same machine writes byte-identical frames run after run (grass included since #341). egui's clock steps with it, so a menu opening animates the same on every run. It seeds scripts' `random()` too (below) |
+| `--seed <n>` | Seed scripts' `random()` and `random_range()`: one sequence, shared by every script in the order they run, the same every run. `--frame-step` seeds it on its own with the seed `flint render --scripts` uses, so a stepped player run and a scripted render draw the same numbers; `--seed` names another. Without either the sequence starts from the clock, once, so runs differ but no two draws repeat (#580). A script can reseed it itself with `seed_random(n)`. The web page takes `?seed=` |
 | `--pixels-per-point <f32>` | Draw point-sized things (ASCII cells, egui panels, the HUD) at this scale instead of the window's, so a capture is the same on any display. `2` at 3840x2160 lays the frame out as 1920x1080 points |
 | `--look <name\|path>` | Play every scene under a look, merged over its `[post_process]` (and over the look the scene names) as `flint render --look` merges it: a built-in (`flint render --look help` lists them) or a `styles/<name>.look.toml` |
 | `--input-script <file>` | Play timed keys, typed text, axes, gamepad buttons, the wheel and the mouse, one event per line (below). Scripted keys reach egui and the debug keys too, so `2.0 tap F2` opens the stats overlay |
 | `--stats` | Open the F2 rendering stats overlay from the first frame. F2 still closes it |
 | `--perf` | Print a perf line every 10 s: frame p50/p99/max, each phase's CPU time (mean/max), each pass's GPU time where the adapter can time, draws and triangles. The same line the web page's `?perf=1` copies, so a desktop and a browser can be set side by side |
+| `--no-hot-reload` | Don't watch the game's files: scripts, UI documents, user styles, glyph sets and palettes load once and never reload, and nothing polls the disk (#633). Also on `flint play` |
+
+A stepped run is repeatable as long as its scripts are. `--frame-step` (or `--seed`) takes care of `random()`; a script that reads `timestamp()` still sees the wall clock. Two stepped runs of `examples/seeded_stars.scene.toml`, which scatters a sky with `random()` every second, write byte-identical screenshots; before #635 every run drew its own sky:
+
+```bash
+flint-player examples/seeded_stars.scene.toml --frame-step 0.0166667 \
+  --screenshot out/stars.png --screenshot-at 2.5 --exit-after 2.6            # the same PNG every run
+flint-player examples/seeded_stars.scene.toml --frame-step 0.0166667 --seed 2 \
+  --screenshot out/stars_2.png --screenshot-at 2.5 --exit-after 2.6          # another sky, also every run
+```
 
 An input script plays its events at set game times. `#` starts a comment:
 
@@ -138,7 +271,7 @@ and `MouseForward`. Pointer positions are physical window pixels, the same
 pixels a screenshot has, so a point read off a capture can be clicked in the
 next one. A glide moves the pointer a little every frame, as a hand would.
 
-The mouse takes the path a real one does (ADR 0082): egui first, then game
+The mouse takes the path a real one does ([ADR 0082](https://github.com/chrischaps/Flint/blob/main/docs/adr/0082-input-script-mouse.md)): egui first, then game
 extensions, then `InputState` and scripts. So a scripted click can press an
 egui button, drag between egui widgets or open a tooltip, and a click over a
 panel stays out of the world. The wheel goes the same way: turned over a
@@ -149,7 +282,7 @@ pointer jumped (egui decides who gets a click or a scroll from where the
 pointer was the frame before), and any release in the frame of its press. A
 `click` therefore takes three frames: move, press, release.
 
-Keys take the path a real keyboard does too (ADR 0097). egui gets each one
+Keys take the path a real keyboard does too ([ADR 0097](https://github.com/chrischaps/Flint/blob/main/docs/adr/0097-input-script-keys-reach-egui.md)). egui gets each one
 as egui-winit would have made it, the key and, on a press, the character it
 types on a US layout (`KeyA` with Shift held types `A`; nothing while Ctrl is
 held). Shift, Ctrl, Alt and Super also send a `ModifiersChanged`, so egui
@@ -165,7 +298,7 @@ a real keyboard: extensions' `on_window_event` never sees a scripted key
 to script them, and a scripted Esc doesn't quit the player. The real cursor still moves the pointer if it crosses the window
 during a capture, so keep it outside.
 
-`look` feeds raw mouse motion, what `mouse_delta_x()` / `mouse_delta_y()` read, at once or spread over the seconds given. As a real mouse's motion, it reaches the game only while the cursor is captured and no egui field has focus ([Cursor Capture and Input Gates](../concepts/input-gates.md), ADR 0110). The script's pad plays whether or not the window has focus. A real pad doesn't.
+`look` feeds raw mouse motion, what `mouse_delta_x()` / `mouse_delta_y()` read, at once or spread over the seconds given. As a real mouse's motion, it reaches the game only while the cursor is captured and no egui field has focus ([Cursor Capture and Input Gates](../concepts/input-gates.md), [ADR 0110](https://github.com/chrischaps/Flint/blob/main/docs/adr/0110-capture-and-focus-gates.md)). The script's pad plays whether or not the window has focus. A real pad doesn't.
 
 Times are `GameClock` seconds (what scripts see via `total_time()`), not
 wall-clock seconds since launch, so a capture lands on the same gameplay
@@ -188,7 +321,7 @@ These are the built-in defaults. Games can override any binding via input config
 | E | Interact with nearby object |
 | R | Reload |
 | 1 / 2 | Select weapon slot |
-| Escape | Release cursor / Exit |
+| Escape | Release cursor / Exit (the game's own key when its input config binds it, see [Escape](../concepts/physics-and-runtime.md#escape)) |
 | F2 | Toggle the render stats overlay (FPS, frame time, draw stats) |
 | F3 | Toggle the scene debug panels (see below); leaves the Rendering & Effects panel alone |
 | F4 | Toggle the **Rendering & Effects** menu: every render and post-processing control, including debug shading mode, shadows, and the lighting levers |
@@ -205,8 +338,9 @@ Gamepad controllers are also supported when connected. Bindings for gamepad butt
 
 `F3` opens live tuning panels for whichever systems the current scene actually
 uses. Each panel is created **only when its driving component is present**, so a
-scene with no ocean never sees an ocean panel and a scene with no panels at all
-logs a note instead. Panels are fold-open headers distributed across up to three
+scene with no ocean never sees an ocean panel, and in a scene with no panels at
+all `F3` shows a short note at the top of the window (and prints it to the
+console) instead. Panels are fold-open headers distributed across up to three
 size-balanced columns.
 
 Built-in panels:
@@ -238,14 +372,18 @@ take a default size weight in the column layout.
 `Escape` releases the mouse so panels can be clicked; clicking the world
 recaptures it.
 
-The `play` command requires the scene to have a `player` archetype entity with a `character_controller` component. Physics colliders on other entities define the walkable geometry.
+For first-person play the scene needs an entity with a `character_controller` component (the `player` archetype bundles one with its collider and rigidbody). Physics colliders on other entities define the walkable geometry. A scene with no such entity plays through its `[camera]`.
 
 ### Game Project Pattern
 
-Games that define their own schemas, scripts, and assets use multiple `--schemas` paths. Game projects typically live in their own repositories with the engine included as a git subtree at `engine/`. The engine schemas come first, then the game-specific schemas overlay on top:
+Games that define their own schemas, scripts, and assets load several schema directories. Game projects typically live in their own repositories with the engine included as a git subtree at `engine/`. The engine schemas come first, then the game-specific schemas overlay on top. The game's `flint.toml` says so (`[project] schemas = ["engine/schemas", "schemas"]`), and then no command needs a flag:
 
 ```bash
-# From a game project root (engine at engine/)
+# From anywhere in a game project (engine at engine/)
+cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
+  scenes/level_1.scene.toml
+
+# Without a manifest, or to override it: the flags, in override order
 cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
   scenes/level_1.scene.toml \
   --schemas engine/schemas \
@@ -259,11 +397,11 @@ This loads the engine's built-in components (transform, material, rigidbody, etc
 The player is also available as a standalone binary for distribution:
 
 ```bash
-cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas
+cargo run --bin flint-player -- examples/phase4_runtime.scene.toml
 
-# With game project schemas (from a game repo with engine subtree)
+# From a game repo with an engine subtree: its flint.toml names the schemas
 cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
-  scenes/level_1.scene.toml --schemas engine/schemas --schemas schemas
+  scenes/level_1.scene.toml
 ```
 
 ## The `render` Command
@@ -271,7 +409,7 @@ cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
 Render a scene to a PNG image without opening a window:
 
 ```bash
-flint render demo/phase3_showcase.scene.toml --output hero.png --schemas schemas
+flint render examples/phase3_showcase.scene.toml --output hero.png
 flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
 ```
 
@@ -283,29 +421,34 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--gpu <name>` | (high-perf) | GPU adapter to use (substring match); `--list-gpus` prints the names |
 | `--list-styles` | | Print every registered style, its stage, table, and each parameter's default and range, then exit; with a scene, its `styles/` user styles too ([Stylize Passes](../concepts/stylize-passes.md#listing-the-styles)) |
 | `--json` | | With `--list-styles`: the list as JSON, for agents |
+| `--watch` | `false` | Keep running and write `--output` again after every save to the scene's folder, its style folders, its schemas or a file a flag names (#432). A still or a `--sweep` keeps its GPU, scene and renderer, so a user style's `.wgsl` save is drawn again on them; anything else (and a `.shader.toml` whose description changed) loads the scene again on the same GPU. One `watch: render <n> in <s>` line a render, then each style's error. Ctrl-C stops it ([Stylize Passes](../concepts/stylize-passes.md#user-authored-styles)) |
 | `--distance <f32>` | (auto) | Camera distance from target |
 | `--yaw <deg>` | (auto) | Horizontal camera angle |
 | `--pitch <deg>` | (auto) | Vertical camera angle |
 | `--target <x,y,z>` | (auto) | Camera look-at point |
 | `--fov <deg>` | (auto) | Field of view |
 | `--no-grid` | `false` | Disable ground grid |
-| `--debug-mode <mode>` | (none) | `wireframe`, `normals`, `depth`, `uv`, `unlit`, `metalrough`, `style`, `edges` |
+| `--select <entity>` | (none) | Outline this entity (by name) and its descendants as `flint edit` does when it is picked |
+| `--debug-mode <mode>` | (none) | `wireframe`, `wireframe-overlay`, `normals`, `depth`, `uv`, `unlit`, `metalrough`, `style`, `edges` |
 | `--wireframe-overlay` | `false` | Wireframe edges on solid geometry |
 | `--show-normals` | `false` | Normal direction arrows |
 | `--no-tonemapping` | `false` | Raw linear output |
 | `--no-shadows` | `false` | Disable shadow mapping |
-| `--shadow-resolution <px>` | `2048` | Shadow map resolution per cascade. A real control since the per-resolution texel upload (ADR 0049); earlier builds silently filtered as if 2048 |
-| `--msaa <n>` | `1` | MSAA sample count for the scene passes: `1` (off) or `4`. Default 1 keeps headless pixel-diff gates single-sample (ADR 0058) |
+| `--shadow-resolution <px>` | `2048` | Shadow map resolution per cascade. A real control since the per-resolution texel upload ([ADR 0049](https://github.com/chrischaps/Flint/blob/main/docs/adr/0049-upload-shadow-texel-size-per-resolution.md)); earlier builds silently filtered as if 2048 |
+| `--msaa <n>` | `1` | MSAA sample count for the scene passes: `1` (off) or `4`. Default 1 keeps headless pixel-diff gates single-sample ([ADR 0058](https://github.com/chrischaps/Flint/blob/main/docs/adr/0058-opt-in-4x-msaa-for-scene-passes.md)) |
 | `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image on each side (0.25–1), upscaled in the composite, as `flint-player --render-scale` (#122) |
-| `--gpu-time <frames>` | (none) | Render the frame this many times with GPU timing on and print each pass's smoothed time (ADR 0108) before writing the image |
+| `--gpu-time <frames>` | (none) | Render the frame this many times with GPU timing on and print each pass's smoothed time ([ADR 0108](https://github.com/chrischaps/Flint/blob/main/docs/adr/0108-gpu-timing-from-timestamp-queries.md)) before writing the image |
 | `--frames <n>` | (none) | Draw a sequence of `n` frames on one renderer, written as `<stem>_0000.png`... beside `--output`; temporal styles see consecutive frames ([Frame sequences](../guides/headless-rendering.md#frame-sequences), #345) |
 | `--frame-dt <s>` | `1/60` | With `--frames`: seconds between frames; post time, grass wind and particles advance by it |
 | `--orbit <deg/s>` / `--camera-path <file>` | (still) | With `--frames`: orbit the camera about its target, or follow a TOML of `[[key]] time/position/target` keys |
 | `--flip-stats` / `--flip-json <file>` | (off) | With `--frames`: count the ASCII style's glyph flips and A-B-A reversals from its own grid, printed per frame and in sum, or written as JSON |
 | `--no-images` | `false` | With `--frames`: write no PNGs |
+| `--last-frame` | `false` | With `--frames`: write only the last frame, to `--output` itself (not numbered): the sequence's end, a temporal style's history settled (#478) |
+| `--mesh <entity>=<files>` | (none) | A frame per mesh file (one GLB, a folder, or `out/f*.glb`, natural order) shown on that entity, all on one renderer; repeatable, frame for frame. `-o` numbered PNGs, `%03d`, a `.gif` at `--fps`, or `--sheet` ([Mesh sequences](../guides/headless-rendering.md#mesh-sequences), #222) |
+| `--sheet` | `false` | With `--mesh`: one labelled contact sheet, a cell a file |
 | `--ascii` | (off) | The full-screen ASCII style (#265, [Stylize Passes](../concepts/stylize-passes.md#ascii)): one glyph per cell on one screen grid. Any `--ascii-*` flag below marked *style* also turns it on |
 | `--ascii-font <name>` | `builtin` | *Style:* glyph set, `builtin` or `fonts/<name>.glyphs.toml` beside the scene ([Glyph Atlas](../concepts/glyph-atlas.md)) |
-| `--ascii-ramp <name>` | the set's | *Style:* ramp of that set (built-in: `classic`, `blocks`, `minimal`, `detailed`) |
+| `--ascii-ramp <name>` | the set's | *Style:* ramp of that set (built-in: `classic`, `blocks`, `minimal`, `detailed`, `quadrants`, `braille`) |
 | `--ascii-color <mode>` | `source` | *Style:* `source` (the cell's hue), `tint` (one colour), `raw` (the cell's colour as it is), `mono` (white on grey) or `palette` ([colour modes](../concepts/stylize-passes.md#colour-modes)) |
 | `--ascii-palette <name>` | `phosphor` | *Style:* palette for `palette` mode: `cga`, `cga-warm`, `cga16`, `phosphor`, `amber`, `mono` or `palettes/<name>.palette.toml` beside the scene; sets `--ascii-color palette` unless that's given |
 | `--ascii-ground <mode>` | `dim` | *Style:* behind the glyph: `dim` (the mode's own), `black` or `inverse` (ink fills the cell, the glyph is cut out) |
@@ -360,15 +503,18 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--contour-fade <f32>` | `30` | Metres at which a line has faded by half (enables contour) |
 | `--contour-boil <f32>` | `0.0` | How far each drawing moves the lines (enables contour) |
 | `--boil-on <u32>` | `2` | Film frames each drawing is held: 1, 2 or 3 |
+| `--motion-hold <rate>` | `0` | Motion on twos for the whole frame (#405): entities' drawn positions and poses, and the post time styles read, change only this many times a second (sets `[post_process] motion_hold`; 0 = off). See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
 | `--boil-time <f64>` | `0` | Seconds of the wooze field to run, which picks the drawing |
 | `--film-grain <f32>` | `0` | Animated film grain (0 = off; 0.02–0.05 is subtle) |
 | `--grain-time <s>` | `0.0` | Post time for grain and render-mode animation. Deterministic: two renders at the same value are identical |
-| `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene's post-processing: `ascii`, `ascii:cell=12,ramp=blocks`, `invert:strength=0.5`, `kuwahara:radius=6`, `ascii:off`. Repeatable; a later word wins; `--style help` lists every style and its keys ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
+| `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene's post-processing: `ascii`, `ascii:cell=12,ramp=blocks`, `invert:strength=0.5`, `kuwahara:radius=6`, `ascii:off` (off everywhere, entities' own included, #376). Repeatable; a later word wins; `--style help` lists every style and its keys ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
 | `--style-time <s>` | `0.0` | Post time animated styles read; the same clock as `--grain-time`, and it wins when both are given |
 | `--particle-time <s>` | (none) | Simulate particle emitters and effects for this long at a fixed 1/60 s step before capturing. Deterministic; without it no particles are drawn |
-| `--time <s>` or `<a..b>` | (none) | Capture at this game time, with living props, the wooze field and the other clocks there, matching the player. A span (`0..4`) writes an animated `--output x.gif`. See [Headless Rendering](../guides/headless-rendering.md#a-chosen-moment) |
-| `--frame-step <s>` | `1/60` | With `--time`: how far each clock tick moves, as `flint-player --frame-step` |
-| `--scripts` | `false` | Run the scene's scripts, one tick a clock step in the player's frame order, deterministically (seeded `random()`, no wall clock). What isn't drawn headless is named in a warning. See [Headless Rendering](../guides/headless-rendering.md#scripts-and-an-expression-timeline) |
+| `--anim-time <s>` | (none) | Run the scene's animation (skeletal clips, layers, sequences, property tweens, node and sprite clips, then IK) to this time at a fixed 1/60 s step before capturing, as the player poses it there. Deterministic; with `--time` or `--frames` it runs on with the clock. Without it skinned meshes draw in their bind pose. See [Headless Rendering](../guides/headless-rendering.md#posed-characters) |
+| `--time <s>` or `<a..b>` | (none) | Capture at this game time, with living props, the wooze field and the other clocks there, matching the player. A span (`0..4`) writes an animated `--output x.gif`, or a PNG a frame to `--output frames/f-%05d.png`; either runs in about one frame's memory however long. See [Headless Rendering](../guides/headless-rendering.md#a-chosen-moment) |
+| `--frame-step <s>` | `1/60` | With `--time` or `--script-time`: how far each clock tick moves, as `flint-player --frame-step` |
+| `--scripts` | `false` | Run the scene's scripts, a clock step at a time through the player's own frame (its game core), deterministically (seeded `random()`, no wall clock). Commands go through the player's dispatcher, so styles, tweens, style reads, looks and the camera apply as in the player; what a capture can't do (sound, the window, other scenes, physics) is named in a warning. See [Headless Rendering](../guides/headless-rendering.md#scripts-and-an-expression-timeline) |
+| `--script-time <t>` | (none) | `--scripts --time <t>` in one flag, beside `--particle-time` and `--anim-time`: run the scene's scripts to game time `t` and capture there, so a look a script sets is in the picture. Takes what `--time` takes (a span, a list) |
 | `--expression-timeline <file>` | (none) | Feed scripts' `expression()` and `on_expression` from a JSON timeline on the render's clock. Implies `--scripts` |
 | `--fps <n>` | `12` | With a `--time` span: GIF frames per second of game time, up to 50 |
 | `--sweep <knob=a,b,...>` | (none) | The same moment once per value, as labelled columns: `wooze.glide=0,0.25,0.5,1`. Takes `wooze.amplitude`, `.step`, `.glide`, `.jitter`, `.preset` |
@@ -380,25 +526,27 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--oren-nayar <f32>` | `0` | Oren-Nayar diffuse blend (0 = Lambert, 1 = full); see [Lighting](../concepts/lighting.md) |
 | `--sheen-strength <f32>` | `0` | Charlie-sheen rim strength (keep at or below about 0.3) |
 | `--sheen-color <r,g,b>` | `1,1,1` | Charlie-sheen rim tint |
-| `--render-mode <n>` | `0` | Stylized render mode: 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater |
+| `--render-mode <n>` | `0` | Stylized render mode: 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater, 6 a tear only `blend_source = "tear"` props show (#397) |
 | `--mode-mix <f32>` | `0.0` | Render mode blend strength, 0--1 |
 | `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters (see [Render Modes](../concepts/post-processing.md#render-modes)) |
-| `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
+| `--schemas <path>` | manifest, else discovered | Schemas directory (repeatable; see [Common Flags](#common-flags)) |
 
 When no camera flags are given, the render starts from the scene's `[camera]` block if it has one. The camera and post flags override the scene's authored `[camera]` and `[post_process]` values.
 
-> **`flint render` runs no scripts unless you pass `--scripts`.** Without it,
+> **`flint render` runs no scripts unless you pass `--scripts` (or `--script-time <t>`),**
+> and a render of a scene with scripts says so on stderr, naming them. Without it,
 > anything your game drives from a script — a render mode, a time of day, a
 > floating hull, an animated character — will not happen. With it, what scripts
 > write to the world, Living Props and the wooze field is drawn, but physics,
 > particles, render modes and the HUD still aren't (a warning names them). The
 > render-mode flags exist so a stylized frame can be captured without a script.
 > For animation, note that skinned meshes render at
-> **bind pose** headlessly. To capture a posed frame of a rigged model, use the
-> model previewer instead: `flint edit model.glb --render out.png --anim-time 1.5`
-> (optionally with `--clip`, `--layer` or `--sequence`). Particles are the
-> exception: `--particle-time 2` steps every emitter before the capture. So are
-> living props, which draw at time 0 or at `--time`.
+> **bind pose** headlessly unless you pass `--anim-time 1.5`, which poses every
+> animated entity as the player has it at that time. For one rigged model on its
+> own, the model previewer does it too: `flint edit model.glb --render out.png
+> --anim-time 1.5` (optionally with `--clip`, `--layer` or `--sequence`). Particles
+> step the same way with `--particle-time 2`, and living props draw at time 0 or
+> at `--time`.
 
 ## The `edit` Command
 
@@ -439,29 +587,100 @@ contexts choose their wgpu adapter through the same chain, first match wins:
 The name is a case-insensitive substring of the adapter name; if nothing
 matches, the engine warns with the available names and falls back to the
 power preference. `--list-gpus` prints every adapter with its type and backend.
-Run with `RUST_LOG=info` to see which adapter was picked:
+`flint render` prints the adapter it drew on as its `GPU:` line, and
+`RUST_LOG=info` logs the pick with its driver:
 
 ```
-INFO flint_render::gpu_select: GPU adapter: NVIDIA GeForce RTX 5070 Laptop GPU (DiscreteGpu, Vulkan, ...)
+GPU: NVIDIA GeForce RTX 4070 (DiscreteGpu, Vulkan)
 ```
 
 The default matters on dual-GPU laptops: before this, `PowerPreference::None`
 let the backend hand back whichever adapter enumerated first, usually the
 integrated GPU.
 
-## Common Flags
+#### DX12's shader compiler
+
+On DX12, every shader is compiled by one of Microsoft's two compilers before it
+draws. Flint uses **DXC** by default and keeps **FXC** only as the fallback.
+FXC is old and slow. On Flint's ASCII style, a debug `flint render` on an RTX 4070
+took 26-27 s on FXC and 5 s on DXC (1.1 s on Vulkan). FXC is also where Flint's
+DX12-only miscompiles came from.
+
+**DXC is linked into Flint's binaries.** No `dxcompiler.dll` or `dxil.dll` sits
+beside them, and there is nothing to install. Where each compiler comes from:
+
+- **FXC** is part of Windows (`d3dcompiler_47.dll`).
+- **DXC** is Microsoft's open-source DirectX Shader Compiler, v1.9.2609. Microsoft
+  publishes it only as DLLs, so Flint builds it from Microsoft's source as one
+  static library, with a one-line change (`tools/dxc-static`). The `static DXC`
+  workflow builds it and publishes it as a release asset of the Flint repository,
+  and every Windows build links it (flint-render's default `static-dxc` feature,
+  through wgpu's). Since DXC 1.8.2505 the compiler signs what it compiles itself,
+  so `dxil.dll` isn't needed.
+
+The first build on a machine downloads that archive once (80 MB) into
+`%LOCALAPPDATA%\flint\static-dxc\`, and checks its SHA-256 against the pinned
+value. Every target directory and worktree on the machine then reuses it. With no
+network and nothing cached, the build stops and names the URL. Put the file in
+that folder, or point `FLINT_STATIC_DXC_ARCHIVE` at a copy of it.
+`FLINT_STATIC_DXC_CACHE` moves the folder. Linking it needs Visual Studio's C++
+tools at least as new as the ones that built it; the build says so if yours are
+older. Static DXC is linked on x86_64 Windows with MSVC only. On other Windows
+targets, Flint loads a `dxcompiler.dll` it finds by name, the executable's folder
+first, else uses FXC.
+
+DX12 takes wgpu's own default, `Dx12Compiler::Auto`, which picks the linked DXC.
+Every adapter line says which compiler DX12 uses, and why. These lines come from
+`flint render`'s `GPU:` line, `flint goldens`' `adapter:` line, `flint dxc status`,
+the player's F3 overlay and its `--perf` line (which shows only `DXC`, `FXC` or
+`FXC fallback`):
+
+```
+GPU: NVIDIA GeForce RTX 4070 (DiscreteGpu, Dx12, shaders DXC (static, v1.9.2609))
+GPU: NVIDIA GeForce RTX 4070 (DiscreteGpu, Dx12, shaders FXC (WGPU_DX12_COMPILER=fxc))
+```
+
+- **`WGPU_DX12_COMPILER`** overrides the choice. wgpu reads it: `fxc` forces FXC,
+  to work around a driver or DXC bug; `dxc` loads `dxcompiler.dll` by name instead;
+  `staticdxc` and `auto` give the default. If the DLL it asks for doesn't load,
+  DX12 gets FXC and the line says `FXC (fallback: ...)`.
+- **A shader that DXC rejects** is not retried with FXC. Its pipeline fails, as on
+  any other backend.
+- `flint dxc status` prints the linked DXC's version, the commit it was built from,
+  how it was built, and the compiler DX12 would use.
+
+##### Shipping DXC with your game
+
+DXC comes under its own open-source licence, not Microsoft's binary terms: the
+LLVM Release License (University of Illinois/NCSA), plus the notices for what it
+incorporates. No `dxil.dll` is in Flint's build, so the DLL release's
+`LICENSE-MS.txt` doesn't apply. That's Flint's reading, not legal advice. A
+Windows build of your game that carries Flint ships DXC's notices beside its
+executable:
+
+```bash
+flint dxc notices --to dist/win   # writes THIRD-PARTY-NOTICES-DXC.txt
+flint dxc notices                 # or prints it
+```
+
+The file names the DXC release and the commit it was built from, then carries
+DXC's `LICENSE.TXT` and `ThirdPartyNotices.txt`. `flint export` has no desktop
+target yet, so nothing copies it into a build for you.
+
+### Edit Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
-| `--width <px>` | (auto) | Window width |
-| `--height <px>` | (auto) | Window height |
-| `--no-grid` | `false` | Disable ground grid |
+| `--schemas <path>` | manifest, else discovered | Schemas directory (repeatable; see [Common Flags](#common-flags)) |
+| `--width <px>` | per editor (scene viewer and track editor `1600`) | Window width in physical pixels |
+| `--height <px>` | per editor (scene viewer and track editor `900`) | Window height in physical pixels |
+| `--no-grid` | `false` | Disable the ground grid, in every editor including the scene viewer and `--spline` |
 | `--watch` | `false` | Watch for file changes |
 | `--seed <u64>` | (auto) | Override seed (procgen) |
 | `--no-inspector` | `false` | Hide egui inspector (scene) |
 | `--spline` | `false` | Open the spline/track editor instead of the viewer (scene) |
 | `--auto-orbit` | `false` | Start with the turntable auto-orbit on (scene/model/procgen); toggle with **O**, speed with `[` / `]` |
+| `--motion-hold <rate>` | (the scene's) | Motion on twos for the whole frame (#871), as on `flint render`: the scene viewer and the model previewer draw positions and poses on ticks, this many a second (0 = off). See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
 
 ### Model Previewer Flags
 
@@ -483,6 +702,7 @@ integrated GPU.
 | `--show-skeleton` | off | Draw the skeleton over the model, posed joints and everything past them in orange |
 | `--render <path>` | (none) | Render to PNG instead of opening a window |
 | `--style <name[:k=v,...]>` / `--style-time <s>` | (none) | With `--render`: a registered style over the snapshot, as on `flint render` (also for `.particles.toml`) |
+| `--motion-hold <rate>` | off | Hold the pose on ticks of the clip's own time, playing and scrubbing (#871); the Animation panel's **Hold** switch and rate change it live |
 
 ### Particle Editor Flags
 
@@ -520,7 +740,7 @@ See the [Particle Editor guide](../guides/particle-editor.md).
 | Space | Return to the scene's authored `[camera]` framing (viewer default if the scene has none) |
 | O | Toggle auto-orbit |
 | `[` / `]` | Slow down / speed up auto-orbit |
-| Ctrl+S | Save scene to disk |
+| Ctrl+S | Save scene to disk: only the fields you edited are written, the rest of the file stays as it is; with nothing edited the file isn't touched |
 | Ctrl+Z | Undo position change |
 | Ctrl+Shift+Z | Redo position change |
 | Escape | Cancel gizmo drag / exit |
@@ -586,6 +806,8 @@ flint gen specs/oak_tree.procgen.toml --seed 42 -o tree.glb
 flint gen specs/oak_tree.procgen.toml --batch 10 --seed-start 0
 ```
 
+`flint gen` also previews a glyph set: `flint gen fonts/terminal.glyphs.toml -o sheet.png` writes the atlas, each ramp's ink and a specimen as one sheet, and `-o out/` writes the pieces as well. See [Glyph Atlas](../concepts/glyph-atlas.md#looking-at-a-set).
+
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-o, --output <path>` | (derived from spec) | Output file or directory |
@@ -631,13 +853,13 @@ flint gen --cost-report --since 2026-10-01
 Preview a prefab template in the interactive viewer:
 
 ```bash
-flint prefab view prefabs/kart.prefab.toml --schemas engine/schemas --schemas schemas
+flint prefab view prefabs/kart.prefab.toml
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--prefix <string>` | `"preview"` | Prefix for `${PREFIX}` substitution |
-| `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
+| `--schemas <path>` | manifest, else discovered | Schemas directory (repeatable; see [Common Flags](#common-flags)) |
 
 This command loads the `.prefab.toml` template, performs variable substitution, builds a synthetic scene from the expanded entities, and launches the viewer for visual inspection. Useful for verifying prefab structure and appearance without creating a full scene.
 
@@ -646,9 +868,11 @@ This command loads the `.prefab.toml` template, performs variable substitution, 
 | Flag | Description |
 |------|-------------|
 | `--scene <path>` | Path to scene file |
-| `--schemas <path>` | Path to schemas directory (repeatable for multi-schema layering; default: `schemas`) |
+| `--schemas <path>` | Schema directory, repeatable on every command that loads schemas (`play`, `render`, `validate`, `query`, `entity`, `schema`, `edit`, `prefab view`, `flint-player`); later paths override earlier. When given, the flags are the whole list. Without it: the `schemas` list of the project's `flint.toml`; else `schemas/` in the working directory, beside the scene and one level up. A directory named by a flag or the manifest that doesn't exist is an error naming it |
+| `--project <dir>` | The project root, instead of the one found by walking up; its `flint.toml` is the manifest read |
 | `--format <fmt>` | Output format: `json`, `toml`, or `text` |
-| `--fix` | Apply auto-fixes (with `validate`) |
+| `--fix` | Apply auto-fixes (with `validate`). The exit code is 1 if an error is left afterwards |
+| `--strict` | With `validate`: a field no schema declares is an error, not a warning (`[project] strict = true` in `flint.toml` does it for every run) |
 | `--dry-run` | Preview changes without applying |
 
 ## Usage

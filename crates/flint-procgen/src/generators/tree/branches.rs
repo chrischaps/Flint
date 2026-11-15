@@ -19,8 +19,8 @@ use crate::algorithms::space_colonization::{
 };
 use crate::types::{BranchSegment, MaterialData, MeshData};
 use crate::{ProcGenError, Result, SeededRng};
-use flint_core::spline::rotate_around_axis;
 use flint_core::Vec3;
+use flint_geometry::spline::rotate_around_axis;
 
 use super::{BranchMethod, BranchOutput, BranchParams, CrownShape};
 
@@ -1610,7 +1610,8 @@ mod tests {
         }
     }
 
-    /// `showcase_game/specs/garden_tree.procgen.toml`, with the method open.
+    /// A game's garden tree spec (the example game's `specs/garden_tree`),
+    /// with the method open.
     const GARDEN_TREE: &str = r##"
 generator = "tree_v1"
 [meta]

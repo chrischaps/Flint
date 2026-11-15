@@ -1,0 +1,12 @@
+# Geometric (#935): Major Mono Display, a monospace built from circles and
+# straight lines, its lowercase drawn as small capitals. Thin, even strokes:
+# a drafting-table, blueprint mood.
+default_ramp = "drafting"
+
+[font]
+file = "ofl/MajorMonoDisplay/MajorMonoDisplay-Regular.ttf"   # OFL 1.1: beside it, OFL.txt
+size = 16
+
+[ramps.drafting]
+glyphs = " .-ilvxzkmw@"
+map = "coverage"

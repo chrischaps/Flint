@@ -1,0 +1,184 @@
+# A grotto of rocks the engine never heard of (#195).
+#
+# Every stone here is a `rock_v1` spec (specs/ beside this file), and rock_v1
+# is this game's own generator: rock.rs, registered by the game binary's
+# player extension in main.rs. No engine code names it.
+#
+#   cargo run -p flint-player --example cave_game              # the rocks
+#   cargo run -p flint-player -- crates/flint-player/examples/cave_game/cave.scene.toml
+#                                                              # placeholders: the stock player has no rock_v1
+#
+# Each spec makes one mesh; entities reuse it turned and scaled, the way a
+# game scatters props.
+
+[scene]
+name = "Cave Game"
+version = "1.0"
+description = "A lantern-lit grotto whose rocks come from the game's own generator"
+
+[camera]
+position = [0.4, 1.35, 4.6]
+target = [0.0, 0.45, 0.0]
+fov = 40.0
+
+[environment]
+ambient_sky = [0.10, 0.12, 0.18]
+ambient_ground = [0.05, 0.04, 0.04]
+
+[post_process]
+exposure = 1.1
+bloom_enabled = true
+bloom_intensity = 0.06
+bloom_threshold = 1.1
+vignette_enabled = true
+vignette_intensity = 0.5
+fog_enabled = true
+fog_color = [0.025, 0.028, 0.04]
+fog_start = 3.0
+fog_end = 14.0
+
+# The dark past the walls.
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.01, 0.012, 0.02, 1.0]
+horizon_color = [0.025, 0.028, 0.04, 1.0]
+haze_color = [0.03, 0.03, 0.04, 0.3]
+cloud_coverage = 0.0
+sun_glow = 0.0
+
+# --- light ----------------------------------------------------------------
+
+# The lantern on the slab, warm and close.
+[entities.lantern]
+[entities.lantern.transform]
+position = [0.15, 0.95, 0.2]
+[entities.lantern.light]
+type = "point"
+color = [1.0, 0.6, 0.26]
+intensity = 7.0
+range = 4.5
+source_radius = 0.05
+
+# Its flame: a small unlit block bright enough to bloom.
+[entities.flame]
+[entities.flame.transform]
+position = [0.15, 0.0, 0.2]
+[entities.flame.bounds]
+min = [-0.03, 0.34, -0.03]
+max = [0.03, 0.44, 0.03]
+[entities.flame.material]
+color = [1.0, 0.72, 0.38, 1.0]
+unlit = true
+emissive_scale = 6.0
+cast_shadows = false
+
+# Daylight through a crack in the roof, cold and from behind.
+[entities.crack]
+[entities.crack.transform]
+position = [0, 30, 0]
+[entities.crack.light]
+type = "directional"
+direction = [-0.35, 1.0, -0.55]
+color = [0.55, 0.65, 0.95]
+intensity = 0.9
+
+# --- floor ----------------------------------------------------------------
+
+[entities.floor]
+[entities.floor.transform]
+position = [0, 0, 0]
+[entities.floor.bounds]
+min = [-12, -0.2, -12]
+max = [12, 0, 12]
+[entities.floor.material]
+color = [0.06, 0.055, 0.05, 1.0]
+roughness = 1.0
+metallic = 0.0
+
+# --- the grotto's walls: boulders, scaled up --------------------------------
+
+[entities.wall_left]
+[entities.wall_left.transform]
+position = [-3.2, -0.3, -2.2]
+rotation = [0, 35, 0]
+scale = [3.2, 3.6, 3.0]
+[entities.wall_left.model]
+asset = "cave_boulder"
+
+[entities.wall_back]
+[entities.wall_back.transform]
+position = [0.6, -0.4, -4.4]
+rotation = [0, 160, 0]
+scale = [4.0, 4.4, 3.0]
+[entities.wall_back.model]
+asset = "cave_boulder"
+
+[entities.wall_right]
+[entities.wall_right.transform]
+position = [3.6, -0.3, -1.6]
+rotation = [0, 250, 0]
+scale = [3.0, 3.2, 3.4]
+[entities.wall_right.model]
+asset = "cave_slab"
+
+# --- the stones round the lantern --------------------------------------------
+
+[entities.slab]
+[entities.slab.transform]
+position = [0.1, 0.0, 0.1]
+rotation = [0, 20, 0]
+[entities.slab.model]
+asset = "cave_slab"
+
+[entities.boulder]
+[entities.boulder.transform]
+position = [-1.45, 0.0, -0.6]
+rotation = [0, 70, 0]
+[entities.boulder.model]
+asset = "cave_boulder"
+
+[entities.stone_right]
+[entities.stone_right.transform]
+position = [1.35, 0.0, 0.35]
+rotation = [0, 200, 0]
+[entities.stone_right.model]
+asset = "cave_stone"
+
+[entities.stone_back]
+[entities.stone_back.transform]
+position = [0.9, 0.0, -1.1]
+rotation = [0, 115, 0]
+scale = [1.3, 1.5, 1.3]
+[entities.stone_back.model]
+asset = "cave_stone"
+
+[entities.pebble_a]
+[entities.pebble_a.transform]
+position = [-0.55, 0.0, 1.05]
+rotation = [0, 10, 0]
+[entities.pebble_a.model]
+asset = "cave_pebble"
+
+[entities.pebble_b]
+[entities.pebble_b.transform]
+position = [0.85, 0.0, 1.25]
+rotation = [0, 140, 0]
+scale = [1.4, 1.2, 1.4]
+[entities.pebble_b.model]
+asset = "cave_pebble"
+
+[entities.pebble_c]
+[entities.pebble_c.transform]
+position = [-0.25, 0.0, 1.55]
+rotation = [0, 260, 0]
+scale = [0.8, 0.8, 0.8]
+[entities.pebble_c.model]
+asset = "cave_pebble"
+
+[entities.pebble_d]
+[entities.pebble_d.transform]
+position = [1.7, 0.0, 1.0]
+rotation = [0, 75, 0]
+scale = [0.7, 0.7, 0.7]
+[entities.pebble_d.model]
+asset = "cave_pebble"

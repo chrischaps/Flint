@@ -55,7 +55,7 @@ def capture(player: Path, scene: Path, schemas: Path, frames: Path) -> list:
     frames.mkdir(parents=True)
     every = f"{STEP:.10f}"
     subprocess.run(
-        [str(player), str(scene), "--schemas", str(schemas),
+        [str(player), str(scene), "--schemas", str(schemas), "--schemas", str(schemas / "examples"),
          "--width", str(WIDTH), "--height", str(HEIGHT), "--frame-step", every,
          "--screenshot", str(frames / "f.png"), "--screenshot-at", str(START),
          "--screenshot-every", every, "--exit-after", str(START + SECONDS)],
@@ -104,7 +104,7 @@ def slit(rows: list, out: Path, row_height: int = 2) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--player", type=Path, default=Path("target/release/flint-player"))
-    ap.add_argument("--scene", type=Path, default=Path("demo/woozy_grove.scene.toml"))
+    ap.add_argument("--scene", type=Path, default=Path("examples/woozy_grove.scene.toml"))
     ap.add_argument("--schemas", type=Path, default=Path("schemas"))
     ap.add_argument("--out", type=Path, default=Path("docs/book/src/images"))
     ap.add_argument("--name", default="linklater")

@@ -1,6 +1,6 @@
 # Grass on Any Ground
 
-The [terrain](terrain.md#grass) grows grass from its own heightmap and splat map. A game whose ground is something else, such as a mesh it builds itself, a level made of boxes or a race track, can give the grass pass its own ground instead (ADR 0089). That ground is two things over a world-space rectangle:
+The [terrain](terrain.md#grass) grows grass from its own heightmap and splat map. A game whose ground is something else, such as a mesh it builds itself, a level made of boxes or a race track, can give the grass pass its own ground instead ([ADR 0089](https://github.com/chrischaps/Flint/blob/main/docs/adr/0089-compute-grass-over-any-ground.md)). That ground is two things over a world-space rectangle:
 
 - **a density mask.** One byte per texel: 0 grows no grass and 255 grows full density.
 - **a height.** Either level ground at one `y`, or a heightmap of world `y` values.
@@ -32,15 +32,15 @@ scale_by_mask = true
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `mask` | string | | Grayscale PNG, relative to the scene file. It stretches over the whole rectangle, whatever its resolution |
+| `mask` | string | | Grayscale PNG, a path from the scene's directory or any directory above it up to the project root. It stretches over the whole rectangle, whatever its resolution |
 | `width` | f32 | 64.0 | World X extent the mask covers |
 | `depth` | f32 | 64.0 | World Z extent the mask covers |
 | `scale_by_mask` | bool | true | Grey thins the field in proportion. When `false`, anything over `grass.density_threshold` grows at full density, as a terrain's splat layer does |
 | `grass.*` | | | As on the [terrain](terrain.md#grass). `grass.enabled` defaults to `true` here; `density_layer` and `density_source` don't apply |
 
-A scene has one grass field. A `grass_ground` replaces a terrain's grass, with a warning. The **Grass Debug** panel (`F3`) works on it as on a terrain, and commits its changes back to the `grass_ground` component. `flint render` draws it too.
+A scene has one grass field. A `grass_ground` replaces a terrain's grass, with a warning. The **Grass Debug** panel (`F3`) works on it as on a terrain, and commits its changes back to the `grass_ground` component. `flint render` and the scene viewer (`flint edit`, which reloads it on each change under `--watch`) draw it too.
 
-Try it with `flint play demo/mesh_meadow.scene.toml`.
+Try it with `flint play examples/mesh_meadow.scene.toml`.
 
 ## From Rust
 
@@ -73,15 +73,15 @@ if let Err(e) = gpu.set_grass_ground(&config, &ground) {
 ```
 
 - **`set_grass_ground`** uploads the mask and height, and replaces any grass already loaded. Call it again to repaint: a road laid, a lot built on, a field cleared. It returns `Err` only when a slice doesn't match its stated size. On a device without compute shaders it does nothing.
-- **`update_grass_mask(x, y, width, height, &bytes)`** repaints part of the mask in place (ADR 0093): the `width × height` texels from texel (`x`, `y`), one byte each, row by row toward +Z. The buffers and bind groups stay as they are, so a small change costs a small upload. Use it for something that comes and goes often, such as a clearing round a thing placed or picked up. It returns `Err` when no ground is set (a terrain's grass has no mask to repaint), or when the rectangle runs off the mask or `bytes` is the wrong length. On a device without compute shaders it does nothing.
+- **`update_grass_mask(x, y, width, height, &bytes)`** repaints part of the mask in place ([ADR 0093](https://github.com/chrischaps/Flint/blob/main/docs/adr/0093-repaint-grass-mask-in-place.md)): the `width × height` texels from texel (`x`, `y`), one byte each, row by row toward +Z. The buffers and bind groups stay as they are, so a small change costs a small upload. Use it for something that comes and goes often, such as a clearing round a thing placed or picked up. It returns `Err` when no ground is set (a terrain's grass has no mask to repaint), or when the rectangle runs off the mask or `bytes` is the wrong length. On a device without compute shaders it does nothing.
 - **`set_grass_config`** retunes the grass without uploading the ground again. If the new config needs more instances than the buffer holds, the buffer grows before the next frame.
 - **`clear_grass`** removes it.
 
-`GrassHeight::Map { heights, width, depth }` gives the ground a shape. It's a grid of world `y` values over the same rectangle. Each value is the height at the middle of its texel's cell, and a blade stands on the blend of the four values round it (ADR 0098), so on a slope the blades follow the ground rather than stepping with the grid. A grid as fine as the ground's own detail is enough. Within half a cell of the rectangle's edge the height holds level at the outermost values. The heights are world units, unlike a terrain's heightmap, which is scaled by `height_scale`.
+`GrassHeight::Map { heights, width, depth }` gives the ground a shape. It's a grid of world `y` values over the same rectangle. Each value is the height at the middle of its texel's cell, and a blade stands on the blend of the four values round it ([ADR 0098](https://github.com/chrischaps/Flint/blob/main/docs/adr/0098-grass-stands-on-blended-heights.md)), so on a slope the blades follow the ground rather than stepping with the grid. A grid as fine as the ground's own detail is enough. Within half a cell of the rectangle's edge the height holds level at the outermost values. The heights are world units, unlike a terrain's heightmap, which is scaled by `height_scale`.
 
 `SceneRenderer::read_grass_blades` reads back the blades the last frame grew: each root, height, turn and tint. It waits for the GPU, so it's for tests and tools, not for a frame.
 
-The same calls are on `SceneRenderer` (`set_grass_ground`, `update_grass_mask`, `set_grass_config`, `unload_grass`) for code that drives the renderer directly. A scene transition clears the grass.
+The same calls are on `SceneRenderer` (`set_grass_ground`, `update_grass_mask`, `set_grass_config`, `unload_grass`) for code that drives the renderer directly. A scene transition clears the grass. To load a scene's `grass_ground` component as the player, `flint render` and the viewer do, call `flint_render::load_scene_grass_ground(&world, scene_path, device, queue, &mut renderer)`: it finds the mask through the project's search and returns the `GrassConfig` and entity it set, or `None`.
 
 ## Only the reach of the camera
 
@@ -89,7 +89,7 @@ The compute pass covers only the grid cells within `max_distance` of the camera,
 
 Each cell keeps its place in the whole grid, so a blade doesn't move as the window follows the camera. Terrain grass gets the same windowing, and grows exactly as it did before.
 
-## Only what the camera sees (ADR 0092)
+## Only what the camera sees ([ADR 0092](https://github.com/chrischaps/Flint/blob/main/docs/adr/0092-grass-culled-to-view-drawn-indirect.md))
 
 Within that window, the compute pass keeps a blade only if its root is inside the camera frustum. The planes are pushed out first, so nothing visible is lost at the frame's edges. They move out by the tallest blade, which covers a blade leaning in from just outside. With shadows on, they move out further, by as far as a blade's shadow reaches along the ground: its height over the tangent of the sun's elevation, capped at eight blade heights for a sun near the horizon. A blade just off screen whose shadow falls on screen is still drawn into the shadow cascades.
 

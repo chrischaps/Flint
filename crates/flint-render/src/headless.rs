@@ -16,6 +16,9 @@ pub struct HeadlessContext {
     /// `depth_texture`'s id, new with each texture (#379; see
     /// [`RenderContext::depth_id`](crate::RenderContext::depth_id)).
     pub depth_id: u64,
+    /// The adapter drawing, so a timing can say which GPU and backend it
+    /// measured (#292: `WGPU_BACKEND` is otherwise invisible in the output).
+    pub adapter_info: wgpu::AdapterInfo,
 }
 
 impl HeadlessContext {
@@ -28,17 +31,15 @@ impl HeadlessContext {
             .ok_or(RenderError::AdapterNotFound)?;
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("Flint Headless Device"),
-                    // Timestamps where the adapter has them, so the
-                    // renderer's GPU timing can be turned on (ADR 0108).
-                    required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: Default::default(),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Flint Headless Device"),
+                // Timestamps where the adapter has them, so the
+                // renderer's GPU timing can be turned on (ADR 0108).
+                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+                required_limits: wgpu::Limits::default(),
+                memory_hints: Default::default(),
+                ..Default::default()
+            })
             .await
             .map_err(|e| RenderError::DeviceCreation(e.to_string()))?;
 
@@ -57,11 +58,12 @@ impl HeadlessContext {
             depth_texture,
             depth_view,
             depth_id: crate::bind_cache::new_depth_id(),
+            adapter_info: adapter.get_info(),
         })
     }
 
     /// Give the context targets of a new size, on the same device (#329:
-    /// `render-suite` keeps one device for every case, and cases can ask
+    /// `flint goldens` keeps one device for every case, and cases can ask
     /// for different sizes).
     pub fn resize(&mut self, width: u32, height: u32) {
         if (width, height) == (self.width, self.height) {
@@ -147,15 +149,15 @@ impl HeadlessContext {
             });
 
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &self.color_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &staging_buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded_bytes_per_row),
                     rows_per_image: Some(self.height),
@@ -176,13 +178,15 @@ impl HeadlessContext {
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = tx.send(result);
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = crate::wait_for_gpu(&self.device);
 
         rx.recv()
             .map_err(|e| RenderError::BufferReadFailed(e.to_string()))?
             .map_err(|e| RenderError::BufferReadFailed(e.to_string()))?;
 
-        let data = buffer_slice.get_mapped_range();
+        let data = buffer_slice
+            .get_mapped_range()
+            .expect("mapped buffer range");
 
         // Strip row padding if present
         let mut pixels = Vec::with_capacity((self.width * self.height * bytes_per_pixel) as usize);

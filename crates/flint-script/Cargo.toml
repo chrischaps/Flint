@@ -5,9 +5,20 @@ edition.workspace = true
 license.workspace = true
 description = "Rhai scripting system for Flint engine"
 
+# `metadata` lists the functions not yet declared through the builder
+# (ADR 0116) from Rhai's own metadata, for `flint script api`. Native
+# tools only; the player and the web build leave it off.
+[features]
+metadata = ["rhai/metadata"]
+# `check`: `flint script check` (#694) walks a script's syntax tree, which
+# Rhai exposes under `internals`, and needs `metadata` for its packages'
+# functions. Native tools only, like `metadata`.
+check = ["metadata", "rhai/internals"]
+
 [dependencies]
 web-time = { workspace = true }
 flint-core = { workspace = true }
+flint-geometry = { workspace = true }
 flint-ecs = { workspace = true }
 flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
@@ -29,3 +40,7 @@ flint-core = { workspace = true }
 flint-ecs = { workspace = true }
 flint-scene = { workspace = true }
 flint-schema = { workspace = true }
+flint-procgen = { workspace = true }
+
+[lints]
+workspace = true

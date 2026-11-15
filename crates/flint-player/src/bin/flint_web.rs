@@ -36,6 +36,8 @@
 //!                   kept through scene transitions
 //!   width=, height= fix the canvas to this many CSS pixels instead of the page
 //!   frame_step=<s>  step game time exactly s per frame (`--frame-step`)
+//!   seed=<n>        seed scripts' random() (`--seed`, #635); frame_step
+//!                   seeds it too, as the player's --frame-step does
 //!   hold_at=<s>     stop game time at s seconds, for a screenshot of an
 //!                   exact moment (with frame_step; `PlayerApp::hold_at`)
 //!   perf=1|cpu      the perf readout in a corner (#120): frame times over
@@ -49,6 +51,10 @@
 //!                   the rate they do hold when they don't; `native` draws
 //!                   every refresh unpaced. Default: `auto` where the
 //!                   primary pointer is a finger, `native` elsewhere
+//!   begin=auto      lift the Begin gate as soon as it's ready, with no
+//!                   click (#381): for a measuring driver (tools/web-perf).
+//!                   With no gesture the browser refuses the pointer lock,
+//!                   and sound starts only where autoplay is allowed
 //!   loop=poll       run winit's loop flat out (`ControlFlow::Poll`), as
 //!                   before #121, to compare against; the default draws once
 //!                   per `requestAnimationFrame`
@@ -96,11 +102,14 @@ mod web {
         render_scale: flint_player::RenderScaleSetting,
         size: Option<(u32, u32)>,
         frame_step: Option<f64>,
+        seed: Option<u64>,
         hold_at: Option<f64>,
         /// `Some(gpu)`: show the perf readout, timing the GPU too when true.
         perf: Option<bool>,
         /// `loop=poll`: the old flat-out loop, for comparison (#121).
         poll: bool,
+        /// `begin=auto`: lift the gate without a click (#381).
+        begin_auto: bool,
         /// `mix=old`: placed sounds on kira spatial tracks and every sound
         /// mixed, heard or not, for comparison (#138).
         old_mix: bool,
@@ -137,6 +146,7 @@ mod web {
                     .unwrap_or_else(flint_player::RenderScaleSetting::web),
                 size: num("width").zip(num("height")),
                 frame_step: secs("frame_step").filter(|s| *s > 0.0),
+                seed: get("seed").and_then(|v| v.parse::<u64>().ok()),
                 hold_at: secs("hold_at"),
                 perf: get("perf").and_then(|v| match v.as_str() {
                     "cpu" => Some(false),
@@ -144,6 +154,7 @@ mod web {
                     _ => Some(true),
                 }),
                 poll: get("loop").as_deref() == Some("poll"),
+                begin_auto: get("begin").as_deref() == Some("auto"),
                 old_mix: get("mix").as_deref() == Some("old"),
                 touch: get("touch")
                     .and_then(|v| flint_runtime::TouchControlsMode::parse(&v))
@@ -204,7 +215,10 @@ mod web {
         world: FlintWorld,
         scene_file: SceneFile,
         scene_path: String,
-        schemas: Vec<String>,
+        schemas: flint_core::project::SchemaDirs,
+        /// What the scene was loaded with: the compiled-in engine schemas
+        /// under the bundle's. The player keeps it for transitions (#683).
+        registry: SchemaRegistry,
     }
 
     async fn start() -> Result<(), String> {
@@ -253,26 +267,32 @@ mod web {
             None,
             loaded.scene_file.scene.input_config.clone(),
         );
-        app.msaa_sample_count = args.msaa;
-        app.render_scale = args.render_scale;
-        app.quality_overrides = args.quality;
+        app.launch.msaa_sample_count = args.msaa;
+        app.launch.render_scale = args.render_scale;
+        app.launch.quality_overrides = args.quality;
         // A bad word is a warning in the console, not a page that won't
         // start: the scene's user styles register later, at init (#274)
-        app.style_specs = args.styles;
+        app.launch.style_specs = args.styles;
         app.input.touch_controls_mut().set_mode(args.touch);
-        app.clock.frame_step = args.frame_step;
-        app.hold_at = args.hold_at;
+        app.core.clock.frame_step = args.frame_step;
+        if let Some(seed) = args
+            .seed
+            .or(args.frame_step.map(|_| flint_player::SCRIPT_SEED))
+        {
+            app.core.script.seed_random(seed);
+        }
+        app.launch.hold_at = args.hold_at;
         app.set_frame_rate(args.fps);
         if let Some(gpu) = args.perf {
             app.enable_perf(gpu);
         }
         app.audio.set_old_mix(args.old_mix);
         app.apply_scene_settings(&loaded.scene_file);
-        app.set_schema_paths(loaded.schemas);
+        app.set_schemas(loaded.registry, loaded.schemas);
         app.set_event_proxy(event_loop.create_proxy());
         // Returns at once: the browser drives the loop from here on.
         event_loop.spawn_app(app);
-        open_gate(&title, line.as_deref().unwrap_or(""));
+        open_gate(&title, line.as_deref().unwrap_or(""), args.begin_auto);
 
         for (source, parts, base) in late {
             fetch_late_bundles(source, parts, base, title.clone());
@@ -311,30 +331,30 @@ mod web {
         // The engine's schemas are compiled in; the bundle's own (its engine
         // subtree's, then the game's) load over them, as `--schemas` does.
         let mut registry = engine_registry()?;
-        let mut schemas = manifest.schemas.clone();
-        for dir in flint_schema::discover_schema_dirs(&scene_path) {
-            let dir = vfs::normalize(&dir);
-            if !schemas.contains(&dir) {
-                schemas.push(dir);
-            }
-        }
-        for dir in &schemas {
-            if vfs::is_dir(dir) {
-                registry
-                    .load_directory(dir)
-                    .map_err(|e| format!("schemas {dir}: {e}"))?;
-            }
+        let schemas = flint_core::project::host_schema_dirs(
+            &manifest.schemas,
+            Some(std::path::Path::new(&scene_path)),
+        );
+        for dir in &schemas.dirs {
+            registry
+                .load_directory(dir)
+                .map_err(|e| format!("schemas {}: {e}", dir.display()))?;
         }
 
         status(&format!("loading {scene_path}"));
-        let (world, scene_file) = flint_scene::load_scene(&scene_path, &registry)
+        #[cfg_attr(not(feature = "living"), allow(unused_mut))]
+        let (world, mut scene_file) = flint_scene::load_scene(&scene_path, &registry)
             .map_err(|e| format!("{scene_path}: {e}"))?;
+        #[cfg(feature = "living")]
+        flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(&scene_path))
+            .map_err(|e| e.to_string())?;
         Ok((
             Loaded {
                 world,
                 scene_file,
                 scene_path,
                 schemas,
+                registry,
             },
             source,
             manifest.late,
@@ -352,7 +372,8 @@ mod web {
             world,
             scene_file,
             scene_path: url.to_string(),
-            schemas: Vec::new(),
+            schemas: Default::default(),
+            registry,
         })
     }
 
@@ -412,6 +433,11 @@ mod web {
             registry
                 .load_archetype_string(toml)
                 .map_err(|e| format!("engine archetype schema: {e}"))?;
+        }
+        for toml in engine_schemas::SCENE {
+            registry
+                .load_table_string(toml)
+                .map_err(|e| format!("engine scene-table schema: {e}"))?;
         }
         Ok(registry)
     }
@@ -536,7 +562,12 @@ mod web {
     /// pointer and starts the sound (`flint_player::web_begin`), and the
     /// veil lifts. Afterwards a line under the world says how to take the
     /// pointer back whenever Escape has freed it.
-    fn open_gate(title: &str, line: &str) {
+    ///
+    /// `auto` (`?begin=auto`, #381) lifts it at once, as a click would but
+    /// with no gesture behind it: a measuring driver's page, whose clicks
+    /// over CDP never reliably reached the button. The page's full-screen
+    /// switch rides on a real click only, so it stays out of the way.
+    fn open_gate(title: &str, line: &str, auto: bool) {
         use std::cell::Cell;
         use std::rc::Rc;
         use wasm_bindgen::closure::Closure;
@@ -573,6 +604,10 @@ mod web {
             })
         };
         let _ = button.add_event_listener_with_callback("click", on_begin.as_ref().unchecked_ref());
+        if auto {
+            let lift: &js_sys::Function = on_begin.as_ref().unchecked_ref();
+            let _ = lift.call0(&wasm_bindgen::JsValue::NULL);
+        }
         on_begin.forget();
 
         let Some(document) = web_sys::window().and_then(|w| w.document()) else {

@@ -2,6 +2,8 @@
 
 A Flint scene is a TOML file describing entities, their components, and their relationships. This page explains the scene format by building one from scratch.
 
+> **`room`, `door`, `furniture` and the other room-builder archetypes on this page are the examples' layer, not the engine's own set.** A new game resolves them once its `flint.toml` lists `schemas/examples` of the Flint checkout after the engine's `schemas`; inside the Flint checkout they resolve as they are. See [Schemas: The Examples Layer](../concepts/schemas.md#the-examples-layer).
+
 ## Scene Structure
 
 Every scene file has two sections: metadata and entities.
@@ -134,10 +136,10 @@ All three approaches produce the same result. The `flint edit --watch` viewer de
 Run the constraint checker to verify your scene is well-formed:
 
 ```bash
-flint validate levels/my-scene.scene.toml --schemas schemas
+flint validate levels/my-scene.scene.toml
 ```
 
-This checks your scene against the rules defined in `schemas/constraints/`. See [Constraints](../concepts/constraints.md) for details.
+This checks your scene against the rules in the `constraints/` folder of each schema directory the project names. The engine's own set has none; the examples' layer brings three about rooms and doors. See [Constraints](../concepts/constraints.md) for details.
 
 ## What's Next
 

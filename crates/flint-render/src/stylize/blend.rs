@@ -15,11 +15,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 const BIND: &str = "style blend input";
 
-/// The blend draw's pipelines, one per target format, made on first use.
+/// The blend draw's pipelines, one per target format, made on first use,
+/// and the reveal's (#406), which draws in its place when the style has one.
 #[derive(Default)]
 pub struct BlendPass {
-    shared: OnceLock<(wgpu::ShaderModule, wgpu::BindGroupLayout)>,
+    shared: OnceLock<(kit::Shader, wgpu::BindGroupLayout)>,
     pipelines: Mutex<Vec<(wgpu::TextureFormat, Arc<wgpu::RenderPipeline>)>>,
+    reveal: super::reveal::RevealPass,
 }
 
 impl BlendPass {
@@ -30,7 +32,7 @@ impl BlendPass {
     ) -> (Arc<wgpu::RenderPipeline>, &wgpu::BindGroupLayout) {
         let (module, layout) = self.shared.get_or_init(|| {
             (
-                kit::shader(device, "Style Blend Shader", include_str!("blend.wgsl")),
+                kit::shader(device, "Style Blend Shader", kit::wgsl!("blend.wgsl")),
                 kit::sampled_layout(device, "Style Blend BGL"),
             )
         });
@@ -43,24 +45,29 @@ impl BlendPass {
             dst_factor: wgpu::BlendFactor::OneMinusConstant,
             operation: wgpu::BlendOperation::Add,
         };
-        let pipeline = Arc::new(kit::fullscreen_pipeline_with(
-            device,
-            "Style Blend Pipeline",
-            module,
-            "fs_main",
-            &[layout],
-            format,
-            Some(wgpu::BlendState {
-                color: component,
-                alpha: component,
-            }),
-        ));
+        let pipeline: Arc<wgpu::RenderPipeline> =
+            crate::pipeline_cache::in_scope(("Style Blend", format), || {
+                kit::fullscreen_pipeline_with(
+                    device,
+                    "Style Blend Pipeline",
+                    module,
+                    "fs_main",
+                    &[layout],
+                    format,
+                    Some(wgpu::BlendState {
+                        color: component,
+                        alpha: component,
+                    }),
+                )
+            });
         pipelines.push((format, pipeline.clone()));
         (pipeline, layout)
     }
 
     /// Show only `blend` of what was just drawn into `output`: draw
     /// `input` back over it with weight `1 - blend`. Nothing to do at 1.
+    /// A style with a reveal between 0 and 1 (#406) shows only inside its
+    /// region instead, `blend` of it there, with the edge's ink.
     pub fn draw(
         &self,
         frame: &StyleFrame<'_>,
@@ -69,6 +76,16 @@ impl BlendPass {
         output: &wgpu::TextureView,
         blend: f32,
     ) {
+        if let Some(reveal) = frame.config.styles.reveal(frame.descriptor.name) {
+            let amount = reveal.amount.unwrap_or(1.0);
+            if amount < 1.0
+                && self
+                    .reveal
+                    .draw(frame, encoder, input, output, reveal, blend)
+            {
+                return;
+            }
+        }
         if blend >= 1.0 {
             return;
         }
@@ -80,6 +97,7 @@ impl BlendPass {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: output,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
@@ -88,6 +106,7 @@ impl BlendPass {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &*group, &[]);

@@ -1,1 +1,31 @@
-scripts/issue*.sh text eol=lf
+# Text is stored LF and checked out in the platform's endings; what follows
+# pins the files whose endings matter, and marks the binaries so no setting
+# converts or diffs them (#760).
+* text=auto
+
+# Shell scripts run under Git Bash on Windows, where a CRLF line breaks them
+*.sh text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+# The static DXC patch applies to an LF checkout of DXC (#947)
+tools/dxc-static/*.patch text eol=lf
+
+# Binaries: images, models, sound, fonts, archives
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.tiff binary
+*.hdr binary
+*.exr binary
+*.ktx2 binary
+*.glb binary
+*.ogg binary
+*.wav binary
+*.flac binary
+*.mp3 binary
+*.ttf binary
+*.otf binary
+*.jar binary
+*.zip binary
+*.wasm binary

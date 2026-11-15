@@ -2,8 +2,8 @@
 //! `PlayerApp` (the first step toward the roadmap's plugin system; ADR 0071).
 //!
 //! A game that wraps `PlayerApp` in its own binary can add native Rhai
-//! functions, run per-frame Rust before the scripts, and see window events
-//! before the player does. Every method has a no-op default, and a player
+//! functions and procgen generators, run per-frame Rust before the scripts,
+//! and see window events before the player does. Every method has a no-op default, and a player
 //! with no extensions behaves exactly as it did before they existed.
 //!
 //! ```ignore
@@ -21,6 +21,7 @@
 //! player.add_extension(Box::new(MyGame { .. }));
 //! ```
 
+pub use crate::player_app::subsystem::Stage;
 use flint_audio::{AudioSystem, Bus};
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
@@ -47,10 +48,150 @@ pub trait PlayerExtension {
     /// atomics).
     fn register_script_api(&mut self, _engine: &mut rhai::Engine) {}
 
+    /// Declare functions through Flint's builder (ADR 0116), so they are
+    /// listed with their parameters and a doc beside the engine's
+    /// (`ScriptSystem::api_listing`), take integers where they want
+    /// numbers, and reach the world through the call handle:
+    ///
+    /// ```ignore
+    /// use flint_script::api::builder::kind::{Entity, Num};
+    /// let mut m = api.module("mygame");
+    /// m.func("boost", "Push the kart forward by this many m/s.")
+    ///     .arg("kart", Entity)
+    ///     .arg("speed", Num)
+    ///     .run(|call, (kart, speed)| { /* call.world_mut()? */ Ok(()) });
+    /// ```
+    ///
+    /// Called once from `add_extension`, after `register_script_api`.
+    /// Functions registered there, on the raw engine, still work and are
+    /// listed as undeclared.
+    fn declare_script_api(&mut self, _api: &mut flint_script::api::ScriptApi) {}
+
+    /// Register the game's own procgen generators (ADR 0119, #195). Called
+    /// once, from `add_extension`, after the script API hooks, with the
+    /// registry the player resolves every scene's `*.procgen.toml` specs
+    /// through; it already holds the
+    /// built-ins. A spec whose `generator` names a type registered here
+    /// resolves like a built-in's: generated at load (or queued, under
+    /// `--procgen-defer`), cached in memory and on the disk, and uploaded
+    /// before the model loader looks for a file of that name.
+    ///
+    /// A generator with a built-in's type name replaces the built-in.
+    /// Generators are `Send + Sync` and stateless; see
+    /// `crates/flint-procgen/CONTRIBUTING.md` for writing one. Add the
+    /// extension before the event loop starts: the first scene's specs are
+    /// resolved as it loads, and a spec resolved before its generator was
+    /// registered has already fallen through to a file or a placeholder.
+    ///
+    /// Only the player sees these: `flint gen`, `flint edit` and
+    /// `flint render` build their registries from the built-ins alone. A
+    /// player built without the `procgen` feature (#754) has no registry,
+    /// and no such hook.
+    #[cfg(feature = "procgen")]
+    fn register_generators(&mut self, _registry: &mut flint_procgen::GeneratorRegistry) {}
+
+    /// The game's own Rust styles (#419): stylize passes written as the
+    /// engine's are (a `static` [`StyleDescriptor`] built with its `const`
+    /// constructor and a `create` that builds a `StylePass`). Called once,
+    /// from `add_extension`, which registers each with
+    /// [`flint_render::stylize::register`]; from then on a style here is
+    /// one like a built-in: F4 lists it (tagged `game`), `--style <name>`
+    /// and `[post_process.styles.<name>]` switch it on, and the player
+    /// draws it.
+    ///
+    /// Add the extension before the event loop starts: the scene's
+    /// `[post_process]` is read against the registry when the renderer is
+    /// made, and a table naming a style not yet registered is dropped. A
+    /// name that is taken (a built-in, a user `.shader.toml` style already
+    /// loaded, another extension's) is refused with an error in the log and
+    /// the rest still register. The registry is the process's, so a second
+    /// `PlayerApp` given the same descriptors changes nothing.
+    ///
+    /// Only the player sees these: `flint render`, `flint edit` and the
+    /// viewer are other binaries. Example game binary:
+    /// `crates/flint-player/examples/cyanotype/`.
+    ///
+    /// [`StyleDescriptor`]: flint_render::stylize::StyleDescriptor
+    fn styles(&self) -> Vec<&'static flint_render::stylize::StyleDescriptor> {
+        Vec::new()
+    }
+
     /// Per-frame Rust, run after the clock ticks and before the scripts'
     /// `on_update`, so anything written to the world here is visible to
-    /// scripts in the same frame.
+    /// scripts in the same frame. It falls between [`Stage::Input`] and
+    /// [`Stage::PreScripts`].
     fn pre_update(&mut self, _ctx: &mut ExtensionCtx) {}
+
+    /// The game's own script modules (ADR 0116, #698, #754): declared once,
+    /// from `add_extension`, and enabled for the whole run, beside the
+    /// modules the scene's subsystems enable. A module is a type
+    /// implementing [`flint_script::ScriptModule`] held in a `static`:
+    ///
+    /// ```ignore
+    /// static KART: KartModule = KartModule;
+    /// const MODULES: &[&dyn flint_script::ScriptModule] = &[&KART];
+    ///
+    /// fn script_modules(&self) -> &[&'static dyn flint_script::ScriptModule] {
+    ///     MODULES
+    /// }
+    /// ```
+    ///
+    /// Its functions are listed under its name with the engine's
+    /// (`ScriptSystem::api_listing`), read what the extension left them
+    /// with [`ExtensionCtx::set_module_state`], and may queue a
+    /// `ScriptCommand::Module` that [`script_command`](Self::script_command)
+    /// takes. Add the extension before the event loop starts, so the first
+    /// scene's `on_init` can call them.
+    fn script_modules(&self) -> &[&'static dyn flint_script::ScriptModule] {
+        &[]
+    }
+
+    /// The scene is up: its world, settings and renderer state are in and
+    /// its scripts have run `on_init`. Called at the end of every scene's
+    /// entry, the first one and each transition's, after the engine's own
+    /// subsystems have heard it.
+    fn scene_loaded(&mut self, _ctx: &mut ExtensionCtx) {}
+
+    /// The scene is going: its scripts have heard `on_scene_exit` and
+    /// nothing has been cleared yet, so drop here what names its entities.
+    /// Called before a transition tears the scene down, and before the
+    /// engine's subsystems hear it (they go the other way round from
+    /// `scene_loaded`, last added first).
+    fn scene_unloading(&mut self, _ctx: &mut ExtensionCtx) {}
+
+    /// A stage of the frame (ADR 0117 decision 1): called at each [`Stage`]
+    /// the engine's own subsystems hear, after them. See [`Stage`] for where
+    /// each falls: [`Stage::Clock`] before the clock ticks, the rest in the
+    /// core's one frame order.
+    ///
+    /// ```ignore
+    /// fn update(&mut self, stage: Stage, ctx: &mut ExtensionCtx) {
+    ///     if stage == Stage::Physics {
+    ///         // the bodies have moved; the camera hasn't followed yet
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// Only the player calls it, as it does every hook here:
+    /// `flint render --scripts` is the engine's own binary and links no
+    /// game's Rust, so a capture of a scene that needs the extension is the
+    /// game binary's, with `--frame-step`.
+    fn update(&mut self, _stage: Stage, _ctx: &mut ExtensionCtx) {}
+
+    /// A script's command, before the engine applies it and after the
+    /// scene's subsystems have passed on it. Return `true` to take it: then
+    /// nothing else sees it. Here the game carries out what its modules'
+    /// functions queued as a `ScriptCommand::Module` with a payload of its
+    /// own type (`ScriptCommand::Module(m)`, then `m.payload::<MyCommand>()`). The frame drains its
+    /// commands twice: after the physics steps, for what `on_update` asked,
+    /// and after `on_draw_ui`.
+    fn script_command(
+        &mut self,
+        _command: &flint_script::context::ScriptCommand,
+        _ctx: &mut ExtensionCtx,
+    ) -> bool {
+        false
+    }
 
     /// See a window event before the player does. Return `true` to consume
     /// it. Only input events (keyboard, IME, mouse buttons, wheel, cursor
@@ -96,9 +237,33 @@ pub trait PlayerExtension {
     /// field rather than quitting), and clicks and the wheel over an egui
     /// area. Clicks on empty space still reach the game.
     ///
-    /// Use windows and areas, or side and top panels. A `CentralPanel`
-    /// covers the whole window, so it takes every click from the game.
-    fn ui(&mut self, _ctx: &egui::Context) {}
+    /// `ui` is the frame's root `egui::Ui`, the one `Context::run_ui` hands
+    /// out (ADR 0121): the shape of eframe's `App::ui` and egui's
+    /// `Plugin::on_begin_pass`. It covers the whole window with no margin
+    /// or background. Show panels on it
+    /// (`egui::Panel::left("inventory").show(ui, |ui| ..)`; a panel on the
+    /// root takes its room from the whole window) and windows and areas
+    /// from it (`egui::Window::new("Quests").show(ui, |ui| ..)`: a `Ui`
+    /// derefs to its `Context`). `ui.ctx()` is the `Context`, to clone or
+    /// keep. A `CentralPanel` covers the whole window, so it takes every
+    /// click from the game.
+    ///
+    /// Before ADR 0121 this took `&egui::Context`. A game's
+    /// `fn ui(&mut self, ctx: &egui::Context)` becomes
+    /// `fn ui(&mut self, ctx: &mut egui::Ui)`, and the body compiles as it
+    /// was: `show(ctx, ..)`, `ctx.input(..)`, `ctx.clone()` and passing
+    /// `ctx` on as a `&Context` all go through the `Deref`.
+    fn ui(&mut self, _ui: &mut egui::Ui) {}
+
+    /// The name `ui` had for one release (#946), when `ui` still took a
+    /// `Context`. The player still calls it, and it calls [`ui`](Self::ui),
+    /// so a game that overrode it draws as before.
+    #[deprecated(
+        note = "`ui` now takes the root `&mut egui::Ui`: rename `fn root_ui` to `fn ui` (ADR 0121)"
+    )]
+    fn root_ui(&mut self, ui: &mut egui::Ui) {
+        self.ui(ui);
+    }
 
     /// Add to or change egui's fonts before the player installs them
     /// (ADR 0081). `defs` already holds the project's `fonts/` (each file
@@ -135,20 +300,32 @@ pub trait PlayerExtension {
     fn debug_panel_ui(&mut self, _name: &str, _ui: &mut egui::Ui) {}
 }
 
-/// What an extension can reach during `pre_update`.
+/// Each extension's egui on the frame's root `Ui`, in the order they were
+/// added (ADR 0121). The call goes through the deprecated `root_ui`, whose
+/// default calls `ui`, so a game that still overrides `root_ui` draws too.
+#[expect(deprecated)]
+pub(crate) fn draw_ui(extensions: &mut [Box<dyn PlayerExtension>], ui: &mut egui::Ui) {
+    for ext in extensions.iter_mut() {
+        ext.root_ui(ui);
+    }
+}
+
+/// What an extension can reach in `pre_update`, at a [`Stage`], as a scene
+/// comes or goes, and at a script command.
 pub struct ExtensionCtx<'a> {
     pub world: &'a mut FlintWorld,
-    /// Already ticked for this frame.
+    /// Already ticked for this frame (at [`Stage::Clock`], last frame's).
     pub clock: &'a GameClock,
-    /// This frame's input, before scripts read it.
+    /// This frame's input.
     pub input: &'a InputState,
-    /// Last frame's camera; scripts and physics may move it later this frame.
+    /// The camera as it stands: last frame's until [`Stage::Physics`],
+    /// final for the frame from [`Stage::PostPhysics`] on.
     pub camera: &'a Camera,
     /// The renderer and GPU handles, for uploading meshes and textures.
     /// `None` until the window and renderer exist.
     pub gpu: Option<ExtensionGpu<'a>>,
     /// The store scripts read and write with `persist_get` / `persist_set`
-    /// (`save/persist.toml`; ADR 0080). Writes here are visible to scripts
+    /// (the game's save file; ADR 0080). Writes here are visible to scripts
     /// this frame, and join the player's save: one second after a burst of
     /// changes, on scene transitions and on exit. Call
     /// [`PersistentStore::request_flush`] to save at the end of this frame
@@ -161,18 +338,73 @@ pub struct ExtensionCtx<'a> {
     /// where the last frame drew them (ADR 0105): cast a ray or a segment
     /// through it to find the first thing drawn along it. Empty until the
     /// first frame is drawn. Scripts cast through the same scene.
-    pub rays: std::sync::Arc<flint_core::ray_mesh::RayScene>,
+    pub rays: std::sync::Arc<flint_geometry::ray_mesh::RayScene>,
+    /// The current scene's top-level tables, as its file wrote them (#686):
+    /// `[post_process]`, `[camera]`, and any table of the game's own. See
+    /// [`scene_table`](Self::scene_table). A scene transition replaces
+    /// them, so read here each frame (or when the scene changes) rather
+    /// than once at start.
+    pub scene_tables: &'a toml::Table,
     /// Events fired with `fire_event`, queued for this frame's scripts.
     pub(crate) fired_events: &'a mut Vec<GameEvent>,
     pub(crate) cursor_captured: bool,
+    /// For [`ExtensionCtx::set_module_state`].
+    pub(crate) script: &'a mut flint_script::ScriptSystem,
 }
 
 impl ExtensionCtx<'_> {
+    /// Hand the game's script modules ([`PlayerExtension::script_modules`])
+    /// what their functions read, one value per type: a module function
+    /// gets it back with `call.ctx().module_state.get_mut::<T>()` (the
+    /// type's `Default` until a value is set). Set it at the stage before
+    /// the scripts that read it run, [`Stage::PreScripts`] for `on_update`.
+    pub fn set_module_state<T: std::any::Any + Send>(&mut self, value: T) {
+        self.script.set_module_state(value);
+    }
+
     /// Whether the cursor is captured now (ADR 0110), as scripts'
     /// `is_cursor_captured()` reads it. While it is, `input.mouse_position`
     /// is the window centre and clicks skip egui.
     pub fn is_cursor_captured(&self) -> bool {
         self.cursor_captured
+    }
+
+    /// The current scene's `[<name>]` table as its file wrote it, or `None`
+    /// when the scene has none (#686).
+    ///
+    /// This is how a game gives a scene its own settings: the scene writes
+    /// `[weather]`, the game's schema layer declares `[table.weather]` in
+    /// `schemas/scene/weather.toml` (so `flint validate` checks every field
+    /// and a misspelled `[wether]` is named), and the extension reads it
+    /// here. The values are the file's own: a default the schema states is
+    /// not filled in, so read with a fallback.
+    ///
+    /// ```ignore
+    /// let rain = ctx
+    ///     .scene_table("weather")
+    ///     .and_then(|weather| flint_core::toml_util::toml_f32(weather.get("rain")?))
+    ///     .unwrap_or(0.0);
+    /// ```
+    pub fn scene_table(&self, name: &str) -> Option<&toml::Table> {
+        self.scene_tables.get(name)?.as_table()
+    }
+
+    /// [`scene_table`](Self::scene_table) read into a type of the game's:
+    /// `None` when the scene has no such table, `Err` when it doesn't fit.
+    ///
+    /// ```ignore
+    /// #[derive(serde::Deserialize, Default)]
+    /// #[serde(default)]
+    /// struct Weather { rain: f32, wind: [f32; 3] }
+    ///
+    /// let weather: Weather = ctx.scene_table_as("weather").transpose()?.unwrap_or_default();
+    /// ```
+    pub fn scene_table_as<T: serde::de::DeserializeOwned>(
+        &self,
+        name: &str,
+    ) -> Option<Result<T, toml::de::Error>> {
+        let table = self.scene_table(name)?;
+        Some(toml::Value::Table(table.clone()).try_into())
     }
 
     /// Fire a custom game event, as a script's `fire_event_data` does.
@@ -268,14 +500,16 @@ impl<'a> ExtensionAudio<'a> {
         self.system.engine.load_sound_from_bytes(name, bytes)
     }
 
-    /// Play the cached sound `name` once. An unknown name is an error;
-    /// with no device it does nothing.
+    /// Play the cached sound `name` once. A preloaded file answers to its
+    /// path (`audio/door.ogg`) or its bare stem (`door`), as in scripts.
+    /// An unknown name is an error naming the nearest cached sound; with
+    /// no device it does nothing.
     pub fn play(&mut self, name: &str, options: &SoundOptions) -> flint_core::Result<()> {
         let engine = &mut self.system.engine;
+        let resolved = engine.resolve_sound(name).into_owned();
+        let name = resolved.as_str();
         if !engine.has_sound(name) {
-            return Err(flint_core::FlintError::AudioError(format!(
-                "Sound not cached: {name}"
-            )));
+            return Err(engine.not_cached(name));
         }
         if !engine.is_available() {
             return Ok(());
@@ -415,7 +649,7 @@ impl ExtensionGpu<'_> {
         self.upload_mesh(name, vertices, indices, material);
         if options.ray_target {
             let positions: Vec<[f32; 3]> = vertices.iter().map(|v| v.position).collect();
-            let mesh = flint_core::ray_mesh::RayMesh::new(&positions, indices);
+            let mesh = flint_geometry::ray_mesh::RayMesh::new(&positions, indices);
             self.renderer
                 .set_ray_mesh(name, Some(std::sync::Arc::new(mesh)));
         }

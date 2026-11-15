@@ -61,10 +61,13 @@ use super::{
     StyleOption, StyleParam, StylePass, StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
+use flint_core::project::{shown, AssetKind, AssetScope};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 
+#[cfg(not(target_arch = "wasm32"))]
+mod bounded;
 mod template;
 pub use template::{template, Template};
 
@@ -781,6 +784,12 @@ impl ShaderStyleDef {
                 self.name
             ));
         }
+        if super::is_game_style(&self.name) {
+            return Err(format!(
+                "{at}: \"{}\" is a style the game registers in Rust (#419); pick another name",
+                self.name
+            ));
+        }
         let stage = match self.stage.as_str() {
             "display" => StyleStage::Display,
             "hdr" => StyleStage::Hdr,
@@ -995,7 +1004,7 @@ pub fn component_name(name: &str) -> String {
     format!("{name}_style")
 }
 
-fn is_identifier(name: &str) -> bool {
+pub(super) fn is_identifier(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
@@ -1494,8 +1503,13 @@ pub fn table_words(count: usize, rows: &[Vec<f32>], slots: Option<&[u32; MAX_IDS
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Report {
     /// Loops in the user's code: each is guarded ([`LOOP_LIMIT`]) unless
-    /// the guard is off ([`set_loop_guard`]).
+    /// the guard is off ([`set_loop_guard`]) or it is [`bounded`](Self::bounded).
     pub loops: usize,
+    /// Of [`loops`](Self::loops), those whose turns the IR proves to be at
+    /// most [`LOOP_LIMIT`] (#424: a `for` over octaves or kernel taps with a
+    /// constant start, bound and step). They can't hang the GPU, so they
+    /// are left as written, unguarded and unwarned.
+    pub bounded: usize,
     /// Texture reads in the user's code (the helpers' own not counted).
     pub texture_reads: usize,
     pub warnings: Vec<String>,
@@ -1546,15 +1560,16 @@ pub fn check_pass(source: &StyleSource, pass: usize, user: &str) -> Result<Repor
             &file,
             e.location(&composed.text)
                 .map(|l| (l.line_number, l.line_position)),
+            e.labels()
+                .next()
+                .and_then(|(span, _)| span_text(&composed, span)),
             e.message(),
             source,
             pass,
         )
     })?;
-    let mut validator = naga::valid::Validator::new(
-        naga::valid::ValidationFlags::all(),
-        naga::valid::Capabilities::default(),
-    );
+    let mut validator =
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), style_capabilities());
     validator.validate(&module).map_err(|e| {
         let mut message = e.as_inner().to_string();
         let mut source_err: Option<&dyn std::error::Error> =
@@ -1568,13 +1583,17 @@ pub fn check_pass(source: &StyleSource, pass: usize, user: &str) -> Result<Repor
             &file,
             e.location(&composed.text)
                 .map(|l| (l.line_number, l.line_position)),
+            e.spans()
+                .next()
+                .and_then(|(span, _)| span_text(&composed, *span)),
             &message,
             source,
             pass,
         )
     })?;
     let mut report = inspect(&module, &composed, &file)?;
-    if report.loops > 0 && LOOP_GUARD.with(|g| g.get()) {
+    let unbounded = report.loops - report.bounded;
+    if unbounded > 0 && LOOP_GUARD.with(|g| g.get()) {
         let user = user_range(&composed);
         guard_loops(&mut module, |span| in_range(&user, span));
         // The guard is ours, so a failure here is a framework bug: say so
@@ -1588,15 +1607,33 @@ pub fn check_pass(source: &StyleSource, pass: usize, user: &str) -> Result<Repor
                     format!("{file}: writing the guarded module failed (a Flint bug, #411): {e}")
                 })?;
         report.guarded = Some(text);
-    } else if report.loops > 0 {
+    } else if unbounded > 0 {
         report.warnings.push(format!(
-            "{file}: warning: {} loop{} and the loop guard is off: a loop that never ends hangs \
-             the GPU until the driver resets it (TDR)",
-            report.loops,
-            if report.loops == 1 { "" } else { "s" }
+            "{file}: warning: {unbounded} loop{} without a constant bound and the loop guard is \
+             off: a loop that never ends hangs the GPU until the driver resets it (TDR)",
+            if unbounded == 1 { "" } else { "s" }
         ));
     }
     Ok(report)
+}
+
+/// What Flint's WGSL validators grant a shader (#946): naga's defaults and
+/// `SHADER_FLOAT16_IN_FLOAT32`, which naga 30 asks of `pack2x16float`,
+/// `unpack2x16float` and `quantizeToF16`. They are core WGSL, naga 23 took
+/// them with no capability, and wgpu grants this one wherever the adapter has
+/// `DownlevelFlags::SHADER_F16_IN_F32`: every backend Flint runs on except
+/// Vulkan on Mesa's llvmpipe without `SHADER_F16`, where the style's build
+/// reports the error instead. The browser's WebGPU always takes them.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn style_capabilities() -> naga::valid::Capabilities {
+    naga::valid::Capabilities::default() | naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32
+}
+
+/// The composed text under an error's primary span: for an unknown
+/// identifier, naga's label covers the identifier itself.
+#[cfg(not(target_arch = "wasm32"))]
+fn span_text(composed: &Composed, span: naga::Span) -> Option<&str> {
+    composed.text.get(span.to_range()?)
 }
 
 /// The byte range of the user's code in the composed text.
@@ -1637,8 +1674,10 @@ fn in_range(range: &std::ops::Range<usize>, span: naga::Span) -> bool {
 /// ```
 ///
 /// `continue` jumps to `continuing`, so every turn counts. A loop that
-/// ends on its own within the limit runs exactly as written. Returns the
-/// number of loops guarded.
+/// ends on its own within the limit runs exactly as written. A loop whose
+/// turns the IR proves to be within it (`bounded`, #424) is left alone: the
+/// guard would never fire, and the plain loop is one the driver can unroll.
+/// Returns the number of loops guarded.
 #[cfg(not(target_arch = "wasm32"))]
 fn guard_loops(module: &mut naga::Module, in_user: impl Fn(naga::Span) -> bool) -> usize {
     let u32_ty = module.types.insert(
@@ -1656,9 +1695,10 @@ fn guard_loops(module: &mut naga::Module, in_user: impl Fn(naga::Span) -> bool) 
         .map(|(h, _)| h)
         .collect();
     for h in handles {
+        let skip = bounded::bounded_loops(module, &module.functions[h], LOOP_LIMIT);
         let f = &mut module.functions[h];
         let mut body = std::mem::take(&mut f.body);
-        guard_block(&mut body, f, u32_ty, &mut guarded);
+        guard_block(&mut body, f, u32_ty, &skip, &mut guarded);
         f.body = body;
     }
     guarded
@@ -1669,6 +1709,7 @@ fn guard_block(
     block: &mut naga::Block,
     f: &mut naga::Function,
     u32_ty: naga::Handle<naga::Type>,
+    skip: &[naga::Span],
     count: &mut usize,
 ) {
     use naga::{BinaryOperator as B, Expression as E, Literal, Statement as S};
@@ -1680,8 +1721,12 @@ fn guard_block(
                 continuing,
                 break_if,
             } => {
-                guard_block(body, f, u32_ty, count);
-                guard_block(continuing, f, u32_ty, count);
+                guard_block(body, f, u32_ty, skip, count);
+                guard_block(continuing, f, u32_ty, skip, count);
+                if skip.contains(&span) {
+                    block.push(statement, span);
+                    continue;
+                }
                 let var = f.local_variables.append(
                     naga::LocalVariable {
                         name: Some(format!("flint_loop_guard_{count}")),
@@ -1744,14 +1789,14 @@ fn guard_block(
                 continuing.push(S::Emit(naga::Range::new_from_bounds(done, last)), span);
                 *break_if = Some(last);
             }
-            S::Block(b) => guard_block(b, f, u32_ty, count),
+            S::Block(b) => guard_block(b, f, u32_ty, skip, count),
             S::If { accept, reject, .. } => {
-                guard_block(accept, f, u32_ty, count);
-                guard_block(reject, f, u32_ty, count);
+                guard_block(accept, f, u32_ty, skip, count);
+                guard_block(reject, f, u32_ty, skip, count);
             }
             S::Switch { cases, .. } => {
                 for case in cases {
-                    guard_block(&mut case.body, f, u32_ty, count);
+                    guard_block(&mut case.body, f, u32_ty, skip, count);
                 }
             }
             _ => {}
@@ -1760,20 +1805,45 @@ fn guard_block(
     }
 }
 
+/// The identifiers an error is about, read from its structure rather than
+/// its wording (#946): the source text under its span when that is one
+/// identifier, and every identifier its message names, however the compiler
+/// quotes them (naga 23 wrote `'x'`, naga 30 writes `` `x` ``, the browser's
+/// compilers have their own).
+fn named<'a>(message: &'a str, subject: Option<&'a str>) -> Vec<&'a str> {
+    let ident = |t: &&str| t.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_');
+    let subject = subject
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        .filter(ident);
+    subject
+        .into_iter()
+        .chain(
+            message
+                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .filter(ident),
+        )
+        .collect()
+}
+
 /// `file:line:col: message`, with the line remapped into the user's file
 /// and the offending line quoted; a hint when the user called a helper of
 /// an input they didn't declare.
 ///
-/// `at` is the composed module's 1-based (line, column): naga's natively,
-/// the browser compiler's on the web (#415).
+/// `at` is the composed module's 1-based (line, column) and `subject` the
+/// composed text under the error's span: naga's natively, the browser
+/// compiler's on the web (#415). The hints go by the identifiers these
+/// name ([`named`]), not by the message's wording.
 fn locate(
     composed: &Composed,
     file: &str,
     at: Option<(u32, u32)>,
+    subject: Option<&str>,
     message: &str,
     source: &StyleSource,
     pass: usize,
 ) -> String {
+    let names = named(message, subject);
     let mut out = match at {
         Some((line_number, line_position)) => match composed.user_line(line_number as usize) {
             Some(line) => {
@@ -1787,7 +1857,7 @@ fn locate(
                     text.trim_end()
                 )
             }
-            None if message.contains("'style'") => format!(
+            None if names.contains(&"style") => format!(
                 "{file}: no `fn style(p: StylePixel) -> vec4<f32>`; the style draws what it returns"
             ),
             None => format!(
@@ -1796,7 +1866,11 @@ fn locate(
         },
         None => format!("{file}: {message}"),
     };
-    let missing = |helpers: &[&str]| helpers.iter().any(|h| message.contains(h));
+    let missing = |helpers: &[&str]| {
+        names
+            .iter()
+            .any(|n| helpers.iter().any(|h| n.starts_with(h)))
+    };
     if !source.inputs.depth && missing(&["flint_depth", "flint_view_depth", "flint_world_pos"]) {
         out.push_str("\n    hint: add \"depth\" to inputs in the .shader.toml");
     }
@@ -1806,7 +1880,7 @@ fn locate(
     if !source.inputs.edges && missing(&["flint_edges", "flint_edge"]) {
         out.push_str("\n    hint: add \"edges\" to inputs in the .shader.toml");
     }
-    if missing(&["'flint_image_", "'flint_lut_"]) {
+    if missing(&["flint_image_", "flint_lut_"]) {
         let names: Vec<&str> = source.images.iter().map(|i| i.name.as_str()).collect();
         out.push_str(&format!(
             "\n    hint: an image is declared as [images.<name>] or an option with \
@@ -1819,16 +1893,11 @@ fn locate(
         ));
     }
     // A helper of a target this pass doesn't read (#412)
-    if let Some(at) = message.find("flint_target_") {
-        let rest = &message[at + "flint_target_".len()..];
-        let name: String = rest
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-            .collect();
+    if let Some(name) = names.iter().find_map(|n| n.strip_prefix("flint_target_")) {
         let name = ["_size", "_load"]
             .iter()
             .find_map(|s| name.strip_suffix(s))
-            .unwrap_or(&name);
+            .unwrap_or(name);
         let reads = &source.passes[pass].reads;
         if !reads.iter().any(|r| source.targets[r.target].name == name) {
             let pass_name = &source.passes[pass].name;
@@ -1890,6 +1959,7 @@ fn inspect(module: &naga::Module, composed: &Composed, file: &str) -> Result<Rep
             continue;
         }
         report.loops += count_loops(&f.body);
+        report.bounded += bounded::bounded_loops(module, f, LOOP_LIMIT).len();
         report.texture_reads += f
             .expressions
             .iter()
@@ -2023,7 +2093,19 @@ pub fn compiler_error_pass(
         .location
         .map(|l| (l.line_number, l.line_position))
         .filter(|(line, _)| *line > 0);
-    let mut out = locate(composed, &file, at, first.message.trim(), source, pass);
+    let subject = first.location.and_then(|l| {
+        let start = l.offset as usize;
+        composed.text.get(start..start + l.length as usize)
+    });
+    let mut out = locate(
+        composed,
+        &file,
+        at,
+        subject,
+        first.message.trim(),
+        source,
+        pass,
+    );
     if errors.len() > 1 {
         out.push_str(&format!("\n    (and {} more)", errors.len() - 1));
     }
@@ -2061,6 +2143,16 @@ struct BindNames {
     targets: Vec<[&'static str; 2]>,
 }
 
+impl BindNames {
+    /// Every name the chain's bind cache keeps a group under. The pass
+    /// labels and target textures aren't cache keys.
+    fn bind_groups(&self) -> impl Iterator<Item = &'static str> + '_ {
+        [self.input, self.extra]
+            .into_iter()
+            .chain(self.passes.iter().flat_map(|p| [p.frame, p.targets]))
+    }
+}
+
 #[derive(Clone, Copy)]
 struct PassNames {
     frame: &'static str,
@@ -2087,59 +2179,159 @@ fn loaded(name: &str) -> Option<Arc<Loaded>> {
         .cloned()
 }
 
-/// The folders a scene in `scene_dir` finds styles in: its own `styles/`,
-/// then its parent's (a game's `levels/` beside `styles/`), as models are.
-pub fn style_dirs(scene_dir: &Path) -> Vec<PathBuf> {
-    let mut dirs = vec![scene_dir.join("styles")];
-    if let Some(parent) = scene_dir.parent() {
-        dirs.push(parent.join("styles"));
-    }
-    dirs
+/// The folders a scene finds styles in, nearest first: `styles/` in the
+/// scene's directory, in each directory above it up to the project root,
+/// then in the mounted engine (ADR 0114; [`AssetKind::Styles`]).
+pub fn style_dirs(scope: &AssetScope) -> Vec<PathBuf> {
+    scope.search_dirs(AssetKind::Styles)
 }
 
-/// Register every `*.shader.toml` in `scene_dir`'s style folders that
-/// isn't registered yet. Call it before the scene's `[post_process]` is
-/// read, or its tables name an unknown style. Returns one message for each
-/// file that couldn't be loaded (and each warning a check raised); a
-/// style whose shader fails still registers, drawing a passthrough.
+/// [`load_for`] for a host that kept only the scene's directory: the
+/// project is found from it.
 pub fn load_dir(scene_dir: &Path) -> Vec<String> {
+    load_for(&AssetScope::for_dir(scene_dir))
+}
+
+/// Register every user style a scene can see: each `*.shader.toml` the
+/// project's one search lists from `scope`
+/// ([`Project::list`](flint_core::project::Project::list)). Call it before
+/// the scene's `[post_process]` is read, or its tables name an unknown
+/// style. Returns one message for each file that couldn't be loaded (and
+/// each warning a check raised); a style whose shader fails still
+/// registers, drawing a passthrough.
+///
+/// Which of two styles of one name wins (#426): the nearest to the scene,
+/// as for every asset. In one `styles/` folder a style is its file's name,
+/// so there is one of a name. The registry is one for the process, so a
+/// style this scene sees in a nearer file than the one loaded (for an
+/// earlier scene, from another folder) takes its place at the same
+/// registry index, as a hot reload does. Styles only an earlier scene's
+/// folders had stay registered.
+pub fn load_for(scope: &AssetScope) -> Vec<String> {
     let mut messages = Vec::new();
-    for dir in style_dirs(scene_dir) {
-        let Ok(mut entries) = flint_core::vfs::read_dir(&dir) else {
-            continue;
-        };
-        entries.sort();
-        for path in entries {
-            let is_style = path
-                .file_name()
-                .and_then(|f| f.to_str())
-                .is_some_and(|f| f.ends_with(SUFFIX));
-            if is_style {
-                if let Err(e) = load_file(&path, &mut messages) {
-                    messages.push(e);
-                }
-            }
+    for listed in scope.list(AssetKind::Styles) {
+        if let Err(e) = load_file(&listed.path, &mut messages) {
+            messages.push(e);
         }
     }
     messages
 }
 
-/// Register the style `path` describes (see [`load_dir`]).
+/// Register the style `path` describes (see [`load_for`]): new, or in
+/// place of the style of its name loaded from another file.
+///
+/// A file that doesn't read (a TOML typo, a `name` that isn't the file's,
+/// an unknown input, a default outside its range) registers nothing: its
+/// error is kept by path for [`errors`] until the file loads or goes
+/// (#425), so the host's card shows it as it shows a shader that fails.
 pub fn load_file(path: &Path, messages: &mut Vec<String>) -> Result<(), String> {
-    let source = read_source(path)?;
-    if let Some(existing) = loaded(&source.name) {
-        if existing.source.toml_path != source.toml_path {
-            messages.push(format!(
-                "{}: style \"{}\" is already loaded from {}; this one is skipped",
-                path.display(),
-                source.name,
-                existing.source.toml_path.display()
-            ));
-        }
+    // Loaded from this very file: a changed one is the reload's to read
+    if loaded_from(path).is_some() {
         return Ok(());
     }
-    install(source, messages, false);
+    // Stamped before the read, so a save during it is read at the next poll
+    #[cfg(not(target_arch = "wasm32"))]
+    let stamp = modified(path);
+    let source = match read_source(path) {
+        Ok(source) => source,
+        Err(e) => {
+            let failure = Failure {
+                name: AssetKind::Styles
+                    .info()
+                    .name_of(path)
+                    .unwrap_or_else(|| shown(path)),
+                message: e.clone(),
+                #[cfg(not(target_arch = "wasm32"))]
+                modified: stamp,
+            };
+            failed().insert(path.to_path_buf(), failure);
+            return Err(e);
+        }
+    };
+    failed().remove(path);
+    match loaded(&source.name) {
+        Some(existing) => {
+            tracing::info!(
+                "style '{}': {} takes over from {} (the nearest styles/ to the scene wins)",
+                source.name,
+                shown(path),
+                shown(&existing.source.toml_path)
+            );
+            install(source, messages, true);
+        }
+        None => install(source, messages, false),
+    }
     Ok(())
+}
+
+/// Take out of `styles` (a scene's `[post_process.styles]`) each table
+/// naming a user style that `scope` can't see (#426), with a warning each.
+/// The registry is one for the process, so after a transition it still
+/// holds the styles an earlier scene's folders had; without this a scene
+/// would draw one of them in the player and not when it loads first, in
+/// `flint render` or alone. Call it after [`load_for`] of the same scope,
+/// on a copy of the tables each time they are read into a config: a
+/// table of a style the scene sees is kept, and so is one the registry
+/// doesn't know, which the read warns about. Kept in the scene's own
+/// tables, a dropped one comes back when a file the scene can see takes
+/// the name over ([`reload_changed_for`]). It reads no folder: a style is
+/// seen when its file is in one of the scope's [`style_dirs`].
+pub fn drop_unseen(styles: &mut BTreeMap<String, toml::Table>, scope: &AssetScope) -> Vec<String> {
+    let user: Vec<(String, PathBuf)> = styles
+        .keys()
+        .filter_map(|name| loaded(name).map(|l| (name.clone(), l.source.toml_path.clone())))
+        .collect();
+    if user.is_empty() {
+        return Vec::new();
+    }
+    let dirs = style_dirs(scope);
+    let mut warnings = Vec::new();
+    for (name, from) in user {
+        let folder = from.parent().unwrap_or(Path::new(""));
+        let seen = dirs
+            .iter()
+            .any(|dir| flint_core::project::same_path(dir, folder));
+        if !seen {
+            styles.remove(&name);
+            warnings.push(format!(
+                "style '{name}' in [post_process.styles] is a user style from {}, \
+                 which this scene can't see (it was loaded for another scene), so it is \
+                 not drawn; copy it into a styles/ folder this scene searches \
+                 (`flint asset where styles {name} --scene <scene>` lists them)",
+                shown(&from)
+            ));
+        }
+    }
+    warnings
+}
+
+/// A `.shader.toml` that didn't load (#425): it registered nothing, so no
+/// [`Loaded`] holds its error.
+struct Failure {
+    /// The style its file names (`x` for `x.shader.toml`).
+    name: String,
+    message: String,
+    /// The file's modified time when it was read: the reload poll tries it
+    /// again only once that moves, so a broken file reports once.
+    #[cfg(not(target_arch = "wasm32"))]
+    modified: Option<std::time::SystemTime>,
+}
+
+/// The files that didn't load, by path, until they do or are deleted.
+static FAILED: Mutex<BTreeMap<PathBuf, Failure>> = Mutex::new(BTreeMap::new());
+
+fn failed() -> std::sync::MutexGuard<'static, BTreeMap<PathBuf, Failure>> {
+    FAILED.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The loaded style whose description is the file at `path`.
+fn loaded_from(path: &Path) -> Option<Arc<Loaded>> {
+    LOADED
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|l| flint_core::project::same_path(&l.source.toml_path, path))
+        .cloned()
 }
 
 /// Read and check the description at `path` (not its shader).
@@ -2183,6 +2375,7 @@ pub fn check_file(path: &Path) -> Result<Report, String> {
         match check_pass(&source, i, &user) {
             Ok(report) => {
                 total.loops += report.loops;
+                total.bounded += report.bounded;
                 total.texture_reads += report.texture_reads;
                 total.warnings.extend(report.warnings);
             }
@@ -2206,10 +2399,12 @@ pub fn check_file(path: &Path) -> Result<Report, String> {
 
 /// The modified time of `path` on disk, for the reload polls (native
 /// only: hot reload reads the disk, never the vfs, and a bundle never
-/// changes).
+/// changes). Through `flint_core::file_watch`, which in the player never
+/// waits on the disk (#633): the stamp taken at a load and the one a poll
+/// compares it with must come from the same place.
 #[cfg(not(target_arch = "wasm32"))]
 fn modified(path: &Path) -> Option<std::time::SystemTime> {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+    flint_core::file_watch::modified(path)
 }
 
 /// Whether user WGSL calls `flint_style_blend` outside a line comment.
@@ -2415,9 +2610,13 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
         .find(|l| replace && l.source.name == loaded.source.name)
     {
         Some(slot) => {
-            *slot = loaded;
+            let old = std::mem::replace(slot, loaded);
             drop(all);
             super::replace_runtime(descriptor);
+            // The old install's groups bind the old pass's buffers and no
+            // one asks for its names again: every cache drops them at its
+            // next frame, not at the next resize (#427)
+            crate::bind_cache::retire(old.names.bind_groups());
         }
         None => {
             all.push(loaded);
@@ -2448,9 +2647,25 @@ impl Reload {
     }
 }
 
+/// [`reload_changed_for`] for a host that kept only the scene's directory.
+/// The project is found from it each call: a host that polls holds an
+/// [`AssetScope`] and calls [`reload_changed_for`].
+pub fn reload_changed(scene_dir: &Path) -> Reload {
+    #[cfg(not(target_arch = "wasm32"))]
+    return reload_changed_for(&AssetScope::for_dir(scene_dir));
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = scene_dir;
+        Reload::default()
+    }
+}
+
 /// Hot reload of the descriptions (#275), natively: read again every
 /// loaded `.shader.toml` whose modified time moved, and load any new one
-/// in `scene_dir`'s style folders. A description that no longer reads
+/// in the style folders `scope` searches ([`style_dirs`]), by the same
+/// rule a load follows: a file that appears nearer to the scene than the
+/// style of its name that is loaded takes over, and when it goes the next
+/// one out is loaded again. A description that no longer reads
 /// keeps the style as it was and shows the error ([`errors`]); one that
 /// does replaces the style at its registry index, so the renderer builds
 /// it again on the next frame. The WGSL itself is polled by the pass, so
@@ -2459,7 +2674,7 @@ impl Reload {
 /// Costs one `stat` a loaded style and one directory listing a style
 /// folder: call it a few times a second, not every frame. On the web it
 /// does nothing.
-pub fn reload_changed(scene_dir: &Path) -> Reload {
+pub fn reload_changed_for(scope: &AssetScope) -> Reload {
     let mut reload = Reload::default();
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -2485,69 +2700,59 @@ pub fn reload_changed(scene_dir: &Path) -> Reload {
                 }
             }
         }
-        let (before, known): (Vec<String>, Vec<PathBuf>) = LOADED
+        let before: Vec<(String, PathBuf)> = LOADED
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .iter()
             .map(|l| (l.source.name.clone(), l.source.toml_path.clone()))
-            .unzip();
+            .collect();
+        // A file that didn't load and is gone takes its error with it (#425)
+        failed().retain(|path, _| modified(path).is_some());
         // New files; one that failed is tried again only once it changes,
-        // so a broken new file reports once, not four times a second
-        static REFUSED: Mutex<BTreeMap<PathBuf, Option<std::time::SystemTime>>> =
-            Mutex::new(BTreeMap::new());
-        for dir in style_dirs(scene_dir) {
-            let Ok(mut entries) = std::fs::read_dir(&dir).map(|rd| {
-                rd.filter_map(|e| e.ok().map(|e| e.path()))
-                    .collect::<Vec<_>>()
-            }) else {
+        // so a broken new file reports once, not four times a second (the
+        // load that first refused it, `load_for`'s included, stamped it)
+        // The folders in the search's order, the nearest file of a name the
+        // one that counts: `Project::list`'s rule, read through
+        // `file_watch` so the poll never waits on the disk (#633)
+        let mut seen = std::collections::HashSet::new();
+        for dir in style_dirs(scope) {
+            let Some(mut entries) = flint_core::file_watch::list(&dir) else {
                 continue;
             };
             entries.sort();
-            for path in entries {
-                let is_style = path
-                    .file_name()
-                    .and_then(|f| f.to_str())
-                    .is_some_and(|f| f.ends_with(SUFFIX));
-                if !is_style || known.contains(&path) {
+            for (path, _) in entries {
+                let Some(name) = AssetKind::Styles.info().name_of(&path) else {
+                    continue;
+                };
+                if !seen.insert(name) || loaded_from(&path).is_some() {
                     continue;
                 }
                 let now = modified(&path);
-                let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
-                if refused.get(&path) == Some(&now) {
+                let refused_at = failed().get(&path).map(|f| f.modified);
+                if refused_at == Some(now) {
                     continue;
                 }
-                match load_file(&path, &mut reload.messages) {
-                    Ok(()) => {
-                        // Skipped (its name is loaded from another folder):
-                        // said once, like a failure
-                        let took = LOADED
-                            .read()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .iter()
-                            .any(|l| l.source.toml_path == path);
-                        if took {
-                            refused.remove(&path);
-                        } else {
-                            refused.insert(path, now);
-                        }
-                    }
-                    Err(e) => {
-                        reload.messages.push(e);
-                        refused.insert(path, now);
-                    }
+                if let Err(e) = load_file(&path, &mut reload.messages) {
+                    reload.messages.push(e);
                 }
             }
         }
-        reload.added = LOADED
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .map(|l| l.source.name.clone())
-            .filter(|n| !before.contains(n))
-            .collect();
+        for l in LOADED.read().unwrap_or_else(|e| e.into_inner()).iter() {
+            let name = &l.source.name;
+            match before.iter().find(|(n, _)| n == name) {
+                None => reload.added.push(name.clone()),
+                // Another file took the name over: its parameters may differ
+                Some((_, path)) if *path != l.source.toml_path => {
+                    if !reload.replaced.contains(name) {
+                        reload.replaced.push(name.clone());
+                    }
+                }
+                Some(_) => {}
+            }
+        }
     }
     #[cfg(target_arch = "wasm32")]
-    let _ = scene_dir;
+    let _ = scope;
     reload
 }
 
@@ -2565,9 +2770,31 @@ pub fn refresh_settings(
     }
 }
 
-/// Every loaded user style with its current error, for a host to show
-/// (a console line, an overlay). Empty when all of them compile.
+/// Every user style with its current error, for a host to show (a console
+/// line, an overlay): `(style, message)`. First each `.shader.toml` that
+/// didn't load (#425: it registered nothing, so the scene's table for it
+/// names an unknown style; the style is the one its file names, and the
+/// message starts with the file's path), then each loaded style whose
+/// shader, images or description fail. Empty when all of them load and
+/// compile.
 pub fn errors() -> Vec<(String, String)> {
+    let mut all = load_errors();
+    all.extend(compile_errors());
+    all
+}
+
+/// The `.shader.toml` files that didn't load, as [`errors`] lists them:
+/// a file's entry stays until it loads or is deleted (the reload poll
+/// notices both), whichever scene's folder it was found in.
+pub fn load_errors() -> Vec<(String, String)> {
+    failed()
+        .values()
+        .map(|f| (f.name.clone(), f.message.clone()))
+        .collect()
+}
+
+/// The loaded styles' errors, as [`errors`] lists them.
+fn compile_errors() -> Vec<(String, String)> {
     LOADED
         .read()
         .unwrap_or_else(|e| e.into_inner())
@@ -2641,6 +2868,9 @@ struct Build {
     /// Frames since the file was last looked at.
     #[cfg(not(target_arch = "wasm32"))]
     since_poll: u32,
+    /// The [`poll_files_now`] count at that look.
+    #[cfg(not(target_arch = "wasm32"))]
+    polled_at: u32,
 }
 
 /// A pipeline made but not yet trusted: it draws once both of the GPU's
@@ -2827,8 +3057,8 @@ fn build(d: &StyleDevice) -> CustomPass {
             }
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("User Style Layout"),
-                bind_group_layouts: &layouts,
-                push_constant_ranges: &[],
+                bind_group_layouts: &layouts.iter().copied().map(Some).collect::<Vec<_>>(),
+                immediate_size: 0,
             });
             PassGpu {
                 format: p
@@ -2844,6 +3074,8 @@ fn build(d: &StyleDevice) -> CustomPass {
                     modified: None,
                     #[cfg(not(target_arch = "wasm32"))]
                     since_poll: 0,
+                    #[cfg(not(target_arch = "wasm32"))]
+                    polled_at: polls_asked(),
                 }),
                 error: Mutex::new(None),
             }
@@ -2865,8 +3097,8 @@ fn build(d: &StyleDevice) -> CustomPass {
     };
     let passthrough_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("User Style Passthrough Layout"),
-        bind_group_layouts: &[&frame_bgl, &input_bgl],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&frame_bgl), Some(&input_bgl)],
+        immediate_size: 0,
     });
     let (_, passthrough) = pipeline(
         device,
@@ -2930,6 +3162,10 @@ fn pipeline(
     text: &str,
     format: wgpu::TextureFormat,
 ) -> (wgpu::ShaderModule, wgpu::RenderPipeline) {
+    // User WGSL, so it keeps every runtime check wgpu has (loop bounding
+    // included, after #945) and never goes through `TrustedShader` (#944).
+    // The passthrough is composed from the user's source too.
+    #[allow(clippy::disallowed_methods)]
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("User Style Shader"),
         source: wgpu::ShaderSource::Wgsl(text.into()),
@@ -2956,7 +3192,7 @@ fn pipeline(
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     });
     (module, pipeline)
@@ -2966,6 +3202,26 @@ fn pipeline(
 /// about four times a second at 60 fps, and one `stat` each.
 #[cfg(not(target_arch = "wasm32"))]
 const POLL_FRAMES: u32 = 15;
+
+/// How many times [`poll_files_now`] was called.
+#[cfg(not(target_arch = "wasm32"))]
+static POLLS_ASKED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+#[cfg(not(target_arch = "wasm32"))]
+fn polls_asked() -> u32 {
+    POLLS_ASKED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Have every user style's pass look at its WGSL and image files at its
+/// next draw, whatever its frame count (#432). A window draws sixty frames
+/// a second and a pass looks every [`POLL_FRAMES`]; a host that draws one
+/// frame a change (`flint render --watch`) calls this before the frame, so
+/// the save it was woken for is the one it draws. Natively; on the web the
+/// files never change and this does nothing.
+pub fn poll_files_now() {
+    #[cfg(not(target_arch = "wasm32"))]
+    POLLS_ASKED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
 
 // ---------------------------------------------------------------------------
 // Images (#413)
@@ -2999,6 +3255,9 @@ struct ImageSet {
     generation: u64,
     #[cfg(not(target_arch = "wasm32"))]
     since_poll: u32,
+    /// The [`poll_files_now`] count at the last look.
+    #[cfg(not(target_arch = "wasm32"))]
+    polled_at: u32,
 }
 
 /// What one [`ImageSet::update`] did.
@@ -3053,6 +3312,8 @@ impl ImageSet {
             generation: 0,
             #[cfg(not(target_arch = "wasm32"))]
             since_poll: 0,
+            #[cfg(not(target_arch = "wasm32"))]
+            polled_at: polls_asked(),
         })
     }
 
@@ -3083,7 +3344,7 @@ impl ImageSet {
             };
             let path = self.dir.join(&want);
             #[cfg(not(target_arch = "wasm32"))]
-            let now = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            let now = modified(&path);
             #[cfg(target_arch = "wasm32")]
             let now: Option<std::time::SystemTime> = None;
             let is_loaded = slot.loaded.as_ref().is_some_and(|(f, _)| *f == want);
@@ -3200,14 +3461,14 @@ fn upload_image(
         view_formats: &[],
     });
     queue.write_texture(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: &texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
         &image,
-        wgpu::ImageDataLayout {
+        wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(width * 4),
             rows_per_image: Some(height),
@@ -3225,6 +3486,7 @@ fn clear(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view,
             resolve_target: None,
+            depth_slice: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                 store: wgpu::StoreOp::Store,
@@ -3233,6 +3495,7 @@ fn clear(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         depth_stencil_attachment: None,
         timestamp_writes: None,
         occlusion_query_set: None,
+        multiview_mask: None,
     });
 }
 
@@ -3277,7 +3540,7 @@ impl CustomPass {
         let path = &source.passes[i].wgsl_path;
         let gpu = &self.passes[i];
         #[cfg(not(target_arch = "wasm32"))]
-        let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        let modified = modified(path);
         let user = match flint_core::vfs::read_to_string(path) {
             Ok(user) => user,
             Err(e) => {
@@ -3314,9 +3577,9 @@ impl CustomPass {
             },
             None => compose_pass(source, i, &user),
         };
-        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let guard = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let (module, made) = pipeline(device, &gpu.layout, &composed.text, gpu.format);
-        let scope = Settling::new(device.pop_error_scope());
+        let scope = Settling::new(guard.pop());
         let info = Settling::new(module.get_compilation_info());
         build.pending = Some(Pending {
             pipeline: made,
@@ -3375,9 +3638,11 @@ impl CustomPass {
         #[cfg(not(target_arch = "wasm32"))]
         let poll = {
             images.since_poll += 1;
-            let due = images.since_poll >= POLL_FRAMES;
+            let asked = polls_asked();
+            let due = images.since_poll >= POLL_FRAMES || images.polled_at != asked;
             if due {
                 images.since_poll = 0;
+                images.polled_at = asked;
             }
             due
         };
@@ -3418,13 +3683,13 @@ impl CustomPass {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
                 build.since_poll += 1;
-                if build.since_poll < POLL_FRAMES {
+                let asked = polls_asked();
+                if build.since_poll < POLL_FRAMES && build.polled_at == asked {
                     continue;
                 }
                 build.since_poll = 0;
-                let now = std::fs::metadata(&pass.wgsl_path)
-                    .and_then(|m| m.modified())
-                    .ok();
+                build.polled_at = asked;
+                let now = modified(&pass.wgsl_path);
                 now.is_some() && now != build.modified
             };
             if changed {
@@ -4253,16 +4518,96 @@ fn style(p: StylePixel) -> vec4<f32> {
         let report = check(&s, user).unwrap();
         assert_eq!(report.loops, 2);
         assert_eq!(report.texture_reads, 1, "one call site, written out once");
-        assert!(report.warnings.is_empty(), "guarded: {:?}", report.warnings);
-        assert!(report.guarded.is_some());
+        // #424: both have constant bounds, so neither needs the guard
+        assert_eq!(report.bounded, 2);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(report.guarded, None, "nothing to guard");
+    }
 
-        // With the guard off the loops are only warned about
+    /// #424: with the guard off, a loop whose bound isn't a constant is
+    /// warned about and a three-octave `for` is not; with it on (always,
+    /// outside tests) neither is, and only the first is guarded.
+    #[test]
+    fn only_a_loop_without_a_constant_bound_is_warned_about() {
+        let s = duotone();
+        let octaves = r#"
+fn style(p: StylePixel) -> vec4<f32> {
+    var n = 0.0;
+    var amp = 0.5;
+    var uv = p.uv * 4.0;
+    for (var i = 0; i < 3; i++) {
+        n += amp * flint_sample(uv).r;
+        uv *= 2.0;
+        amp *= 0.5;
+    }
+    return vec4<f32>(p.color.rgb * n * params.mix, p.color.a);
+}
+"#;
+        let until = r#"
+fn style(p: StylePixel) -> vec4<f32> {
+    var x = p.color.r;
+    loop {
+        if x > 1.0 { break; }
+        x += 0.1;
+    }
+    return vec4<f32>(vec3<f32>(x * params.mix), 1.0);
+}
+"#;
         set_loop_guard(false);
-        let report = check(&s, user).unwrap();
+        let off = (check(&s, octaves), check(&s, until));
         set_loop_guard(true);
-        assert_eq!(report.guarded, None);
-        assert_eq!(report.warnings.len(), 1);
-        assert!(report.warnings[0].contains("2 loops"));
+        let (octaves_off, until_off) = (off.0.unwrap(), off.1.unwrap());
+        assert!(
+            octaves_off.warnings.is_empty(),
+            "{:?}",
+            octaves_off.warnings
+        );
+        assert_eq!(until_off.warnings.len(), 1, "{:?}", until_off.warnings);
+        assert!(
+            until_off.warnings[0].contains("1 loop without a constant bound"),
+            "{}",
+            until_off.warnings[0]
+        );
+
+        let octaves_on = check(&s, octaves).unwrap();
+        assert_eq!((octaves_on.loops, octaves_on.bounded), (1, 1));
+        assert!(octaves_on.warnings.is_empty() && octaves_on.guarded.is_none());
+        let until_on = check(&s, until).unwrap();
+        assert_eq!((until_on.loops, until_on.bounded), (1, 0));
+        assert!(until_on.warnings.is_empty(), "{:?}", until_on.warnings);
+        let text = until_on.guarded.expect("guarded");
+        assert_eq!(text.matches(&format!(">= {LOOP_LIMIT}u")).count(), 1);
+    }
+
+    /// #424: the shipped example styles load with no warning, and their
+    /// constant-bound loops (orton's 13-tap blurs) are left as written;
+    /// radial_blur's loop runs to a parameter, so it is still guarded.
+    #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
+    fn example_styles_warn_about_nothing() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/styles");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if !path.to_string_lossy().ends_with(".shader.toml") {
+                continue;
+            }
+            let report = check_file(&path).unwrap_or_else(|e| panic!("{e}"));
+            assert!(
+                report.warnings.is_empty(),
+                "{}: {:?}",
+                path.display(),
+                report.warnings
+            );
+            let name = path.file_name().unwrap().to_string_lossy();
+            match &*name {
+                "orton.shader.toml" => assert_eq!((report.loops, report.bounded), (2, 2)),
+                "radial_blur.shader.toml" => assert_eq!((report.loops, report.bounded), (1, 0)),
+                _ => {}
+            }
+            checked += 1;
+        }
+        assert!(checked >= 9, "only {checked} styles in {}", dir.display());
     }
 
     /// #411: every user loop gets a counter of its own (reset where it
@@ -4296,6 +4641,8 @@ fn style(p: StylePixel) -> vec4<f32> {
 "#;
         let report = check(&s, user).unwrap();
         assert_eq!(report.loops, 4);
+        // The `for` over 9 is proven to end (#424) and left as written
+        assert_eq!(report.bounded, 1);
         let text = report.guarded.expect("guarded");
         // It parses and validates as naga wrote it
         let module = naga::front::wgsl::parse_str(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
@@ -4306,8 +4653,8 @@ fn style(p: StylePixel) -> vec4<f32> {
         .validate(&module)
         .unwrap();
         let limit = format!(">= {LOOP_LIMIT}u");
-        assert_eq!(text.matches(&limit).count(), 4, "{text}");
-        assert_eq!(text.matches("break if").count(), 4, "{text}");
+        assert_eq!(text.matches(&limit).count(), 3, "{text}");
+        assert_eq!(text.matches("break if").count(), 3, "{text}");
         // The user's own break_if is kept, or-ed with the guard
         assert!(text.contains("> 2f) || ("), "{text}");
         // The prelude has no loops; the written module none we didn't add
@@ -4331,7 +4678,7 @@ fn style(p: StylePixel) -> vec4<f32> {
             let instance = crate::gpu_select::instance();
             let adapter = crate::gpu_select::request_adapter(&instance, None).await?;
             adapter
-                .request_device(&wgpu::DeviceDescriptor::default(), None)
+                .request_device(&wgpu::DeviceDescriptor::default())
                 .await
                 .ok()
         })
@@ -4689,11 +5036,243 @@ fn style(p: StylePixel) -> vec4<f32> {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    fn game_pass(_: &super::super::StyleDevice) -> Box<dyn super::super::StylePass> {
+        unreachable!("never built")
+    }
+
+    static GAME_TAKEN: StyleDescriptor = StyleDescriptor::new(
+        "utest_game_owned",
+        "Game owned",
+        StyleStage::Display,
+        game_pass,
+    );
+
+    /// #419: a `.shader.toml` can't take a name a game registered in Rust,
+    /// and the game's descriptor stays where it was.
+    #[test]
+    fn a_user_style_cannot_take_a_game_styles_name() {
+        super::super::register(&GAME_TAKEN).unwrap();
+        let dir = std::env::temp_dir().join(format!("flint-game-owned-{}", std::process::id()));
+        let styles = dir.join("styles");
+        std::fs::create_dir_all(&styles).unwrap();
+        std::fs::write(
+            styles.join("utest_game_owned.shader.toml"),
+            "version = 1\nname = \"utest_game_owned\"\nshader = \"s.wgsl\"\n",
+        )
+        .unwrap();
+        std::fs::write(styles.join("s.wgsl"), PASSTHROUGH).unwrap();
+        let messages = load_dir(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("is a style the game registers in Rust")),
+            "{messages:?}"
+        );
+        let found = super::super::find("utest_game_owned").unwrap();
+        assert!(std::ptr::eq(found, &GAME_TAKEN));
+        // Nor can a hot reload put one in its place
+        static IMPOSTOR: StyleDescriptor = StyleDescriptor::new(
+            "utest_game_owned",
+            "Impostor",
+            StyleStage::Display,
+            game_pass,
+        );
+        assert!(!super::super::replace_runtime(&IMPOSTOR));
+        assert!(std::ptr::eq(
+            super::super::find("utest_game_owned").unwrap(),
+            &GAME_TAKEN
+        ));
+    }
+
     fn index_of(name: &str) -> usize {
         super::super::registry()
             .iter()
             .position(|d| d.name == name)
             .unwrap()
+    }
+
+    /// #426, by ADR 0114's one rule: of two user styles of one name, the
+    /// one in the `styles/` nearest the scene wins. A scene two folders
+    /// down finds a style where the scene-then-parent search found none;
+    /// the next scene, in another folder, gets its own nearest, in the same
+    /// registry slot; and a nearer file that appears later takes over at
+    /// the next reload poll, and gives the name back when it goes.
+    /// Held by every test that polls for edits: `reload_changed` reads every
+    /// user style loaded in the process, so one test's edit shows up in
+    /// another's poll (`utest_edit` in the nearest-folder test's) while they
+    /// run side by side.
+    static RELOAD_POLL: Mutex<()> = Mutex::new(());
+
+    fn reload_poll() -> std::sync::MutexGuard<'static, ()> {
+        RELOAD_POLL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The part of a poll that is a test's own: the styles it added and
+    /// replaced whose `.shader.toml` is under `root`. Tests that load user
+    /// styles without polling don't take [`RELOAD_POLL`] (making them wait
+    /// for it made #598's driver deadlock likelier, #489), and a style one
+    /// of them loads while a poll runs is in that poll's `added`.
+    fn under(root: &Path, mut reload: Reload) -> Reload {
+        let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let root = canonical(root);
+        let mine = |name: &String| {
+            LOADED
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .any(|l| {
+                    &l.source.name == name && canonical(&l.source.toml_path).starts_with(&root)
+                })
+        };
+        reload.added.retain(|n| mine(n));
+        reload.replaced.retain(|n| mine(n));
+        reload
+    }
+
+    #[test]
+    fn the_nearest_styles_folder_wins_a_name() {
+        let _poll = reload_poll();
+        let root = std::env::temp_dir().join(format!("flint-user-426-{}", std::process::id()));
+        let cave = root.join("levels/act/cave");
+        let other = root.join("other");
+        std::fs::create_dir_all(&cave).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(root.join("flint.toml"), "").unwrap();
+        let write = |folder: &str, k: f32| {
+            let styles = root.join(folder).join("styles");
+            std::fs::create_dir_all(&styles).unwrap();
+            std::fs::write(
+                styles.join("utest_near.shader.toml"),
+                format!(
+                    "version = 1\nname = \"utest_near\"\nshader = \"near.wgsl\"\n\
+                     [params.k]\ndefault = {k}\nmin = 0\nmax = 9\n"
+                ),
+            )
+            .unwrap();
+            std::fs::write(styles.join("near.wgsl"), PASSTHROUGH).unwrap();
+            styles.join("utest_near.shader.toml")
+        };
+        let at_root = write("", 1.5);
+        let in_levels = write("levels", 2.5);
+        let k = || {
+            super::super::find("utest_near")
+                .unwrap()
+                .param(&Default::default(), "k")
+        };
+        let from = || loaded("utest_near").unwrap().source.toml_path.clone();
+        let cave_scope = AssetScope::for_dir(&cave);
+        let other_scope = AssetScope::for_dir(&other);
+        // What the loader takes is what the resolver lists
+        let listed = cave_scope.list(AssetKind::Styles);
+        assert_eq!(listed.len(), 1);
+        assert!(flint_core::project::same_path(&listed[0].path, &in_levels));
+
+        assert!(load_for(&cave_scope).is_empty());
+        assert_eq!(k(), 2.5, "levels/styles is nearer the cave than the root's");
+        assert!(flint_core::project::same_path(&from(), &in_levels));
+        let index = index_of("utest_near");
+
+        // Another scene, whose nearest is the root's
+        assert!(load_for(&other_scope).is_empty());
+        assert_eq!(k(), 1.5);
+        assert!(flint_core::project::same_path(&from(), &at_root));
+        assert_eq!(index_of("utest_near"), index, "one slot for the name");
+        // ... and back, every time, in whichever order scenes load
+        assert!(load_for(&cave_scope).is_empty());
+        assert_eq!(k(), 2.5);
+        assert!(load_for(&cave_scope).is_empty());
+        assert_eq!(k(), 2.5);
+
+        // A nearer one appears while the scene is open
+        assert!(!under(&root, reload_changed_for(&cave_scope)).changed());
+        let in_act = write("levels/act", 3.5);
+        let reload = under(&root, reload_changed_for(&cave_scope));
+        assert_eq!(reload.replaced, vec!["utest_near".to_string()]);
+        assert!(reload.added.is_empty());
+        assert_eq!(k(), 3.5);
+        assert_eq!(index_of("utest_near"), index);
+        assert!(
+            !under(&root, reload_changed_for(&cave_scope)).changed(),
+            "settled"
+        );
+        // It goes: the next one out has the name again
+        std::fs::remove_file(&in_act).unwrap();
+        let reload = under(&root, reload_changed_for(&cave_scope));
+        assert_eq!(reload.replaced, vec!["utest_near".to_string()]);
+        assert_eq!(k(), 2.5);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// #426: the registry still holds a style an earlier scene's folder
+    /// had, but a scene that can't see that folder doesn't draw it: its
+    /// table is dropped with a warning, as when the scene loads first.
+    /// The scene that sees it keeps it, and so do built-ins and names
+    /// the registry doesn't know (the read warns about those).
+    #[test]
+    fn a_style_only_an_earlier_scene_saw_is_not_drawn() {
+        let root = std::env::temp_dir().join(format!("flint-unseen-426-{}", std::process::id()));
+        let near = root.join("near");
+        let far = root.join("far");
+        std::fs::create_dir_all(near.join("styles")).unwrap();
+        std::fs::create_dir_all(&far).unwrap();
+        std::fs::write(root.join("flint.toml"), "").unwrap();
+        std::fs::write(
+            near.join("styles/utest_unseen.shader.toml"),
+            "version = 1\nname = \"utest_unseen\"\nshader = \"unseen.wgsl\"\n",
+        )
+        .unwrap();
+        std::fs::write(near.join("styles/unseen.wgsl"), PASSTHROUGH).unwrap();
+        let tables = || -> BTreeMap<String, toml::Table> {
+            ["utest_unseen", "invert", "utest_nobody"]
+                .into_iter()
+                .map(|n| (n.to_string(), toml::Table::new()))
+                .collect()
+        };
+        let names = |t: &BTreeMap<String, toml::Table>| t.keys().cloned().collect::<Vec<_>>();
+
+        let near_scope = AssetScope::for_dir(&near);
+        assert!(load_for(&near_scope).is_empty());
+        let mut seen = tables();
+        assert!(drop_unseen(&mut seen, &near_scope).is_empty());
+        assert_eq!(names(&seen), ["invert", "utest_nobody", "utest_unseen"]);
+
+        // The next scene, in a folder with no styles/
+        let far_scope = AssetScope::for_dir(&far);
+        assert!(load_for(&far_scope).is_empty());
+        assert!(
+            super::super::find("utest_unseen").is_some(),
+            "still registered"
+        );
+        let mut unseen = tables();
+        let warnings = drop_unseen(&mut unseen, &far_scope);
+        assert_eq!(names(&unseen), ["invert", "utest_nobody"]);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("'utest_unseen'"), "{warnings:?}");
+        assert!(warnings[0].contains("can't see"), "{warnings:?}");
+
+        // Back: the first scene draws it again
+        assert!(load_for(&near_scope).is_empty());
+        let mut again = tables();
+        assert!(drop_unseen(&mut again, &near_scope).is_empty());
+        assert!(again.contains_key("utest_unseen"));
+
+        // The far scene gets a copy of its own: the same tables keep it,
+        // and now the near scene is the one that can't see the one loaded
+        std::fs::create_dir_all(far.join("styles")).unwrap();
+        std::fs::copy(
+            near.join("styles/utest_unseen.shader.toml"),
+            far.join("styles/utest_unseen.shader.toml"),
+        )
+        .unwrap();
+        std::fs::write(far.join("styles/unseen.wgsl"), PASSTHROUGH).unwrap();
+        assert!(load_for(&far_scope).is_empty());
+        let mut own = tables();
+        assert!(drop_unseen(&mut own, &far_scope).is_empty());
+        assert!(own.contains_key("utest_unseen"));
+        let mut near_now = tables();
+        assert_eq!(drop_unseen(&mut near_now, &near_scope).len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// #275: an edited `.shader.toml` replaces its style at the same
@@ -4702,6 +5281,7 @@ fn style(p: StylePixel) -> vec4<f32> {
     /// scene's settings are read again for what changed.
     #[test]
     fn toml_edits_replace_the_style_in_place() {
+        let _poll = reload_poll();
         let dir = std::env::temp_dir().join(format!("flint-user-toml-{}", std::process::id()));
         let styles = dir.join("styles");
         std::fs::create_dir_all(&styles).unwrap();
@@ -4717,10 +5297,8 @@ fn style(p: StylePixel) -> vec4<f32> {
         let index = index_of("utest_edit");
         let old = super::super::find("utest_edit").unwrap();
         let old_bind = loaded("utest_edit").unwrap().names.passes[0].frame;
-        assert!(
-            reload_changed(&dir).replaced.is_empty(),
-            "nothing changed yet"
-        );
+        let first = reload_changed(&dir);
+        assert!(first.replaced.is_empty(), "nothing changed yet: {first:?}");
 
         // A new parameter, a new label
         std::thread::sleep(std::time::Duration::from_millis(30));
@@ -4784,16 +5362,105 @@ fn style(p: StylePixel) -> vec4<f32> {
             "version = 1\nname = \"utest_added\"\nshader = \"edit.wgsl\"\n",
         )
         .unwrap();
-        let reload = reload_changed(&dir);
+        let reload = under(&dir, reload_changed(&dir));
         assert_eq!(reload.added, vec!["utest_added".to_string()]);
         assert!(super::super::find("utest_added").is_some());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #425: a `.shader.toml` that never registers is in [`errors`] by its
+    /// file's style name, from the load that refused it: reported once,
+    /// gone when the file is fixed, back when it breaks, gone when it's
+    /// deleted. The scene's table for it still warns "unknown style".
+    #[test]
+    fn a_style_that_fails_to_load_is_an_error_until_it_loads_or_goes() {
+        let _poll = reload_poll();
+        let dir = std::env::temp_dir().join(format!("flint-user-425-{}", std::process::id()));
+        let styles = dir.join("styles");
+        std::fs::create_dir_all(&styles).unwrap();
+        std::fs::write(styles.join("unloaded.wgsl"), PASSTHROUGH).unwrap();
+        let toml_path = styles.join("utest_unloaded.shader.toml");
+        let write = |stage: &str| {
+            std::fs::write(
+                &toml_path,
+                format!(
+                    "version = 1\nname = \"utest_unloaded\"\nstage = \"{stage}\"\n\
+                     shader = \"unloaded.wgsl\"\n"
+                ),
+            )
+            .unwrap();
+        };
+        let error = || {
+            errors()
+                .into_iter()
+                .find(|(n, _)| n == "utest_unloaded")
+                .map(|(_, e)| e)
+        };
+
+        // The first mistake: a typo in the stage
+        write("hrd");
+        let messages = load_dir(&dir);
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(super::super::find("utest_unloaded").is_none());
+        let shown = error().expect("the load failure is an error");
+        assert!(
+            shown.starts_with(&toml_path.display().to_string()),
+            "{shown}"
+        );
+        assert!(shown.contains("stage = \"hrd\""), "{shown}");
+        assert_eq!(
+            load_errors()
+                .iter()
+                .filter(|(n, _)| n == "utest_unloaded")
+                .count(),
+            1
+        );
+        // The scene's table for it is warned of as before
+        let tables: BTreeMap<String, toml::Table> =
+            toml::from_str("[utest_unloaded]\nblend = 1\n").unwrap();
+        let (_, warnings) = super::super::StyleSettings::from_tables(&tables);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        // The poll doesn't read it again, or say it again, until it changes
+        assert!(reload_changed(&dir).messages.is_empty());
+        assert_eq!(error(), Some(shown.clone()));
+
+        // Fixed: it loads at the next poll and the error goes
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        write("hdr");
+        let reload = under(&dir, reload_changed(&dir));
+        assert_eq!(reload.added, vec!["utest_unloaded".to_string()]);
+        assert_eq!(error(), None);
+        assert!(super::super::find("utest_unloaded").is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // A new file in another folder that never loads, then is deleted
+        let other = std::env::temp_dir().join(format!("flint-user-425b-{}", std::process::id()));
+        let other_styles = other.join("styles");
+        std::fs::create_dir_all(&other_styles).unwrap();
+        let gone = other_styles.join("utest_gone.shader.toml");
+        std::fs::write(
+            &gone,
+            "version = 1\nname = \"utest_went\"\nshader = \"x.wgsl\"\n",
+        )
+        .unwrap();
+        let reload = reload_changed(&other);
+        assert_eq!(reload.messages.len(), 1, "{:?}", reload.messages);
+        let (_, message) = errors()
+            .into_iter()
+            .find(|(n, _)| n == "utest_gone")
+            .unwrap();
+        assert!(message.contains("must match the file name"), "{message}");
+        std::fs::remove_file(&gone).unwrap();
+        assert!(reload_changed(&other).messages.is_empty());
+        assert!(errors().iter().all(|(n, _)| n != "utest_gone"));
+        let _ = std::fs::remove_dir_all(&other);
     }
 
     /// #275: the renderer's [`StyleSet`](super::super::StyleSet) throws a
     /// pass away when its descriptor is replaced, and builds the new one.
     #[test]
     fn a_replaced_descriptor_is_built_again() {
+        let _poll = reload_poll();
         let Some((device, _queue)) = device() else {
             crate::gpu_select::skip_without_gpu("no GPU adapter");
             return;
@@ -4940,7 +5607,8 @@ fn style(p: StylePixel) -> vec4<f32> {
         let user = r#"
 fn style(p: StylePixel) -> vec4<f32> {
     var acc = vec3<f32>(0.0);
-    for (var i = 0; i < 4; i++) {
+    // A bound read from a parameter, so the loop is guarded (#424)
+    for (var i = 0; i < 4 + i32(params.grain); i++) {
         acc += flint_image_tiled_paper(p.uv + vec2<f32>(f32(i)) * flint.texel).rgb;
     }
     var c = flint_lut_grade(p.color.rgb) * acc * 0.25;
@@ -5021,6 +5689,76 @@ fn style(p: StylePixel) -> vec4<f32> {
             e.contains("[images.<name>]") && e.contains("grade, paper"),
             "{e}"
         );
+    }
+
+    /// #946: the hints go by the identifier an error is about, not its
+    /// words. naga 23 quoted it 'like this', naga 30 `like this`, and a
+    /// browser compiler may only point its span at it: each gets the
+    /// `[images.<name>]` hint, and an error about another name doesn't.
+    #[test]
+    fn hints_follow_the_identifier_not_the_wording() {
+        let s = printed();
+        let user = "fn style(p: StylePixel) -> vec4<f32> {
+                        return flint_image_brush(p.uv);
+}
+";
+        let c = compose(&s, user);
+        let offset = c.text.find("flint_image_brush").unwrap() as u32;
+        let line = c.prelude_lines as u32 + 2;
+        let report = |text: &str| {
+            let info = wgpu::CompilationInfo {
+                messages: vec![wgpu::CompilationMessage {
+                    message: text.to_string(),
+                    message_type: wgpu::CompilationMessageType::Error,
+                    location: Some(wgpu::SourceLocation {
+                        line_number: line,
+                        line_position: 12,
+                        offset,
+                        length: "flint_image_brush".len() as u32,
+                    }),
+                }],
+            };
+            compiler_error(&s, &c, &info).unwrap()
+        };
+        for text in [
+            "no definition in scope for identifier: 'flint_image_brush'",
+            "no definition in scope for identifier: `flint_image_brush`",
+            "unresolved call target \"flint_image_brush\"",
+            "unknown identifier",
+        ] {
+            let e = report(text);
+            assert!(
+                e.contains("[images.<name>]") && e.contains("grade, paper"),
+                "{text}: {e}"
+            );
+        }
+        // Named only in passing, inside a longer identifier: no hint
+        assert_eq!(named("not_flint_image_x", None), ["not_flint_image_x"]);
+        let e = check(
+            &s,
+            "fn style(p: StylePixel) -> vec4<f32> {
+    return p.color * glow;
+}
+",
+        )
+        .unwrap_err();
+        assert!(!e.contains("hint"), "{e}");
+    }
+
+    /// #946: `pack2x16float`, `unpack2x16float` and `quantizeToF16` are
+    /// core WGSL; naga 30 asks for `SHADER_FLOAT16_IN_FLOAT32`, which wgpu
+    /// grants from `DownlevelFlags::SHADER_F16_IN_F32`, so `flint style
+    /// check` takes them as the device will.
+    #[test]
+    fn half_float_packing_validates() {
+        let s = duotone();
+        let user = "fn style(p: StylePixel) -> vec4<f32> {
+                        let packed = pack2x16float(p.color.rg);
+                        let rg = unpack2x16float(packed);
+                        return vec4<f32>(rg, quantizeToF16(p.color.b), p.color.a);
+}
+";
+        check(&s, user).unwrap_or_else(|e| panic!("{e}"));
     }
 
     /// #413: an image option with no list offers its default's folder; the

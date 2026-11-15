@@ -3,9 +3,7 @@
 use anyhow::{Context, Result};
 use clap::Subcommand;
 use flint_scene::{load_scene_string, PrefabFile, SceneFile};
-use flint_schema::SchemaRegistry;
 use std::collections::HashMap;
-use std::path::Path;
 
 #[derive(Subcommand)]
 pub enum PrefabCommands {
@@ -14,8 +12,10 @@ pub enum PrefabCommands {
         /// Path to .prefab.toml file
         path: String,
 
-        /// Paths to schemas directories (can specify multiple)
-        #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+        /// Schema directories, later ones overriding earlier (repeatable).
+        /// Without it: the project's flint.toml `schemas`, else schemas/ in the
+        /// working directory, beside the prefab and one level up
+        #[arg(long, action = clap::ArgAction::Append)]
         schemas: Vec<String>,
 
         /// Instance prefix (defaults to prefab name)
@@ -36,17 +36,10 @@ pub fn run(cmd: PrefabCommands) -> Result<()> {
 
 fn run_view(path: &str, schemas: &[String], prefix_override: Option<&str>) -> Result<()> {
     // Load schemas
-    let existing: Vec<&str> = schemas
-        .iter()
-        .map(|s| s.as_str())
-        .filter(|p| Path::new(p).exists())
-        .collect();
-    let registry = if !existing.is_empty() {
-        SchemaRegistry::load_from_directories(&existing).context("Failed to load schemas")?
-    } else {
+    let (registry, schema_dirs) = super::common_args::load_schemas(Some(path), schemas)?;
+    if schema_dirs.dirs.is_empty() {
         println!("Warning: No schemas directories found");
-        SchemaRegistry::new()
-    };
+    }
 
     // Read and parse the prefab file
     let content = std::fs::read_to_string(path)

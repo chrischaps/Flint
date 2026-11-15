@@ -21,8 +21,8 @@ pub use grammar::{interpret, Grammar, ProductionRule, TurtleConfig};
 use crate::rng::SeededRng;
 use crate::types::BranchSegment;
 use crate::{ProcGenError, Result};
-use flint_core::spline::rotate_around_axis;
 use flint_core::Vec3;
+use flint_geometry::spline::rotate_around_axis;
 
 // ─── A. Symbol Enum ──────────────────────────────────────────────────────────
 

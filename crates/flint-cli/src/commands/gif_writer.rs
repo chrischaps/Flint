@@ -8,14 +8,14 @@
 //! render didn't change is written as transparent over the frame before it. A still
 //! pixel can't flicker, and stillness compresses to almost nothing.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use color_quant::NeuQuant;
 use image::RgbImage;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::BufWriter;
-use std::path::Path;
+use std::io::{BufReader, BufWriter, Read, Write};
+use std::path::{Path, PathBuf};
 
 /// The palette's colours, leaving the last index to mean "as the last frame".
 const COLORS: usize = 255;
@@ -31,53 +31,192 @@ const PALETTE_SAMPLES: usize = 2_000_000;
 const PALETTE_THOROUGH_BELOW: usize = 400_000;
 const PALETTE_EFFORT: i32 = 10;
 
+/// How hard a spilled frame is deflated: 1 is the fastest, and the frame-to-frame
+/// difference it packs is mostly zeros, which any level packs to almost nothing.
+const SPILL_LEVEL: u8 = 1;
+
 /// Write `frames` as a GIF that loops forever at `fps`.
 pub fn write(path: &Path, frames: &[RgbImage], fps: f32) -> Result<()> {
     let Some(first) = frames.first() else {
         bail!("a GIF needs at least one frame");
     };
     let (width, height) = first.dimensions();
-    let (Ok(gif_width), Ok(gif_height)) = (u16::try_from(width), u16::try_from(height)) else {
-        bail!("{width} x {height} is too big for a GIF, whose sides stop at 65535");
-    };
-    if frames.iter().any(|f| f.dimensions() != (width, height)) {
-        bail!("every frame of a GIF has to be the same size");
+    let mut spool = Spool::new(path, width, height, frames.len())?;
+    for frame in frames {
+        spool.push(frame)?;
     }
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-    let file =
-        File::create(path).with_context(|| format!("failed to create {}", path.display()))?;
-    let palette = Palette::learn(frames);
-    let mut encoder = gif::Encoder::new(BufWriter::new(file), gif_width, gif_height, &palette.rgb)
-        .context("failed to start the GIF")?;
-    encoder
-        .set_repeat(gif::Repeat::Infinite)
-        .context("failed to loop the GIF")?;
+    spool.finish(fps)
+}
 
-    let mut mapper = palette.mapper();
-    let mut shown: Vec<u8> = Vec::new();
-    for (index, frame) in frames.iter().enumerate() {
-        let indices: Vec<u8> = frame.pixels().map(|p| mapper.index(p.0)).collect();
-        let delay = delay_of(index, fps);
-        let piece = Piece::between(&shown, &indices, width as usize);
-        encoder
-            .write_frame(&gif::Frame {
-                delay,
-                dispose: gif::DisposalMethod::Keep,
-                transparent: Some(UNCHANGED),
-                left: piece.left,
-                top: piece.top,
-                width: piece.width,
-                height: piece.height,
-                buffer: Cow::Owned(piece.buffer),
-                ..Default::default()
-            })
-            .with_context(|| format!("failed to write frame {index} of the GIF"))?;
-        shown = indices;
+/// A GIF written as its frames arrive, in memory that stays flat however long it
+/// runs (#588). The palette has to be known before the first frame is encoded and
+/// is learned from all of them, so each frame waits on disk, beside the GIF, as
+/// its difference from the frame before, deflated: what stood still costs almost
+/// nothing. The palette's sample is taken on the way in, the pixels it would have
+/// taken from the frames all held at once, so the file is byte for byte the one
+/// [`write`] made when it held them.
+pub struct Spool {
+    path: PathBuf,
+    spill_path: PathBuf,
+    spill: Option<BufWriter<File>>,
+    width: u32,
+    height: u32,
+    /// Every `stride`th pixel of each frame goes into the palette's sample.
+    stride: usize,
+    sample: Vec<u8>,
+    last: Vec<u8>,
+    frames: usize,
+    /// The spill's bytes, for the summary.
+    spilled: u64,
+}
+
+impl Spool {
+    /// Start a GIF of about `expected_frames` frames of `width` x `height`. The
+    /// count only spreads the palette's sample; a GIF may end up longer or shorter.
+    pub fn new(path: &Path, width: u32, height: u32, expected_frames: usize) -> Result<Self> {
+        if u16::try_from(width).is_err() || u16::try_from(height).is_err() {
+            bail!("{width} x {height} is too big for a GIF, whose sides stop at 65535");
+        }
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        let mut name = path.file_name().unwrap_or_default().to_os_string();
+        name.push(".frames~");
+        let spill_path = path.with_file_name(name);
+        let spill = File::create(&spill_path)
+            .with_context(|| format!("failed to create {}", spill_path.display()))?;
+        let pixels = width as usize * height as usize * expected_frames.max(1);
+        let stride = (pixels / PALETTE_SAMPLES).max(1);
+        Ok(Self {
+            path: path.to_path_buf(),
+            spill_path,
+            spill: Some(BufWriter::new(spill)),
+            width,
+            height,
+            stride,
+            sample: Vec::with_capacity((pixels / stride + 1).min(PALETTE_SAMPLES * 2) * 4),
+            last: vec![0; width as usize * height as usize * 3],
+            frames: 0,
+            spilled: 0,
+        })
     }
-    Ok(())
+
+    /// Add the next frame.
+    pub fn push(&mut self, frame: &RgbImage) -> Result<()> {
+        if frame.dimensions() != (self.width, self.height) {
+            bail!("every frame of a GIF has to be the same size");
+        }
+        for pixel in frame.pixels().step_by(self.stride) {
+            self.sample
+                .extend_from_slice(&[pixel.0[0], pixel.0[1], pixel.0[2], 255]);
+        }
+        let raw = frame.as_raw();
+        let delta: Vec<u8> = raw.iter().zip(&self.last).map(|(a, b)| a ^ b).collect();
+        self.last.copy_from_slice(raw);
+        let packed = miniz_oxide::deflate::compress_to_vec(&delta, SPILL_LEVEL);
+        let spill = self.spill.as_mut().context("the GIF is already written")?;
+        spill
+            .write_all(&(packed.len() as u64).to_le_bytes())
+            .and_then(|()| spill.write_all(&packed))
+            .with_context(|| format!("failed to write {}", self.spill_path.display()))?;
+        self.spilled += 8 + packed.len() as u64;
+        self.frames += 1;
+        Ok(())
+    }
+
+    /// Frames pushed so far.
+    pub fn frames(&self) -> usize {
+        self.frames
+    }
+
+    /// The bytes the frames took on disk while they waited.
+    pub fn spilled(&self) -> u64 {
+        self.spilled
+    }
+
+    /// Learn the palette, encode every frame into the GIF at `fps`, and remove the
+    /// spill.
+    pub fn finish(mut self, fps: f32) -> Result<()> {
+        if self.frames == 0 {
+            bail!("a GIF needs at least one frame");
+        }
+        let spill = self.spill.take().context("the GIF is already written")?;
+        spill
+            .into_inner()
+            .map_err(|e| e.into_error())
+            .with_context(|| format!("failed to write {}", self.spill_path.display()))?;
+        let mut spill = BufReader::new(
+            File::open(&self.spill_path)
+                .with_context(|| format!("failed to read {}", self.spill_path.display()))?,
+        );
+
+        let file = File::create(&self.path)
+            .with_context(|| format!("failed to create {}", self.path.display()))?;
+        let palette = Palette::learn(&std::mem::take(&mut self.sample));
+        let mut encoder = gif::Encoder::new(
+            BufWriter::new(file),
+            self.width as u16,
+            self.height as u16,
+            &palette.rgb,
+        )
+        .context("failed to start the GIF")?;
+        encoder
+            .set_repeat(gif::Repeat::Infinite)
+            .context("failed to loop the GIF")?;
+
+        let width = self.width as usize;
+        let mut mapper = palette.mapper();
+        let mut rgb = vec![0u8; width * self.height as usize * 3];
+        let mut shown: Vec<u8> = Vec::new();
+        for index in 0..self.frames {
+            let unread = |e| anyhow!("failed to read frame {index} back from the spill: {e}");
+            let mut len = [0u8; 8];
+            spill.read_exact(&mut len).map_err(unread)?;
+            let mut packed = vec![0u8; u64::from_le_bytes(len) as usize];
+            spill.read_exact(&mut packed).map_err(unread)?;
+            let delta = miniz_oxide::inflate::decompress_to_vec(&packed)
+                .map_err(|e| anyhow!("frame {index} of the spill is damaged: {e:?}"))?;
+            if delta.len() != rgb.len() {
+                bail!("frame {index} of the spill is the wrong size");
+            }
+            for (pixel, d) in rgb.iter_mut().zip(&delta) {
+                *pixel ^= d;
+            }
+            let (pixels, _) = rgb.as_chunks::<3>();
+            let indices: Vec<u8> = pixels.iter().map(|&p| mapper.index(p)).collect();
+            let delay = delay_of(index, fps);
+            let piece = Piece::between(&shown, &indices, width);
+            encoder
+                .write_frame(&gif::Frame {
+                    delay,
+                    dispose: gif::DisposalMethod::Keep,
+                    transparent: Some(UNCHANGED),
+                    left: piece.left,
+                    top: piece.top,
+                    width: piece.width,
+                    height: piece.height,
+                    buffer: Cow::Owned(piece.buffer),
+                    ..Default::default()
+                })
+                .with_context(|| format!("failed to write frame {index} of the GIF"))?;
+            shown = indices;
+        }
+        encoder
+            .into_inner()
+            .context("failed to finish the GIF")?
+            .flush()
+            .with_context(|| format!("failed to write {}", self.path.display()))?;
+        Ok(())
+    }
+}
+
+impl Drop for Spool {
+    /// The spill goes however the GIF ends, written or not.
+    fn drop(&mut self) {
+        self.spill = None;
+        let _ = std::fs::remove_file(&self.spill_path);
+    }
 }
 
 /// Frame `index`'s delay in hundredths of a second, rounding each frame's end and
@@ -95,23 +234,16 @@ struct Palette {
 }
 
 impl Palette {
-    /// Learn from a spread of pixels through all the frames, so that a colour that
-    /// only appears late still gets a place.
-    fn learn(frames: &[RgbImage]) -> Self {
-        let pixels: usize = frames.iter().map(|f| f.pixels().len()).sum();
-        let stride = (pixels / PALETTE_SAMPLES).max(1);
-        let mut sample = Vec::with_capacity(pixels / stride * 4);
-        for frame in frames {
-            for pixel in frame.pixels().step_by(stride) {
-                sample.extend_from_slice(&[pixel.0[0], pixel.0[1], pixel.0[2], 255]);
-            }
-        }
+    /// Learn from a spread of pixels through all the frames (`sample`, RGBA, as
+    /// [`Spool::push`] gathers it), so that a colour that only appears late still
+    /// gets a place.
+    fn learn(sample: &[u8]) -> Self {
         let effort = if sample.len() / 4 < PALETTE_THOROUGH_BELOW {
             1
         } else {
             PALETTE_EFFORT
         };
-        let quant = NeuQuant::new(effort, COLORS, &sample);
+        let quant = NeuQuant::new(effort, COLORS, sample);
         let mut rgb = quant.color_map_rgb();
         rgb.resize(256 * 3, 0);
         Self { quant, rgb }
@@ -321,6 +453,34 @@ mod tests {
         assert_eq!(piece.buffer, [2, 3]);
         let same = Piece::between(&shown, &shown, 4);
         assert_eq!(same.buffer, [UNCHANGED]);
+    }
+
+    #[test]
+    fn the_spill_is_gone_however_the_gif_ends() {
+        let dir = std::env::temp_dir().join(format!("flint-gif-spill-{}", std::process::id()));
+        let path = dir.join("spilled.gif");
+        let spill = dir.join("spilled.gif.frames~");
+
+        let mut spool = Spool::new(&path, 48, 32, 3).unwrap();
+        for i in 0..3 {
+            spool.push(&frame(i * 7)).unwrap();
+        }
+        assert!(spill.exists(), "frames wait on disk while the GIF grows");
+        assert_eq!(spool.frames(), 3);
+        // A still backdrop's difference packs to a sliver of the raw frame.
+        assert!(spool.spilled() < 3 * 48 * 32 * 3 / 4);
+        spool.finish(10.0).unwrap();
+        assert!(!spill.exists());
+        assert_eq!(decoded(&std::fs::read(&path).unwrap()).len(), 3);
+
+        let mut abandoned = Spool::new(&path, 48, 32, 3).unwrap();
+        abandoned.push(&frame(0)).unwrap();
+        drop(abandoned);
+        assert!(
+            !spill.exists(),
+            "a render that fails leaves no spill behind"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

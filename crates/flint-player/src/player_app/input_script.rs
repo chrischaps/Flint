@@ -55,13 +55,13 @@
 //! real mouse's: it reaches the game only while the cursor is captured and
 //! no text field has focus (ADR 0110).
 
+use flint_core::vfs;
 use flint_runtime::{parse_key_code, InputState};
 use winit::dpi::PhysicalPosition;
 use winit::event::{
     DeviceId, ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent,
 };
 use winit::keyboard::{KeyCode, ModifiersState};
-use flint_core::vfs;
 
 /// Gamepad slot the script drives, away from slot 0 so a real pad plugged in
 /// at the same time does not overwrite its values.
@@ -267,8 +267,8 @@ fn parse_mouse_button(name: &str) -> Option<MouseButton> {
 
 impl InputScript {
     pub fn load(path: &str) -> anyhow::Result<Self> {
-        let text = vfs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("input script {path}: {e}"))?;
+        let text =
+            vfs::read_to_string(path).map_err(|e| anyhow::anyhow!("input script {path}: {e}"))?;
         Self::parse(&text).map_err(|e| anyhow::anyhow!("input script {path}: {e}"))
     }
 
@@ -580,8 +580,12 @@ impl InputScript {
             let (now_at, arrived) = g.at(now);
             if now_at != *at {
                 *at = now_at;
-                out.events
-                    .push(ScriptEvent::Touch(*id, TouchPhase::Moved, now_at.0, now_at.1));
+                out.events.push(ScriptEvent::Touch(
+                    *id,
+                    TouchPhase::Moved,
+                    now_at.0,
+                    now_at.1,
+                ));
             }
             if arrived {
                 *glide = None;
@@ -687,12 +691,17 @@ gamepad = "any"
                 .unwrap(),
             )
             .unwrap();
-        let mut s =
-            InputScript::parse("1.0 pull RightTrigger2 0.6
+        let mut s = InputScript::parse(
+            "1.0 pull RightTrigger2 0.6
 2.0 pull RightTrigger2 0
-").unwrap();
+",
+        )
+        .unwrap();
         s.apply(1.0, &mut input);
-        assert!((input.action_value("zoom_in") - 0.6).abs() < 1e-6, "a half pull");
+        assert!(
+            (input.action_value("zoom_in") - 0.6).abs() < 1e-6,
+            "a half pull"
+        );
         s.apply(2.0, &mut input);
         assert_eq!(input.action_value("zoom_in"), 0.0, "let go");
         assert!(InputScript::parse("0 pull RightTrigger2").is_err());
@@ -923,15 +932,27 @@ gamepad = "any"
     #[test]
     fn look_is_raw_motion_at_once_or_spread() {
         assert_eq!(
-            looks("1 look 40 -10
-", &[0.5, 1.0, 1.5]),
+            looks(
+                "1 look 40 -10
+",
+                &[0.5, 1.0, 1.5]
+            ),
             [vec![], vec![(40.0, -10.0)], vec![]]
         );
         // Spread over a second: a share each frame, adding up to it all.
         assert_eq!(
-            looks("0 look 100 0 1
-", &[0.0, 0.25, 0.5, 1.0, 2.0]),
-            [vec![], vec![(25.0, 0.0)], vec![(25.0, 0.0)], vec![(50.0, 0.0)], vec![]]
+            looks(
+                "0 look 100 0 1
+",
+                &[0.0, 0.25, 0.5, 1.0, 2.0]
+            ),
+            [
+                vec![],
+                vec![(25.0, 0.0)],
+                vec![(25.0, 0.0)],
+                vec![(50.0, 0.0)],
+                vec![]
+            ]
         );
         // The script never writes it itself: the player routes it.
         let mut s = InputScript::parse("0 look 5 5").unwrap();

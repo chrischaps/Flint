@@ -16,7 +16,7 @@
 name = "The Collapsed Library"
 version = "1.0"
 description = "Crumbling library with sandstone tiles, twisted roots, and book mites"
-input_config = "showcase_game/config/input_ruins.toml"
+input_config = "config/input_ruins.toml"
 
 [post_process]
 bloom_enabled = true
@@ -55,9 +55,6 @@ jump_force = 6.0
 height = 1.8
 radius = 0.3
 camera_mode = "first_person"
-
-[entities.player.audio_listener]
-active = true
 
 [entities.player.script]
 source = "footsteps.rhai"

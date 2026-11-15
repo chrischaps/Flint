@@ -18,3 +18,6 @@ pub const ON_SEQUENCE_CUE: &str = "on_sequence_cue";
 pub const ON_EVENT: &str = "on_event";
 /// `on_expression(state)`: a new state from outside the process (Flint#518).
 pub const ON_EXPRESSION: &str = "on_expression";
+/// `on_persist_migrate(from)`: the save data loaded is at version `from`,
+/// lower than the game's `[project] save_version` (#726).
+pub const ON_PERSIST_MIGRATE: &str = "on_persist_migrate";

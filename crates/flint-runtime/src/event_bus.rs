@@ -1,8 +1,11 @@
-//! Event bus for broadcasting game events
+//! The frame's queue of game events
 
 use crate::event::GameEvent;
 
-/// A simple event queue that systems push to and consumers drain
+/// The frame's game events, in the order they happened. The player owns one
+/// (#727): physics pushes its contacts into it at each fixed step, and
+/// extensions, style tweens and scripts' `fire_event` push their own; the
+/// frame drains it once, before the scripts run, for scripts and audio.
 #[derive(Default)]
 pub struct EventBus {
     events: Vec<GameEvent>,
@@ -31,6 +34,11 @@ impl EventBus {
     /// Number of pending events
     pub fn len(&self) -> usize {
         self.events.len()
+    }
+
+    /// Keep only the events `keep` says to, in order
+    pub fn retain(&mut self, keep: impl FnMut(&GameEvent) -> bool) {
+        self.events.retain(keep);
     }
 }
 

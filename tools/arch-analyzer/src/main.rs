@@ -1,3 +1,4 @@
+mod book;
 mod cargo_parser;
 mod metrics;
 mod model;
@@ -6,10 +7,51 @@ mod source_parser;
 use model::ArchData;
 use std::path::PathBuf;
 
+const USAGE: &str = "\
+flint-arch-analyzer: the workspace's crates, their dependencies and public items
+
+  flint-arch-analyzer [out.json]   write the explorer's data (default
+                                   tools/arch-viewer/arch-data.json; open
+                                   tools/arch-viewer/index.html over a static server)
+  flint-arch-analyzer --book       rewrite the crate table in
+                                   docs/book/src/architecture/crate-graph.md
+  flint-arch-analyzer --check-book exit 1 if that table is stale (CI)";
+
 fn main() {
     let workspace_root = find_workspace_root();
-    let output_path = std::env::args()
-        .nth(1)
+    let arg = std::env::args().nth(1);
+    match arg.as_deref() {
+        Some("-h" | "--help") => {
+            println!("{USAGE}");
+            return;
+        }
+        Some(flag @ ("--book" | "--check-book")) => {
+            let check = flag == "--check-book";
+            match book::run(&workspace_root, check) {
+                Ok(true) if check => println!("{} is up to date", book::PAGE),
+                Ok(true) => println!("wrote the crate table in {}", book::PAGE),
+                Ok(false) => {
+                    eprintln!(
+                        "{} is stale: a Cargo.toml changed its engine dependencies.\n\
+                         Run `cargo run -p flint-arch-analyzer -- --book` and commit the page.",
+                        book::PAGE
+                    );
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("flint-arch-analyzer: {e}");
+                    std::process::exit(2);
+                }
+            }
+            return;
+        }
+        Some(a) if a.starts_with('-') => {
+            eprintln!("unknown flag {a}\n\n{USAGE}");
+            std::process::exit(2);
+        }
+        _ => {}
+    }
+    let output_path = arg
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace_root.join("tools/arch-viewer/arch-data.json"));
 

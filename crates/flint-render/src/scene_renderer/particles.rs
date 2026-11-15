@@ -46,7 +46,7 @@ impl SceneRenderer {
         draws: &[ParticleDrawData<'_>],
     ) {
         self.particle_draws.clear();
-        if self.particle_pipeline.is_none() {
+        if self.pipelines.particle.is_none() || self.particle_buffers.is_none() {
             return;
         }
         self.ensure_soft_disc_texture(device, queue);
@@ -77,9 +77,11 @@ impl SceneRenderer {
             });
         }
 
-        if let Some(pp) = &mut self.particle_pipeline {
-            pp.ensure_capacity(device, scratch.len() as u32);
-            pp.write_instances(queue, &scratch);
+        if let (Some(pipeline), Some(buffers)) =
+            (&self.pipelines.particle, &mut self.particle_buffers)
+        {
+            buffers.ensure_capacity(device, pipeline, scratch.len() as u32);
+            buffers.write_instances(queue, &scratch);
         }
         sort_particle_draws(&mut calls);
         self.particle_draws = calls;
@@ -107,7 +109,8 @@ impl SceneRenderer {
             return bg.clone();
         }
         let pp = self
-            .particle_pipeline
+            .pipelines
+            .particle
             .as_ref()
             .expect("particle pipeline present");
         let tc = self
@@ -174,7 +177,7 @@ impl SceneRenderer {
         let tex_cache = self.texture_cache.as_ref().expect("texture cache");
         let draw: DrawCall = Self::create_draw_call(
             device,
-            &self.pipeline,
+            &self.layouts,
             mesh,
             true,
             TransformUniforms::new(),
@@ -209,7 +212,7 @@ impl SceneRenderer {
     pub fn frame_depth_ready(&self) -> bool {
         let has_postprocess =
             self.postprocess_pipeline.is_some() && self.postprocess_resources.is_some();
-        !self.device_lost && (has_postprocess || self.sample_count == 1)
+        !self.device_lost && (has_postprocess || self.pipelines.samples() == 1)
     }
 
     /// Background colour of the main pass (linear RGBA). Editors use this
@@ -225,36 +228,49 @@ impl SceneRenderer {
 
 /// Load every texture referenced by the live particle instances and
 /// registered effects into the renderer's texture cache. Names are cache
-/// keys verbatim; files are searched in `search_dirs` in order.
-pub fn load_particle_textures(
+/// keys verbatim. Each texture is found by the
+/// project's one asset search (`AssetKind::ParticleTextures`, ADR 0114):
+/// `particles/<name>`, then `<name>` beside the scene, the same at each
+/// directory above it up to the project root, then in the engine. A miss
+/// is warned about with every path tried.
+pub fn load_scene_particle_textures(
     renderer: &mut SceneRenderer,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     sync: &ParticleSync,
-    search_dirs: &[PathBuf],
+    project: &flint_core::project::Project,
+    scene_dir: &std::path::Path,
+) {
+    use flint_core::project::AssetKind;
+    load_textures_found(renderer, device, queue, sync, |name| {
+        project
+            .resolve(AssetKind::ParticleTextures, name, scene_dir)
+            .map_err(|not_found| not_found.to_string())
+    });
+}
+
+fn load_textures_found(
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    sync: &ParticleSync,
+    find: impl Fn(&str) -> Result<PathBuf, String>,
 ) {
     let mut any_new = false;
     for tex_name in sync.texture_names() {
-        let mut found = false;
-        for dir in search_dirs {
-            let path = dir.join(&tex_name);
-            if flint_core::vfs::exists(&path) {
-                match renderer.load_texture_file(device, queue, &tex_name, &path) {
-                    Ok(true) => {
-                        eprintln!("Loaded particle texture: {tex_name}");
-                        any_new = true;
-                    }
-                    Ok(false) => {} // already cached
-                    Err(e) => {
-                        tracing::warn!("Failed to load particle texture '{}': {}", tex_name, e)
-                    }
+        // Loaded already: nothing to look for (and nothing to warn about twice)
+        match find(&tex_name) {
+            Ok(path) => match renderer.load_texture_file(device, queue, &tex_name, &path) {
+                Ok(true) => {
+                    eprintln!("Loaded particle texture: {tex_name}");
+                    any_new = true;
                 }
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            tracing::warn!("Particle texture not found: {}", tex_name);
+                Ok(false) => {} // already cached
+                Err(e) => {
+                    tracing::warn!("Failed to load particle texture '{}': {}", tex_name, e)
+                }
+            },
+            Err(not_found) => tracing::warn!("{not_found}"),
         }
     }
     if any_new {

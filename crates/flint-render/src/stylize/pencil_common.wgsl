@@ -21,6 +21,11 @@ struct PencilRow {
     g: vec4<f32>,
     // paper_scale (pt a texel), stroke_rows, paper image on, stroke image on (#390)
     h: vec4<f32>,
+    // grazing (#404), tone (#869: 0 picture, 1 light), transition (#879:
+    // 0 fade, 1 draw), the seed without the boil's steps (the draw order's)
+    i: vec4<f32>,
+    // clutter (#883), unused x3
+    j: vec4<f32>,
 };
 
 struct PencilUniforms {
@@ -29,7 +34,9 @@ struct PencilUniforms {
     pixels_per_point: f32,
     size: vec2<f32>,
     srgb: f32,
-    _pad0: f32,
+    // The whole frame's draw front (#879): its table's blend while the
+    // table draws on, else 1
+    front: f32,
     // The camera's forward axis, for view depth
     forward: vec3<f32>,
     _pad1: f32,
@@ -124,10 +131,19 @@ fn vnoise(p: vec2<f32>, seed: u32) -> f32 {
 // The paper and stroke images (#390), a blank texel while none is named
 @group(2) @binding(2) var paper_tex: texture_2d<f32>;
 @group(2) @binding(3) var stroke_tex: texture_2d<f32>;
+// The style albedo (#869): each opaque mesh's own colour, alpha 0 where none
+// was drawn; a blank texel while no row reads the light
+@group(2) @binding(4) var albedo_tex: texture_2d<f32>;
 
 fn mask_id(p: vec2<i32>) -> u32 {
     let size = vec2<i32>(textureDimensions(style_mask));
     return textureLoad(style_mask, clamp(p, vec2<i32>(0), size - 1), 0).r;
+}
+
+// The entity's blend at a mask pixel (#278: `.g`, 0..65535)
+fn mask_blend(p: vec2<i32>) -> f32 {
+    let size = vec2<i32>(textureDimensions(style_mask));
+    return f32(textureLoad(style_mask, clamp(p, vec2<i32>(0), size - 1), 0).g) / 65535.0;
 }
 
 fn mask_px(uv: vec2<f32>) -> vec2<i32> {

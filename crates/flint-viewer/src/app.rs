@@ -9,19 +9,22 @@ use crate::panels::{
 use crate::picking::{build_pick_targets, pick_entity};
 use crate::spline_editor::{DragMode, SplineEditor, SplineEditorConfig};
 use crate::undo::{EditAction, UndoCommand, UndoStack};
+use crate::watch::StyleSources;
 use anyhow::{Context, Result};
 use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_core::components as comp;
 use flint_ecs::FlintWorld;
 use flint_render::model_loader::{self, ModelLoadConfig};
+use flint_render::AcquireFrame;
 use flint_render::{
     post_process_config_from_def, Camera, PostProcessConfig, RenderContext, RendererConfig,
     SceneRenderer,
 };
-use flint_scene::{load_scene, save_scene, CameraDef, PostProcessDef, SceneDocument};
-use flint_schema::SchemaRegistry;
-use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
-use std::path::Path;
+use flint_scene::{load_scene, CameraDef, PostProcessDef, SceneDocument};
+use flint_schema::{SchemaDirs, SchemaRegistry};
+use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
+use notify_debouncer_mini::{new_debouncer, Debouncer};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -41,11 +44,12 @@ struct ViewerState {
     scene_doc: Option<SceneDocument>,
     /// The scene's authored `[post_process]` block, if any — applied on load
     /// so the viewer shows the authored look (DoF, vignette, fog, …);
-    /// F11 toggles between it and the viewer's default config.
+    /// F4's "Authored post" button toggles between it and the viewer's
+    /// default config.
     scene_post: Option<PostProcessDef>,
     /// The scene's wooze field, if it has a `[wooze]` table. The viewer reads it
     /// for the shading boil only (#214); it doesn't run living props.
-    wooze: Option<flint_core::wooze::WoozeField>,
+    wooze: Option<flint_wooze::WoozeField>,
     /// The scene's authored `[camera]` block, if any — seeds the orbit camera
     /// on load (and on Space reset) so the viewer opens on the authored
     /// framing instead of the generic default.
@@ -54,36 +58,125 @@ struct ViewerState {
 
 /// `flint edit scene.toml --style ... --style-time ...` (#328): style words
 /// written over the scene's post-processing at load and at every hot
-/// reload, and the post time styles see.
+/// reload, and the post time styles see. `--motion-hold` (#871) is the
+/// whole-frame motion on twos rate, written over the scene's `[post_process]
+/// motion_hold` the same way.
 #[derive(Debug, Clone, Default)]
 pub struct ViewerStyle {
     pub specs: Vec<String>,
     pub time: Option<f32>,
+    pub motion_hold: Option<f32>,
 }
 
-/// Run the viewer application (standard viewer mode)
+/// The viewer window's size in physical pixels and whether it draws the
+/// editor grid: `flint edit scene.toml --width --height --no-grid` (#423).
+/// The grid writes depth, so a depth-reading style traces it; `grid: false`
+/// keeps it out of the frame from the first one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewerWindow {
+    pub width: u32,
+    pub height: u32,
+    pub grid: bool,
+}
+
+impl Default for ViewerWindow {
+    fn default() -> Self {
+        Self {
+            width: 1600,
+            height: 900,
+            grid: true,
+        }
+    }
+}
+
+/// What the viewer loads for a scene: the schemas and constraints of every
+/// directory the one resolver names (ADR 0114: `--schemas` flags if given,
+/// else the project manifest's list, else `schemas/` in the working
+/// directory, beside the scene and one level up), and those directories, to
+/// watch. Every flag counts (#704: the viewer used to take the first).
+pub fn load_schemas(
+    scene_path: &str,
+    schemas: &[String],
+) -> Result<(SchemaRegistry, ConstraintRegistry, SchemaDirs)> {
+    let (registry, dirs) = SchemaRegistry::resolve(Some(Path::new(scene_path)), schemas)?;
+    if dirs.dirs.is_empty() {
+        println!("Warning: No schemas directories found");
+    }
+    let mut constraints = ConstraintRegistry::new();
+    for dir in &dirs.dirs {
+        // A file that doesn't read leaves the viewer without that
+        // directory's constraints, and says so (#687); a constraint whose
+        // query doesn't parse is kept with its file, and the evaluator
+        // shows it in the status panel as an error
+        match ConstraintRegistry::load_from_directory(dir) {
+            Ok(loaded) => constraints.extend(loaded),
+            Err(e) => eprintln!("Warning: constraints not loaded: {e}"),
+        }
+    }
+    Ok((registry, constraints, dirs))
+}
+
+/// What the status panel lists: one line a violation, and one for each
+/// constraint that can't be evaluated (a query that doesn't parse), which
+/// the evaluator reports as an error naming the constraint and its file
+/// (#687). It used to show nothing for those, so a typo read as a pass.
+fn violation_lines(
+    world: &FlintWorld,
+    registry: &SchemaRegistry,
+    constraints: &ConstraintRegistry,
+) -> Vec<String> {
+    ConstraintEvaluator::new(world, registry, constraints)
+        .validate()
+        .violations
+        .iter()
+        .map(|v| format!("[{:?}] {}: {}", v.severity, v.entity_name, v.message))
+        .collect()
+}
+
+#[cfg(test)]
+mod constraint_tests {
+    use super::*;
+
+    #[test]
+    fn a_constraint_with_a_bad_query_is_listed_as_an_error() {
+        let mut constraints = ConstraintRegistry::new();
+        constraints
+            .load_string(
+                "[[constraint]]\nname = \"doors_shut\"\n\
+                 query = \"entities where archetype == 'door' and door.locked == true\"\n\
+                 severity = \"warning\"\nmessage = \"m\"\n\
+                 [constraint.kind]\ntype = \"required_child\"\nchild_archetype = \"handle\"\n",
+            )
+            .unwrap();
+        let lines = violation_lines(&FlintWorld::new(), &SchemaRegistry::new(), &constraints);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("[Error] [constraint]: constraint 'doors_shut': its query"),
+            "{lines:?}"
+        );
+        assert!(lines[0].contains("can't be evaluated"), "{lines:?}");
+    }
+}
+
+/// Run the viewer application (standard viewer mode). `schemas` are the
+/// `--schemas` flags, empty when none were given.
 pub fn run(
     scene_path: &str,
     watch: bool,
-    schemas_path: &str,
+    schemas: &[String],
     inspector: bool,
     auto_orbit: bool,
     style: ViewerStyle,
+    window: ViewerWindow,
 ) -> Result<()> {
-    let registry = if Path::new(schemas_path).exists() {
-        SchemaRegistry::load_from_directory(schemas_path)?
-    } else {
-        println!("Warning: Schemas directory not found: {}", schemas_path);
-        SchemaRegistry::new()
-    };
-
-    let constraint_registry =
-        ConstraintRegistry::load_from_directory(schemas_path).unwrap_or_default();
+    let (registry, constraint_registry, schema_dirs) = load_schemas(scene_path, schemas)?;
 
     load_user_styles(scene_path);
     // A word may name one of the scene's styles, registered just now
     flint_render::stylize::check_style_specs(&style.specs).map_err(anyhow::Error::msg)?;
-    let (world, scene_file) = load_scene(scene_path, &registry)?;
+    let (world, mut scene_file) = load_scene(scene_path, &registry)?;
+    // Living props' tables: checked, and the preset [wooze] names filled in (#686)
+    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))?;
 
     println!("Loaded scene: {}", scene_file.scene.name);
     println!("Entities: {}", world.entity_count());
@@ -107,44 +200,9 @@ pub fn run(
     }));
 
     let _watcher = if watch {
-        let state_clone = Arc::clone(&state);
-        let (tx, rx) = mpsc::channel();
-
-        let mut debouncer = new_debouncer(Duration::from_millis(500), tx)?;
-        let scene_file = Path::new(scene_path);
-        let scene_dir = scene_file.parent().unwrap_or_else(|| Path::new("."));
-
-        debouncer
-            .watcher()
-            .watch(scene_file, RecursiveMode::NonRecursive)?;
-        debouncer
-            .watcher()
-            .watch(scene_dir, RecursiveMode::Recursive)?;
-
-        let schemas_dir = Path::new(schemas_path);
-        if schemas_dir.exists() {
-            debouncer
-                .watcher()
-                .watch(schemas_dir, RecursiveMode::Recursive)?;
-        }
-
-        std::thread::spawn(move || {
-            for result in rx {
-                match result {
-                    Ok(_events) => {
-                        if let Ok(mut state) = state_clone.lock() {
-                            state.needs_reload = true;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Watch error: {:?}", e);
-                    }
-                }
-            }
-        });
-
+        let watcher = watch_scene(scene_path, &schema_dirs.dirs, &state)?;
         println!("Watching for changes in scene and related assets...");
-        Some(debouncer)
+        Some(watcher)
     } else {
         None
     };
@@ -156,6 +214,8 @@ pub fn run(
     app.auto_orbit = auto_orbit;
     app.style_specs = style.specs;
     app.style_time = style.time;
+    app.motion_hold = style.motion_hold.map(|rate| rate.max(0.0));
+    app.window_opts = window;
     event_loop.run_app(&mut app)?;
 
     Ok(())
@@ -195,31 +255,19 @@ pub fn run_with_world(
 }
 
 /// Run the viewer in editor mode with a spline editor configuration.
+/// `schemas` are the `--schemas` flags, empty when none were given.
 pub fn run_editor(
     scene_path: &str,
     watch: bool,
-    schemas_paths: &[&str],
+    schemas: &[String],
     editor_config: SplineEditorConfig,
+    window: ViewerWindow,
 ) -> Result<()> {
-    let existing: Vec<&str> = schemas_paths
-        .iter()
-        .copied()
-        .filter(|p| Path::new(p).exists())
-        .collect();
-    let registry = if !existing.is_empty() {
-        SchemaRegistry::load_from_directories(&existing)?
-    } else {
-        println!("Warning: No schemas directories found");
-        SchemaRegistry::new()
-    };
-
-    let constraint_registry = existing
-        .first()
-        .and_then(|p| ConstraintRegistry::load_from_directory(p).ok())
-        .unwrap_or_default();
+    let (registry, constraint_registry, schema_dirs) = load_schemas(scene_path, schemas)?;
 
     load_user_styles(scene_path);
-    let (world, scene_file) = load_scene(scene_path, &registry)?;
+    let (world, mut scene_file) = load_scene(scene_path, &registry)?;
+    flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))?;
 
     println!("Loaded scene: {}", scene_file.scene.name);
     println!("Entities: {}", world.entity_count());
@@ -241,46 +289,9 @@ pub fn run_editor(
     }));
 
     let _watcher = if watch {
-        let state_clone = Arc::clone(&state);
-        let (tx, rx) = mpsc::channel();
-
-        let mut debouncer = new_debouncer(Duration::from_millis(500), tx)?;
-        let scene_file_path = Path::new(scene_path);
-        let scene_dir = scene_file_path.parent().unwrap_or_else(|| Path::new("."));
-
-        debouncer
-            .watcher()
-            .watch(scene_file_path, RecursiveMode::NonRecursive)?;
-        debouncer
-            .watcher()
-            .watch(scene_dir, RecursiveMode::Recursive)?;
-
-        for sp in schemas_paths {
-            let schemas_dir = Path::new(sp);
-            if schemas_dir.exists() {
-                debouncer
-                    .watcher()
-                    .watch(schemas_dir, RecursiveMode::Recursive)?;
-            }
-        }
-
-        std::thread::spawn(move || {
-            for result in rx {
-                match result {
-                    Ok(_events) => {
-                        if let Ok(mut state) = state_clone.lock() {
-                            state.needs_reload = true;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Watch error: {:?}", e);
-                    }
-                }
-            }
-        });
-
+        let watcher = watch_scene(scene_path, &schema_dirs.dirs, &state)?;
         println!("Watching for changes...");
-        Some(debouncer)
+        Some(watcher)
     } else {
         None
     };
@@ -290,6 +301,7 @@ pub fn run_editor(
 
     let editor = SplineEditor::from_config(editor_config);
     let mut app = ViewerApp::new_editor(state, editor);
+    app.window_opts = window;
     event_loop.run_app(&mut app)?;
 
     Ok(())
@@ -390,6 +402,18 @@ pub struct ViewerApp {
     style_specs: Vec<String>,
     /// `--style-time`: the post time animated styles see.
     style_time: Option<f32>,
+    /// `--motion-hold` (#871): the whole-frame motion on twos rate, kept
+    /// over the scene's as `--style` is.
+    motion_hold: Option<f32>,
+    /// The clock motion held on twos ticks by (#871): seconds since the
+    /// viewer opened. The viewer's post time stands still (at 0, or
+    /// `--style-time`), so a hold stamped with it would never turn and a
+    /// dragged held entity would stay where it was first drawn; on its own
+    /// wall clock it steps, `rate` times a second, as it will in the player.
+    motion_clock: Instant,
+    /// `--width` / `--height` / `--no-grid` (#423): the window's first size
+    /// and whether the renderer draws the editor grid.
+    window_opts: ViewerWindow,
 
     // Live particles (ADR 0068): the viewer steps the same ParticleSystem the
     // player uses, so inspector edits to particle_emitter / particle_effect
@@ -401,7 +425,7 @@ pub struct ViewerApp {
     particle_alive: usize,
     last_particle_tick: Instant,
     /// The shading boil's clock (#214): beats, and seconds for the field's ramps.
-    boil_clock: flint_core::wooze::BoilClock,
+    boil_clock: flint_wooze::BoilClock,
     boil_time: f64,
     last_boil_tick: Instant,
 }
@@ -415,6 +439,54 @@ fn scene_dir_of(scene_path: &str) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
+/// `--watch`: the scene file, its folder (recursively) and the schema
+/// folders, marking the scene for a reload on a change. A batch that is
+/// only user styles' WGSL and descriptions marks nothing (#429): the
+/// style's pass rebuilds its shader in place, and `check_reload`'s poll
+/// of the descriptions reloads the scene only when one changed.
+fn watch_scene(
+    scene_path: &str,
+    schema_dirs: &[PathBuf],
+    state: &Arc<Mutex<ViewerState>>,
+) -> Result<Debouncer<RecommendedWatcher>> {
+    let state = Arc::clone(state);
+    let (tx, rx) = mpsc::channel();
+    let mut debouncer = new_debouncer(Duration::from_millis(500), tx)?;
+    let scene_file = Path::new(scene_path);
+    let scene_dir = scene_dir_of(scene_path);
+    debouncer
+        .watcher()
+        .watch(scene_file, RecursiveMode::NonRecursive)?;
+    debouncer
+        .watcher()
+        .watch(scene_dir, RecursiveMode::Recursive)?;
+    for dir in schema_dirs {
+        debouncer.watcher().watch(dir, RecursiveMode::Recursive)?;
+    }
+    let style_sources = StyleSources::for_scene_dir(scene_dir);
+
+    std::thread::spawn(move || {
+        for result in rx {
+            match result {
+                Ok(events) => {
+                    let paths = events.iter().map(|e| e.path.as_path());
+                    if !style_sources.wants_scene_reload(paths) {
+                        tracing::debug!("style sources changed; left to the style's own reload");
+                        continue;
+                    }
+                    if let Ok(mut state) = state.lock() {
+                        state.needs_reload = true;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Watch error: {:?}", e);
+                }
+            }
+        }
+    });
+    Ok(debouncer)
+}
+
 /// Register the user-authored styles (`styles/*.shader.toml`, ADR 0112)
 /// the scene can see, before its `[post_process]` is read, so its tables
 /// for them aren't dropped as unknown (#275).
@@ -424,10 +496,18 @@ fn load_user_styles(scene_path: &str) {
     }
 }
 
-/// `config` with the `--style` words written over it (#328).
-fn with_styles(mut config: PostProcessConfig, specs: &[String]) -> PostProcessConfig {
+/// `config` with the `--style` words (#328) and `--motion-hold` (#871)
+/// written over it.
+fn with_flags(
+    mut config: PostProcessConfig,
+    specs: &[String],
+    motion_hold: Option<f32>,
+) -> PostProcessConfig {
     for e in flint_render::stylize::apply_style_specs(&mut config, specs) {
         eprintln!("Warning: {e}");
+    }
+    if let Some(rate) = motion_hold {
+        config.motion_hold = rate;
     }
     config
 }
@@ -519,6 +599,9 @@ impl ViewerApp {
             auto_orbit_speed: 0.5,
             style_specs: Vec::new(),
             style_time: None,
+            motion_hold: None,
+            motion_clock: Instant::now(),
+            window_opts: ViewerWindow::default(),
             particles: flint_particles::ParticleSystem::new(),
             show_particles: true,
             particles_paused: false,
@@ -579,6 +662,9 @@ impl ViewerApp {
             auto_orbit_speed: 0.5,
             style_specs: Vec::new(),
             style_time: None,
+            motion_hold: None,
+            motion_clock: Instant::now(),
+            window_opts: ViewerWindow::default(),
             particles: flint_particles::ParticleSystem::new(),
             show_particles: true,
             particles_paused: false,
@@ -632,7 +718,10 @@ impl ViewerApp {
 
         let window_attrs = Window::default_attributes()
             .with_title(title)
-            .with_inner_size(PhysicalSize::new(1600, 900));
+            .with_inner_size(PhysicalSize::new(
+                self.window_opts.width.max(1),
+                self.window_opts.height.max(1),
+            ));
 
         let window = Arc::new(
             event_loop
@@ -689,18 +778,22 @@ impl ViewerApp {
             None,
         );
 
+        // For the plain view egui draws into (RenderContext::hud_view, #428)
         let egui_renderer = egui_wgpu::Renderer::new(
             &render_context.device,
-            render_context.config.format,
-            None,
-            1,
-            false,
+            render_context.hud_format,
+            egui_wgpu::RendererOptions {
+                depth_stencil_format: None,
+                msaa_samples: 1,
+                dithering: false,
+                ..Default::default()
+            },
         );
 
         let mut scene_renderer = SceneRenderer::new(
             &render_context,
             RendererConfig {
-                show_grid: true,
+                show_grid: self.window_opts.grid,
                 ..Default::default()
             },
         );
@@ -708,11 +801,13 @@ impl ViewerApp {
         // Load models and update meshes from world
         {
             let mut state = self.state.lock().unwrap();
-            // Fonts and glyph sets (ASCII's `font`, #265) resolve beside the scene
-            scene_renderer.scene_dir = Path::new(&state.scene_path)
-                .parent()
-                .map(|p| p.to_path_buf());
             let config = ModelLoadConfig::from_scene_path(&state.scene_path);
+            // Glyph sets, palettes and papers (ASCII's `font`, #265) are
+            // found from the scene's project and folder (ADR 0114)
+            scene_renderer.set_asset_scope(flint_core::project::AssetScope::new(
+                config.project.clone(),
+                config.scene_dir.clone(),
+            ));
             model_loader::load_models_from_world(
                 &mut state.world,
                 &mut scene_renderer,
@@ -723,39 +818,60 @@ impl ViewerApp {
             scene_renderer.update_from_world(&state.world, &render_context.device);
 
             // Particles (ADR 0068): effects next to the scene, then textures.
+            let project = &config.project;
             flint_particles::load_particle_effects_from_world(
+                project,
                 &state.scene_path,
                 &mut self.particles,
             );
             self.particles.sync.sync_from_world(&state.world);
-            let dirs = flint_particles::texture_search_dirs(&state.scene_path);
-            flint_render::load_particle_textures(
+            flint_render::load_scene_particle_textures(
                 &mut scene_renderer,
                 &render_context.device,
                 &render_context.queue,
                 &self.particles.sync,
-                &dirs,
+                project,
+                scene_dir_of(&state.scene_path),
+            );
+
+            // Grass on a mesh ground (ADR 0089), as the player and
+            // `flint render` load it (#332)
+            flint_render::load_grass_ground_in(
+                &state.world,
+                project,
+                scene_dir_of(&state.scene_path),
+                &render_context.device,
+                &render_context.queue,
+                &mut scene_renderer,
             );
         }
 
         // Apply the scene's authored [post_process] block (DoF, vignette,
-        // fog, …) so the viewer shows the authored look. F11 toggles back
-        // to the viewer's default config (kept here for that).
+        // fog, …) so the viewer shows the authored look. F4's "Authored post"
+        // button toggles back to the viewer's default config (kept here for that).
         self.default_post_config = Some(scene_renderer.post_process_config().clone());
         {
             let state = self.state.lock().unwrap();
             if let Some(def) = &state.scene_post {
-                scene_renderer.set_post_process_config(with_styles(
+                scene_renderer.set_post_process_config(with_flags(
                     post_process_config_from_def(def),
                     &self.style_specs,
+                    self.motion_hold,
                 ));
-                println!("Scene [post_process] applied (F11 toggles scene/default)");
-            } else if !self.style_specs.is_empty() {
+                println!("Scene [post_process] applied (F4 > Authored post toggles scene/default)");
+            } else if !self.style_specs.is_empty() || self.motion_hold.is_some() {
                 let config = scene_renderer.post_process_config().clone();
-                scene_renderer.set_post_process_config(with_styles(config, &self.style_specs));
+                scene_renderer.set_post_process_config(with_flags(
+                    config,
+                    &self.style_specs,
+                    self.motion_hold,
+                ));
             }
             if !self.style_specs.is_empty() {
                 println!("--style applied: {}", self.style_specs.join(" "));
+            }
+            if let Some(rate) = self.motion_hold {
+                println!("--motion-hold applied: the whole frame drawn {rate} times a second");
             }
             if let Some(t) = self.style_time {
                 scene_renderer.ocean_time = t as f64;
@@ -802,15 +918,9 @@ impl ViewerApp {
 
     fn update_constraints(&mut self) {
         let state = self.state.lock().unwrap();
-        let evaluator =
-            ConstraintEvaluator::new(&state.world, &state.registry, &state.constraint_registry);
-        let report = evaluator.validate();
-        self.violation_count = report.violations.len();
-        self.violation_messages = report
-            .violations
-            .iter()
-            .map(|v| format!("[{:?}] {}: {}", v.severity, v.entity_name, v.message))
-            .collect();
+        self.violation_messages =
+            violation_lines(&state.world, &state.registry, &state.constraint_registry);
+        self.violation_count = self.violation_messages.len();
     }
 
     fn render(&mut self) {
@@ -821,24 +931,26 @@ impl ViewerApp {
         // Animate camera snap transitions
         self.animate_camera();
 
-        let output = match self
-            .render_context
-            .as_ref()
-            .unwrap()
-            .surface
-            .get_current_texture()
-        {
+        let output = match self.render_context.as_ref().unwrap().surface.acquire() {
             Ok(output) => output,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => return,
+            Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => return,
             Err(e) => {
                 tracing::warn!("Surface error: {:?}", e);
                 return;
             }
         };
 
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        // The scene into the sRGB view, egui into the plain one, as the
+        // player does: egui's translucent panels blend in display space
+        // there, so the style-error card and the F4 panels look the same in
+        // both hosts (#428).
+        let (view, hud_view) = {
+            let context = self.render_context.as_ref().unwrap();
+            (
+                context.frame_view(&output.texture),
+                context.hud_view(&output.texture),
+            )
+        };
 
         self.render_stats.record_frame();
 
@@ -861,6 +973,9 @@ impl ViewerApp {
         // Particles: step, pack, upload (ADR 0068)
         self.tick_particles();
 
+        // Motion on twos: the clock held drawings turn on (#871)
+        self.tick_motion_hold();
+
         // Render the 3D scene
         {
             let context = self.render_context.as_ref().unwrap();
@@ -874,7 +989,7 @@ impl ViewerApp {
         }
 
         // Always render egui overlay (gizmo is always visible, panels are conditional)
-        let (gizmo_action, menu_actions) = self.render_egui(&view);
+        let (gizmo_action, menu_actions) = self.render_egui(&hud_view);
 
         // Rendering & Effects menu actions that need &mut self (deferred out
         // of the egui closure's disjoint field borrows)
@@ -902,6 +1017,10 @@ impl ViewerApp {
             match action {
                 GizmoAction::SnapToView { yaw, pitch } => {
                     self.camera_snap_target = Some((yaw, pitch));
+                    // The turn eases in, but the projection switches at once
+                    if !self.camera.orthographic {
+                        self.reset_style_history();
+                    }
                     self.camera.orthographic = true;
                 }
                 GizmoAction::OrbitDelta { dyaw, dpitch } => {
@@ -909,6 +1028,9 @@ impl ViewerApp {
                     self.camera.orbit_horizontal(dyaw);
                     self.camera.orbit_vertical(dpitch);
                     self.camera_snap_target = None;
+                    if self.camera.orthographic {
+                        self.reset_style_history();
+                    }
                     self.camera.orthographic = false;
                 }
                 GizmoAction::SwitchToPerspective => {
@@ -926,7 +1048,24 @@ impl ViewerApp {
             self.finalize_gizmo_undo();
         }
 
-        output.present();
+        self.render_context.as_ref().unwrap().queue.present(output);
+    }
+
+    /// Stamp the hold's clock (#871), and while anything is drawn on ticks
+    /// re-read the world every frame. The viewer otherwise re-reads it only
+    /// on an edit, so a held entity dragged with the gizmo would be left
+    /// drawn where the last tick of the drag caught it, not where it was
+    /// dropped. A scene with no hold re-reads nothing more than it did.
+    fn tick_motion_hold(&mut self) {
+        let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer)
+        else {
+            return;
+        };
+        renderer.set_motion_time(self.motion_clock.elapsed().as_secs_f64());
+        if renderer.motion_held() {
+            let state = self.state.lock().unwrap();
+            renderer.update_from_world(&state.world, &context.device);
+        }
     }
 
     /// Advance the particle simulation by real time (scaled), then pack and
@@ -1014,19 +1153,17 @@ impl ViewerApp {
         renderer.set_post_process_config(config);
     }
 
-    /// Advance the shading boil and tell the renderer which drawing it's on. Also
-    /// keeps the post passes' resources in step with the config, since every way
-    /// the viewer changes it (load, F11, hot reload, F4) ends up here.
+    /// Advance the shading boil and tell the renderer which drawing it's on.
+    /// The post passes' resources (styles, FXAA) follow the config by
+    /// themselves: the renderer builds them each frame (#262, #297), however
+    /// the viewer set it (load, scene/default toggle, hot reload, F4).
     fn tick_boil(&mut self) {
         let now = Instant::now();
         let dt = (now - self.last_boil_tick).as_secs_f64().min(0.1);
         self.last_boil_tick = now;
-        let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer)
-        else {
+        let Some(renderer) = &mut self.scene_renderer else {
             return;
         };
-        renderer.ensure_kuwahara_resources(&context.device, &context.queue);
-        renderer.ensure_contour_resources(&context.device);
 
         let eye = self.camera.position_array();
         let state = self.state.lock().unwrap();
@@ -1072,17 +1209,21 @@ impl ViewerApp {
         match scene_post {
             None => println!("Scene has no [post_process] block — nothing to toggle"),
             Some(def) if !self.scene_post_enabled => {
-                renderer.set_post_process_config(with_styles(
+                renderer.set_post_process_config(with_flags(
                     post_process_config_from_def(&def),
                     &self.style_specs,
+                    self.motion_hold,
                 ));
                 self.scene_post_enabled = true;
                 println!("Scene post-process: ON (authored)");
             }
             Some(_) => {
                 if let Some(default) = &self.default_post_config {
-                    renderer
-                        .set_post_process_config(with_styles(default.clone(), &self.style_specs));
+                    renderer.set_post_process_config(with_flags(
+                        default.clone(),
+                        &self.style_specs,
+                        self.motion_hold,
+                    ));
                 }
                 self.scene_post_enabled = false;
                 println!("Scene post-process: OFF (viewer default)");
@@ -1149,9 +1290,10 @@ impl ViewerApp {
                     flint_render::look::resolve(&def, rp.look.as_deref(), &state.scene_path)
                 }) {
                     Some(Ok(def)) => {
-                        renderer.set_post_process_config(with_styles(
+                        renderer.set_post_process_config(with_flags(
                             post_process_config_from_def(&def),
                             &self.style_specs,
+                            self.motion_hold,
                         ));
                         renderer.ensure_style_resources(&context.device);
                         renderer.ensure_fxaa_resources(&context.device);
@@ -1171,9 +1313,6 @@ impl ViewerApp {
                 }
                 if flags.fxaa_needs_resources {
                     renderer.ensure_fxaa_resources(&context.device);
-                }
-                if flags.contour_needs_resources {
-                    renderer.ensure_contour_resources(&context.device);
                 }
             }
             if flags.shadows_changed {
@@ -1394,25 +1533,31 @@ impl ViewerApp {
         let mut gizmo_edits: Vec<EditAction> = Vec::new();
         let mut gizmo_drag_just_ended = false;
 
-        // User styles that don't compile (#275), shown until they do
-        let style_errors = flint_render::stylize::custom::errors();
+        // User styles that don't compile (#275) or don't load (#425), and
+        // built-in shaders read from FLINT_STYLE_SHADER_DIR that don't
+        // compile (#418), shown until they do
+        let mut style_errors = flint_render::stylize::custom::errors();
+        style_errors.extend(flint_render::stylize::dev_shader::errors());
 
-        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+        // A real frame: its texture updates are uploaded below (#944)
+        #[allow(clippy::disallowed_methods)]
+        let mut full_output = self.egui_ctx.run_ui(raw_input, |ui| {
+            let ctx = &ui.ctx().clone();
             flint_debug_ui::paint_style_errors(ctx, &style_errors, 0.0);
             if show_panels {
                 // Left side panel: scene tree
-                egui::SidePanel::left("scene_tree_panel")
-                    .default_width(220.0)
+                egui::Panel::left("scene_tree_panel")
+                    .default_size(220.0)
                     .resizable(true)
-                    .show(ctx, |ui| {
+                    .show(ui, |ui| {
                         scene_tree.ui(ui);
                     });
 
                 // Right side panel: spline editor (in editor mode) or entity inspector
-                egui::SidePanel::right("inspector_panel")
-                    .default_width(300.0)
+                egui::Panel::right("inspector_panel")
+                    .default_size(300.0)
                     .resizable(true)
-                    .show(ctx, |ui| {
+                    .show(ui, |ui| {
                         if let Some(ed) = editor.as_mut() {
                             panel_actions =
                                 crate::panels::spline_panel::spline_editor_panel(ui, ed);
@@ -1435,10 +1580,10 @@ impl ViewerApp {
                     });
 
                 // Bottom panel: stats + constraint violations + mode indicator + undo info
-                egui::TopBottomPanel::bottom("status_panel")
-                    .default_height(100.0)
+                egui::Panel::bottom("status_panel")
+                    .default_size(100.0)
                     .resizable(true)
-                    .show(ctx, |ui| {
+                    .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             if violation_count == 0 {
                                 ui.colored_label(
@@ -1634,8 +1779,8 @@ impl ViewerApp {
                         .unwrap_or(pos);
                     drop(st); // Release lock before gizmo draw (it reads ctx.input)
 
-                    let render_rect = ctx.screen_rect();
-                    let clip_rect = ctx.available_rect();
+                    let render_rect = ctx.content_rect();
+                    let clip_rect = ui.available_rect_before_wrap();
 
                     if let Some(delta) = transform_gizmo.draw(
                         ctx,
@@ -1661,11 +1806,11 @@ impl ViewerApp {
             }
 
             // View orientation gizmo (always visible)
-            gizmo_action = view_gizmo.draw(ctx, &cam_view);
+            gizmo_action = view_gizmo.draw(ctx, &cam_view, ui.available_rect_before_wrap());
 
             // Draw spline overlay on the central area (editor mode)
             if let Some(ed) = editor.as_ref() {
-                let screen_rect = ctx.screen_rect();
+                let screen_rect = ctx.content_rect();
                 let painter = ctx.layer_painter(egui::LayerId::new(
                     egui::Order::Foreground,
                     egui::Id::new("spline_overlay"),
@@ -1749,8 +1894,10 @@ impl ViewerApp {
                 label: Some("egui Encoder"),
             });
 
-        for (id, image_delta) in &full_output.textures_delta.set {
-            egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+        for (id, deltas) in &full_output.textures_delta.set {
+            for image_delta in deltas {
+                egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+            }
         }
 
         egui_renderer.update_buffers(
@@ -1767,6 +1914,7 @@ impl ViewerApp {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -1775,6 +1923,7 @@ impl ViewerApp {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             let mut render_pass = render_pass.forget_lifetime();
@@ -1786,6 +1935,8 @@ impl ViewerApp {
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);
         }
+        // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
+        full_output.textures_delta.clear();
 
         self.egui_renderer = Some(egui_renderer);
 
@@ -1947,79 +2098,78 @@ impl ViewerApp {
         }
     }
 
-    /// Save the scene to disk using structure-preserving patcher when possible
+    /// Save the scene: write the edited fields into the file through its
+    /// `SceneDocument`, leaving everything else as written (#677). With
+    /// nothing edited this does nothing, so Ctrl+S on an untouched scene, or
+    /// a second Ctrl+S, leaves the file byte for byte as it was.
     fn save(&mut self) {
+        if self.dirty_fields.is_empty() {
+            self.dirty = false;
+            self.update_window_title();
+            self.status_message = Some(("Nothing to save".to_string(), Instant::now()));
+            return;
+        }
         let mut st = self.state.lock().unwrap();
         let scene_path = st.scene_path.clone();
-        let has_doc = st.scene_doc.is_some();
 
-        // Try structure-preserving save via patcher
-        if has_doc && !self.dirty_fields.is_empty() {
-            // Collect patch data from world first (immutable borrow of world)
-            let patches: Vec<(String, String, String, toml::Value)> = self
-                .dirty_fields
-                .iter()
-                .filter_map(|(entity_name, component, field)| {
-                    let eid = st.world.get_id(entity_name)?;
-                    let components = st.world.get_components(eid)?;
-                    let value = components.get_field(component, field)?;
-                    Some((
-                        entity_name.clone(),
-                        component.clone(),
-                        field.clone(),
-                        value.clone(),
-                    ))
-                })
-                .collect();
+        // Collect patch data from world first (immutable borrow of world)
+        let patches: Vec<(String, String, String, toml::Value)> = self
+            .dirty_fields
+            .iter()
+            .filter_map(|(entity_name, component, field)| {
+                let eid = st.world.get_id(entity_name)?;
+                let components = st.world.get_components(eid)?;
+                let value = components.get_field(component, field)?;
+                Some((
+                    entity_name.clone(),
+                    component.clone(),
+                    field.clone(),
+                    value.clone(),
+                ))
+            })
+            .collect();
 
-            // Now apply patches (mutable borrow of doc only)
-            let doc = st.scene_doc.as_mut().unwrap();
-            for (entity_name, component, field, value) in &patches {
-                if let Err(e) = doc.patch_field(entity_name, component, field, value) {
-                    tracing::warn!("Patch error: {}", e);
-                }
-            }
-
-            match doc.save(&scene_path) {
-                Ok(()) => {
-                    drop(st);
-                    self.dirty = false;
-                    self.dirty_fields.clear();
-                    self.last_save_time = Some(Instant::now());
-                    self.suppress_reload_until = Some(Instant::now() + Duration::from_millis(1500));
-                    self.update_window_title();
-                    self.status_message = Some(("Saved!".to_string(), Instant::now()));
-                    println!("Saved scene to {} (structure-preserving)", scene_path);
-                    return;
-                }
-                Err(e) => {
-                    tracing::warn!("Patcher save failed, falling back to full save: {}", e);
-                }
+        // No document means the file didn't parse when it was read. The world
+        // alone would write a scene without its look, camera, wooze field and
+        // prefabs, so the viewer doesn't write it at all.
+        let Some(doc) = st.scene_doc.as_mut() else {
+            drop(st);
+            tracing::error!("Not saving {scene_path}: it didn't parse as TOML when it was read");
+            self.status_message = Some((
+                "Save refused: the scene file didn't parse; reload it".to_string(),
+                Instant::now(),
+            ));
+            return;
+        };
+        let mut skipped = Vec::new();
+        for (entity_name, component, field, value) in &patches {
+            if let Err(e) = doc.patch_field(entity_name, component, field, value) {
+                tracing::warn!("Not saved: {}", e);
+                skipped.push(e);
             }
         }
 
-        // Fallback: full serialize save
-        let scene_name = Path::new(&scene_path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("scene")
-            .to_string();
-
-        match save_scene(&scene_path, &st.world, &scene_name) {
+        match doc.save(&scene_path) {
             Ok(()) => {
-                // Re-parse the document after full save so future patches work
-                st.scene_doc = SceneDocument::from_file(&scene_path).ok();
                 drop(st);
                 self.dirty = false;
                 self.dirty_fields.clear();
                 self.last_save_time = Some(Instant::now());
                 self.suppress_reload_until = Some(Instant::now() + Duration::from_millis(1500));
                 self.update_window_title();
-                self.status_message = Some(("Saved!".to_string(), Instant::now()));
+                let message = match skipped.first() {
+                    None => "Saved!".to_string(),
+                    // An entity a prefab instance expands into isn't in the file
+                    Some(first) => format!(
+                        "Saved, but {} edit(s) had nowhere to go: {first}",
+                        skipped.len()
+                    ),
+                };
+                self.status_message = Some((message, Instant::now()));
                 println!("Saved scene to {}", scene_path);
             }
             Err(e) => {
-                tracing::error!("Failed to save scene: {:?}", e);
+                tracing::error!("Failed to save scene: {}", e);
                 drop(st);
                 self.status_message = Some((format!("Save failed: {}", e), Instant::now()));
             }
@@ -2044,6 +2194,18 @@ impl ViewerApp {
     }
 
     /// Refresh renderer from current world state
+    /// A camera jump of the viewer's own (Space back to the authored
+    /// framing, a switch between perspective and orthographic) or a hot
+    /// reload: styles that remember earlier frames (ASCII's steady glyphs,
+    /// #277) start over instead of carrying the old view into the new one
+    /// (#474). The viewer knows each of its jumps, so it runs no detector:
+    /// orbits, wheel zooms and view snaps ease, and keep their history.
+    fn reset_style_history(&mut self) {
+        if let Some(renderer) = &mut self.scene_renderer {
+            renderer.reset_style_history();
+        }
+    }
+
     fn refresh_renderer(&mut self) {
         let st = self.state.lock().unwrap();
         if let (Some(ctx), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
@@ -2059,7 +2221,7 @@ impl ViewerApp {
         };
 
         // Check if pointer is over egui panels
-        if self.egui_ctx.is_pointer_over_area() {
+        if self.egui_ctx.is_pointer_over_egui() {
             return;
         }
 
@@ -2109,7 +2271,11 @@ impl ViewerApp {
         // scene, which reads its settings for the style again.
         self.user_style_polls = self.user_style_polls.wrapping_add(1);
         if needs_reload || self.user_style_polls % 15 == 0 {
-            let reload = flint_render::stylize::custom::reload_changed(scene_dir_of(&scene_path));
+            // From the project the renderer was given at load, not found anew
+            let reload = match self.scene_renderer.as_ref().map(|r| r.asset_scope()) {
+                Some(scope) => flint_render::stylize::custom::reload_changed_for(&scope),
+                None => flint_render::stylize::custom::reload_changed(scene_dir_of(&scene_path)),
+            };
             for message in &reload.messages {
                 eprintln!("Warning: {message}");
             }
@@ -2124,16 +2290,31 @@ impl ViewerApp {
 
             let reload_result = {
                 let state = self.state.lock().unwrap();
-                load_scene(&scene_path, &state.registry)
+                load_scene(&scene_path, &state.registry).and_then(|(world, mut scene_file)| {
+                    let path = std::path::Path::new(&scene_path);
+                    flint_procgen::settle_scene(&mut scene_file, path)?;
+                    Ok((world, scene_file))
+                })
             };
 
             match reload_result {
                 Ok((new_world, scene_file)) => {
                     println!("Reloaded scene: {}", scene_file.scene.name);
+                    // The picture no longer follows on from the last one
+                    self.reset_style_history();
 
                     {
                         let mut state = self.state.lock().unwrap();
+                        // A reload spawns every entity again under a new id:
+                        // keep the selection (and its outline, #602) by name
+                        let selected_name = self
+                            .scene_tree
+                            .selected_entity()
+                            .and_then(|id| state.world.get_name(id))
+                            .map(str::to_owned);
                         state.world = new_world;
+                        self.scene_tree
+                            .select(selected_name.and_then(|name| state.world.get_id(&name)));
                         state.scene_post = with_look(
                             scene_file.post_process.clone(),
                             &state.scene_path,
@@ -2162,18 +2343,32 @@ impl ViewerApp {
                         // Particles: effects may have changed on disk too
                         // (the watcher covers the scene dir recursively).
                         self.particles.clear();
+                        let project = &config.project;
                         flint_particles::load_particle_effects_from_world(
+                            project,
                             &state.scene_path,
                             &mut self.particles,
                         );
                         self.particles.sync.sync_from_world(&state.world);
-                        let dirs = flint_particles::texture_search_dirs(&state.scene_path);
-                        flint_render::load_particle_textures(
+                        flint_render::load_scene_particle_textures(
                             renderer,
                             &context.device,
                             &context.queue,
                             &self.particles.sync,
-                            &dirs,
+                            project,
+                            scene_dir_of(&state.scene_path),
+                        );
+
+                        // Grass: the scene's grass_ground (or its mask) may
+                        // have changed, or gone; drop the old field first
+                        renderer.unload_grass();
+                        flint_render::load_grass_ground_in(
+                            &state.world,
+                            project,
+                            scene_dir_of(&state.scene_path),
+                            &context.device,
+                            &context.queue,
+                            renderer,
                         );
 
                         // Re-derive the authored post-process so [post_process]
@@ -2181,9 +2376,10 @@ impl ViewerApp {
                         if self.scene_post_enabled {
                             // --style keeps winning over the reloaded file (#328)
                             if let Some(def) = &state.scene_post {
-                                renderer.set_post_process_config(with_styles(
+                                renderer.set_post_process_config(with_flags(
                                     post_process_config_from_def(def),
                                     &self.style_specs,
+                                    self.motion_hold,
                                 ));
                             }
                         }
@@ -2228,7 +2424,10 @@ impl ViewerApp {
         if let Some(ctx) = &self.render_context {
             [ctx.config.width as f32, ctx.config.height as f32]
         } else {
-            [1600.0, 900.0]
+            [
+                self.window_opts.width as f32,
+                self.window_opts.height as f32,
+            ]
         }
     }
 
@@ -2404,6 +2603,9 @@ impl ViewerApp {
 impl ApplicationHandler for ViewerApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
+            // The user style and glyph set polls ask a watcher thread from
+            // here on, never the disk in a frame (#633)
+            flint_core::file_watch::start();
             if let Err(e) = self.initialize(event_loop) {
                 tracing::error!("Failed to initialize viewer: {e:#}");
                 event_loop.exit();
@@ -2594,6 +2796,7 @@ impl ApplicationHandler for ViewerApp {
                             // the scene has no [camera] block)
                             self.seed_camera_from_scene();
                             self.camera.update_orbit();
+                            self.reset_style_history();
                         }
                         PhysicalKey::Code(KeyCode::KeyO) if !is_editor => {
                             self.auto_orbit = !self.auto_orbit;
@@ -2717,8 +2920,8 @@ impl ApplicationHandler for ViewerApp {
 
 /// The wooze field a scene describes, naming what's wrong with it and going on
 /// without that part, as the player does.
-fn field_of(scene: &flint_scene::SceneFile) -> Option<flint_core::wooze::WoozeField> {
-    let (field, issues) = scene.wooze.as_ref()?.field();
+fn field_of(scene: &flint_scene::SceneFile) -> Option<flint_wooze::WoozeField> {
+    let (field, issues) = flint_procgen::LivingTables::or_warn(scene).wooze?.field();
     for issue in issues {
         tracing::warn!("{issue}; going without it");
     }
@@ -2760,14 +2963,14 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats) 
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 209))
                 .stroke(egui::Stroke::new(
                     1.0f32,
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 38),
                 ))
-                .rounding(egui::Rounding::same(4.0))
-                .inner_margin(egui::Margin::same(10.0))
+                .corner_radius(egui::CornerRadius::same(4))
+                .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
                     ui.style_mut().override_font_id = Some(egui::FontId::monospace(11.0));
                     ui.set_min_width(180.0);

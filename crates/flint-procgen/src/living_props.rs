@@ -33,8 +33,8 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 
-use flint_core::wooze::{Cycle, WoozeField, WoozeSample};
 use flint_core::{ContentHash, EntityId};
+use flint_wooze::{Cycle, WoozeField, WoozeSample};
 use web_time::Instant;
 
 use crate::generator::LivingGenerator;
@@ -43,7 +43,9 @@ use crate::living::{
     SegmentPose, WarpedTime, BOIL_BONES, JITTER_CHANNELS,
 };
 use crate::registry::GeneratorRegistry;
-use crate::spec::{EchoConfig, EchoCopy, ProcGenSpec, Stagger, VarianceConfig};
+use crate::spec::{
+    EchoBlend, EchoConfig, EchoCopy, EchoPlaces, ProcGenSpec, Stagger, VarianceConfig,
+};
 use crate::types::BranchSegment;
 
 /// How many bytes of poses the cache keeps once no ring holds them. A pose of
@@ -111,6 +113,8 @@ pub struct LivingDefaults {
     pub stagger: Option<Stagger>,
     /// The scene's word on variance, over each spec's, a field at a time.
     pub variance: VarianceOverride,
+    /// The scene's word on softness (#582), over each spec's.
+    pub softness: Option<f32>,
     /// `[living.species.<spec>]` (#246): each species' own values, over all of
     /// the above and over the wooze field, zones included. Keyed by spec name.
     pub species: BTreeMap<String, SpeciesOverride>,
@@ -130,6 +134,8 @@ pub struct SpeciesOverride {
     pub echoes: EchoOverride,
     /// Its variance, a field at a time.
     pub variance: VarianceOverride,
+    /// Its softness (#582), over the scene's and the spec's.
+    pub softness: Option<f32>,
 }
 
 impl SpeciesOverride {
@@ -140,6 +146,7 @@ impl SpeciesOverride {
             stagger: self.stagger.or(under.stagger),
             echoes: self.echoes.merged(under.echoes),
             variance: self.variance.merged(under.variance),
+            softness: self.softness.or(under.softness),
         }
     }
 
@@ -249,6 +256,7 @@ pub struct ResolvedProp {
     pub variance_amount: Resolved<f32>,
     pub variance_steady: Resolved<f32>,
     pub keep_size: Resolved<bool>,
+    pub softness: Resolved<f32>,
 }
 
 /// Every layer the grove's values are made of, apart from the field, to put back
@@ -257,6 +265,7 @@ pub struct ResolvedProp {
 pub struct LivingLayers {
     echoes: Vec<EchoOverride>,
     staggers: Vec<Option<Stagger>>,
+    softnesses: Vec<Option<f32>>,
     clocks: Vec<(WoozeSample, bool)>,
     variances: Vec<VarianceOverride>,
     species: Vec<(String, SpeciesOverride)>,
@@ -396,6 +405,12 @@ struct DrawnState {
 struct DrawnBones {
     times: Vec<WarpedTime>,
     turns: [f32; JITTER_CHANNELS],
+    /// How much of the poses' slide it showed: it changes with an echo's
+    /// offset while the clock holds, and must be drawn when it does.
+    slide: f32,
+    /// Where it was moved to (`[living] echo_places`): like the slide, it
+    /// changes with an echo's place while the clock holds.
+    place: [f32; 2],
     /// Each part's cycle, by segment id. Holds what the part started it with, for
     /// this buffer alone: an echo reaches each beat at a moment of its own.
     parts: Vec<Cycle>,
@@ -624,6 +639,12 @@ pub struct LivingProp {
     /// What its echoes are set to, or are about to be, in the units a person
     /// turns: [`Self::echoes`] is what those work out to.
     echo_config: EchoConfig,
+    /// How its echoes meet what's behind them: its spec's.
+    echo_blend: EchoBlend,
+    /// Its spec's `echo_slide`: 0, or the steps at which an echo's slide is whole.
+    echo_slide: f32,
+    /// Its spec's `echo_places`: where its echoes stand at a wide spread.
+    echo_places: EchoPlaces,
     /// How deep its lineage's tree is, once built. A ring's size depends on it.
     max_depth: u32,
     /// Clocks it's been asked for and is waiting on poses to start.
@@ -649,6 +670,10 @@ pub struct LivingProp {
     stagger_entity: bool,
     /// The global layer's word on its stagger.
     stagger_global: Option<Stagger>,
+    /// Its spec's softness (#582), the lowest layer.
+    softness_spec: f32,
+    /// The global layer's word on its softness.
+    softness_global: Option<f32>,
 }
 
 /// New clocks for a prop, held back until its ring has what they read.
@@ -891,7 +916,7 @@ impl LivingProp {
                 copy,
                 drawn: old
                     .get(i)
-                    .filter(|was| was.copy.offset == copy.offset)
+                    .filter(|was| was.copy.offset == copy.offset && was.copy.place == copy.place)
                     .map(|was| DrawnBones {
                         times: Vec::new(),
                         ..was.drawn.clone()
@@ -909,6 +934,11 @@ impl LivingProp {
         for echo in &mut self.echoes {
             echo.drawn.times.clear();
         }
+    }
+
+    /// How its echoes meet what's behind them, as its spec says.
+    pub fn echo_blend(&self) -> EchoBlend {
+        self.echo_blend
     }
 
     /// What its echoes are set to, as a person would turn them.
@@ -1075,6 +1105,41 @@ pub struct LivingProps {
     /// Takes turns with filling, once what's in use is done, so that neither can
     /// starve the other.
     rehold_turn: bool,
+}
+
+/// The budget arithmetic of [`LivingProps::fill_within`], apart from the clock
+/// and the generator, so a test can give it a pose cost of its own (#597).
+/// `used_ms` is the frame's time so far; `fill` makes the next pose and says
+/// whether that took generating and how many ms it took, or `None` if nothing
+/// is missing. Returns whether it generated anything.
+fn fill_while_it_fits(
+    estimate_ms: &mut f64,
+    budget_ms: f64,
+    mut used_ms: impl FnMut() -> f64,
+    mut fill: impl FnMut() -> Option<(bool, f64)>,
+) -> bool {
+    let mut made = false;
+    loop {
+        let used = used_ms();
+        let estimate = *estimate_ms;
+        let a_later_frame_fits_it = estimate > 0.0 && estimate <= budget_ms;
+        if used + estimate > budget_ms && (made || budget_ms <= 0.0 || a_later_frame_fits_it) {
+            // Only making a pose teaches the estimate anything, so one that came
+            // down to just under the budget would be turned away by every frame
+            // after it, and the rings would run dry with the budget unspent.
+            if !made {
+                *estimate_ms *= POSE_ESTIMATE_DECAY;
+            }
+            return made;
+        }
+        let Some((generated, took)) = fill() else {
+            return made;
+        };
+        if generated {
+            made = true;
+            *estimate_ms = (*estimate_ms * POSE_ESTIMATE_DECAY).max(took);
+        }
+    }
 }
 
 impl LivingProps {
@@ -1345,6 +1410,43 @@ impl LivingProps {
         self.refresh_props(scope)
     }
 
+    /// Give every prop this softness in the global layer, or one species this
+    /// softness of its own (#582). It changes no pose and fills no ring: only how
+    /// the body draws, from the next upload. Returns whether any prop has it.
+    pub fn tune_softness(&mut self, scope: LivingScope, softness: f32) -> bool {
+        let softness = softness.clamp(0.0, 1.0);
+        match scope {
+            LivingScope::All => {
+                for prop in &mut self.props {
+                    prop.softness_global = Some(softness);
+                }
+                !self.props.is_empty()
+            }
+            LivingScope::Species(name) => {
+                let species = self.species_index(name);
+                self.species[species].over.softness = Some(softness);
+                self.props.iter().any(|prop| prop.species == species)
+            }
+        }
+    }
+
+    /// How soft a prop's silhouette draws, 0 to 1, from its layers: its
+    /// species' own, then the global layer's, then its spec's.
+    pub fn softness(&self, id: LivingPropId) -> f32 {
+        let prop = &self.props[id.0];
+        self.species[prop.species]
+            .over
+            .softness
+            .or(prop.softness_global)
+            .unwrap_or(prop.softness_spec)
+    }
+
+    /// What the global layer says of softness: the first prop's, which a scene's
+    /// `[living] softness` and every live change set alike for all of them.
+    pub fn global_softness(&self) -> Option<f32> {
+        self.props.first().and_then(|prop| prop.softness_global)
+    }
+
     /// What the global layer says (#249): the first prop's echoes and stagger and
     /// the first lineage's variance, which every live change and a scene's
     /// `[living]` set alike for all of them. Unset fields are each spec's.
@@ -1364,6 +1466,7 @@ impl LivingProps {
         LivingLayers {
             echoes: self.props.iter().map(|p| p.echo_global).collect(),
             staggers: self.props.iter().map(|p| p.stagger_global).collect(),
+            softnesses: self.props.iter().map(|p| p.softness_global).collect(),
             clocks: (self.props.iter())
                 .map(|p| (p.wooze_below, p.clock_live))
                 .collect(),
@@ -1382,6 +1485,9 @@ impl LivingProps {
         }
         for (prop, stagger) in self.props.iter_mut().zip(&layers.staggers) {
             prop.stagger_global = *stagger;
+        }
+        for (prop, softness) in self.props.iter_mut().zip(&layers.softnesses) {
+            prop.softness_global = *softness;
         }
         for (prop, (below, live)) in self.props.iter_mut().zip(&layers.clocks) {
             prop.wooze_below = *below;
@@ -1441,7 +1547,7 @@ impl LivingProps {
         let stagger = prop.stagger();
         prop.pending = Some(PendingClocks {
             stagger,
-            copies: echoes.copies(),
+            copies: echoes.copies_placed(&prop.echo_places),
         });
         if prop.ring.is_none() {
             prop.start_pending();
@@ -1578,6 +1684,10 @@ impl LivingProps {
                     over.variance.keep_size.is_some(),
                     global_variance.keep_size.is_some(),
                 ),
+            ),
+            softness: resolved(
+                self.softness(id),
+                layer_of(over.softness.is_some(), prop.softness_global.is_some()),
             ),
         }
     }
@@ -1775,7 +1885,7 @@ impl LivingProps {
             shadow_cycle: Cycle::default(),
             drawn: DrawnState::default(),
             echoes: echo_config
-                .copies()
+                .copies_placed(&living.echo_places)
                 .into_iter()
                 .map(|copy| PropEcho {
                     copy,
@@ -1783,6 +1893,9 @@ impl LivingProps {
                 })
                 .collect(),
             echo_config,
+            echo_blend: living.echo_blend,
+            echo_slide: living.echo_slide,
+            echo_places: living.echo_places.clone(),
             max_depth: 0,
             pending: None,
             echoes_changed: false,
@@ -1794,6 +1907,8 @@ impl LivingProps {
             stagger_own,
             stagger_entity: request.stagger.is_some(),
             stagger_global: self.defaults.stagger,
+            softness_spec: living.softness,
+            softness_global: self.defaults.softness,
         });
         (LivingPropId(self.props.len() - 1), asset_name)
     }
@@ -1840,6 +1955,8 @@ impl LivingProps {
             t,
             prop.beats,
             &prop.wooze,
+            crate::spec::slide_shown(prop.echo_slide, 0.0),
+            [0.0; 2],
             &mut prop.drawn.bones,
             frame,
         );
@@ -1877,8 +1994,10 @@ impl LivingProps {
                     ring.get(wanted).map(|p| &**p)
                 });
                 if found {
+                    let slide = crate::spec::slide_shown(prop.echo_slide, 0.0);
                     for segment in &mut pose.segments {
                         *segment = segment.pulled(shown);
+                        segment.slide = segment.slide.map(|x| x * slide);
                     }
                 }
                 if found
@@ -1917,6 +2036,8 @@ impl LivingProps {
         let t = prop.echo_jitter_time(echo, self.time + prop.jitter_ahead);
         let beats = prop.echo_beats(echo);
         let jitter = prop.jitter.scaled(prop.wooze.jitter);
+        let copy = prop.echoes[echo].copy;
+        let slide = copy.slide_shown(prop.echo_slide);
         let drawn = &mut prop.echoes[echo].drawn;
         let never_posed = drawn.times.is_empty();
         let moved = blend_bones(
@@ -1929,6 +2050,8 @@ impl LivingProps {
             t,
             beats,
             &prop.wooze,
+            slide,
+            copy.place,
             drawn,
             frame,
         );
@@ -2022,30 +2145,19 @@ impl LivingProps {
         start: Instant,
         registry: &GeneratorRegistry,
     ) -> bool {
-        let mut made = false;
-        loop {
-            let used = start.elapsed().as_secs_f64() * 1000.0;
-            let estimate = self.pose_estimate_ms;
-            let a_later_frame_fits_it = estimate > 0.0 && estimate <= budget_ms;
-            if used + estimate > budget_ms && (made || budget_ms <= 0.0 || a_later_frame_fits_it) {
-                // Only making a pose teaches the estimate anything, so one that came
-                // down to just under the budget would be turned away by every frame
-                // after it, and the rings would run dry with the budget unspent.
-                if !made {
-                    self.pose_estimate_ms *= POSE_ESTIMATE_DECAY;
-                }
-                return made;
-            }
-            let began = Instant::now();
-            let Some(generated) = self.fill_one(registry) else {
-                return made;
-            };
-            if generated {
-                made = true;
-                let took = began.elapsed().as_secs_f64() * 1000.0;
-                self.pose_estimate_ms = (self.pose_estimate_ms * POSE_ESTIMATE_DECAY).max(took);
-            }
-        }
+        let mut estimate = self.pose_estimate_ms;
+        let made = fill_while_it_fits(
+            &mut estimate,
+            budget_ms,
+            || start.elapsed().as_secs_f64() * 1000.0,
+            || {
+                let began = Instant::now();
+                let generated = self.fill_one(registry)?;
+                Some((generated, began.elapsed().as_secs_f64() * 1000.0))
+            },
+        );
+        self.pose_estimate_ms = estimate;
+        made
     }
 
     /// Give the emptiest ring its next pose. Returns whether that took
@@ -2310,6 +2422,8 @@ fn blend_bones(
     t: f64,
     beats: f64,
     wooze: &WoozeSample,
+    slide: f32,
+    place: [f32; 2],
     drawn: &mut DrawnBones,
     frame: &mut BlendFrame,
 ) -> MovedBones {
@@ -2333,7 +2447,7 @@ fn blend_bones(
         });
     }
     let turned = turns != drawn.turns;
-    let drifted = frame.times != drawn.times;
+    let drifted = frame.times != drawn.times || slide != drawn.slide || place != drawn.place;
 
     frame.bones.clear();
     if drifted {
@@ -2351,6 +2465,7 @@ fn blend_bones(
                     *segment = segment.pulled(shown);
                 }
             }
+            skeleton.show_at(pose, slide, place);
         }
         let posed = found
             && rig
@@ -2358,6 +2473,8 @@ fn blend_bones(
                 .is_ok();
         if posed {
             std::mem::swap(&mut drawn.times, &mut frame.times);
+            drawn.slide = slide;
+            drawn.place = place;
             boil_bones(&turns, &mut frame.bones);
             drawn.turns = turns;
             moved.first_bone = Some(0);
@@ -3180,27 +3297,129 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
     /// frame reads as having used nothing, and an estimate at the budget still fits.
     #[test]
     fn an_estimate_just_under_the_budget_does_not_stop_the_poses() {
+        // Four props at a step of 0.1 s want 40 poses a second, two thirds of
+        // one a 60 Hz frame. So the rings keep up as long as most frames make
+        // a pose at all, whatever a pose costs here (#597: 256 props needed
+        // ~43 a frame, which a debug build can't make in 4 ms, and the test
+        // measured the machine instead of the estimate).
+        const PROPS: u64 = 4;
+        const BUDGET_MS: f64 = 4.0;
         let mut resolver = resolver_with(&sapling("step = 0.1"));
-        for n in 0..256u64 {
+        for n in 0..PROPS {
             let name = format!("oak_{n}");
             resolver.add_living_prop(request(n + 1, &name)).unwrap();
         }
         resolver.make_living_now();
-        resolver.frame_budget_for_test(4.0);
+        resolver.frame_budget_for_test(BUDGET_MS);
         let made_before = resolver.living_props().stats().poses_made;
-        resolver.living_props_mut().pose_estimate_ms = 4.0;
+        // Any time spent before the first pose puts it over. Whether a frame
+        // spends any before it is the machine's clock's to say (a few props can
+        // finish inside one tick of it), so the decay that keeps this estimate
+        // from turning away every frame is pinned on a clock of the tests' own,
+        // in `a_refused_frame_brings_a_stuck_estimate_down` below.
+        resolver.living_props_mut().pose_estimate_ms = BUDGET_MS;
 
-        run(&mut resolver, 4.0, 1.0 / 60.0);
+        let frames = 240u32;
+        run(&mut resolver, f64::from(frames) / 60.0, 1.0 / 60.0);
 
         let props = resolver.living_props();
+        let stats = props.stats();
+        assert!(stats.poses_made > made_before, "no poses in 4 s: {stats:?}");
+        // What 4 s of beats asked for, give or take the ring's spare.
+        let wanted = PROPS * u64::from(frames) / 6;
         assert!(
-            props.stats().poses_made > made_before,
-            "no poses in 4 s: {:?}",
-            props.stats()
+            stats.poses_made - made_before >= wanted - PROPS,
+            "{} poses for {wanted} beats: {stats:?}",
+            stats.poses_made - made_before
+        );
+        assert!(
+            props.pose_estimate_ms < BUDGET_MS,
+            "the estimate never came down: {} ms",
+            props.pose_estimate_ms
         );
         for prop in props.props() {
-            assert_eq!(prop.ready(), prop.ring_len(), "{:?}", props.stats());
+            assert_eq!(prop.ready(), prop.ring_len(), "{stats:?}");
         }
+    }
+
+    /// Frames of [`fill_while_it_fits`] on a clock of the test's own: each frame
+    /// spends `overhead_ms` before its first pose and `pose_ms` on each, and a
+    /// pose more goes missing every frame. Returns the poses each frame made and
+    /// the estimate after the last.
+    fn fake_frames(
+        frames: usize,
+        budget_ms: f64,
+        overhead_ms: f64,
+        pose_ms: f64,
+        mut estimate_ms: f64,
+    ) -> (Vec<u32>, f64) {
+        let missing = std::cell::Cell::new(0u32);
+        let mut made = Vec::with_capacity(frames);
+        for _ in 0..frames {
+            missing.set(missing.get() + 1);
+            let clock = std::cell::Cell::new(overhead_ms);
+            let mut this_frame = 0;
+            fill_while_it_fits(
+                &mut estimate_ms,
+                budget_ms,
+                || clock.get(),
+                || {
+                    if missing.get() == 0 {
+                        return None;
+                    }
+                    clock.set(clock.get() + pose_ms);
+                    missing.set(missing.get() - 1);
+                    this_frame += 1;
+                    Some((true, pose_ms))
+                },
+            );
+            made.push(this_frame);
+        }
+        (made, estimate_ms)
+    }
+
+    #[test]
+    fn a_refused_frame_brings_a_stuck_estimate_down() {
+        // An estimate at the budget, a frame that has spent 0.05 ms before its
+        // first pose: refused. Without the decay every later frame would be too,
+        // whatever a pose really costs (0.2 ms here).
+        let (made, estimate) = fake_frames(240, 4.0, 0.05, 0.2, 4.0);
+        assert_eq!(made[0], 0, "the first frame can't fit the estimate");
+        let first = made.iter().position(|&n| n > 0).expect("never made a pose");
+        // 4 x 0.99^n <= 3.95 at n = 2: the third frame fits.
+        assert_eq!(first, 2, "{made:?}");
+        // A pose a frame is wanted; the backlog is gone well before the end.
+        assert_eq!(made.iter().sum::<u32>(), 240, "{made:?}");
+        assert!(estimate < 1.0, "the estimate stayed at {estimate} ms");
+    }
+
+    #[test]
+    fn a_pose_dearer_than_the_budget_still_gets_one_a_frame() {
+        // A debug build whose pose costs more than the whole budget.
+        let (made, estimate) = fake_frames(60, 4.0, 0.05, 6.0, 0.0);
+        assert!(made.iter().all(|&n| n == 1), "{made:?}");
+        assert_eq!(estimate, 6.0);
+    }
+
+    #[test]
+    fn a_frame_stops_at_the_pose_that_would_pass_the_budget() {
+        // 0.5 ms poses in a 4 ms budget after 0.05 ms: seven fit, an eighth
+        // would end at 4.05 ms.
+        let mut estimate = 0.5;
+        let clock = std::cell::Cell::new(0.05);
+        let mut made = 0;
+        fill_while_it_fits(
+            &mut estimate,
+            4.0,
+            || clock.get(),
+            || {
+                clock.set(clock.get() + 0.5);
+                made += 1;
+                Some((true, 0.5))
+            },
+        );
+        assert_eq!(made, 7);
+        assert!(clock.get() <= 4.0);
     }
 
     #[test]
@@ -3798,10 +4017,8 @@ value = 1
                 .iter()
                 .enumerate()
                 .map(|(i, s)| {
-                    let (index, weight) = flint_core::wooze::warp(
-                        prop.beats() + prop.clock.phase(s),
-                        prop.clock.glide,
-                    );
+                    let (index, weight) =
+                        flint_wooze::warp(prop.beats() + prop.clock.phase(s), prop.clock.glide);
                     SegmentPose::blend(
                         &prop.pose(index).unwrap().segments[i],
                         &prop.pose(index + 1).unwrap().segments[i],
@@ -3980,7 +4197,7 @@ value = 1
                     .iter()
                     .enumerate()
                     .map(|(i, s)| {
-                        let (index, weight) = flint_core::wooze::warp(
+                        let (index, weight) = flint_wooze::warp(
                             prop.echo_beats(echo) + prop.clock.phase(s),
                             prop.clock.glide,
                         );
@@ -4001,6 +4218,60 @@ value = 1
             }
         }
         assert!(checked > 30, "only {checked} echo blends moved");
+    }
+
+    #[test]
+    fn an_echo_at_a_place_is_its_blend_moved_there() {
+        // Two echoes, a step either side, each already at its place.
+        let extra = format!(
+            "stagger = \"per_level\"\nechoes = {{ count = 2, spread = 1.0 }}\n\
+             echo_places = {{ at = [[0.1, 0.0, -1.0], [0.0, 0.2, 1.0]], from = 0.2, whole = 0.8 }}\n{NO_JITTER}"
+        );
+        let (mut resolver, id) = one_prop(&extra, LivingDefaults::default());
+        let prop = resolver.living_props().prop(id);
+        assert_eq!(prop.echo(0).place, [0.1, 0.0]);
+        assert_eq!(prop.echo(1).place, [0.0, 0.2]);
+        let mut frame = BlendFrame::default();
+        let mut checked = 0;
+        for _ in 0..40 {
+            resolver.process_living(0.03);
+            for echo in 0..2 {
+                let first = resolver.living_props_mut().blend_echo(id, echo, &mut frame);
+                if first != Some(0) {
+                    continue;
+                }
+                checked += 1;
+                let props = resolver.living_props();
+                let prop = props.prop(id);
+                let (skeleton, rig) = props.rig_of(id).unwrap();
+                let segments = skeleton
+                    .segments
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let (index, weight) = flint_wooze::warp(
+                            prop.echo_beats(echo) + prop.clock.phase(s),
+                            prop.clock.glide,
+                        );
+                        SegmentPose::blend(
+                            &prop.pose(index).unwrap().segments[i],
+                            &prop.pose(index + 1).unwrap().segments[i],
+                            weight,
+                        )
+                    })
+                    .collect();
+                let mut by_hand = LivingPose {
+                    shape_seed: 0,
+                    segments,
+                };
+                // A tree has no place axes of its own: the prop's X and Y.
+                skeleton.show_at(&mut by_hand, 1.0, prop.echo(echo).place);
+                let mut expected = Vec::new();
+                rig.palette(skeleton, &by_hand, &mut expected).unwrap();
+                assert_eq!(&frame.bones[..expected.len()], &expected[..]);
+            }
+        }
+        assert!(checked > 10, "only {checked} echo blends moved");
     }
 
     #[test]
@@ -4040,7 +4311,7 @@ value = 1
             resolver.process_living(1.0 / 60.0);
             let props = resolver.living_props_mut();
             let prop = props.prop(id);
-            let slow = flint_core::wooze::warp(prop.beats() / 2.0, prop.clock.glide).0;
+            let slow = flint_wooze::warp(prop.beats() / 2.0, prop.clock.glide).0;
             let (from, to) = LivingClock::slow_pair(slow);
             assert!(prop.pose(from).is_some() && prop.pose(to).is_some());
             wrote += u32::from(props.blend_prop(id, &mut frame).shadow_changed);
@@ -4588,9 +4859,52 @@ value = 1
                     amount: Some(0.9),
                     ..Default::default()
                 },
+                softness: None,
             },
         );
         defaults
+    }
+
+    #[test]
+    fn softness_layers_from_the_spec_up_and_changes_no_pose() {
+        // The spec's 0 is a hard edge.
+        let mut resolver = grove(LivingDefaults {
+            softness: Some(0.25),
+            ..LivingDefaults::default()
+        });
+        let field = field("", &[]);
+        tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
+        let before = resolver.living_props().stats();
+        let props = resolver.living_props_mut();
+        let read = |props: &LivingProps, i: usize| props.resolved(LivingPropId(i), None).softness;
+        assert_eq!(read(props, 0).value, 0.25, "the scene's beats the spec's");
+        assert_eq!(read(props, 0).layer, LivingLayer::Global);
+        assert_eq!(props.global_softness(), Some(0.25));
+
+        // A species of its own beats the grove's, and the grove's then moved live
+        // leaves it standing.
+        assert!(props.tune_softness(LivingScope::Species("thorn"), 0.8));
+        assert!(props.tune_softness(LivingScope::All, 0.5));
+        assert_eq!(props.softness(LivingPropId(0)), 0.5);
+        assert_eq!(props.softness(LivingPropId(2)), 0.8);
+        assert_eq!(read(props, 2).layer, LivingLayer::Species);
+        // Out of range is held to it.
+        assert!(props.tune_softness(LivingScope::All, 3.0));
+        assert_eq!(props.softness(LivingPropId(1)), 1.0);
+        assert!(!props.tune_softness(LivingScope::Species("fern"), 0.5));
+
+        // As loaded puts every layer back.
+        let layers = LivingLayers {
+            softnesses: vec![None; 4],
+            ..props.layers()
+        };
+        props.restore_layers(&layers);
+        assert_eq!(props.softness(LivingPropId(0)), 0.0, "the spec's again");
+        assert_eq!(read(props, 0).layer, LivingLayer::Spec);
+        assert_eq!(props.softness(LivingPropId(2)), 0.8, "a species' own stays");
+
+        // Nothing about the poses moved: softness is how the body draws.
+        assert_eq!(resolver.living_props().stats(), before);
     }
 
     #[test]

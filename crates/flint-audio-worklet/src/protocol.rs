@@ -111,6 +111,54 @@ pub enum Command {
         voice: u32,
     },
     ClearOneShots,
+    /// Report where the voice is in its sound (#658): from now until it is
+    /// dropped, the mixer's report names it, and the
+    /// processor posts that back to the page.
+    VoiceWatch {
+        voice: u32,
+    },
+}
+
+/// What the mixer reports back about each watched voice (#658), as
+/// `f64`s: the voice's id, seconds into its sound (wrapped, for a loop)
+/// and kira's `PlaybackState` as a number, [`REPORT_STRIDE`] to a voice.
+pub const REPORT_STRIDE: usize = 3;
+
+/// kira's `PlaybackState`, numbered as kira numbers it.
+pub mod state {
+    pub const PLAYING: u8 = 0;
+    pub const PAUSING: u8 = 1;
+    pub const PAUSED: u8 = 2;
+    pub const WAITING_TO_RESUME: u8 = 3;
+    pub const RESUMING: u8 = 4;
+    pub const STOPPING: u8 = 5;
+    pub const STOPPED: u8 = 6;
+
+    /// The sound's position is moving: it is being mixed.
+    pub fn moving(state: u8) -> bool {
+        matches!(state, PLAYING | PAUSING | RESUMING | STOPPING)
+    }
+}
+
+/// One watched voice, as a report gives it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VoiceReport {
+    pub voice: u32,
+    pub position: f64,
+    pub state: u8,
+}
+
+/// Read a report's voices from its `f64`s.
+pub fn read_report(values: &[f64]) -> impl Iterator<Item = VoiceReport> + '_ {
+    values
+        .as_chunks::<REPORT_STRIDE>()
+        .0
+        .iter()
+        .map(|v| VoiceReport {
+            voice: v[0] as u32,
+            position: v[1],
+            state: v[2] as u8,
+        })
 }
 
 mod op {
@@ -131,6 +179,7 @@ mod op {
     pub const VOICE_PANNING: u8 = 15;
     pub const VOICE_PAUSE: u8 = 16;
     pub const VOICE_RESUME: u8 = 17;
+    pub const VOICE_WATCH: u8 = 18;
 }
 
 struct Writer<'a>(&'a mut Vec<u8>);
@@ -256,6 +305,9 @@ impl Command {
             Command::ClearOneShots => {
                 w.u8(op::CLEAR_ONE_SHOTS);
             }
+            Command::VoiceWatch { voice } => {
+                w.u8(op::VOICE_WATCH).u32(voice);
+            }
         }
     }
 }
@@ -380,6 +432,7 @@ impl<'a> Reader<'a> {
                 tween: self.f32()?,
             },
             op::CLEAR_ONE_SHOTS => Command::ClearOneShots,
+            op::VOICE_WATCH => Command::VoiceWatch { voice: self.u32()? },
             _ => return None,
         })
     }
@@ -487,6 +540,7 @@ mod tests {
                 voice: 4,
                 tween: 0.016,
             },
+            Command::VoiceWatch { voice: 3 },
             Command::VoiceDrop { voice: 4 },
             Command::TrackDrop { track: 7 },
             Command::ClearOneShots,

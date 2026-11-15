@@ -1,0 +1,18 @@
+# A halftone dot screen (#335): one round dot a cell, growing with the
+# tone, like a newspaper photograph. Hand-drawn 8x12 cells in halftone.txt,
+# taller than the built-in 8x8, so a prop in this set and one in the
+# built-in letters draw on different grids in the same frame.
+default_ramp = "dots"
+
+[font]
+file = "halftone.txt"
+cell = [8, 12]
+
+[ramps.dots]
+glyphs = " .:oO0@"
+
+[edges]
+horizontal = "-"
+vertical = "|"
+diagonal = "/"
+antidiagonal = "\\"

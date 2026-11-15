@@ -1,0 +1,130 @@
+# ASCII Dark Props: three barrels in the meadow clearing, each drawn in
+# glyphs by its own ascii_style (#289). Glyph density follows luminance, so
+# a dark prop maps to `.` and `-` and all but vanishes. Left to right:
+#
+#   barrel_plain       the style as it was: dots on a dark ground
+#   barrel_exposed     exposure = 1.5: brighter, but the range stays narrow
+#   barrel_normalized  normalize = 1: its own tones stretched over the ramp,
+#                      so the staves and hoops read again
+#
+#   cargo run --bin flint -- render examples/ascii_dark_props.scene.toml --output dark.png --no-grid
+
+[scene]
+name = "ASCII Dark Props"
+version = "1.0"
+description = "Dark props kept legible in glyphs by exposure and per-entity normalisation (#289)"
+
+[camera]
+position = [0.0, 1.35, 4.6]
+target = [0.0, 0.5, 0.0]
+fov = 42.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.05
+bloom_threshold = 1.2
+exposure = 1.25
+vignette_enabled = true
+vignette_intensity = 0.25
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+
+[post_process.styles.ascii]
+scope = "entities"
+cell = 8
+background = 0.3
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.16, 0.30, 0.58, 1.0]
+horizon_color = [0.86, 0.72, 0.52, 1.0]
+haze_color = [0.95, 0.80, 0.60, 0.7]
+cloud_tint = [1.0, 0.90, 0.78, 0.8]
+cloud_coverage = 0.3
+sun_glow = 1.4
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [-0.75, 0.38, -0.35]
+color = [1.0, 0.86, 0.66]
+intensity = 2.4
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.light]
+type = "directional"
+direction = [0.4, 0.8, 0.4]
+color = [0.55, 0.65, 0.85]
+intensity = 0.35
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-60, -0.2, -60]
+max = [60, 0, 60]
+[entities.ground.material]
+color = [0.13, 0.09, 0.055, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+[entities.meadow]
+[entities.meadow.transform]
+position = [-48, 0, -48]
+[entities.meadow.grass_ground]
+mask = "mesh_meadow/mask.png"
+width = 96.0
+depth = 96.0
+scale_by_mask = true
+"grass.density" = 40.0
+"grass.max_distance" = 70.0
+"grass.fade_start" = 50.0
+"grass.blade_width" = 0.2
+"grass.blade_height" = 0.45
+"grass.height_variation" = 0.4
+"grass.color_base" = [0.12, 0.38, 0.08]
+"grass.color_tip" = [0.42, 0.70, 0.20]
+"grass.color_dry" = [0.62, 0.54, 0.24]
+"grass.dry_amount" = 0.3
+"grass.wind_direction" = [0.8, 0.0, 0.6]
+"grass.wind_speed" = 0.6
+"grass.wind_strength" = 0.1
+"grass.density_threshold" = 0.05
+
+# --- In glyphs ---
+
+[entities.barrel_plain]
+archetype = "furniture"
+[entities.barrel_plain.transform]
+position = [-1.25, 0.48, 0.0]
+scale = [0.5, 0.5, 0.5]
+[entities.barrel_plain.model]
+asset = "barrel"
+[entities.barrel_plain.ascii_style]
+cell = 8
+
+[entities.barrel_exposed]
+archetype = "furniture"
+[entities.barrel_exposed.transform]
+position = [0.0, 0.48, 0.0]
+scale = [0.5, 0.5, 0.5]
+[entities.barrel_exposed.model]
+asset = "barrel"
+[entities.barrel_exposed.ascii_style]
+exposure = 1.5
+
+[entities.barrel_normalized]
+archetype = "furniture"
+[entities.barrel_normalized.transform]
+position = [1.25, 0.48, 0.0]
+scale = [0.5, 0.5, 0.5]
+[entities.barrel_normalized.model]
+asset = "barrel"
+[entities.barrel_normalized.ascii_style]
+normalize = 1.0

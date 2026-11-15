@@ -1,0 +1,162 @@
+# User-authored styles (#274, ADR 0112): the styles in examples/styles/ are a
+# `.shader.toml` and one WGSL function each, loaded at run time, not
+# compiled into the engine. Two props are drawn in `hologram`, which reads
+# the entity style mask, so it is per-entity (#414): the YBot's style_mask
+# alone switches it on, with no [post_process.styles.hologram] table, and
+# the barrel's `hologram_style` (the component every mask-reading user
+# style gets, its fields the style's params) gives it settings of its own.
+# The other two styles draw the whole frame:
+#
+#   cargo run --bin flint -- render examples/user_styles.scene.toml --output holo.png
+#   cargo run --bin flint -- render examples/user_styles.scene.toml --style risograph
+#   cargo run --bin flint -- render examples/user_styles.scene.toml --style contour_map
+#   cargo run --bin flint -- render examples/user_styles.scene.toml --style radial_blur
+#
+# radial_blur's loop runs a parameter's count of times; every user loop is
+# guarded (#411), so even one that never ends stops after 4096 turns.
+#
+# Break a .wgsl on purpose and render again: the style draws its input
+# unchanged and the error names the file, line and column.
+
+[scene]
+name = "User styles"
+version = "1.0"
+description = "Styles written by a game, not the engine: WGSL beside a .shader.toml (#274)"
+
+[camera]
+position = [3.6, 1.5, 8.8]
+target = [0.9, 0.6, 4.0]
+fov = 50.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.05
+bloom_threshold = 1.2
+exposure = 1.25
+vignette_enabled = true
+vignette_intensity = 0.25
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.16, 0.30, 0.58, 1.0]
+horizon_color = [0.86, 0.72, 0.52, 1.0]
+haze_color = [0.95, 0.80, 0.60, 0.7]
+cloud_tint = [1.0, 0.90, 0.78, 0.8]
+cloud_coverage = 0.3
+sun_glow = 1.4
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [-0.75, 0.38, -0.35]
+color = [1.0, 0.86, 0.66]
+intensity = 2.4
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.light]
+type = "directional"
+direction = [0.4, 0.8, 0.4]
+color = [0.55, 0.65, 0.85]
+intensity = 0.35
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-60, -0.2, -60]
+max = [60, 0, 60]
+[entities.ground.material]
+color = [0.13, 0.09, 0.055, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+[entities.meadow]
+[entities.meadow.transform]
+position = [-48, 0, -48]
+[entities.meadow.grass_ground]
+mask = "mesh_meadow/mask.png"
+width = 96.0
+depth = 96.0
+scale_by_mask = true
+"grass.density" = 40.0
+"grass.max_distance" = 70.0
+"grass.fade_start" = 50.0
+"grass.blade_width" = 0.2
+"grass.blade_height" = 0.45
+"grass.height_variation" = 0.4
+"grass.color_base" = [0.12, 0.38, 0.08]
+"grass.color_tip" = [0.42, 0.70, 0.20]
+"grass.color_dry" = [0.62, 0.54, 0.24]
+"grass.dry_amount" = 0.3
+"grass.wind_direction" = [0.8, 0.0, 0.6]
+"grass.wind_speed" = 0.6
+"grass.wind_strength" = 0.1
+"grass.density_threshold" = 0.05
+
+[entities.cask]
+archetype = "furniture"
+[entities.cask.transform]
+position = [0.4, 0.48, 3.4]
+rotation = [0, 70, 0]
+scale = [0.5, 0.5, 0.5]
+[entities.cask.model]
+asset = "barrel"
+
+# --- Projected: a style_mask naming the user style, or its own component ---
+
+[entities.ybot]
+archetype = "character"
+[entities.ybot.transform]
+position = [-0.9, 0, 4.4]
+rotation = [0, 25, 0]
+[entities.ybot.model]
+asset = "YBotWithIdle"
+[entities.ybot.skeleton]
+skin = "Armature"
+[entities.ybot.style_mask]
+style = "hologram"
+
+[entities.barrel]
+archetype = "furniture"
+[entities.barrel.transform]
+position = [2.4, 0.48, 5.4]
+scale = [0.5, 0.5, 0.5]
+[entities.barrel.model]
+asset = "barrel"
+[entities.barrel.hologram_style]
+glow = 2.0
+lines = 6.0
+blend = 0.6
+
+[entities.crate]
+archetype = "furniture"
+[entities.crate.transform]
+position = [2.1, 0.0, 2.6]
+rotation = [0, 30, 0]
+[entities.crate.bounds]
+min = [-0.4, 0.0, -0.4]
+max = [0.4, 0.8, 0.4]
+[entities.crate.material]
+color = [0.55, 0.38, 0.22, 1.0]
+roughness = 0.8
+
+[entities.lid]
+archetype = "furniture"
+parent = "crate"
+[entities.lid.transform]
+position = [0.05, 0.8, -0.05]
+rotation = [0, 20, 0]
+[entities.lid.bounds]
+min = [-0.22, 0.0, -0.22]
+max = [0.22, 0.3, 0.22]
+[entities.lid.material]
+color = [0.42, 0.50, 0.30, 1.0]
+roughness = 0.7

@@ -14,6 +14,7 @@
 //! Normals aren't bent: at a few centimetres over a metre, it's about a degree or
 //! two of shading for three times the noise.
 
+use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 
 use crate::pipeline::{BlendMode, RenderPipeline, ADDITIVE_BLEND, MULTIPLY_BLEND};
@@ -108,6 +109,8 @@ pub(crate) fn grow_bounds(bounds: &mut ([f32; 3], [f32; 3]), uniforms: &ShallowW
 /// The woozy twin of each solid and blended pipeline of one kind of mesh.
 pub(crate) struct WoozePipelineSet {
     pub opaque: wgpu::RenderPipeline,
+    /// `opaque` culling nothing, for glTF `doubleSided` materials (#623).
+    pub opaque_double_sided: wgpu::RenderPipeline,
     pub alpha_back: wgpu::RenderPipeline,
     pub alpha_front: wgpu::RenderPipeline,
     pub additive: wgpu::RenderPipeline,
@@ -140,7 +143,7 @@ impl Stages<'_> {
             vertex: wgpu::VertexState {
                 module: self.vertex_module,
                 entry_point: Some(self.vertex_entry),
-                buffers: std::slice::from_ref(&self.vertex_layout),
+                buffers: &[Some(self.vertex_layout.clone())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -164,8 +167,8 @@ impl Stages<'_> {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(depth_write_enabled),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -173,7 +176,7 @@ impl Stages<'_> {
                 count: self.sample_count,
                 ..Default::default()
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         })
     }
@@ -182,6 +185,7 @@ impl Stages<'_> {
         let alpha = wgpu::BlendState::ALPHA_BLENDING;
         WoozePipelineSet {
             opaque: self.pipeline(device, alpha, Some(wgpu::Face::Back), true),
+            opaque_double_sided: self.pipeline(device, alpha, None, true),
             alpha_back: self.pipeline(device, alpha, Some(wgpu::Face::Front), false),
             alpha_front: self.pipeline(device, alpha, Some(wgpu::Face::Back), false),
             additive: self.pipeline(device, ADDITIVE_BLEND, None, false),
@@ -191,15 +195,21 @@ impl Stages<'_> {
 }
 
 fn vertex_module(device: &wgpu::Device) -> wgpu::ShaderModule {
-    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Shallow Wooze Vertex Shader"),
         source: wgpu::ShaderSource::Wgsl(VERTEX_SOURCE.into()),
     })
 }
 
 impl WoozePipelineSet {
-    /// The set for standard meshes, over `base`'s fragment stage and layout.
-    pub fn standard(device: &wgpu::Device, base: &RenderPipeline) -> Self {
+    /// The set for standard meshes, over `base`'s fragment stage and layout,
+    /// for targets of `format` at `sample_count` (`ScenePipelines` gives its own).
+    pub fn standard(
+        device: &wgpu::Device,
+        base: &RenderPipeline,
+        format: wgpu::TextureFormat,
+        sample_count: u32,
+    ) -> Self {
         Stages {
             label: "Shallow Wooze Pipeline",
             layout: &base.pipeline_layout,
@@ -208,8 +218,8 @@ impl WoozePipelineSet {
             vertex_layout: Vertex::desc(),
             fragment_module: &base.shader,
             fragment_entry: "fs_main",
-            format: base.format,
-            sample_count: base.sample_count,
+            format,
+            sample_count,
         }
         .set(device)
     }
@@ -217,8 +227,9 @@ impl WoozePipelineSet {
     /// The set for skinned meshes, over `skinned`'s fragment stage and layout.
     pub fn skinned(
         device: &wgpu::Device,
-        base: &RenderPipeline,
         skinned: &SkinnedPipeline,
+        format: wgpu::TextureFormat,
+        sample_count: u32,
     ) -> Self {
         Stages {
             label: "Shallow Wooze Skinned Pipeline",
@@ -228,8 +239,8 @@ impl WoozePipelineSet {
             vertex_layout: SkinnedVertex::desc(),
             fragment_module: &skinned.shader,
             fragment_entry: "fs_skinned",
-            format: base.format,
-            sample_count: base.sample_count,
+            format,
+            sample_count,
         }
         .set(device)
     }
@@ -403,7 +414,7 @@ mod tests {
             let instance = crate::gpu_select::instance();
             let adapter = crate::gpu_select::request_adapter(&instance, None).await?;
             let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor::default(), None)
+                .request_device(&wgpu::DeviceDescriptor::default())
                 .await
                 .ok()?;
             let target = |format, usage| {
@@ -472,9 +483,9 @@ mod tests {
             let mut encoder = self.device.create_command_encoder(&Default::default());
             encoder.copy_texture_to_buffer(
                 self.color.as_image_copy(),
-                wgpu::ImageCopyBuffer {
+                wgpu::TexelCopyBufferInfo {
                     buffer: &buffer,
-                    layout: wgpu::ImageDataLayout {
+                    layout: wgpu::TexelCopyBufferLayout {
                         offset: 0,
                         bytes_per_row: Some(row),
                         rows_per_image: None,
@@ -490,8 +501,11 @@ mod tests {
             buffer
                 .slice(..)
                 .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-            self.device.poll(wgpu::Maintain::Wait);
-            let data = buffer.slice(..).get_mapped_range();
+            let _ = crate::wait_for_gpu(&self.device);
+            let data = buffer
+                .slice(..)
+                .get_mapped_range()
+                .expect("mapped buffer range");
             let mut out = Vec::with_capacity((SIZE * SIZE * 4) as usize);
             for y in 0..SIZE {
                 let start = (row * y) as usize;

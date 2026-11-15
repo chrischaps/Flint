@@ -17,13 +17,13 @@ size_start = { type = "f32", default = 0.1, min = 0.0, max = 10.0, description =
 size_end = { type = "f32", default = 0.0, min = 0.0, max = 10.0, description = "Particle size at death" }
 color_start = { type = "vec4", default = [1.0, 1.0, 1.0, 1.0], description = "RGBA color at birth" }
 color_end = { type = "vec4", default = [1.0, 1.0, 1.0, 0.0], description = "RGBA color at death" }
-texture = { type = "string", default = "", description = "Sprite texture path, resolved against the scene dir then its parent (empty = white dot)" }
+texture = { type = "asset", kind = "particle-textures", default = "", description = "Sprite texture path, resolved against the scene dir then its parent (empty = white dot)" }
 stretch = { type = "f32", default = 0.0, min = 0.0, max = 1.0, description = "Velocity-aligned billboard stretch (s): quad elongates along on-screen motion by |velocity|*stretch. 0 = normal camera-facing quad. Rain streaks ~0.03" }
 frames_x = { type = "i32", default = 1, min = 1, max = 64, description = "Sprite sheet columns" }
 frames_y = { type = "i32", default = 1, min = 1, max = 64, description = "Sprite sheet rows" }
 animate_frames = { type = "bool", default = false, description = "Auto-advance frames over lifetime" }
-blend_mode = { type = "string", default = "alpha", description = "Blend mode: alpha, additive, premultiplied or multiply" }
-shape = { type = "string", default = "point", description = "Emission shape: point, sphere, cone, box" }
+blend_mode = { type = "enum", values = ["alpha", "additive", "premultiplied", "multiply"], default = "alpha", description = "Blend mode: alpha, additive, premultiplied or multiply" }
+shape = { type = "enum", values = ["point", "sphere", "cone", "box"], default = "point", description = "Emission shape: point, sphere, cone, box" }
 shape_radius = { type = "f32", default = 0.5, min = 0.0, max = 100.0, description = "Radius for the sphere shape, or the spawn disc of a cone (cones spawn from a point unless set)" }
 shape_angle = { type = "f32", default = 30.0, min = 0.0, max = 180.0, description = "Half-angle for cone shape in degrees" }
 shape_offset = { type = "vec3", default = [0, 0, 0], description = "Spawn-region translation relative to the emitter position" }
@@ -36,7 +36,7 @@ looping = { type = "bool", default = true, description = "Loop emitter when dura
 playing = { type = "bool", default = false, description = "Current playback state" }
 autoplay = { type = "bool", default = true, description = "Start emitting on scene load" }
 local_axes = { type = "bool", default = false, description = "Rotate direction, shape_offset and shape axes with the entity's world rotation and scale distances by its scale (default off keeps world-space axes, ADR 0061)" }
-sort = { type = "string", default = "none", description = "Draw order within the emitter: none, back_to_front, youngest_first, oldest_first" }
+sort = { type = "enum", values = ["none", "back_to_front", "youngest_first", "oldest_first"], default = "none", description = "Draw order within the emitter: none, back_to_front, youngest_first, oldest_first" }
 frame_rate = { type = "f32", default = 0.0, min = 0.0, max = 240.0, description = "Sprite-sheet frames per second (0 = follow animate_frames)" }
 random_start_frame = { type = "bool", default = false, description = "Each particle starts on a random sprite-sheet frame" }
 rotation_min = { type = "f32", default = 0.0, min = -3600.0, max = 3600.0, description = "Minimum initial rotation in degrees" }

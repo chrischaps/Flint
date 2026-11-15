@@ -1,0 +1,82 @@
+# Sun prints (#419), after Anna Atkins' "Photographs of British Algae" (1843).
+#
+# Two palms against a bright evening sky, seen from below, printed as a
+# cyanotype: the sky is the light that reached the paper and turned it
+# Prussian blue, the fronds are what lay on it and stayed white. The style
+# is the game's own, written in Rust beside this file (cyanotype.rs) and
+# registered by the game binary's player extension (main.rs). No engine code
+# names it.
+#
+#   cargo run -p flint-player --example cyanotype
+#   cargo run -p flint-player --example cyanotype -- --style cyanotype:process=print
+#   cargo run -p flint-player -- crates/flint-player/examples/cyanotype/atkins.scene.toml
+#       # the stock player: no cyanotype, so the table is dropped with a warning
+#
+# The palms are the engine's double-sided test palms (#623), found by path.
+
+[scene]
+name = "Sun Prints"
+version = "1.0"
+description = "Palms against the sky, printed in sunlight by the game's own cyanotype style"
+
+[camera]
+position = [0.0, 1.0, 7.6]
+target = [0.0, 3.1, 0.0]
+fov = 58.0
+
+[post_process]
+exposure = 1.05
+bloom_enabled = false
+vignette_enabled = false
+
+[post_process.styles.cyanotype]
+process = "photogram"
+exposure = 1.3
+bleed = 0.45
+coating = 0.07
+grain = 0.55
+
+# A pale sky: the light that prints
+[entities.sky_dome]
+[entities.sky_dome.sky]
+zenith_color = [0.62, 0.72, 0.86, 1.0]
+horizon_color = [0.98, 0.92, 0.84, 1.0]
+haze_color = [1.0, 0.95, 0.88, 0.6]
+cloud_coverage = 0.18
+star_opacity = 0.0
+ambient_sky = [0.12, 0.13, 0.16]
+ambient_ground = [0.08, 0.07, 0.06]
+
+# Dark earth: what lies in the shade prints white with the fronds
+[entities.ground]
+[entities.ground.transform]
+position = [0, -0.05, 0]
+[entities.ground.bounds]
+min = [-14, -0.05, -10]
+max = [14, 0.0, 10]
+[entities.ground.material]
+color = [0.10, 0.09, 0.08, 1.0]
+roughness = 0.95
+
+# The sun behind the crowns, so the fronds stand dark against the sky
+[entities.sun]
+[entities.sun.light]
+type = "directional"
+direction = [0.25, 0.6, -0.75]
+color = [1.0, 0.92, 0.80]
+intensity = 1.0
+
+[entities.palm_left]
+[entities.palm_left.transform]
+position = [-2.2, 0, 0]
+rotation = [0, 20, 0]
+[entities.palm_left.model]
+asset = "../../../../examples/models/palm_two_sided"
+
+[entities.palm_right]
+[entities.palm_right.transform]
+position = [2.4, 0, -0.8]
+rotation = [0, 140, 0]
+scale = [0.85, 0.85, 0.85]
+[entities.palm_right.model]
+asset = "../../../../examples/models/palm_two_sided"

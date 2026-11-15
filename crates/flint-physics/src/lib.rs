@@ -4,7 +4,8 @@
 //! - `PhysicsWorld` — wraps Rapier pipeline, body/collider sets
 //! - `PhysicsSync` — bridges Flint's dynamic TOML components with Rapier bodies
 //! - `CharacterController` — first-person kinematic character with gravity and collision
-//! - `PhysicsSystem` — implements `RuntimeSystem` for integration into the game loop
+//! - `PhysicsSystem` — the fixed-step simulation the player steps; its contacts go
+//!   into the caller's `EventBus`
 
 pub mod character;
 pub mod sync;
@@ -17,7 +18,7 @@ use character::CharacterController;
 use flint_core::components as comp;
 use flint_core::{EntityId, Result, Vec3};
 use flint_ecs::FlintWorld;
-use flint_runtime::{EventBus, GameEvent, InputState, RuntimeSystem};
+use flint_runtime::{EventBus, GameEvent, InputState};
 use rapier3d::control::{CharacterLength, KinematicCharacterController};
 use rapier3d::prelude::*;
 use sync::PhysicsSync;
@@ -50,12 +51,14 @@ pub enum ColliderExtents {
     Cylinder { radius: f32, half_height: f32 },
 }
 
-/// Physics system implementing RuntimeSystem for the game loop
+/// The physics simulation: initialized from the world when a scene is
+/// entered, then stepped at the fixed rate ([`fixed_update`](Self::fixed_update)).
+/// It keeps no events: each step pushes its collisions and triggers into the
+/// bus the caller hands it, which the player owns (#727).
 pub struct PhysicsSystem {
     pub(crate) physics_world: PhysicsWorld,
     pub(crate) sync: PhysicsSync,
     pub(crate) character: CharacterController,
-    pub(crate) event_bus: EventBus,
     /// Fixed steps this frame will run (set by the frame loop) and the index
     /// of the step in progress, for even kinematic motion across the frame
     frame_steps: usize,
@@ -78,7 +81,6 @@ impl PhysicsSystem {
             physics_world: PhysicsWorld::new(),
             sync: PhysicsSync::new(),
             character: CharacterController::new(),
-            event_bus: EventBus::new(),
             frame_steps: 1,
             step_in_frame: 0,
             frame_span: 1.0,
@@ -331,12 +333,12 @@ impl PhysicsSystem {
     }
 
     /// Reset all physics state for a scene transition.
-    /// Replaces the world, clears sync maps, resets character and event bus.
+    /// Replaces the world, clears sync maps, resets the character. Events are
+    /// the caller's bus's, and stay there.
     pub fn clear(&mut self) {
         self.physics_world = PhysicsWorld::new();
         self.sync.clear();
         self.character = CharacterController::new();
-        self.event_bus = EventBus::new();
     }
 
     /// Whether a player entity has been assigned to the character controller
@@ -362,16 +364,6 @@ impl PhysicsSystem {
     /// Camera look-at target from yaw/pitch
     pub fn camera_target(&self, camera_pos: Vec3) -> Vec3 {
         self.character.camera_target(camera_pos)
-    }
-
-    /// Drain all pending game events (collisions, triggers)
-    pub fn drain_events(&mut self) -> Vec<GameEvent> {
-        self.event_bus.drain()
-    }
-
-    /// Push a game event onto the event bus
-    pub fn push_event(&mut self, event: GameEvent) {
-        self.event_bus.push(event);
     }
 
     /// Register a static trimesh collider from raw geometry
@@ -406,8 +398,10 @@ impl PhysicsSystem {
     }
 }
 
-impl RuntimeSystem for PhysicsSystem {
-    fn initialize(&mut self, world: &mut FlintWorld) -> Result<()> {
+impl PhysicsSystem {
+    /// Read the scene's bodies, colliders and joints, and find the player
+    /// entity, when a scene is entered.
+    pub fn initialize(&mut self, world: &mut FlintWorld) -> Result<()> {
         // Initial sync of all entities with physics components, then joints
         self.sync.sync_to_rapier(world, &mut self.physics_world);
         self.sync.sync_joints(world, &mut self.physics_world);
@@ -425,7 +419,16 @@ impl RuntimeSystem for PhysicsSystem {
         Ok(())
     }
 
-    fn fixed_update(&mut self, world: &mut FlintWorld, dt: f64) -> Result<()> {
+    /// One fixed step of `dt` seconds: new bodies and joints in, kinematic
+    /// poses and joint targets from the world, the step, then this step's
+    /// collisions and triggers pushed onto `events` and dynamic bodies'
+    /// poses written back to the world.
+    pub fn fixed_update(
+        &mut self,
+        world: &mut FlintWorld,
+        dt: f64,
+        events: &mut EventBus,
+    ) -> Result<()> {
         // Sync any new entities to Rapier, then any joints whose bodies now exist
         self.sync.sync_to_rapier(world, &mut self.physics_world);
         self.sync.sync_joints(world, &mut self.physics_world);
@@ -451,7 +454,7 @@ impl RuntimeSystem for PhysicsSystem {
         // Step physics
         self.physics_world.step(dt as f32);
 
-        // Drain collision events and push to event bus
+        // This step's collisions and triggers, onto the caller's bus
         for event in self.physics_world.drain_collision_events() {
             match event {
                 rapier3d::prelude::CollisionEvent::Started(h1, h2, flags) => {
@@ -478,10 +481,9 @@ impl RuntimeSystem for PhysicsSystem {
                                 .map(|c| c.is_sensor())
                                 .unwrap_or(false);
                             let (trigger, entity) = if a_is_sensor { (a, b) } else { (b, a) };
-                            self.event_bus
-                                .push(GameEvent::TriggerEntered { entity, trigger });
+                            events.push(GameEvent::TriggerEntered { entity, trigger });
                         } else {
-                            self.event_bus.push(GameEvent::CollisionStarted {
+                            events.push(GameEvent::CollisionStarted {
                                 entity_a: a,
                                 entity_b: b,
                             });
@@ -510,10 +512,9 @@ impl RuntimeSystem for PhysicsSystem {
                                 .map(|c| c.is_sensor())
                                 .unwrap_or(false);
                             let (trigger, entity) = if a_is_sensor { (a, b) } else { (b, a) };
-                            self.event_bus
-                                .push(GameEvent::TriggerExited { entity, trigger });
+                            events.push(GameEvent::TriggerExited { entity, trigger });
                         } else {
-                            self.event_bus.push(GameEvent::CollisionEnded {
+                            events.push(GameEvent::CollisionEnded {
                                 entity_a: a,
                                 entity_b: b,
                             });
@@ -531,17 +532,10 @@ impl RuntimeSystem for PhysicsSystem {
         Ok(())
     }
 
-    fn update(&mut self, _world: &mut FlintWorld, _dt: f64) -> Result<()> {
-        // Variable-rate updates (none needed for physics)
-        Ok(())
-    }
-
-    fn shutdown(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    fn name(&self) -> &str {
-        "physics"
+    /// A fixed step for a test that reads no contacts.
+    #[cfg(test)]
+    pub(crate) fn step(&mut self, world: &mut FlintWorld, dt: f64) {
+        self.fixed_update(world, dt, &mut EventBus::new()).unwrap();
     }
 }
 
@@ -637,11 +631,12 @@ mod tests {
         sys.initialize(&mut world).unwrap();
 
         // Step physics until ball falls into sensor
+        let mut bus = EventBus::new();
         for _ in 0..120 {
-            sys.fixed_update(&mut world, 1.0 / 60.0).unwrap();
+            sys.fixed_update(&mut world, 1.0 / 60.0, &mut bus).unwrap();
         }
 
-        let events = sys.event_bus.drain();
+        let events = bus.drain();
         let has_trigger = events
             .iter()
             .any(|e| matches!(e, GameEvent::TriggerEntered { .. }));
@@ -687,11 +682,12 @@ mod tests {
 
         sys.initialize(&mut world).unwrap();
 
+        let mut bus = EventBus::new();
         for _ in 0..120 {
-            sys.fixed_update(&mut world, 1.0 / 60.0).unwrap();
+            sys.fixed_update(&mut world, 1.0 / 60.0, &mut bus).unwrap();
         }
 
-        let events = sys.event_bus.drain();
+        let events = bus.drain();
         let has_collision = events
             .iter()
             .any(|e| matches!(e, GameEvent::CollisionStarted { .. }));
@@ -730,7 +726,7 @@ mod tests {
 
         // Step and sync back
         for _ in 0..10 {
-            sys.fixed_update(&mut world, 1.0 / 60.0).unwrap();
+            sys.step(&mut world, 1.0 / 60.0);
         }
 
         let transform = world.get_transform(id).unwrap();
@@ -844,7 +840,7 @@ mod tests {
 
         sys.initialize(&mut world).unwrap();
         // Need to step once so query pipeline is updated
-        sys.fixed_update(&mut world, 1.0 / 60.0).unwrap();
+        sys.step(&mut world, 1.0 / 60.0);
 
         let results = sys.overlap_rect(0.0, 0.0, 3.0, 3.0);
         assert!(
@@ -875,7 +871,7 @@ mod tests {
         );
 
         sys.initialize(&mut world).unwrap();
-        sys.fixed_update(&mut world, 1.0 / 60.0).unwrap();
+        sys.step(&mut world, 1.0 / 60.0);
 
         // Cast ray from origin rightward
         let hit = sys.raycast_2d(0.0, 0.0, 1.0, 0.0, 20.0, None);
@@ -920,5 +916,195 @@ mod tests {
             "vy should be 7.0, got {}",
             vel[1]
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Typed reads (ADR 0115 decision 5, #685): each of the ticket's cases
+    // ------------------------------------------------------------------
+
+    fn spawn_from_toml(world: &mut FlintWorld, name: &str, text: &str) -> EntityId {
+        let id = world.spawn(name).unwrap();
+        let table: toml::Table = toml::from_str(text).unwrap();
+        for (component, data) in table {
+            world.set_component(id, &component, data).unwrap();
+        }
+        id
+    }
+
+    #[test]
+    fn an_unknown_body_type_warns_with_the_entity_and_the_allowed_values() {
+        let mut world = FlintWorld::new();
+        let mut sys = PhysicsSystem::new();
+        let id = spawn_from_toml(
+            &mut world,
+            "crate",
+            "[transform]\nposition = [0, 5, 0]\n[rigidbody]\nbody_type = \"dynamc\"\n\
+             [collider]\nshape = \"box\"",
+        );
+        sys.initialize(&mut world).unwrap();
+        for _ in 0..30 {
+            sys.step(&mut world, 1.0 / 60.0);
+        }
+
+        let said = world.read_reports().snapshot();
+        assert_eq!(said.len(), 1, "once, however many steps run: {said:?}");
+        assert_eq!(
+            said[0].one_line(),
+            "error[bad-enum-value] entity 'crate' rigidbody.body_type: \"dynamc\" is not a \
+             value of `body_type` (did you mean `dynamic`? allowed values: static, dynamic, \
+             kinematic, kinematic_position, kinematic_velocity; the default \"static\" is used)"
+        );
+        // It still falls back to a static body, as it always did
+        let y = world.get_transform(id).unwrap().position.y;
+        assert_eq!(y, 5.0, "a static body does not fall");
+    }
+
+    #[test]
+    fn an_unknown_shape_and_joint_type_warn() {
+        let mut world = FlintWorld::new();
+        let mut sys = PhysicsSystem::new();
+        spawn_from_toml(
+            &mut world,
+            "anchor",
+            "[transform]\nposition = [0, 0, 0]\n[rigidbody]\nbody_type = \"static\"",
+        );
+        spawn_from_toml(
+            &mut world,
+            "arm",
+            "[transform]\nposition = [0, 1, 0]\n[rigidbody]\nbody_type = \"dynamic\"\n\
+             [collider]\nshape = \"spere\"\nfriction = \"slippy\"\n\
+             [joint]\ntype = \"hing\"\nparent = \"anchor\"\nlimits = [10]",
+        );
+        sys.initialize(&mut world).unwrap();
+        sys.step(&mut world, 1.0 / 60.0);
+        sys.step(&mut world, 1.0 / 60.0);
+
+        let said = world.read_reports().snapshot();
+        let lines: Vec<String> = said.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            lines,
+            [
+                "error[bad-enum-value] entity 'arm' collider.shape: \"spere\" is not a value of \
+                 `shape`",
+                "error[bad-type] entity 'arm' collider.friction: expected a number, got string \
+                 \"slippy\"",
+                "error[bad-enum-value] entity 'arm' joint.type: \"hing\" is not a value of `type`",
+                "error[bad-type] entity 'arm' joint.limits: expected 2 numbers, [min, max], got \
+                 [10]",
+            ]
+        );
+        assert_eq!(
+            said[0].hint.as_deref(),
+            Some(
+                "did you mean `sphere`? allowed values: box, sphere, capsule, cylinder, sprite; \
+                 the default \"box\" is used"
+            )
+        );
+    }
+
+    #[test]
+    fn a_collider_without_a_rigidbody_warns_once() {
+        let mut world = FlintWorld::new();
+        let mut sys = PhysicsSystem::new();
+        spawn_from_toml(
+            &mut world,
+            "wall",
+            "[transform]\nposition = [0, 0, 0]\n[collider]\nshape = \"box\"",
+        );
+        spawn_from_toml(
+            &mut world,
+            "floor",
+            "[rigidbody]\nbody_type = \"static\"\n[collider]\nshape = \"box\"",
+        );
+        sys.initialize(&mut world).unwrap();
+        assert!(
+            world.read_reports().is_empty(),
+            "the first pass waits: a script may add the rigidbody a step later"
+        );
+        for _ in 0..10 {
+            sys.step(&mut world, 1.0 / 60.0);
+        }
+        let said = world.read_reports().snapshot();
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert_eq!(
+            said[0].one_line(),
+            "warning[needs-component] entity 'wall' component 'collider': a collider with no \
+             rigidbody collides with nothing (add a `rigidbody` to the entity, `body_type = \
+             \"static\"` for scenery, or remove the collider)"
+        );
+    }
+
+    #[test]
+    fn a_rigidbody_added_a_step_after_its_collider_is_not_reported() {
+        let mut world = FlintWorld::new();
+        let mut sys = PhysicsSystem::new();
+        let id = spawn_from_toml(&mut world, "late", "[collider]\nshape = \"box\"");
+        sys.initialize(&mut world).unwrap();
+        let body: toml::Value = toml::from_str("body_type = \"static\"").unwrap();
+        world.set_component(id, "rigidbody", body).unwrap();
+        for _ in 0..5 {
+            sys.step(&mut world, 1.0 / 60.0);
+        }
+        assert!(world.read_reports().is_empty());
+        assert!(sys.sync.get_body_handle(id).is_some());
+    }
+
+    /// Metres walked forward in one second by a character whose
+    /// `character_controller` is `settings`.
+    fn metres_walked(settings: &str) -> (f32, usize) {
+        let mut world = FlintWorld::new();
+        let mut sys = PhysicsSystem::new();
+        spawn_from_toml(
+            &mut world,
+            "floor",
+            "[transform]\nposition = [0, -0.5, 0]\n[rigidbody]\nbody_type = \"static\"\n\
+             [collider]\nshape = \"box\"\nsize = [200, 1, 200]",
+        );
+        let id = spawn_from_toml(
+            &mut world,
+            "player",
+            &format!(
+                "[transform]\nposition = [0, 1, 0]\n[rigidbody]\nbody_type = \"kinematic\"\n\
+                 [collider]\nshape = \"capsule\"\nsize = [0.6, 1.8, 0.6]\n\
+                 [character_controller]\n{settings}"
+            ),
+        );
+        sys.initialize(&mut world).unwrap();
+        let mut input = InputState::new();
+        let dt = 1.0 / 60.0;
+        // Settle on the floor, then hold forward for a second
+        for _ in 0..30 {
+            sys.update_character(&input, &mut world, dt);
+            sys.step(&mut world, dt);
+        }
+        let start = world.get_transform(id).unwrap().position;
+        input.process_key_down(flint_runtime::parse_key_code("KeyW").unwrap());
+        for _ in 0..60 {
+            sys.update_character(&input, &mut world, dt);
+            sys.step(&mut world, dt);
+        }
+        let end = world.get_transform(id).unwrap().position;
+        let walked = ((end.x - start.x).powi(2) + (end.z - start.z).powi(2)).sqrt();
+        (walked, world.read_reports().len())
+    }
+
+    #[test]
+    fn an_integer_move_speed_moves_at_that_speed() {
+        let (as_float, _) = metres_walked("move_speed = 8.0");
+        let (as_integer, reports) = metres_walked("move_speed = 8");
+        let (unset, _) = metres_walked("");
+        assert_eq!(reports, 0, "an integer is a number, not a mistake");
+        assert_eq!(
+            as_integer, as_float,
+            "`move_speed = 8` walks as far as `move_speed = 8.0`"
+        );
+        // 60 steps of 1/60 s at 8 m/s, less the step the kinematic body lags
+        assert!((7.5..=8.01).contains(&as_integer), "walked {as_integer}");
+        assert!((4.6..=5.01).contains(&unset), "the default is 5: {unset}");
+
+        // A string is a mistake: the default, and one report however long it walks
+        let (wrong, reports) = metres_walked("move_speed = \"fast\"");
+        assert_eq!(wrong, unset);
+        assert_eq!(reports, 1);
     }
 }

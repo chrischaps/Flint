@@ -1,0 +1,16 @@
+# A palette any style can name (#276): `palette = "tidepool"` with
+# `color = "palette"` in [post_process.styles.ascii], or
+# `flint render <scene> --ascii --ascii-palette tidepool`.
+#
+# match = "nearest" gives each cell the ink nearest its own hue (at full
+# value); "luminance" would treat the inks as a ladder, darkest first.
+match = "nearest"
+background = "#0d1b2a"   # deep water behind every glyph
+colors = [
+    "#1b998b",   # kelp teal
+    "#3a86ff",   # open-water blue
+    "#ed217c",   # anemone pink
+    "#ff9b71",   # coral
+    "#fffd82",   # sunlit sand
+    "#e8f1f2",   # foam
+]

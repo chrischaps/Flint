@@ -86,8 +86,31 @@ impl SoundHandle {
         }
     }
 
-    /// How a local sound is playing. A remote mixer says nothing back, so
-    /// `None` there.
+    /// Ask the mixer to say where this sound is (#658). Here, kira's handle
+    /// always can; a remote mixer reports only the voices it is asked to.
+    pub fn watch(&mut self) {
+        if let Self::Remote(v) = self {
+            v.link.send(Command::VoiceWatch { voice: v.id });
+        }
+    }
+
+    /// Where the sound is: seconds into it (wrapped, for a loop), its
+    /// playback state (kira's, as a number: `protocol::state`), and for a
+    /// remote mixer the audio time it was there. A local sound is there
+    /// now. `None` from a remote mixer until it has reported this voice,
+    /// which needs a [`watch`](Self::watch).
+    pub fn observe(&self) -> Option<(f64, u8, Option<f64>)> {
+        match self {
+            Self::Local(h) => Some((h.position(), h.state() as u8, None)),
+            Self::Remote(v) => v
+                .link
+                .voice_report(v.id)
+                .map(|(r, at)| (r.position, r.state, Some(at))),
+        }
+    }
+
+    /// How a local sound is playing. A remote mixer reports only the voices
+    /// it watches, through [`observe`](Self::observe), so `None` there.
     pub fn local_state(&self) -> Option<PlaybackState> {
         match self {
             Self::Local(h) => Some(h.state()),

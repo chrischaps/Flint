@@ -2,8 +2,9 @@
 
 WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
 
-// Main query structure
-query = { resource ~ (where_clause)? }
+// Main query structure: the whole input, so anything after the one
+// condition (`and ...`, a second clause) is a parse error, not ignored (#687)
+query = { SOI ~ resource ~ (where_clause)? ~ EOI }
 
 // Resources that can be queried
 resource = { "entities" | "components" }

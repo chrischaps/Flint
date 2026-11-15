@@ -26,7 +26,6 @@
 
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f32;
-use flint_core::wooze::WoozeField;
 use flint_ecs::FlintWorld;
 use flint_import::{AlphaMode, ImportResult, ImportedMaterial, ImportedMesh, ImportedTexture};
 use flint_procgen::{
@@ -36,13 +35,14 @@ use flint_procgen::{
 };
 use flint_render::model_loader::ModelLoadConfig;
 use flint_render::SceneRenderer;
+use flint_wooze::WoozeField;
 
 use super::procgen_assets::{AssetSink, ProcGenMode};
 
 /// A scene's `[living]` table as the resolver wants it. A bad value is named
 /// and then means its default, since a look lab shouldn't refuse to start over
 /// one knob.
-pub fn defaults_of(table: Option<&flint_scene::LivingDef>) -> LivingDefaults {
+pub fn defaults_of(table: Option<&flint_procgen::LivingDef>) -> LivingDefaults {
     let Some(table) = table else {
         return LivingDefaults::default();
     };
@@ -76,26 +76,37 @@ pub fn defaults_of(table: Option<&flint_scene::LivingDef>) -> LivingDefaults {
         echoes: echoes_of(table.echoes.as_ref(), &mut warn),
         stagger,
         variance: variance_of(table.variance.as_ref(), &mut warn),
+        softness: softness_of(table.softness, &mut warn),
         species,
+    }
+}
+
+/// A softness (#582) as a scene or a tune gives it: 0 to 1, or `None` with the
+/// reason sent to `say`.
+pub fn softness_of(value: Option<f32>, say: &mut dyn FnMut(String)) -> Option<f32> {
+    let value = value?;
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Some(value)
+    } else {
+        say(format!("softness = {value} must be in [0.0, 1.0]"));
+        None
     }
 }
 
 /// One species' table (#246) as the resolver wants it. Each bad value goes to
 /// `say`, by key, and is left unset, so the layers below decide it.
 pub fn species_of(
-    def: &flint_scene::LivingSpeciesDef,
+    def: &flint_procgen::LivingSpeciesDef,
     say: &mut dyn FnMut(String),
 ) -> SpeciesOverride {
     let mut knob = |name: &str, value: Option<f32>| {
-        value.filter(
-            |&value| match flint_core::wooze::check_knob_named(name, value) {
-                Ok(_) => true,
-                Err(problem) => {
-                    say(problem);
-                    false
-                }
-            },
-        )
+        value.filter(|&value| match flint_wooze::check_knob_named(name, value) {
+            Ok(_) => true,
+            Err(problem) => {
+                say(problem);
+                false
+            }
+        })
     };
     let clock = ClockOverride {
         amplitude: knob("amplitude", def.amplitude),
@@ -111,11 +122,12 @@ pub fn species_of(
             .and_then(|name| checked_stagger(name, say)),
         echoes: echoes_of(def.echoes.as_ref(), say),
         variance: variance_of(def.variance.as_ref(), say),
+        softness: softness_of(def.softness, say),
     }
 }
 
 /// Everything wrong with one species' table, for `flint validate`.
-pub fn species_problems(def: &flint_scene::LivingSpeciesDef) -> Vec<String> {
+pub fn species_problems(def: &flint_procgen::LivingSpeciesDef) -> Vec<String> {
     let mut problems = Vec::new();
     species_of(def, &mut |problem| problems.push(problem));
     problems
@@ -149,7 +161,7 @@ pub fn stagger_name(stagger: Stagger) -> &'static str {
 /// A `variance` table as the resolver wants it, with a bad field sent to `say`
 /// and then left to the layers below.
 pub fn variance_of(
-    table: Option<&flint_scene::LivingVarianceDef>,
+    table: Option<&flint_procgen::LivingVarianceDef>,
     say: &mut dyn FnMut(String),
 ) -> VarianceOverride {
     let Some(table) = table else {
@@ -177,7 +189,7 @@ pub fn variance_of(
 /// The field a scene's `[wooze]` table describes, if it has one. For the same
 /// reason as above, what's wrong with it is named and left out, here where
 /// `flint validate` fails on it.
-pub fn field_of(table: Option<&flint_scene::WoozeDef>) -> Option<WoozeField> {
+pub fn field_of(table: Option<&flint_procgen::WoozeDef>) -> Option<WoozeField> {
     let (field, issues) = table?.field();
     for issue in issues {
         tracing::warn!("{issue}; going without it");
@@ -188,7 +200,7 @@ pub fn field_of(table: Option<&flint_scene::WoozeDef>) -> Option<WoozeField> {
 /// An `echoes` table as the resolver wants it, with a bad field sent to `say`
 /// and then left to the layers below.
 pub fn echoes_of(
-    table: Option<&flint_scene::LivingEchoesDef>,
+    table: Option<&flint_procgen::LivingEchoesDef>,
     say: &mut dyn FnMut(String),
 ) -> EchoOverride {
     let Some(table) = table else {
@@ -215,243 +227,71 @@ pub fn echoes_of(
     }
 }
 
-/// A scene's living props with no window and no frame budget, for `flint render`
-/// (#216): the same load, the same field and the same step the player takes each
-/// frame, so a capture at a game time shows what the player shows at it.
-pub struct LivingRun {
-    resolver: ProcGenResolver,
-    blend: BlendFrame,
-    field: Option<WoozeField>,
-    /// The clock the field is read on, as the player's `wooze_time`.
-    time: f64,
+/// Whether `world` has a living prop. A capture of a scene with none, and no
+/// `[wooze]` table, draws as `flint render` always has.
+pub fn wanted_by(world: &FlintWorld) -> bool {
+    world.all_entities().iter().any(|entity| {
+        world
+            .get_components(entity.id)
+            .is_some_and(|comps| comps.get(comp::LIVING_PROP).is_some())
+    })
 }
 
-impl LivingRun {
-    /// Whether `world` has anything for this to run. Everything else about a scene
-    /// that doesn't opt in stays as `flint render` has always drawn it.
-    pub fn wanted_by(world: &FlintWorld) -> bool {
-        world.all_entities().iter().any(|entity| {
-            world
-                .get_components(entity.id)
-                .is_some_and(|comps| comps.get(comp::LIVING_PROP).is_some())
+/// Lay a preset file's `[living]` over the scene's, as the player's Load does
+/// (#249): its stagger, echoes and variance set the global layer a field at a
+/// time, and each species it names takes exactly its values. Its `[wooze]`
+/// knobs go to the field, [`wooze_of_scene`]. What can't be used is returned.
+pub fn apply_preset(props: &mut LivingProps, living: &flint_procgen::LivingDef) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut say = |problem: String| problems.push(problem);
+    let stagger = (living.stagger.as_deref()).and_then(|name| checked_stagger(name, &mut say));
+    let echoes = echoes_of(living.echoes.as_ref(), &mut say);
+    let variance = variance_of(living.variance.as_ref(), &mut say);
+    let softness = softness_of(living.softness, &mut say);
+    let species: Vec<(String, SpeciesOverride)> = (living.species.iter())
+        .map(|(name, def)| {
+            let mut say = |problem: String| say(format!("species '{name}': {problem}"));
+            (name.clone(), species_of(def, &mut say))
         })
+        .collect();
+    if let Some(stagger) = stagger {
+        props.tune_stagger(LivingScope::All, stagger);
     }
-
-    /// Resolve the scene's procgen assets as the player does at load, before the
-    /// model loader, with every lineage built and every ring full.
-    pub fn load(
-        scene_path: &str,
-        living: Option<&flint_scene::LivingDef>,
-        wooze: Option<&flint_scene::WoozeDef>,
-        world: &mut FlintWorld,
-        sink: super::procgen_assets::GpuSink<'_>,
-    ) -> Self {
-        let mut resolver = ProcGenResolver::new();
-        resolver.set_living_defaults(defaults_of(living));
-        super::procgen_assets::resolve_scene(
-            scene_path,
-            world,
-            &mut resolver,
-            ProcGenMode::Immediate,
-            sink,
-        );
-        Self {
-            resolver,
-            blend: BlendFrame::default(),
-            field: field_of(wooze),
-            time: 0.0,
+    props.tune_echoes(LivingScope::All, echoes);
+    props.tune_variance(LivingScope::All, variance);
+    if let Some(softness) = softness {
+        props.tune_softness(LivingScope::All, softness);
+    }
+    for (name, over) in species {
+        if !props.set_species(&name, over) {
+            problems.push(format!("no living prop grows from '{name}'"));
         }
     }
-
-    /// Lay `knobs` over the scene's global wooze values, before the first step. A
-    /// scene with no `[wooze]` table is treated as if it had an empty one.
-    pub fn change_field(&mut self, knobs: &toml::Table) -> Result<(), String> {
-        self.field
-            .get_or_insert_with(|| WoozeField::new(flint_core::wooze::WoozeSample::NEUTRAL))
-            .set_global(knobs, self.time, 0.0)
-    }
-
-    /// Lay a preset file's `[living]` over the scene's, as the player's Load does
-    /// (#249): its stagger, echoes and variance set the global layer a field at a
-    /// time, and each species it names takes exactly its values. Its `[wooze]`
-    /// knobs go through [`Self::change_field`]. What can't be used is returned.
-    pub fn apply_preset(&mut self, living: &flint_scene::LivingDef) -> Vec<String> {
-        let mut problems = Vec::new();
-        let mut say = |problem: String| problems.push(problem);
-        let stagger = (living.stagger.as_deref()).and_then(|name| checked_stagger(name, &mut say));
-        let echoes = echoes_of(living.echoes.as_ref(), &mut say);
-        let variance = variance_of(living.variance.as_ref(), &mut say);
-        let species: Vec<(String, SpeciesOverride)> = (living.species.iter())
-            .map(|(name, def)| {
-                let mut say = |problem: String| say(format!("species '{name}': {problem}"));
-                (name.clone(), species_of(def, &mut say))
-            })
-            .collect();
-        let props = self.resolver.living_props_mut();
-        if let Some(stagger) = stagger {
-            props.tune_stagger(LivingScope::All, stagger);
-        }
-        props.tune_echoes(LivingScope::All, echoes);
-        props.tune_variance(LivingScope::All, variance);
-        for (name, over) in species {
-            if !props.set_species(&name, over) {
-                problems.push(format!("no living prop grows from '{name}'"));
-            }
-        }
-        problems
-    }
-
-    /// The field, if the scene has one or has been given one.
-    pub fn field(&self) -> Option<&WoozeField> {
-        self.field.as_ref()
-    }
-
-    /// Where the field is kept, for a script's change to it (#8). A change that
-    /// gives a scene with none a field puts it here.
-    pub(crate) fn field_slot(&mut self) -> &mut Option<WoozeField> {
-        &mut self.field
-    }
-
-    /// The props, for a script's tune (#8).
-    pub(crate) fn props_mut(&mut self) -> &mut LivingProps {
-        self.resolver.living_props_mut()
-    }
-
-    /// Move the clocks on by `dt` and make whatever poses that calls for. A step of
-    /// 0, as the player's first frame is, reads the field without moving.
-    pub fn step(&mut self, dt: f64) {
-        self.time += dt;
-        let wooze = self.field.as_ref().map(|field| (field, self.time));
-        // Load built every lineage, and no new ones turn up.
-        self.resolver.step_living_now(dt, wooze);
-    }
-
-    /// The clock, in seconds.
-    pub fn time(&self) -> f64 {
-        self.time
-    }
-
-    /// The props as they stand.
-    pub fn props(&self) -> &LivingProps {
-        self.resolver.living_props()
-    }
-
-    /// Blend every prop where its clock stands and write what moved, as a frame of
-    /// the player does.
-    pub fn upload(
-        &mut self,
-        renderer: &mut SceneRenderer,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) {
-        upload_blends(&mut self.resolver, &mut self.blend, renderer, device, queue);
-    }
+    problems
 }
 
-/// What reads the wooze field besides living props, with no window, for `flint
-/// render`: the shading boil (#214), and shallow wooze (#215) if asked. It steps as
-/// the player's frame does, so a capture at a game time shows what the player shows.
-pub struct WoozeClocks {
-    field: WoozeField,
-    time: f64,
-    boil: flint_core::wooze::BoilClock,
-    shallow: Option<super::shallow_wooze::ShallowWooze>,
-    grass: super::shallow_wooze::GrassWooze,
+/// A scene's `[wooze]` field with `knobs` laid over it (a sweep's column), or
+/// `None` if the scene has no table and nothing is laid over it.
+pub fn wooze_of_scene(
+    table: Option<&flint_procgen::WoozeDef>,
+    knobs: Option<&toml::Table>,
+) -> Result<Option<WoozeField>, String> {
+    let mut field = field_of(table);
+    if let Some(knobs) = knobs {
+        field
+            .get_or_insert_with(|| WoozeField::new(flint_wooze::WoozeSample::NEUTRAL))
+            .set_global(knobs, 0.0, 0.0)?;
+    }
+    Ok(field)
 }
 
-impl WoozeClocks {
-    /// The clocks of a scene's `[wooze]` table with `knobs` laid over it, or `None`
-    /// if the scene has no table and nothing is laid over it, so nothing samples.
-    pub fn of_scene(
-        table: Option<&flint_scene::WoozeDef>,
-        knobs: Option<&toml::Table>,
-        shallow: bool,
-    ) -> Result<Option<Self>, String> {
-        let mut field = table.map(|def| def.field().0);
-        if let Some(knobs) = knobs {
-            field
-                .get_or_insert_with(|| WoozeField::new(flint_core::wooze::WoozeSample::NEUTRAL))
-                .set_global(knobs, 0.0, 0.0)?;
-        }
-        Ok(field.map(|field| Self {
-            field,
-            time: 0.0,
-            boil: Default::default(),
-            shallow: shallow.then(Default::default),
-            grass: Default::default(),
-        }))
-    }
-
-    /// The clocks of `field` as it stands at `time`: the field a script gave a
-    /// scene that had none (#8).
-    pub(crate) fn of_field(field: WoozeField, time: f64, shallow: bool) -> Self {
-        Self {
-            field,
-            time,
-            boil: Default::default(),
-            shallow: shallow.then(Default::default),
-            grass: Default::default(),
-        }
-    }
-
-    /// Change the field at the time its clock has reached, as a script's
-    /// command does (#8). `change` gets the field in the slot shape
-    /// [`LivingRun::field_slot`] has, so one change goes to both the same way.
-    pub(crate) fn change_field(&mut self, change: impl FnOnce(&mut Option<WoozeField>, f64)) {
-        let mut slot = Some(self.field.clone());
-        change(&mut slot, self.time);
-        if let Some(field) = slot {
-            self.field = field;
-        }
-    }
-
-    /// Move on by `dt`, with the viewer at `viewer`. Returns what shallow wooze draws
-    /// with now, for `SceneRenderer::set_shallow_wooze`.
-    pub fn step(
-        &mut self,
-        world: &FlintWorld,
-        viewer: [f32; 3],
-        dt: f64,
-    ) -> &[(flint_core::EntityId, flint_render::ShallowWoozeDraw)] {
-        self.time += dt;
-        let sample = self.field.sample(viewer, self.time);
-        self.boil.tick(dt, &sample);
-        match &mut self.shallow {
-            Some(shallow) => shallow.advance(world, &self.field, self.time, dt),
-            None => &[],
-        }
-    }
-
-    /// Move woozy grass (#252) on by the `dt` the last [`Self::step`] took, with the
-    /// viewer at `viewer`. Grass `config` doesn't ask for it stays on the wall clock.
-    pub fn step_grass(
-        &mut self,
-        config: Option<&flint_terrain::GrassConfig>,
-        viewer: [f32; 3],
-        dt: f64,
-    ) {
-        self.grass
-            .advance(config, &self.field, viewer, self.time, dt);
-    }
-
-    /// The grass's clock and comb as of the last [`Self::step_grass`].
-    pub fn grass(&self) -> &super::shallow_wooze::GrassWooze {
-        &self.grass
-    }
-
-    /// The boil's drawing where its clock now stands.
-    pub fn boil(&self, viewer: [f32; 3], on: u32) -> flint_core::wooze::BoilFrame {
-        self.boil.frame(&self.field.sample(viewer, self.time), on)
-    }
-
-    /// The boil's drawing at `time`, in one tick at the tempo of that moment, whatever
-    /// the clock says: `--boil-time`.
-    pub fn boil_at(&self, viewer: [f32; 3], time: f64, on: u32) -> flint_core::wooze::BoilFrame {
-        let sample = self.field.sample(viewer, time);
-        let mut clock = flint_core::wooze::BoilClock::default();
-        clock.tick(time, &sample);
-        clock.frame(&sample, on)
-    }
+/// The shading boil's drawing at `time` for a viewer at `viewer`, in one tick
+/// at the tempo of that moment, whatever a clock says: `--boil-time`.
+pub fn boil_at(field: &WoozeField, viewer: [f32; 3], time: f64, on: u32) -> flint_wooze::BoilFrame {
+    let sample = field.sample(viewer, time);
+    let mut clock = flint_wooze::BoilClock::default();
+    clock.tick(time, &sample);
+    clock.frame(&sample, on)
 }
 
 /// One frame's blending and upload for every prop, timed for `--exit-after`.
@@ -486,6 +326,8 @@ pub fn upload_props(
         if let Some(count) = blend.echo_count {
             renderer.set_entity_echo_count(blend.entity, count);
         }
+        let lighten = props.prop(id).echo_blend() == flint_procgen::EchoBlend::Lighten;
+        renderer.set_entity_echo_lighten(blend.entity, lighten);
         if let Some(first) = blend.first_bone {
             renderer.write_entity_bones(device, queue, blend.entity, first, &frame.bones);
             writes += 1;
@@ -496,6 +338,14 @@ pub fn upload_props(
         }
         for (part, tint) in &frame.tints {
             renderer.set_entity_part_tint(blend.entity, *part, *tint);
+        }
+        // The body's silhouette (#582); the cards keep their edges. A write of
+        // what's there already changes nothing, so it can go every frame.
+        if let Some((_, rig)) = props.rig_of(id) {
+            let softness = props.softness(id);
+            for part in rig.body_parts() {
+                renderer.set_entity_part_softness(blend.entity, part, softness);
+            }
         }
         for echo in 0..props.prop(id).echo_count() {
             if let Some(first) = props.blend_echo(id, echo, frame) {
@@ -810,7 +660,7 @@ pub fn knobs_report(stats: &LivingStats, props: &LivingProps) -> Option<String> 
 /// The `[wooze]` line `--exit-after` prints: how far apart the field has put the
 /// props, knob by knob, so that a run says whether its zones reached anything.
 pub fn wooze_report(field: &WoozeField, props: &LivingProps) -> String {
-    let range = |read: fn(&flint_core::wooze::WoozeSample) -> f32| {
+    let range = |read: fn(&flint_wooze::WoozeSample) -> f32| {
         props
             .props()
             .iter()

@@ -4,6 +4,7 @@
 //! direct brush sculpting, and splat-map painting. Operates on `.terrain.toml`
 //! spec files and exports heightmap/splat PNGs.
 
+use flint_render::AcquireFrame;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -288,8 +289,16 @@ impl TerrainEditApp {
             None,
             None,
         );
-        let egui_renderer =
-            egui_wgpu::Renderer::new(&context.device, context.config.format, None, 1, false);
+        let egui_renderer = egui_wgpu::Renderer::new(
+            &context.device,
+            context.config.format,
+            egui_wgpu::RendererOptions {
+                depth_stencil_format: None,
+                msaa_samples: 1,
+                dithering: false,
+                ..Default::default()
+            },
+        );
         self.egui_winit = Some(egui_winit);
         self.egui_renderer = Some(egui_renderer);
 
@@ -531,7 +540,7 @@ impl TerrainEditApp {
     }
 
     fn save_spec_as(&mut self) {
-        let dialog = rfd::FileDialog::new()
+        let dialog = crate::file_dialog::FileDialog::new()
             .set_title("Save Terrain Spec As")
             .add_filter("Terrain Spec", &["toml"])
             .set_file_name(
@@ -561,7 +570,7 @@ impl TerrainEditApp {
     }
 
     fn export_maps(&mut self) {
-        let dialog = rfd::FileDialog::new()
+        let dialog = crate::file_dialog::FileDialog::new()
             .set_title("Export Heightmap PNG")
             .add_filter("PNG Image", &["png"])
             .set_file_name("heightmap.png");
@@ -651,12 +660,15 @@ impl TerrainEditApp {
         let mut want_randomize = false;
 
         let raw_input = egui_winit.take_egui_input(&window);
-        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+        // A real frame: its texture updates are uploaded below (#944)
+        #[allow(clippy::disallowed_methods)]
+        let mut full_output = self.egui_ctx.run_ui(raw_input, |ui| {
+            let ctx = &ui.ctx().clone();
             // ─── Left panel ──────────────────────────────────────────
-            egui::SidePanel::left("left_panel")
-                .default_width(320.0)
+            egui::Panel::left("left_panel")
+                .default_size(320.0)
                 .resizable(true)
-                .show(ctx, |ui| {
+                .show(ui, |ui| {
                     ui.heading(&spec.meta.name);
                     ui.separator();
 
@@ -701,7 +713,7 @@ impl TerrainEditApp {
                     ui.separator();
 
                     // Bottom buttons
-                    egui::TopBottomPanel::bottom("left_bottom").show_inside(ui, |ui| {
+                    egui::Panel::bottom("left_bottom").show(ui, |ui| {
                         ui.label(format!("Gen: {:.1} ms | FPS: {:.0}", gen_time_ms, fps));
                         ui.label(format!("Heightmap: {}x{}", heightmap_res, heightmap_res));
 
@@ -983,10 +995,10 @@ impl TerrainEditApp {
                 });
 
             // ─── Right panel ──────────────────────────────────────────
-            egui::SidePanel::right("right_panel")
-                .default_width(280.0)
+            egui::Panel::right("right_panel")
+                .default_size(280.0)
                 .resizable(true)
-                .show(ctx, |ui| {
+                .show(ui, |ui| {
                     // Texture layers
                     egui::CollapsingHeader::new("Texture Layers")
                         .default_open(true)
@@ -1081,8 +1093,10 @@ impl TerrainEditApp {
                 label: Some("egui Encoder"),
             });
 
-        for (id, image_delta) in &full_output.textures_delta.set {
-            egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+        for (id, deltas) in &full_output.textures_delta.set {
+            for image_delta in deltas {
+                egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+            }
         }
 
         egui_renderer.update_buffers(
@@ -1099,6 +1113,7 @@ impl TerrainEditApp {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -1107,6 +1122,7 @@ impl TerrainEditApp {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             let mut render_pass = render_pass.forget_lifetime();
@@ -1118,6 +1134,8 @@ impl TerrainEditApp {
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);
         }
+        // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
+        full_output.textures_delta.clear();
 
         self.egui_renderer = Some(egui_renderer);
 
@@ -1256,7 +1274,7 @@ impl ApplicationHandler for TerrainEditApp {
 
                 // Pass to orbit for right-drag
                 self.orbit
-                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_area());
+                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_egui());
             }
 
             ref ev @ WindowEvent::MouseInput { state, button, .. } => {
@@ -1277,14 +1295,14 @@ impl ApplicationHandler for TerrainEditApp {
                     self.orbit.handle_event(
                         ev,
                         &mut self.camera,
-                        self.egui_ctx.is_pointer_over_area(),
+                        self.egui_ctx.is_pointer_over_egui(),
                     );
                 }
             }
 
             ref ev @ WindowEvent::MouseWheel { .. } => {
                 self.orbit
-                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_area());
+                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_egui());
             }
 
             WindowEvent::RedrawRequested => {
@@ -1318,7 +1336,7 @@ impl ApplicationHandler for TerrainEditApp {
                 }
 
                 // Brush painting (continuous while held)
-                if self.painting && !self.egui_ctx.is_pointer_over_area() {
+                if self.painting && !self.egui_ctx.is_pointer_over_egui() {
                     self.update_brush_hit();
                     self.apply_brush(dt);
                 }
@@ -1338,18 +1356,15 @@ impl ApplicationHandler for TerrainEditApp {
                     None => return,
                 };
 
-                let output = match context.surface.get_current_texture() {
+                let output = match context.surface.acquire() {
                     Ok(o) => o,
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                    Err(
+                        flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated,
+                    ) => {
                         let size = context.size;
                         if let Some(ctx) = &mut self.render_context {
                             ctx.resize(size);
                         }
-                        return;
-                    }
-                    Err(wgpu::SurfaceError::OutOfMemory) => {
-                        tracing::error!("Out of GPU memory");
-                        event_loop.exit();
                         return;
                     }
                     Err(e) => {
@@ -1372,7 +1387,9 @@ impl ApplicationHandler for TerrainEditApp {
                     self.render_egui(&view);
                 }
 
-                output.present();
+                if let Some(context) = &self.render_context {
+                    context.queue.present(output);
+                }
             }
 
             _ => {}

@@ -1,6 +1,6 @@
 # Particles
 
-Flint's particle system (`flint-particles`) provides GPU-instanced visual effects: fire, smoke, sparks, rain, dust, magic — any effect made of hundreds or thousands of small, short-lived elements. Since ADR 0068 it has two authoring paths, a deterministic simulation that headless renders can step, and its own editor.
+Flint's particle system (`flint-particles`) provides GPU-instanced visual effects: fire, smoke, sparks, rain, dust, magic — any effect made of hundreds or thousands of small, short-lived elements. Since [ADR 0068](https://github.com/chrischaps/Flint/blob/main/docs/adr/0068-particle-effect-assets-and-deterministic-sim.md) it has two authoring paths, a deterministic simulation that headless renders can step, and its own editor.
 
 ![Campfire effect: flames, embers, puffs and smoke from one asset](../images/particles-campfire-scene.png)
 
@@ -8,7 +8,7 @@ Flint's particle system (`flint-particles`) provides GPU-instanced visual effect
 
 | | Inline `particle_emitter` | Effect asset + `particle_effect` |
 |---|---|---|
-| Where it lives | On a scene entity | `particles/<name>.particles.toml` next to the scene (or one level up) |
+| Where it lives | On a scene entity | `particles/<name>.particles.toml` beside the scene, beside any directory above it up to the project root, or in the engine: [the one search rule](assets.md#where-the-engine-looks-for-a-file) |
 | Emitters | One | Any number, simulated together |
 | Curves, forces, bursts timeline, sub-emitters | No (start/end values only) | Yes |
 | Reuse | Copy the block | Reference by name from any scene; `play_effect` from scripts |
@@ -44,7 +44,7 @@ shape_radius = 0.15
 
 ### Effect asset
 
-`demo/particles/campfire.particles.toml`, trimmed:
+`examples/particles/campfire.particles.toml`, trimmed:
 
 ```toml
 name = "campfire"
@@ -137,7 +137,7 @@ Over-lifetime curves: `size` (`[w, h]`), `color` (RGBA), `alpha` (multiplies col
 | `cone` | `{ kind = "cone", radius = 0.15, angle = 10 }` — spawns on a disc of `radius` perpendicular to `direction`, moving within `angle` degrees | `shape = "cone"`, `shape_angle`, `shape_radius` (cones spawn from a point unless set) |
 | `box` | `{ kind = "box", extents = [x, y, z] }` | `shape = "box"`, `shape_extents` |
 
-`shape_offset` translates the spawn region relative to the emitter. `shape_axis_u` / `shape_axis_v` orient a box (ADR 0061): `extents.x` runs along `u`, `extents.y` along `v`, `extents.z` along their cross product; zero or parallel axes fall back to axis-aligned.
+`shape_offset` translates the spawn region relative to the emitter. `shape_axis_u` / `shape_axis_v` orient a box ([ADR 0061](https://github.com/chrischaps/Flint/blob/main/docs/adr/0061-flight-trails-from-script-driven-emitters.md)): `extents.x` runs along `u`, `extents.y` along `v`, `extents.z` along their cross product; zero or parallel axes fall back to axis-aligned.
 
 `local_axes` decides whether `direction`, `shape_offset` and the shape axes rotate with the entity's world rotation (and scale with its scale). Assets default to `true`; inline components default to `false` so existing scripts that drive `shape_axis_u` in world space (the prologue flight trails) keep working.
 
@@ -169,7 +169,7 @@ Asset emitters can add `[[emitters.forces]]`:
 |---|---|
 | `blend_mode` | `alpha`, `additive`, `premultiplied`, `multiply` |
 | `sort` | `none`, `back_to_front` (correct alpha), `youngest_first`, `oldest_first` — per emitter, using the camera position |
-| `texture` | Sprite image, searched in `particles/`, the scene dir, then its parent. Empty draws a procedural soft disc |
+| `texture` | Sprite image, by file name: `particles/<name>`, then `<name>` beside the scene, the same beside each directory above it up to the project root, then the engine's ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)). Empty draws a procedural soft disc |
 | `frames_x`, `frames_y`, `animate_frames`, `frame_rate`, `random_start_frame` | Sprite sheets: frames follow lifetime, or run at `frame_rate` fps, optionally from a random start frame |
 | `stretch` | Velocity-aligned billboard stretch in seconds (rain streaks ~0.03) |
 | `soft_distance`, `fade_near`, `fade_far`, `lighting`, `fog` | Parsed and saved now; the soft-particle / fade pass is scheduled with the depth-grab work |
@@ -186,7 +186,7 @@ The system keeps a global alive cap (default 100 000; the F3 Particles panel exp
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `effect` | string | "" | Effect name (`name` field or file stem of a `particles/*.particles.toml`) |
+| `effect` | string | "" | Effect name (`name` field or file stem of a `particles/*.particles.toml`). Every effect file the scene can see is loaded, a nearer one hiding a farther one of the same name; a name that matches none is a warning listing each path tried. `flint asset where particles <name> --scene <scene>` shows the search |
 | `playing` / `autoplay` | bool | false / true | Playback state; `start_emitter` / `stop_emitter` toggle `playing` |
 | `scale` | f32 | 1.0 | Multiplies size, speed and shape distances |
 | `emission_scale` | f32 | 1.0 | Multiplies every emitter's rate |
@@ -282,7 +282,7 @@ fn on_update() {
 - **`ParticleSystem`** — the `RuntimeSystem`; `step`, `simulate_to`, `pack`
 - **`flint-render` `scene_renderer/particles.rs`** — the single upload bridge used by the player, viewer, editor and `flint render`; four blend pipelines over one shared instance buffer
 
-Deferred by ADR 0068: GPU compute simulation, ribbons/trails (the `trail` key is reserved), mesh particles, soft particles and distance fade, collision.
+Deferred by [ADR 0068](https://github.com/chrischaps/Flint/blob/main/docs/adr/0068-particle-effect-assets-and-deterministic-sim.md): GPU compute simulation, ribbons/trails (the `trail` key is reserved), mesh particles, soft particles and distance fade, collision.
 
 ## Recipes
 

@@ -211,6 +211,26 @@ mod tests {
         assert_eq!(cond.value.as_bool(), Some(true));
     }
 
+    /// The language is one resource and one condition. What follows the
+    /// condition used to be dropped in silence, so a constraint written with
+    /// `and` checked half of what it said (#687).
+    #[test]
+    fn what_follows_the_one_condition_is_an_error() {
+        for query in [
+            "entities where archetype == 'door' and door.locked == true",
+            "entities where archetype == 'door' or archetype == 'room'",
+            "entities where archetype == 'door' extra",
+            "entities archetype == 'door'",
+            "entity where archetype == 'door'",
+            "entities where archetype = 'door'",
+            "entities where has door",
+            "",
+        ] {
+            assert!(parse_query(query).is_err(), "{query:?} parsed");
+        }
+        assert!(parse_query("  entities where door.locked == true  ").is_ok());
+    }
+
     #[test]
     fn test_numeric_comparison() {
         let query = parse_query("entities where health > 50").unwrap();

@@ -39,7 +39,7 @@ pub use emitter::{
 };
 pub use loader::{
     load_effect_from_file, load_effect_from_str, load_effects_from_dir,
-    load_particle_effects_from_world, resolve_particles_dir, texture_search_dirs, EFFECT_SUFFIX,
+    load_particle_effects_from_world, load_visible_effects, EFFECT_SUFFIX,
 };
 pub use particle::{Particle, ParticleInstance, ParticlePool};
 pub use sim::EmitterFrame;
@@ -128,22 +128,9 @@ impl RuntimeSystem for ParticleSystem {
         Ok(())
     }
 
-    fn fixed_update(&mut self, _world: &mut FlintWorld, _dt: f64) -> Result<()> {
-        // Particles are purely visual — no fixed-step needed
-        Ok(())
-    }
-
     fn update(&mut self, world: &mut FlintWorld, dt: f64) -> Result<()> {
         self.step(world, dt as f32);
         Ok(())
-    }
-
-    fn shutdown(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    fn name(&self) -> &str {
-        "particles"
     }
 }
 

@@ -1,0 +1,15 @@
+# Typewriter (#935): Cutive Mono, a thin slab-serif typewriter face. Light
+# strokes leave a lot of paper in every cell, so the frame reads pale and
+# printed: a page of a manuscript rather than a screen.
+default_ramp = "ink"
+
+[font]
+file = "ofl/CutiveMono/CutiveMono-Regular.ttf"   # OFL 1.1: ofl/CutiveMono/OFL.txt
+size = 18
+
+[ramps.ink]
+glyphs = " .,:;-=+ox*%&#@"
+map = "coverage"
+
+[edges]
+corners = "+++++++++"

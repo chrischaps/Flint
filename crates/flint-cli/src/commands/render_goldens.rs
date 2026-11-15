@@ -1,4 +1,5 @@
-//! `flint render-suite <file>.goldens.toml` (#271): render a list of
+//! `flint goldens <file>.goldens.toml` (#271, its own command since #327;
+//! `render-suite` given one still runs it): render a list of
 //! scenes with `flint render`, each with its own flags, and compare every
 //! image with a checked-in golden PNG. The suite fails when any case moves
 //! past its tolerance, so a change to the stylize framework (or anything
@@ -19,7 +20,7 @@
 //!
 //! [[case]]
 //! name = "ascii-full-pbr"
-//! scene = "demo/pbr_test.scene.toml"
+//! scene = "examples/pbr_test.scene.toml"
 //! golden = "ascii_pbr_test.png"   # beside the manifest; default "<name>.png"
 //! args = ["--style", "ascii"]
 //! text = "ascii_pbr_test.txt"     # optional (#317): the ASCII grid, compared exactly
@@ -75,6 +76,26 @@
 //! from it. `--bless-drifted` re-blesses only those cases (passing ones
 //! that moved), for a deliberate catch-up commit; failures still fail.
 //!
+//! A case with `frames` is a sequence (#478): no golden file, but a budget.
+//! It draws that many frames on one renderer, the camera moving by `orbit`
+//! (degrees a second) or along `camera_path` (a `flint render
+//! --camera-path` file, from the suite's root), `frame_dt` apart (default
+//! 1/60 s), counting the ASCII style's glyph flips and A-B-A reversals
+//! from its own grid (`flint render --flip-json`). It fails when the mean
+//! reversals a frame pass `max_reversals`, or the mean flips pass
+//! `max_flips` when it gives one. Its last frame is the render on the
+//! contact sheet, beside a chart of every frame's counts:
+//!
+//! ```toml
+//! [[case]]
+//! name = "ascii-motion-tone"
+//! scene = "tests/fixtures/scenes/ascii_motion.scene.toml"
+//! args = ["--no-grid", "--style", "ascii:edges=0"]
+//! frames = 60
+//! orbit = 6.8755
+//! max_reversals = 0.5
+//! ```
+//!
 //! Every case runs in this process, on one GPU device (#329): it parses
 //! the case's flags as `flint render` would and calls the same function.
 //! `--isolate` spawns a `flint render` per case instead.
@@ -84,47 +105,109 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// The flags `render-suite` takes for a `.goldens.toml`.
+/// `flint goldens <manifest>`: the manifest and the flags (#327). Its own
+/// command, so `--help` lists only what a golden suite takes; `render-suite`
+/// given a `.goldens.toml` is routed here before parsing
+/// ([`route_render_suite_goldens`]).
+#[derive(clap::Args, Debug)]
+#[command(after_help = "Also run as `flint render-suite <file>.goldens.toml`, \
+    which is this command.\nManifest format: `flint goldens` in the book \
+    (guides/headless-rendering.md#golden-suites).")]
+pub struct GoldensArgs {
+    /// The suite: a `.goldens.toml` of cases, each a scene and its
+    /// `flint render` flags, compared with a golden PNG beside the manifest
+    pub manifest: String,
+
+    #[command(flatten)]
+    pub golden: GoldenArgs,
+}
+
+/// Run `flint goldens`.
+pub fn run_command(args: GoldensArgs) -> Result<()> {
+    run(&args.manifest, &args.golden)
+}
+
+/// `flint render-suite <x>.goldens.toml ...` was how a golden suite ran
+/// before it had a command (#271); it still works, by naming the command
+/// `goldens` when any word after `render-suite` ends in `.goldens.toml`
+/// (no music flag takes one, and the manifest may come after a golden
+/// flag's value: `--out-dir out x.goldens.toml`). Done on the words,
+/// before clap, so `render-suite`'s own flags and help stay the music
+/// suite's alone. Anything else passes through unchanged.
+pub fn route_render_suite_goldens(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    // The subcommand is the first word after the binary that is neither a
+    // flag nor `--project`'s value (the one global option taking a value)
+    let mut i = 1;
+    while i < args.len() {
+        let word = args[i].to_string_lossy();
+        if word == "--project" {
+            i += 2;
+        } else if word.starts_with('-') {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    if args.get(i).is_some_and(|w| w == "render-suite")
+        && args[i + 1..]
+            .iter()
+            .any(|w| w.to_string_lossy().ends_with(".goldens.toml"))
+    {
+        args[i] = "goldens".into();
+    }
+    args
+}
+
+/// The flags `flint goldens` takes.
 #[derive(clap::Args, Debug, Default)]
+// Flattened, these would number from 0 and put the global `--project`
+// after `--bless`; from 1 they follow it, as every other command's flags do
+#[command(next_display_order = 1)]
 pub struct GoldenArgs {
-    /// Goldens: write each render over its golden instead of comparing
+    /// Write each render over its golden instead of comparing
     /// (this adapter's variant, when the case has one)
     #[arg(long)]
     pub bless: bool,
 
-    /// Goldens: write each render as this adapter's variant of its golden,
+    /// Write each render as this adapter's variant of its golden,
     /// `<stem>.<adapter>.png`, for a case another adapter draws differently
     #[arg(long)]
     pub bless_variant: bool,
 
-    /// Goldens: re-bless only the cases that pass but aren't byte-identical
+    /// Re-bless only the cases that pass but aren't byte-identical
     /// with their golden (#387), for a deliberate catch-up commit. Failing
     /// cases are left alone and still fail the run
     #[arg(long, conflicts_with_all = ["bless", "bless_variant"])]
     pub bless_drifted: bool,
 
-    /// Goldens: run only this case. A name that is exactly a case's picks
+    /// Run only this case. A name that is exactly a case's picks
     /// that case alone (`ascii-silhouette-cell` skips
     /// `ascii-silhouette-cell-object`); one that names no case picks every
     /// case whose name contains it (repeatable)
     #[arg(long = "case")]
     pub cases: Vec<String>,
 
-    /// Goldens: where renders, diffs and report.json go (default: a
+    /// Where renders, diffs and report.json go (default: a
     /// folder in the system temp dir)
     #[arg(long)]
     pub out_dir: Option<String>,
 
-    /// Goldens: fail, rather than skip, when there is no GPU adapter
+    /// Fail, rather than skip, when there is no GPU adapter
     #[arg(long)]
     pub require_gpu: bool,
 
-    /// Goldens: run each case as its own `flint render` process. Slower
+    /// Run each case as its own `flint render` process. Slower
     /// (a GPU device, schemas and shaders a case) but a crash takes down
     /// only its case; by default every case runs in this process on one
     /// device, and a case that panics is run again in its own (#329)
     #[arg(long)]
     pub isolate: bool,
+
+    /// Build every case's pipelines anew, as before #911, instead of
+    /// keeping them for the next case on the device: for checking that
+    /// the reuse changes no pixel, in one process
+    #[arg(long)]
+    pub fresh_pipelines: bool,
 }
 
 #[derive(Deserialize)]
@@ -219,6 +302,165 @@ struct Case {
     /// `flint render` prints as a warning, e.g. `"broken.wgsl:9:9"`.
     #[serde(default)]
     error: Option<String>,
+    /// A sequence of this many frames on one renderer (#478), held to a
+    /// shimmer budget instead of a golden.
+    #[serde(default)]
+    frames: Option<u32>,
+    /// With `frames`: orbit the camera this many degrees a second.
+    #[serde(default)]
+    orbit: Option<f32>,
+    /// With `frames`: a camera path file, from the suite's root.
+    #[serde(default)]
+    camera_path: Option<String>,
+    /// With `frames`: seconds between frames (default 1/60).
+    #[serde(default)]
+    frame_dt: Option<f32>,
+    /// With `frames`: the most A-B-A glyph reversals a frame may average.
+    #[serde(default)]
+    max_reversals: Option<f64>,
+    /// With `frames`: the most glyph flips a frame may average (optional).
+    #[serde(default)]
+    max_flips: Option<f64>,
+}
+
+/// The `flint render` flags of a sequence case's run that its manifest
+/// keys set, so a case can't give them twice.
+const SEQUENCE_FLAGS: &[&str] = &[
+    "--frames",
+    "--orbit",
+    "--camera-path",
+    "--frame-dt",
+    "--flip-stats",
+    "--flip-json",
+    "--no-images",
+    "--last-frame",
+];
+
+impl Case {
+    /// What a sequence case adds to `flint render`'s flags (#478): its
+    /// frames, camera and frame step. Empty for any other case.
+    fn sequence_flags(&self) -> Vec<String> {
+        let Some(frames) = self.frames else {
+            return Vec::new();
+        };
+        let mut flags = vec!["--frames".to_string(), frames.to_string()];
+        if let Some(rate) = self.orbit {
+            flags.extend(["--orbit".to_string(), rate.to_string()]);
+        }
+        if let Some(path) = &self.camera_path {
+            flags.extend(["--camera-path".to_string(), path.clone()]);
+        }
+        if let Some(dt) = self.frame_dt {
+            flags.extend(["--frame-dt".to_string(), dt.to_string()]);
+        }
+        flags
+    }
+
+    /// The keys that make sense together: a sequence case has a budget
+    /// and no golden, and only a sequence case has the sequence keys.
+    fn check(&self) -> Result<()> {
+        let name = &self.name;
+        if self.frames.is_none() {
+            let stray = [
+                ("orbit", self.orbit.is_some()),
+                ("camera_path", self.camera_path.is_some()),
+                ("frame_dt", self.frame_dt.is_some()),
+                ("max_reversals", self.max_reversals.is_some()),
+                ("max_flips", self.max_flips.is_some()),
+            ];
+            if let Some((key, _)) = stray.iter().find(|(_, set)| *set) {
+                bail!("case '{name}': `{key}` is a sequence case's key; add `frames`");
+            }
+            return Ok(());
+        }
+        if self.max_reversals.is_none() {
+            bail!(
+                "case '{name}': a sequence case (`frames`) is held to a budget: \
+                 give `max_reversals` (A-B-A glyph reversals a frame, the mean)"
+            );
+        }
+        let goldens = [
+            ("golden", self.golden.is_some()),
+            ("text", self.text.is_some()),
+            ("text_cells", self.text_cells > 0),
+            ("matches", self.matches.is_some()),
+            ("error", self.error.is_some()),
+            (
+                "tolerance",
+                self.tolerance.level.is_some()
+                    || self.tolerance.share.is_some()
+                    || self.tolerance.mean.is_some(),
+            ),
+        ];
+        if let Some((key, _)) = goldens.iter().find(|(_, set)| *set) {
+            bail!(
+                "case '{name}': a sequence case (`frames`) is held to its budget, \
+                 not a golden: drop `{key}`"
+            );
+        }
+        if self.orbit.is_some() && self.camera_path.is_some() {
+            bail!("case '{name}': give `orbit` or `camera_path`, not both");
+        }
+        if let Some(flag) = self
+            .args
+            .iter()
+            .find(|a| SEQUENCE_FLAGS.contains(&a.as_str()) || *a == "--output" || *a == "-o")
+        {
+            bail!(
+                "case '{name}': {flag} in `args`; a sequence case's frames, camera and \
+                 output come from its keys (`frames`, `orbit`, `camera_path`, `frame_dt`)"
+            );
+        }
+        Ok(())
+    }
+}
+
+/// How a sequence case's glyphs moved (#478), against its budget.
+#[derive(Serialize, Clone, Debug, Default, PartialEq)]
+pub struct SequenceReport {
+    pub frames: u32,
+    /// How the camera moved: `orbit 6.8755 deg/s`, `camera path <file>`
+    /// or `still`.
+    pub motion: String,
+    pub frame_dt: f32,
+    /// Cells in the ASCII grid.
+    pub cells: u32,
+    pub flips_per_frame: f64,
+    pub reversals_per_frame: f64,
+    pub max_reversals: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_flips: Option<f64>,
+    /// Per frame from the second, as `--flip-json` writes them.
+    pub flips: Vec<u32>,
+    /// Per frame from the third.
+    pub reversals: Vec<u32>,
+}
+
+impl SequenceReport {
+    fn of(case: &Case, stats: super::frame_seq::FlipStats) -> Self {
+        let motion = match (case.orbit, &case.camera_path) {
+            (Some(rate), _) => format!("orbit {rate} deg/s"),
+            (None, Some(path)) => format!("camera path {path}"),
+            _ => "still".to_string(),
+        };
+        Self {
+            frames: stats.frames,
+            motion,
+            frame_dt: case.frame_dt.unwrap_or(1.0 / 60.0),
+            cells: stats.cells,
+            flips_per_frame: stats.flips_per_frame,
+            reversals_per_frame: stats.reversals_per_frame,
+            max_reversals: case.max_reversals.unwrap_or(0.0),
+            max_flips: case.max_flips,
+            flips: stats.flips,
+            reversals: stats.reversals,
+        }
+    }
+
+    pub fn passes(&self) -> bool {
+        self.reversals_per_frame <= self.max_reversals
+            && self.max_flips.is_none_or(|m| self.flips_per_frame <= m)
+    }
 }
 
 /// How a render's ASCII grid compares with its golden text (#317).
@@ -349,6 +591,9 @@ pub(crate) struct CaseReport {
     pub diff: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<TextComparison>,
+    /// A sequence case's counts against its budget (#478).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<SequenceReport>,
     /// The text golden's limit (`text_cells`).
     #[serde(skip)]
     pub text_cells: usize,
@@ -421,6 +666,29 @@ enum Rendered {
     Failed(String),
 }
 
+/// The run's pipeline line (#911): how many the cases built and how many
+/// they took from an earlier case, and ASCII's glyph pipeline's own count,
+/// which was one a case before.
+fn pipeline_summary(kept: bool) -> String {
+    let counts = flint_render::pipeline_cache::counts();
+    let built: u64 = counts.values().map(|c| c.built).sum();
+    let reused: u64 = counts.values().map(|c| c.reused).sum();
+    let glyph = counts
+        .get(ASCII_GLYPH_PIPELINE)
+        .copied()
+        .unwrap_or_default();
+    format!(
+        "pipelines: {built} built, {reused} reused from an earlier case{}; \
+         ASCII glyph pipeline built {}, reused {}",
+        if kept { "" } else { " (--fresh-pipelines)" },
+        glyph.built,
+        glyph.reused
+    )
+}
+
+/// The label of ASCII's glyph pipeline, the one the summary names.
+const ASCII_GLYPH_PIPELINE: &str = "ASCII Pipeline";
+
 /// Every loaded user style's error, a line each, as `flint render` warns
 /// of them: what an in-process case's `error` is checked against.
 fn user_style_errors() -> String {
@@ -482,12 +750,13 @@ fn render_in_process(
     argv: &[std::ffi::OsString],
 ) -> Result<Rendered> {
     use clap::Parser;
-    let cli = match RenderCli::try_parse_from(
+    let mut cli = match RenderCli::try_parse_from(
         std::iter::once(std::ffi::OsString::from("flint render")).chain(argv[1..].iter().cloned()),
     ) {
         Ok(cli) => cli,
         Err(e) => return Ok(Rendered::Failed(e.to_string())),
     };
+    cli.args.command_line = argv[1..].to_vec();
     let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         super::render::run_in(cli.args, host)
     }));
@@ -548,6 +817,8 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
 
     let mut names = std::collections::HashSet::new();
     for case in &manifest.cases {
+        case.check()
+            .with_context(|| format!("in {}", manifest_path.display()))?;
         if !names.insert(case.name.as_str()) {
             bail!(
                 "case '{}' appears twice in {}",
@@ -579,7 +850,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
 
     let flint = std::env::current_exe().context("finding the flint binary")?;
     println!(
-        "render-suite '{}': {} case(s){}, {}, from {}",
+        "goldens '{}': {} case(s){}, {}, from {}",
         manifest.suite.name,
         chosen.len(),
         if args.bless || args.bless_variant {
@@ -603,9 +874,8 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         None,
     ))
     .map(|a| a.get_info());
-    let adapter = info
-        .as_ref()
-        .map(|i| format!("{} ({:?}, {:?})", i.name, i.device_type, i.backend));
+    // On DX12 it names the shader compiler too (#912)
+    let adapter = info.as_ref().map(flint_render::gpu_select::adapter_line);
     let key = info.as_ref().map(adapter_key);
     println!(
         "adapter: {}{}",
@@ -625,6 +895,12 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
     // build the two were most of a props case's time
     flint_import::memoize_imports(!args.isolate);
     flint_render::memoize_mip_chains(!args.isolate);
+    // And their pipelines (#911): compiling them again was most of a
+    // case's time. Only what nothing writes is kept, so no case sees
+    // another's state
+    let keep_pipelines = !args.isolate && !args.fresh_pipelines;
+    flint_render::pipeline_cache::set_enabled(keep_pipelines);
+    flint_render::pipeline_cache::reset_counts();
     let _cwd = if args.isolate {
         CwdGuard(None)
     } else {
@@ -656,7 +932,10 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             mean: case.tolerance.mean.unwrap_or(defaults.mean),
         };
         let reference = out_dir.join(format!("{}.reference.png", case.name));
+        let sequence = case.frames.is_some();
         let plain = match &case.matches {
+            // A sequence case has a budget, no golden (#478)
+            _ if sequence => PathBuf::new(),
             Some(_) => reference.clone(),
             None => here.join(
                 case.golden
@@ -668,7 +947,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         // A reference render is this adapter's already
         let variant = key
             .as_deref()
-            .filter(|_| case.matches.is_none())
+            .filter(|_| case.matches.is_none() && !sequence)
             .map(|k| variant_path(&plain, k));
         let golden = match &variant {
             Some(v) if args.bless_variant || v.exists() => v.clone(),
@@ -689,6 +968,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             adapter: adapter.clone(),
             diff: None,
             text: None,
+            sequence: None,
             text_cells: case.text_cells,
             text_diff: None,
             message: None,
@@ -721,6 +1001,8 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         let _ = std::fs::remove_file(&text_render);
 
         let _ = std::fs::remove_file(&reference);
+        let flips_json = out_dir.join(format!("{}.flips.json", case.name));
+        let _ = std::fs::remove_file(&flips_json);
         let argv_for = |flags: &[String], output: &Path, text: bool| {
             let mut argv: Vec<std::ffi::OsString> =
                 vec!["render".into(), case.scene.clone().into()];
@@ -739,6 +1021,14 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             if text {
                 argv.push("--ascii-text".into());
                 argv.push(text_render.clone().into_os_string());
+            }
+            // A sequence (#478): its frames and camera, the counts as JSON,
+            // and its last frame as the render
+            if sequence {
+                argv.extend(case.sequence_flags().into_iter().map(Into::into));
+                argv.push("--flip-json".into());
+                argv.push(flips_json.clone().into_os_string());
+                argv.push("--last-frame".into());
             }
             argv.push("--output".into());
             argv.push(output.as_os_str().to_owned());
@@ -805,6 +1095,45 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
                 reports.push(report);
                 continue;
             }
+        }
+        // A sequence case is its counts against its budget (#478)
+        if sequence {
+            let stats: super::frame_seq::FlipStats = serde_json::from_str(
+                &std::fs::read_to_string(&flips_json)
+                    .with_context(|| format!("reading {}", flips_json.display()))?,
+            )
+            .with_context(|| format!("parsing {}", flips_json.display()))?;
+            let seq = SequenceReport::of(case, stats);
+            let pass = seq.passes();
+            let flips_limit = seq
+                .max_flips
+                .map(|m| format!(" (limit {m:.1})"))
+                .unwrap_or_default();
+            println!(
+                "  {}  {:<28} {:.2} reversals/frame (limit {:.2}), {:.1} flips/frame{}, \
+                 {} frames, {}, {} ms",
+                if pass { "PASS" } else { "FAIL" },
+                case.name,
+                seq.reversals_per_frame,
+                seq.max_reversals,
+                seq.flips_per_frame,
+                flips_limit,
+                seq.frames,
+                seq.motion,
+                ms
+            );
+            if !pass {
+                report.message = Some(format!(
+                    "over its shimmer budget: {:.2} reversals a frame (limit {:.2}), \
+                     {:.1} flips a frame{flips_limit}",
+                    seq.reversals_per_frame, seq.max_reversals, seq.flips_per_frame,
+                ));
+            }
+            report.status = if pass { "pass" } else { "fail" };
+            report.sequence = Some(seq);
+            failed += (!pass) as usize;
+            reports.push(report);
+            continue;
         }
         let got = image::open(&render)
             .with_context(|| format!("reading {}", render.display()))?
@@ -1039,6 +1368,10 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         },
         sheet_path.display()
     );
+    if !args.isolate {
+        println!("{}", pipeline_summary(keep_pipelines));
+    }
+    flint_render::pipeline_cache::set_enabled(false);
 
     if failed > 0 && !blessing {
         bail!("{failed} case(s) failed against their goldens");
@@ -1058,6 +1391,48 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn routed(words: &[&str]) -> Vec<String> {
+        let args = words.iter().map(std::ffi::OsString::from).collect();
+        route_render_suite_goldens(args)
+            .into_iter()
+            .map(|w| w.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// #327: `render-suite <x>.goldens.toml` still runs the goldens, the
+    /// manifest anywhere after it, `--project` before it or not; a music
+    /// suite and every other command are left alone.
+    #[test]
+    fn render_suite_with_a_goldens_manifest_is_routed_to_goldens() {
+        assert_eq!(
+            routed(&["flint", "render-suite", "s.goldens.toml", "--bless"]),
+            ["flint", "goldens", "s.goldens.toml", "--bless"]
+        );
+        assert_eq!(
+            routed(&["flint", "render-suite", "--out-dir", "o", "s.goldens.toml"]),
+            ["flint", "goldens", "--out-dir", "o", "s.goldens.toml"]
+        );
+        assert_eq!(
+            routed(&["flint", "--project", "g", "render-suite", "s.goldens.toml"]),
+            ["flint", "--project", "g", "goldens", "s.goldens.toml"]
+        );
+        for kept in [
+            &["flint", "render-suite", "m.suite.toml", "-o", "x.wav"][..],
+            &["flint", "render-suite", "--help"],
+            &["flint", "render", "s.goldens.toml"],
+            &[
+                "flint",
+                "--project",
+                "render-suite",
+                "render",
+                "x.goldens.toml",
+            ],
+            &["flint"],
+        ] {
+            assert_eq!(routed(kept), kept, "{kept:?}");
+        }
+    }
 
     fn solid(v: u8) -> image::RgbaImage {
         image::RgbaImage::from_pixel(10, 10, image::Rgba([v, v, v, 255]))
@@ -1089,12 +1464,7 @@ mod tests {
     fn variants_are_keyed_by_backend_and_software_adapters_by_name() {
         let info = |name: &str, device_type, backend| wgpu::AdapterInfo {
             name: name.into(),
-            vendor: 0,
-            device: 0,
-            device_type,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend,
+            ..wgpu::AdapterInfo::new(device_type, backend)
         };
         use wgpu::{Backend, DeviceType};
         let warp = info(
@@ -1163,10 +1533,21 @@ mod tests {
         use clap::Parser;
         let (_, manifest) = stylize_manifest();
         for case in &manifest.cases {
+            case.check().unwrap();
+            // A sequence case's flags are its keys' (#478)
+            let sequence = case.frames.map(|_| {
+                [
+                    "--flip-json".to_string(),
+                    "f.json".into(),
+                    "--last-frame".into(),
+                ]
+            });
             let argv = ["flint render".to_string(), case.scene.clone()]
                 .into_iter()
                 .chain(manifest.suite.args.iter().cloned())
-                .chain(case.args.iter().cloned());
+                .chain(case.args.iter().cloned())
+                .chain(case.sequence_flags())
+                .chain(sequence.into_iter().flatten());
             if let Err(e) = RenderCli::try_parse_from(argv) {
                 panic!("case '{}': {e}", case.name);
             }
@@ -1181,6 +1562,70 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// #478: a sequence case is held to a budget and has no golden, and
+    /// only a sequence case takes the sequence keys.
+    #[test]
+    fn sequence_keys_go_together() {
+        let case = |extra: &str| -> Result<()> {
+            let text = format!("name = \"c\"\nscene = \"s.scene.toml\"\n{extra}");
+            toml::from_str::<Case>(&text).unwrap().check()
+        };
+        let refused = |extra: &str, says: &str| {
+            let e = format!("{:#}", case(extra).unwrap_err());
+            assert!(e.contains(says), "{extra}: {e}");
+        };
+        case("").unwrap();
+        case("frames = 30\norbit = 6.0\nmax_reversals = 0.5").unwrap();
+        case("frames = 30\nmax_reversals = 0.5\nmax_flips = 9.0").unwrap();
+        refused("orbit = 6.0", "add `frames`");
+        refused("max_reversals = 1.0", "add `frames`");
+        refused("frames = 30", "give `max_reversals`");
+        refused(
+            "frames = 30\nmax_reversals = 1.0\ngolden = \"x.png\"",
+            "drop `golden`",
+        );
+        refused(
+            "frames = 30\nmax_reversals = 1.0\nmatches = []",
+            "drop `matches`",
+        );
+        refused(
+            "frames = 30\nmax_reversals = 1.0\ntolerance = { mean = 1.0 }",
+            "drop `tolerance`",
+        );
+        refused(
+            "frames = 30\nmax_reversals = 1.0\norbit = 1.0\ncamera_path = \"c.toml\"",
+            "not both",
+        );
+        refused(
+            "frames = 30\nmax_reversals = 1.0\nargs = [\"--frame-dt\", \"0.1\"]",
+            "--frame-dt in `args`",
+        );
+        let seq: Case =
+            toml::from_str("name = \"c\"\nscene = \"s\"\nframes = 4\norbit = -2.5\nframe_dt = 0.5")
+                .unwrap();
+        assert_eq!(
+            seq.sequence_flags(),
+            ["--frames", "4", "--orbit", "-2.5", "--frame-dt", "0.5"]
+        );
+    }
+
+    /// The budget is a mean a frame, reversals always and flips when given.
+    #[test]
+    fn a_sequence_passes_within_its_budget() {
+        let mut seq = SequenceReport {
+            reversals_per_frame: 0.5,
+            max_reversals: 0.5,
+            flips_per_frame: 20.0,
+            ..Default::default()
+        };
+        assert!(seq.passes());
+        seq.max_flips = Some(19.9);
+        assert!(!seq.passes());
+        seq.max_flips = Some(20.0);
+        seq.reversals_per_frame = 0.51;
+        assert!(!seq.passes());
     }
 
     #[test]
@@ -1206,10 +1651,11 @@ mod tests {
         for case in &manifest.cases {
             // A case that matches its own reference render has no golden
             // file, and a golden it named would never be read
-            if case.matches.is_some() {
+            // ...nor does a sequence case, held to a budget (#478)
+            if case.matches.is_some() || case.frames.is_some() {
                 assert!(
                     case.golden.is_none() && case.text.is_none(),
-                    "{} matches a reference render: it takes no golden",
+                    "{} matches a reference render or is a sequence: it takes no golden",
                     case.name
                 );
                 continue;
@@ -1292,11 +1738,11 @@ mod tests {
             "ascii-full-yields-to-pencil",
         ];
         for case in &manifest.cases {
-            if case.scene == "demo/stylize_props.scene.toml" {
+            if case.scene == "tests/fixtures/scenes/stylize_props.scene.toml" {
                 assert!(
                     mixed.contains(&case.name.as_str()),
                     "case '{}' is on the mixed props bench: use the bench of its own \
-                     style (demo/stylize_props_ascii, _pencil or _plain), so another \
+                     style (tests/fixtures/scenes/stylize_props_ascii, _pencil or _plain), so another \
                      style's change doesn't move it",
                     case.name
                 );
@@ -1306,6 +1752,26 @@ mod tests {
             assert!(
                 manifest.cases.iter().any(|c| c.name == name),
                 "the mixed case '{name}' is gone"
+            );
+        }
+    }
+
+    /// The goldens load frozen fixtures, never the curated examples (#763):
+    /// an example is free to change, and a golden on one would turn every
+    /// improvement into a re-bless. A case that needs a scene copies it to
+    /// tests/fixtures/scenes/ with the assets it loads.
+    #[test]
+    fn no_golden_case_loads_an_example() {
+        let (_, manifest) = stylize_manifest();
+        for case in &manifest.cases {
+            assert!(
+                case.scene.starts_with("tests/fixtures/scenes/")
+                    || case
+                        .scene
+                        .starts_with("crates/flint-cli/tests/golden/fixtures/"),
+                "case '{}' loads {}: goldens load copies under tests/fixtures/scenes/",
+                case.name,
+                case.scene
             );
         }
     }

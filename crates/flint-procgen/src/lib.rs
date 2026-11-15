@@ -4,7 +4,9 @@
 //! generation: deterministic seeding, mesh and image output formats,
 //! material descriptions, and error handling. Higher-level constructs
 //! (generator traits, registry, specs) build on these primitives.
-
+// Unit tests read their files off the disk and assert on TOML as written;
+// the lib build still holds the rules (#761).
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 // The tree generator's parameter schema is one large `json!` literal.
 #![recursion_limit = "256"]
 
@@ -25,6 +27,7 @@ mod queue;
 mod registry;
 pub mod resolver;
 mod rng;
+pub mod scene_tables;
 mod seed;
 pub mod skinning;
 mod spec;
@@ -58,11 +61,18 @@ pub use queue::{
 pub use registry::GeneratorRegistry;
 pub use resolver::ProcGenResolver;
 pub use rng::SeededRng;
+pub use scene_tables::{
+    apply_preset_file, commit_look, edit_species, list_presets, list_presets_in, look_edits,
+    preset_save_dir, read_preset, read_preset_in, settle_scene, write_preset, write_preset_in,
+    BoilDef, CommitReport, LivingDef, LivingEchoesDef, LivingSpeciesDef, LivingTables,
+    LivingVarianceDef, WoozeDef, WoozeIssue, WoozeKnobs, WoozePreset, PRESET_SUFFIX,
+};
 pub use seed::Seed;
 pub use skinning::{BoneDef, SkeletonDef, SkinnedMeshData, SkinnedVertex, MAX_SKINNED_BONES};
 pub use spec::{
-    discover_specs, DriftConfig, EchoConfig, EchoCopy, JitterConfig, LivingConfig, LodLevel,
-    ProcGenSpec, SeedConfig, SeedMode, SpecMeta, Stagger, VarianceConfig,
+    discover_specs, DriftConfig, EchoBlend, EchoConfig, EchoCopy, EchoPlace, EchoPlaces,
+    JitterConfig, LivingConfig, LodLevel, ProcGenSpec, SeedConfig, SeedMode, SpecMeta, Stagger,
+    VarianceConfig,
 };
 pub use types::{
     BoundingBox, BranchSegment, ChannelSemantics, ImageData, MaterialData, MeshData, SubMesh,

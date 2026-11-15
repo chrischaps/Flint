@@ -1,0 +1,124 @@
+# ================================================================
+#  UNLIT + AMBIENT (#627)
+# ================================================================
+#
+#  A scene lit by its ambient alone, with no light entities and no
+#  built-in key and fill (`default_lights = false`), no shadow pass
+#  (`shadows = false`), and three bars drawn unlit: their colour
+#  times `emissive_scale`, straight to the HDR target, where bloom
+#  finds the ones above 1.
+#
+#  The props are ordinary lit materials. With no lights they take
+#  only the hemisphere ambient, so they read as soft, flat paper
+#  shapes; the unlit bars ignore it.
+#
+#  Render:  cargo run --bin flint -- render examples/unlit_ambient.scene.toml \
+#             --output renders/unlit_ambient.png --no-grid
+#  Play:    cargo run --bin flint-player -- examples/unlit_ambient.scene.toml \
+#             --exit-after 3
+#           ([perf] reads "0 in shadows")
+# ================================================================
+
+[scene]
+name = "Unlit and Ambient"
+version = "1.0"
+description = "Ambient-only lighting, no shadows, unlit neon bars (#627)"
+
+[camera]
+position = [0, 3.2, 9.5]
+target = [0, 1.4, 0]
+fov = 45.0
+
+[environment]
+shadows = false
+default_lights = false
+ambient_sky = [0.95, 0.9, 0.82]
+ambient_ground = [0.32, 0.28, 0.3]
+
+[post_process]
+bloom_intensity = 0.12
+bloom_threshold = 1.0
+ssao_intensity = 0.6
+
+# ------------------------------------------------------------
+#  Ground: a warm paper floor and a back wall
+# ------------------------------------------------------------
+[entities.floor.transform]
+position = [0, 0, 0]
+[entities.floor.bounds]
+min = [-8, -0.1, -4]
+max = [8, 0.0, 4]
+[entities.floor.material]
+color = [0.86, 0.82, 0.74, 1.0]
+roughness = 0.95
+
+[entities.wall.transform]
+position = [0, 0, 0]
+[entities.wall.bounds]
+min = [-8, 0, -4.2]
+max = [8, 6, -4.0]
+[entities.wall.material]
+color = [0.9, 0.87, 0.8, 1.0]
+roughness = 0.95
+
+# ------------------------------------------------------------
+#  Lit props: they see only the ambient
+# ------------------------------------------------------------
+[entities.red_block.transform]
+position = [-2.4, 0, -0.5]
+[entities.red_block.bounds]
+min = [-0.9, 0, -0.9]
+max = [0.9, 1.8, 0.9]
+[entities.red_block.material]
+color = [0.78, 0.16, 0.12, 1.0]
+roughness = 0.8
+
+[entities.blue_slab.transform]
+position = [1.2, 0, -1.4]
+[entities.blue_slab.bounds]
+min = [-1.6, 0, -0.35]
+max = [1.6, 3.2, 0.35]
+[entities.blue_slab.material]
+color = [0.12, 0.2, 0.55, 1.0]
+roughness = 0.8
+
+[entities.yellow_cube.transform]
+position = [3.1, 0, 1.2]
+[entities.yellow_cube.bounds]
+min = [-0.55, 0, -0.55]
+max = [0.55, 1.1, 0.55]
+[entities.yellow_cube.material]
+color = [0.95, 0.75, 0.1, 1.0]
+roughness = 0.8
+
+# ------------------------------------------------------------
+#  Unlit bars: base colour x emissive_scale, no lighting
+# ------------------------------------------------------------
+[entities.neon_pink.transform]
+position = [-0.4, 0, 0.6]
+[entities.neon_pink.bounds]
+min = [-0.08, 0, -0.08]
+max = [0.08, 3.6, 0.08]
+[entities.neon_pink.material]
+color = [1.0, 0.18, 0.55, 1.0]
+unlit = true
+emissive_scale = 3.0
+
+[entities.neon_cyan.transform]
+position = [0.6, 2.4, 0.4]
+[entities.neon_cyan.bounds]
+min = [-2.2, -0.06, -0.06]
+max = [2.2, 0.06, 0.06]
+[entities.neon_cyan.material]
+color = [0.1, 0.85, 1.0, 1.0]
+unlit = true
+emissive_scale = 2.5
+
+[entities.flat_black.transform]
+position = [-3.6, 0, 1.4]
+[entities.flat_black.bounds]
+min = [-0.25, 0, -0.25]
+max = [0.25, 2.6, 0.25]
+[entities.flat_black.material]
+color = [0.04, 0.035, 0.05, 1.0]
+unlit = true

@@ -25,7 +25,6 @@ use super::{
 };
 use crate::palette::{oklab, Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS};
 use bytemuck::{Pod, Zeroable};
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// The palette the style draws in when the scene names none.
@@ -91,14 +90,14 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         uniforms: kit::uniform_buffer::<PaletteUniforms>(device, "Palette Uniforms"),
         uniform_bgl,
         input_bgl,
-        palettes: Mutex::new((Vec::new(), PaletteCache::default())),
+        palettes: Mutex::new(PaletteCache::default()),
     })
 }
 
 /// The style's shader: its own code, then the shared matcher.
-pub const SHADER: &str = concat!(
-    include_str!("palette.wgsl"),
-    include_str!("../palette.wgsl")
+pub const SHADER: kit::Wgsl = kit::wgsl!(
+    "palette.wgsl",
+    "../palette.wgsl"
 );
 
 #[repr(C)]
@@ -163,25 +162,13 @@ pub fn block_pixels(pixel: f32, pixels_per_point: f32) -> u32 {
         .max(1.0) as u32
 }
 
-fn search_for(scene_dir: Option<&Path>) -> Vec<PathBuf> {
-    let mut search = Vec::new();
-    if let Some(dir) = scene_dir {
-        search.push(dir.to_path_buf());
-        if let Some(parent) = dir.parent() {
-            search.push(parent.to_path_buf());
-        }
-    }
-    search.push(PathBuf::from("."));
-    search
-}
-
 struct PaletteStyle {
-    pipeline: wgpu::RenderPipeline,
+    pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
     input_bgl: wgpu::BindGroupLayout,
-    /// The search path the cache was made for, and the cache
-    palettes: Mutex<(Vec<PathBuf>, PaletteCache)>,
+    /// The palettes, found from the frame's project and scene folder
+    palettes: Mutex<PaletteCache>,
 }
 
 impl PaletteStyle {
@@ -189,21 +176,19 @@ impl PaletteStyle {
     /// (the cache has warned, once).
     fn palette(&self, frame: &StyleFrame<'_>) -> Arc<Palette> {
         let mut guard = self.palettes.lock().unwrap_or_else(|e| e.into_inner());
-        let search = search_for(frame.scene_dir);
-        if guard.0 != search {
-            *guard = (search.clone(), PaletteCache::new(search));
+        if guard.scope() != Some(frame.assets) {
+            *guard = PaletteCache::new(frame.assets.clone());
         }
         // An edited palette file shows while the viewer is open (#323),
         // checked as often as the ASCII style checks its own
         if frame.frame.is_multiple_of(15) {
-            guard.1.poll();
+            guard.poll();
         }
         let name = match frame.option("palette") {
             "" => DEFAULT_PALETTE,
             n => n,
         };
         guard
-            .1
             .get(name)
             .unwrap_or_else(|_| Palette::builtin(DEFAULT_PALETTE).expect("built-in"))
     }
@@ -248,7 +233,7 @@ mod tests {
 
     #[test]
     fn the_shader_validates_and_its_uniforms_match_rust() {
-        let module = naga::front::wgsl::parse_str(SHADER).expect("palette shader parses");
+        let module = naga::front::wgsl::parse_str(SHADER.text).expect("palette shader parses");
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::default(),
@@ -288,8 +273,8 @@ mod tests {
     #[test]
     fn ascii_and_palette_compile_one_matcher() {
         // Not a copy: both shaders hold the same file
-        assert!(SHADER.contains(PALETTE_WGSL));
-        assert!(super::super::ascii::GLYPH_SHADER.contains(PALETTE_WGSL));
+        assert!(SHADER.text.contains(PALETTE_WGSL));
+        assert!(super::super::ascii::GLYPH_SHADER.text.contains(PALETTE_WGSL));
     }
 
     #[test]

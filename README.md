@@ -14,13 +14,13 @@ You need a stable Rust toolchain. On Windows that is all; Android and the web ne
 
 ```bash
 cargo build --release
-cargo run --bin flint -- play demo/phase4_runtime.scene.toml   # play a demo scene
-cargo run --bin flint -- render demo/phase4_runtime.scene.toml --output shot.png --schemas schemas
-cargo run --bin flint -- edit demo/phase4_runtime.scene.toml    # scene viewer with live inspector
+cargo run --bin flint -- play examples/phase4_runtime.scene.toml   # play a demo scene
+cargo run --bin flint -- render examples/phase4_runtime.scene.toml --output shot.png --schemas schemas
+cargo run --bin flint -- edit examples/phase4_runtime.scene.toml    # scene viewer with live inspector
 cargo test
 ```
 
-`flint init` starts a new game, which carries the engine inside it as a git subtree at `engine/` and layers its own schemas over the engine's (`--schemas engine/schemas --schemas schemas`). That is how every game in the family is built.
+`flint init <name>` starts a new game: a `flint.toml` manifest, a lit scene with a player, a HUD script, an input config and a `CLAUDE.md` for agents, then the three commands that validate, render and play it. By default the manifest names this checkout's schemas by path, so those commands work at once. `flint init <name> --engine subtree` writes the pattern every game in the family uses, with the engine carried inside the game as a git subtree at `engine/` and the game's schemas layered over the engine's (`schemas = ["engine/schemas", "schemas"]` in its `flint.toml`), and prints the `git subtree add` to run.
 
 To run the web player locally (see `docs/design/web.md`):
 
@@ -32,8 +32,8 @@ trunk serve
 
 ## Layout
 
-- `crates/` holds the 26-crate workspace: the `flint` CLI, `flint-player`, the wgpu renderer, Rapier physics, Kira audio, Rhai scripting, animation, particles, terrain, the query language and the editors
+- `crates/` holds the 31-crate workspace: the `flint` CLI, `flint-player`, the wgpu renderer, Rapier physics, Kira audio, Rhai scripting, animation, particles, terrain, the query language and the editors
 - `schemas/` defines the engine's components and archetypes in TOML
-- `demo/` has showcase scenes, scripts and effects
+- `examples/` has showcase scenes, scripts and effects
 - `docs/book/` is the mdBook source for [docs.chaps.dev/flint](https://docs.chaps.dev/flint)
-- `tools/` holds the docs checker, the play.chaps.dev site builder and other helpers
+- `tools/` holds the crate-graph analyzer and viewer, the play.chaps.dev site builder, the showcase film rig and other helpers (`tools/README.md` lists them); the docs checker is `scripts/docs-check.py`

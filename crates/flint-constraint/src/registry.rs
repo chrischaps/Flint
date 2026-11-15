@@ -1,14 +1,82 @@
 //! Constraint registry for loading and managing constraint definitions
 
-use crate::types::{ConstraintDef, ConstraintFile, Severity};
+use crate::types::{ConstraintDef, ConstraintFile, ConstraintKind, Severity};
 use flint_core::vfs;
 use flint_core::{FlintError, Result};
-use std::path::Path;
+use flint_query::parse_query;
+use std::fmt;
+use std::path::{Path, PathBuf};
 
 /// Registry that holds all loaded constraint definitions
 #[derive(Debug, Default)]
 pub struct ConstraintRegistry {
     constraints: Vec<ConstraintDef>,
+    /// The file each constraint was read from, by index; `None` for one
+    /// registered in code.
+    sources: Vec<Option<PathBuf>>,
+}
+
+/// A constraint that can't be evaluated (#687): its query, or its
+/// `query_rule`'s rule, doesn't parse, or selects something other than
+/// entities. It used to be skipped in silence, so it passed forever.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BadConstraint {
+    /// The constraint's `name`.
+    pub name: String,
+    /// The file it was read from, when it came from one.
+    pub file: Option<PathBuf>,
+    /// `query`, or `rule` (a `query_rule`'s): the key of the text at fault.
+    pub field: &'static str,
+    /// The text that doesn't parse.
+    pub query: String,
+    /// What the parser said, or what is wrong with the selection.
+    pub error: String,
+}
+
+impl fmt::Display for BadConstraint {
+    /// ``constraint 'doors' (schemas/constraints/a.toml): its query `...`
+    /// can't be evaluated: ...``
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "constraint '{}'", self.name)?;
+        if let Some(file) = &self.file {
+            write!(f, " ({})", file.to_string_lossy().replace('\\', "/"))?;
+        }
+        write!(
+            f,
+            ": its {} `{}` can't be evaluated: {}",
+            self.field, self.query, self.error
+        )
+    }
+}
+
+/// What is wrong with `text` as a constraint's query, if anything: it must
+/// parse (the whole of it) and select entities.
+fn query_problem(text: &str) -> Option<String> {
+    match parse_query(text) {
+        Err(e) => Some(e.to_string()),
+        Ok(query) if query.resource != "entities" => Some(format!(
+            "a constraint selects entities, and this selects {}",
+            query.resource
+        )),
+        Ok(_) => None,
+    }
+}
+
+impl ConstraintDef {
+    /// Why this constraint can't be evaluated, if it can't: `(key, text,
+    /// error)` for its `query`, then for a `query_rule`'s `rule`.
+    pub fn problems(&self) -> Vec<(&'static str, String, String)> {
+        let mut found = Vec::new();
+        if let Some(error) = query_problem(&self.query) {
+            found.push(("query", self.query.clone(), error));
+        }
+        if let ConstraintKind::QueryRule { rule } = &self.kind {
+            if let Some(error) = query_problem(rule) {
+                found.push(("rule", rule.clone(), error));
+            }
+        }
+        found
+    }
 }
 
 impl ConstraintRegistry {
@@ -19,13 +87,16 @@ impl ConstraintRegistry {
 
     /// Load constraints from a directory of TOML files
     ///
-    /// Expects `path/constraints/*.toml` files
+    /// Expects `path/constraints/*.toml` files, read in name order. A file
+    /// that doesn't read is the error, and the error names the file.
     pub fn load_from_directory<P: AsRef<Path>>(path: P) -> Result<Self> {
         let mut registry = Self::new();
         let constraints_path = path.as_ref().join("constraints");
 
         if vfs::exists(&constraints_path) {
-            for file_path in vfs::read_dir(&constraints_path)? {
+            let mut files = vfs::read_dir(&constraints_path)?;
+            files.sort();
+            for file_path in files {
                 if file_path.extension().map(|e| e == "toml").unwrap_or(false) {
                     registry.load_file(&file_path)?;
                 }
@@ -35,10 +106,23 @@ impl ConstraintRegistry {
         Ok(registry)
     }
 
-    /// Load constraints from a TOML file
+    /// Load constraints from a TOML file. The error names the file.
     pub fn load_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        let content = vfs::read_to_string(path)?;
-        self.load_string(&content)
+        let path = path.as_ref();
+        let shown = path.to_string_lossy().replace('\\', "/");
+        let content = vfs::read_to_string(path)
+            .map_err(|e| FlintError::ConstraintLoadError(format!("{shown}: {e}")))?;
+        let before = self.constraints.len();
+        self.load_string(&content).map_err(|e| match e {
+            FlintError::ConstraintLoadError(message) => {
+                FlintError::ConstraintLoadError(format!("{shown}: {message}"))
+            }
+            other => other,
+        })?;
+        for source in &mut self.sources[before..] {
+            *source = Some(path.to_path_buf());
+        }
+        Ok(())
     }
 
     /// Load constraints from a TOML string
@@ -48,7 +132,7 @@ impl ConstraintRegistry {
         })?;
 
         for constraint in file.constraint {
-            self.constraints.push(constraint);
+            self.register(constraint);
         }
 
         Ok(())
@@ -57,6 +141,38 @@ impl ConstraintRegistry {
     /// Register a constraint directly
     pub fn register(&mut self, constraint: ConstraintDef) {
         self.constraints.push(constraint);
+        self.sources.push(None);
+    }
+
+    /// Add every constraint of `other`, keeping the file each came from.
+    pub fn extend(&mut self, other: ConstraintRegistry) {
+        self.constraints.extend(other.constraints);
+        self.sources.extend(other.sources);
+    }
+
+    /// The file the constraint at `index` of [`all`](Self::all) was read
+    /// from, when it came from one.
+    pub fn source(&self, index: usize) -> Option<&Path> {
+        self.sources.get(index)?.as_deref()
+    }
+
+    /// Every constraint that can't be evaluated, with its file: what
+    /// `flint check` and `flint validate` report, and what the evaluator
+    /// turns into an error violation.
+    pub fn problems(&self) -> Vec<BadConstraint> {
+        let mut found = Vec::new();
+        for (index, constraint) in self.constraints.iter().enumerate() {
+            for (field, query, error) in constraint.problems() {
+                found.push(BadConstraint {
+                    name: constraint.name.clone(),
+                    file: self.source(index).map(Path::to_path_buf),
+                    field,
+                    query,
+                    error,
+                });
+            }
+        }
+        found
     }
 
     /// Get all constraints
@@ -97,7 +213,71 @@ impl ConstraintRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ConstraintKind;
+
+    /// #687: a constraint whose query doesn't parse is named, with its file,
+    /// rather than skipped; so is one whose rule doesn't, and one that
+    /// selects something other than entities.
+    #[test]
+    fn a_bad_query_is_a_problem_naming_the_constraint_and_its_file() {
+        use flint_core::vfs::MemorySource;
+        let rule = |name: &str, query: &str, kind: &str| {
+            format!(
+                "[[constraint]]\nname = \"{name}\"\nquery = \"{query}\"\nseverity = \"error\"\n\
+                 message = \"m\"\n[constraint.kind]\n{kind}\n\n"
+            )
+        };
+        let required = "type = \"required_component\"\narchetype = \"door\"\ncomponent = \"t\"";
+        let rules = [
+            rule("fine", "entities where archetype == 'door'", required),
+            rule("typo", "entities were archetype == 'door'", required),
+            rule(
+                "two_conditions",
+                "entities where archetype == 'door' and door.locked == true",
+                "type = \"query_rule\"\nrule = \"components\"",
+            ),
+        ]
+        .concat();
+        let mut source = MemorySource::new();
+        source.insert("game/schemas/constraints/rules.toml", rules.as_str());
+        source.insert("game/broken/constraints/broken.toml", "[[constraint]\n");
+        vfs::scoped(std::sync::Arc::new(source), || {
+            let registry = ConstraintRegistry::load_from_directory("game/schemas").unwrap();
+            let problems = registry.problems();
+            let named: Vec<(&str, &str)> = problems
+                .iter()
+                .map(|p| (p.name.as_str(), p.field))
+                .collect();
+            assert_eq!(
+                named,
+                [
+                    ("typo", "query"),
+                    ("two_conditions", "query"),
+                    ("two_conditions", "rule"),
+                ]
+            );
+            let said = problems[0].to_string();
+            assert!(
+                said.starts_with(
+                    "constraint 'typo' (game/schemas/constraints/rules.toml): its query \
+                     `entities were archetype == 'door'` can't be evaluated: Parse error"
+                ),
+                "{said}"
+            );
+            assert!(problems[2].error.contains("selects components"));
+
+            // Merged into another registry, a constraint keeps its file
+            let mut merged = ConstraintRegistry::new();
+            merged.extend(registry);
+            assert_eq!(merged.problems().len(), 3);
+            assert!(merged.source(0).is_some());
+
+            // A file that is not TOML is an error naming the file
+            let err = ConstraintRegistry::load_from_directory("game/broken")
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("game/broken/constraints/broken.toml"), "{err}");
+        });
+    }
 
     fn sample_toml() -> &'static str {
         r#"

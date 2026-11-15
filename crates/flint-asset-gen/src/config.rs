@@ -89,7 +89,7 @@ impl FlintConfig {
         }
 
         // Layer 2: Project-local config (<project root>/.flint/config.toml)
-        let local_path = flint_asset::Project::current().config_file();
+        let local_path = flint_asset::ProjectStore::config_file(&flint_asset::Project::current()?);
         if local_path.exists() {
             let local = Self::load_file(&local_path)?;
             Self::merge_into(&mut config, local);

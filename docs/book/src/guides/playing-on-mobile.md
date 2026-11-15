@@ -42,12 +42,19 @@ The controls are declared in the game's input config; see [On-Screen Touch Contr
 - **Put the controls away under a menu.** A floating stick takes any finger in its region, including one meant for a menu row. Call `set_touch_controls(false)` when a menu opens and `set_touch_controls(true)` when play resumes; while they're away, every tap reaches the scripts' `tap_count()` / `touch_count()`.
 - **Make room in the HUD.** `touch_controls_visible()` is true while the controls are on screen. Flint Kart's HUD uses it to drop its standings board on a short screen, and to say "ITEM" where a keyboard player sees "[E]".
 - **Let a finger press "any key".** `any_input_just_pressed()` counts a finger landing, so a title card that waits for a key lifts on a tap too.
-- **Mind the corners.** Offsets are points inside the phone's safe area. The page keeps its own buttons out of the bottom corners once the game is playing.
+- **Mind the corners.** Offsets are points inside the phone's safe area. The page keeps its own buttons out of the bottom corners once the game is playing. A script-drawn HUD reads the same insets with `safe_area()` and keeps its score and clock inside them instead of guessing a margin:
+
+  ```rust
+  let s = safe_area();
+  draw_text(16.0 + s.left, 12.0 + s.top, "SCORE " + score, 22.0, 1.0, 1.0, 1.0, 1.0);
+  ```
+
+- **Know a phone before it's touched.** `last_input_device()` says `"touch"` only once a finger lands. `is_touch_device()` is true from the first frame on a phone or tablet page and on Android, so a title screen can say "TAP TO START" and give its rows a thumb's height (44 pt) there and nowhere else.
 
 To try a layout on the desktop, show the controls from the start and drive them with the mouse:
 
 ```bash
-flint-player levels/demo.scene.toml --schemas engine/schemas --schemas schemas --touch-controls always
+flint-player levels/demo.scene.toml --touch-controls always
 ```
 
-On the web the same switch is `?touch=always`.
+On the web the same switch is `?touch=always`. `--touch-device` makes `is_touch_device()` true on the desktop, and `--safe-area 47,0,47,21` (left, top, right, bottom, in points) stands in for a phone held sideways, notch and home bar; the controls and `safe_area()` both take it.

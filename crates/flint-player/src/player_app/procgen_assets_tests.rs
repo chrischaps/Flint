@@ -3,9 +3,10 @@
 //! brings them on the web.
 
 use super::*;
-use flint_core::vfs::MemorySource;
+use flint_core::vfs::{self, MemorySource};
 use flint_procgen::{GenerationCost, Generator, OutputKind, ProcGenSpec, SeededRng};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// What the renderer was asked to do, in order.
@@ -15,7 +16,9 @@ pub(crate) enum Event {
     Image(String),
     Placeholder(String, AssetKind),
     File(String, AssetKind),
+    #[cfg_attr(not(feature = "living"), allow(dead_code))]
     Living(String),
+    #[cfg_attr(not(feature = "living"), allow(dead_code))]
     Bones(EntityId, String, usize),
 }
 
@@ -129,8 +132,14 @@ fn source(specs: &[(&str, &str)]) -> Arc<MemorySource> {
 fn resolver_for(src: &Arc<MemorySource>) -> ProcGenResolver {
     let mut resolver = ProcGenResolver::new();
     resolver.register_generator(Box::new(Broken));
-    vfs::scoped(src.clone(), || discover_specs(&mut resolver, SCENE));
+    vfs::scoped(src.clone(), || discover(&mut resolver, SCENE));
     resolver
+}
+
+/// `discover_specs` in the project the scene is found in.
+fn discover(resolver: &mut ProcGenResolver, scene: &str) {
+    let project = flint_core::project::Project::for_scene(Path::new(scene));
+    discover_specs(resolver, &project, scene);
 }
 
 /// A world of entities naming `model.asset`s, and one ground naming a texture.
@@ -162,28 +171,42 @@ fn outcomes(results: &[(AssetRequest, Outcome)]) -> Vec<(&str, &Outcome)> {
 }
 
 #[test]
-fn spec_dirs_put_the_scene_after_the_game() {
+fn the_scenes_own_spec_beats_the_games() {
     let mut src = MemorySource::new();
     src.insert("game/specs/a.procgen.toml", spec("shared", "mock"));
     src.insert("game/levels/specs/b.procgen.toml", spec("shared", "broken"));
-    let src = Arc::new(src);
-    let dirs = vfs::scoped(src.clone(), || spec_dirs(SCENE));
-    assert_eq!(
-        dirs,
-        vec![
-            PathBuf::from("game/specs"),
-            PathBuf::from("game/levels/specs")
-        ]
-    );
-    // The scene's own spec wins over the game-wide one of the same name.
+    // The scene's own spec wins over the game-wide one of the same name,
+    // whatever their files are called.
     let mut resolver = ProcGenResolver::new();
     resolver.register_generator(Box::new(Broken));
-    vfs::scoped(src, || discover_specs(&mut resolver, SCENE));
+    vfs::scoped(Arc::new(src), || discover(&mut resolver, SCENE));
     assert!(resolver.check_generator("shared").is_ok());
     assert!(
         resolver.generate("shared").is_err(),
         "the broken one, from beside the scene"
     );
+}
+
+#[test]
+fn a_scene_two_folders_deep_finds_the_projects_specs() {
+    // Before the one resolver a spec was looked for beside the scene and
+    // one level up, so a scene at levels/act1/cave/ saw none of the game's.
+    let mut src = MemorySource::new();
+    src.insert("game/flint.toml", "");
+    src.insert("game/specs/oak.procgen.toml", spec("oak_tree", "mock"));
+    src.insert("game/specs/props/crate.procgen.toml", spec("crate", "mock"));
+    src.insert("game/models/rock.procgen.toml", spec("rock", "mock"));
+    src.insert(
+        "game/engine/specs/pebble.procgen.toml",
+        spec("pebble", "mock"),
+    );
+    let mut resolver = ProcGenResolver::new();
+    vfs::scoped(Arc::new(src), || {
+        discover(&mut resolver, "game/levels/act1/cave/a.scene.toml")
+    });
+    for name in ["oak_tree", "crate", "rock", "pebble"] {
+        assert!(resolver.has_spec(name), "{name}");
+    }
 }
 
 #[test]
@@ -468,4 +491,173 @@ fn image_sets_name_their_maps() {
         image_set_name("brick", 2, ChannelSemantics::Roughness),
         "brick_roughness"
     );
+}
+
+/// A game's own generator, which no built-in shares a name with: one
+/// triangle, so its three vertices say whose mesh was uploaded.
+struct Rock;
+impl Generator for Rock {
+    fn type_name(&self) -> &str {
+        "rock_v1"
+    }
+    fn revision(&self) -> u32 {
+        1
+    }
+    fn output_kind(&self) -> OutputKind {
+        OutputKind::Mesh
+    }
+    fn generate(
+        &self,
+        _spec: &ProcGenSpec,
+        rng: &mut SeededRng,
+    ) -> flint_procgen::Result<GeneratorOutput> {
+        let top = 1.0 + rng.next_f32();
+        let vertex = |position: [f32; 3]| flint_procgen::Vertex {
+            position,
+            normal: [0.0, 0.0, 1.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            uv: [0.0, 0.0],
+        };
+        let vertices = vec![
+            vertex([-1.0, 0.0, 0.0]),
+            vertex([1.0, 0.0, 0.0]),
+            vertex([0.0, top, 0.0]),
+        ];
+        let positions: Vec<[f32; 3]> = vertices.iter().map(|v| v.position).collect();
+        Ok(GeneratorOutput::Mesh(MeshData {
+            vertices,
+            indices: vec![0, 1, 2],
+            materials: vec![Default::default()],
+            submeshes: vec![],
+            bounding_box: flint_procgen::BoundingBox::from_positions(&positions),
+        }))
+    }
+    fn param_schema(&self) -> serde_json::Value {
+        serde_json::json!({ "type": "object", "properties": {} })
+    }
+}
+
+/// The game's extension: no script API, no frame hook, only its generator.
+struct CaveGame;
+impl crate::PlayerExtension for CaveGame {
+    fn register_generators(&mut self, registry: &mut flint_procgen::GeneratorRegistry) {
+        registry.register(Box::new(Rock));
+    }
+}
+
+fn cave_game() -> crate::PlayerApp {
+    let mut app = crate::PlayerApp::new(FlintWorld::new(), SCENE.into(), false, None, None);
+    app.add_extension(Box::new(CaveGame));
+    app
+}
+
+/// Resolve `models` through the app's own resolver, as a scene load does.
+fn load(app: &mut crate::PlayerApp, src: &Arc<MemorySource>, models: &[&str]) -> Recorder {
+    vfs::scoped(src.clone(), || {
+        discover(&mut app.core.procgen_resolver, SCENE)
+    });
+    let world = world(models, None);
+    let mut sink = Recorder::default();
+    let requests = collect_requests(&world, &config(), &app.core.procgen_resolver, &sink);
+    resolve(
+        &requests,
+        &mut app.core.procgen_resolver,
+        &mut sink,
+        ProcGenMode::Immediate,
+    );
+    sink
+}
+
+#[test]
+fn a_games_generator_resolves_its_specs_in_the_player() {
+    // #195's done-when: the game's binary registers `rock_v1` through its
+    // extension, a spec in the game names it, and the scene's entity gets
+    // the generated mesh. Nothing in the engine knows the name.
+    let src = source(&[("cave_rock", "rock_v1"), ("oak_tree", "mock")]);
+    let mut plain = crate::PlayerApp::new(FlintWorld::new(), SCENE.into(), false, None, None);
+    let without = load(&mut plain, &src, &["cave_rock"]);
+    assert_eq!(
+        without.events,
+        vec![Event::Placeholder("cave_rock".into(), AssetKind::Model)],
+        "the stock player has no rock_v1"
+    );
+
+    let mut app = cave_game();
+    let sink = load(&mut app, &src, &["cave_rock", "oak_tree"]);
+    assert_eq!(
+        sink.events,
+        vec![
+            Event::Mesh("cave_rock".into(), 3),
+            Event::Mesh("oak_tree".into(), 24),
+        ],
+        "the game's generator, and the built-ins beside it"
+    );
+}
+
+#[test]
+fn a_games_generators_survive_the_disk_tier() {
+    // The player rebuilds its resolver when it opens the disk cache, after
+    // extensions are added: the game's generator has to move across.
+    let mut app = cave_game();
+    let dir = std::env::temp_dir().join(format!("flint-195-disk-{}", std::process::id()));
+    app.use_procgen_disk(flint_procgen::DiskCacheConfig::new(&dir));
+    assert!(
+        app.core.procgen_resolver.disk_stats().is_some(),
+        "now on disk"
+    );
+    assert!(app
+        .core
+        .procgen_resolver
+        .registry()
+        .get("rock_v1")
+        .is_some());
+    assert!(app
+        .core
+        .procgen_resolver
+        .registry()
+        .get("tree_v1")
+        .is_some());
+
+    let src = source(&[("cave_rock", "rock_v1")]);
+    let sink = load(&mut app, &src, &["cave_rock"]);
+    assert_eq!(sink.events, vec![Event::Mesh("cave_rock".into(), 3)]);
+    #[allow(clippy::disallowed_methods)] // a test's own temp folder
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_games_generator_can_replace_a_built_in() {
+    // Registered under `mock`'s name, the game's generator is the one used.
+    struct MockRock;
+    impl crate::PlayerExtension for MockRock {
+        fn register_generators(&mut self, registry: &mut flint_procgen::GeneratorRegistry) {
+            struct Renamed(Rock);
+            impl Generator for Renamed {
+                fn type_name(&self) -> &str {
+                    "mock"
+                }
+                fn revision(&self) -> u32 {
+                    self.0.revision()
+                }
+                fn output_kind(&self) -> OutputKind {
+                    self.0.output_kind()
+                }
+                fn generate(
+                    &self,
+                    spec: &ProcGenSpec,
+                    rng: &mut SeededRng,
+                ) -> flint_procgen::Result<GeneratorOutput> {
+                    self.0.generate(spec, rng)
+                }
+                fn param_schema(&self) -> serde_json::Value {
+                    self.0.param_schema()
+                }
+            }
+            registry.register(Box::new(Renamed(Rock)));
+        }
+    }
+    let mut app = crate::PlayerApp::new(FlintWorld::new(), SCENE.into(), false, None, None);
+    app.add_extension(Box::new(MockRock));
+    let sink = load(&mut app, &source(&[("oak_tree", "mock")]), &["oak_tree"]);
+    assert_eq!(sink.events, vec![Event::Mesh("oak_tree".into(), 3)]);
 }

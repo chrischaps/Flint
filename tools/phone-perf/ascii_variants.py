@@ -26,6 +26,6 @@ for k, t in v.items():
 for d in ['models', 'mesh_meadow']:
     shutil.copytree(src.parent / d, out / d, dirs_exist_ok=True)
 shutil.copytree(eng / 'schemas', out / 'engine' / 'schemas', dirs_exist_ok=True)
-(out / 'bundle.toml').write_text('scene = "ascii_entities.scene.toml"\nschemas = ["engine/schemas"]\n')
+(out / 'bundle.toml').write_text('scene = "ascii_entities.scene.toml"\nschemas = ["engine/schemas", "engine/schemas/examples"]\n')
 print(sorted(p.name for p in out.iterdir()))
 print('none ascii mentions:', v['ascii_none'].count('ascii'))

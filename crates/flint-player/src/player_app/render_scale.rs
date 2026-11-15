@@ -187,20 +187,20 @@ impl super::PlayerApp {
     /// window's pixel ratio, stepped down by the dynamic scale if it's on.
     /// The renderer only rebuilds its targets when the size changes.
     pub(super) fn update_render_scale(&mut self) {
-        let setting = self.render_scale;
-        if setting.dynamic && self.clock.frame_step.is_none() {
+        let setting = self.launch.render_scale;
+        if setting.dynamic && self.core.clock.frame_step.is_none() {
             // A paced page's budget is its period (#140), not the refresh.
-            let refresh = self.paced_period().or(self.clock.vsync_period());
-            let dt = self.clock.raw_delta_time;
-            if self.dynamic_scale.frame(dt, refresh) {
+            let refresh = self.paced_period().or(self.core.clock.vsync_period());
+            let dt = self.core.clock.raw_delta_time;
+            if self.quality.dynamic_scale.frame(dt, refresh) {
                 tracing::info!(
                     "[render-scale] {} of the ceiling",
-                    self.dynamic_scale.factor()
+                    self.quality.dynamic_scale.factor()
                 );
             }
         }
         let dpr = self.window.as_ref().map_or(1.0, |w| w.scale_factor());
-        let scale = setting.ceiling(dpr) * self.dynamic_scale.factor();
+        let scale = setting.ceiling(dpr) * self.quality.dynamic_scale.factor();
         if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
             renderer.set_render_scale(&context.device, scale);
         }

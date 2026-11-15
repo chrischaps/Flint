@@ -13,3 +13,7 @@ bimap = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

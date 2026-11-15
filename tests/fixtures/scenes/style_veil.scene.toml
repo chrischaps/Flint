@@ -1,0 +1,178 @@
+# Style Veil: what's in front of a styled entity unmasks it (#290).
+#
+# A standing stone drawn in ASCII glyphs stands behind the campfire, and a
+# glyph crate stands behind a pane of glass. Particles and transparents
+# write no depth, so before #290 the style mask kept the stone's id where
+# the fire covered it and the glyph pass glyphized the fire as if it were
+# stone. Now a veil pass draws their coverage first and the mask hands
+# that share of each pixel back: the fire stays fire, the glass stays
+# glass, and the glyphs show through only as much as the glass lets them.
+#
+#   cargo run --bin flint -- render tests/fixtures/scenes/style_veil.scene.toml --output veil.png --particle-time 2
+#   cargo run --bin flint -- render tests/fixtures/scenes/style_veil.scene.toml --output mask.png --particle-time 2 --debug-mode style
+#
+# Without --particle-time the effect isn't stepped and draws no particles.
+
+[scene]
+name = "Style Veil"
+version = "1.0"
+description = "A glyph stone behind a campfire and a glyph crate behind glass (#290)"
+
+[camera]
+position = [0.55, 1.0, 2.7]
+target = [0.45, 0.72, -0.4]
+fov = 50.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.06
+bloom_threshold = 1.3
+exposure = 1.15
+vignette_enabled = true
+vignette_intensity = 0.3
+
+[post_process.styles.ascii]
+scope = "entities"
+cell = 8
+background = 0.25
+brightness = 0.2
+contrast = 1.3
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.01, 0.015, 0.04, 1.0]
+horizon_color = [0.06, 0.05, 0.08, 1.0]
+haze_color = [0.10, 0.06, 0.06, 0.5]
+cloud_coverage = 0.15
+sun_glow = 0.2
+
+[entities.moon]
+[entities.moon.transform]
+position = [0, 30, 0]
+[entities.moon.directional_light]
+direction = [-0.5, -0.6, -0.6]
+color = [0.55, 0.62, 0.85]
+intensity = 0.5
+
+[entities.firelight]
+[entities.firelight.transform]
+position = [0, 0.6, 0.1]
+[entities.firelight.point_light]
+color = [1.0, 0.62, 0.30]
+intensity = 5.0
+radius = 7.0
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-20, -0.1, -20]
+max = [20, 0, 20]
+[entities.ground.material]
+color = [0.12, 0.09, 0.07, 1.0]
+roughness = 0.95
+
+# --- In glyphs ---
+
+# The standing stone, right behind the fire
+[entities.stone]
+archetype = "furniture"
+[entities.stone.transform]
+position = [0, 0, -0.9]
+rotation = [0, 8, 0]
+[entities.stone.bounds]
+min = [-0.75, 0.0, -0.2]
+max = [0.75, 1.9, 0.2]
+[entities.stone.material]
+color = [0.58, 0.56, 0.52, 1.0]
+roughness = 0.9
+[entities.stone.ascii_style]
+color = "tint"
+tint = [0.55, 0.85, 1.0]
+ramp = "classic"
+
+# The crate, behind the glass
+[entities.crate]
+archetype = "furniture"
+[entities.crate.transform]
+position = [1.45, 0, -0.5]
+rotation = [0, -20, 0]
+[entities.crate.bounds]
+min = [-0.45, 0.0, -0.45]
+max = [0.45, 0.9, 0.45]
+[entities.crate.material]
+color = [0.60, 0.42, 0.24, 1.0]
+roughness = 0.8
+[entities.crate.ascii_style]
+ramp = "blocks"
+color = "tint"
+tint = [1.0, 0.72, 0.32]
+
+# --- Smooth, in front ---
+
+[entities.fire]
+[entities.fire.transform]
+position = [0, 0.12, 0]
+[entities.fire.particle_effect]
+effect = "campfire"
+
+# Big soft tongues of flame (alpha-blended), so the fire covers the stone
+[entities.blaze]
+[entities.blaze.transform]
+position = [0, 0.12, 0]
+[entities.blaze.particle_emitter]
+emission_rate = 30.0
+max_particles = 120
+lifetime_min = 0.6
+lifetime_max = 1.2
+speed_min = 0.5
+speed_max = 1.1
+direction = [0, 1, 0]
+spread = 14.0
+gravity = [0, 0.6, 0]
+size_start = 0.34
+size_end = 0.06
+color_start = [1.0, 0.55, 0.12, 0.85]
+color_end = [0.9, 0.15, 0.02, 0.0]
+blend_mode = "alpha"
+shape = "sphere"
+shape_radius = 0.12
+autoplay = true
+
+[entities.hearth_a]
+archetype = "furniture"
+[entities.hearth_a.transform]
+position = [0.45, 0.07, 0.1]
+rotation = [0, 20, 0]
+scale = [0.22, 0.14, 0.18]
+[entities.hearth_a.material]
+color = [0.35, 0.33, 0.31, 1.0]
+roughness = 0.9
+
+[entities.hearth_b]
+archetype = "furniture"
+[entities.hearth_b.transform]
+position = [-0.45, 0.07, 0.15]
+rotation = [0, -35, 0]
+scale = [0.2, 0.14, 0.22]
+[entities.hearth_b.material]
+color = [0.35, 0.33, 0.31, 1.0]
+roughness = 0.9
+
+# A pane of glass at 45% in front of the crate, covering its left half
+[entities.glass]
+[entities.glass.transform]
+position = [0.92, 0.6, 0.35]
+rotation = [0, -12, 0]
+[entities.glass.bounds]
+min = [-0.4, -0.6, -0.02]
+max = [0.4, 0.6, 0.02]
+[entities.glass.material]
+base_color_r = 0.55
+base_color_g = 0.85
+base_color_b = 0.75
+base_color_a = 1.0
+opacity = 0.45
+roughness = 0.05
+metallic = 0.3

@@ -1,0 +1,23 @@
+# The rules only the wasm check can hold (#761). scripts/wasm-check.sh adds
+# them to the root clippy.toml (scripts/clippy-conf.sh --wasm), so the wasm
+# job reads that one list plus these; native clippy never sees them.
+#
+# Why they can't be native: on native `web_time::Instant` is a re-export of
+# `std::time::Instant`, so banning `Instant::now` there flags every correct
+# call, and native code grabs the cursor with winit as it should.
+#
+# The clock calls compile for wasm32-unknown-unknown but panic there at run
+# time ("time not implemented on this platform"). #100 moved the sites that
+# predated the check to web-time, so there are no time allows.
+#
+# winit's cursor grab calls the Pointer Lock API on the web without asking
+# whether the browser has one, and iOS WebKit hasn't, so it throws through the
+# event loop and freezes the game (Float#3). The page asks for and lets go of
+# the lock itself (player_app/web_page.rs).
+disallowed-methods = [
+    { path = "winit::window::Window::set_cursor_grab", reason = "throws on iOS WebKit, which has no Pointer Lock API; use web_page's request_lock/exit_lock (Float#3)" },
+    { path = "std::time::Instant::now", reason = "panics on wasm32; use web_time::Instant (#100)" },
+    { path = "std::time::Instant::elapsed", reason = "calls Instant::now, which panics on wasm32; use web_time::Instant (#100)" },
+    { path = "std::time::SystemTime::now", reason = "panics on wasm32; use web_time::SystemTime (#100)" },
+    { path = "std::time::SystemTime::elapsed", reason = "calls SystemTime::now, which panics on wasm32; use web_time::SystemTime (#100)" },
+]

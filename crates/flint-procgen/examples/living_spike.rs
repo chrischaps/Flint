@@ -38,6 +38,7 @@
 //! tree's own regrowth instead, to compare the two on an L-system tree. Writes
 //! `f<nnn>.glb` per frame (`--poses N` also writes `pose<k>.glb`, the ring's
 //! first N poses held).
+#![allow(clippy::disallowed_methods)] // an example: reads its files off the disk, not through the vfs
 
 use flint_core::Vec3;
 use flint_procgen::algorithms::mesh_builder::MeshBuilder;
@@ -591,6 +592,7 @@ mod noise {
                 leaf_mesh,
                 card_index_count: card_indices,
                 leaf_bindings,
+                place_axes: Vec::new(),
             })
         }
 
@@ -631,6 +633,7 @@ mod noise {
                         rotation,
                         length_scale: (1.0 + self.0.stretch * field.at(3, mid)).clamp(0.5, 1.5),
                         radius_scale: 1.0,
+                        slide: [0.0; 3],
                     }
                 })
                 .collect();

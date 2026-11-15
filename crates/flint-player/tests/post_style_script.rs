@@ -4,10 +4,36 @@
 //! a reset fires `post_style_changed` to scripts' `on_event`.
 
 use flint_ecs::FlintWorld;
-use flint_player::{apply_post_style_command, StyleApplied, POST_STYLE_CHANGED};
+use flint_player::{
+    reset_post_style, set_post_style, set_post_style_param, StyleApplied, POST_STYLE_CHANGED,
+};
 use flint_render::{stylize, PostProcessConfig};
 use flint_runtime::GameEvent;
 use flint_script::engine::ScriptEngine;
+use flint_script::ScriptHost;
+
+/// The whole-frame style commands as the player's and a capture's hosts do
+/// them (#697): from their `ScriptHost` methods, against a config.
+struct PostStyles<'a> {
+    config: &'a mut PostProcessConfig,
+    authored: &'a PostProcessConfig,
+    out: Vec<StyleApplied>,
+}
+
+impl ScriptHost for PostStyles<'_> {
+    fn set_post_style(&mut self, style: String, enabled: bool) {
+        let r = set_post_style(self.config, &style, enabled);
+        self.out.push(r);
+    }
+    fn set_post_style_param(&mut self, style: String, param: String, value: toml::Value) {
+        let r = set_post_style_param(self.config, &style, &param, value);
+        self.out.push(r);
+    }
+    fn reset_post_style(&mut self, style: String) {
+        let r = reset_post_style(self.config, self.authored, &style);
+        self.out.push(r);
+    }
+}
 
 /// One frame as the player runs it: scripts' updates, then their commands
 /// against `config` (the renderer's), with `authored` as the scene's own.
@@ -20,8 +46,14 @@ fn frame(
     engine.call_updates(world);
     let mut events = Vec::new();
     let mut failures = Vec::new();
-    for cmd in engine.drain_commands() {
-        match apply_post_style_command(config, || authored.clone(), &cmd) {
+    let mut host = PostStyles {
+        config,
+        authored,
+        out: Vec::new(),
+    };
+    flint_script::host::apply_all(&mut host, engine.drain_commands());
+    for applied in host.out {
+        match applied {
             StyleApplied::Done(Some(e)) => events.push(e),
             StyleApplied::Failed(f) => failures.push(f),
             _ => {}

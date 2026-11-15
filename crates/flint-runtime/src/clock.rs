@@ -102,6 +102,18 @@ impl GameClock {
         self.advance(raw);
     }
 
+    /// One frame of exactly `dt` game seconds, for a host with no wall
+    /// clock (a capture stepping on its own fixed step, #725): no pacing
+    /// and no clamp, scaled by `time_scale`, and the fixed steps accumulate
+    /// as a tick's do.
+    pub fn advance_by(&mut self, dt: f64) {
+        self.first_tick = false;
+        self.raw_delta_time = dt;
+        self.delta_time = dt * self.time_scale;
+        self.total_time += self.delta_time;
+        self.accumulator += self.delta_time;
+    }
+
     /// One frame of `raw` wall seconds: pace it, clamp it, accumulate it.
     fn advance(&mut self, raw: f64) {
         self.raw_delta_time = raw;
@@ -261,7 +273,13 @@ mod tests {
 
     /// Three quick frames, then a long one: a 60 Hz mean (#406).
     fn bursts(n: usize) -> impl Iterator<Item = f64> {
-        (0..n).map(|i| if i % 4 == 3 { 4.0 * HZ60 - 0.018 } else { 0.006 })
+        (0..n).map(|i| {
+            if i % 4 == 3 {
+                4.0 * HZ60 - 0.018
+            } else {
+                0.006
+            }
+        })
     }
 
     /// A page drawing one 120 Hz refresh in four (#140) steps 33.3 ms,
@@ -270,7 +288,10 @@ mod tests {
     fn paced_to_the_refresh_frames_step_the_refreshes_they_took() {
         let hz120 = 1.0 / 120.0;
         let mut clock = paced(Some(hz120));
-        let dts = run(&mut clock, [4.0 * hz120, 5.0 * hz120, 6.0 * hz120, 4.0 * hz120]);
+        let dts = run(
+            &mut clock,
+            [4.0 * hz120, 5.0 * hz120, 6.0 * hz120, 4.0 * hz120],
+        );
         for (dt, n) in dts.iter().zip([4.0, 5.0, 6.0, 4.0]) {
             assert!((dt - n * hz120).abs() < 1e-9, "{dts:?}");
         }

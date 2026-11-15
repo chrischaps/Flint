@@ -5,11 +5,23 @@ edition.workspace = true
 license.workspace = true
 description = "wgpu renderer for Flint"
 
+[features]
+default = ["static-dxc"]
+# DX12's shader compiler linked into the binary (#947): wgpu's
+# `static-dxc`, which links `mach-dxcompiler-rs`, here Flint's own
+# vendor/static-dxc (the root Cargo.toml's [patch.crates-io]). On x86_64
+# Windows with MSVC only; a no-op everywhere else. Its build fetches one
+# archive per machine (vendor/static-dxc/build.rs says from where).
+static-dxc = ["wgpu/static-dxc", "dep:mach-dxcompiler-rs"]
+
 [dependencies]
 flint-core = { workspace = true }
+flint-wooze = { workspace = true }
+flint-geometry = { workspace = true }
 flint-ecs = { workspace = true }
 flint-scene = { workspace = true }
 flint-import = { workspace = true }
+flint-pixels = { workspace = true }
 flint-terrain = { workspace = true }
 flint-particles = { workspace = true }
 toml = { workspace = true }
@@ -23,11 +35,12 @@ image = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 profiling = { workspace = true }
+web-time = { workspace = true }
 
 [dev-dependencies]
 flint-asset = { workspace = true }
-naga = { version = "23", features = ["wgsl-in", "wgsl-out"] }
-epaint_default_fonts = "0.30"
+naga = { version = "30.0.2", features = ["wgsl-in", "wgsl-out"] }
+epaint_default_fonts = "0.36"
 serde_json = { workspace = true }
 
 # Native builds decode every format image does by default (with rayon); the
@@ -38,4 +51,33 @@ image = { workspace = true, features = ["default"] }
 # them. wgpu already builds naga natively, so this adds nothing there; the
 # web relies on the browser's compiler instead. `wgsl-out` writes the
 # module back out with every user loop guarded (#411).
-naga = { version = "23", features = ["wgsl-in", "wgsl-out"] }
+naga = { version = "30.0.2", features = ["wgsl-in", "wgsl-out"] }
+
+# DX12's shader compiler (#912, #947): in a build without static DXC,
+# `gpu_select` loads dxcompiler.dll by name before wgpu-hal does, to report
+# which file it got. Already in the tree through wgpu-hal.
+[target.'cfg(windows)'.dependencies]
+libloading = "0.8"
+
+# The linked DXC's version and notices (`gpu_select::static_dxc`): the
+# same crate wgpu-hal links, on the target it links it on.
+#
+# `=0.1.947` is Flint's vendor/static-dxc and nothing on crates.io (#982).
+# cargo applies [patch] only from the root of the workspace it builds, so a
+# game that builds flint-render (a game binary with the engine at engine/)
+# names the engine's patches in its own root Cargo.toml, on every platform:
+#
+#     [patch.crates-io]
+#     mach-dxcompiler-rs = { path = "engine/vendor/static-dxc" }
+#     egui-winit = { path = "engine/vendor/egui-winit" }
+#
+# Without it cargo stops with "failed to select a version for the
+# requirement `mach-dxcompiler-rs = "=0.1.947"`", pointing here. `flint
+# check` on the game names the missing lines too (`missing-cargo-patch`).
+[target.'cfg(all(windows, target_arch = "x86_64", target_env = "msvc"))'.dependencies]
+mach-dxcompiler-rs = { version = "=0.1.947", optional = true }
+
+# Built-in shader modules and frame acquisition go through flint-render's
+# seams; the list is the workspace clippy.toml (#944).
+[lints.clippy]
+disallowed_methods = "deny"

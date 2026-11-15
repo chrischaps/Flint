@@ -7,7 +7,7 @@ front.
 
 ```bash
 # 1. a game folder with the scene and its variants: none, per entity, full screen, each + edges = 1
-python -I tools/phone-perf/ascii_variants.py demo/ascii_entities.scene.toml <work>/asciiweb .
+python -I tools/phone-perf/ascii_variants.py examples/ascii_entities.scene.toml <work>/asciiweb .
 flint bundle <work>/asciiweb --out-dir <work>          # asciiweb.flintpack
 
 # 2. the site, with the bundle beside index.html, served on 8378

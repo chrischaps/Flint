@@ -19,13 +19,10 @@ fn timing_device() -> Option<(wgpu::Device, wgpu::Queue)> {
             return None;
         }
         adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    required_features: features,
-                    ..Default::default()
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: features,
+                ..Default::default()
+            })
             .await
             .ok()
     })
@@ -72,7 +69,7 @@ fn a_renderer_times_its_phases_once_asked() {
         renderer.update_from_world(&world, &device);
         renderer.render_to(&device, &queue, &depth, &camera, &color);
         renderer.finish_gpu_timings(&device, &queue);
-        device.poll(wgpu::Maintain::Wait);
+        let _ = flint_render::wait_for_gpu(&device);
     };
 
     // Off by default: nothing timed.
@@ -92,7 +89,7 @@ fn a_renderer_times_its_phases_once_asked() {
         let scope = timer.begin_submit(&device, &queue, "UI");
         timer.end_submit(&device, &queue, scope);
         renderer.finish_gpu_timings(&device, &queue);
-        device.poll(wgpu::Maintain::Wait);
+        let _ = flint_render::wait_for_gpu(&device);
     };
     // The times come back a frame or more late.
     for _ in 0..4 {
@@ -131,6 +128,23 @@ fn a_renderer_times_its_phases_once_asked() {
         .map(|p| p.label)
         .collect();
     assert_eq!(labels, ["Shadows", "Scene", "SSAO", "Bloom", "FXAA", "UI"]);
+
+    // Recording (#292): every frame drawn from now on, raw, once flushed;
+    // a frame that waited on the GPU each time is never skipped.
+    renderer.gpu_timer_mut().unwrap().record(true);
+    for _ in 0..5 {
+        timed(&mut renderer);
+    }
+    let timer = renderer.gpu_timer_mut().unwrap();
+    timer.flush(&device);
+    assert_eq!(timer.recorded().len(), 5, "every frame, the last included");
+    let spread = flint_render::gpu_timer::spread(timer.recorded(), 1);
+    assert_eq!(spread.frames, 4);
+    let ui = spread.passes.iter().find(|p| p.label == "UI").unwrap();
+    assert_eq!(ui.samples.len(), 4);
+    assert!(ui.min <= ui.p50 && ui.p50 <= ui.p90 && ui.p90 <= ui.max);
+    timer.record(false);
+    assert!(timer.recorded().is_empty());
 
     // Off again: the times go with the timer.
     assert!(!renderer.set_gpu_timing(&device, &queue, false));

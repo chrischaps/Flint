@@ -1,0 +1,60 @@
+# The wooze field (#213): how woozy any place in a scene is.
+#
+# A scene-level table: no entity carries it. This describes a scene's `[wooze]`
+# table and its `[[wooze.zone]]` entries, which `flint validate` and every scene
+# load check against it, so `flint schema wooze` says what the table and a zone
+# take and a game's own schemas can tighten it. A zone's rules that a field
+# can't state, such as a sphere needing a radius, are checked by
+# `flint_wooze`.
+#
+# A scene with a `[wooze]` table has every living prop follow it, whatever each
+# spec's `[living]` table says about step and glide, and every `shallow_wooze` mesh
+# too. A scene without one samples nothing and pays nothing.
+#
+#   [wooze]
+#   preset = "linklater"     # linklater | boil | morph | calm, or a saved file:
+#                            # wooze/<name>.wooze.toml, as the F3 panel writes
+#   glide = 0.4              # any global key beats the preset
+#
+#   [[wooze.zone]]
+#   name = "pocket"
+#   shape = "sphere"
+#   center = [0, 0, 12]
+#   radius = 6
+#   falloff = 4              # metres past the edge to fade out over; 0 is a hard edge
+#   glide = 0.8              # a dreamier pocket
+#
+# Zones lie over the global values in the order they're written. A knob a zone
+# doesn't name passes through what's below it. Scripts move all of it at run time
+# with set_wooze, set_wooze_zone and remove_wooze_zone.
+
+[table.wooze]
+description = "A scene's [wooze] table: how woozy the scene is everywhere, and the zones that are more or less so."
+
+[table.wooze.fields]
+preset = { type = "string", description = "A set of knobs to start from: a wooze/<name>.wooze.toml beside the scene or at its game's root, which can also set stagger, echoes, variance and the shading boil, or a built-in: linklater, boil, morph or calm. Unset: amplitude 1, step 0.5, glide 0.3, jitter 1" }
+amplitude = { type = "f32", min = 0.0, max = 1.0, description = "How much of a prop's slow drift shows: 1 is what its spec authored, 0 is its rest pose" }
+step = { type = "f32", min = 0.01, description = "Seconds between pose targets" }
+glide = { type = "f32", min = 0.0, max = 1.0, description = "How much of a step is spent easing: 0 holds and snaps on the beat, 1 never rests" }
+jitter = { type = "f32", min = 0.0, max = 4.0, description = "How much of a prop's fast jitter shows: 1 is what its spec authored, 0 is none" }
+
+# A [[wooze.zone]] entry: one part of the world woozier or calmer than the rest.
+# It needs a shape, a center and at least one knob.
+[table.wooze.fields.zone]
+type = "array"
+description = "The [[wooze.zone]] entries, lying over the global values in the order written"
+
+[table.wooze.fields.zone.element]
+type = "table"
+
+[table.wooze.fields.zone.element.fields]
+name = { type = "string", description = "What a script calls it, and what errors call it. Unset: 'zone <n>', its place in the list" }
+shape = { type = "enum", values = ["sphere", "box"], required = true, description = "A sphere takes radius, a box takes size" }
+center = { type = "vec3", required = true, description = "The middle of it, in world space" }
+radius = { type = "f32", min = 0.0, description = "A sphere's reach in metres from its center, more than 0" }
+size = { type = "vec3", description = "A box's full width on each axis in metres, each more than 0. Boxes are axis-aligned" }
+falloff = { type = "f32", min = 0.0, description = "Metres past the edge over which it fades out, smoothly. 0, the default, is a hard edge" }
+amplitude = { type = "f32", min = 0.0, max = 1.0, description = "How much of a prop's slow drift shows here" }
+step = { type = "f32", min = 0.01, description = "Seconds between pose targets here" }
+glide = { type = "f32", min = 0.0, max = 1.0, description = "How much of a step is spent easing here" }
+jitter = { type = "f32", min = 0.0, max = 4.0, description = "How much of a prop's fast jitter shows here" }

@@ -1,3 +1,0 @@
-[archetype.character]
-description = "A character entity (player or NPC)"
-components = ["transform"]

@@ -7,7 +7,7 @@ Prototype: `crates/flint-render/src/stylize/custom.rs`, demos in `demo/styles/`.
 
 ## Context
 
-ADR 0111 made a style a Rust module: a `StyleDescriptor` plus a
+[ADR 0111](0111-stylized-rendering.md) made a style a Rust module: a `StyleDescriptor` plus a
 `StylePass`, compiled into the engine and listed in `register_styles!`.
 Six styles have been written that way (Kuwahara, watercolor, ASCII,
 pencil, invert, mask_view). A game that wants a look of its own has to
@@ -167,7 +167,7 @@ prototype; #275 wires the player and viewer.
 | a later edit breaks it (hot reload) | rebuild | the **last good build keeps drawing**; the error replaces the old one; fixing it logs "compiles again" |
 | a loop that never ends | **not detectable**, so every loop is **guarded** (#411, natively) | each user loop stops after `LOOP_LIMIT` (4096) turns a run; its pixel draws whatever it had reached, and the frame finishes. A `loop {}` style renders in `flint render` in 0.9 ms of GPU at 960x540. On the web (no naga) the loop runs as written, unguarded |
 | many texture reads | check | >32 reads written out are warned |
-| the shader crashes the driver | `catch_unwind` around `create` (ADR 0111) | the style stays off; the renderer reports a lost device |
+| the shader crashes the driver | `catch_unwind` around `create` ([ADR 0111](0111-stylized-rendering.md)) | the style stays off; the renderer reports a lost device |
 
 `stylize::custom::errors()` lists each style's current error for the host
 to show. The prototype logs; #275 draws it on screen.
@@ -216,6 +216,26 @@ before. What it costs and shows:
 - The limit is per run of a loop, so nested loops multiply (a 64x64
   kernel is fine). A loop that needs more than 4096 turns a pixel is far
   past what a full-screen pass can afford anyway.
+- **A loop the IR proves short is left alone (#424).** Before the
+  rewrite, `custom/bounded.rs` looks for a counter in each loop: started
+  at a constant (a store just before the loop, or the variable's own init
+  when nothing else writes it), compared with a constant (a literal or a
+  module `const`) by a `for`'s leading `if .. else { break }` or by a
+  `break if`, stepped by a constant in `continuing`, and written nowhere
+  else (no store in the body, no pointer handed to a call). It runs the
+  counter forward on the CPU in its own type, wrapping as the GPU does; a
+  loop that ends within `LOOP_LIMIT` turns could never trip the guard, so
+  it isn't guarded (`Report::bounded`), and a style whose loops are all
+  like that builds its composed text with no rewrite. Octaves and kernel
+  taps, the commonest loops, are such loops. A bound read from a
+  parameter stays guarded: params are clamped to their range where they
+  are written, but a guard that trusts every writer is weaker than one
+  that trusts none. Measured at 1080p on the 4070 (`flint render
+  --gpu-time 240`, main and the branch alternated five times, minimums),
+  with pixels byte-identical: an 11x11 constant kernel 0.946-0.951 ms
+  guarded vs 0.881-0.884 ms as written (-7%), three octaves of noise 0.071
+  vs 0.069-0.070 ms, and `radial_blur` (guarded in both) 0.194-0.195 ms
+  in both. With the guard off, only the loops not proven are warned about.
 - Errors still point into the user's file: they come from the first
   parse, before the rewrite. The guard's own failure (re-validation or
   writing) is reported as a Flint bug and the style draws a passthrough;
@@ -270,7 +290,7 @@ scene's `[post_process]` (see "Built in #275" below).
   a graph needs ordering and cycle checks. It should be designed from a
   game asking for one. Filed as a follow-up.
 - **Rust styles behind a `PlayerExtension` hook.** Games already embed
-  `PlayerApp` (ADRs 0071-0075), so a game could register a Rust style.
+  `PlayerApp` (ADRs [0071](0071-player-extensions-in-a-game-binary.md)-[0075](0075-screen-to-ground-picking.md)), so a game could register a Rust style.
   That covers the power user, but not `flint render`, the viewer, the web
   page's shared player or agents iterating on a look. It is worth doing
   separately (a public `register_style`), and it is not a substitute.
@@ -354,7 +374,7 @@ and contract above and changed five things:
   wrong size. Each install now names its groups `<style> ... #<n>`.
 - **A user style that panics building is not a lost device.** The
   renderer switches it off and records the panic as its error. Only a
-  built-in's panic still marks the device lost (ADR 0111).
+  built-in's panic still marks the device lost ([ADR 0111](0111-stylized-rendering.md)).
 - **`flint bundle`** loads every user style each scene sees from the
   packed files, through the bundle's vfs, as the web player will. It
   refuses the bundle if a description doesn't read, a shader isn't packed
@@ -498,6 +518,62 @@ top-level `shader` reads as before.
 Measured: `demo/styles/orton.*` (expose, blur across, blur down at half
 size, screen over the frame) costs 0.032 ms for all four passes at
 1280x720 on an RTX 4070, with 5.3 MB of targets.
+
+## Addendum (#426): which of two styles of one name wins
+
+**Decided: option 2, scope by folder.** A scene draws the user style
+nearest to it, and only one it can see. The registry stays one for the
+process (an append-only snapshot, indices fixed, as in decision 3); what
+is scoped is which of its entries a scene's tables reach.
+
+The question, from #275: `load_dir` searched `<scene>/styles/` and the
+folder above, but filled a registry that is global for the run. So the
+first scene to load a `glow` decided it for every later scene, the
+player warned "already loaded" again at every transition, and a scene
+could draw a style that only an earlier scene's folder had. Three
+options were on the ticket: keep first-wins and warn once a pair, scope
+by folder, or refuse duplicates.
+
+- **The nearest file wins a name** (built in #781, ADR 0114 step 3).
+  `load_for(&scope)` registers `scope.list(AssetKind::Styles)`, the
+  project's one asset search, nearest of a name first. A file whose name
+  is loaded from another file takes over at the same registry index, as
+  a hot reload does (`install(.., replace = true)`), with an `info!`, not
+  a warning: a transition between two folders is not a mistake, and
+  `flint bundle` must not refuse it. Loading the same file again does
+  nothing, so nothing repeats on a transition. In one `styles/` folder a
+  style is its file's name, so there is only one of a name.
+- **A style the scene can't see is not drawn** (#426).
+  `custom::drop_unseen(&mut tables, &scope)` takes out of a scene's
+  `[post_process.styles]` each table naming a registered user style
+  whose file is in none of the scope's `style_dirs`, with a warning
+  naming the file. The player calls it each time it reads the scene's
+  tables into a config (`scene_post_config`), on a copy, so the scene's
+  own tables keep it: a file the scene can see that appears later takes
+  the name over at the next reload poll, and the table is drawn.
+  `flint check` calls it per scene, so a folder's report doesn't depend
+  on the order it meets the scenes in. It reads no folder (a path compare
+  against `search_dirs`), so a reload can call it on the frame thread.
+- **Not chosen.** First-wins with one warning a pair keeps a scene's look
+  dependent on what was played before it. Refusing duplicates would make
+  two folders' `glow` an error although each scene sees only one of
+  them, and would break a game that keeps a style per level folder.
+  Per-scene registries, or names qualified by folder, would change the
+  registry's indices and the `StyleSet` keyed on them for a case no game
+  has yet.
+
+Proof (#426's PR): a project of two folders, `atelier/` with
+`styles/risograph.*` and `cellar/` naming `risograph` with no styles
+folder. Played atelier then cellar in `flint-player --frame-step`, the
+cellar's frame before this change was drawn in the atelier's risograph;
+after it, it is byte-identical to `flint render` of the cellar alone,
+with the warning. Copying the style into `cellar/styles/` while the
+cellar played drew it there at the next poll. `flint check` of the
+project reported nothing before and the cellar's warning after.
+
+Left as it was: the viewer and `flint render` show one scene a process,
+and `flint render --list-styles` and `flint style list` list every
+registered style, which for one scene is the ones it sees.
 
 ## Follow-ups
 

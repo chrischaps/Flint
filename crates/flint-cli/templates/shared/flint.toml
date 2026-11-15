@@ -1,0 +1,15 @@
+# {{name}}: a game on the Flint engine.
+#
+# This file marks the project root. Every flint command, the viewer and the
+# player read it, from any folder of the project, so none of them needs a
+# --schemas flag.
+
+[project]
+# Names the web bundle; saves and user files are keyed on it.
+id = "{{id}}"
+# Schema directories in override order: the game's come last and win.
+schemas = {{schemas}}
+# What `flint play` opens when no scene is named.
+scene = "scenes/main.scene.toml"
+# The game's input layer, over the engine's built-in bindings.
+input = "config/input.toml"

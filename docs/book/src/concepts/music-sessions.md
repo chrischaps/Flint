@@ -1,16 +1,35 @@
 # Music Sessions
 
-A music session turns a scene into a rhythm-driven space: a fixed set of stems plays sample-locked on the audio clock, a beatmap chart says what the player's controller should be doing on each beat, and the world's audio and visuals come apart or re-gather as one thing depending on how well the two agree. The machinery lives in two engine crates, `flint-music` and `flint-input-capture`, and is switched on per scene by a `music_session` component. It grew out of Starchild but nothing in it is game-specific: any scene with a suite manifest and a chart can run one.
+A music session gives a scene its music: a suite's stems play sample-locked on the audio clock, and scripts keep time by it with `music_beat()`, `music_bar()` and `music_section()`. Give it a beatmap chart as well and it becomes a rhythm game: the chart says what the player's controller should be doing on each beat, and the world's audio and visuals come apart or re-gather as one thing depending on how well the two agree. The machinery lives in three engine crates, `flint-music`, `flint-rhythm` and `flint-input-capture`, and is switched on per scene by a `music_session` component. The rhythm half grew out of Starchild but nothing in it is game-specific: any scene with a suite manifest and a chart can run one.
 
 The design rule throughout is "linear composition, adaptive playback": the music is authored once as a suite, and the engine adapts *how it is played back*, never what it is.
 
 ## The Crates
 
-**`flint-music`** is the data-contract and judgment layer. It parses suite manifests and charts, validates them against each other and against the stem files, keeps musical time (tempo map, conductor), judges input against the chart, integrates the result into a single coherence value, drives the six-bus stem mixer through the disintegration ladder, sequences reintegration after a full fail, records and replays sessions, and renders a scripted session offline to WAV. It never touches a gamepad.
+**`flint-music`** is music without a game. It parses suite manifests, validates them against the stem files, keeps musical time (tempo map, conductor), plays a suite's stems sample-locked on buses the manifest names, schedules bus events (gain, low-pass, detune) on the musical grid, reads the latency calibration on record, and renders a scripted session offline to WAV. Any game with music can use it: the showcase film's score is mixed by it, with no chart and no judgment.
 
-**`flint-input-capture`** owns the gamepad on a dedicated thread polling at 1 kHz (default), far above frame rate, so pulse timing resolves at millisecond granularity instead of once per frame. Every event is stamped with a *compensated suite sample*: the bridged audio-clock sample minus the total judgment offset (measured output latency plus tap calibration), so the event carries the musical moment the player was responding to. On Windows the crate uses gilrs on the XInput backend rather than the default (ADR 0011, gilrs XInput backend), because the default backend delivers nothing to console applications.
+**`flint-rhythm`** is the rhythm game built on it. It parses and validates beatmap charts, holds a rhythm suite to its contract (below), judges input against the chart, integrates the result into a single coherence value, drives the stem mixer through the disintegration ladder, sequences reintegration after a full fail, records and replays sessions, and drives the rumble motors from the beat. It depends on `flint-music` and never the other way round. Neither crate touches a gamepad.
 
-Neither crate is optional at build time. The player links both; without an audio device or a gamepad the session simply degrades, as described below.
+**`flint-input-capture`** owns the gamepad on a dedicated thread polling at 1 kHz (default), far above frame rate, so pulse timing resolves at millisecond granularity instead of once per frame. Every event is stamped with a *compensated suite sample*: the bridged audio-clock sample minus the total judgment offset (measured output latency plus tap calibration), so the event carries the musical moment the player was responding to. On Windows the crate uses gilrs on the XInput backend rather than the default ([ADR 0011](https://github.com/chrischaps/Flint/blob/main/docs/adr/0011-gilrs-on-the-xinput-backend.md), gilrs XInput backend), because the default backend delivers nothing to console applications.
+
+The player always links `flint-music`. `flint-rhythm` and `flint-input-capture` come with its `rhythm` Cargo feature, on by default (and in `flint play`); a game built with `default-features = false` and without `rhythm` links neither, and plays a charted suite as music, saying on the console that the chart isn't judged. Without an audio device or a gamepad a session degrades, as described below.
+
+## Keeping Time
+
+A suite with no chart is music for a scene to keep time by. `examples/music_clock.scene.toml` is one: two stems, a pad and a bell, on buses its suite names itself, and an event script that opens the pad's low-pass on the way into the second section. Its script reads nothing but these three functions:
+
+<!-- script-api:begin module:music -->
+<!-- Generated by `flint script api --book` from the engine's declarations (crates/flint-script/src/api/, or the ScriptModule of a feature that owns its module): edit the doc there, not here. CI's headless job runs --check-book. -->
+
+| Function | Returns | Description |
+|---|---|---|
+| `music_beat()` | `num`: beats; negative in the count-in, -1.0 with no music playing | Beats since the music's first beat, with the fraction, across tempo changes. |
+| `music_bar()` | `int`: the bar; -1 with no music playing | The bar the music is in, counted from 0. |
+| `music_section()` | `str`: the section's name; "" before the first or with no music | The name of the section the music is in. |
+
+<!-- script-api:end -->
+
+In play the beat is the audio clock's, compensated for the measured output latency, so a light that flashes on the beat flashes when the ear hears it. Under `--frame-step`, in `flint render --scripts`, and with no sound device, it is the game clock's: the session's two-beat count-in, then the suite, so a capture lands each beat on the same frame every run, and `flint render examples/music_clock.scene.toml --scripts --time 8.4` shows bar 3 every time. With no music in the scene the functions return `-1.0`, `-1` and `""`.
 
 ## Verb Space
 
@@ -25,7 +44,7 @@ Charts never see buttons. The capture thread maps physical controls onto a small
 | `press` | discrete | | Rising onset of a trigger squeeze; depth is judged from the pressure stream, never carried on the event. |
 | `flick` | discrete, with direction | | Right stick goes from quiet to hard deflection within a beat-scale instant. |
 
-Which of these the pad produces is a **verb map** (ADR 0030, full verb map capture):
+Which of these the pad produces is a **verb map** ([ADR 0030](https://github.com/chrischaps/Flint/blob/main/docs/adr/0030-full-verb-map-capture.md), full verb map capture):
 
 - `prototype` (default): left stick is `lean`; South button *or* right trigger is `pulse`. Byte-identical to the earliest builds.
 - `full`: left stick is `lean`, South is `pulse`, triggers become `pressure_l`/`pressure_r` streams with `press` onsets, right stick becomes `sway` plus the flick detector. The right trigger no longer emits a plain pulse.
@@ -71,20 +90,47 @@ file = "stems/harmony.wav"
 silent = true
 ```
 
-The bus set is fixed at six: `foundation`, `harmony`, `world_voice`, `home_theme`, `child_motif`, `texture`. `home_theme` and `child_motif` are the *motif* buses and must stay isolated (never share a file with another bus). Optional `[[degraded_alternates]]` entries name a pre-composed degraded take for a bus over a sample range (ADR 0032, degraded alternate playback).
+The buses are the manifest's own: as many as the suite has, named as it likes, built and mixed in the order the manifest declares them. Each has a `file` or `silent = true`, and at least one must have a file. Optional `[[degraded_alternates]]` entries name a pre-composed degraded take for a bus over a sample range ([ADR 0032](https://github.com/chrischaps/Flint/blob/main/docs/adr/0032-degraded-alternate-playback.md), degraded alternate playback). A suite that only plays music needs nothing else: no `[reintegration]` and no `pulse_window_ms`, as in this one, which the showcase film's `tools/showcase/music/*.suite.toml` are like:
+
+```toml
+[[sections]]
+name = "a"
+start_sample = 0
+
+[buses.pad]
+file = "stems/pad.wav"
+[buses.drums]
+file = "stems/drums.wav"
+```
+
+### The rhythm contract
+
+A suite a chart is judged against keeps `flint-rhythm`'s contract on top of that (`flint_rhythm::validate_manifest`, which runs the general checks first):
+
+- **Six buses**, exactly: `foundation`, `harmony`, `world_voice`, `home_theme`, `child_motif`, `texture` (`MissingBus`, `UnknownBus`). `home_theme` and `child_motif` are the *motif* buses and must stay isolated, never sharing a file with another bus (`MotifBusShared`).
+- **`[reintegration]`** (`MissingReintegration`): `re_entry_sections` naming declared sections, a `lead_bus` that is a motif bus, `reassembly_bars` of 1 or 2.
+- **A judgment window** on every section, `pulse_window_ms` (`PulseWindowMissing`; a non-positive one is `PulseWindowInvalid` in either layer).
+
+`flint validate-suite` holds a suite to the rhythm contract when it declares `[reintegration]`, when it is given a `--chart`, or with `--rhythm`; otherwise to the general one.
 
 The **chart** (`*.chart.toml`) says what the player should do, in beats:
 
 - `[[curves]]` keys: `channel`, `beat`, `value` (one or two numbers), `interp` in `linear` | `hold` | `smooth`.
 - `[[pulses]]`: `beat`, `kind` in `pulse` | `press` | `flick`, optional `window_ms`, `strength`, `direction`.
-- `[[cues]]`: `beat`, `cue` name, optional `params` table. Cues reach scripts through `conducted_cues()` (ADR 0033, cue params and conducted cues).
+- `[[cues]]`: `beat`, `cue` name, optional `params` table. Cues reach scripts through `conducted_cues()` ([ADR 0033](https://github.com/chrischaps/Flint/blob/main/docs/adr/0033-chart-cues-fire-with-params.md), cue params and conducted cues).
 - `[[intensity]]` keys: `beat`, `value`.
 
-Both parsers are shape-tolerant on purpose. Unknown bus names, channels or kinds parse fine and are reported by `flint validate-suite` as coded issues; only structurally unreadable input fails to parse.
+Both parsers are shape-tolerant on purpose. Unknown channels or kinds, and buses outside a rhythm suite's six, parse fine and are reported by `flint validate-suite` as coded issues; only structurally unreadable input fails to parse.
 
 ## The `music_session` Component
 
-Add the component to any entity in the scene. Its schema file lives in the *game's* `schemas/components/` directory, not in the engine's, so the engine reads it by name and validates the fields itself:
+Add the component to any entity in the scene (`flint schema music_session` lists its fields). Only `manifest` is needed for music; `chart` makes it a rhythm game, and the fields after it are the rhythm layer's:
+
+```toml
+[entities.conductor.music_session]
+manifest = "examples/music/clock.suite.toml"
+events = "examples/music/clock.events.toml"
+```
 
 ```toml
 [entities.conductor.music_session]
@@ -99,39 +145,42 @@ quit_on_finish = false
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `manifest` | string | required | Suite manifest, relative to the game root |
-| `chart` | string | required | Beatmap chart |
-| `lean_mode` | string | `"arrival"` | `arrival` judges gross motion toward beat-anchored targets (ADR 0013, arrival lean mode); `track` judges the stick against the curve on a fine grid |
+| `manifest` | string | required | Suite manifest, from the project root |
+| `events` | string | | Event script of bus changes on the musical grid (`*.events.toml`, as `flint render-suite` plays) |
+| `chart` | string | | Beatmap chart: judge the player against it (the rhythm layer, the player's `rhythm` feature) |
+| `lean_mode` | string | `"arrival"` | `arrival` judges gross motion toward beat-anchored targets ([ADR 0013](https://github.com/chrischaps/Flint/blob/main/docs/adr/0013-arrival-lean-mode.md), arrival lean mode); `track` judges the stick against the curve on a fine grid |
 | `input_map` | string | `"prototype"` | Verb map, `prototype` or `full` |
 | `coherence_config` | string | `config/coherence.toml` if present | Explicit path must load; the default is optional |
 | `ladder_config` | string | `config/ladder.toml` if present | Same contract |
 | `gradient_config` | string | `config/gradient.toml` if present | Same contract; absent means inert |
 | `haptics_config` | string | `config/haptics.toml` if present | Same contract; absent never emits an event |
 | `bars` | integer | play the suite out | Stop after this many bars |
-| `quit_on_finish` | bool | `false` | Exit the player when the session finishes (ADR 0036) |
+| `quit_on_finish` | bool | `false` | Exit the player when the session finishes ([ADR 0036](https://github.com/chrischaps/Flint/blob/main/docs/adr/0036-quit-on-finish.md)) |
 | `tuning_config` | string | | Parsed and logged, not yet read |
 | `bindings` | string | | Declarative only. The script named here must be loaded through an ordinary `script` component; the session warns if the file does not exist |
 
-Paths are resolved against the game root (the scene's `base_dir`), the same place `scripts/` and `audio/` live.
+Paths are from the project root (the folder of the scene's `flint.toml`). A suite that fails flint-music's validation, or whose stems are missing, is reported on the console and doesn't play; the scene runs on without it.
 
 ## Lifecycle
 
-1. **Shared audio manager.** The session opens on the player's existing Kira manager rather than its own (ADR 0017, shared audio manager). Stems and `audio_source` sounds share one device, one clock. If there is no audio device the session is skipped with a console notice and everything else in the scene runs.
+The session is a player subsystem ([ADR 0117](https://github.com/chrischaps/Flint/blob/main/docs/adr/0117-player-subsystems-and-one-game-step.md)), built when a scene with the component is entered and dropped when it unloads. A suite with no chart takes steps 1, 2 and 4 below; a chart adds the gamepad handoff and the judgment.
+
+1. **Shared audio manager.** The session opens on the player's existing Kira manager rather than its own ([ADR 0017](https://github.com/chrischaps/Flint/blob/main/docs/adr/0017-one-shared-audio-manager.md), shared audio manager). Stems and `audio_source` sounds share one device, one clock. If there is no audio device the session is skipped with a console notice and everything else in the scene runs.
 2. **Timing offsets.** Measured output latency and tap calibration are read from the newest files under `logs/latency/` in the game root. Missing values are announced loudly on the console: run the latency harness for the former and `flint calibrate` for the latter.
-3. **Gamepad handoff.** The capture thread takes the pad for the session's duration (ADR 0018, gilrs handoff and InputState downsample). The same event stream is down-sampled into the ordinary `InputState` so `is_action_pressed` and friends keep working frame-quantised, with a pulse press released on the *next* tick so edge detection sees a full down/up pair.
-4. **Teardown** fades the stems over 50 ms and restores the scene's authored post-processing values.
+3. **Gamepad handoff.** The capture thread takes the pad for the session's duration ([ADR 0018](https://github.com/chrischaps/Flint/blob/main/docs/adr/0018-gamepad-handoff-and-inputstate-downsample.md), gilrs handoff and InputState downsample). The same event stream is down-sampled into the ordinary `InputState` so `is_action_pressed` and friends keep working frame-quantised, with a pulse press released on the *next* tick so edge detection sees a full down/up pair.
+4. **Teardown** fades the stems over 50 ms, before the player clears its audio, and restores the scene's authored post-processing values. On the web, where there is no device until the Begin click, the session starts on the first frame after it.
 
-> **While a session is active only `lean` and `pulse` reach `InputState`.** Every other pad control is dropped inside the capture crate. Keyboard input stays on winit throughout. This is an accepted gap of ADR 0018; design your session scenes so that nothing else needs the pad.
+> **While a session is active only `lean` and `pulse` reach `InputState`.** Every other pad control is dropped inside the capture crate. Keyboard input stays on winit throughout. This is an accepted gap of [ADR 0018](https://github.com/chrischaps/Flint/blob/main/docs/adr/0018-gamepad-handoff-and-inputstate-downsample.md); design your session scenes so that nothing else needs the pad.
 
-The session ticks once per frame from the player's frame loop. Each tick drains capture events, judges them, advances coherence, observes the ladder, runs the reintegration sequencer, applies the resolved mixer state, and publishes a `ConductedSnapshot` for scripts.
+A chart session ticks once per frame, first, before the game clock ticks and in place of the player's own pad polling. Each tick drains capture events, judges them, advances coherence, observes the ladder, runs the reintegration sequencer and applies the resolved mixer state; then, before the scripts run, it publishes a `ConductedSnapshot` and the music clock.
 
 ## Coherence
 
-Everything downstream sees one number in [0, 1] (ADR 0010, coherence model). It is a leaky integrator with asymmetric, bar-denominated time constants: the continuous tracking signal sets a per-step target and the value eases toward it, rising with `rise_bars` and falling with `fall_bars`. Judged pulses enter as bounded impulses: a hit nudges up by how clean it was, a miss down by `miss_penalty`, a spurious pulse by `spurious_penalty` (default 0, because this is flow, not evaluation). The `sway` and pressure channels have weights that default to 0, so an unmodified config produces bit-identical values on any chart. All of it is plain `f64` arithmetic in a fixed order: same records in, same value out. Every knob is in `config/coherence.toml` and reloadable mid-session.
+Everything downstream sees one number in [0, 1] ([ADR 0010](https://github.com/chrischaps/Flint/blob/main/docs/adr/0010-coherence-as-asymmetric-leaky-integrator.md), coherence model). It is a leaky integrator with asymmetric, bar-denominated time constants: the continuous tracking signal sets a per-step target and the value eases toward it, rising with `rise_bars` and falling with `fall_bars`. Judged pulses enter as bounded impulses: a hit nudges up by how clean it was, a miss down by `miss_penalty`, a spurious pulse by `spurious_penalty` (default 0, because this is flow, not evaluation). The `sway` and pressure channels have weights that default to 0, so an unmodified config produces bit-identical values on any chart. All of it is plain `f64` arithmetic in a fixed order: same records in, same value out. Every knob is in `config/coherence.toml` and reloadable mid-session.
 
 ## The Ladder
 
-The disintegration ladder (ADR 0015, disintegration ladder config) is ordered rungs, each with a coherence threshold and a full description of the degraded state. It is data, `config/ladder.toml`, hot-reloadable:
+The disintegration ladder ([ADR 0015](https://github.com/chrischaps/Flint/blob/main/docs/adr/0015-disintegration-ladder-as-data.md), disintegration ladder config) is ordered rungs, each with a coherence threshold and a full description of the degraded state. It is data, `config/ladder.toml`, hot-reloadable:
 
 ```toml
 schema_version = 0
@@ -183,7 +232,7 @@ Rules the ladder keeps:
 
 ## Full Fail and Reintegration
 
-Below `full_fail.enter_below`, held for `hold_ms`, the reintegration sequencer takes over (ADR 0014, reintegration seam mechanism). The state machine is `Playing → Failing → Reassembling → Playing`:
+Below `full_fail.enter_below`, held for `hold_ms`, the reintegration sequencer takes over ([ADR 0014](https://github.com/chrischaps/Flint/blob/main/docs/adr/0014-reintegration-seam-on-one-clock-tick.md), reintegration seam mechanism). The state machine is `Playing → Failing → Reassembling → Playing`:
 
 1. **Rewind.** For `seam.rewind_beats` the whole world spins down like a record played backwards, a playback-rate ramp on every stem landing at `rewind_drop_semitones`, mirrored visually. The gesture is measured in beats so it starts on a beat and ends exactly at the seam.
 2. **Pickup.** In the last `pickup_beats` before the seam the lead bus plays the re-entry material winding up from the spin-down rate to full speed, arriving on the re-entry downbeat.
@@ -196,16 +245,16 @@ Coherence is not reset. A player still absent after reassembly fails again, whic
 
 Two optional drivers sit beside the ladder, both pure evaluators that feed the same single mixer writer:
 
-- **Gradient** (ADR 0024, error-driven audio gradient; `config/gradient.toml`). *Tune*: lean error drives the depth of a zero-mean pitch LFO on one degradable bus, so off the lean the voice wavers and on it the voice settles. *Sink*: at stick-neutral the mix thins by per-bus gain trims. Scripts are read-only toward audio by design; the gradient never goes through Rhai.
-- **Haptics** (ADR 0026, haptic entrainment architecture; `config/haptics.toml`). Pre-beat tick, pulse-landing thump, rewind grind, pickup ticks. The driver is event-shaped: it never sees coherence or lean error, because a buzz-when-wrong reads as punishment. Motor writes happen in `flint-input-capture`'s rumble engine over direct XInput (ADR 0025, rumble spike direct XInput), fired early by a feel-tuned lead.
+- **Gradient** ([ADR 0024](https://github.com/chrischaps/Flint/blob/main/docs/adr/0024-error-driven-audio-gradient.md), error-driven audio gradient; `config/gradient.toml`). *Tune*: lean error drives the depth of a zero-mean pitch LFO on one degradable bus, so off the lean the voice wavers and on it the voice settles. *Sink*: at stick-neutral the mix thins by per-bus gain trims. Scripts are read-only toward audio by design; the gradient never goes through Rhai.
+- **Haptics** ([ADR 0026](https://github.com/chrischaps/Flint/blob/main/docs/adr/0026-haptic-entrainment-architecture.md), haptic entrainment architecture; `config/haptics.toml`). Pre-beat tick, pulse-landing thump, rewind grind, pickup ticks. The driver is event-shaped: it never sees coherence or lean error, because a buzz-when-wrong reads as punishment. Motor writes happen in `flint-input-capture`'s rumble engine over direct XInput ([ADR 0025](https://github.com/chrischaps/Flint/blob/main/docs/adr/0025-rumble-through-direct-xinput.md), rumble spike direct XInput), fired early by a feel-tuned lead.
 
 ## Post-Processing Integration
 
-The rung's visual half maps onto three [post-processing](post-processing.md) fields (ADR 0021, post-stack desaturation and blur mapping): `blur` becomes radial blur scaled by 0.6, `chromatic` and `desaturate` map 1:1. Each frame the session writes `authored + rung × scale` into any slot a script has *not* overridden, so script overrides win, preroll leaves the world untouched, and a ladder that recovers to clean restores the authored look. The F4 menu's "Freeze script post overrides" switch stops these stamps so panel edits stick while tuning.
+The rung's visual half maps onto three [post-processing](post-processing.md) fields ([ADR 0021](https://github.com/chrischaps/Flint/blob/main/docs/adr/0021-ladder-visuals-through-the-post-stack.md), post-stack desaturation and blur mapping): `blur` becomes radial blur scaled by 0.6, `chromatic` and `desaturate` map 1:1. Each frame the session writes `authored + rung × scale` into any slot a script has *not* overridden, so script overrides win, preroll leaves the world untouched, and a ladder that recovers to clean restores the authored look. The F4 menu's "Freeze script post overrides" switch stops these stamps so panel edits stick while tuning.
 
 ## Scripts
 
-A running session publishes a `ConductedSnapshot` every frame and the `conducted_*` family in [Scripting](scripting.md) reads it (ADR 0020, conducted parameters script surface): `conducted_lean()`, `conducted_target()`, `conducted_next_target()`, `conducted_next_pulse()`, `conducted_coherence()`, `conducted_beat_phase()`, `conducted_bar()`, `conducted_section()`, `conducted_pulses()`, `conducted_cues()`, `conducted_desaturate()`, `conducted_blur()`, `conducted_chromatic()`, `conducted_reassembly()`, `conducted_rewind()`, `conducted_no_input()`, `conducted_preroll()`. With no session running the snapshot is neutral (coherence and reassembly 1.0, lookaheads effectively infinite), so a script binding `1 - conducted_coherence()` to fog shows nothing.
+Any session sets the music clock (`music_beat()`, `music_bar()`, `music_section()`, under [Keeping Time](#keeping-time)). A running chart session also publishes a `ConductedSnapshot` every frame and the `conducted_*` family in [Scripting](scripting.md) reads it ([ADR 0020](https://github.com/chrischaps/Flint/blob/main/docs/adr/0020-conducted-parameters-script-surface.md), conducted parameters script surface): `conducted_lean()`, `conducted_target()`, `conducted_next_target()`, `conducted_next_pulse()`, `conducted_coherence()`, `conducted_beat_phase()`, `conducted_bar()`, `conducted_section()`, `conducted_pulses()`, `conducted_cues()`, `conducted_desaturate()`, `conducted_blur()`, `conducted_chromatic()`, `conducted_reassembly()`, `conducted_rewind()`, `conducted_no_input()`, `conducted_preroll()`. With no session running the snapshot is neutral (coherence and reassembly 1.0, lookaheads effectively infinite), so a script binding `1 - conducted_coherence()` to fog shows nothing. The family is the `conducted` module, enabled only in a scene whose `music_session` has a chart (#698): in a scene without one a call is a script error saying the module is not enabled.
 
 Scripts are read-only toward the session. Nothing in Rhai can change a bus gain, a rung, or the chart.
 
@@ -220,10 +269,10 @@ All of these compile only with the player's `debug-hud` cargo feature (on by def
 | Key | Surface |
 |-----|---------|
 | `` ` `` (backquote) | **Music Guide**: upcoming pulse, press and flick windows with a countdown, per-channel targets beside the live stick and trigger state (ADR 0035, music guide debug panel) |
-| `\` (backslash) | **Manifest Map**: a full-width bottom strip of the whole suite, with sections, bar ruler, tempo changes, re-entry points, a playhead and this run's judged pulses and seams (ADR 0037) |
+| `\` (backslash) | **Manifest Map**: a full-width bottom strip of the whole suite, with sections, bar ruler, tempo changes, re-entry points, a playhead and this run's judged pulses and seams ([ADR 0037](https://github.com/chrischaps/Flint/blob/main/docs/adr/0037-manifest-map-timeline-panel.md)) |
 | `F9` | **Force fail**: trigger the full rewind, seam and reassembly without playing down to it. Routed through the ordinary trigger path so it exercises the real failure code |
 
-With no gamepad visible, a debug-hud build arms a **keyboard fallback** (ADR 0064, debug keyboard input fallback): arrow keys are `lean`, Space is `pulse`. Prototype verbs only; it is a plumbing check, not a feel surface.
+With no gamepad visible, a debug-hud build arms a **keyboard fallback** ([ADR 0064](https://github.com/chrischaps/Flint/blob/main/docs/adr/0064-debug-keyboard-fallback-for-music-sessions.md), debug keyboard input fallback): arrow keys are `lean`, Space is `pulse`. Prototype verbs only; it is a plumbing check, not a feel surface.
 
 ## Workflow
 

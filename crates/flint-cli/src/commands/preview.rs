@@ -19,6 +19,7 @@ use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use flint_import::{import_gltf, ImportResult, MeshBounds};
 use flint_render::model_loader::{self, ModelLoadConfig, ModelLoadResult};
+use flint_render::AcquireFrame;
 use flint_render::{
     Camera, DebugMode, HeadlessContext, OrbitCameraController, RendererConfig, SceneRenderer,
 };
@@ -124,6 +125,21 @@ pub struct PreviewArgs {
     /// Draw the skeleton over the model, posed joints in their own colour
     #[arg(long)]
     pub show_skeleton: bool,
+
+    /// Motion on twos (#871): the pose changes only this many times a second
+    /// of the clip's own time, playing and scrubbing (12 = on twos at 24 fps;
+    /// 0 = off). The Animation panel's "Hold" switches it live
+    #[arg(long, value_name = "RATE")]
+    pub motion_hold: Option<f32>,
+}
+
+/// `--motion-hold` as the previewer's Hold switch (#871): on at the flag's
+/// rate; off with no flag or a rate of 0, when the switch turns it on at 12.
+fn hold_from_flag(flag: Option<f32>) -> (bool, f32) {
+    match flag {
+        Some(rate) if rate > 0.0 && rate.is_finite() => (true, rate),
+        _ => (false, flint_render::motion_hold::DEFAULT_RATE),
+    }
 }
 
 pub fn run(args: PreviewArgs) -> Result<()> {
@@ -516,8 +532,12 @@ fn model_load_config(model_path: &Path, asset_name: &str) -> ModelLoadConfig {
     let mut overrides = HashMap::new();
     overrides.insert(asset_name.to_string(), model_path.to_path_buf());
     ModelLoadConfig {
+        // The model's own folder stands in for a scene's: textures beside
+        // it, and above it up to its project's root, are found.
+        project: flint_core::project::Project::for_scene(model_path),
         scene_dir,
         overrides,
+        asked_first: Vec::new(),
     }
 }
 
@@ -807,6 +827,7 @@ pub fn render_model(model: &Path, width: u32, height: u32) -> Result<image::Rgba
         style: Default::default(),
         pose_bones: Vec::new(),
         show_skeleton: false,
+        motion_hold: None,
     })
 }
 
@@ -936,6 +957,13 @@ fn render_image(args: &PreviewArgs) -> Result<image::RgbaImage> {
 
     renderer.update_from_world(&world, &ctx.device);
     args.style.apply_to_renderer(&mut renderer, &ctx.device);
+    // A still is the first frame of its tick, so its pose is the live one;
+    // the whole-frame rate holds the post time styles read (#871)
+    if let Some(rate) = args.motion_hold {
+        let mut config = renderer.post_process_config().clone();
+        config.motion_hold = rate.max(0.0);
+        renderer.set_post_process_config(config);
+    }
 
     // Render
     renderer.render_to(
@@ -1045,6 +1073,7 @@ fn run_interactive(args: PreviewArgs) -> Result<()> {
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let auto_orbit = args.auto_orbit;
+    let (hold_on, hold_rate) = hold_from_flag(args.motion_hold);
 
     let mut app = PreviewApp {
         state,
@@ -1082,6 +1111,8 @@ fn run_interactive(args: PreviewArgs) -> Result<()> {
         bone_pose: BonePose::new(),
         posed_joint: 0,
         pose_dirty: false,
+        hold_on,
+        hold_rate,
     };
     app.orbit.auto_orbit = auto_orbit;
 
@@ -1124,6 +1155,10 @@ struct PreviewApp {
     posed_joint: usize,
     /// The pose changed outside the UI and hasn't reached the GPU yet
     pose_dirty: bool,
+    /// Motion on twos (#871): whether the pose is held, and how many
+    /// drawings a second of clip time it holds to (`--motion-hold`, else 12)
+    hold_on: bool,
+    hold_rate: f32,
 
     // egui overlay
     egui_ctx: egui::Context,
@@ -1256,14 +1291,23 @@ impl PreviewApp {
             None,
             None,
         );
-        let egui_renderer =
-            egui_wgpu::Renderer::new(&context.device, context.config.format, None, 1, false);
+        let egui_renderer = egui_wgpu::Renderer::new(
+            &context.device,
+            context.config.format,
+            egui_wgpu::RendererOptions {
+                depth_stencil_format: None,
+                msaa_samples: 1,
+                dithering: false,
+                ..Default::default()
+            },
+        );
         self.egui_winit = Some(egui_winit);
         self.egui_renderer = Some(egui_renderer);
 
         self.window = Some(window);
         self.render_context = Some(context);
         self.scene_renderer = Some(renderer);
+        self.apply_motion_hold();
 
         if let Some(info) = &self.anim_info {
             println!(
@@ -1642,7 +1686,9 @@ impl PreviewApp {
 
     /// Upload every skinned entity's bone matrices to the renderer.
     fn upload_bone_matrices(&mut self) {
+        let motion_time = self.motion_time();
         if let (Some(renderer), Some(ctx)) = (&mut self.scene_renderer, &self.render_context) {
+            renderer.set_motion_time(motion_time);
             for (entity_id, asset_name) in &self.skeletal_entity_assets {
                 if let Some(matrices) = self.animation.bone_matrices(entity_id) {
                     renderer.update_bone_matrices(
@@ -1654,6 +1700,49 @@ impl PreviewApp {
                     );
                 }
             }
+        }
+    }
+
+    /// The clock motion on twos ticks by (#871): the clip's own playback
+    /// time (the one the timeline shows), so a paused scrub steps through
+    /// held drawings as playing does, and a slowed clip draws fewer a
+    /// second, as slowing film does. Wraps with the clip's loop.
+    fn motion_time(&self) -> f64 {
+        let Some(eid) = self.state.lock().ok().and_then(|s| s.entity_id) else {
+            return self.anim_time_accumulator;
+        };
+        // The timeline's order: a node clip's time wins over a skeletal one
+        if let Some(ps) = self.animation.node_playback_state(&eid) {
+            return ps.time;
+        }
+        if let Some(ps) = self.animation.skeletal_playback_state(&eid) {
+            return ps.time;
+        }
+        self.anim_time_accumulator
+    }
+
+    /// Write the Hold switch into the renderer as the whole-frame rate
+    /// (`PostProcessConfig::motion_hold`, #871): the model and its bones are
+    /// held on ticks, and taking it off shows the live pose at once.
+    fn apply_motion_hold(&mut self) {
+        let rate = if self.hold_on { self.hold_rate } else { 0.0 };
+        let Some(renderer) = &mut self.scene_renderer else {
+            return;
+        };
+        if renderer.post_process_config().motion_hold != rate {
+            let mut config = renderer.post_process_config().clone();
+            config.motion_hold = rate;
+            renderer.set_post_process_config(config);
+        }
+    }
+
+    /// The pose changed by hand, not by time (a layer, a posed bone, a clip
+    /// switch): let it through the hold now rather than at the next tick,
+    /// which while paused never comes (#871).
+    fn release_hold(&mut self) {
+        let eid = self.state.lock().ok().and_then(|s| s.entity_id);
+        if let (Some(renderer), Some(eid)) = (&mut self.scene_renderer, eid) {
+            renderer.release_motion_hold(eid);
         }
     }
 
@@ -1763,6 +1852,7 @@ impl PreviewApp {
 
         // Snapshot animation state
         let anim_paused = self.anim_paused;
+        let (hold_on, hold_rate) = (self.hold_on, self.hold_rate);
         let anim_clip_names: Vec<String> = self
             .anim_info
             .as_ref()
@@ -1942,13 +2032,16 @@ impl PreviewApp {
         let mut seq_seek: Option<f64> = None;
         let mut seq_restart = false;
         let mut seq_loop: Option<bool> = None;
+        let mut new_hold: Option<(bool, f32)> = None;
 
-        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+        // A real frame: its texture updates are uploaded below (#944)
+        #[allow(clippy::disallowed_methods)]
+        let mut full_output = self.egui_ctx.run_ui(raw_input, |ui| { let ctx = &ui.ctx().clone();
             // ── Left panel: model info ──
-            egui::SidePanel::left("preview_info_panel")
-                .default_width(220.0)
+            egui::Panel::left("preview_info_panel")
+                .default_size(220.0)
                 .resizable(true)
-                .show(ctx, |ui| {
+                .show(ui, |ui| {
                     ui.heading("Model Inspector");
                     ui.separator();
 
@@ -2218,9 +2311,9 @@ impl PreviewApp {
 
             // ── Bottom panel: animation timeline ──
             if has_anim {
-                egui::TopBottomPanel::bottom("animation_panel")
+                egui::Panel::bottom("animation_panel")
                     .resizable(false)
-                    .show(ctx, |ui| {
+                    .show(ui, |ui| {
                         ui.add_space(4.0);
 
                         // Top row: play/pause, clip selector, speed
@@ -2263,6 +2356,37 @@ impl PreviewApp {
                             }
                             if ui.small_button("1x").clicked() {
                                 new_speed = Some(1.0);
+                            }
+                        });
+
+                        // Motion on twos (#871): the pose drawn `rate` times
+                        // a second of the clip's time, playing or scrubbed
+                        ui.horizontal(|ui| {
+                            let mut on = hold_on;
+                            let mut rate = hold_rate;
+                            let toggled = ui
+                                .checkbox(&mut on, "Hold")
+                                .on_hover_text(
+                                    "Motion on twos: the pose changes only this many \
+                                     times a second of the clip's own time (12 = on \
+                                     twos at 24 fps), playing and scrubbing",
+                                )
+                                .changed();
+                            let drag = egui::DragValue::new(&mut rate)
+                                .range(1.0..=60.0)
+                                .speed(0.25)
+                                .suffix("/s");
+                            let dragged = ui.add_enabled(on, drag).changed();
+                            if toggled || dragged {
+                                new_hold = Some((on, rate));
+                            }
+                            if on {
+                                // Which drawing the timeline is on
+                                if let Some(n) =
+                                    flint_render::motion_hold::tick(anim_time as f32, rate)
+                                {
+                                    ui.weak(format!("drawing {}", n + 1));
+                                }
                             }
                         });
 
@@ -2654,9 +2778,9 @@ impl PreviewApp {
                 .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
                 .interactable(false)
                 .show(ctx, |ui| {
-                    egui::Frame::none()
+                    egui::Frame::NONE
                         .fill(egui::Color32::from_black_alpha(160))
-                        .rounding(4.0)
+                        .corner_radius(4.0)
                         .inner_margin(6.0)
                         .show(ui, |ui| {
                             ui.colored_label(
@@ -2693,8 +2817,10 @@ impl PreviewApp {
                 label: Some("egui Encoder"),
             });
 
-        for (id, image_delta) in &full_output.textures_delta.set {
-            egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+        for (id, deltas) in &full_output.textures_delta.set {
+            for image_delta in deltas {
+                egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+            }
         }
 
         egui_renderer.update_buffers(
@@ -2711,6 +2837,7 @@ impl PreviewApp {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -2719,6 +2846,7 @@ impl PreviewApp {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             let mut render_pass = render_pass.forget_lifetime();
@@ -2730,6 +2858,8 @@ impl PreviewApp {
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);
         }
+        // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
+        full_output.textures_delta.clear();
 
         self.egui_renderer = Some(egui_renderer);
 
@@ -2782,6 +2912,12 @@ impl PreviewApp {
         }
         if let Some(idx) = new_clip_index {
             self.switch_clip(idx);
+            self.release_hold();
+        }
+        if let Some((on, rate)) = new_hold {
+            self.hold_on = on;
+            self.hold_rate = rate;
+            self.apply_motion_hold();
         }
         if let Some(spd) = new_speed {
             if let Ok(mut state) = self.state.lock() {
@@ -2793,6 +2929,13 @@ impl PreviewApp {
             }
         }
         let mut repose = false;
+        // Everything below but the scrub changes the pose by hand (#871)
+        let by_hand = new_layers.is_some()
+            || new_solo.is_some()
+            || new_mutes.is_some()
+            || (new_bone_angles.is_some() && preview_eid.is_some())
+            || (reset_bone_pose && preview_eid.is_some())
+            || self.pose_dirty;
         if let Some(t) = scrub_time {
             if let Ok(state) = self.state.lock() {
                 if let Some(eid) = state.entity_id {
@@ -2882,6 +3025,11 @@ impl PreviewApp {
             repose = false;
         }
         if repose {
+            // A scrub is time, and a hold keeps it to its tick; anything
+            // else changed the pose by hand and shows now (#871)
+            if by_hand {
+                self.release_hold();
+            }
             // dt = 0 re-pose so dials and scrubs show immediately, even paused
             self.recompute_pose_now();
         }
@@ -3249,7 +3397,7 @@ impl ApplicationHandler for PreviewApp {
             | WindowEvent::CursorMoved { .. }
             | WindowEvent::MouseWheel { .. }) => {
                 self.orbit
-                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_area());
+                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_egui());
             }
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
@@ -3315,6 +3463,7 @@ impl ApplicationHandler for PreviewApp {
                     }
                 }
 
+                let motion_time = self.motion_time();
                 let context = match &self.render_context {
                     Some(c) => c,
                     None => return,
@@ -3326,6 +3475,9 @@ impl ApplicationHandler for PreviewApp {
 
                 // Bone upload + overlay run every frame (cheap) so a paused
                 // pose still reflects layer dials after a dt=0 re-pose.
+                // Under a hold the clip's time picks the frames they land
+                // on (#871), so it is stamped first.
+                renderer.set_motion_time(motion_time);
                 if self.anim_info.is_some() {
                     for (entity_id, asset_name) in &self.skeletal_entity_assets {
                         if let Some(matrices) = self.animation.bone_matrices(entity_id) {
@@ -3357,18 +3509,15 @@ impl ApplicationHandler for PreviewApp {
                     renderer.update_from_world(&state.world, &context.device);
                 }
 
-                let output = match context.surface.get_current_texture() {
+                let output = match context.surface.acquire() {
                     Ok(o) => o,
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                    Err(
+                        flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated,
+                    ) => {
                         let size = context.size;
                         if let Some(ctx) = &mut self.render_context {
                             ctx.resize(size);
                         }
-                        return;
-                    }
-                    Err(wgpu::SurfaceError::OutOfMemory) => {
-                        tracing::error!("Out of GPU memory");
-                        event_loop.exit();
                         return;
                     }
                     Err(e) => {
@@ -3388,7 +3537,9 @@ impl ApplicationHandler for PreviewApp {
                     self.render_egui(&view);
                 }
 
-                output.present();
+                if let Some(context) = &self.render_context {
+                    context.queue.present(output);
+                }
             }
             _ => {}
         }
@@ -3404,6 +3555,16 @@ impl ApplicationHandler for PreviewApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_motion_hold_flag_sets_the_hold_switch() {
+        assert_eq!(hold_from_flag(Some(8.0)), (true, 8.0));
+        assert_eq!(hold_from_flag(Some(12.0)), (true, 12.0));
+        // Off, but the switch still turns it on at twelve
+        assert_eq!(hold_from_flag(None), (false, 12.0));
+        assert_eq!(hold_from_flag(Some(0.0)), (false, 12.0));
+        assert_eq!(hold_from_flag(Some(f32::NAN)), (false, 12.0));
+    }
 
     #[test]
     fn a_bone_pose_is_a_joint_and_three_angles() {

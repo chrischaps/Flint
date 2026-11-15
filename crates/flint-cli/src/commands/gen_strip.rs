@@ -23,7 +23,8 @@ use flint_ecs::FlintWorld;
 use flint_import::{import_gltf, ImportResult};
 use flint_procgen::{
     boil_bones, mesh_to_glb, BranchSegment, EchoCopy, Generator, LivingClock, LivingConfig,
-    LivingRig, LivingSkeleton, PoseStream, ProcGenSpec, Stagger, WarpedTime, JITTER_CHANNELS,
+    LivingPose, LivingRig, LivingSkeleton, PoseStream, ProcGenSpec, Stagger, WarpedTime,
+    JITTER_CHANNELS,
 };
 use flint_render::{Camera, HeadlessContext, RendererConfig, SceneRenderer};
 use image::{Rgb, RgbImage};
@@ -251,7 +252,7 @@ pub fn run(
         living.glide,
         stagger_name(living.stagger)
     );
-    let echoes = living.echoes.copies();
+    let echoes = living.echoes.copies_placed(&living.echo_places);
     if !echoes.is_empty() {
         println!(
             "Echoes:     {} copies, out to {} of a step, alpha {}",
@@ -293,6 +294,7 @@ pub fn run(
         for info in &infos {
             let mesh = stream
                 .at(info.t)
+                .map(|pose| slid(pose, living.slide_shown(0.0)))
                 .and_then(|pose| alive.posed_mesh(spec, &skeleton, &pose))
                 .with_context(|| format!("{label}: couldn't build frame {}", info.index))?;
             positions.extend(mesh.vertices.iter().map(|v| Vec3::from_array(v.position)));
@@ -310,6 +312,7 @@ pub fn run(
             &rig,
             &times,
             &echoes,
+            living,
             f64::from(clock.step),
             options.cell_size,
         )
@@ -460,16 +463,32 @@ fn render_frames(glbs: &[Vec<u8>], positions: &[Vec3], size: u32) -> Result<Vec<
     Ok(frames)
 }
 
+/// `pose` showing `shown` of its slide, as the player draws a prop (0 steps
+/// from now) or an echo (`[living] echo_slide`).
+fn slid(mut pose: LivingPose, shown: f32) -> LivingPose {
+    if shown != 1.0 {
+        for segment in &mut pose.segments {
+            segment.slide = segment.slide.map(|x| x * shown);
+        }
+    }
+    pose
+}
+
 /// A pose as what the skinned pipeline reads, with its leaf cards held still:
-/// a strip draws the slow layer.
+/// a strip draws the slow layer. `slide` is how much of its slide it shows,
+/// and `place` where an echo stands (`[living] echo_places`).
 fn still_palette(
     stream: &mut PoseStream,
     skeleton: &LivingSkeleton,
     rig: &LivingRig,
     t: f64,
+    slide: f32,
+    place: [f32; 2],
 ) -> Result<Vec<[[f32; 4]; 4]>> {
     let mut bones = Vec::new();
-    rig.palette(skeleton, &stream.at(t)?, &mut bones)?;
+    let mut pose = stream.at(t)?;
+    skeleton.show_at(&mut pose, slide, place);
+    rig.palette(skeleton, &pose, &mut bones)?;
     boil_bones(&[0.0; JITTER_CHANNELS], &mut bones);
     Ok(bones)
 }
@@ -483,6 +502,7 @@ fn render_echo_frames(
     rig: &LivingRig,
     times: &[f64],
     echoes: &[EchoCopy],
+    living: &LivingConfig,
     step: f64,
     size: u32,
 ) -> Result<Vec<RgbImage>> {
@@ -497,7 +517,7 @@ fn render_echo_frames(
     let ends = ends.chain(times.last().map(|t| t + reach));
     let mut positions: Vec<Vec3> = Vec::new();
     for t in times.iter().copied().chain(ends) {
-        let mesh = rig.skinned_mesh(&still_palette(stream, skeleton, rig, t)?);
+        let mesh = rig.skinned_mesh(&still_palette(stream, skeleton, rig, t, 1.0, [0.0; 2])?);
         positions.extend(mesh.vertices.iter().map(|v| Vec3::from_array(v.position)));
     }
 
@@ -511,16 +531,27 @@ fn render_echo_frames(
         .world
         .get_id(PREVIEW_ASSET)
         .context("the strip's world has no prop")?;
+    stage.renderer.set_entity_echo_lighten(
+        entity,
+        living.echo_blend == flint_procgen::EchoBlend::Lighten,
+    );
 
     let mut frames = Vec::with_capacity(times.len());
     for &t in times {
         let ctx = &stage.ctx;
-        let bones = still_palette(stream, skeleton, rig, t)?;
+        let bones = still_palette(stream, skeleton, rig, t, living.slide_shown(0.0), [0.0; 2])?;
         stage
             .renderer
             .write_entity_bones(&ctx.device, &ctx.queue, entity, 0, &bones);
         for (index, echo) in echoes.iter().enumerate() {
-            let bones = still_palette(stream, skeleton, rig, t + f64::from(echo.offset) * step)?;
+            let bones = still_palette(
+                stream,
+                skeleton,
+                rig,
+                t + f64::from(echo.offset) * step,
+                echo.slide_shown(living.echo_slide),
+                echo.place,
+            )?;
             stage.renderer.write_entity_echo_bones(
                 &ctx.device,
                 &ctx.queue,
@@ -640,7 +671,7 @@ fn compose(
         &format!("LINEAGE {}", living.lineage_seed),
     );
     y += GLYPH_HEIGHT * title + 6 * scale;
-    let echoes = living.echoes.copies().len();
+    let echoes = living.echoes.copies_placed(&living.echo_places).len();
     draw_text(
         &mut sheet,
         MARGIN,

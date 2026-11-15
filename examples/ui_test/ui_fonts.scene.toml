@@ -1,0 +1,48 @@
+[scene]
+name = "Sprite Text Fonts"
+description = "ui_text in every glyph source (#283, ADR 0113): a .font.toml PNG grid, the built-in 8x8 set and a hand-drawn glyph set"
+
+[camera]
+position = [0, 0, 20]
+target = [0, 0, 0]
+orthographic = true
+ortho_height = 10.0
+
+# ─── The older format: a PNG grid named by a .font.toml ───
+
+[entities.grid_font]
+
+[entities.grid_font.transform]
+position = [-7.5, 2.6, 0]
+
+[entities.grid_font.ui_text]
+font = "fonts/default.font.toml"
+text = "A PNG GRID   fonts/default.font.toml"
+size = 0.7
+color = [0.96, 0.92, 0.84, 1.0]
+
+# ─── The engine's own hand-drawn 8x8 set ───
+
+[entities.builtin_font]
+
+[entities.builtin_font.transform]
+position = [-7.5, 0.4, 0]
+
+[entities.builtin_font.ui_text]
+font = "builtin"
+text = "THE BUILT-IN SET   builtin"
+size = 0.7
+color = [0.55, 0.92, 0.78, 1.0]
+
+# ─── A glyph set from ../fonts/, the one the ASCII looks draw in ───
+
+[entities.halftone_font]
+
+[entities.halftone_font.transform]
+position = [-7.5, -1.8, 0]
+
+[entities.halftone_font.ui_text]
+font = "halftone"
+text = ". : o O 0 @ @ @ 0 O o : ."
+size = 0.7
+color = [0.98, 0.72, 0.45, 1.0]

@@ -32,7 +32,7 @@ configure and no edge to sail off.
 
 This is the single most important thing to know about the ocean.
 
-**`flint-core/src/ocean.rs` is the sole source of truth for wave math.** It
+**`flint-geometry/src/ocean.rs` is the sole source of truth for wave math.** It
 builds the wave array on the CPU, and the GPU only *sums the array it is
 given* — `ocean_shader.wgsl` contains no spectrum logic of its own. That is
 what lets a script ask `ocean_height(x, z)` and get the same answer the
@@ -112,7 +112,7 @@ foam belongs even in a confused sea.
 
 The ocean **writes depth**, so scene fog applies to it like any other surface,
 with the scene's own `fog_density` and `fog_start`, all the way to the far
-plane (ADR 0078). Thin the fog and the water stays water-coloured further out.
+plane ([ADR 0078](https://github.com/chrischaps/Flint/blob/main/docs/adr/0078-fog-reaches-everything-drawn.md)). Thin the fog and the water stays water-coloured further out.
 (It used to fog itself over a fixed 380–640 m, whatever the density, to hide the
 composite's old near-1.0 sky cut.)
 
@@ -253,14 +253,14 @@ with the view.
 ## Water bodies
 
 The sea is one sheet at y = 0. A lake at its own level or a river falling
-down a valley is a **water body** (ADR 0094): a mesh of its own, shaded by
+down a valley is a **water body** ([ADR 0094](https://github.com/chrischaps/Flint/blob/main/docs/adr/0094-water-on-any-mesh.md)): a mesh of its own, shaded by
 the same shader (waves, Fresnel, refraction, the cel ramp, the shoreline
 band) with its own tint, wave height and flow. A scene can have as many as
 it likes, with or without an `ocean`.
 
 ![A tarn above the sea, a river falling into it, its outflow falling on](../images/water-bodies.png)
 
-*`demo/water_bodies.scene.toml`: the tarn sits 6 m up, the river off the
+*`examples/water_bodies.scene.toml`: the tarn sits 6 m up, the river off the
 plateau falls into it, and the outflow falls on to the sea. Fast water foams
 white along its flow.*
 
@@ -326,7 +326,7 @@ How it works:
 - **Everything else is the ocean's.** Foam, refraction, turbidity, sky
   reflection and the shoreline band come from the `ocean` component, or the
   default ocean when the scene has none.
-- **The shoreline band scales per body** (ADR 0099). The band foams wherever
+- **The shoreline band scales per body** ([ADR 0099](https://github.com/chrischaps/Flint/blob/main/docs/adr/0099-water-body-scales-shore-band.md)). The band foams wherever
   the bed is within `shore_foam_width` of the surface, so a stream or a
   shallow river whose whole bed is that shallow foams from bank to bank.
   `shore_foam` narrows the band on that body alone (0.2 leaves a hairline at
@@ -350,8 +350,8 @@ hull and drive the transform from the result:
 
 ```rhai
 fn on_update() {
-    let me = entity();
-    let p = get_field(me, "transform", "position");
+    let me = self_entity();
+    let p = get_position(me);
     let h = ocean_height(p.x, p.z);
     // ... ease the hull toward h, tilt from ocean_normal ...
 }

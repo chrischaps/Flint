@@ -17,16 +17,21 @@ Without visibility culling, every object renders every frame regardless of wheth
 - Mesh LOD switching by camera distance
 - Optional texture streaming for large worlds
 
-> Partly delivered. The renderer extracts a camera frustum every frame
-> (`flint-render/src/frustum.rs`) and culls terrain chunks by AABB against it;
-> grass has its own distance fade. Entity meshes are still drawn
-> unconditionally, so per-object culling and LOD remain open.
+> Mostly delivered. Every opaque and transparent mesh draw whose world box
+> misses the camera frustum is skipped, each shadow cascade skips the draws
+> outside its own frustum, and terrain chunks are culled the same way. A
+> multi-LOD model draws one level at a time by distance (authored
+> `flint_lod` bands, or a `LOD_0`, `LOD_1`, ... chain banded at import,
+> #193), an entity's `lod` component sets a draw distance, and two runtime
+> scales serve quality settings (see [Rendering](concepts/rendering.md)).
+> Still open: a BVH (the cull walks every draw), terrain chunk LOD, and
+> texture streaming.
 
 ## Navigation Mesh & Pathfinding
 
 **Priority: High**
 
-Every game with NPCs needs this. Currently enemies can only do simple raycast-based movement — entire genres are blocked without proper pathfinding.
+Every game with NPCs needs this. Currently enemies can only do simple raycast-based movement — entire genres are blocked without proper pathfinding. Tracked in [#969](https://github.com/chrischaps/Flint/issues/969).
 
 - Nav mesh generation from scene geometry
 - A\* pathfinding with dynamic obstacle avoidance
@@ -176,12 +181,15 @@ The 2D overlay draws in screen-space, but there's no way to visualize 3D informa
 - Script API: `debug_line(from, to, color)`, `debug_box(center, size, color)`, `debug_sphere(center, radius, color)`, `debug_ray(origin, dir, length, color)`
 - Wireframe overlay rendered after scene, before HUD
 - Auto-clear each frame (immediate-mode, like the 2D draw API)
-- Toggle from the F4 Rendering & Effects menu — the per-feature F-keys were retired (ADR 0053) and the bare F-key space is spoken for
+- Toggle from the F4 Rendering & Effects menu — the per-feature F-keys were retired ([ADR 0053](https://github.com/chrischaps/Flint/blob/main/docs/adr/0053-one-rendering-and-effects-menu-on-f4.md)) and the bare F-key space is spoken for
 - Optional built-in modes: visualize physics colliders, trigger volumes, nav meshes
 
 > The skeleton overlay in the model previewer and the wireframe debug modes
-> (which now include skinned meshes) are the first pieces of this; a
-> script-driven 3D line API is still open.
+> (which now include skinned meshes) are the first pieces of this, and
+> scripts already draw world-space lines: `draw_line_3d` on the HUD and
+> `draw_world_line` in the 3D frame, depth-tested ([Lines in the
+> world](concepts/scripting.md#lines-in-the-world)). The `debug_*` shapes and
+> the built-in modes above are still open.
 
 ## Performance Profiler Overlay
 

@@ -1,6 +1,14 @@
+# First-person player movement (flint-physics `character.rs`). Defaults are
+# the reader's own fallbacks (#792). `height` has none: with no height the
+# camera sits 1.5 above the entity, with one it sits at 0.85 x height, so a
+# default would move the eye. `radius` and `camera_mode` are read by nothing
+# yet (the capsule comes from the collider).
 [component.character_controller]
+description = "Player movement, jump and first-person eye height"
+
+[component.character_controller.fields]
 move_speed = { type = "f32", default = 5.0, min = 0.0, description = "Movement speed in units per second" }
 jump_force = { type = "f32", default = 6.0, min = 0.0, description = "Vertical impulse applied on jump" }
-height = { type = "f32", default = 1.8, min = 0.1, description = "Character capsule height in units" }
-radius = { type = "f32", default = 0.3, min = 0.01, description = "Character capsule radius" }
-camera_mode = { type = "enum", values = ["first_person", "orbit"], default = "first_person", description = "Camera mode for this character" }
+height = { type = "f32", min = 0.1, description = "Character height; the eye sits at 0.85 x height (1.5 above the entity when unset)" }
+radius = { type = "f32", min = 0.01, description = "Character capsule radius (not read yet: the collider sets the capsule)" }
+camera_mode = { type = "enum", values = ["first_person", "orbit"], description = "Camera mode for this character (not read yet)" }

@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 
 /// The engine's own schemas under `engine/schemas/`, plus a small game under
 /// `bundle/` that exists nowhere on disk.
+#[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
 fn bundle() -> MemorySource {
     let mut src = MemorySource::new();
     let schemas = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
@@ -60,6 +61,7 @@ position = [0.0, 2.0, 0.0]
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
 fn a_scene_its_schemas_and_a_script_load_from_memory() {
     assert!(!Path::new("bundle/levels/porch.scene.toml").exists());
 
@@ -79,11 +81,16 @@ fn a_scene_its_schemas_and_a_script_load_from_memory() {
         let mut app = PlayerApp::new(world, scene_path.into(), false, None, None);
         {
             let seen = seen.clone();
-            app.script
+            app.core
+                .script
                 .rhai_engine_mut()
                 .register_fn("record", move |s: String| seen.lock().unwrap().push(s));
         }
-        app.script.load_scripts_from_scene(scene_path);
+        app.refresh_project();
+        let project = app.project().clone();
+        app.core
+            .script
+            .load_scripts_from_scene(scene_path, &project);
         app.tick();
         app.tick();
     });

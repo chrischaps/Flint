@@ -1,0 +1,15 @@
+# Runes (#935): Noto Sans Runic, the Elder Futhark. Runes were cut across
+# the grain of wood, so they have upright and slanted staves and no
+# horizontals: the outline's level edges fall back to a dash.
+default_ramp = "futhark"
+
+[font]
+file = "ofl/NotoSansRunic/NotoSansRunic-Regular.ttf"   # OFL 1.1: beside it, OFL.txt
+size = 16
+
+[ramps.futhark]
+glyphs = " ᛫ᛁᚾᚲᚢᚦᚱᚹᛒᛗᛞᛥ"
+map = "coverage"
+
+[edges]
+vertical = "ᛁ"

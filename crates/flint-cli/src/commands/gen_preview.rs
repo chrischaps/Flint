@@ -4,6 +4,7 @@
 //! (for texture generators), plus an auto-generated parameter editor panel.
 //! Parameters are derived from each generator's `param_schema()` JSON Schema.
 
+use flint_render::AcquireFrame;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -295,8 +296,16 @@ impl GenPreviewApp {
             None,
             None,
         );
-        let egui_renderer =
-            egui_wgpu::Renderer::new(&context.device, context.config.format, None, 1, false);
+        let egui_renderer = egui_wgpu::Renderer::new(
+            &context.device,
+            context.config.format,
+            egui_wgpu::RendererOptions {
+                depth_stencil_format: None,
+                msaa_samples: 1,
+                dithering: false,
+                ..Default::default()
+            },
+        );
         self.egui_winit = Some(egui_winit);
         self.egui_renderer = Some(egui_renderer);
 
@@ -628,27 +637,22 @@ impl GenPreviewApp {
 
     /// The edited params minus any the generator would ignore under the
     /// current settings (a knob set while another pattern was selected).
-    /// Unknown keys stay: the editor didn't write them.
     fn params_to_save(&self) -> toml::map::Map<String, toml::Value> {
-        let mut params = self.params.clone();
-        let table = toml::Value::Table(params.clone());
-        for issue in flint_procgen::lint_params(&self.param_schema, &table) {
-            if let flint_procgen::ParamIssue::Inapplicable { key, .. } = issue {
-                params.remove(&key);
-            }
-        }
-        params
+        params_to_save(&self.param_schema, &self.params)
     }
 
-    fn save_spec(&mut self) {
+    fn spec_text_for_save(&mut self) -> Result<String, String> {
         self.spec.params = toml::Value::Table(self.params_to_save());
         self.spec.seed = SeedConfig {
             mode: SeedMode::Fixed,
             value: Some(self.current_seed),
             derive_from: None,
         };
+        spec_text_for_save(&self.spec_path, &self.spec)
+    }
 
-        match toml::to_string_pretty(&self.spec) {
+    fn save_spec(&mut self) {
+        match self.spec_text_for_save() {
             Ok(content) => {
                 if let Err(e) = std::fs::write(&self.spec_path, &content) {
                     self.set_status(&format!("Failed to save: {e}"));
@@ -684,7 +688,7 @@ impl GenPreviewApp {
         }
 
         if has_mesh {
-            let dialog = rfd::FileDialog::new()
+            let dialog = crate::file_dialog::FileDialog::new()
                 .set_title("Export GLB")
                 .add_filter("glTF Binary", &["glb"])
                 .set_file_name(format!("{base_name}.glb"));
@@ -699,7 +703,7 @@ impl GenPreviewApp {
             }
         } else if has_images {
             if self.last_images.len() == 1 {
-                let dialog = rfd::FileDialog::new()
+                let dialog = crate::file_dialog::FileDialog::new()
                     .set_title("Export PNG")
                     .add_filter("PNG Image", &["png"])
                     .set_file_name(format!("{base_name}.png"));
@@ -714,7 +718,7 @@ impl GenPreviewApp {
                 }
             } else {
                 // Multiple images: pick a directory, save with suffixed names
-                let dialog = rfd::FileDialog::new()
+                let dialog = crate::file_dialog::FileDialog::new()
                     .set_title("Export PNGs (select folder)")
                     .set_file_name(format!("{base_name}.png"));
                 let dialog = if let Some(parent) = self.spec_path.parent() {
@@ -799,7 +803,7 @@ impl GenPreviewApp {
     // ─── Save spec as ────────────────────────────────────────────────────
 
     fn save_spec_as(&mut self) {
-        let dialog = rfd::FileDialog::new()
+        let dialog = crate::file_dialog::FileDialog::new()
             .set_title("Save Spec As")
             .add_filter("ProcGen Spec", &["toml"])
             .set_file_name(
@@ -815,14 +819,7 @@ impl GenPreviewApp {
         };
 
         if let Some(path) = dialog.save_file() {
-            self.spec.params = toml::Value::Table(self.params_to_save());
-            self.spec.seed = SeedConfig {
-                mode: SeedMode::Fixed,
-                value: Some(self.current_seed),
-                derive_from: None,
-            };
-
-            match toml::to_string_pretty(&self.spec) {
+            match self.spec_text_for_save() {
                 Ok(content) => {
                     if let Err(e) = std::fs::write(&path, &content) {
                         self.set_status(&format!("Failed to save: {e}"));
@@ -891,12 +888,14 @@ impl GenPreviewApp {
         let mut want_randomize = false;
 
         let raw_input = egui_winit.take_egui_input(&window);
-        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+        // A real frame: its texture updates are uploaded below (#944)
+        #[allow(clippy::disallowed_methods)]
+        let mut full_output = self.egui_ctx.run_ui(raw_input, |ui| {
             // Left side panel — parameter editor
-            egui::SidePanel::left("param_panel")
-                .default_width(320.0)
+            egui::Panel::left("param_panel")
+                .default_size(320.0)
                 .resizable(true)
-                .show(ctx, |ui| {
+                .show(ui, |ui| {
                     ui.heading(&spec_name);
                     ui.label(format!("Generator: {}", generator_name));
                     ui.separator();
@@ -919,7 +918,7 @@ impl GenPreviewApp {
                     ui.separator();
 
                     // Bottom section (stats, buttons, status) — always visible
-                    egui::TopBottomPanel::bottom("param_panel_bottom").show_inside(ui, |ui| {
+                    egui::Panel::bottom("param_panel_bottom").show(ui, |ui| {
                         // LOD selector
                         if lod_count > 1 {
                             ui.horizontal(|ui| {
@@ -1010,7 +1009,7 @@ impl GenPreviewApp {
 
             // Texture display in central panel (only for image output)
             if is_texture && !egui_textures.is_empty() {
-                egui::CentralPanel::default().show(ctx, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     // Toolbar: channel tabs + view controls
                     ui.horizontal(|ui| {
                         for (i, (label, _)) in egui_textures.iter().enumerate() {
@@ -1066,7 +1065,7 @@ impl GenPreviewApp {
 
                         // Scroll-to-zoom (centered on cursor)
                         if response.hovered() {
-                            let scroll = ui.input(|i| i.raw_scroll_delta.y);
+                            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
                             if scroll != 0.0 {
                                 let old_zoom = texture_zoom;
                                 texture_zoom =
@@ -1124,7 +1123,7 @@ impl GenPreviewApp {
             if !is_texture {
                 egui::Area::new(egui::Id::new("stats_overlay"))
                     .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
-                    .show(ctx, |ui| {
+                    .show(ui, |ui| {
                         egui::Frame::popup(ui.style()).show(ui, |ui| {
                             ui.label(format!("FPS: {:.0}", fps));
                         });
@@ -1152,8 +1151,10 @@ impl GenPreviewApp {
                 label: Some("egui Encoder"),
             });
 
-        for (id, image_delta) in &full_output.textures_delta.set {
-            egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+        for (id, deltas) in &full_output.textures_delta.set {
+            for image_delta in deltas {
+                egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+            }
         }
 
         egui_renderer.update_buffers(
@@ -1170,6 +1171,7 @@ impl GenPreviewApp {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -1178,6 +1180,7 @@ impl GenPreviewApp {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             let mut render_pass = render_pass.forget_lifetime();
@@ -1189,6 +1192,8 @@ impl GenPreviewApp {
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);
         }
+        // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
+        full_output.textures_delta.clear();
 
         self.egui_renderer = Some(egui_renderer);
 
@@ -1405,7 +1410,7 @@ impl ApplicationHandler for GenPreviewApp {
             | WindowEvent::CursorMoved { .. }
             | WindowEvent::MouseWheel { .. }) => {
                 self.orbit
-                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_area());
+                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_egui());
             }
 
             WindowEvent::RedrawRequested => {
@@ -1454,18 +1459,15 @@ impl ApplicationHandler for GenPreviewApp {
                     None => return,
                 };
 
-                let output = match context.surface.get_current_texture() {
+                let output = match context.surface.acquire() {
                     Ok(o) => o,
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                    Err(
+                        flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated,
+                    ) => {
                         let size = context.size;
                         if let Some(ctx) = &mut self.render_context {
                             ctx.resize(size);
                         }
-                        return;
-                    }
-                    Err(wgpu::SurfaceError::OutOfMemory) => {
-                        tracing::error!("Out of GPU memory");
-                        event_loop.exit();
                         return;
                     }
                     Err(e) => {
@@ -1498,6 +1500,7 @@ impl ApplicationHandler for GenPreviewApp {
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                 view: &view,
                                 resolve_target: None,
+                                depth_slice: None,
                                 ops: wgpu::Operations {
                                     load: wgpu::LoadOp::Clear(wgpu::Color {
                                         r: 0.12,
@@ -1511,6 +1514,7 @@ impl ApplicationHandler for GenPreviewApp {
                             depth_stencil_attachment: None,
                             timestamp_writes: None,
                             occlusion_query_set: None,
+                            multiview_mask: None,
                         });
                     }
                     context.queue.submit(std::iter::once(encoder.finish()));
@@ -1521,7 +1525,9 @@ impl ApplicationHandler for GenPreviewApp {
                     self.render_egui(&view);
                 }
 
-                output.present();
+                if let Some(context) = &self.render_context {
+                    context.queue.present(output);
+                }
             }
 
             _ => {}
@@ -1587,3 +1593,90 @@ pub(super) fn build_mesh_world(submesh_count: usize) -> FlintWorld {
 // ─── Parameter UI helpers (delegated to gen_preview_common) ─────────────────
 
 use super::gen_preview_common::{format_count, group_fields, random_seed, render_param_field};
+
+/// `params` minus any the generator would ignore under the current settings.
+/// Unknown keys stay: the editor didn't write them.
+fn params_to_save(
+    schema: &serde_json::Value,
+    params: &toml::map::Map<String, toml::Value>,
+) -> toml::map::Map<String, toml::Value> {
+    let mut params = params.clone();
+    let table = toml::Value::Table(params.clone());
+    for issue in flint_procgen::lint_params(schema, &table) {
+        if let flint_procgen::ParamIssue::Inapplicable { key, .. } = issue {
+            params.remove(&key);
+        }
+    }
+    params
+}
+
+/// The text Ctrl+S writes: the file at `path` with only `[params]` and
+/// `[seed]` patched to `spec`'s, so its comments, key order and formatting
+/// survive (#194). A missing or broken file is written fresh from the spec.
+fn spec_text_for_save(path: &Path, spec: &ProcGenSpec) -> Result<String, String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let Ok(mut doc) = text.parse::<toml::Table>() else {
+        return toml::to_string_pretty(spec).map_err(|e| e.to_string());
+    };
+    doc.insert("params".into(), spec.params.clone());
+    let seed = toml::Value::try_from(&spec.seed).map_err(|e| e.to_string())?;
+    doc.insert("seed".into(), seed);
+    super::spec_save::patch_document(&text, &toml::Value::Table(doc))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #194's done-when, through the code Ctrl+S runs: open the commented
+    /// example oak, move one slider, save; one line of the file changes.
+    #[test]
+    fn saving_one_slider_change_rewrites_one_line() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let src = root.join("specs/examples/oak_tree.procgen.toml");
+        let dir = std::env::temp_dir().join(format!("flint-194-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("oak_tree.procgen.toml");
+        std::fs::copy(&src, &path).unwrap();
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        let mut spec = ProcGenSpec::from_file(&path).unwrap();
+        let mut registry = GeneratorRegistry::new();
+        flint_procgen::register_built_in_generators(&mut registry);
+        let schema = registry.get(&spec.generator).unwrap().param_schema();
+        let mut params = spec.params.as_table().unwrap().clone();
+
+        // Saving untouched writes the file back byte for byte.
+        spec.params = toml::Value::Table(params_to_save(&schema, &params));
+        assert_eq!(spec_text_for_save(&path, &spec).unwrap(), before);
+
+        params.insert("crown_radius".into(), toml::Value::Float(4.4));
+        spec.params = toml::Value::Table(params_to_save(&schema, &params));
+        let after = spec_text_for_save(&path, &spec).unwrap();
+        let changed: Vec<_> = before
+            .lines()
+            .zip(after.lines())
+            .filter(|(a, b)| a != b)
+            .collect();
+        assert_eq!(before.lines().count(), after.lines().count());
+        assert_eq!(changed.len(), 1, "{changed:?}");
+        assert_eq!(
+            changed[0].1,
+            "crown_radius = 4.4                       # how far the limbs reach from the trunk"
+        );
+        assert_eq!(ProcGenSpec::parse(&after).unwrap().params, spec.params);
+
+        // The old save's output (toml::to_string_pretty), for comparison.
+        if let Ok(out) = std::env::var("FLINT_194_SAVE_DIR") {
+            let out = Path::new(&out);
+            std::fs::write(out.join("before.toml"), &before).unwrap();
+            std::fs::write(out.join("after_new.toml"), &after).unwrap();
+            std::fs::write(
+                out.join("after_old.toml"),
+                toml::to_string_pretty(&spec).unwrap(),
+            )
+            .unwrap();
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

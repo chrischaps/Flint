@@ -7,59 +7,41 @@
 //!
 //! Scripts can read/write ECS data, respond to collisions/triggers/input,
 //! control animation and audio, and hot-reload while the game is running.
+#![cfg_attr(test, allow(clippy::disallowed_methods))] // unit tests read their files off the disk and assert on TOML as written; the lib build still holds the rules (#761)
 
 pub mod api;
+#[cfg(feature = "check")]
+pub mod check;
 pub mod context;
 pub mod draw2d;
 pub mod engine;
+pub mod host;
+#[cfg(test)]
+mod layout_tests;
+pub mod module;
 pub mod module_resolver;
 pub mod projector;
+pub mod random;
+#[cfg(not(target_arch = "wasm32"))]
+mod reload_worker;
 pub mod style_reader;
 pub mod sync;
 pub mod ui;
 
+pub use context::MusicClock;
 pub use context::StateScope;
-pub use context::{ConductedCue, ConductedPulse, ConductedSnapshot, CueParam};
+pub use context::{CameraOverrides, FrameRequests, PostProcessOverrides};
 pub use context::{DrawCommand, DrawItem};
 use context::{InputSnapshot, ScriptCommand};
 use engine::ScriptEngine;
 use flint_core::Result;
 use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, InputState, RuntimeSystem};
+pub use host::ScriptHost;
+pub use module::{ModuleCommand, ScriptModule};
 pub use projector::{GroundField, Projector, ScreenPoint, View};
 pub use style_reader::{EntityStyle, StyleReader};
 use sync::ScriptSync;
-
-/// Post-processing overrides set by scripts this frame; each field is `Some`
-/// only if the corresponding `set_*` API was called since the last drain.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct PostProcessOverrides {
-    pub vignette: Option<f32>,
-    pub bloom: Option<f32>,
-    pub exposure: Option<f32>,
-    pub chromatic_aberration: Option<f32>,
-    pub radial_blur: Option<f32>,
-    pub ssao_intensity: Option<f32>,
-    pub fog_density: Option<f32>,
-    pub desaturation: Option<f32>,
-    pub dof_strength: Option<f32>,
-    pub dof_focus_distance: Option<f32>,
-    pub dof_focus_range: Option<f32>,
-}
-
-/// Camera overrides set by scripts this frame; each field is `Some` only if
-/// the corresponding `set_camera_*` API was called since the last drain.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct CameraOverrides {
-    pub position: Option<[f32; 3]>,
-    pub target: Option<[f32; 3]>,
-    pub fov: Option<f32>,
-    pub orthographic: Option<bool>,
-    pub ortho_height: Option<f32>,
-    /// Roll about the view axis, radians. `None` means "no roll this frame" —
-    /// the host resets the camera up vector to world up.
-    pub roll: Option<f32>,
-}
 
 /// Top-level scripting system integrating engine, sync, and the game loop
 pub struct ScriptSystem {
@@ -70,6 +52,8 @@ pub struct ScriptSystem {
     /// `update` (Flint#518). Not cleared by a scene change: they describe the
     /// world outside the game.
     pending_expressions: std::collections::VecDeque<rhai::Map>,
+    /// The optional features' modules declared so far (#698).
+    declared_modules: std::collections::HashSet<&'static str>,
 }
 
 /// The most expression states held for scripts that aren't running (a paused
@@ -95,6 +79,7 @@ impl ScriptSystem {
             sync: ScriptSync::new(),
             pending_events: Vec::new(),
             pending_expressions: std::collections::VecDeque::new(),
+            declared_modules: std::collections::HashSet::new(),
         }
     }
 
@@ -117,35 +102,28 @@ impl ScriptSystem {
     /// (`flint render --scripts`, #8). `random()` and `random_range(a, b)` draw
     /// from one SplitMix64 started at `seed`, shared by every script in the
     /// order they run; Rhai's `timestamp()`, which reads the wall clock, fails
-    /// and says to use `total_time()`. The player keeps its own.
+    /// and says to use `total_time()`. The player keeps the clock, and
+    /// seeds only `random()` ([`Self::seed_random`]).
     pub fn make_deterministic(&mut self, seed: u64) {
-        let state = std::sync::Arc::new(std::sync::Mutex::new(seed));
-        let next = move || -> f64 {
-            let mut s = lock_or_recover(&state);
-            *s = s.wrapping_add(0x9E37_79B9_7F4A_7C15);
-            let mut z = *s;
-            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-            z ^= z >> 31;
-            // The top 53 bits, as a float in [0, 1).
-            (z >> 11) as f64 / (1u64 << 53) as f64
-        };
-        let rhai = self.rhai_engine_mut();
-        let random = next.clone();
-        rhai.register_fn("random", move || -> f64 { random() });
-        rhai.register_fn("random_range", move |min: f64, max: f64| -> f64 {
-            min + (max - min) * next()
-        });
-        rhai.register_fn(
-            "timestamp",
-            || -> std::result::Result<rhai::Dynamic, Box<rhai::EvalAltResult>> {
-                Err(
-                    "timestamp() reads the wall clock, which a deterministic run doesn't \
-                     have: use total_time() or delta_time()"
-                        .into(),
-                )
-            },
-        );
+        self.seed_random(seed);
+        #[cfg(not(target_arch = "wasm32"))]
+        let declared = self.engine.api_registry().declares("timestamp", 0);
+        #[cfg(target_arch = "wasm32")]
+        let declared = false;
+        if !declared {
+            api::forbid_wall_clock(&mut self.script_api());
+        }
+    }
+
+    /// Restart `random()` and `random_range(a, b)` at `seed`: one
+    /// SplitMix64 sequence shared by every script in the order they call it.
+    /// Without this it starts from the wall clock, once, when the engine is
+    /// made (#580). The player's `--seed` (and `--frame-step`, #635), `flint
+    /// render --scripts` and a script's own `seed_random(n)` all come here,
+    /// so the same seed gives the same numbers. The sequence lives as long as
+    /// the engine, through scene changes.
+    pub fn seed_random(&mut self, seed: u64) {
+        self.engine.random.seed(seed);
     }
 
     /// The expression state scripts see now (`expression()`): the last one
@@ -172,11 +150,13 @@ impl ScriptSystem {
         delta_time: f64,
     ) {
         // Snapshot input state
-        let touches: Vec<(i64, f64, f64)> = input
+        // Lowest id first, so `touch_id(i)` is the same finger frame to frame
+        let mut touches: Vec<(i64, f64, f64)> = input
             .active_touches()
             .values()
             .map(|t| (t.id as i64, t.position.0, t.position.1))
             .collect();
+        touches.sort_unstable_by_key(|t| t.0);
         let touch_just_started: Vec<(i64, f64, f64)> = input
             .touches_just_started_set()
             .iter()
@@ -203,6 +183,8 @@ impl ScriptSystem {
             last_device: input.last_device().as_str().to_string(),
             gamepad_connected: input.gamepad_connected(),
             touch_controls_visible: input.touch_controls_visible(),
+            touch_device: input.touch_device(),
+            safe_area: input.touch_controls().insets().map(f64::from),
             mouse_delta: input.raw_mouse_delta(),
             mouse_wheel: {
                 let (x, y) = input.mouse_wheel_delta();
@@ -246,10 +228,18 @@ impl ScriptSystem {
         c.transition_phase = phase.to_string();
     }
 
-    /// Set the current scene path for script access
-    pub fn set_current_scene(&mut self, path: &str) {
+    /// Set the current scene's path and the project it belongs to, for
+    /// script access: `load_ui` and `load_data` paths are from the
+    /// project's root (ADR 0114).
+    pub fn set_current_scene(&mut self, path: &str, project: &flint_core::project::Project) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
-        c.current_scene_path = path.to_string();
+        // Called every frame: nothing is copied while the scene stays
+        if c.current_scene_path != path {
+            c.current_scene_path = path.to_string();
+        }
+        if c.project.as_ref() != Some(project) {
+            c.project = Some(project.clone());
+        }
     }
 
     /// Set camera position and direction for weapon aiming
@@ -277,7 +267,7 @@ impl ScriptSystem {
     /// `screen_to_mesh` and [`Projector::ray_scene`] cast against. The host
     /// hands over the renderer's after each update, so scripts see where the
     /// last frame drew them.
-    pub fn set_ray_scene(&mut self, scene: std::sync::Arc<flint_core::ray_mesh::RayScene>) {
+    pub fn set_ray_scene(&mut self, scene: std::sync::Arc<flint_geometry::ray_mesh::RayScene>) {
         crate::lock_or_recover(&self.engine.ctx).ray_scene = scene;
     }
 
@@ -287,18 +277,15 @@ impl ScriptSystem {
         self.engine.set_style_reader(reader);
     }
 
-    /// Drain commands produced by scripts this frame
+    /// Everything scripts asked of the host since the last drain, for
+    /// [`host::apply_all`]: the commands they queued, in order, then this
+    /// frame's requests (`SetCamera`, `SetPostProcess`, `SetTimeScale`,
+    /// `SetQuality`...), one each, for what was asked (#697). The host
+    /// carries out a `SetQuality` between frames and hands back what it
+    /// applied with [`set_quality_state`](Self::set_quality_state), and a
+    /// `SetLodScales` with [`set_lod_state`](Self::set_lod_state).
     pub fn drain_commands(&mut self) -> Vec<ScriptCommand> {
         self.engine.drain_commands()
-    }
-
-    /// Take the quality settings a script asked for with `set_quality`
-    /// since the last call, if any (FlintKart#55). The host applies them
-    /// between frames and hands back what it applied with
-    /// [`set_quality_state`](Self::set_quality_state).
-    pub fn take_quality_request(&mut self) -> Option<flint_core::quality::QualitySettings> {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        std::mem::take(&mut c.quality_requested).then_some(c.quality)
     }
 
     /// The quality settings in force, for `get_quality()`.
@@ -343,16 +330,89 @@ impl ScriptSystem {
         c.loaded_chunk_ids = ids;
     }
 
-    /// Set the conducted-parameters snapshot for this frame (ADR 0020).
-    /// Persistent, not take(): the host re-sets it every frame, passing
-    /// `ConductedSnapshot::default()` (the neutral, settled-world state)
-    /// when no music session is active.
-    pub fn set_conducted(&mut self, conducted: ConductedSnapshot) {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        c.conducted = conducted;
+    /// Declare a module an optional feature owns (#698): its functions,
+    /// listed under its name, run only while it is enabled
+    /// ([`ScriptSystem::set_enabled_modules`]) and are a script error
+    /// saying so anywhere else. Declaring one twice declares it once.
+    pub fn declare_module(&mut self, module: &dyn ScriptModule) {
+        let gate = module::Gate {
+            module: module.name(),
+            enabled_when: module.enabled_when(),
+        };
+        if !self.declared_modules.insert(gate.module) {
+            return;
+        }
+        let mut api = self.script_api();
+        let mut m = api.gated_module(gate);
+        module.declare(&mut m);
     }
 
-    /// Load a script file for a specific entity (for chunk loading).
+    /// The modules a host's subsystems for this scene own, which may run
+    /// now (#698); every other declared module's functions are "not
+    /// enabled". A host sets it when its subsystems change, before the
+    /// scene's scripts load.
+    pub fn set_enabled_modules(&mut self, modules: Vec<&'static str>) {
+        crate::lock_or_recover(&self.engine.ctx).enabled_modules = modules;
+    }
+
+    /// What [`ScriptSystem::set_enabled_modules`] set.
+    pub fn enabled_modules(&self) -> Vec<&'static str> {
+        crate::lock_or_recover(&self.engine.ctx)
+            .enabled_modules
+            .clone()
+    }
+
+    /// Hand a module's functions their state for this frame (a rhythm
+    /// session's snapshot): one value of each type, which a function reads
+    /// with `call.ctx().module_state.get_mut::<T>()`. Persistent until set
+    /// again; never set, it is `T::default()`.
+    pub fn set_module_state<T: std::any::Any + Send>(&mut self, value: T) {
+        crate::lock_or_recover(&self.engine.ctx)
+            .module_state
+            .set(value);
+    }
+
+    /// Where the scene's music is this frame, for `music_beat()`,
+    /// `music_bar()` and `music_section()` (#745). Persistent: the host's
+    /// music subsystem sets it every frame and [`MusicClock::default`]
+    /// when the music goes.
+    pub fn set_music(&mut self, music: MusicClock) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.music = music;
+    }
+
+    /// Where each playing `audio_source` is in its sound, and the output
+    /// latency where known, for `audio_position` / `audio_output_latency`
+    /// (#658). The host sets them every frame before scripts run, paused or
+    /// not.
+    pub fn set_audio_clock(
+        &mut self,
+        positions: &std::collections::HashMap<flint_core::EntityId, f64>,
+        output_latency: Option<f64>,
+    ) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.audio_positions.clone_from(positions);
+        c.audio_output_latency = output_latency;
+    }
+
+    /// Load the script a `script.source` names for a specific entity (for
+    /// chunk loading), searched for from `from_dir`, the chunk's own
+    /// directory, by the project's one rule (`AssetKind::Scripts`), and
+    /// followed by hot reload. The entity must already have a `script`
+    /// component in the ECS. `Err` is the not-found text, every path tried;
+    /// nothing is loaded then.
+    pub fn load_script_named(
+        &mut self,
+        entity_id: flint_core::EntityId,
+        source: &str,
+        from_dir: &std::path::Path,
+    ) -> std::result::Result<std::path::PathBuf, String> {
+        let script_path = self.sync.locate_for(entity_id, source, from_dir)?;
+        self.load_script_for_entity(entity_id, &script_path);
+        Ok(script_path)
+    }
+
+    /// Load a script file for a specific entity, from the path given.
     /// The entity must already have a `script` component in the ECS.
     pub fn load_script_for_entity(
         &mut self,
@@ -452,104 +512,35 @@ impl ScriptSystem {
         self.engine.call_scene_enters(world);
     }
 
-    /// Take camera overrides set by scripts this frame (clears them)
-    pub fn take_camera_overrides(&mut self) -> CameraOverrides {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        CameraOverrides {
-            position: c.camera_position_override.take(),
-            target: c.camera_target_override.take(),
-            fov: c.camera_fov_override.take(),
-            orthographic: c.camera_orthographic_override.take(),
-            ortho_height: c.camera_ortho_height_override.take(),
-            roll: c.camera_roll_override.take(),
-        }
-    }
-
-    /// Take post-processing overrides set by scripts this frame (clears them)
-    pub fn take_postprocess_overrides(&mut self) -> PostProcessOverrides {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        PostProcessOverrides {
-            vignette: c.postprocess_vignette_override.take(),
-            bloom: c.postprocess_bloom_override.take(),
-            exposure: c.postprocess_exposure_override.take(),
-            chromatic_aberration: c.postprocess_chromatic_aberration_override.take(),
-            radial_blur: c.postprocess_radial_blur_override.take(),
-            ssao_intensity: c.postprocess_ssao_intensity_override.take(),
-            fog_density: c.postprocess_fog_density_override.take(),
-            desaturation: c.postprocess_desaturation_override.take(),
-            dof_strength: c.postprocess_dof_strength_override.take(),
-            dof_focus_distance: c.postprocess_dof_focus_distance_override.take(),
-            dof_focus_range: c.postprocess_dof_focus_range_override.take(),
-        }
-    }
-
-    /// Take the time scale a script asked for this frame, if any (clears it)
-    pub fn take_time_scale_request(&mut self) -> Option<f64> {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        c.time_scale_request.take()
-    }
-
-    /// Take audio low-pass filter override set by scripts this frame (clears it)
-    pub fn take_audio_overrides(&mut self) -> Option<f32> {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        c.audio_lowpass_cutoff_override.take()
-    }
-
-    /// Take the `set_touch_controls` request set by scripts this frame
-    /// (clears it)
-    pub fn take_touch_controls_override(&mut self) -> Option<bool> {
-        crate::lock_or_recover(&self.engine.ctx)
-            .touch_controls_override
-            .take()
-    }
-
-    /// Take the `set_lod_scale` / `set_draw_distance_scale` requests made by
-    /// scripts this frame (clears them), as (lod scale, draw-distance scale).
-    pub fn take_lod_requests(&mut self) -> (Option<f32>, Option<f32>) {
-        let mut c = crate::lock_or_recover(&self.engine.ctx);
-        (
-            c.lod_scale_request.take(),
-            c.draw_distance_scale_request.take(),
-        )
+    /// Whether any loaded script may call `complete_transition()`: one that
+    /// names it, or imports a module (#362). When none can, nothing will
+    /// end a transition's Exiting or Entering phase, so the player moves on
+    /// by itself.
+    pub fn can_complete_transition(&self) -> bool {
+        self.engine.can_complete_transition()
     }
 
     /// Tell scripts the renderer's distance scales in force (#56), for
-    /// `lod_scale()` and `draw_distance_scale()`.
+    /// `get_lod_scale()` and `get_draw_distance_scale()`.
     pub fn set_lod_state(&mut self, lod_scale: f32, draw_distance_scale: f32) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.lod_scale = lod_scale;
         c.draw_distance_scale = draw_distance_scale;
     }
 
-    /// Take the cursor capture request set by scripts this frame (clears it)
-    pub fn take_cursor_capture_override(&mut self) -> Option<bool> {
-        let mut c = self.engine.ctx.lock().unwrap();
-        c.cursor_captured_override.take()
-    }
-
-    /// Take the fog color override set by scripts this frame (clears it)
-    pub fn take_fog_color_override(&mut self) -> Option<[f32; 3]> {
-        let mut c = self.engine.ctx.lock().unwrap();
-        c.postprocess_fog_color_override.take()
-    }
-
-    /// Take the reality-tear render mode overrides set by scripts this
-    /// frame (clears them): ((mode, mix), mode_params).
-    #[allow(clippy::type_complexity)]
-    pub fn take_render_mode_overrides(&mut self) -> (Option<(u32, f32)>, Option<[f32; 4]>) {
-        let mut c = self.engine.ctx.lock().unwrap();
-        (
-            c.postprocess_render_mode_override.take(),
-            c.postprocess_mode_params_override.take(),
-        )
-    }
-
-    /// Set up the script system's scripts directory from the scene path.
-    /// Also points `import` at `<scripts>/lib` and starts watching it.
-    pub fn load_scripts_from_scene(&mut self, scene_path: &str) {
-        sync::load_scripts_from_scene(scene_path, &mut self.sync);
-        if let Some(lib) = self.sync.lib_dir() {
-            self.engine.set_module_base(lib);
+    /// Point the script system at the scripts the scene at `scene_path` can
+    /// see in `project` (`AssetKind::Scripts`: `scripts/` beside the scene,
+    /// in each directory above it up to the project root, then in the
+    /// engine). Also points `import` at `scripts/lib/` in the same places
+    /// and starts watching them.
+    pub fn load_scripts_from_scene(
+        &mut self,
+        scene_path: &str,
+        project: &flint_core::project::Project,
+    ) {
+        sync::load_scripts_from_scene(scene_path, project, &mut self.sync);
+        if let Some(base) = self.sync.module_base() {
+            self.engine.set_module_search(base);
         }
     }
 
@@ -561,6 +552,47 @@ impl ScriptSystem {
     /// feature, registered closures must be `Send + Sync`.
     pub fn rhai_engine_mut(&mut self) -> &mut rhai::Engine {
         self.engine.rhai_engine_mut()
+    }
+
+    /// Declare functions through the builder (ADR 0116): registered like
+    /// [`Self::rhai_engine_mut`]'s, and listed with a doc and named
+    /// parameters by [`Self::api_listing`] and `flint script api`.
+    pub fn script_api(&mut self) -> api::ScriptApi<'_> {
+        self.engine.script_api()
+    }
+
+    /// The whole script API as it is registered now: what the builder
+    /// declared (Flint's and any extension's), what was registered on the
+    /// engine directly, and the callbacks. A game binary with extensions
+    /// prints its own listing from this (`flint script api` prints the
+    /// engine's). The undeclared part needs flint-script's `metadata`
+    /// feature (Rhai's); without it `undeclared_listed` is false.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn api_listing(&self) -> api::registry::ApiListing {
+        let registry = self.engine.api_registry();
+        #[cfg(feature = "metadata")]
+        let (undeclared, undeclared_listed) = {
+            let mut fns: Vec<api::registry::UndeclaredFn> = self
+                .engine
+                .rhai_engine()
+                .gen_fn_signatures(false)
+                .iter()
+                .filter_map(|sig| api::registry::parse_signature(sig))
+                .filter(|f| !registry.declares(&f.name, f.params.len()))
+                .collect();
+            fns.sort_by(|a, b| (&a.name, a.params.len()).cmp(&(&b.name, b.params.len())));
+            fns.dedup_by(|a, b| a.signature == b.signature);
+            (fns, true)
+        };
+        #[cfg(not(feature = "metadata"))]
+        let (undeclared, undeclared_listed) = (Vec::new(), false);
+        api::registry::ApiListing {
+            declared: registry.entries().to_vec(),
+            undeclared,
+            undeclared_listed,
+            callbacks: api::registry::CALLBACKS.to_vec(),
+            gates: registry.gates().to_vec(),
+        }
     }
 
     /// Set the terrain height sampling callback for scripts
@@ -588,6 +620,10 @@ impl RuntimeSystem for ScriptSystem {
         // Discover scripts from world
         self.sync.discover_and_load(world, &mut self.engine);
 
+        // Save data from an older version first (#726), so on_init reads
+        // it migrated
+        self.engine.migrate_persistent_store(world);
+
         // Call on_init() for all loaded scripts
         self.engine.call_inits(world);
 
@@ -596,11 +632,6 @@ impl RuntimeSystem for ScriptSystem {
             eprintln!("Script system initialized ({} scripts)", count);
         }
 
-        Ok(())
-    }
-
-    fn fixed_update(&mut self, _world: &mut FlintWorld, _dt: f64) -> Result<()> {
-        // Scripts run at variable rate (like animation), not fixed timestep
         Ok(())
     }
 
@@ -625,6 +656,11 @@ impl RuntimeSystem for ScriptSystem {
         // Discover any new script entities
         let began = now();
         self.sync.discover_and_load(world, &mut self.engine);
+
+        // Save data at an older version (a slot a script switched to last
+        // frame, or one no earlier scene's scripts could migrate), before
+        // anything else runs this frame (#726)
+        self.engine.migrate_persistent_store(world);
 
         // Call on_init for newly added scripts
         self.engine.call_inits(world);
@@ -652,18 +688,6 @@ impl RuntimeSystem for ScriptSystem {
         self.engine.call_updates(world);
 
         Ok(())
-    }
-
-    fn shutdown(&mut self) -> Result<()> {
-        let count = self.engine.scripts.len();
-        if count > 0 {
-            println!("Script system shut down ({} scripts)", count);
-        }
-        Ok(())
-    }
-
-    fn name(&self) -> &str {
-        "script"
     }
 }
 
@@ -717,11 +741,6 @@ mod tests {
 
         let result = system.update(&mut world, 0.016);
         assert!(result.is_ok());
-
-        let result = system.shutdown();
-        assert!(result.is_ok());
-
-        assert_eq!(system.name(), "script");
     }
 
     #[test]
@@ -863,6 +882,146 @@ mod tests {
     }
 
     #[test]
+    fn seed_random_is_make_deterministics_sequence_and_keeps_the_clock() {
+        // The player's --seed and flint render --scripts draw the same numbers
+        let source = r#"fn on_update() {
+            record(`${random()} ${random_range(-1.0, 1.0)}`);
+            try { let t = timestamp(); record("clock"); }
+            catch (e) { record("no clock"); }
+        }"#;
+        let run = |seeded_only: bool| {
+            let (mut system, seen) = recording_system();
+            if seeded_only {
+                system.seed_random(0x5EED);
+            } else {
+                system.make_deterministic(0x5EED);
+            }
+            let mut world = FlintWorld::new();
+            let id = world.spawn("dice").unwrap();
+            let ast = system.engine.compile(source).unwrap();
+            system.engine.add_script(id, ast, "dice.rhai".into());
+            for _ in 0..3 {
+                system.update(&mut world, 1.0 / 60.0).unwrap();
+            }
+            let out = seen.lock().unwrap().clone();
+            out
+        };
+        let (player, render) = (run(true), run(false));
+        let numbers = |lines: &[String]| -> Vec<String> {
+            lines
+                .iter()
+                .filter(|l| l.starts_with(|c: char| c.is_ascii_digit()))
+                .cloned()
+                .collect()
+        };
+        assert_eq!(numbers(&player), numbers(&render));
+        assert_eq!(numbers(&player).len(), 3);
+        // Only the render takes the wall clock away
+        assert!(player.iter().any(|l| l == "clock"), "{player:?}");
+        assert!(render.iter().any(|l| l == "no clock"), "{render:?}");
+    }
+
+    #[test]
+    fn a_script_seeds_random_itself_and_draws_what_the_host_seed_draws() {
+        // #580: seed_random(n) in Rhai is --seed n, mid-run as well as at start
+        let run = |source: &str, host_seed: Option<u64>| {
+            let (mut system, seen) = recording_system();
+            if let Some(seed) = host_seed {
+                system.seed_random(seed);
+            }
+            let mut world = FlintWorld::new();
+            let id = world.spawn("dice").unwrap();
+            let ast = system.engine.compile(source).unwrap();
+            system.engine.add_script(id, ast, "dice.rhai".into());
+            for _ in 0..3 {
+                system.update(&mut world, 1.0 / 60.0).unwrap();
+            }
+            let out = seen.lock().unwrap().clone();
+            out
+        };
+        let draw = r#"fn on_update() {
+            record(`${random()} ${random()} ${random_range(5.0, 6.0)}`);
+        }"#;
+        // In on_init: top-level statements run again before every callback,
+        // so a seed_random(n) up there would restart the sequence each frame
+        let seeded_here = r#"
+            fn on_init() { seed_random(1234); }
+            fn on_update() {
+                record(`${random()} ${random()} ${random_range(5.0, 6.0)}`);
+            }"#;
+        let by_host = run(draw, Some(1234));
+        assert_eq!(run(seeded_here, None), by_host);
+        assert_eq!(
+            run(seeded_here, Some(99)),
+            by_host,
+            "the script's seed wins"
+        );
+        // Unseeded runs start from the clock: two engines differ, and no two
+        // draws in a frame repeat
+        let (a, b) = (run(draw, None), run(draw, None));
+        assert_ne!(a, b);
+        for line in a.iter().chain(&b) {
+            let v: Vec<&str> = line.split(' ').collect();
+            assert_ne!(v[0], v[1], "{line}");
+        }
+        // Negative seeds are a u64's bits
+        let neg = run(
+            r#"fn on_init() { seed_random(-1); } fn on_update() { record(`${random()}`); }"#,
+            None,
+        );
+        let host = run(
+            r#"fn on_update() { record(`${random()}`); }"#,
+            Some(u64::MAX),
+        );
+        assert_eq!(neg, host);
+    }
+
+    #[test]
+    fn a_setter_on_a_missing_entity_warns_once_per_script_and_function() {
+        let source = r#"fn on_update() {
+            let gone = get_entity("car_body");
+            set_position(gone, 1.0, 2.0, 3.0);
+            set_position(gone, 1.0, 2.0, 3.0);
+            set_rotation_quat(gone, 0.0, 0.0, 0.0, 1.0);
+            set_field(9999, "transform", "position", [0.0, 0.0, 0.0]);
+            set_position(self_entity(), 4.0, 5.0, 6.0);
+        }"#;
+        let mut system = ScriptSystem::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("driver").unwrap();
+        world
+            .set_field(
+                id,
+                "script",
+                "source",
+                toml::Value::String("driver.rhai".into()),
+            )
+            .unwrap();
+        let ast = system.engine.compile(source).unwrap();
+        system.engine.add_script(id, ast, "driver.rhai".into());
+        for _ in 0..3 {
+            system.update(&mut world, 1.0 / 60.0).unwrap();
+        }
+        let warned = lock_or_recover(&system.engine.ctx)
+            .bad_target_warned
+            .clone();
+        let mut warned: Vec<_> = warned.into_iter().collect();
+        warned.sort();
+        let named = |f: &'static str| ("driver.rhai".to_string(), f);
+        assert_eq!(
+            warned,
+            vec![
+                named("set_field"),
+                named("set_position"),
+                named("set_rotation_quat")
+            ]
+        );
+        // A real entity is still set, and doesn't warn
+        let pos = world.get_transform(id).unwrap().position;
+        assert_eq!((pos.x, pos.y, pos.z), (4.0, 5.0, 6.0));
+    }
+
+    #[test]
     fn deterministic_runs_have_no_wall_clock() {
         let (mut system, seen) = recording_system();
         system.make_deterministic(1);
@@ -927,13 +1086,18 @@ mod tests {
         let mut system = ScriptSystem::new();
         {
             let mut c = crate::lock_or_recover(&system.engine.ctx);
-            c.postprocess_desaturation_override = Some(0.85);
+            c.requests.post.desaturation = Some(0.85);
         }
-        let overrides = system.take_postprocess_overrides();
-        assert_eq!(overrides.desaturation, Some(0.85));
-        // Drain clears: a second take returns all-None
-        let overrides = system.take_postprocess_overrides();
-        assert_eq!(overrides, PostProcessOverrides::default());
+        let commands = system.drain_commands();
+        assert!(
+            matches!(
+                commands.as_slice(),
+                [ScriptCommand::SetPostProcess { post }] if post.desaturation == Some(0.85)
+            ),
+            "{commands:?}"
+        );
+        // Drain clears: a second drain asks for nothing
+        assert!(system.drain_commands().is_empty());
     }
 }
 

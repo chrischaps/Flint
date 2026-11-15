@@ -1,0 +1,124 @@
+# Looks (#356): the stylize props' clearing, unstyled, wearing a look.
+# The scene names one in its [post_process] block; the look goes under
+# the scene's own keys, so the scene keeps its exposure and vignette and
+# takes the rest of graphite (the pencil style, its ssao, no bloom).
+#
+#   cargo run --bin flint -- render examples/looks.scene.toml --no-grid -o looks.png
+#   cargo run --bin flint-player -- examples/looks.scene.toml
+#
+# In the player, scripts/looks_tour.rhai walks the built-in looks with
+# set_look(), three seconds each (game time, so a --frame-step capture
+# shows the same beats every run), and F4 -> Look picks one by hand.
+# `flint render --look help` lists every look the scene can reach.
+
+[scene]
+name = "Looks"
+version = "1.0"
+description = "A scene that names a look, and a script that tours them (#356)"
+
+[camera]
+position = [3.4, 1.7, 9.0]
+target = [0.7, 0.7, 4.2]
+fov = 50.0
+
+[post_process]
+look = "graphite"
+exposure = 1.25
+vignette_enabled = true
+vignette_intensity = 0.25
+
+[entities.director.tour]
+beat = -1
+[entities.director.script]
+source = "looks_tour.rhai"
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.16, 0.30, 0.58, 1.0]
+horizon_color = [0.86, 0.72, 0.52, 1.0]
+haze_color = [0.95, 0.80, 0.60, 0.7]
+cloud_tint = [1.0, 0.90, 0.78, 0.8]
+cloud_coverage = 0.3
+sun_glow = 1.4
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [-0.75, 0.38, -0.35]
+color = [1.0, 0.86, 0.66]
+intensity = 2.4
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.light]
+type = "directional"
+direction = [0.4, 0.8, 0.4]
+color = [0.55, 0.65, 0.85]
+intensity = 0.35
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-60, -0.2, -60]
+max = [60, 0, 60]
+[entities.ground.material]
+color = [0.13, 0.09, 0.055, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+[entities.barrel]
+archetype = "furniture"
+[entities.barrel.transform]
+position = [1.3, 0.48, 5.6]
+rotation = [0, 40, 0]
+scale = [0.5, 0.5, 0.5]
+[entities.barrel.model]
+asset = "barrel"
+
+[entities.ybot]
+archetype = "character"
+[entities.ybot.transform]
+position = [-0.9, 0, 4.0]
+rotation = [0, 25, 0]
+[entities.ybot.model]
+asset = "YBotWithIdle"
+[entities.ybot.skeleton]
+skin = "Armature"
+
+[entities.cask]
+archetype = "furniture"
+[entities.cask.transform]
+position = [0.2, 0.48, 4.6]
+scale = [0.5, 0.5, 0.5]
+[entities.cask.model]
+asset = "barrel"
+
+[entities.crate]
+archetype = "furniture"
+[entities.crate.transform]
+position = [1.9, 0.0, 3.6]
+rotation = [0, 30, 0]
+[entities.crate.bounds]
+min = [-0.4, 0.0, -0.4]
+max = [0.4, 0.8, 0.4]
+[entities.crate.material]
+color = [0.55, 0.38, 0.22, 1.0]
+roughness = 0.8
+
+[entities.lid]
+archetype = "furniture"
+parent = "crate"
+[entities.lid.transform]
+position = [0.05, 0.8, -0.05]
+rotation = [0, 20, 0]
+[entities.lid.bounds]
+min = [-0.22, 0.0, -0.22]
+max = [0.22, 0.3, 0.22]
+[entities.lid.material]
+color = [0.42, 0.50, 0.30, 1.0]
+roughness = 0.7

@@ -12,3 +12,4 @@ pub mod picking;
 pub mod projection;
 pub mod spline_editor;
 pub mod undo;
+pub mod watch;

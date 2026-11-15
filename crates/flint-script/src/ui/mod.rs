@@ -23,18 +23,17 @@ use element::{ElementType, StyleValue, UiElement};
 use layout::ResolvedRect;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 use style::{ResolvedStyle, StyleClass};
 use tokens::TokenSet;
 
 /// Modification fingerprint of one source file: (mtime, length). `None`
 /// when the file is missing so that appearing/disappearing counts as a change.
-/// Hot reload watches the disk, so this stays on `std::fs`.
-type FileStamp = Option<(SystemTime, u64)>;
+/// Hot reload watches the disk, through `flint_core::file_watch`, which in the
+/// player never waits on it (#633).
+type FileStamp = Option<flint_core::file_watch::Stamp>;
 
 fn stamp(path: &Path) -> FileStamp {
-    let meta = std::fs::metadata(path).ok()?;
-    Some((meta.modified().ok()?, meta.len()))
+    flint_core::file_watch::stamp(path)
 }
 
 /// A loaded UI document (one layout + style pair)
@@ -302,6 +301,11 @@ impl UiDocument {
                             shadow: style.shadow.map(|(mut sc, dx, dy)| {
                                 sc[3] *= opacity;
                                 (sc, dx, dy)
+                            }),
+                            glow: (style.glow_radius > 0.0).then(|| {
+                                let mut gc = style.glow_color;
+                                gc[3] *= opacity;
+                                (gc, style.glow_radius)
                             }),
                         });
                     }

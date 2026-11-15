@@ -6,8 +6,8 @@
 
 pub mod brush;
 pub mod chunk;
-pub mod ground;
 pub mod grass_config;
+pub mod ground;
 pub mod heightmap;
 pub mod procgen;
 pub mod spec;

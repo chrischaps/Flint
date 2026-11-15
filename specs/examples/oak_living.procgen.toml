@@ -21,7 +21,7 @@
 # the lineage instead. [[lod]] doesn't apply: a skinned rest is one level.
 #
 # In a scene, give an entity `model.asset = "oak_living"` and a `living_prop`
-# component, as demo/living_props.scene.toml does. It blends a ring of poses on
+# component, as examples/living_props.scene.toml does. It blends a ring of poses on
 # the clock below, a part at a time, with its leaf cards boiling on top.
 
 generator = "tree_v1"

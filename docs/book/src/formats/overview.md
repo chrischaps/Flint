@@ -123,8 +123,8 @@ fxaa = false
 | `fog_height_enabled` | bool | `false` | Height-based fog |
 | `fog_height_falloff` | f32 | `0.1` | How quickly height fog thins with altitude |
 | `fog_height_origin` | f32 | `0.0` | World Y where height fog is densest |
-| `fog_height_density` | f32 | `0.0` | Height fog's density at its origin; 0 adds none (ADR 0101) |
-| `fog_tint_color` | `[f32; 3]` | `[0.42, 0.50, 0.65]` | Aerial tint colour (ADR 0101) |
+| `fog_height_density` | f32 | `0.0` | Height fog's density at its origin; 0 adds none ([ADR 0101](https://github.com/chrischaps/Flint/blob/main/docs/adr/0101-height-fog-layer-and-aerial-tint.md)) |
+| `fog_tint_color` | `[f32; 3]` | `[0.42, 0.50, 0.65]` | Aerial tint colour ([ADR 0101](https://github.com/chrischaps/Flint/blob/main/docs/adr/0101-height-fog-layer-and-aerial-tint.md)) |
 | `fog_tint_strength` | f32 | `0.0` | How much tint the farthest things take; 0 is off |
 | `fog_tint_start` | f32 | `100.0` | Distance at which the tint comes in |
 | `fog_tint_end` | f32 | `1000.0` | Distance at which it reaches full strength |
@@ -142,16 +142,8 @@ fxaa = false
 | `dof_focus_distance` | f32 | `10.0` | Focus plane distance in view metres |
 | `dof_focus_range` | f32 | `5.0` | Half-width of the in-focus band in view metres |
 | `kuwahara_enabled`, `kuwahara_radius`, `kuwahara_sharpness`, `kuwahara_hardness`, `kuwahara_anisotropy` | | | Older spellings of `[post_process.styles.kuwahara]`, still read (see [Post-Processing](../concepts/post-processing.md#kuwahara-painterly-filter)) |
-| `kuwahara_boil` | f32 | `0.0` | With a `[wooze]` table, how far each drawing moves the paint, as a share of the radius |
-| `contour_enabled` | bool | `false` | Ink lines from breaks in depth and luminance |
-| `contour_width` | f32 | `1.25` | Half a line's width, in pixels at 1080p |
-| `contour_threshold` | f32 | `0.08` | How strong an edge must be before it inks |
-| `contour_strength` | f32 | `0.9` | How dark the ink goes, 0--1 |
-| `contour_luma` | f32 | `0.5` | How much luminance edges count; `0` is silhouettes only |
-| `contour_color` | \[f32; 3\] | `[0.015, 0.012, 0.02]` | The ink's colour, linear |
-| `contour_fade` | f32 | `30.0` | Metres at which a line has faded by half; `0` never fades |
-| `contour_boil` | f32 | `0.0` | With a `[wooze]` table, how far each drawing moves the lines |
-| `boil_on` | u32 | `2` | Film frames each drawing is held: 1, 2 or 3 |
+| `kuwahara_boil`, `contour_enabled`, `contour_width`, `contour_threshold`, `contour_strength`, `contour_luma`, `contour_color`, `contour_fade`, `contour_boil` | | | Older spellings of `[post_process.styles.kuwahara] boil` and `[post_process.styles.contour]`, still read (see [Post-Processing](../concepts/post-processing.md#contour-ink-lines)) |
+| `boil_on` | u32 | `2` | Film frames each drawing of the shading boil is held: 1, 2 or 3 |
 | `film_grain` | f32 | `0` | Animated grain; `0.02`–`0.05` is subtle |
 | `grade_lift` | `[f32; 3]` | `[0, 0, 0]` | Per-channel add after ACES tone mapping |
 | `grade_gamma` | `[f32; 3]` | `[1, 1, 1]` | Per-channel midtone curve |
@@ -174,7 +166,7 @@ field_name = { type = "<type>", default = <value>, description = "..." }
 
 Supported field types: `bool`, `i32`, `i64`, `f32`, `f64`, `string`, `vec2`, `vec3`, `vec4`, `color`, `transform`, `enum`, `entity_ref`, `array`. `vec2` and `vec4` are validated as float arrays. Schema `default` values are applied at scene load for every listed component that omits the field (see [Schemas](../concepts/schemas.md)).
 
-Key component schemas: `transform`, `material`, `door`, `bounds`, `rigidbody`, `collider`, `character_controller`, `audio_source`, `audio_listener`, `audio_trigger`, `animator`, `skeleton`, `script`, `interactable`, `sprite`, `asset_def`.
+Key component schemas: `transform`, `material`, `door`, `bounds`, `rigidbody`, `collider`, `character_controller`, `audio_source`, `audio_trigger`, `animator`, `skeleton`, `script`, `interactable`, `sprite`, `asset_def`.
 
 ## Archetype Schemas (`schemas/archetypes/*.toml`)
 
@@ -244,7 +236,7 @@ event_name = "door_start"
 
 ## Animation Sequences (`animations/*.sequence.toml`)
 
-An ordered list of timestamped animator events: crossfade the base clip, set a layer, change speed, or raise a named cue for the entity's script. The player loads every sequence in the scene's `animations/` directory; scripts start one with `play_sequence(entity, name)`, and the model previewer plays one with `flint edit model.glb --sequence <file>`. See [Animation: Sequences](../concepts/animation.md#sequences).
+An ordered list of timestamped animator events: crossfade the base clip, set a layer, change speed, or raise a named cue for the entity's script. The player loads every sequence in each `animations/` directory the scene can see ([the asset search](../concepts/assets.md#where-the-engine-looks-for-a-file)); scripts start one with `play_sequence(entity, name)`, and the model previewer plays one with `flint edit model.glb --sequence <file>`. See [Animation: Sequences](../concepts/animation.md#sequences).
 
 ```toml
 name = "intro_bow"
@@ -288,7 +280,7 @@ name = "done"                      # Delivered to on_sequence_cue(sequence, cue)
 
 ## Particle Effects (`particles/*.particles.toml`)
 
-A named, reusable particle effect: one or more emitters simulated together, with multi-key curves, forces, a burst timeline and sub-emitters. The player and viewer load every effect in the scene's `particles/` directory (or `../particles/`); scenes reference one with a `particle_effect` component, scripts with `play_effect(name, x, y, z)`, and `flint edit fx.particles.toml` edits it. See [Particles](../concepts/particles.md).
+A named, reusable particle effect: one or more emitters simulated together, with multi-key curves, forces, a burst timeline and sub-emitters. The player and viewer load every effect a scene can see: `particles/` beside the scene, beside each directory above it up to the project root, then in the engine subtree, a nearer file hiding a farther one of the same name ([the search rule](../concepts/assets.md#where-the-engine-looks-for-a-file)); scenes reference one with a `particle_effect` component, scripts with `play_effect(name, x, y, z)`, and `flint edit fx.particles.toml` edits it. See [Particles](../concepts/particles.md).
 
 ```toml
 name = "campfire"                  # defaults to the file stem
@@ -339,9 +331,9 @@ prompt = "wooden tavern chair"
 provider = "meshy"
 ```
 
-## Style Guides (`styles/*.style.toml`)
+## Style Guides (`styles/*.styleguide.toml`)
 
-Define visual vocabulary for consistent AI asset generation. Searched in `styles/` then `.flint/styles/`.
+Define visual vocabulary for consistent AI asset generation. Searched in `styles/` then `.flint/styles/`. The old suffix, `.style.toml`, still loads with a warning to rename the file: it is the [UI styles](#ui-styles-uistyletoml) suffix.
 
 ```toml
 [style]
@@ -488,7 +480,7 @@ See [Scripting: Data-Driven UI](../concepts/scripting.md#data-driven-ui-system) 
 
 ## UI Styles (`ui/*.style.toml`)
 
-Named style classes for UI elements. Referenced by `.ui.toml` layout files.
+Named style classes for UI elements. Referenced by `.ui.toml` layout files. Not to be confused with an AI [style guide](#style-guides-stylesstyleguidetoml), which is `*.styleguide.toml`.
 
 ```toml
 [styles.<class-name>]
@@ -578,11 +570,11 @@ Binding types: `key`, `mouse_button`, `mouse_delta`, `mouse_wheel`, `gamepad_but
 
 ## Music Session Files
 
-The rhythm system ([Music Sessions](../concepts/music-sessions.md)) has its own family of files. All carry `schema_version = 0`. The full grammar lives with the `flint-music` crate; this is the map.
+The rhythm system ([Music Sessions](../concepts/music-sessions.md)) has its own family of files. All carry `schema_version = 0`. The full grammar lives with the `flint-music` crate (suites, event scripts) and `flint-rhythm` (charts, sessions, the rhythm contract); this is the map.
 
 | File | Purpose |
 |------|---------|
-| `*.suite.toml` | Suite manifest: `[suite]` id and title, `[audio] sample_rate`, `[[tempo]]` anchors (`sample`, `bpm`, `time_signature`), `[[sections]]` (`name`, `start_sample`, `pulse_window_ms`), `[reintegration]` (`re_entry_sections`, `lead_bus`, `reassembly_bars`), and one `[buses.<name>]` per fixed bus (`foundation`, `harmony`, `world_voice`, `home_theme`, `child_motif`, `texture`) with `file` or `silent = true`. Optional `[[degraded_alternates]]`. Checked by `flint validate-suite`. |
+| `*.suite.toml` | Suite manifest: `[suite]` id and title, `[audio] sample_rate`, `[[tempo]]` anchors (`sample`, `bpm`, `time_signature`), `[[sections]]` (`name`, `start_sample`, and for a rhythm suite `pulse_window_ms`), and one `[buses.<name>]` per bus, named by the suite and mixed in the order it declares them, with `file` or `silent = true`. Optional `[[degraded_alternates]]`. A rhythm suite adds `[reintegration]` (`re_entry_sections`, `lead_bus`, `reassembly_bars`) and keeps exactly the six buses `foundation`, `harmony`, `world_voice`, `home_theme`, `child_motif`, `texture`. Checked by `flint validate-suite`. |
 | `*.chart.toml` | Beatmap: `suite` id, `[[curves]]` (`channel` ∈ `lean`, `sway`, `pressure_l`, `pressure_r`; `beat`; `value`; `interp` ∈ `linear`, `hold`, `smooth`), `[[pulses]]` (`beat`, `kind` ∈ `pulse`, `press`, `flick`, optional `window_ms`, `strength`, `direction`), `[[cues]]` (`beat`, `cue`, optional `params`), `[[intensity]]` (`beat`, `value`). |
 | `*.events.toml` | Offline event script for `flint render-suite`: `[[events]]` with `at = "bar:N"` or `"beat:N"`, `bus`, `action` ∈ `set_gain` (`db`, `ramp_ms`), `set_lpf` (`hz`, `ramp_ms`), `set_detune` (`semitones`, `ramp_ms`), `marker` (`label`). |
 | `*.session.jsonl` | Recorded input session (`flint play-chart --record`): one JSON object per line, a `header` (suite, chart, sample rate, latency and calibration offsets, config snapshots) followed by `lean` (`sample`, `x`, `y`) and `pulse` (`sample`, `kind`) events stamped in suite samples. Replayed by `flint replay-chart --session`. |

@@ -17,11 +17,11 @@
 //! scenery such as verges.
 
 use flint_core::components as comp;
-use flint_core::spline::{self, SplineControlPoint, SplineSample};
 use flint_core::toml_util::{toml_f32, toml_f32_slice};
 use flint_core::vfs;
 use flint_core::Vec3;
 use flint_ecs::FlintWorld;
+use flint_geometry::spline::{self, SplineControlPoint, SplineSample};
 use flint_import::ImportedMaterial;
 use flint_physics::PhysicsSystem;
 use flint_render::{SceneRenderer, Vertex};
@@ -150,7 +150,11 @@ fn store_spline_data(
         toml::Value::Integer(gap_ranges.len() as i64),
     );
 
-    let _ = world.set_component(entity_id, comp::SPLINE_DATA, toml::Value::Table(table));
+    let _ = world.set_component(
+        entity_id,
+        flint_geometry::components::SPLINE_DATA,
+        toml::Value::Table(table),
+    );
 }
 
 // ─── Pass 2: generate cross-section meshes ───────────────
@@ -299,17 +303,15 @@ fn sweep_v_coords(
     dist.into_iter().map(|d| d / length).collect()
 }
 
-/// Resolve a path written in a scene: next to the scene, then one directory
-/// up (where a game's `splines/`, `textures/` sit beside `scenes/`).
+/// Resolve a path written in a scene by the project's one search
+/// (`AssetKind::Files`, ADR 0114): from the scene's directory, then from each
+/// directory above it up to the project root (where a game's `splines/`,
+/// `textures/` sit), then the engine. A miss is warned about with every path
+/// tried, and the path beside the scene is returned for the loader's error.
 fn resolve_scene_path(scene_dir: &Path, rel: &str) -> std::path::PathBuf {
-    let p = scene_dir.join(rel);
-    if vfs::exists(&p) {
-        p
-    } else if let Some(parent) = scene_dir.parent() {
-        parent.join(rel)
-    } else {
-        p
-    }
+    // The scene's project, found from its folder (`--project` pins it)
+    let project = flint_core::project::Project::for_scene(&scene_dir.join("scene.toml"));
+    project.file_or_beside("spline file", rel, scene_dir)
 }
 
 /// Load a spline mesh's texture into the renderer's cache, with mipmaps, keyed
@@ -752,7 +754,7 @@ pub fn load_splines(
     for entity in world.all_entities() {
         let spline_file = world
             .get_components(entity.id)
-            .and_then(|c| c.get(comp::SPLINE).cloned())
+            .and_then(|c| c.get(flint_geometry::components::SPLINE).cloned())
             .and_then(|s| s.get("file").and_then(|v| v.as_str().map(String::from)));
 
         if let Some(file_rel) = spline_file {
@@ -821,7 +823,7 @@ pub fn load_splines(
     for entity in world.all_entities() {
         let mesh_comp = world
             .get_components(entity.id)
-            .and_then(|c| c.get(comp::SPLINE_MESH).cloned());
+            .and_then(|c| c.get(flint_geometry::components::SPLINE_MESH).cloned());
 
         if let Some(comp) = mesh_comp {
             match parse_spline_mesh_component(&comp) {
@@ -991,7 +993,7 @@ pub fn load_splines(
                 chunk_table.insert("t_end".into(), toml::Value::Float(t_end as f64));
                 let _ = world.set_component(
                     chunk_id,
-                    comp::SPLINE_CHUNK,
+                    flint_geometry::components::SPLINE_CHUNK,
                     toml::Value::Table(chunk_table),
                 );
 

@@ -54,7 +54,7 @@ SSAO darkens crevices, corners, and areas where surfaces meet, adding depth and 
 | `ssao_enabled` | bool | `true` | Enable SSAO |
 | `ssao_radius` | f32 | `0.5` | Sample radius in world units (larger = wider darkening) |
 | `ssao_intensity` | f32 | `1.0` | Occlusion strength (higher = darker crevices) |
-| `ssao_samples` | u32 | `64` | Hemisphere samples per pixel, 1--64 (ADR 0052) |
+| `ssao_samples` | u32 | `64` | Hemisphere samples per pixel, 1--64 ([ADR 0052](https://github.com/chrischaps/Flint/blob/main/docs/adr/0052-authorable-ssao-sample-count.md)) |
 
 SSAO is the heaviest per-pixel pass in the post stack. The sample kernel is strided, so lower counts keep full radius coverage; `ssao_samples = 16` is usually indistinguishable on soft matte scenes and roughly four times cheaper. The clay-look demo scenes use 16.
 
@@ -78,7 +78,7 @@ Depth of field defocuses everything outside a focus band. The composite pass com
 | `dof_focus_distance` | f32 | `10.0` | Distance of the focus plane in world units |
 | `dof_focus_range` | f32 | `5.0` | Half-width of the sharp band around the focus plane |
 
-Distances are plain view-space meters. Earlier builds linearized depth with the OpenGL `[-1, 1]` convention, which made focus values drift with the far plane; ADR 0055 moved every depth consumer to wgpu's `[0, 1]` convention, so `dof_focus_distance = 10` now means ten meters from the camera.
+Distances are plain view-space meters. Earlier builds linearized depth with the OpenGL `[-1, 1]` convention, which made focus values drift with the far plane; [ADR 0055](https://github.com/chrischaps/Flint/blob/main/docs/adr/0055-wgpu-zero-to-one-depth-convention.md) moved every depth consumer to wgpu's `[0, 1]` convention, so `dof_focus_distance = 10` now means ten meters from the camera.
 
 In the scene viewer, the Rendering & Effects menu offers **DoF follow**: the focus plane tracks the last selected entity, which is a fast way to find a focus distance by eye.
 
@@ -102,13 +102,13 @@ Distance-based fog blends a configurable fog color into the scene based on pixel
 | `fog_tint_start` | f32 | `100.0` | Distance where the tint starts to come in |
 | `fog_tint_end` | f32 | `1000.0` | Distance where it reaches `fog_tint_strength` |
 
-**Height fog** (ADR 0101) is a layer of air whose density is `fog_height_density` at `fog_height_origin` and falls exponentially above it (and rises below it). The composite integrates that density exactly along each view ray, from the camera to the pixel, and adds it to the distance fog's optical depth: `fog = 1 - exp(-(fog_density * max(d - fog_start, 0) + height_depth))`. So a view low in the layer goes milky at a short distance, a view across it from above sees only the hollows fill, and the layer lies round the camera too (it isn't held off by `fog_start`). The layer is one horizontal slab across the whole scene: for mist that keeps to valleys at different heights, use the ground fog below. Before ADR 0101, height fog took `max(distance fog, exp(-falloff × h) × distance fog)`, which is never more than the distance fog, so it did nothing on screen. `fog_height_density` defaults to 0, so a scene that turned height fog on then looks as it did.
+**Height fog** ([ADR 0101](https://github.com/chrischaps/Flint/blob/main/docs/adr/0101-height-fog-layer-and-aerial-tint.md)) is a layer of air whose density is `fog_height_density` at `fog_height_origin` and falls exponentially above it (and rises below it). The composite integrates that density exactly along each view ray, from the camera to the pixel, and adds it to the distance fog's optical depth: `fog = 1 - exp(-(fog_density * max(d - fog_start, 0) + height_depth))`. So a view low in the layer goes milky at a short distance, a view across it from above sees only the hollows fill, and the layer lies round the camera too (it isn't held off by `fog_start`). The layer is one horizontal slab across the whole scene: for mist that keeps to valleys at different heights, use the ground fog below. Before [ADR 0101](https://github.com/chrischaps/Flint/blob/main/docs/adr/0101-height-fog-layer-and-aerial-tint.md), height fog took `max(distance fog, exp(-falloff × h) × distance fog)`, which is never more than the distance fog, so it did nothing on screen. `fog_height_density` defaults to 0, so a scene that turned height fog on then looks as it did.
 
-**The aerial tint** (ADR 0101) mixes `fog_tint_color` over each drawn pixel by `fog_tint_strength × smoothstep(fog_tint_start, fog_tint_end, d)`, before the fog is mixed in. Far land turns blue (aerial perspective), while the farthest of it still runs into `fog_color` and, with a fog the colour of the sky's horizon, into the sky with no line. Like the fog, the tint is light in the air, not a surface colour: keep it with the hour, darker at night, as you would `fog_color`. It leaves the sky alone.
+**The aerial tint** ([ADR 0101](https://github.com/chrischaps/Flint/blob/main/docs/adr/0101-height-fog-layer-and-aerial-tint.md)) mixes `fog_tint_color` over each drawn pixel by `fog_tint_strength × smoothstep(fog_tint_start, fog_tint_end, d)`, before the fog is mixed in. Far land turns blue (aerial perspective), while the farthest of it still runs into `fog_color` and, with a fog the colour of the sky's horizon, into the sky with no line. Like the fog, the tint is light in the air, not a surface colour: keep it with the hour, darker at night, as you would `fog_color`. It leaves the sky alone.
 
 ### Ground fog
 
-**Ground fog** (ADR 0106) is fog that lies on floors of its own, so a mist can fill hollows at many heights where the height fog is one level layer. The game gives it a map over a world rectangle, `GroundFog { origin, size, width, depth, texels }`, each texel a `[floor, amount]`: the floor a world Y (the ground's, usually) and the amount 0 to 1. Over a texel the density is `amount × ground_fog_density` at the floor, falling by e every `1 / ground_fog_falloff` metres above it and holding at the floor's under it. Set the map with `SceneRenderer::set_ground_fog(device, queue, &fog)` (`ExtensionGpu::set_ground_fog` from an extension), once and again when the ground changes; `clear_ground_fog` removes it, and so does a map with no fog on it. The look is on the post-process config and can change every frame:
+**Ground fog** ([ADR 0106](https://github.com/chrischaps/Flint/blob/main/docs/adr/0106-ground-fog-on-own-floors.md)) is fog that lies on floors of its own, so a mist can fill hollows at many heights where the height fog is one level layer. The game gives it a map over a world rectangle, `GroundFog { origin, size, width, depth, texels }`, each texel a `[floor, amount]`: the floor a world Y (the ground's, usually) and the amount 0 to 1. Over a texel the density is `amount × ground_fog_density` at the floor, falling by e every `1 / ground_fog_falloff` metres above it and holding at the floor's under it. Set the map with `SceneRenderer::set_ground_fog(device, queue, &fog)` (`ExtensionGpu::set_ground_fog` from an extension), once and again when the ground changes; `clear_ground_fog` removes it, and so does a map with no fog on it. The look is on the post-process config and can change every frame:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -121,7 +121,7 @@ The composite marches each view ray through the box the fog can lie in: the map'
 
 A texel's value is at the middle of its cell, and the fog blends the four round a point, so give a texel with no fog the ground's height too: its floor still shapes the fog at its edges. Its cost is the march over every pixel whose ray crosses the box, `ground_fog_steps + 2` reads each; at 1080p with 24 steps it was within the noise of a frame without it in The Capitol's wilds.
 
-Fog reaches **everything drawn, at any distance** (ADR 0078). The sky and skybox never write depth and the scene clears it to exactly 1.0, so the composite treats a pixel as sky only when its depth is 1.0; any geometry inside the camera's far plane is fogged. Set `far` to what the scene draws, not larger. SSAO, volumetric lighting and depth of field use the same sky test. Before ADR 0078 the cut was depth ≥ 0.9999, which with a 1 m near plane is about 2.9 km at `far` = 4 km and never more than 10 km, so a ground running to the horizon ended in an unfogged band.
+Fog reaches **everything drawn, at any distance** ([ADR 0078](https://github.com/chrischaps/Flint/blob/main/docs/adr/0078-fog-reaches-everything-drawn.md)). The sky and skybox never write depth and the scene clears it to exactly 1.0, so the composite treats a pixel as sky only when its depth is 1.0; any geometry inside the camera's far plane is fogged. Set `far` to what the scene draws, not larger. SSAO, volumetric lighting and depth of field use the same sky test. Before [ADR 0078](https://github.com/chrischaps/Flint/blob/main/docs/adr/0078-fog-reaches-everything-drawn.md) the cut was depth ≥ 0.9999, which with a 1 m near plane is about 2.9 km at `far` = 4 km and never more than 10 km, so a ground running to the horizon ended in an unfogged band.
 
 ## Volumetric Lighting (God Rays)
 
@@ -194,7 +194,7 @@ High `volumetric_density` with a short `volumetric_max_distance` and `decay` clo
 
 The anisotropic Kuwahara filter turns the HDR image into flat, brush-like patches that follow local edge direction. It runs as a pre-pass on the HDR buffer before SSAO and bloom, so lighting effects stay crisp on top of the painted surface. Three shaders cooperate: a structure-tensor pass, a tensor blur, and the sector filter itself.
 
-![Kuwahara off](../images/kuwahara-off.png)
+![Kuwahara off](../images/room-unstyled.png)
 
 *The tavern showcase with the Kuwahara pre-pass disabled.*
 
@@ -211,7 +211,7 @@ sharpness = 6.0
 hardness = 4.0
 ```
 
-In a scene with a `[wooze]` table its paint can also boil: `kuwahara_boil` (a plain `[post_process]` key beside `contour_boil` and `boil_on`, not one of the table's) moves the kernel and turns the strokes a little on each drawing. See [Shading boil](#shading-boil).
+In a scene with a `[wooze]` table its paint can also boil: `boil` moves the kernel and turns the strokes a little on each drawing. See [Shading boil](#shading-boil).
 
 | Key | Default | Menu range | Description |
 |-----|---------|------------|-------------|
@@ -219,29 +219,39 @@ In a scene with a `[wooze]` table its paint can also boil: `kuwahara_boil` (a pl
 | `sharpness` | `8.0` | 1--16 | How strongly the lowest-variance sector wins |
 | `hardness` | `8.0` | 1--16 | Edge hardness between sectors |
 | `anisotropy` | `1.0` | 0--2 | 0 = isotropic disc, 1 = sectors stretch fully along the local edge direction |
+| `boil` | `0.0` | 0--1 | With a `[wooze]` table, how far each drawing moves the paint, as a share of the radius |
 
-Scenes written before the table used `kuwahara_enabled`, `kuwahara_radius`, `kuwahara_sharpness`, `kuwahara_hardness` and `kuwahara_anisotropy` directly in `[post_process]` (the tavern showcase still does). They still work: on load each one moves into the table, so `kuwahara_enabled = true` with `kuwahara_radius = 4` renders the same bytes as the table above with `radius = 4`. A key the table also sets is the table's, and the old keys without `kuwahara_enabled = true` leave the filter off, as they always did.
+Scenes written before the table used `kuwahara_enabled`, `kuwahara_radius`, `kuwahara_sharpness`, `kuwahara_hardness`, `kuwahara_anisotropy` and `kuwahara_boil` directly in `[post_process]` (the tavern showcase still does). They still work: on load each one moves into the table, so `kuwahara_enabled = true` with `kuwahara_radius = 4` renders the same bytes as the table above with `radius = 4`. A key the table also sets is the table's, and the old keys without `kuwahara_enabled = true` leave the filter off, as they always did.
 
 The filter's textures and pipelines are allocated the first time it is enabled, so scenes that never use it pay nothing. Kuwahara is the first [stylize pass](stylize-passes.md): it runs through the same framework as every later style, in its HDR stage.
 
 ## Contour (Ink Lines)
 
-The contour pass draws ink lines in screen space. It finds silhouettes as breaks in depth, and the edges between fills as breaks in luminance. It's one full-screen draw, so its cost doesn't grow with the scene. It runs after the Kuwahara filter, so paint sits under the ink and never smears it.
+The contour style draws ink lines in screen space. It finds silhouettes as breaks in depth, and the edges between fills as breaks in luminance. It's one full-screen draw, so its cost doesn't grow with the scene. It's an HDR-stage [style](stylize-passes.md) registered after every other built-in, so it runs after the Kuwahara filter: paint sits under the ink and never smears it. A table's `order` can move it, and a [user style](stylize-passes.md#user-authored-styles) at the HDR stage comes after it unless its `order` says otherwise.
 
 Depth is read as the second difference of 1 / distance, which is zero on any flat surface however steep the view, so a floor seen at a grazing angle draws no lines.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `contour_enabled` | bool | `false` | Enable the pass |
-| `contour_width` | f32 | `1.25` | Half a line's width, in pixels at 1080p. Scaled with the frame, and never under a pixel's reach |
-| `contour_threshold` | f32 | `0.08` | How strong an edge must be before it starts to ink. Lower draws more |
-| `contour_strength` | f32 | `0.9` | How dark the ink goes, 0--1 |
-| `contour_luma` | f32 | `0.5` | How much edges in luminance count against edges in depth. 0 is silhouettes only |
-| `contour_color` | \[f32; 3\] | `[0.015, 0.012, 0.02]` | The ink's colour, linear |
-| `contour_fade` | f32 | `30.0` | Metres at which a line has faded by half, so distant foliage doesn't go solid with ink. 0 never fades |
-| `contour_boil` | f32 | `0.0` | How far each drawing moves the lines, and how much it changes their width and pressure |
+```toml
+[post_process.styles.contour]
+width = 1.5
+fade = 26.0
+```
 
-Its texture and pipeline are allocated the first time it is enabled, so scenes that never use it pay nothing. It costs about 0.07 ms at 1080p on an RTX 5070 Laptop GPU, or 0.14 ms boiling.
+| Key | Default | Menu range | Description |
+|-----|---------|------------|-------------|
+| `width` | `1.25` | 0.25--5 | Half a line's width, in pixels at 1080p. Scaled with the frame, and never under a pixel's reach |
+| `threshold` | `0.08` | 0.01--0.5 | How strong an edge must be before it starts to ink. Lower draws more |
+| `strength` | `0.9` | 0--1 | How dark the ink goes |
+| `luma` | `0.5` | 0--2 | How much edges in luminance count against edges in depth. 0 is silhouettes only |
+| `color` | `[0.015, 0.012, 0.02]` | | The ink's colour as the HDR scene holds it (linear); `"#rrggbb"` works too |
+| `fade` | `30.0` | 0--200 | Metres at which a line has faded by half, so distant foliage doesn't go solid with ink. 0 never fades |
+| `boil` | `0.0` | 0--2 | With a `[wooze]` table, how far each drawing moves the lines, and how much it changes their width and pressure |
+
+Being a style, it also takes `blend` and `order` and turns up in F4's Styles editor, `--style contour:width=2` and `flint render --list-styles`. `flint render --contour` and the `--contour-*` flags still work, as shorthands for its keys.
+
+Scenes written before #599 used `contour_enabled`, `contour_width`, `contour_threshold`, `contour_strength`, `contour_luma`, `contour_color`, `contour_fade` and `contour_boil` in `[post_process]`. They still load, each moving into the table as Kuwahara's old keys do, and without `contour_enabled = true` they leave the ink off, as they always did. `examples/shading_boil.scene.toml` renders the same bytes in either spelling.
+
+Its pipeline is built the first time it is enabled, so scenes that never use it pay nothing. It costs about 0.07 ms at 1080p on an RTX 5070 Laptop GPU, or 0.14 ms boiling.
 
 ## Shading Boil
 
@@ -249,7 +259,7 @@ In a scene with a [`[wooze]` table](procgen.md#the-wooze-field), paint and ink c
 
 ![One drawing](../images/shading-boil-a.png)
 
-*`demo/shading_boil.scene.toml`, in which nothing moves.*
+*`examples/shading_boil.scene.toml`, in which nothing moves.*
 
 ![The next drawing](../images/shading-boil-b.png)
 
@@ -260,27 +270,33 @@ In a scene with a [`[wooze]` table](procgen.md#the-wooze-field), paint and ink c
 preset = "linklater"
 
 [post_process]
-kuwahara_enabled = true
-kuwahara_boil = 0.5
-contour_enabled = true
-contour_boil = 1.0
 boil_on = 1
+
+[post_process.styles.kuwahara]
+boil = 0.5
+
+[post_process.styles.contour]
+boil = 1.0
 ```
+
+Each style's `boil` is its own amount; how long each drawing is held is one `[post_process]` key the two share:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `boil_on` | u32 | `2` | Film frames each drawing is held: 1, 2 or 3 |
 
-A beat of the field's `step` is six film frames, which ones, twos and threes all divide, so a drawing always lands on the beat. The `linklater` preset's half second is therefore 12 frames a second, and on ones a drawing lasts 1/12 s. Leave `boil_on` at its default with that preset and a drawing lasts 1/6 s, which reads as a throb. `demo/shading_boil.scene.toml` gets the same 1/12 s from a quarter-second step on twos. The clock runs on game time, not frames, so a drawing lasts as long at 30 fps as at 144, and it stops when animation does. A change of `step` bends it from where it stands.
+The shading boil's drawings are held on the wooze field's beat. To hold the motion under the lines too, so poses and positions change on the same ticks as a style's `boil`, see [Motion on twos](stylize-passes.md#motion-on-twos) and `[post_process] motion_hold`.
 
-The field's `jitter` sets how hard it boils: both `_boil` values are multiplied by it, so a preset or zone with `jitter = 0` holds still, and `amplitude` has no say, so a zone can hold its trees still and go on boiling their lines. The field is sampled once a frame where the camera is, since the passes are full-screen. A zone boils when you're in it, and not when you're looking at it from outside.
+A beat of the field's `step` is six film frames, which ones, twos and threes all divide, so a drawing always lands on the beat. The `linklater` preset's half second is therefore 12 frames a second, and on ones a drawing lasts 1/12 s. Leave `boil_on` at its default with that preset and a drawing lasts 1/6 s, which reads as a throb. `examples/shading_boil.scene.toml` gets the same 1/12 s from a quarter-second step on twos. The clock runs on game time, not frames, so a drawing lasts as long at 30 fps as at 144, and it stops when animation does. A change of `step` bends it from where it stands.
 
-With either `_boil` at 0, or no `[wooze]` table, that pass renders byte for byte as if boil didn't exist. The contour still draws in a scene with no field; its lines just hold still.
+The field's `jitter` sets how hard it boils: both styles' `boil` values are multiplied by it, so a preset or zone with `jitter = 0` holds still, and `amplitude` has no say, so a zone can hold its trees still and go on boiling their lines. The field is sampled once a frame where the camera is, since the passes are full-screen. A zone boils when you're in it, and not when you're looking at it from outside.
+
+With either `boil` at 0, or no `[wooze]` table, that pass renders byte for byte as if boil didn't exist. The contour still draws in a scene with no field; its lines just hold still.
 
 To check the cadence, capture one film frame per frame. In a scene where nothing else moves, consecutive pairs are byte for byte the same on twos, and each pair differs from the next:
 
 ```bash
-flint-player demo/shading_boil.scene.toml --schemas schemas \
+flint-player examples/shading_boil.scene.toml \
   --frame-step 0.0416666666666667 --screenshot out/f.png --screenshot-every 0.0416666666666667 --exit-after 2
 ```
 
@@ -288,7 +304,7 @@ Headless, `--boil-time <seconds>` picks the drawing: the same value gives the sa
 
 ## Color Grade, Film Grain and FXAA
 
-Three finishing controls from ADR 0050 sit at the end of the composite pass.
+Three finishing controls from [ADR 0050](https://github.com/chrischaps/Flint/blob/main/docs/adr/0050-color-grade-film-grain-and-fxaa.md) sit at the end of the composite pass.
 
 **Color grade** is an ASC-CDL-shaped lift/gamma/gain applied right after ACES tonemapping, so it grades the display-referred image: `pow(max(color * gain + lift, 0), 1 / gamma)`. The grade is skipped entirely while all three are neutral.
 
@@ -310,7 +326,7 @@ These three are the "feel" levers scripts reach for most; see the script notes b
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `desaturate` | f32 | `0.0` | Mix toward a darkened ash grey (0 = full color, 1 = drained). Applied after the grade, before render modes (ADR 0021) |
+| `desaturate` | f32 | `0.0` | Mix toward a darkened ash grey (0 = full color, 1 = drained). Applied after the grade, before render modes ([ADR 0021](https://github.com/chrischaps/Flint/blob/main/docs/adr/0021-ladder-visuals-through-the-post-stack.md)) |
 | `chromatic_aberration` | f32 | `0.0` | Splits the red and blue channels radially from the screen center |
 | `radial_blur` | f32 | `0.0` | 8-tap blur that grows toward the screen edges while the center stays sharp |
 
@@ -329,7 +345,7 @@ Desaturation mixes toward `luma * 0.62` rather than neutral grey on purpose: it 
 
 ## MSAA
 
-The scene passes can run with 4x multisample anti-aliasing (ADR 0058). Post-processing, shadow and blit passes stay single-sample; depth consumers such as SSAO, fog and DoF read a sample-0 depth resolve.
+The scene passes can run with 4x multisample anti-aliasing ([ADR 0058](https://github.com/chrischaps/Flint/blob/main/docs/adr/0058-opt-in-4x-msaa-for-scene-passes.md)). Post-processing, shadow and blit passes stay single-sample; depth consumers such as SSAO, fog and DoF read a sample-0 depth resolve.
 
 ![MSAA comparison](../images/msaa-compare.png)
 
@@ -357,7 +373,6 @@ volumetric_enabled = false
 dof_strength = 0.4
 dof_focus_distance = 8.0
 dof_focus_range = 4.0
-contour_enabled = false
 grade_lift = [0.03, 0.02, 0.015]
 grade_gamma = [1.0, 1.0, 1.0]
 grade_gain = [1.04, 1.0, 0.94]
@@ -378,7 +393,7 @@ WARN levels/demo.scene.toml: [post_process] has no field 'bloom_intensty', did y
 
 When the pipeline is disabled (`--no-postprocess` or the menu checkbox), most effects are zeroed: bloom, vignette, fog, dither, desaturate, film grain, DoF, render mode and grade. Two are not: `chromatic_aberration` and `radial_blur` predate the gate and stay live even with post-processing off.
 
-The scene viewer applies the scene's `[post_process]` block on load (ADR 0046). The Rendering & Effects menu can swap between the authored block and the viewer's default look.
+The scene viewer applies the scene's `[post_process]` block on load ([ADR 0046](https://github.com/chrischaps/Flint/blob/main/docs/adr/0046-viewer-applies-scene-post-process.md)). The Rendering & Effects menu can swap between the authored block and the viewer's default look.
 
 ## CLI Flags
 
@@ -413,7 +428,7 @@ flint render scene.toml --contour --contour-width 1.5 --contour-boil 1 --kuwahar
 flint render scene.toml --grade-lift 0.03,0.02,0.015 --grade-gain 1.04,1,0.94 --film-grain 0.03 --fxaa --msaa 4
 
 # Combine flags
-flint play scene.toml --bloom-intensity 0.1 --exposure 1.2 --volumetric-density 5.0
+flint render scene.toml --bloom-intensity 0.1 --exposure 1.2 --volumetric-density 5.0
 ```
 
 | Flag | Description |
@@ -467,7 +482,7 @@ CLI flags take precedence over scene TOML settings.
 
 ## The Rendering & Effects Menu (F4)
 
-There are no longer per-effect function keys. ADR 0053 consolidated every render and post-process debug control into one egui window, opened with **F4** in both the player and the scene viewer. Every toggle above appears there with its non-binary parameters, and changes write straight through to the renderer.
+There are no longer per-effect function keys. [ADR 0053](https://github.com/chrischaps/Flint/blob/main/docs/adr/0053-one-rendering-and-effects-menu-on-f4.md) consolidated every render and post-process debug control into one egui window, opened with **F4** in both the player and the scene viewer. Every toggle above appears there with its non-binary parameters, and changes write straight through to the renderer.
 
 | Section | Controls |
 |---------|----------|
@@ -480,7 +495,7 @@ There are no longer per-effect function keys. ADR 0053 consolidated every render
 | Styles | A section per registered style (Kuwahara among them), drawn from its declaration, with Defaults, Authored, Copy TOML and Commit to scene |
 | Contour | Enabled, width, threshold, strength, luma, ink colour, fade, boil |
 | Shading boil | Paint boil (Kuwahara's), hold each drawing (ones, twos, threes), and what the wooze field says now: step, jitter and the drawing |
-| Render mode | Mode combo (None, Matrix, Blood, Drunk, Tron, Underwater), mix, params |
+| Render mode | Mode combo (None, Matrix, Blood, Drunk, Tron, Underwater, Tear (props)), mix, params |
 | Dither / Volumetric | Dither + intensity, volumetric + samples + density + max distance + decay |
 | Shadows | Enabled, resolution (512 / 1024 / 2048 / 4096; rebuilds the shadow pass) |
 | Lighting | Ambient sky, ambient ground, diffuse wrap, Oren-Nayar, sheen color, sheen strength, Reset lighting |
@@ -550,16 +565,17 @@ depth and luminance.*
 | 3 | Drunk | Pre-sample UV sway warping the whole composite chain, plus a ghosting double-tap. |
 | 4 | Tron | Depth Sobel + luminance edges in cyan over a dimmed scene, with a world-space grid reconstructed from depth so it rides real geometry. |
 | 5 | Underwater | Masks per pixel against a **waterline plane**, not a patch mask. Banded murk absorption, a wobbled foam lip on the line, light shafts, Snell-window brightening. |
+| 6 | Tear (props) | A tear with no look of its own (#397): the composite draws nothing, and only entities whose style has `blend_source = "tear"` show it, turning to their style where it passes ([A blend that follows the tear](stylize-passes.md#a-blend-that-follows-the-tear)). |
 
 Four uniforms carry the state: `render_mode`, `mode_mix` (0..1 blend),
 `mode_time`, and a `mode_params` vec4 whose meaning is per-mode.
 
 | Mode | `mode_params` |
 |------|---------------|
-| 1--4 | `x` = bleed-mask scale, `y` = mask style (0 = fbm patches, 1 = radial iris), `z` = rate, `w` = spare |
+| 1--4, 6 | `x` = bleed-mask scale (0 or less = the default 3), `y` = mask style (0 = fbm patches, 1 = radial iris), `z` = rate (Matrix glyph rerolls per second; 0 = the default 6), `w` = spare |
 | 5 | `x` = signed eye depth in meters (+ = submerged), `y` = sea energy 0..1, `z` = daylight 0..1, `w` = bioluminescence 0..1 |
 
-Modes 1--4 fade in through an fbm **bleed mask** whose threshold sweeps across
+Modes 1--4 and 6 fade in through an fbm **bleed mask** whose threshold sweeps across
 the noise span, so patch coverage grows with `mode_mix` and pins to full
 coverage at 1. Mode 5 ignores the mask entirely: being underwater is a fact
 about where your eye is, not a patch that spreads.
@@ -585,10 +601,12 @@ inside a hallucination with no way out. Instead, a dead script means a healed
 world. The cost is that you must call it every frame the effect is active:
 
 ```rhai
+fn envelope(t) { max(1.0 - t / 4.0, 0.0) }   // your own: 1 at the start, 0 after 4 s
+
 fn on_update() {
-    let m = current_mix();          // your own envelope
+    let m = envelope(total_time());
     if m > 0.001 {
-        set_render_mode(active_mode, m);
+        set_render_mode(3, m);          // 3 is drunk
     }
     // stop calling -> the engine restores the world by itself
 }
@@ -618,7 +636,7 @@ the Matrix mode nearly black.
 - **Rgba16Float** for the HDR buffer provides sufficient precision for bloom extraction without the memory cost of Rgba32Float
 - **Progressive downsample/upsample** (rather than a single Gaussian blur) produces wide, natural-looking bloom cheaply
 - **1x1 black fallback texture** when bloom is disabled avoids conditional bind group creation
-- **Lazy allocation** --- Kuwahara, contour and FXAA pipelines and textures are created the first time they are enabled, so the default path pays nothing for them
+- **Lazy allocation** --- Kuwahara, contour and FXAA pipelines and textures are created on the first frame they are enabled, however the config was set (scene load, a hot reload, the debug menu, a script), so the default path pays nothing for them
 - **Gate-safe defaults** --- MSAA, FXAA and film grain default off, and grain time is pinned at 0 headlessly, so `flint render` output stays byte-stable for pixel-diff gates
 - **Resize handling** --- `PostProcessResources` are recreated on window resize since the HDR texture and bloom mip chain are resolution-dependent
 - **Extended shadow depth** --- the shadow frustum's depth range is extended beyond the camera frustum so off-screen casters (ceilings, walls behind the camera) are captured in the shadow map, which is critical for correct volumetric shafts in enclosed spaces

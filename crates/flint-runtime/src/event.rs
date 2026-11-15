@@ -26,3 +26,16 @@ pub enum GameEvent {
     /// Custom event for scripting/gameplay
     Custom { name: String, data: toml::Value },
 }
+
+impl GameEvent {
+    /// A collision or trigger contact, which names the scene's entities.
+    pub fn is_contact(&self) -> bool {
+        matches!(
+            self,
+            Self::CollisionStarted { .. }
+                | Self::CollisionEnded { .. }
+                | Self::TriggerEntered { .. }
+                | Self::TriggerExited { .. }
+        )
+    }
+}

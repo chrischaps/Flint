@@ -6,8 +6,8 @@ use image::{Rgba, RgbaImage};
 use std::path::Path;
 
 fn main() {
-    let out_dir = Path::new("demo/textures");
-    std::fs::create_dir_all(out_dir).expect("Failed to create demo/textures");
+    let out_dir = Path::new("examples/textures");
+    std::fs::create_dir_all(out_dir).expect("Failed to create examples/textures");
 
     generate_stone_wall(out_dir);
     generate_wood_planks(out_dir);

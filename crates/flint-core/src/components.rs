@@ -1,6 +1,12 @@
 //! Engine component name constants.
 //!
 //! Use these instead of bare string literals so the compiler catches typos.
+//! A feature crate owns the names of its own components (#754):
+//! `flint_geometry::components` (ocean, water body, splines) and
+//! `flint_wooze::components` (shallow wooze), so adding one rebuilds that
+//! crate's readers, not the engine. `LIVING_PROP` and `MUSIC_SESSION` stay
+//! here: a player built without living props or music still names them to
+//! say so (`flint-player`'s `missing_features.rs`).
 
 // --- Spatial ---
 pub const TRANSFORM: &str = "transform";
@@ -14,11 +20,17 @@ pub const MODEL: &str = "model";
 pub const BOUNDS: &str = "bounds";
 pub const SPRITE: &str = "sprite";
 pub const LIGHT: &str = "light";
+/// `visibility { visible = false }` keeps an entity and its descendants out of
+/// every draw, shadow, light and ray target (#628). See `FlintWorld::hidden_entities`.
+pub const VISIBILITY: &str = "visibility";
+/// `motion_hold { rate = 12 }` draws an entity and its descendants on ticks,
+/// `rate` a second, as a rotoscoped film holds its drawings (#405). Only what
+/// the renderer draws is held. See `flint_render::motion_hold`.
+pub const MOTION_HOLD: &str = "motion_hold";
 
 // --- Scripting & interaction ---
 pub const SCRIPT: &str = "script";
 pub const INTERACTABLE: &str = "interactable";
-pub const HEALTH: &str = "health";
 
 // --- Animation ---
 pub const ANIMATOR: &str = "animator";
@@ -26,18 +38,20 @@ pub const SKELETON: &str = "skeleton";
 pub const SPRITE_ANIMATOR: &str = "sprite_animator";
 pub const IK_TWO_BONE: &str = "ik_two_bone";
 pub const LIVING_PROP: &str = "living_prop";
-pub const SHALLOW_WOOZE: &str = "shallow_wooze";
 
 // --- Physics ---
 pub const RIGIDBODY: &str = "rigidbody";
 pub const COLLIDER: &str = "collider";
 pub const JOINT: &str = "joint";
 pub const CHARACTER_CONTROLLER: &str = "character_controller";
-pub const PLAYER: &str = "player";
 
 // --- Audio ---
 pub const AUDIO_SOURCE: &str = "audio_source";
 pub const AUDIO_TRIGGER: &str = "audio_trigger";
+/// A scene's suite (#745): its stems play on their buses, sample-locked, and
+/// scripts read the beat; with a `chart`, the rhythm layer judges it too.
+/// Read by flint-player's music subsystem.
+pub const MUSIC_SESSION: &str = "music_session";
 
 // --- Particles ---
 pub const PARTICLE_EMITTER: &str = "particle_emitter";
@@ -48,23 +62,11 @@ pub const TERRAIN: &str = "terrain";
 /// Compute grass on a game's own ground: a mask over a rectangle (ADR 0089).
 pub const GRASS_GROUND: &str = "grass_ground";
 
-// --- Ocean ---
-pub const OCEAN: &str = "ocean";
-pub const OCEAN_CONTACT: &str = "ocean_contact";
-/// Water on a mesh of its own: a lake at its level or a river down its path (ADR 0094).
-pub const WATER_BODY: &str = "water_body";
-
 // --- Skeletal probes ---
 pub const BONE_PROBE: &str = "bone_probe";
 
 // --- Procedural sky ---
 pub const SKY: &str = "sky";
-
-// --- Splines ---
-pub const SPLINE: &str = "spline";
-pub const SPLINE_DATA: &str = "spline_data";
-pub const SPLINE_MESH: &str = "spline_mesh";
-pub const SPLINE_CHUNK: &str = "spline_chunk";
 
 // --- UI ---
 pub const SCREEN_ANCHOR: &str = "screen_anchor";

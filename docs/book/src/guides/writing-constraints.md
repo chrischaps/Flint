@@ -21,7 +21,7 @@ type = "<kind>"
 
 - **name** --- unique identifier, used in logs and JSON output
 - **description** --- what the rule checks (for documentation)
-- **query** --- which entities this constraint applies to
+- **query** --- which entities this constraint applies to: one resource and at most one condition (`entities where archetype == 'door'`). There is no `and` or `or`; a query that does not parse is an error naming the constraint, not a rule that is skipped
 - **severity** --- `"error"` fails validation, `"warning"` is advisory
 - **message** --- shown when violated. `{name}` is replaced with the entity name
 
@@ -176,7 +176,7 @@ schemas/constraints/
 └── gameplay.toml        # Game-specific rules (one player, door connectivity)
 ```
 
-All `.toml` files in `schemas/constraints/` are loaded automatically.
+All `.toml` files in the `constraints/` folder of every schema directory the project names are loaded automatically. The engine's own `schemas/` has none; the three rules about rooms and doors live with the [examples' layer](../concepts/schemas.md#the-examples-layer), `schemas/examples/constraints/basics.toml`.
 
 ## Cascade Detection
 

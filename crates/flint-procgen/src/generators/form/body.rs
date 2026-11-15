@@ -228,6 +228,14 @@ fn section_turn(p: &FormParams, u: f32) -> f32 {
     p.section_deg.to_radians() + TAU * p.twist_turns * u
 }
 
+/// The section's broad axis at height fraction `u`, a unit vector at rest: the
+/// way a line of writing runs across a flat form.
+pub(super) fn broad_axis(p: &FormParams, spine: &Spine, u: f32) -> Vec3 {
+    let f = spine.frame(u);
+    let turn = section_turn(p, u);
+    (f.normal * turn.cos() + f.binormal * turn.sin()).normalized()
+}
+
 /// The rest surface at height fraction `u` and angle `a`, with its outward
 /// normal. The first and last rings close on the spine, so the form is shut.
 pub(super) fn surface(

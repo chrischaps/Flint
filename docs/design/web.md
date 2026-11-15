@@ -30,9 +30,12 @@ trunk build --release --cargo-profile web-release   # what the site ships (#123,
 CI keeps this compiling (#96). The `wasm32 check` job in
 `.github/workflows/ci.yml` runs `scripts/wasm-check.sh` on every PR: a wasm32
 clippy pass over `flint-player` and the workspace crates it links, with every
-lint off but `disallowed_methods`, configured in
-`scripts/wasm-clippy/clippy.toml` to deny `Instant::now`, `SystemTime::now`
-and their `elapsed()`. Those are the calls that compile but panic. #100
+lint off but `disallowed_methods`: the root `clippy.toml`'s list (reads past
+the vfs, `as_float`, the wgpu seams), which native `cargo clippy` reads too,
+plus `scripts/wasm-clippy/wasm-only.toml`, which denies `Instant::now`,
+`SystemTime::now` and their `elapsed()` (#761: on native `web_time::Instant`
+is `std::time::Instant`, so only a wasm build can tell them apart). Those are
+the calls that compile but panic. #100
 moved the 32 sites that predated the check to `web-time` and removed
 their allows, so a std time call in a runtime crate now fails the check.
 
@@ -57,6 +60,7 @@ the query string instead of clap:
 | `perf=1\|cpu` | `--perf` | the perf readout in a corner (#120): frame times, each phase's CPU time, the slowest scripts and each pass's GPU time ([The perf readout](#the-perf-readout-120)) |
 | `mix=old` | | the mix as before #138, to compare: placed sounds on kira spatial tracks, and every sound mixed whether anyone can hear it or not ([A cheaper mix](#a-cheaper-mix-138)) |
 | `fps=30\|60\|auto\|native` | | which refreshes are drawn ([Frame rate on phones](#frame-rate-on-phones-140)). A rate is a whole number of refreshes (30 is every other at 60 Hz, every fourth at 120); `auto` draws every refresh while the frames hold it and drops to a rate they hold when they don't; `native` is every refresh, unpaced. Default `auto` where the primary pointer is a finger (`pointer: coarse`), `native` elsewhere |
+| `begin=auto` | | lift the Begin gate as soon as it is ready, with no click (#381), for a measuring driver (`tools/web-perf/run.mjs`). With no gesture the browser refuses the pointer lock, sound starts only where autoplay is allowed, and the full-screen switch, which rides on a real click, stays off |
 | `loop=poll` | | winit's flat-out `ControlFlow::Poll`, as before #121, to compare against the default of one frame per `requestAnimationFrame` ([Firefox's cadence](#firefoxs-cadence-121)) |
 
 The engine schemas are compiled in (`build.rs` embeds `schemas/components`
@@ -203,12 +207,14 @@ to `main` that touches the player, and on a manual run:
 
 1. `trunk build --release --cargo-profile web-release` in
    `crates/flint-player`, the player page (the profile is under Size);
-2. `cargo build -p flint-cli`, for `flint bundle`;
+2. `cargo build -p flint-cli`, for `flint export web`;
 3. `python tools/play-site/build.py`, which fetches each game in
-   `games.toml` at its pinned commit (a GitHub tarball; nothing to clone),
-   packs it with `flint bundle --name <id>` into `games/<id>/`, and writes
-   `games.json` (what the page shows) and `built-from.txt` (the Flint
-   commit and each game's);
+   `games.toml` at its pinned commit (a GitHub tarball; nothing to clone)
+   and runs `flint export web <game> --out site --player <dist> --name <id>
+   --meta ...` on it ([#106](#flint-export-web-106)): the player into the
+   site root, the bundles into `games/<id>/`, the game's entry into
+   `games.json` (what the page shows). It then writes `built-from.txt` (the
+   Flint commit and each game's);
 4. `actions/upload-pages-artifact` and `actions/deploy-pages`. This repo's
    Pages site serves the result, with `play.chaps.dev` as its custom domain.
 
@@ -224,11 +230,23 @@ can't change or break the site between Flint deploys. Moving a game forward
 means changing its `ref`. Float is pinned to its `engine-catchup` branch
 (#102): the engine subtree at Flint `main`, plus its `bundle.toml`.
 
+**A game in this repo** (#430) gives `path`, a folder in the Flint
+checkout, in place of `repo` and `ref`. `build.py` exports it from where it
+is, so it plays at the commit the site is built from and needs no pin:
+every deploy then checks an engine feature in a real browser at the
+engine's own commit. Sun Prints (`tools/play-site/sunprint/`,
+`?game=sunprint`) is the first: a garden whose whole look is a
+user-authored style, a cyanotype in a `.shader.toml` and two WGSL passes,
+which on the web only the browser compiles (#415). `build.py --only
+sunprint` builds just that game for a local trial.
+
 **The doorway.** Before any wasm is fetched, an inline script in
 `index.html` decides whether this visit can play:
 
 - no `?game=` (or `bundle`/`scene`) and a `games.json` beside the page:
-  the chooser, a card per game with its poster;
+  the chooser, a card per game with its poster. A `games.json` of one game
+  (a `flint export web` folder) plays that game instead: the doorway writes
+  its `?game=` into the address before it opens;
 - a `?game=` the site doesn't have: the chooser, saying so;
 - no `navigator.gpu`, or no adapter from `requestAdapter()`: the game's
   film from chaps.dev, full-bleed and muted, with the reason and the
@@ -285,6 +303,34 @@ stood in for by Firefox on Windows with WebGPU turned off, which takes the
 same path. A threaded AudioWorklet build would need cross-origin isolation
 headers, which GitHub Pages can't set (the issue's second risk). #136 mixes
 in an AudioWorklet without them, in a second wasm (see Sound).
+
+## flint export web (#106)
+
+`flint export web <game> [--out dir]` runs the site's steps for any one
+game: it copies the player (or builds it with trunk from the CLI's own
+tree, so packer and player agree on `bundle::FORMAT_VERSION`), packs
+`games/<id>/` with the game's `bundle.toml`, and merges the game's entry
+into `games.json`. Several exports into one folder make one site, which is
+what `build.py` now does for play.chaps.dev. A folder of one game plays it
+at its bare address, and `?scene=` picks another scene from its bundle.
+`bundle.toml` gained `[web]` (the `games.json` keys) and `[mount]` (a
+folder outside the game packed inside it); a game with no `engine/schemas`
+packs the engine's. Book: guides/publishing-to-the-web.md.
+
+**Checked locally** (2026-11-09, Windows 11, Chrome 156 headed over CDP,
+`python -m http.server`):
+
+| Run | Result |
+|---|---|
+| `flint export web examples/`, no `--player` | trunk built the player in 5 m 54 s (cold `web-release`); `demo.flintpack` 228 files 106.12 MB, `demo.audio.flintpack` 14 files 1.84 MB |
+| `/` | the address became `/?game=demo`; the gate read "Flint demos"; the tavern loaded (49 entities), its scripts started, the late audio bundle arrived |
+| `/?scene=pencil_sketch.scene.toml` | `&game=demo` added; Pencil Sketch (11 entities) drawn from the same bundle |
+| `build.py` (Float `3e0b75f`, FlintKart `bd910be`) through export | float 16.03 MB in 3 bundles, kart 91.88 MB in 2 plus its film and poster; `games.json` holds the keys and values the old script wrote |
+
+The demo bundle was large because the tavern's `wooden_bench.glb` (31 MB) and
+`wood_planks.png` (27 MB) were; #759 capped both at 2048 texels a side
+(3.6 MB and a 1.9 MB `wood_planks.jpg`). The packer doesn't drop files no
+scene reads.
 
 ## Flint Kart (#104)
 
@@ -508,8 +554,11 @@ the page's `#perf` panel):
 - **worst**: the longest gap between the player's frames, and how much of
   it was the player's own work. A long frame with little work in it is the
   browser's, not ours.
-- canvas pixels and DPR, the adapter as the browser names it (wgpu 23's
-  WebGPU backend leaves `AdapterInfo` empty, so the page asks
+- canvas pixels and DPR, the adapter as the browser names it (wgpu's
+  WebGPU backend fills only `AdapterInfo::name`, and wgpu 30 takes that from
+  the browser's `GPUAdapterInfo.description`, which Chrome 157 and Firefox
+  159 leave empty: #949 found the player's log line still says
+  `GPU adapter:  (Other, BrowserWebGpu)` in both. So the page asks
   `navigator.gpu` itself), draw calls and triangles, late audio buffers and
   the mean time to mix one (`AudioEngine::buffer_stats`).
 - **voices**: the sounds and spatial tracks kira holds, and how many of
@@ -536,7 +585,12 @@ the page's `#perf` panel):
   running totals in `window.flintGpuCalls`; each readout divides what moved
   by the frames since the last.
 
-**Copy line** puts the whole readout on one line for an issue:
+**Copy line** puts the whole readout on one line for an issue. The panel
+lies over the canvas's top right, where a game puts its menu button, so
+Copy is the only part of it that takes a pointer (#660): every other click
+and touch goes through to the game. On a small screen the readout is cut at
+36 % of the height rather than scrolled, since a scroller would take the
+game's touches; Copy still takes all of it.
 
 ```
 flint perf · float · t=34s | Chrome 156 · nvidia lovelace | 1280x720 DPR 1 | frame p50 16.7 p99 16.8 max 16.8 ms (600 frames/10s) | cpu 9.07 ms: … | gpu 2.71 ms: Shadows 1.40, Scene 0.29, SSAO 0.69, Bloom 0.30, … | 71 draws 50.4K tris | audio 0/948 late
@@ -708,7 +762,7 @@ The ASCII style (#265, per entity since #266, temporal since #277) adds
 two things to a frame: the entity style mask (`Style mask`, a redraw of
 the styled entities' ids after the scene pass) and the glyph style itself
 (`ASCII`, a cell pass and a glyph pass at the display stage). Measured on
-`demo/ascii_entities.scene.toml` (six styled props, meadow, SSAO, bloom),
+`examples/ascii_entities.scene.toml` (six styled props, meadow, SSAO, bloom),
 RTX 4070 laptop, release build, 1920x1080 output, `flint render
 --gpu-time 240`, best of five processes since other jobs shared the GPU:
 
@@ -773,6 +827,38 @@ a render scale the chain owns its depth and all of them are kept. Since
 (`RenderContext::depth_target()`, a fresh `new_depth_id()` whenever the
 context makes the texture again) and those groups are kept at scale 1
 too (measured below the table, "Bind groups over the caller's depth").
+
+**Re-read with `tools/web-perf/run.mjs` (#381, 2026-11-12).** The table
+above is now one command over a `flint export web` folder of the same three
+scenes (`tools/web-perf/README.md`), Chrome 157, same machine, three runs of
+two 10 s windows each:
+
+| page | scene | Style mask | ASCII | bind groups a frame | passes |
+|---|---|---|---|---|---|
+| DPR 1, no style | 1920x1080 | | | 0 | 17 |
+| DPR 1, per entity | 1920x1080 | 0.03--0.04 | 0.34--0.60 | 0 | 26 |
+| DPR 1, full screen | 1920x1080 | 0.02--0.19 | 0.52--1.17 | 0 | 26 |
+| DPR 2 (cap 1.5), no style | 1440x810 | | | 0 | 18 |
+| DPR 2, per entity | 1440x810 | 0.02--0.04 | 0.28--1.00 | 0 | 27 |
+| DPR 2, full screen | 1440x810 | 0.02--0.69 | 0.49--1.23 | 0 | 27 |
+
+The last run had #380's note in the readout, and every page said `under
+vsync at idle clocks` (17--27% busy). A page always presents on the
+browser's frame, and it has no `FLINT_VSYNC=0`, so the browser's pass times
+read high; #270's did too. Compare a pass with a control page in the same
+run (here `ascii_none`), not with the desktop's figures.
+
+The scene sizes and the no-style pages' passes match. What moved is the
+style itself: it adds nine passes a frame where it added three, since edges
+(#267) and tone normalisation (#289) came on by default after #270 (the
+desktop's own 0.43 ms with edges, above), and #379's kept bind groups make
+it 0 a frame at scale 1 too. The runs disagree by up to 2x on the ASCII pass, with no-style
+pages steady, so the GPU was shared; take the minimum of several runs. The
+driver asks for the DPR with `--force-device-scale-factor`, one Chrome per
+DPR: CDP's `Emulation.setDeviceMetricsOverride` changes `devicePixelRatio`,
+but the canvas kept the display's 1.5 (2880x1620 at "DPR 1"), since winit
+sizes it from a ResizeObserver's device-pixel box. `?begin=auto` lifts the
+gate, so the screenshots need no hiding.
 
 **Cells are output pixels.** ASCII runs at the display stage, after the
 upscale, so a render scale or the web's DPR cap changes only the scene
@@ -921,7 +1007,7 @@ release the cursor (`touch_overlay.rs`). On an iPad that release threw
 the game stopped: frozen on its last frame, with the page around it still
 answering. Chrome and Android have the API, so no Pixel or desktop run saw
 it. The wasm clippy check now denies `winit::window::Window::set_cursor_grab`
-(`scripts/wasm-clippy/clippy.toml`). `tools/web-touch/ipad.mjs` replays the
+(`scripts/wasm-clippy/wasm-only.toml`). `tools/web-touch/ipad.mjs` replays the
 iPad in desktop Chrome over CDP: touch emulation, a 1180x820 DPR 2 viewport,
 an iPadOS Chrome user agent, and optionally WebKit's missing APIs deleted
 (`coalesced`, `dpbox`, `lock`). It taps, drags and calls the game FROZEN or
@@ -1702,6 +1788,10 @@ gzip -9:
 | Whole engine (size probe, below) | 14.9 MB | 10.7 MB | 4.1 MB |
 | `flint-web` running PlayerApp (#99, measured before the vfs merge; file-reading code was still dead) | | 9.4 MB | 3.5 MB |
 | `flint-web` reading game bundles (#98; every engine read live) | | 14.2 MB | 5.1 MB |
+| `flint-web`, `web-release` (#123, #137), main before #754 (`8e3d930f`) | | 12.33 MB | 4.70 MB |
+| the same after #754, default features | | 12.33 MB | 4.70 MB |
+| after #754, without `music`, `rhythm`, `procgen` and `living` | | 11.23 MB | 4.28 MB |
+| after #754, `--no-default-features` | | 10.92 MB | 4.14 MB |
 
 The **size probe** is a throwaway bin, not committed. It builds a
 `PlayerApp` from a `black_box` world and passes opaque bytes to
@@ -1800,14 +1890,39 @@ opt-level = 3` raises one crate without giving back the rest.
 Not trimmed:
 
 - **flint_procgen is reachable on the web.** Scene loading resolves
-  `procgen` components through `ProcGenResolver`
-  (`player_app/scene_loading.rs`) into meshes and textures, so it stays.
-  Float uses none, so a `procgen` cargo feature could drop it for games like
-  Float. That needs a measurement first.
+  `model.asset` and texture names through `ProcGenResolver` into meshes and
+  textures. Since #754 it is flint-player's `procgen` feature, and a game
+  that uses none can leave it out: [Features](#features-754) has the sizes.
 - **exr** was reachable only through image's default formats. It's gone now.
 
 3.1 MB gzipped is in the range of other WebGPU game demos. Float's 10 MB of
 data, most of it music, now costs three times what the engine does.
+
+### Features (#754)
+
+The player's optional parts are Cargo features since #754 (ADR 0117 decision
+6): `music`, `rhythm`, `procgen`, `living`, beside `debug-hud`, `audio` and
+`gamepad`, all on by default. The site keeps the defaults, so its wasm is the
+size it was. A game that leaves parts out ships less. trunk 0.21.14 with its
+`wasm-opt -Oz`, `trunk build --release --cargo-profile web-release` plus the
+feature flags, gzip -9 of the page's `.wasm`, 2026-11-12:
+
+| Build | `.wasm` | gzip -9 | Saved (gzip) |
+|---|---|---|---|
+| main before #754 (`8e3d930f`), default features | 12.33 MB | 4.70 MB | |
+| after #754, default features | 12.33 MB | 4.70 MB | 0.00 MB |
+| `--no-default-features --features audio,gamepad,debug-hud` (no music, rhythm, procgen, living) | 11.23 MB | 4.28 MB | 0.42 MB |
+| `--no-default-features` (and no sound card, pads or debug panels) | 10.92 MB | 4.14 MB | 0.56 MB |
+
+- **The default build is over the 4 MB line again.** #137 shipped 3.64 MB;
+  the engine has grown by 1.06 MB gzipped since, with no new lever. The
+  features don't bring it back under on their own: with every default off
+  it is 4.14 MB.
+- **The music, the rhythm game, procgen and living props are 0.42 MB** of
+  the gzipped wasm together (1.10 MB before gzip). Each alone wasn't
+  measured.
+- `trunk build --no-default-features --features ...` passes the flags to
+  cargo; `index.html` names no features, so the page is the same.
 
 ### Built for speed (#137)
 

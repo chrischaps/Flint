@@ -79,8 +79,9 @@ impl JobStore {
     }
 
     /// Default job store location: `<project root>/.flint/jobs`
-    pub fn default_store() -> Self {
-        Self::new(flint_asset::Project::current().jobs_dir())
+    pub fn default_store() -> Result<Self> {
+        let project = flint_asset::Project::current()?;
+        Ok(Self::new(flint_asset::ProjectStore::jobs_dir(&project)))
     }
 
     /// Save a job to disk

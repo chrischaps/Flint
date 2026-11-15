@@ -1,0 +1,4 @@
+# Declared by name only: an open schema (ADR 0115). The component is known
+# and its table is not checked.
+[component.story]
+description = "A story example's director table: its beats and timings. Read by examples/scripts/ascii_story.rhai and dream_story.rhai; open"

@@ -109,7 +109,7 @@ Higher values produce finer detail but may show visible tiling at a distance. Fu
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `heightmap` | string | | Path to grayscale PNG (relative to scene directory) |
+| `heightmap` | string | | Path to grayscale PNG, from the scene's directory or any directory above it up to the project root ([where the engine looks](assets.md#where-the-engine-looks-for-a-file)) |
 | `width` | f32 | 256.0 | World-space extent along X axis |
 | `depth` | f32 | 256.0 | World-space extent along Z axis |
 | `height_scale` | f32 | 50.0 | Maximum height in world units |
@@ -177,7 +177,7 @@ depth = 384.0
 
 How it works, per frame:
 
-1. A **compute pass** walks the cells within `max_distance` of the camera on a grid whose spacing is `1 / sqrt(density)`, samples the splat map's `density_layer` at each cell, skips cells under `density_threshold`, applies a probabilistic falloff between `fade_start` and `max_distance`, and writes a 32-byte instance (position on the heightmap, rotation, height scale, packed tint) into a storage buffer, in grid order, so the buffer is the same every run (a count, a scan and a write; see [Grass on Any Ground](grass-ground.md)). A blade's root takes the heightmap's bilinear blend at its spot, the same blend `sample_height` makes, so the blades stand on the terrain's surface (ADR 0098).
+1. A **compute pass** walks the cells within `max_distance` of the camera on a grid whose spacing is `1 / sqrt(density)`, samples the splat map's `density_layer` at each cell, skips cells under `density_threshold`, applies a probabilistic falloff between `fade_start` and `max_distance`, and writes a 32-byte instance (position on the heightmap, rotation, height scale, packed tint) into a storage buffer, in grid order, so the buffer is the same every run (a count, a scan and a write; see [Grass on Any Ground](grass-ground.md)). A blade's root takes the heightmap's bilinear blend at its spot, the same blend `sample_height` makes, so the blades stand on the terrain's surface ([ADR 0098](https://github.com/chrischaps/Flint/blob/main/docs/adr/0098-grass-stands-on-blended-heights.md)).
 2. A **render pass** draws one shared blade mesh per instance. The vertex shader sways blades by a time-driven wind term (on the wall clock, or the wooze field's with `grass.wooze`) and pushes them away from up to eight entity positions within `bend_radius`; the fragment shader blends `color_base` to `color_tip` along the blade, mixes in `color_dry`, and shades with the same lighting levers and PCSS shadows as other geometry. The player feeds the camera position as the bend entity.
 3. The **shadow pass** renders the instances into the nearest two cascades, so grass darkens the ground under it.
 
@@ -262,7 +262,7 @@ This separation means `flint-terrain` can be used independently for tools, CLI c
 - **CPU-side simulation** --- no GPU compute for terrain generation
 - **Fixed PBR parameters** --- metallic and roughness are uniform across the entire terrain surface
 
-See the [Terrain Roadmap](../../../TERRAIN_ROADMAP.md) for planned features including LOD, sculpting, auto-splatting, triplanar mapping, and more.
+See the [Terrain Roadmap](https://github.com/chrischaps/Flint/blob/main/docs/TERRAIN_ROADMAP.md) for planned features: chunk LOD, per-layer normal maps, triplanar mapping, several terrains a scene, and more.
 
 ## Further Reading
 

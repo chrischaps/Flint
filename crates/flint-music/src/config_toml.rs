@@ -16,7 +16,7 @@ use flint_core::toml_util::toml_f64;
 use flint_core::{FlintError, Result};
 
 /// How a format treats `schema_version`.
-pub(crate) enum VersionPolicy {
+pub enum VersionPolicy {
     /// Key must be present (content formats); the value is returned untouched.
     Required,
     /// Absent means 0; any non-zero value is rejected here (config files).
@@ -25,7 +25,7 @@ pub(crate) enum VersionPolicy {
 
 /// Parse TOML text and resolve `schema_version` under the format's policy.
 /// Every error carries `name` as its prefix, matching the historical text.
-pub(crate) fn parse_versioned(
+pub fn parse_versioned(
     name: &str,
     text: &str,
     policy: VersionPolicy,
@@ -61,30 +61,26 @@ pub(crate) fn parse_versioned(
 }
 
 /// The shared shape-error: `"{name}: missing or malformed `{what}`"`.
-pub(crate) fn bad(name: &str, what: &str) -> FlintError {
+pub fn bad(name: &str, what: &str) -> FlintError {
     FlintError::ParseError(format!("{name}: missing or malformed `{what}`"))
 }
 
 // -- accessors over a root value ----------------------------------------------
 
-pub(crate) fn table<'a>(
-    name: &str,
-    v: &'a toml::Value,
-    key: &str,
-) -> Result<&'a toml::value::Table> {
+pub fn table<'a>(name: &str, v: &'a toml::Value, key: &str) -> Result<&'a toml::value::Table> {
     v.get(key)
         .and_then(|v| v.as_table())
         .ok_or_else(|| bad(name, key))
 }
 
-pub(crate) fn array<'a>(name: &str, v: &'a toml::Value, key: &str) -> Result<&'a Vec<toml::Value>> {
+pub fn array<'a>(name: &str, v: &'a toml::Value, key: &str) -> Result<&'a Vec<toml::Value>> {
     v.get(key)
         .and_then(|v| v.as_array())
         .ok_or_else(|| bad(name, key))
 }
 
 /// Array-of-tables, absent or non-array treated as empty (the chart idiom).
-pub(crate) fn tables<'a>(root: &'a toml::Value, key: &str) -> Vec<&'a toml::value::Table> {
+pub fn tables<'a>(root: &'a toml::Value, key: &str) -> Vec<&'a toml::value::Table> {
     root.get(key)
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_table()).collect())
@@ -95,22 +91,17 @@ pub(crate) fn tables<'a>(root: &'a toml::Value, key: &str) -> Vec<&'a toml::valu
 // `ctx` is what the error names; callers pass either the key itself or a
 // fuller path like `curves[3].beat`.
 
-pub(crate) fn int_in(name: &str, t: &toml::value::Table, key: &str) -> Result<i64> {
+pub fn int_in(name: &str, t: &toml::value::Table, key: &str) -> Result<i64> {
     t.get(key)
         .and_then(|v| v.as_integer())
         .ok_or_else(|| bad(name, key))
 }
 
-pub(crate) fn float_in(name: &str, t: &toml::value::Table, key: &str, ctx: &str) -> Result<f64> {
+pub fn float_in(name: &str, t: &toml::value::Table, key: &str, ctx: &str) -> Result<f64> {
     t.get(key).and_then(toml_f64).ok_or_else(|| bad(name, ctx))
 }
 
-pub(crate) fn string_in(
-    name: &str,
-    t: &toml::value::Table,
-    key: &str,
-    ctx: &str,
-) -> Result<String> {
+pub fn string_in(name: &str, t: &toml::value::Table, key: &str, ctx: &str) -> Result<String> {
     t.get(key)
         .and_then(|v| v.as_str())
         .map(String::from)
@@ -118,7 +109,7 @@ pub(crate) fn string_in(
 }
 
 /// Array of f64 (any element malformed fails the whole array).
-pub(crate) fn floats(name: &str, v: Option<&toml::Value>, ctx: &str) -> Result<Vec<f64>> {
+pub fn floats(name: &str, v: Option<&toml::Value>, ctx: &str) -> Result<Vec<f64>> {
     v.and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
@@ -129,7 +120,7 @@ pub(crate) fn floats(name: &str, v: Option<&toml::Value>, ctx: &str) -> Result<V
 }
 
 /// `root.[table].key` as f64 with a default — the config-file read idiom.
-pub(crate) fn section_f64(root: &toml::Value, table: &str, key: &str, default: f64) -> f64 {
+pub fn section_f64(root: &toml::Value, table: &str, key: &str, default: f64) -> f64 {
     root.get(table)
         .and_then(|t| t.get(key))
         .and_then(toml_f64)

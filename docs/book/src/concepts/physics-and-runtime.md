@@ -17,7 +17,9 @@ The loop structure:
 7. **Run scripts** --- execute Rhai scripts (`on_update`, event callbacks), process deferred commands (audio, events)
 8. **Render** --- draw the frame with the current entity positions, HUD overlay (crosshair, interaction prompts)
 
-The `RuntimeSystem` trait provides a standard interface for systems that plug into this loop. Physics, audio, animation, and scripting each implement `RuntimeSystem` with `initialize()`, `fixed_update()`, `update()`, and `shutdown()` methods.
+Scripts, audio, animation and particles implement the `RuntimeSystem` trait: `initialize()` when a scene is entered and `update()` once a frame. Nothing holds a list of them: the player calls each by its type, in the order above, and skips one the game state pauses (see [Game states](scripting.md#game-state-machine-api)). Physics is stepped at the fixed rate instead, by `PhysicsSystem::fixed_update(world, dt, events)`. Optional parts of the player, such as living props, are its subsystems ([ADR 0117](https://github.com/chrischaps/Flint/blob/main/docs/adr/0117-player-subsystems-and-one-game-step.md)).
+
+The frame's events live in one `EventBus`, which the player owns. Each fixed physics step pushes its collisions and triggers onto it, and player extensions, style changes and scripts' `fire_event` push their own; the frame hands the whole batch to scripts and audio before `on_update`. Clearing physics at a scene transition doesn't touch it: a script's event fired as it leaves reaches the next scene's scripts, and only the old scene's contacts are dropped.
 
 ## Physics with Rapier 3D
 
@@ -32,7 +34,7 @@ The `flint-physics` crate wraps Rapier 3D and bridges it to Flint's TOML-based c
 Four component schemas define physics properties:
 
 **Rigidbody** (`rigidbody.toml`) --- determines how an entity participates in physics:
-- `body_type`: `"static"` (immovable world geometry), `"dynamic"` (simulated), or `"kinematic"` (script-controlled)
+- `body_type`: `"static"` (immovable world geometry, the default), `"dynamic"` (simulated), or `"kinematic"` (script-controlled; `"kinematic_velocity"` for a velocity-based one). A misspelt value fails `flint validate`
 - `mass`, `gravity_scale`, `linear_damping`, `angular_damping`
 - `mode_2d`: lock to the XY plane (Z = 0, Z rotation only)
 
@@ -56,6 +58,14 @@ Four component schemas define physics properties:
 - `move_speed`, `jump_force`, `height`, `radius`, `camera_mode`
 
 The **player** archetype (`player.toml`) bundles these together with a `transform` for a ready-to-use player entity.
+
+**A collider needs a rigidbody.** Colliders are given to the physics world as part of their entity's rigidbody, so a `collider` on an entity with no `rigidbody` collides with nothing. For scenery, add `[entities.<name>.rigidbody]` with `body_type = "static"`. The player says so when it finds one:
+
+```
+WARN warning[needs-component] entity 'wall' component 'collider': a collider with no rigidbody collides with nothing (add a `rigidbody` to the entity, `body_type = "static"` for scenery, or remove the collider)
+```
+
+**A value the physics cannot read is reported, then defaulted.** An unknown `body_type` makes a static body, an unknown `shape` a box and an unknown joint `type` a hinge, each with one warning naming the entity, the allowed values and the nearest one; a value of the wrong type (`friction = "low"`) takes the field's default the same way. Whole numbers are fine wherever a number is read: `move_speed = 8` is 8. See [Diagnostics while the game runs](schemas.md#diagnostics-while-the-game-runs).
 
 ## Adding Physics to a Scene
 
@@ -96,7 +106,7 @@ flint play my_scene.scene.toml
 
 ## Joints
 
-Joints (ADR 0069) connect a **dynamic** body to a parent body so that Rapier
+Joints ([ADR 0069](https://github.com/chrischaps/Flint/blob/main/docs/adr/0069-physics-joints-and-world-space-bodies.md)) connect a **dynamic** body to a parent body so that Rapier
 supplies the secondary motion --- overshoot, settle, bounce --- while scripts
 keep authoring the primary motion. The intended pattern is a hybrid: the root
 and most nodes stay kinematic and script-posed, and a few nodes (a folding
@@ -161,7 +171,7 @@ Rules that follow from the implementation:
 - `flint render` and the scene viewer do not simulate physics; a `joint`
   component is inert there and the authored rest pose is what renders.
 
-`demo/joint_test.scene.toml` is the reference bench: a hinged pendulum, a
+`examples/joint_test.scene.toml` is the reference bench: a hinged pendulum, a
 sprung prismatic slider on a yawing kinematic base, a gimballed pod with a
 driven spherical motor, and a cylinder wheel.
 
@@ -252,14 +262,14 @@ gamepad = "any"
 Configs are loaded with deterministic precedence (later layers override earlier):
 
 1. **Engine built-in defaults** --- hardcoded WASD + mouse baseline (always present)
-2. **Game default config** --- `<game_root>/config/input.toml` (checked into the repo)
+2. **Game default config** --- the first of: the scene's `[scene] input_config`; the file `flint.toml`'s `[project] input` names, from the project root; `config/input.toml`. The first and the last are paths found by the engine's [one search](assets.md#where-the-engine-looks-for-a-file): from the scene's directory, then each directory above it up to the project root. A scene's `input_config` that isn't found is a warning with every path tried
 3. **User overrides** --- per-player remapping, written at runtime. The first that exists of:
-   - `<scene_dir>/.flint/input.user.toml` (project-local, for development)
+   - `<project root>/.flint/input.user.toml` (project-local, for development; for one release a `.flint/input.user.toml` beside the scene is still read when the root has none)
    - `<config>/flint/input_{game_id}.toml`, where `<config>` is the OS config directory (`%APPDATA%` on Windows, `~/Library/Application Support` on macOS, `~/.config` on Linux)
    - `<config>/flint/input.user.toml`, shared by games with no `game_id` of their own (or `game_id = "flint"`)
 4. **CLI override** --- `--input-config <path>` flag (one-off testing/debugging)
 
-Scenes can also reference an input config via the `input_config` field in the `[scene]` table.
+A scene's `input_config` replaces the game default for that scene; it is not a fifth layer.
 
 ### Default Action Bindings
 
@@ -281,6 +291,35 @@ When no config files are present, the built-in defaults provide:
 
 Games can define any number of custom actions in their config files. Scripts access them with `is_action_pressed("custom_action")`.
 
+### Escape
+
+With nothing bound to it, Escape is the player's: it releases a captured cursor, and otherwise closes the window. Bind it to any action and it becomes the game's (#639). The press reaches the game like any other key, so `back` in a menu or `pause` can be Escape, and the window stays open. A captured cursor is still let go, so the menu Escape opens can be clicked. Alt+F4 and the window's close button still quit.
+
+```toml
+[actions.pause]
+kind = "button"
+[[actions.pause.bindings]]
+type = "key"
+code = "Escape"
+```
+
+`examples/showcase_crucible.scene.toml` binds it this way through `examples/input_showcase.toml`, and Escape opens its pause screen. An Escape from `--input-script` never quits the player, bound or not.
+
+A game that takes Escape takes its player's way out with it, so it offers its own: an EXIT row on the title screen and the pause menu that calls `quit_game()` (#659). The run ends as closing the window ends it, with saves flushed and exit code 0. The crucible's pause screen reads Q for it:
+
+```rhai
+fn on_draw_ui() {
+    // on_draw_ui runs while a "paused" state holds the scripts; on_action doesn't
+    if is_action_just_pressed("pause") {
+        if paused { pop_state(); paused = false; } else { push_state("paused"); paused = true; }
+    } else if paused && is_action_just_pressed("quit") {
+        quit_game();
+    }
+}
+```
+
+On the web a page has no window to close: `quit_game()` leaves full screen and the pointer lock and goes back to the list of games where the page has one. A game can hide its EXIT row there with `gpu_info().platform == "web"`.
+
 ### Gamepad Support
 
 Gamepad input is handled via the [gilrs](https://gitlab.com/gilrs-project/gilrs) crate. The player polls gamepad events each frame and routes them through the same binding system as keyboard/mouse:
@@ -289,12 +328,15 @@ Gamepad input is handled via the [gilrs](https://gitlab.com/gilrs-project/gilrs)
 - **Axes** support deadzone filtering, scale, invert, and optional threshold for button-like behavior
 - **Multi-gamepad** is supported via `GamepadSelector::Any` (first match) or `GamepadSelector::Index(n)` (specific controller)
 - Disconnected gamepads are automatically cleaned up
+- **Rumble**: a script's `rumble(pad, strength, seconds)` buzzes both motors of a pad, or every pad with `-1` ([Scripting](scripting.md#input-and-cursor-api)). It goes through gilrs's force-feedback server, so lengths are whole 50 ms ticks; a music session's haptics are a separate, clock-stamped path in `flint-input-capture`, and own the motors while a session runs
+
+The backend lives in `flint-runtime` (`flint_runtime::pad`), beside `InputState`: gilrs with the `gamepad` feature, or a stand-in that never finds a backend without it, so a headless build has no gamepad code to cut around. Read pads through it, never `gilrs` directly. The player's ordinary pad polling and rumble don't touch the rhythm crates; `flint-input-capture` reads pads through the same module for its 1 kHz capture thread.
 
 ### Runtime Rebinding
 
-Bindings can be remapped at runtime through the `rebind_action()` API:
+Bindings can be remapped at runtime from Rust (scripts have no rebinding function): `InputState::rebind_action` sets a binding directly, and the player captures one from the next input:
 
-1. Call `begin_rebind_capture(action, mode)` to enter capture mode
+1. Call `PlayerApp::begin_rebind_capture(action, mode)` to enter capture mode
 2. The next physical input (key press, mouse click, or gamepad button/axis) becomes the new binding
 3. The mode determines conflict resolution:
    - **Replace** --- clear all existing bindings, set the new one

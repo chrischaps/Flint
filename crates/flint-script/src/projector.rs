@@ -28,7 +28,7 @@
 
 use std::sync::{Arc, Mutex};
 
-pub use flint_core::ray_mesh::{RayHit, RayScene};
+pub use flint_geometry::ray_mesh::{RayHit, RayScene};
 pub use flint_terrain::GroundField;
 
 use crate::context::ScriptCallContext;
@@ -436,11 +436,26 @@ mod tests {
                 ]
             })
             .collect();
-        let quads = [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]];
-        let i: Vec<u32> = quads.iter().flat_map(|q| [q[0], q[1], q[2], q[0], q[2], q[3]]).collect();
+        let quads = [
+            [0, 2, 3, 1],
+            [4, 5, 7, 6],
+            [0, 1, 5, 4],
+            [2, 6, 7, 3],
+            [0, 4, 6, 2],
+            [1, 3, 7, 5],
+        ];
+        let i: Vec<u32> = quads
+            .iter()
+            .flat_map(|q| [q[0], q[1], q[2], q[0], q[2], q[3]])
+            .collect();
         let mut scene = super::RayScene::new();
-        let mesh = std::sync::Arc::new(flint_core::ray_mesh::RayMesh::new(&p, &i));
-        let identity = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        let mesh = std::sync::Arc::new(flint_geometry::ray_mesh::RayMesh::new(&p, &i));
+        let identity = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
         scene.add(flint_core::EntityId::from_raw(42), mesh, identity);
         std::sync::Arc::new(scene)
     }
@@ -449,18 +464,27 @@ mod tests {
     fn a_click_picks_the_drawn_thing_under_it() {
         let mut s = system();
         let projector = s.projector();
-        assert!(projector.screen_to_mesh(640.0, 360.0).is_none(), "no scene yet");
+        assert!(
+            projector.screen_to_mesh(640.0, 360.0).is_none(),
+            "no scene yet"
+        );
         s.set_ray_scene(a_box());
         // The camera looks at the origin from (0, 10, 20), so mid-screen
         // meets the box's top front edge region: its front face or its top.
         let hit = projector.screen_to_mesh(640.0, 360.0).unwrap();
         assert_eq!(hit.entity.raw(), 42);
         let back = projector.view().world_to_screen(hit.point).unwrap();
-        assert!((back.x - 640.0).abs() < 0.01 && (back.y - 360.0).abs() < 0.01, "{back:?}");
+        assert!(
+            (back.x - 640.0).abs() < 0.01 && (back.y - 360.0).abs() < 0.01,
+            "{back:?}"
+        );
         // The top, (0, 2, 0), is met at its own point, facing up.
         let top = projector.view().world_to_screen([0.0, 2.0, 0.0]).unwrap();
         let hit = projector.screen_to_mesh(top.x, top.y).unwrap();
-        assert!((hit.point[1] - 2.0).abs() < 1e-3 && hit.normal[1] > 0.99, "{hit:?}");
+        assert!(
+            (hit.point[1] - 2.0).abs() < 1e-3 && hit.normal[1] > 0.99,
+            "{hit:?}"
+        );
         // Off to the side the ray misses.
         assert!(projector.screen_to_mesh(10.0, 10.0).is_none());
     }
@@ -482,7 +506,10 @@ mod tests {
             "raycast_meshes(-5.0, 3.0, 0.0, 1.0, 0.0, 0.0, 100.0)",
             "screen_to_mesh(10.0, 10.0)",
         ] {
-            assert!(engine.eval::<rhai::Dynamic>(missed).unwrap().is_unit(), "{missed}");
+            assert!(
+                engine.eval::<rhai::Dynamic>(missed).unwrap().is_unit(),
+                "{missed}"
+            );
         }
         let picked: rhai::Map = engine.eval("screen_to_mesh(640.0, 360.0)").unwrap();
         assert_eq!(picked["entity"].as_int().unwrap(), 42);

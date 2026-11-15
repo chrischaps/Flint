@@ -18,9 +18,9 @@ Panels are dev surface. They compile only when the player's `debug-hud` cargo fe
 | `F8` | Living Props: [pick the tree](#picking-a-tree-in-the-world) at the view centre, as a click would with the cursor free. `Shift+F8` picks the next tree by name, for a click that missed | player |
 | `Escape` | Lets go of a picked tree first. Otherwise it releases the mouse so panels can be clicked; clicking the world recaptures it | player |
 
-Opening any panel releases the cursor; closing the last one recaptures it if the scene has a player entity. When a key has nothing to toggle (no panels in the scene, no music session, no renderer) the player logs a note instead of failing.
+Opening any panel releases the cursor; closing the last one recaptures it if the scene has a player entity. When a key has nothing to toggle (no panels in the scene, no music session, no renderer) the player says so instead: a short note at the top of the window for about two seconds, and the same line in the console (`[debug] F3: no debug panels in this scene`).
 
-The old per-effect function keys (F1 debug-mode cycle, F4 shadows, F5 to F10 per-effect toggles, F12 kuwahara) are gone. Everything they flipped now lives in the Rendering & Effects panel, along with the non-binary parameters those keys could never expose (ADR 0053, consolidated render debug menu). F5 to F7 came back for Living Props, and only do anything in a scene that has some.
+The old per-effect function keys (F1 debug-mode cycle, F4 shadows, F5 to F10 per-effect toggles, F12 kuwahara) are gone. Everything they flipped now lives in the Rendering & Effects panel, along with the non-binary parameters those keys could never expose ([ADR 0053](https://github.com/chrischaps/Flint/blob/main/docs/adr/0053-one-rendering-and-effects-menu-on-f4.md), consolidated render debug menu). F5 to F7 came back for Living Props, and only do anything in a scene that has some.
 
 ## Layout
 
@@ -93,6 +93,7 @@ At the top is the warped clock, drawn as what it is: one step's worth of hold, t
 | Shading boil | On or off, `paint`, `ink`, and on ones, twos or threes. Paint needs Kuwahara on and ink needs contour on, both in F4, and the panel says so |
 | Echoes | `count`, `spread` and `alpha`, with `count = 0` in reach to compare the grove without them |
 | Variance | `amount`, `steady` and `keep size`. **Unheld** sets 1, 0 and off: each pose exactly as it grew |
+| Silhouette | `softness`: the body's outline feathers at rest, 0 a hard edge; the cards keep theirs ([Softness](../concepts/procgen.md#softness)) |
 
 **What a knob does right away.** Nothing here pops except stagger, which can't change without moving a part to its new place on the clock.
 
@@ -191,7 +192,7 @@ For the render panel the player adds **Freeze script post overrides**: while fro
 
 ## Adding a Panel from a Game
 
-A game that wraps the player adds its own panels through its [extension](player-extensions.md) (ADR 0107). Name them in `debug_panels`, and draw each one's contents in `debug_panel_ui`:
+A game that wraps the player adds its own panels through its [extension](player-extensions.md) ([ADR 0107](https://github.com/chrischaps/Flint/blob/main/docs/adr/0107-debug-panels-from-the-game.md)). Name them in `debug_panels`, and draw each one's contents in `debug_panel_ui`:
 
 ```rust
 impl PlayerExtension for MyGame {

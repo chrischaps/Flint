@@ -5,7 +5,9 @@
 //! via their transforms (as opposed to vertex skinning).
 
 use crate::clip::Interpolation;
-use crate::skeletal_clip::{make_rotation_track_continuous, JointKeyframe, JointProperty};
+use crate::skeletal_clip::{
+    make_rotation_track_continuous, slide_to_first_key, JointKeyframe, JointProperty,
+};
 
 /// A single track targeting one node's property (translation, rotation, or scale)
 #[derive(Debug, Clone)]
@@ -25,9 +27,12 @@ pub struct NodeClip {
 }
 
 impl NodeClip {
-    /// Convert from imported glTF node animation data
+    /// Convert from imported glTF node animation data. The clip starts at its
+    /// first key, as a skeletal clip does (`slide_to_first_key`, #872): one
+    /// glTF animation can drive joints and plain nodes, and the two halves
+    /// must stay in step.
     pub fn from_imported(imported: &flint_import::ImportedNodeClip) -> Self {
-        let node_tracks = imported
+        let mut node_tracks: Vec<NodeTrack> = imported
             .channels
             .iter()
             .map(|ch| {
@@ -65,10 +70,14 @@ impl NodeClip {
                 }
             })
             .collect();
+        let duration = slide_to_first_key(
+            node_tracks.iter_mut().map(|t| &mut t.keyframes),
+            imported.duration as f64,
+        );
 
         Self {
             name: imported.name.clone(),
-            duration: imported.duration as f64,
+            duration,
             node_tracks,
         }
     }

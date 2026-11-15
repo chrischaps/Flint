@@ -8,7 +8,7 @@ use crate::human_task::generate_task_file;
 use crate::provider::{AssetKind, AudioParams, GenerateRequest, ModelParams, TextureParams};
 use crate::registration::register_generated_asset_in;
 use crate::style::StyleGuide;
-use flint_asset::Project;
+use flint_asset::{Project, ProjectStore};
 use flint_core::{FlintError, Result};
 use std::path::Path;
 
@@ -49,7 +49,7 @@ pub fn scan_scene_assets(scene_path: &str) -> Result<(usize, Vec<MissingAsset>)>
         .map_err(|e| FlintError::GenerationError(format!("Failed to parse scene: {}", e)))?;
 
     // The scene's own project, not the working directory's (#179).
-    let project = Project::for_path(Path::new(scene_path));
+    let project = Project::for_path(Path::new(scene_path))?;
     let catalog =
         flint_asset::AssetCatalog::load_from_directory(project.catalog_dir()).unwrap_or_default();
 
@@ -153,7 +153,7 @@ pub fn resolve_scene(
 ) -> Result<BatchResult> {
     let (total, missing_assets) = scan_scene_assets(scene_path)?;
     let found = total - missing_assets.len();
-    let project = Project::for_path(Path::new(scene_path));
+    let project = Project::for_path(Path::new(scene_path))?;
 
     println!("Scanning scene for asset references...");
     println!(

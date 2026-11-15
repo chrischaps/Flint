@@ -1,0 +1,112 @@
+# ASCII Edges (#267): a sphere and a box under the full-screen ASCII style,
+# with line glyphs along their edges.
+#
+#   cargo run --bin flint -- render examples/ascii_edges.scene.toml --output edges.png
+#   cargo run --bin flint -- render examples/ascii_edges.scene.toml --ascii-no-edges --output tone.png
+#
+# Luminance alone loses a silhouette wherever an object is as bright as
+# what's behind it; edges come from geometry instead (depth, normals
+# rebuilt from it, and the style mask), so cells along them draw
+# `─ │ ╱ ╲` by the direction of the edge through the cell.
+#   sphere   style_mask "ascii": its outline is always drawn
+#   cube     style_mask "ascii": outline, plus creases where faces meet
+#   pillar   unstyled: depth and crease edges only, at the thresholds
+# The sphere sits against a sky of about its own brightness on purpose.
+#
+# Edge ink (#351): the outlines in an ink of their own, against a tone fill
+# in another (amber lines over a green phosphor fill):
+#   cargo run --bin flint -- render examples/ascii_edges.scene.toml --no-grid #     --style ascii:color=tint,edge_ink=color,edge_color=#ffb347 --output ink.png
+# or in the table below: color = "tint", edge_ink = "color", edge_color = "#ffb347".
+# edge_ink = "hue" draws each line in its near side's own colour instead.
+
+[scene]
+name = "ASCII Edges"
+version = "1.0"
+description = "A styled sphere and box under the ASCII style's edge glyphs (#267)"
+
+[camera]
+position = [0.0, 1.6, 5.2]
+target = [0.0, 0.55, 0.0]
+fov = 45.0
+
+[post_process]
+exposure = 1.1
+
+[post_process.styles.ascii]
+cell = 8
+edges = 1.0
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.42, 0.50, 0.62, 1.0]
+horizon_color = [0.70, 0.70, 0.68, 1.0]
+haze_color = [0.75, 0.74, 0.70, 0.6]
+cloud_coverage = 0.0
+sun_glow = 0.6
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 30, 0]
+[entities.sun.light]
+type = "directional"
+direction = [0.55, 0.7, 0.45]
+color = [1.0, 0.94, 0.84]
+intensity = 2.2
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 20, 0]
+[entities.fill.light]
+type = "directional"
+direction = [-0.6, 0.4, -0.5]
+color = [0.6, 0.7, 0.9]
+intensity = 0.5
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-20, -0.1, -20]
+max = [20, 0, 20]
+[entities.ground.material]
+color = [0.30, 0.27, 0.22, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+[entities.sphere]
+archetype = "furniture"
+[entities.sphere.transform]
+position = [-0.85, 0.6, 0.2]
+scale = [1.2, 1.2, 1.2]
+[entities.sphere.model]
+asset = "Sphere"
+[entities.sphere.style_mask]
+style = "ascii"
+
+[entities.cube]
+archetype = "furniture"
+[entities.cube.transform]
+position = [0.95, 0.5, -0.1]
+rotation = [0, 35, 0]
+[entities.cube.bounds]
+min = [-0.5, -0.5, -0.5]
+max = [0.5, 0.5, 0.5]
+[entities.cube.material]
+color = [0.72, 0.42, 0.28, 1.0]
+roughness = 0.7
+metallic = 0.0
+[entities.cube.style_mask]
+style = "ascii"
+
+[entities.pillar]
+archetype = "furniture"
+[entities.pillar.transform]
+position = [0.2, 0, -2.6]
+[entities.pillar.bounds]
+min = [-0.35, 0, -0.35]
+max = [0.35, 2.4, 0.35]
+[entities.pillar.material]
+color = [0.55, 0.56, 0.6, 1.0]
+roughness = 0.8
+metallic = 0.0

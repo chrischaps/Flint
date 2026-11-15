@@ -1,7 +1,7 @@
 # Stylize goldens (#271): every registered style, pinned.
 #
-#   cargo run --bin flint -- render-suite crates/flint-cli/tests/golden/stylize.goldens.toml
-#   cargo run --bin flint -- render-suite crates/flint-cli/tests/golden/stylize.goldens.toml --bless
+#   cargo run --bin flint -- goldens crates/flint-cli/tests/golden/stylize.goldens.toml
+#   cargo run --bin flint -- goldens crates/flint-cli/tests/golden/stylize.goldens.toml --bless
 #
 # `cargo test -p flint-cli --test render_goldens` runs the same suite. Each
 # case is one `flint render`, single-sample unless it says `--msaa 4`, with
@@ -10,17 +10,17 @@
 # index.html (#329) shows every case's old golden, render and diff side by
 # side, the ones that moved first.
 #
-# The props cases use one clearing (demo/prefabs/stylize_props.prefab.toml),
+# The props cases use one clearing (tests/fixtures/scenes/prefabs/stylize_props.prefab.toml),
 # which loads in a few seconds in a debug build (style_mask.scene.toml's
 # grass and 32 MB bench took 20-90 s), and turn the grid off: its far-off
 # moire is the part of a frame most likely to shade differently on another
 # GPU. Each style has a bench of its own on that clearing (#386), so a
 # change to one style moves only its own goldens:
 #
-#   demo/stylize_props_ascii.scene.toml    barrel and YBot style_mask "ascii"
-#   demo/stylize_props_pencil.scene.toml   cask and crate style_mask "pencil"
-#   demo/stylize_props_plain.scene.toml    nothing styled: whole-frame styles, looks
-#   demo/stylize_props.scene.toml          both, for the mask and styles-mixed only
+#   tests/fixtures/scenes/stylize_props_ascii.scene.toml    barrel and YBot style_mask "ascii"
+#   tests/fixtures/scenes/stylize_props_pencil.scene.toml   cask and crate style_mask "pencil"
+#   tests/fixtures/scenes/stylize_props_plain.scene.toml    nothing styled: whole-frame styles, looks
+#   tests/fixtures/scenes/stylize_props.scene.toml          both, for the mask and styles-mixed only
 #
 # A new per-entity style gets a bench of its own; a new whole-frame style
 # or look goes on the plain one.
@@ -48,7 +48,9 @@ name = "stylize"
 root = "../../../.."
 width = 640
 height = 360
-args = ["--schemas", "schemas"]
+# The fixtures are written in the examples' room-builder archetypes
+# (`furniture`), which the engine's own set no longer holds (#681).
+args = ["--schemas", "schemas", "--schemas", "schemas/examples"]
 
 [tolerance]
 level = 48
@@ -62,7 +64,7 @@ mean = 3.0
 # what pins "edges = 0 draws what #265 drew"
 [[case]]
 name = "ascii-full"
-scene = "demo/pbr_test.scene.toml"
+scene = "tests/fixtures/scenes/pbr_test.scene.toml"
 golden = "ascii_pbr_test.png"
 args = ["--style", "ascii:edges=0"]
 # The structural golden (#317): the same frame's 80x45 character grid,
@@ -72,20 +74,20 @@ text = "ascii_pbr_test.txt"
 
 [[case]]
 name = "ascii-full-detailed-tint"
-scene = "demo/stylize_props_ascii.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--style", "ascii:ramp=detailed,color=tint,cell=10"]
 
 # Cells are in points: at 2x each one is twice the pixels. Edges off here
 # and in the next: these pin the glyph grid alone
 [[case]]
 name = "ascii-full-hidpi"
-scene = "demo/pbr_test.scene.toml"
+scene = "tests/fixtures/scenes/pbr_test.scene.toml"
 args = ["--style", "ascii:edges=0", "--pixels-per-point", "2"]
 
 # The scene passes at 4x MSAA; the glyph grid must not care
 [[case]]
 name = "ascii-full-msaa4"
-scene = "demo/pbr_test.scene.toml"
+scene = "tests/fixtures/scenes/pbr_test.scene.toml"
 args = ["--style", "ascii:edges=0", "--msaa", "4"]
 
 # --- ASCII edges (#267) ---------------------------------------------------
@@ -97,7 +99,7 @@ args = ["--style", "ascii:edges=0", "--msaa", "4"]
 # The two boxes and the character outlined
 [[case]]
 name = "ascii-edges-pbr"
-scene = "demo/pbr_test.scene.toml"
+scene = "tests/fixtures/scenes/pbr_test.scene.toml"
 args = ["--no-grid", "--style", "ascii"]
 
 # The same frame with the editor grid on (#346). The grid is an overlay
@@ -107,55 +109,65 @@ args = ["--no-grid", "--style", "ascii"]
 # 9.1% of pixels past the limit, mean 21
 [[case]]
 name = "ascii-edges-pbr-grid"
-scene = "demo/pbr_test.scene.toml"
+scene = "tests/fixtures/scenes/pbr_test.scene.toml"
 args = ["--style", "ascii"]
 
 # A styled sphere and box: their outlines must be unbroken glyph lines
 # (the scene turns the style on itself)
 [[case]]
 name = "ascii-edges"
-scene = "demo/ascii_edges.scene.toml"
+scene = "tests/fixtures/scenes/ascii_edges.scene.toml"
 args = ["--no-grid"]
 
 # Edge pixels come from the single-sample depth and mask under MSAA
 [[case]]
 name = "ascii-edges-msaa4"
-scene = "demo/ascii_edges.scene.toml"
+scene = "tests/fixtures/scenes/ascii_edges.scene.toml"
 args = ["--no-grid", "--msaa", "4"]
 
 # Under a render scale the edges run at the scene's resolution, so a line
 # stays one cell wide
 [[case]]
 name = "ascii-edges-scale05"
-scene = "demo/ascii_edges.scene.toml"
+scene = "tests/fixtures/scenes/ascii_edges.scene.toml"
 args = ["--no-grid", "--render-scale", "0.5"]
 
 # The edge debug view (#349): edge pixels by source, each cell's decision
 # and its length bar, with the legend card the render draws
 [[case]]
 name = "ascii-edges-view"
-scene = "demo/ascii_edges.scene.toml"
+scene = "tests/fixtures/scenes/ascii_edges.scene.toml"
 args = ["--no-grid", "--debug-mode", "edges"]
+
+# Corners (#348): ascii-edges above draws the pillar's top corners `┌ ┐`
+# and the tees where the horizon and the box's edges meet it. A font with
+# no corner glyphs (halftone names only the four lines) keeps the line
+# glyphs it drew before, exactly as with the corner test off
+[[case]]
+name = "ascii-edges-no-corner-glyphs"
+scene = "tests/fixtures/scenes/ascii_edges.scene.toml"
+args = ["--no-grid", "--style", "ascii:font=halftone"]
+matches = ["--no-grid", "--style", "ascii:font=halftone,edge_corner=0"]
 
 # Edges in an ink of their own (#351): amber outlines over a green tint
 # fill, never the fill's colour
 [[case]]
 name = "ascii-edge-ink-color"
-scene = "demo/ascii_edges.scene.toml"
+scene = "tests/fixtures/scenes/ascii_edges.scene.toml"
 args = ["--no-grid", "--style", "ascii:color=tint,edge_ink=color,edge_color=#ffb347"]
 
 # ...and in the near side's hue: each prop outlined in its own colour, not
 # a mix of it and the floor behind (the edge cell pass's packed hue)
 [[case]]
 name = "ascii-edge-ink-hue"
-scene = "demo/pbr_test.scene.toml"
+scene = "tests/fixtures/scenes/pbr_test.scene.toml"
 args = ["--no-grid", "--style", "ascii:edge_ink=hue"]
 
 # The grid-fixed ordered dither (#277): the one temporal-stability knob a
 # single frame shows (smoothing and hysteresis need a frame before)
 [[case]]
 name = "ascii-full-dither"
-scene = "demo/stylize_props_ascii.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--style", "ascii:dither=1"]
 
 # Exposure and normalisation (#289): the whole frame's tones stretched over
@@ -163,42 +175,84 @@ args = ["--no-grid", "--style", "ascii:dither=1"]
 # each stretched over its own range after half a stop of exposure
 [[case]]
 name = "ascii-full-normalize"
-scene = "demo/stylize_props_ascii.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--style", "ascii:normalize=1"]
 
 [[case]]
 name = "ascii-entities-normalize"
-scene = "demo/stylize_props_ascii.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-normalize", "1", "--ascii-exposure", "0.5"]
+
+# --- ASCII in motion: the shimmer gate (#478) -------------------------------
+#
+# Sequence cases: no golden, a budget. Each draws 60 frames of the
+# ascii_motion clearing on one renderer under the #277 bench's slow orbit
+# and counts, from the style's own grid, the glyphs that flip and the ones
+# that flip back (A-B-A reversals, which is what shimmer is). It fails when
+# the mean a frame passes its budget. Measured 2026-11-13 at 640x360, RTX
+# 4070 under Vulkan (DX12 within 0.1):
+#
+#                      reversals/frame  flips/frame
+#   tone, history on        0.0             9.4      (ascii-motion-tone)
+#   tone, hysteresis = 0    2.2            24.1
+#   tone, temporal = off   10.5            39.9
+#   edges, history on       0.2            19.1      (ascii-motion-edges)
+#   edges, hysteresis = 0   3.5            41.7
+#   edges, temporal = off  18.8            76.7
+#
+# So a history that stops holding fails both cases on reversals and flips.
+# A budget is a deliberate number: raise one only with the reason, and the
+# new measurement, here.
+
+# The tone glyphs alone (#277): the history removes their shimmer completely
+[[case]]
+name = "ascii-motion-tone"
+scene = "tests/fixtures/scenes/ascii_motion.scene.toml"
+args = ["--no-grid", "--style", "ascii:edges=0"]
+frames = 60
+orbit = 6.8755
+max_reversals = 0.5
+max_flips = 15.0
+
+# With the edge glyphs, which keep a history of their own since #477
+# (38.2 reversals a frame before it, at 1280x720)
+[[case]]
+name = "ascii-motion-edges"
+scene = "tests/fixtures/scenes/ascii_motion.scene.toml"
+args = ["--no-grid"]
+frames = 60
+orbit = 6.8755
+max_reversals = 1.0
+max_flips = 30.0
 
 # --- per-entity ASCII -----------------------------------------------------
 
 # The entity style mask (#263) the per-entity styles read: one hue a style
 [[case]]
 name = "style-mask"
-scene = "demo/stylize_props.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props.scene.toml"
 args = ["--no-grid", "--debug-mode", "style"]
 
 # The shared geometry edges (#301) every edge-reading style sees: hue is
 # the direction across the edge, silhouettes solid, creases softer
 [[case]]
 name = "edges-view"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "edges_view"]
 
-# A user style reading them (demo/styles/inkline.*, inputs = ["edges"])
+# A user style reading them (tests/fixtures/scenes/styles/inkline.*, inputs = ["edges"])
 # beside edges_view in one frame: the pass runs once for both, and at
 # --render-scale 0.5 both read it by UV at the scene's smaller size
 [[case]]
 name = "edges-inkline-scale05"
-scene = "demo/pbr_test.scene.toml"
+scene = "tests/fixtures/scenes/pbr_test.scene.toml"
 args = ["--no-grid", "--render-scale", "0.5", "--style", "edges_view", "--style", "inkline"]
 
 # Under MSAA 4 the mask is drawn 4x against the scene's samples and
 # resolved, any styled sample winning (#306), so thin edges keep their ids
 [[case]]
 name = "style-mask-msaa4"
-scene = "demo/stylize_props.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props.scene.toml"
 args = ["--no-grid", "--debug-mode", "style", "--msaa", "4"]
 
 # Two styles in one frame, as the mixed bench authors them: the barrel and
@@ -207,7 +261,7 @@ args = ["--no-grid", "--debug-mode", "style", "--msaa", "4"]
 # with both ASCII and pencil, on purpose (#386)
 [[case]]
 name = "styles-mixed"
-scene = "demo/stylize_props.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props.scene.toml"
 args = ["--no-grid"]
 
 # Per-entity ASCII (#266): the ASCII bench as authored (its two
@@ -215,40 +269,62 @@ args = ["--no-grid"]
 # whole frame with those props as variants, and the props on object grids
 [[case]]
 name = "ascii-style-entities"
-scene = "demo/stylize_props_ascii.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
 args = ["--no-grid"]
 # Per entity (#317): the barrel and YBot are glyphs, every other cell is a
 # space (the picture passes through)
 text = "ascii-style-entities.txt"
+
+# A style a script sets (#371): the same bench, its props held smooth by
+# tests/fixtures/scenes/scripts/story_beat.rhai until a beat at 2 s.
+# At 3 s the script has given the glyphs back, and the frame is the one the
+# scene draws as authored with no script run, byte for byte; at 1 s the
+# props are smooth
+[[case]]
+name = "script-beat-is-the-authored-style"
+scene = "tests/fixtures/scenes/stylize_props_scripted.scene.toml"
+args = ["--no-grid", "--script-time", "3"]
+matches = ["--no-grid", "--time", "3"]
+
+[[case]]
+name = "script-beat"
+scene = "tests/fixtures/scenes/stylize_props_scripted.scene.toml"
+args = ["--no-grid", "--script-time", "3"]
+text = "script-beat.txt"
+
+[[case]]
+name = "script-before-the-beat"
+scene = "tests/fixtures/scenes/stylize_props_scripted.scene.toml"
+args = ["--no-grid", "--script-time", "1"]
 
 # Each pixel one style's (#384): whole-frame ASCII leaves the pencil cask,
 # crate and lid sketched (pencil draws them from the scene, not from the
 # glyphs); the tag, opted out of pencil, is ASCII's
 [[case]]
 name = "ascii-full-yields-to-pencil"
-scene = "demo/stylize_props.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props.scene.toml"
 args = ["--no-grid", "--style", "ascii"]
 
 [[case]]
 name = "ascii-style-screen"
-scene = "demo/stylize_props_ascii.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--ascii-scope", "screen"]
 
 [[case]]
 name = "ascii-style-object"
-scene = "demo/stylize_props_ascii.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object"]
 
 # Whole-cell silhouettes (#338): every edge cell of the glyph props is drawn
 # whole or shows the scene, on the screen grid and on object grids
 [[case]]
 name = "ascii-silhouette-cell"
-scene = "demo/ascii_entities.scene.toml"
+scene = "tests/fixtures/scenes/ascii_entities.scene.toml"
 args = ["--no-grid", "--style", "ascii:silhouette=cell"]
 
 [[case]]
 name = "ascii-silhouette-cell-object"
-scene = "demo/stylize_props_ascii.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object", "--style", "ascii:silhouette=cell,edges=0"]
 
 # The variant cell pre-pass (#313) sums a variant's cells once, but only at
@@ -256,34 +332,59 @@ args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object", "--s
 # binary from before #313, so they say the pre-pass draws the same pixels
 [[case]]
 name = "ascii-style-footprint2"
-scene = "demo/stylize_props_ascii.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--style", "ascii:footprint=2"]
 
 [[case]]
 name = "ascii-style-object-footprint3"
-scene = "demo/stylize_props_ascii.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
 args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object", "--style", "ascii:footprint=3"]
 
 # Blend (#278): the barrel half-way dissolved, the YBot a 40% cross-fade,
 # both carried in the mask's .g beside their ids (on the ASCII props alone
-# since #386: demo/stylize_blend.scene.toml styles no pencil props)
+# since #386: tests/fixtures/scenes/stylize_blend.scene.toml styles no pencil props)
 [[case]]
 name = "ascii-blend"
-scene = "demo/stylize_blend.scene.toml"
+scene = "tests/fixtures/scenes/stylize_blend.scene.toml"
 args = ["--no-grid"]
 
 # The same through the variant cell pre-pass (#313), blessed as above
 [[case]]
 name = "ascii-blend-footprint2"
-scene = "demo/stylize_blend.scene.toml"
+scene = "tests/fixtures/scenes/stylize_blend.scene.toml"
 args = ["--no-grid", "--style", "ascii:footprint=2"]
+
+# A blend that follows the tear (#397): tests/fixtures/scenes/stylize_props_tear.scene.toml's
+# barrel (cross-fade) and YBot (dissolve) have `blend_source = "tear"`, so
+# under render mode 6, the tear with no look of its own, they are glyphs
+# only where the tear's fbm patches pass and the rest of the frame is
+# untouched. Under Matrix (1) the same holes rain code and the props in
+# them are glyphized from that picture
+[[case]]
+name = "ascii-tear"
+scene = "tests/fixtures/scenes/stylize_props_tear.scene.toml"
+args = ["--no-grid", "--render-mode", "6", "--mode-mix", "0.5"]
+
+[[case]]
+name = "ascii-tear-matrix"
+scene = "tests/fixtures/scenes/stylize_props_tear.scene.toml"
+args = ["--no-grid", "--render-mode", "1", "--mode-mix", "0.5"]
+
+# With no tear (mode 6 at a mix of 0) the torn props are at blend 0: their
+# style is off, pass and mask skipped, so the frame is the one with ASCII
+# off everywhere, byte for byte
+[[case]]
+name = "ascii-tear-calm"
+scene = "tests/fixtures/scenes/stylize_props_tear.scene.toml"
+args = ["--no-grid", "--render-mode", "6", "--mode-mix", "0"]
+matches = ["--no-grid", "--style", "ascii:off"]
 
 # The veil (#290): a glyph stone behind a campfire and a glyph crate behind
 # glass. The fire stays fire and the glass fades the crate's glyphs by its
 # coverage; before #290 both were glyphized as the entity behind them
 [[case]]
 name = "style-veil"
-scene = "demo/style_veil.scene.toml"
+scene = "tests/fixtures/scenes/style_veil.scene.toml"
 args = ["--no-grid", "--particle-time", "2"]
 
 # --- pencil sketch (#273) ---------------------------------------------------
@@ -297,60 +398,60 @@ args = ["--no-grid", "--particle-time", "2"]
 # that pencil leaves another style's pixels alone)
 [[case]]
 name = "pencil-full"
-scene = "demo/stylize_props_pencil.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--style", "pencil"]
 
 # Another hand: a seed and screen hatching at one angle, at 2x (sizes in points)
 [[case]]
 name = "pencil-screen-seed-hidpi"
-scene = "demo/stylize_props_pencil.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--style", "pencil:direction=screen,seed=7,angle=35", "--pixels-per-point", "2"]
 
 [[case]]
 name = "pencil-tensor"
-scene = "demo/pencil_sketch.scene.toml"
+scene = "tests/fixtures/scenes/pencil_sketch.scene.toml"
 args = ["--no-grid", "--style", "pencil:direction=tensor,scope=screen"]
 
 # Strokes laid on the surfaces (#389): triplanar stripes in octaves of
 # metres, each picked by its on-screen spacing; the sky keeps the screen's
 [[case]]
 name = "pencil-world"
-scene = "demo/pencil_sketch.scene.toml"
+scene = "tests/fixtures/scenes/pencil_sketch.scene.toml"
 args = ["--no-grid", "--style", "pencil:grid=world,scope=screen"]
 
 # Per-entity pencil_style variants (coloured, screen, object grid, blue
 # lead, an opt-out) as the demo scene authors them
 [[case]]
 name = "pencil-entities"
-scene = "demo/pencil_sketch.scene.toml"
+scene = "tests/fixtures/scenes/pencil_sketch.scene.toml"
 args = ["--no-grid"]
 
 # Boiling lines: the post clock moves the seed, in whole steps
 [[case]]
 name = "pencil-boil"
-scene = "demo/pencil_sketch.scene.toml"
+scene = "tests/fixtures/scenes/pencil_sketch.scene.toml"
 args = ["--no-grid", "--style", "pencil:boil=4,scope=screen", "--style-time", "1.3"]
 
-# Images from files (#390): demo/papers/cold_press.png under the strokes,
-# and demo/strokes/graphite.png's four strokes along each dash. The
+# Images from files (#390): tests/fixtures/scenes/papers/cold_press.png under the strokes,
+# and tests/fixtures/scenes/strokes/graphite.png's four strokes along each dash. The
 # pencil cases above name none, so passing unblessed is what pins "the
 # procedural paper is unchanged when none is named"
 [[case]]
 name = "pencil-paper-image"
-scene = "demo/stylize_props_pencil.scene.toml"
-args = ["--no-grid", "--style", "pencil:paper_image=cold_press,grain=0.8"]
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
+args = ["--no-grid", "--style", "pencil:paper_image=../../../examples/papers/cold_press.png,grain=0.8"]
 
 [[case]]
 name = "pencil-stroke-image"
-scene = "demo/stylize_props_pencil.scene.toml"
-args = ["--no-grid", "--style", "pencil:paper_image=cold_press,stroke_image=graphite,stroke_rows=4,thickness=1.5"]
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
+args = ["--no-grid", "--style", "pencil:paper_image=../../../examples/papers/cold_press.png,stroke_image=../../../examples/strokes/graphite.png,stroke_rows=4,thickness=1.5"]
 
 # The strip on surfaces (#389 x #390): world strokes draw it too, the row
 # twice the stroke width in metres
 [[case]]
 name = "pencil-world-stroke-image"
-scene = "demo/pencil_sketch.scene.toml"
-args = ["--no-grid", "--style", "pencil:grid=world,scope=screen,stroke_image=graphite,stroke_rows=4,thickness=1.5"]
+scene = "tests/fixtures/scenes/pencil_sketch.scene.toml"
+args = ["--no-grid", "--style", "pencil:grid=world,scope=screen,stroke_image=../../../examples/strokes/graphite.png,stroke_rows=4,thickness=1.5"]
 
 # --- the other registered styles ------------------------------------------
 #
@@ -364,18 +465,18 @@ args = ["--no-grid", "--style", "pencil:grid=world,scope=screen,stroke_image=gra
 # across their cells. Edges off, so pbr_test's grid isn't traced
 [[case]]
 name = "display-bloom"
-scene = "demo/pbr_test.scene.toml"
+scene = "tests/fixtures/scenes/pbr_test.scene.toml"
 args = ["--ascii", "--ascii-palette", "phosphor", "--ascii-edges", "0", "--style", "display_bloom"]
 
 [[case]]
 name = "invert"
-scene = "demo/pbr_test.scene.toml"
+scene = "tests/fixtures/scenes/pbr_test.scene.toml"
 args = ["--style", "invert:strength=1"]
 tolerance = { level = 8, share = 0.003, mean = 0.25 }
 
 [[case]]
 name = "kuwahara"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "kuwahara:radius=5"]
 tolerance = { level = 8, share = 0.003, mean = 0.25 }
 
@@ -385,19 +486,106 @@ tolerance = { level = 8, share = 0.003, mean = 0.25 }
 # without it byte for byte, in either stage
 [[case]]
 name = "ascii-whole-blend-half"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--ascii", "--style", "ascii:blend=0.5"]
 
 [[case]]
 name = "ascii-whole-blend-zero"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--ascii", "--style", "ascii:blend=0"]
 matches = ["--no-grid"]
 
 [[case]]
 name = "kuwahara-blend-zero"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "kuwahara:radius=5,blend=0"]
+matches = ["--no-grid"]
+
+# A reveal (#406): the style shows inside a ragged region and the live frame
+# around it, with a drawn edge between. Half-torn, the clearing is pencil
+# through a hole that rips out from the middle, and the edge's teeth are
+# the boil step at post time 0.6. At reveal 0 the style leaves the chain,
+# so the frame is the live one byte for byte; a panel is a straight frame
+# the screen's shape, the comic-panel cut
+[[case]]
+name = "pencil-reveal-tear-half"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "pencil:reveal=0.5", "--style-time", "0.6"]
+
+[[case]]
+name = "pencil-reveal-panel"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "pencil:reveal=0.4,reveal_shape=panel,reveal_edge=4"]
+
+# Torn paper (#876): the half tear again, with a rim of bare paper on the
+# drawn side of the line and the edge's shadow falling down and to the
+# right on the live side. Without the two keys it is pencil-reveal-tear-half
+# byte for byte
+[[case]]
+name = "pencil-reveal-torn-paper"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "pencil:reveal=0.5,reveal_rim=3,reveal_shadow=0.4", "--style-time", "0.6"]
+
+[[case]]
+name = "pencil-reveal-zero"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "pencil:reveal=0,reveal_shape=wipe"]
+matches = ["--no-grid"]
+
+# Drawn on (#879): under transition = "draw" a blend is a front, not a
+# mix. Half-way, the whole frame has about half of each outline, the
+# hatching a stroke at a time behind it and the paper's wash just begun,
+# over the live clearing, with no faint copy of the rest. At blend 1 the
+# drawing is whole: the same pixels as a pencil frame with no transition
+[[case]]
+name = "pencil-draw-half"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "pencil:transition=draw,blend=0.5"]
+
+[[case]]
+name = "pencil-draw-whole"
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
+args = ["--no-grid", "--style", "pencil:transition=draw"]
+matches = ["--no-grid", "--style", "pencil"]
+
+# Per entity: the cask half drawn by its own blend (the cross-fade passes
+# over it), the crate's blend following the tear, so it draws only where
+# render mode 6 tears
+[[case]]
+name = "pencil-draw-entities-half"
+scene = "tests/fixtures/scenes/stylize_props_pencil_draw.scene.toml"
+args = ["--no-grid"]
+
+[[case]]
+name = "pencil-draw-entities-torn"
+scene = "tests/fixtures/scenes/stylize_props_pencil_draw.scene.toml"
+args = ["--no-grid", "--render-mode", "6", "--mode-mix", "0.5"]
+
+# Contour (#214; a registered style since #599): ink from depth's second
+# difference and luminance edges, so the flat ground draws no line. Lines
+# are high contrast, so they take the suite's tolerance, not the smooth one
+[[case]]
+name = "contour"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "contour:width=1.5"]
+
+# Last of the HDR chain: the ink over Kuwahara's paint, never smeared by it
+[[case]]
+name = "contour-over-kuwahara"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "kuwahara:radius=4", "--style", "contour:width=1.5"]
+
+# The old flags are shorthands for its table's keys
+[[case]]
+name = "contour-flags-are-its-table"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--contour-width", "1.5", "--contour-color", "0.2,0.05,0.02"]
+matches = ["--no-grid", "--style", "contour:width=1.5,color=0.2/0.05/0.02"]
+
+[[case]]
+name = "contour-blend-zero"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "contour:blend=0"]
 matches = ["--no-grid"]
 
 # Palette quantize (#324): a ladder dithered in 2-point blocks, and nearest
@@ -405,12 +593,12 @@ matches = ["--no-grid"]
 # step, so these take the glyph styles' tolerance, not the smooth one
 [[case]]
 name = "palette-phosphor-dither"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "palette:palette=phosphor,dither=1,pixel=2"]
 
 [[case]]
 name = "palette-cga16"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "palette:palette=cga16"]
 
 # Watercolor (#272): the whole frame painted (on the plain bench, so every
@@ -419,7 +607,7 @@ args = ["--no-grid", "--style", "palette:palette=cga16"]
 # share
 [[case]]
 name = "watercolor"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "watercolor"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
@@ -427,14 +615,14 @@ tolerance = { level = 8, share = 0.005, mean = 0.3 }
 # points, its relief the grain the pigment settles in
 [[case]]
 name = "watercolor-paper-image"
-scene = "demo/stylize_props_plain.scene.toml"
-args = ["--no-grid", "--style", "watercolor:paper_image=cold_press,grain_scale=1.5,grain=0.6"]
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--style", "watercolor:paper_image=../../../examples/papers/cold_press.png,grain_scale=1.5,grain=0.6"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
 # Over Kuwahara: the two chain (HDR brush pools, then display-stage paint)
 [[case]]
 name = "watercolor-kuwahara"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "kuwahara:radius=4", "--style", "watercolor:layers=3"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
@@ -443,13 +631,13 @@ tolerance = { level = 8, share = 0.005, mean = 0.3 }
 # grass left as they are
 [[case]]
 name = "watercolor-entities"
-scene = "demo/watercolor.scene.toml"
+scene = "tests/fixtures/scenes/watercolor.scene.toml"
 args = ["--no-grid"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
 # --- user-authored styles (#274, #417) ---------------------------------------
 #
-# Styles a game writes (demo/styles/*.shader.toml + WGSL), loaded at run time
+# Styles a game writes (tests/fixtures/scenes/styles/*.shader.toml + WGSL), loaded at run time
 # by the same `stylize::custom::load_dir` call as `flint render` (the suite
 # runs `render::run_in`). These pin what the framework writes around a user's
 # function: the prelude's sRGB round trip at the display stage (each reads a
@@ -463,7 +651,7 @@ tolerance = { level = 8, share = 0.005, mean = 0.3 }
 # 181 levels yet only 1.25% of the frame passes 48, which 2% let through
 [[case]]
 name = "user-styles"
-scene = "demo/user_styles.scene.toml"
+scene = "tests/fixtures/scenes/user_styles.scene.toml"
 args = ["--no-grid"]
 tolerance = { share = 0.005 }
 
@@ -472,14 +660,15 @@ tolerance = { share = 0.005 }
 # The YBot and barrel are hologram's, so risograph leaves them (#384)
 [[case]]
 name = "user-style-risograph"
-scene = "demo/user_styles.scene.toml"
+scene = "tests/fixtures/scenes/user_styles.scene.toml"
 args = ["--no-grid", "--style", "risograph"]
 
-# Contour: lines of equal distance from `flint_view_depth`, the depth binding
+# Contour map: lines of equal distance from `flint_view_depth`, the depth binding
+# (named `contour` until #599 gave the name to the built-in ink)
 [[case]]
-name = "user-style-contour"
-scene = "demo/user_styles.scene.toml"
-args = ["--no-grid", "--style", "contour"]
+name = "user-style-contour-map"
+scene = "tests/fixtures/scenes/user_styles.scene.toml"
+args = ["--no-grid", "--style", "contour_map"]
 
 # A style whose WGSL fails (tests/golden/fixtures/styles/broken.*) must draw
 # its input unchanged and say where it failed. The passthrough runs the
@@ -500,52 +689,121 @@ error = "broken.wgsl:9:9"
 
 [[case]]
 name = "look-ascii-noir"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--look", "ascii_noir"]
 
 [[case]]
 name = "look-matrix"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--look", "matrix"]
 
 # Kuwahara under it: the smooth styles' tolerance
 [[case]]
 name = "look-ink-wash"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--look", "ink_wash"]
 tolerance = { level = 8, share = 0.003, mean = 0.25 }
 
 [[case]]
 name = "look-graphite"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--look", "graphite"]
 
 [[case]]
 name = "look-watercolor"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--look", "watercolor"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
 # The pencil style's other hands (#391)
 [[case]]
 name = "look-coloured-pencil"
-scene = "demo/stylize_props_pencil.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--look", "coloured_pencil"]
 
 [[case]]
 name = "look-blueprint"
-scene = "demo/stylize_props_pencil.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--look", "blueprint"]
 
 [[case]]
 name = "look-charcoal"
-scene = "demo/stylize_props_pencil.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
 args = ["--no-grid", "--look", "charcoal"]
+
+# Ink-forward pencil on a blank sheet (#404): lines, one horizon (grazing = 1
+# spares the floor's depth steps), hatching only where the light falls off
+# (tone = "light", #887: the barrels' and crate's shadow sides, not their
+# dark paint). On the plain bench, so only the look draws. A still at time
+# 0, so the look's motion_hold = 12 holds nothing here
+[[case]]
+name = "look-rotoscope"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--look", "rotoscope"]
+
+# The same as an entities preset on the pencil bench: the cask and crate
+# blank paper with lines, the rest of the scene as it is
+[[case]]
+name = "look-rotoscope-entities"
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
+args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:scope=entities"]
+
+# Tone from the light (#869): the picture over the style albedo, so the
+# brown floor in the sun is blank at the neutral brightness and only the
+# shadows are hatched: the barrels' undersides, the crate's shaded face and
+# what they cast. Under tone = "picture" brightness 0 hatches the whole floor.
+# The rotoscope look already says tone = "light", brightness = 0, so this
+# draws `look-rotoscope`'s frame byte for byte and shares its golden (#759:
+# one copy of an image); a look that stops saying so splits them again
+[[case]]
+name = "look-rotoscope-light"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+golden = "look-rotoscope.png"
+args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:tone=light,brightness=0"]
+
+# The same per entity, 4x: the variants take tone from the preset, and the
+# albedo is drawn against the scene's samples and resolved
+[[case]]
+name = "look-rotoscope-light-entities-msaa4"
+scene = "tests/fixtures/scenes/stylize_props_pencil.scene.toml"
+args = ["--no-grid", "--msaa", "4", "--look", "rotoscope", "--style", "pencil:scope=entities,tone=light,brightness=0"]
+
+# A meadow under rotoscope (#883): grass at density 40 out to 70 m, every
+# blade a depth step against the ground behind it. clutter = 1 (the look's)
+# fades a line where the lines round it already cover most of a disc, near
+# and wide, so the meadow is a sheet with its near edge and its horizon
+# line, and the bench, barrel, crate and lantern keep their outlines
+[[case]]
+name = "look-rotoscope-meadow"
+scene = "tests/fixtures/scenes/pencil_meadow.scene.toml"
+args = ["--no-grid", "--look", "rotoscope"]
+
+# The same with clutter off: the band #883 was filed for, every blade inked
+# and merged into one black fill from the near edge to the horizon
+[[case]]
+name = "look-rotoscope-meadow-clutter-off"
+scene = "tests/fixtures/scenes/pencil_meadow.scene.toml"
+args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:clutter=0"]
+# Nothing drawn reads as paper (#890): under a dark sky, tone = "light" (the
+# look's own) leaves the sky blank, as a traced drawing does, while the
+# YBot's shadow side is still hatched. Before #890 the sky kept the
+# picture's dark tone and was hatched all over
+[[case]]
+name = "look-rotoscope-dark-sky"
+scene = "tests/fixtures/scenes/pencil_dark_sky.scene.toml"
+args = ["--no-grid", "--look", "rotoscope"]
+
+# The same under tone = "picture": the sky is hatched, for a look that
+# wants one
+[[case]]
+name = "look-rotoscope-dark-sky-picture"
+scene = "tests/fixtures/scenes/pencil_dark_sky.scene.toml"
+args = ["--no-grid", "--look", "rotoscope", "--style", "pencil:tone=picture"]
 
 # A sweep's contact sheet: the cells, their frames and the glyph labels
 [[case]]
 name = "look-sweep-cell"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 width = 320
 height = 180
 args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.cell=6,10,16"]
@@ -554,7 +812,7 @@ args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.cell=6,10,16"]
 # column and row labels, and glyphs drawn at the frame's own size
 [[case]]
 name = "look-sweep-grid-crop"
-scene = "demo/stylize_props_plain.scene.toml"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 width = 640
 height = 360
 args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.brightness=0,0.3",
@@ -565,10 +823,70 @@ args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.brightness=0,0.3"
 # glyphs; then the mask itself
 [[case]]
 name = "style-terrain"
-scene = "demo/style_terrain.scene.toml"
+scene = "tests/fixtures/scenes/style_terrain.scene.toml"
 args = ["--no-grid"]
 
 [[case]]
 name = "style-terrain-mask"
-scene = "demo/style_terrain.scene.toml"
+scene = "tests/fixtures/scenes/style_terrain.scene.toml"
 args = ["--no-grid", "--debug-mode", "style"]
+
+# --- the editor's selection outline (#602) ---------------------------------
+#
+# Not a style, but it is drawn over the finished image, after every style,
+# so it lives with them. tests/fixtures/scenes/selection_outline.scene.toml holds one of each
+# kind of thing a person picks in `flint edit`; --select draws its outline.
+# An outline is a thin line, about 0.2% of the frame here, so these hold a
+# share of 0.05%, not the suite's 2%: losing a quarter of one fails, the
+# shading noise between adapters doesn't. No shadows: their edges are the
+# part of this bench likeliest to shade differently on another GPU.
+[[case]]
+name = "selection-static"
+scene = "tests/fixtures/scenes/selection_outline.scene.toml"
+args = ["--no-grid", "--no-shadows", "--select", "barrel"]
+tolerance = { level = 40, share = 0.0005, mean = 1.0 }
+
+[[case]]
+name = "selection-skinned"
+scene = "tests/fixtures/scenes/selection_outline.scene.toml"
+args = ["--no-grid", "--no-shadows", "--select", "ybot"]
+tolerance = { level = 40, share = 0.0005, mean = 1.0 }
+
+# A parent with no mesh of its own: its children are outlined as one
+[[case]]
+name = "selection-parent"
+scene = "tests/fixtures/scenes/selection_outline.scene.toml"
+args = ["--no-grid", "--no-shadows", "--select", "cart"]
+tolerance = { level = 40, share = 0.0005, mean = 1.0 }
+
+# A sprite follows its alpha cut-out; glass is outlined, not filled
+[[case]]
+name = "selection-billboard"
+scene = "tests/fixtures/scenes/selection_outline.scene.toml"
+args = ["--no-grid", "--no-shadows", "--select", "wisp"]
+tolerance = { level = 40, share = 0.0005, mean = 1.0 }
+
+[[case]]
+name = "selection-transparent"
+scene = "tests/fixtures/scenes/selection_outline.scene.toml"
+args = ["--no-grid", "--no-shadows", "--select", "glass"]
+tolerance = { level = 40, share = 0.0005, mean = 1.0 }
+
+# Selecting what draws nothing (a light) leaves the frame as it was, byte
+# for byte: the mask and outline passes do nothing without the selection's
+# draws, so an editor's frame with nothing outlined is the game's
+[[case]]
+name = "selection-nothing-drawn"
+scene = "tests/fixtures/scenes/selection_outline.scene.toml"
+args = ["--no-grid", "--no-shadows", "--select", "sun"]
+matches = ["--no-grid", "--no-shadows"]
+
+# A reality tear with no mode_params (#395): a mask scale of 0 is read as the
+# default 3 in the shader, so a partial mix tears in patches, the same as the
+# documented 3,0,6,0. Before, the scale sat at ~0, the fbm was one value over
+# the whole screen, and mix 0.55 tore nothing at all
+[[case]]
+name = "tear-default-params"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--render-mode", "1", "--mode-mix", "0.55"]
+matches = ["--no-grid", "--render-mode", "1", "--mode-mix", "0.55", "--mode-params", "3,0,6,0"]

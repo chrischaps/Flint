@@ -1,22 +1,8 @@
 //! Render pipeline setup
 
 use crate::primitives::Vertex;
+use crate::TrustedShader;
 
-/// Depth bias for the line-list overlays (wireframe, skeleton), pulling
-/// them in front of the surface they trace. WebGPU forbids any depth bias
-/// on line topologies and rejects the pipeline, so the web draws them
-/// unbiased.
-pub(crate) fn line_depth_bias() -> wgpu::DepthBiasState {
-    if cfg!(target_arch = "wasm32") {
-        wgpu::DepthBiasState::default()
-    } else {
-        wgpu::DepthBiasState {
-            constant: -2,
-            slope_scale: -1.0,
-            clamp: 0.0,
-        }
-    }
-}
 use bytemuck::{Pod, Zeroable};
 
 /// Additive blending: src*SrcAlpha + dst*One.
@@ -30,6 +16,22 @@ pub(crate) const ADDITIVE_BLEND: wgpu::BlendState = wgpu::BlendState {
         src_factor: wgpu::BlendFactor::One,
         dst_factor: wgpu::BlendFactor::One,
         operation: wgpu::BlendOperation::Add,
+    },
+};
+
+/// Lighten blending: the brighter of src and dst, channel by channel, for a
+/// fragment that has already multiplied its colour by its alpha. Nothing drawn
+/// with it can darken what's behind it.
+pub(crate) const LIGHTEN_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Max,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Max,
     },
 };
 
@@ -127,11 +129,22 @@ pub struct MaterialUniforms {
     /// unchanged, so with `emissive_scale` a light part's surface and light
     /// are set apart. 0 is the mesh as uploaded.
     pub glow_surface: f32,
-    pub _pad_emissive: u32,
+    /// 1 when the material is glTF `doubleSided` (#623): a back face is lit
+    /// with its normal turned toward the viewer. The draw also goes through
+    /// a pipeline that culls nothing.
+    pub double_sided: u32,
     /// Multiplies every vertex colour, `rgb` only, as surface and as
     /// per-vertex light (ADR 0102: the entity's `material.vertex_tint_*`).
     /// White is the mesh as uploaded. Unused without `use_vertex_color`.
     pub vertex_tint: [f32; 4],
+    /// Unlit (#627: the entity's `material.unlit`). `x` is 1 when the
+    /// material skips lighting and draws its base colour (texture and
+    /// vertex colour included) times `y`, its `emissive_scale`, plus its
+    /// emission, straight to the HDR target; 0 is lit. `z` is the edge
+    /// softness (#582, a living prop's `softness`, skinned shader only): above
+    /// 0 the surface's alpha falls toward its silhouette, where it turns away
+    /// from the eye; 0 is a hard edge. `w` unused.
+    pub unlit: [f32; 4],
 }
 
 impl MaterialUniforms {
@@ -155,8 +168,9 @@ impl MaterialUniforms {
             has_emissive_tex: 0,
             vertex_emission: 0,
             glow_surface: 0.0,
-            _pad_emissive: 0,
+            double_sided: 0,
             vertex_tint: [1.0; 4],
+            unlit: [0.0; 4],
         }
     }
 
@@ -180,18 +194,56 @@ impl MaterialUniforms {
             has_emissive_tex: 0,
             vertex_emission: 0,
             glow_surface: 0.0,
-            _pad_emissive: 0,
+            double_sided: 0,
             vertex_tint: [1.0; 4],
+            unlit: [0.0; 4],
         }
     }
 
     /// Sets the emission from an imported material.
     pub fn set_emission(&mut self, material: &flint_import::ImportedMaterial) {
-        let [r, g, b] = material.emissive;
-        let s = material.emissive_strength;
+        self.set_emission_overridden(material, None, None);
+    }
+
+    /// [`set_emission`](Self::set_emission) with the material's `emissive`
+    /// colour and `emissive_strength` replaced where given (#624: a
+    /// `material_overrides` entry recolouring an imported model's glow). The
+    /// strength reaches per-vertex light too, as the material's own does.
+    pub fn set_emission_overridden(
+        &mut self,
+        material: &flint_import::ImportedMaterial,
+        emissive: Option<[f32; 3]>,
+        strength: Option<f32>,
+    ) {
+        let [r, g, b] = emissive.unwrap_or(material.emissive);
+        let s = strength.unwrap_or(material.emissive_strength);
         let per_vertex = material.vertex_emission && material.use_vertex_color;
         self.emissive = [r * s, g * s, b * s, if per_vertex { s } else { 0.0 }];
         self.vertex_emission = per_vertex as u32;
+    }
+
+    /// Whether back faces are lit as the side the viewer sees, from an
+    /// imported material's glTF `doubleSided` (#623).
+    pub fn set_double_sided(&mut self, material: &flint_import::ImportedMaterial) {
+        self.double_sided = material.double_sided as u32;
+    }
+
+    /// Draw unlit (#627): base colour times `scale` plus emission, no
+    /// lights, ambient or shadows. `scale` below 0 counts as 0.
+    pub fn set_unlit(&mut self, scale: f32) {
+        self.unlit[0] = 1.0;
+        self.unlit[1] = scale.max(0.0);
+    }
+
+    /// How far the surface's alpha feathers toward its silhouette (#582), 0 to
+    /// 1; 0 is a hard edge. Only the skinned shader reads it.
+    pub fn set_edge_softness(&mut self, softness: f32) {
+        self.unlit[2] = softness.clamp(0.0, 1.0);
+    }
+
+    /// The edge softness [`set_edge_softness`](Self::set_edge_softness) gave.
+    pub fn edge_softness(&self) -> f32 {
+        self.unlit[2]
     }
 
     /// Multiplies all of the emission, the material's own and per-vertex,
@@ -382,19 +434,11 @@ impl LightUniforms {
     }
 }
 
-/// The main render pipeline
-pub struct RenderPipeline {
-    pub pipeline: wgpu::RenderPipeline,
-    pub line_pipeline: wgpu::RenderPipeline,
-    pub overlay_line_pipeline: wgpu::RenderPipeline,
-    pub skeleton_line_pipeline: wgpu::RenderPipeline,
-    pub outline_pipeline: wgpu::RenderPipeline,
-    pub depth_prepass_pipeline: wgpu::RenderPipeline,
-    pub transparent_alpha_pipeline: wgpu::RenderPipeline,
-    /// Back-face pass of the alpha pipeline (drawn first).
-    pub transparent_alpha_back_pipeline: wgpu::RenderPipeline,
-    pub transparent_additive_pipeline: wgpu::RenderPipeline,
-    pub transparent_multiply_pipeline: wgpu::RenderPipeline,
+/// The bind group layouts every scene pipeline is made against, and the
+/// sampler the light group lends every material. Made once per renderer:
+/// they don't depend on the sample count, so an MSAA change keeps them and
+/// every bind group made from them (#735).
+pub struct SceneLayouts {
     pub transform_bind_group_layout: wgpu::BindGroupLayout,
     pub material_bind_group_layout: wgpu::BindGroupLayout,
     pub light_bind_group_layout: wgpu::BindGroupLayout,
@@ -402,21 +446,10 @@ pub struct RenderPipeline {
     /// group (binding 4) rather than in each material's: linear, with linear
     /// mips, repeating, as `TextureCache` made every texture's own.
     pub material_sampler: wgpu::Sampler,
-    /// What shallow wooze's pipelines build on (#215), made only when a scene
-    /// asks for them: the PBR fragment stage, and the layout and targets it has.
-    pub(crate) shader: wgpu::ShaderModule,
-    pub(crate) pipeline_layout: wgpu::PipelineLayout,
-    pub(crate) format: wgpu::TextureFormat,
-    pub(crate) sample_count: u32,
 }
 
-impl RenderPipeline {
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, sample_count: u32) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("PBR Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-        });
-
+impl SceneLayouts {
+    pub fn new(device: &wgpu::Device) -> Self {
         // Bind group 0: Transform uniforms (vertex + fragment)
         let transform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -562,7 +595,7 @@ impl RenderPipeline {
             label: Some("Material Sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
             // Ground seen edge-on (roads, floors) keeps its detail; needs
@@ -570,302 +603,64 @@ impl RenderPipeline {
             anisotropy_clamp: 8,
             ..Default::default()
         });
+        Self {
+            transform_bind_group_layout,
+            material_bind_group_layout,
+            light_bind_group_layout,
+            material_sampler,
+        }
+    }
+}
+
+/// The main render pipeline
+pub struct RenderPipeline {
+    pub pipeline: wgpu::RenderPipeline,
+    /// `pipeline` culling nothing, for glTF `doubleSided` materials (#623).
+    pub pipeline_double_sided: wgpu::RenderPipeline,
+    pub line_pipeline: wgpu::RenderPipeline,
+    pub overlay_line_pipeline: wgpu::RenderPipeline,
+    pub skeleton_line_pipeline: wgpu::RenderPipeline,
+    pub transparent_alpha_pipeline: wgpu::RenderPipeline,
+    /// Back-face pass of the alpha pipeline (drawn first).
+    pub transparent_alpha_back_pipeline: wgpu::RenderPipeline,
+    pub transparent_additive_pipeline: wgpu::RenderPipeline,
+    pub transparent_multiply_pipeline: wgpu::RenderPipeline,
+    /// What shallow wooze's pipelines build on (#215), made only when a scene
+    /// asks for them: the PBR fragment stage and the layout it has.
+    pub(crate) shader: wgpu::ShaderModule,
+    pub(crate) pipeline_layout: wgpu::PipelineLayout,
+}
+
+impl RenderPipeline {
+    pub fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        sample_count: u32,
+        layouts: &SceneLayouts,
+    ) -> Self {
+        let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("PBR Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("PBR Pipeline Layout"),
             bind_group_layouts: &[
-                &transform_bind_group_layout,
-                &material_bind_group_layout,
-                &light_bind_group_layout,
+                Some(&layouts.transform_bind_group_layout),
+                Some(&layouts.material_bind_group_layout),
+                Some(&layouts.light_bind_group_layout),
             ],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("PBR Render Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
-
-        // Line pipeline for wireframes and grid
-        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Line Render Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
-
-        // Overlay line pipeline — renders lines on top of solid geometry with depth bias
-        let overlay_line_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Overlay Line Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::desc()],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::LineList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    unclipped_depth: false,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState::default(),
-                    bias: line_depth_bias(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            });
-
-        // Overlay line pipeline — renders lines on top of solid geometry with depth bias
-        let skeleton_line_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Skeleton Line Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::desc()],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::LineList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    unclipped_depth: false,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    stencil: wgpu::StencilState::default(),
-                    bias: line_depth_bias(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            });
-
-        // Outline pipeline — inverted hull (front-face culled, solid orange)
-        let outline_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Outline Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("outline_shader.wgsl").into()),
-        });
-
-        let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Outline Render Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &outline_shader,
-                entry_point: Some("vs_outline"),
-                buffers: &[Vertex::desc()],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &outline_shader,
-                entry_point: Some("fs_outline"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Front), // Inverted hull: cull front faces
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
-
-        // Depth prepass pipeline — writes depth only (no color) for selected entity
-        // front faces, used in wireframe mode to mask the outline interior.
-        let depth_prepass_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Depth Prepass Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &outline_shader,
-                    entry_point: Some("vs_depth_prepass"),
-                    buffers: &[Vertex::desc()],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &outline_shader,
-                    entry_point: Some("fs_outline"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::empty(),
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    unclipped_depth: false,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    ..Default::default()
-                },
-                multiview: None,
-                cache: None,
-            });
-
-        // Alpha-blended meshes draw in two passes, back faces first (cull front) then
-        // front faces (cull back). Depth write stays off, but with no sort inside one
-        // mesh a single double-sided pass blends its own back faces over its front
-        // faces in index order, which shows as triangular patches on a translucent
-        // sphere. Two passes make every convex translucent object order-independent.
-        let make_transparent_alpha = |label: &str, cull_mode: Option<wgpu::Face>| {
+        let make_opaque = |label: &str, cull_mode: Option<wgpu::Face>| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::desc()],
+                    buffers: &[Some(Vertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -889,8 +684,8 @@ impl RenderPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -898,14 +693,207 @@ impl RenderPipeline {
                     count: sample_count,
                     ..Default::default()
                 },
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };
-        let transparent_alpha_back_pipeline =
-            make_transparent_alpha("Transparent Alpha Pipeline (back faces)", Some(wgpu::Face::Front));
-        let transparent_alpha_pipeline =
-            make_transparent_alpha("Transparent Alpha Pipeline (front faces)", Some(wgpu::Face::Back));
+        let pipeline = make_opaque("PBR Render Pipeline", Some(wgpu::Face::Back));
+        // glTF `doubleSided` (#623): thin cards seen from behind
+        let pipeline_double_sided = make_opaque("PBR Render Pipeline (double-sided)", None);
+
+        // Line pipeline for wireframes and grid
+        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Line Render Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Some(Vertex::desc())],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::LineList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
+            multiview_mask: None,
+            cache: None,
+        });
+
+        // Overlay line pipeline: lines over solid geometry, LessEqual and no
+        // depth bias. WebGPU and wgpu 29+ reject a bias on line topologies,
+        // and Vulkan never applied one to lines (#944).
+        let overlay_line_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Overlay Line Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Some(Vertex::desc())],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview_mask: None,
+                cache: None,
+            });
+
+        // Skeleton line pipeline: as the overlay's, unbiased (#944)
+        let skeleton_line_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Skeleton Line Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Some(Vertex::desc())],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview_mask: None,
+                cache: None,
+            });
+
+        // Alpha-blended meshes draw in two passes, back faces first (cull front) then
+        // front faces (cull back). Depth write stays off, but with no sort inside one
+        // mesh a single double-sided pass blends its own back faces over its front
+        // faces in index order, which shows as triangular patches on a translucent
+        // sphere. Two passes make every convex translucent object order-independent.
+        let make_transparent_alpha = |label: &str, cull_mode: Option<wgpu::Face>| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Some(Vertex::desc())],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let transparent_alpha_back_pipeline = make_transparent_alpha(
+            "Transparent Alpha Pipeline (back faces)",
+            Some(wgpu::Face::Front),
+        );
+        let transparent_alpha_pipeline = make_transparent_alpha(
+            "Transparent Alpha Pipeline (front faces)",
+            Some(wgpu::Face::Back),
+        );
 
         // Transparent additive pipeline: src*SrcAlpha + dst*One
         let transparent_additive_pipeline =
@@ -915,7 +903,7 @@ impl RenderPipeline {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::desc()],
+                    buffers: &[Some(Vertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -939,8 +927,8 @@ impl RenderPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -948,7 +936,7 @@ impl RenderPipeline {
                     count: sample_count,
                     ..Default::default()
                 },
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             });
 
@@ -960,7 +948,7 @@ impl RenderPipeline {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::desc()],
+                    buffers: &[Some(Vertex::desc())],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -984,8 +972,8 @@ impl RenderPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -993,29 +981,22 @@ impl RenderPipeline {
                     count: sample_count,
                     ..Default::default()
                 },
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             });
 
         Self {
             pipeline,
+            pipeline_double_sided,
             line_pipeline,
             overlay_line_pipeline,
             skeleton_line_pipeline,
-            outline_pipeline,
-            depth_prepass_pipeline,
             transparent_alpha_pipeline,
             transparent_alpha_back_pipeline,
             transparent_additive_pipeline,
             transparent_multiply_pipeline,
-            transform_bind_group_layout,
-            material_bind_group_layout,
-            light_bind_group_layout,
-            material_sampler,
             shader,
             pipeline_layout,
-            format,
-            sample_count,
         }
     }
 }

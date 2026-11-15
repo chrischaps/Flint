@@ -32,6 +32,7 @@
 //! whether the sender wrote `1` or `1.0`. What the fields mean, and how strict
 //! to be about them, belongs to whoever writes the messages.
 
+use super::subsystem::{Lasts, Stage, StageCtx, Subsystem};
 use rhai::{Dynamic, Map};
 use serde_json::Value;
 
@@ -606,6 +607,43 @@ fn log_state(source: &str, now: f64, state: &serde_json::Map<String, Value>) {
     if tracing::enabled!(target: "expression", tracing::Level::INFO) {
         let json = serde_json::to_string(state).unwrap_or_default();
         tracing::info!(target: "expression", "{now:8.3}s {source}: {json}");
+    }
+}
+
+/// The feed as one of the player's subsystems (ADR 0117, #724): the first
+/// and simplest. A run has it when its host gave a feed
+/// (`LaunchOptions::expression_feed`), and keeps it across scenes, since the
+/// timeline plays on the game clock and the socket stays open for the whole
+/// run. At [`Stage::Input`] it queues the states due by now for the scripts'
+/// update, which hears them before `on_update`.
+pub(crate) struct ExpressionSubsystem {
+    feed: ExpressionFeed,
+}
+
+impl ExpressionSubsystem {
+    pub(crate) fn new(feed: ExpressionFeed) -> Self {
+        Self { feed }
+    }
+}
+
+impl Subsystem for ExpressionSubsystem {
+    fn name(&self) -> &'static str {
+        "expression feed"
+    }
+
+    fn lasts(&self) -> Lasts {
+        Lasts::Run
+    }
+
+    fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
+        if stage != Stage::Input {
+            return;
+        }
+        // The timeline on the game clock, then what the socket's reader
+        // threads have parsed
+        for state in self.feed.poll(ctx.clock.total_time) {
+            ctx.script.queue_expression(state);
+        }
     }
 }
 

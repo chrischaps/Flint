@@ -19,10 +19,12 @@
 
 mod gpu;
 pub mod set;
+pub mod specimen;
 
 pub use gpu::{stack_pixels, GpuGlyphAtlas, GpuGlyphStack};
 pub use set::{
-    EdgeGlyphs, GlyphRamp, GlyphSet, GlyphSetCache, RampOrder, BUILTIN_SET, GLYPHS_SUFFIX,
+    calibrated_bounds, EdgeGlyphs, GlyphRamp, GlyphSet, GlyphSetCache, RampMap, RampOrder,
+    BUILTIN_SET, CORNER_ORDER, GLYPHS_SUFFIX,
 };
 
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
@@ -66,6 +68,72 @@ impl std::error::Error for GlyphError {}
 /// Every printable ASCII character, `' '` to `'~'`.
 pub fn printable_ascii() -> impl Iterator<Item = char> {
     (0x20u8..=0x7e).map(char::from)
+}
+
+/// The quadrant blocks, each with its quadrants as bits: 1 upper left,
+/// 2 upper right, 4 lower left, 8 lower right. The halves are two
+/// quadrants; ` ` (none) and `█` (all four) are drawn by hand already.
+pub const QUADRANT_BLOCKS: [(char, u8); 14] = [
+    ('▘', 0b0001),
+    ('▝', 0b0010),
+    ('▖', 0b0100),
+    ('▗', 0b1000),
+    ('▀', 0b0011),
+    ('▄', 0b1100),
+    ('▌', 0b0101),
+    ('▐', 0b1010),
+    ('▚', 0b1001),
+    ('▞', 0b0110),
+    ('▙', 0b1101),
+    ('▛', 0b0111),
+    ('▜', 0b1011),
+    ('▟', 0b1110),
+];
+
+/// The braille pattern for a 2x4 dot grid given as Unicode's dot bits
+/// (bit 0 dot 1 at the top left, down the left column to dot 3, then dots
+/// 4-6 down the right, then dots 7 and 8 along the bottom row).
+pub fn braille_char(dots: u8) -> char {
+    char::from_u32(0x2800 + dots as u32).expect("U+2800..=U+28FF are chars")
+}
+
+/// Unicode's braille dot bit for the dot at `column` (0..2), `row` (0..4).
+pub fn braille_dot(column: u32, row: u32) -> u8 {
+    match (column, row) {
+        (0, 3) => 0x40,
+        (1, 3) => 0x80,
+        (c, r) => 1 << (c * 3 + r),
+    }
+}
+
+/// The generated groups of the built-in set, in `builtin_8x8.txt`'s format:
+/// their glyphs are their bit patterns, so they are written by rule rather
+/// than by hand. A quadrant fills a 4x4 corner of the cell. A braille dot is
+/// 2 px wide and 1 tall, at x 1-2 or 5-6 and y 0, 2, 4 or 6: dots on a
+/// regular 4 x 2 px pitch that carries on into the next cell, with a dark
+/// row and column between them so a dense pattern still reads as dots.
+fn generated_8x8_text() -> String {
+    let mut text = String::new();
+    let mut glyph = |ch: char, ink: &dyn Fn(u32, u32) -> bool| {
+        text.push_str(&format!("== {ch}\n"));
+        for y in 0..8 {
+            for x in 0..8 {
+                text.push(if ink(x, y) { '#' } else { '.' });
+            }
+            text.push('\n');
+        }
+    };
+    for (ch, quadrants) in QUADRANT_BLOCKS {
+        glyph(ch, &|x, y| quadrants & (1 << ((y / 4) * 2 + x / 4)) != 0);
+    }
+    for dots in 0..=255u8 {
+        glyph(braille_char(dots), &|x, y| {
+            let column = x / 4;
+            let on_dot = x % 4 == 1 || x % 4 == 2;
+            on_dot && y % 2 == 0 && dots & braille_dot(column, y / 2) != 0
+        });
+    }
+    text
 }
 
 /// Monospaced glyphs packed into one coverage image.
@@ -148,16 +216,19 @@ impl GlyphAtlas {
     }
 
     /// The built-in 8x8 set: printable ASCII, the box-drawing edge glyphs
-    /// `─│╱╲` and the shade blocks `░▒▓█`.
+    /// `─│╱╲` with their corners and tees `┌┐└┘├┤┬┴┼`, the shade blocks
+    /// `░▒▓█`, and two generated groups (#285): the half and quadrant
+    /// blocks `▀▄▌▐▖▗▘▝▚▞▙▛▜▟` and all 256 braille patterns `⠀`..`⣿`.
     /// Built once per process.
     pub fn builtin() -> std::sync::Arc<GlyphAtlas> {
         static BUILTIN: std::sync::OnceLock<std::sync::Arc<GlyphAtlas>> =
             std::sync::OnceLock::new();
         BUILTIN
             .get_or_init(|| {
+                let mut text = include_str!("builtin_8x8.txt").to_string();
+                text.push_str(&generated_8x8_text());
                 std::sync::Arc::new(
-                    Self::from_pixel_text(include_str!("builtin_8x8.txt"), [8, 8])
-                        .expect("the built-in glyph text parses"),
+                    Self::from_pixel_text(&text, [8, 8]).expect("the built-in glyph text parses"),
                 )
             })
             .clone()

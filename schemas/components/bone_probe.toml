@@ -3,6 +3,6 @@ description = "Publishes a skeleton joint's model-local position into readable f
 
 [component.bone_probe.fields]
 joint = { type = "string", description = "Name of the joint to probe", default = "" }
-x = { type = "float", description = "RUNTIME: model-local joint X", default = 0.0 }
-y = { type = "float", description = "RUNTIME: model-local joint Y", default = 0.0 }
-z = { type = "float", description = "RUNTIME: model-local joint Z", default = 0.0 }
+x = { type = "f32", description = "RUNTIME: model-local joint X", default = 0.0 }
+y = { type = "f32", description = "RUNTIME: model-local joint Y", default = 0.0 }
+z = { type = "f32", description = "RUNTIME: model-local joint Z", default = 0.0 }

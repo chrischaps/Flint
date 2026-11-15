@@ -65,11 +65,11 @@ action = "pause"                   # default
 anchor = "top_right"               # default
 ```
 
-`demo/input_touch.toml` is this block for the first-person demos:
+`examples/input_touch.toml` is this block for the first-person demos:
 
 ```bash
-cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas \
-  --input-config demo/input_touch.toml --touch-controls always
+cargo run --bin flint-player -- examples/phase4_runtime.scene.toml \
+  --input-config examples/input_touch.toml --touch-controls always
 ```
 
 ### Sticks
@@ -127,12 +127,14 @@ The controls are drawn on their own Foreground egui layer, over the script UI an
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `touch_controls_visible()` | `bool` | Whether the controls are on screen now |
+| `is_touch_device()` | `bool` | Whether the device is touch-first (a web page whose main pointer is a finger, `pointer: coarse`, or Android), from the first frame, before any finger has landed. A title screen can show tap hints and size rows for a thumb up front |
+| `safe_area()` | `Map` | `#{ left, top, right, bottom }`: the safe-area insets in points (the space of `screen_width()` and `draw_*`), the same ones the controls keep inside. Zeros where there are none, as on every desktop |
 | `set_touch_controls(enabled)` | | `false` puts the controls away, `true` brings them back. While away they hold no fingers and every touch reaches the game, so a menu's rows can be tapped where a floating stick would take them. Applied after the frame's scripts; it lasts across scene changes, like `set_cursor_captured` |
 
 Flint Kart's menu scene calls `set_touch_controls(false)` on entering, and its race HUD brings them out while racing and puts them away under the pause and finish menus:
 
 ```rust
-let want = if current_state() != "paused" && !finish_menu_active { 1 } else { 0 };
+let want = if get_current_state() != "paused" && !finish_menu_active { 1 } else { 0 };
 if want != touch_controls_out {
     set_touch_controls(want == 1);
     touch_controls_out = want;

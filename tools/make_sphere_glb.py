@@ -1,4 +1,4 @@
-"""Write a UV sphere as a self-contained GLB: demo/models/Sphere.glb.
+"""Write a UV sphere as a self-contained GLB: examples/models/Sphere.glb.
 
     python -I tools/make_sphere_glb.py [out.glb] [--rings 32] [--segments 48]
 
@@ -73,7 +73,7 @@ def glb(pos, nrm, idx):
 
 
 def main(argv):
-    out, rings, segments = "demo/models/Sphere.glb", 32, 48
+    out, rings, segments = "examples/models/Sphere.glb", 32, 48
     args = list(argv)
     while args:
         a = args.pop(0)

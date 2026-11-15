@@ -1,0 +1,19 @@
+# The engine checkout as a project (ADR 0114): what `examples/`, the test
+# fixtures and anything else run from this tree resolve their schemas by,
+# from any folder and with no --schemas flag:
+#
+#   flint render examples/pbr_test.scene.toml -o pbr.png
+#   flint play examples/phase4_runtime.scene.toml
+#
+# A game that carries the engine as a subtree never reads this file: its own
+# flint.toml names `engine/schemas`, the engine's set, and that set has no
+# room-builder vocabulary in it (#681).
+
+[project]
+# The engine's components and archetypes, then the layer the examples are
+# written in: `furniture`, `wall`, `floor`, `ceiling`, `pillar`, `room`,
+# `door` and the `door` component.
+#
+# A --schemas flag is the whole list, so `--schemas schemas` alone is the
+# engine's set and leaves the examples' archetypes unresolved.
+schemas = ["schemas", "schemas/examples"]

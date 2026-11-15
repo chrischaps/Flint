@@ -104,7 +104,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     let module = kit::shader(
         device,
         "Display Bloom Shader",
-        include_str!("display_bloom.wgsl"),
+        kit::wgsl!("display_bloom.wgsl"),
     );
     let chain_layouts = [&uniform_bgl, &sampled_bgl];
     let pipeline = |label: &str, entry: &str, format, blend, layouts: &[_]| {
@@ -173,10 +173,10 @@ struct BloomUniforms {
 }
 
 struct DisplayBloom {
-    threshold: wgpu::RenderPipeline,
-    down: wgpu::RenderPipeline,
-    up: wgpu::RenderPipeline,
-    composite: wgpu::RenderPipeline,
+    threshold: std::sync::Arc<wgpu::RenderPipeline>,
+    down: std::sync::Arc<wgpu::RenderPipeline>,
+    up: std::sync::Arc<wgpu::RenderPipeline>,
+    composite: std::sync::Arc<wgpu::RenderPipeline>,
     uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
     sampled_bgl: wgpu::BindGroupLayout,

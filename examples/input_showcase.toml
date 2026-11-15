@@ -1,0 +1,16 @@
+version = 1
+game_id = "showcase"
+
+[actions.pause]
+kind = "button"
+[[actions.pause.bindings]]
+type = "key"
+code = "Escape"
+
+# With Escape the game's, the pause screen's way out (#659): Q, read only
+# while paused, calls quit_game().
+[actions.quit]
+kind = "button"
+[[actions.quit.bindings]]
+type = "key"
+code = "KeyQ"

@@ -3,30 +3,34 @@
 //!
 //! These need a GPU adapter. Without one each test prints a note and passes.
 
-use flint_core::wooze::BoilFrame;
+mod shared_gpu;
+
 use flint_ecs::FlintWorld;
 use flint_import::ImportedMaterial;
 use flint_render::{Camera, DebugMode, PostProcessConfig, RendererConfig, SceneRenderer, Vertex};
+use flint_wooze::BoilFrame;
 
 const SIZE: u32 = 128;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 struct Gpu {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    device: &'static wgpu::Device,
+    queue: &'static wgpu::Queue,
     color: wgpu::Texture,
     color_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
+    _lease: shared_gpu::Lease,
 }
 
+/// The shared device (#598), alongside the other tests holding it.
 fn gpu() -> Option<Gpu> {
-    pollster::block_on(async {
-        let instance = flint_render::gpu_select::instance();
-        let adapter = flint_render::gpu_select::request_adapter(&instance, None).await?;
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
-            .await
-            .ok()?;
+    shared_gpu::lease().map(frame_for)
+}
+
+fn frame_for(lease: shared_gpu::Lease) -> Gpu {
+    let shared = lease.gpu;
+    let device = &shared.device;
+    {
         let target = |format, usage| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: None,
@@ -49,14 +53,15 @@ fn gpu() -> Option<Gpu> {
             wgpu::TextureFormat::Depth32Float,
             attach | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        Some(Gpu {
+        Gpu {
             color_view: color.create_view(&Default::default()),
             depth_view: depth.create_view(&Default::default()),
             color,
             device,
-            queue,
-        })
-    })
+            queue: &shared.queue,
+            _lease: lease,
+        }
+    }
 }
 
 macro_rules! gpu_or_skip {
@@ -114,8 +119,8 @@ fn spawn(world: &mut FlintWorld, name: &str, position: [f32; 3]) {
 impl Gpu {
     fn bench(&self) -> Bench {
         let mut renderer = SceneRenderer::new_headless(
-            &self.device,
-            &self.queue,
+            self.device,
+            self.queue,
             FORMAT,
             SIZE,
             SIZE,
@@ -128,7 +133,7 @@ impl Gpu {
         ] {
             let (vertices, indices) = square(half, color);
             renderer.load_procedural_mesh(
-                &self.device,
+                self.device,
                 name,
                 &vertices,
                 &indices,
@@ -157,18 +162,17 @@ impl Gpu {
         bench.renderer.set_post_process_config(config.clone());
         bench
             .renderer
-            .ensure_kuwahara_resources(&self.device, &self.queue);
-        bench.renderer.ensure_contour_resources(&self.device);
+            .ensure_kuwahara_resources(self.device, self.queue);
         bench.renderer.set_boil(boil);
-        bench.renderer.update_from_world(&bench.world, &self.device);
+        bench.renderer.update_from_world(&bench.world, self.device);
         bench.renderer.render_to(
-            &self.device,
-            &self.queue,
+            self.device,
+            self.queue,
             &self.depth_view,
             &bench.camera,
             &self.color_view,
         );
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = flint_render::wait_for_gpu(&self.device);
 
         let row = (SIZE * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -181,9 +185,9 @@ impl Gpu {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_texture_to_buffer(
             self.color.as_image_copy(),
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(row),
                     rows_per_image: None,
@@ -199,8 +203,11 @@ impl Gpu {
         buffer
             .slice(..)
             .map_async(wgpu::MapMode::Read, |r| r.unwrap());
-        self.device.poll(wgpu::Maintain::Wait);
-        let data = buffer.slice(..).get_mapped_range();
+        let _ = flint_render::wait_for_gpu(&self.device);
+        let data = buffer
+            .slice(..)
+            .get_mapped_range()
+            .expect("mapped buffer range");
         (0..SIZE as usize)
             .flat_map(|y| {
                 let start = y * row as usize;
@@ -218,10 +225,8 @@ fn drawing(seed: u32, amount: f32) -> BoilFrame {
     }
 }
 
-fn inked() -> PostProcessConfig {
+fn bare() -> PostProcessConfig {
     PostProcessConfig {
-        contour_enabled: true,
-        contour_boil: 1.0,
         ssao_enabled: false,
         bloom_enabled: false,
         vignette_enabled: false,
@@ -229,18 +234,29 @@ fn inked() -> PostProcessConfig {
     }
 }
 
+/// `config` with `style`'s boil at `amount`.
+fn boiling(mut config: PostProcessConfig, style: &str, amount: f32) -> PostProcessConfig {
+    config.styles.set_param(style, "boil", amount);
+    config
+}
+
+/// `config` with the contour style on or off.
+fn contour(mut config: PostProcessConfig, on: bool) -> PostProcessConfig {
+    config.styles.set_enabled("contour", on);
+    config
+}
+
+/// The contour, a registered style since #599, boiling.
+fn inked() -> PostProcessConfig {
+    boiling(contour(bare(), true), "contour", 1.0)
+}
+
 fn painted() -> PostProcessConfig {
-    let mut config = PostProcessConfig {
-        kuwahara_boil: 0.5,
-        ssao_enabled: false,
-        bloom_enabled: false,
-        vignette_enabled: false,
-        ..Default::default()
-    };
-    // Kuwahara is a style since #298; its boil stays a flat key (#487)
+    let mut config = bare();
+    // Kuwahara is a style since #298, and its boil one of its params (#599)
     config.styles.set_enabled("kuwahara", true);
     config.styles.set_param("kuwahara", "radius", 3.0);
-    config
+    boiling(config, "kuwahara", 0.5)
 }
 
 /// Pixels darker by more than a little than the same pixel of `plain`.
@@ -255,15 +271,9 @@ fn darkened(with: &[u8], plain: &[u8]) -> usize {
 fn the_contour_inks_a_silhouette_and_leaves_flat_ground_alone() {
     let gpu = gpu_or_skip!();
     let mut bench = gpu.bench();
-    let plain = PostProcessConfig {
-        contour_enabled: false,
-        ..inked()
-    };
+    let plain = contour(inked(), false);
     let without = gpu.pixels(&mut bench, &plain, BoilFrame::default());
-    let still = PostProcessConfig {
-        contour_boil: 0.0,
-        ..inked()
-    };
+    let still = boiling(inked(), "contour", 0.0);
     let with = gpu.pixels(&mut bench, &still, BoilFrame::default());
 
     let lines = darkened(&with, &without);
@@ -313,14 +323,8 @@ fn with_no_amount_the_drawing_means_nothing() {
     }
     // Likewise a scene with a field that hasn't asked its passes to boil.
     for config in [
-        PostProcessConfig {
-            contour_boil: 0.0,
-            ..inked()
-        },
-        PostProcessConfig {
-            kuwahara_boil: 0.0,
-            ..painted()
-        },
+        boiling(inked(), "contour", 0.0),
+        boiling(painted(), "kuwahara", 0.0),
     ] {
         let a = gpu.pixels(&mut bench, &config, drawing(1, 1.0));
         let b = gpu.pixels(&mut bench, &config, drawing(2, 1.0));
@@ -334,7 +338,7 @@ fn the_contour_survives_a_resize() {
     let mut bench = gpu.bench();
     let config = inked();
     let before = gpu.pixels(&mut bench, &config, drawing(3, 1.0));
-    bench.renderer.resize_postprocess(&gpu.device, SIZE, SIZE);
+    bench.renderer.resize_postprocess(gpu.device, SIZE, SIZE);
     // Nothing calls ensure here: the resize must have made its texture again.
     bench.renderer.set_boil(drawing(3, 1.0));
     let after = gpu.pixels(&mut bench, &config, drawing(3, 1.0));
@@ -345,10 +349,7 @@ fn the_contour_survives_a_resize() {
 fn turning_the_contour_off_goes_back_to_the_same_pixels() {
     let gpu = gpu_or_skip!();
     let mut bench = gpu.bench();
-    let off = PostProcessConfig {
-        contour_enabled: false,
-        ..inked()
-    };
+    let off = contour(inked(), false);
     let never_on = gpu.pixels(&mut bench, &off, drawing(4, 1.0));
     let on = gpu.pixels(&mut bench, &inked(), drawing(4, 1.0));
     let off_again = gpu.pixels(&mut bench, &off, drawing(4, 1.0));

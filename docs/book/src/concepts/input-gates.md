@@ -1,6 +1,6 @@
 # Cursor Capture and Input Gates
 
-Mouse-look and pad play need the player to be strict about who hears what. A hidden cursor mustn't press a button nobody can see. A pad shouldn't walk the character while someone types a name into a field, or while the window is in the background. ADR 0110 sets these rules, and the player enforces them for every game. Nothing needs turning on.
+Mouse-look and pad play need the player to be strict about who hears what. A hidden cursor mustn't press a button nobody can see. A pad shouldn't walk the character while someone types a name into a field, or while the window is in the background. [ADR 0110](https://github.com/chrischaps/Flint/blob/main/docs/adr/0110-capture-and-focus-gates.md) sets these rules, and the player enforces them for every game. Nothing needs turning on.
 
 ## A captured cursor
 
@@ -18,14 +18,16 @@ Keys and touch don't change with the capture.
 ```rhai
 fn on_update() {
     if is_cursor_captured() {
-        turn_view(mouse_delta_x(), mouse_delta_y());
+        let me = self_entity();
+        let r = get_rotation(me);
+        set_rotation(me, r.x - mouse_delta_y() * 0.1, r.y - mouse_delta_x() * 0.1, 0.0);
     }
 }
 ```
 
 ## The text-focus gate
 
-While an egui text field has keyboard focus, keys stop at egui (ADR 0073). Pads and raw mouse motion stop there too:
+While an egui text field has keyboard focus, keys stop at egui ([ADR 0073](https://github.com/chrischaps/Flint/blob/main/docs/adr/0073-game-egui-layer-and-input-routing.md)). Pads and raw mouse motion stop there too:
 
 - **Pads are held.** Sticks and triggers read 0 and buttons read up, so a pad-bound action releases the frame focus arrives (`InputState::hold_gamepads`). The pads are still tracked underneath, so a stick held through it reads again the frame the field lets go. A button doesn't. One held when the field took focus, or pressed while it had it, reads as up until it's released. It never fires a press nobody made.
 - **Raw mouse motion is dropped**, so typing with the mouse-look on doesn't turn the view.

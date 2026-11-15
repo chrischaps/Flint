@@ -13,7 +13,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn scene_path() -> PathBuf {
-    repo_root().join("demo/woozy_grove.scene.toml")
+    repo_root().join("examples/woozy_grove.scene.toml")
 }
 
 fn scene() -> toml::Value {
@@ -47,6 +47,9 @@ fn the_grove_passes_flint_validate() {
         .arg(scene_path())
         .arg("--schemas")
         .arg(repo_root().join("schemas"))
+        // the grove's ground is a `furniture` box: the examples' layer (#681)
+        .arg("--schemas")
+        .arg(repo_root().join("schemas/examples"))
         .output()
         .expect("run flint");
     assert!(out.status.success(), "{}", text(&out));
@@ -83,7 +86,7 @@ fn every_species_is_a_living_spec_with_no_lods() {
         .collect();
     for name in species {
         let path = repo_root()
-            .join("demo/specs")
+            .join("examples/specs")
             .join(format!("{name}.procgen.toml"));
         let spec: toml::Value =
             toml::from_str(&std::fs::read_to_string(&path).expect("read the spec")).unwrap();
@@ -143,5 +146,62 @@ fn the_grove_is_lit_and_can_be_walked() {
     assert_eq!(
         scene["entities"]["ground"]["rigidbody"]["body_type"].as_str(),
         Some("static")
+    );
+}
+
+/// #677: saving the grove untouched leaves it byte for byte as it was. The
+/// viewer's Ctrl+S with nothing edited writes nothing at all; this holds the two
+/// writers that do run, on the scene as committed: `validate --fix`'s world diff
+/// with no change, and the viewer's patch of every field the file writes, each to
+/// the value the world loaded (an edit undone before saving).
+#[test]
+fn saving_the_untouched_grove_leaves_it_byte_identical() {
+    let path = scene_path();
+    let original = std::fs::read_to_string(&path).unwrap();
+    let (registry, _) =
+        flint_schema::SchemaRegistry::resolve(Some(&path), &[repo_root().join("schemas")]).unwrap();
+    let (world, _) = flint_scene::load_scene(&path, &registry).unwrap();
+    let (again, _) = flint_scene::load_scene(&path, &registry).unwrap();
+
+    let mut doc = flint_scene::SceneDocument::from_str(&original).unwrap();
+    let problems = doc.apply_world_diff(&world, &again);
+    assert!(problems.is_empty(), "{problems:?}");
+    same_text(&doc.to_string(), &original, "validate --fix's writer");
+
+    let written = scene();
+    let mut patched = 0;
+    for (name, entity) in written["entities"].as_table().unwrap() {
+        let id = world.get_id(name).unwrap();
+        let components = world.get_components(id).unwrap();
+        for (component, fields) in entity.as_table().unwrap() {
+            let Some(fields) = fields.as_table() else {
+                continue;
+            };
+            for field in fields.keys() {
+                let value = components.get_field(component, field).unwrap();
+                doc.patch_field(name, component, field, value).unwrap();
+                patched += 1;
+            }
+        }
+    }
+    assert!(patched > 100, "only {patched} fields");
+    same_text(&doc.to_string(), &original, "the viewer's writer");
+}
+
+/// `got` is `want` byte for byte; if not, the first line that differs.
+fn same_text(got: &str, want: &str, writer: &str) {
+    if got == want {
+        return;
+    }
+    let lines = |s: &str| s.split('\n').map(str::to_string).collect::<Vec<_>>();
+    let (got, want) = (lines(got), lines(want));
+    let n = (0..got.len().max(want.len()))
+        .find(|&i| got.get(i) != want.get(i))
+        .expect("texts differ");
+    panic!(
+        "{writer} changed the grove at line {}:\n  was: {:?}\n  now: {:?}",
+        n + 1,
+        want.get(n),
+        got.get(n)
     );
 }

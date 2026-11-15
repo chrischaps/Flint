@@ -30,7 +30,7 @@ use flint_asset::{AssetFile, AssetMeta, AssetType, ContentStore};
 use flint_core::ContentHash;
 use flint_procgen::{OutputKind, ProcGenSpec};
 
-use flint_asset::Project;
+use flint_asset::{Project, ProjectStore};
 
 /// One file a run wrote. `role` names an image-set map (`color`, `normal`,
 /// ...) and is `None` for a run that writes a single file.

@@ -1,0 +1,32 @@
+# Stylize props, unstyled (#386): tests/fixtures/scenes/stylize_props.scene.toml's clearing
+# with no style_mask on any prop, for the goldens of whole-frame styles
+# (Kuwahara, palette, watercolor) and looks. Only the style or look a case
+# names draws, so a change to ASCII or pencil moves none of them. The
+# clearing is tests/fixtures/scenes/prefabs/stylize_props.prefab.toml.
+#
+#   cargo run --bin flint -- render tests/fixtures/scenes/stylize_props_plain.scene.toml --no-grid --look ink_wash --output wash.png
+
+[scene]
+name = "Stylize Props (plain)"
+version = "1.0"
+description = "The stylize props with nothing styled, for whole-frame styles and looks (#386)"
+
+[camera]
+position = [3.4, 1.7, 9.0]
+target = [0.7, 0.7, 4.2]
+fov = 50.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.05
+bloom_threshold = 1.2
+exposure = 1.25
+vignette_enabled = true
+vignette_intensity = 0.25
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+
+[prefabs.props]
+template = "stylize_props"
+prefix = "props"

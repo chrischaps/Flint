@@ -1,0 +1,411 @@
+# Living Props bench (#211, #212): forty oaks, five lineages, each tree with its
+# own bone buffer and its own ring of poses kept full ahead of its clock, drifting
+# between them on the warped clock with its leaves boiling.
+#
+#   cargo run --release -p flint-player -- examples/living_props.scene.toml --exit-after 60
+#
+# prints `[living]` lines saying whether the rings stayed full and within the
+# procgen frame budget, and what blending cost. To turn the dial, add a table:
+#
+#   [wooze]
+#   glide = 0.0            # snap on the beat; the spec's 0.3 holds, then glides
+#
+#   [living]
+#   shadows = "drift"      # a slower shadow, with no stagger or jitter
+#   echoes = { count = 0 } # no faint copies; also takes spread and alpha
+#
+# examples/wooze_field.scene.toml does more with [wooze].
+#
+# The spec is specs/examples/oak_living.procgen.toml; an
+# entity's `lineage_seed` says which tree it is, and its name which way it moves.
+
+[scene]
+name = "Living Props Bench"
+version = "1.0"
+description = "Forty living oaks, for checking that their pose rings stay full"
+
+[camera]
+position = [0.0, 2.2, 26.0]
+target = [0.0, 5.2, -8.0]
+fov = 58.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.06
+bloom_threshold = 1.2
+exposure = 1.2
+vignette_enabled = true
+vignette_intensity = 0.3
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+fog_enabled = true
+fog_color = [0.86, 0.72, 0.52]
+fog_density = 0.006
+fog_start = 25.0
+fog_end = 220.0
+
+# --- Light: late afternoon, low from behind the left shoulder ---
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.16, 0.30, 0.58, 1.0]
+horizon_color = [0.86, 0.72, 0.52, 1.0]
+haze_color = [0.95, 0.80, 0.60, 0.7]
+cloud_tint = [1.0, 0.90, 0.78, 0.8]
+cloud_coverage = 0.3
+sun_glow = 1.4
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [-0.62, 0.52, 0.45]
+color = [1.0, 0.86, 0.66]
+intensity = 2.6
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.light]
+type = "directional"
+direction = [0.4, 0.8, -0.4]
+color = [0.55, 0.65, 0.85]
+intensity = 0.4
+
+# --- The ground: a plain box, its top at y = 0 ---
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-140, -0.2, -140]
+max = [140, 0, 140]
+[entities.ground.material]
+color = [0.15, 0.17, 0.07, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+# --- The grove ---
+
+[entities.oak_00.transform]
+position = [-6.94, 0.0, -57.83]
+rotation = [0.0, 0.0, 0.0]
+[entities.oak_00.model]
+asset = "oak_living"
+[entities.oak_00.living_prop]
+lineage_seed = 7
+
+[entities.oak_01.transform]
+position = [1.05, 0.0, -57.82]
+rotation = [0.0, 137.5, 0.0]
+[entities.oak_01.model]
+asset = "oak_living"
+[entities.oak_01.living_prop]
+lineage_seed = 8
+
+[entities.oak_02.transform]
+position = [32.04, 0.0, -57.59]
+rotation = [0.0, 275.0, 0.0]
+[entities.oak_02.model]
+asset = "oak_living"
+[entities.oak_02.living_prop]
+lineage_seed = 9
+
+[entities.oak_03.transform]
+position = [17.53, 0.0, -57.59]
+rotation = [0.0, 52.5, 0.0]
+[entities.oak_03.model]
+asset = "oak_living"
+[entities.oak_03.living_prop]
+lineage_seed = 10
+
+[entities.oak_04.transform]
+position = [45.53, 0.0, -56.51]
+rotation = [0.0, 190.0, 0.0]
+[entities.oak_04.model]
+asset = "oak_living"
+[entities.oak_04.living_prop]
+lineage_seed = 11
+
+[entities.oak_05.transform]
+position = [-13.36, 0.0, -53.50]
+rotation = [0.0, 327.5, 0.0]
+[entities.oak_05.model]
+asset = "oak_living"
+[entities.oak_05.living_prop]
+lineage_seed = 7
+
+[entities.oak_06.transform]
+position = [-53.32, 0.0, -53.17]
+rotation = [0.0, 105.0, 0.0]
+[entities.oak_06.model]
+asset = "oak_living"
+[entities.oak_06.living_prop]
+lineage_seed = 8
+
+[entities.oak_07.transform]
+position = [-45.69, 0.0, -50.27]
+rotation = [0.0, 242.5, 0.0]
+[entities.oak_07.model]
+asset = "oak_living"
+[entities.oak_07.living_prop]
+lineage_seed = 9
+
+[entities.oak_08.transform]
+position = [-27.81, 0.0, -48.88]
+rotation = [0.0, 20.0, 0.0]
+[entities.oak_08.model]
+asset = "oak_living"
+[entities.oak_08.living_prop]
+lineage_seed = 10
+
+[entities.oak_09.transform]
+position = [22.32, 0.0, -48.62]
+rotation = [0.0, 157.5, 0.0]
+[entities.oak_09.model]
+asset = "oak_living"
+[entities.oak_09.living_prop]
+lineage_seed = 11
+
+[entities.oak_10.transform]
+position = [-34.45, 0.0, -45.35]
+rotation = [0.0, 295.0, 0.0]
+[entities.oak_10.model]
+asset = "oak_living"
+[entities.oak_10.living_prop]
+lineage_seed = 7
+
+[entities.oak_11.transform]
+position = [13.45, 0.0, -43.60]
+rotation = [0.0, 72.5, 0.0]
+[entities.oak_11.model]
+asset = "oak_living"
+[entities.oak_11.living_prop]
+lineage_seed = 8
+
+[entities.oak_12.transform]
+position = [44.48, 0.0, -43.55]
+rotation = [0.0, 210.0, 0.0]
+[entities.oak_12.model]
+asset = "oak_living"
+[entities.oak_12.living_prop]
+lineage_seed = 9
+
+[entities.oak_13.transform]
+position = [35.75, 0.0, -43.30]
+rotation = [0.0, 347.5, 0.0]
+[entities.oak_13.model]
+asset = "oak_living"
+[entities.oak_13.living_prop]
+lineage_seed = 10
+
+[entities.oak_14.transform]
+position = [-26.27, 0.0, -39.02]
+rotation = [0.0, 125.0, 0.0]
+[entities.oak_14.model]
+asset = "oak_living"
+[entities.oak_14.living_prop]
+lineage_seed = 11
+
+[entities.oak_15.transform]
+position = [-13.82, 0.0, -38.83]
+rotation = [0.0, 262.5, 0.0]
+[entities.oak_15.model]
+asset = "oak_living"
+[entities.oak_15.living_prop]
+lineage_seed = 7
+
+[entities.oak_16.transform]
+position = [3.33, 0.0, -38.52]
+rotation = [0.0, 40.0, 0.0]
+[entities.oak_16.model]
+asset = "oak_living"
+[entities.oak_16.living_prop]
+lineage_seed = 8
+
+[entities.oak_17.transform]
+position = [17.71, 0.0, -34.26]
+rotation = [0.0, 177.5, 0.0]
+[entities.oak_17.model]
+asset = "oak_living"
+[entities.oak_17.living_prop]
+lineage_seed = 9
+
+[entities.oak_18.transform]
+position = [-19.73, 0.0, -32.12]
+rotation = [0.0, 315.0, 0.0]
+[entities.oak_18.model]
+asset = "oak_living"
+[entities.oak_18.living_prop]
+lineage_seed = 10
+
+[entities.oak_19.transform]
+position = [32.80, 0.0, -30.30]
+rotation = [0.0, 92.5, 0.0]
+[entities.oak_19.model]
+asset = "oak_living"
+[entities.oak_19.living_prop]
+lineage_seed = 11
+
+[entities.oak_20.transform]
+position = [-36.26, 0.0, -29.53]
+rotation = [0.0, 230.0, 0.0]
+[entities.oak_20.model]
+asset = "oak_living"
+[entities.oak_20.living_prop]
+lineage_seed = 7
+
+[entities.oak_21.transform]
+position = [13.56, 0.0, -26.89]
+rotation = [0.0, 7.5, 0.0]
+[entities.oak_21.model]
+asset = "oak_living"
+[entities.oak_21.living_prop]
+lineage_seed = 8
+
+[entities.oak_22.transform]
+position = [26.11, 0.0, -26.72]
+rotation = [0.0, 145.0, 0.0]
+[entities.oak_22.model]
+asset = "oak_living"
+[entities.oak_22.living_prop]
+lineage_seed = 9
+
+[entities.oak_23.transform]
+position = [-2.59, 0.0, -25.05]
+rotation = [0.0, 282.5, 0.0]
+[entities.oak_23.model]
+asset = "oak_living"
+[entities.oak_23.living_prop]
+lineage_seed = 10
+
+[entities.oak_24.transform]
+position = [-28.72, 0.0, -24.40]
+rotation = [0.0, 60.0, 0.0]
+[entities.oak_24.model]
+asset = "oak_living"
+[entities.oak_24.living_prop]
+lineage_seed = 11
+
+[entities.oak_25.transform]
+position = [-18.30, 0.0, -19.88]
+rotation = [0.0, 197.5, 0.0]
+[entities.oak_25.model]
+asset = "oak_living"
+[entities.oak_25.living_prop]
+lineage_seed = 7
+
+[entities.oak_26.transform]
+position = [-9.73, 0.0, -18.71]
+rotation = [0.0, 335.0, 0.0]
+[entities.oak_26.model]
+asset = "oak_living"
+[entities.oak_26.living_prop]
+lineage_seed = 8
+
+[entities.oak_27.transform]
+position = [15.22, 0.0, -17.89]
+rotation = [0.0, 112.5, 0.0]
+[entities.oak_27.model]
+asset = "oak_living"
+[entities.oak_27.living_prop]
+lineage_seed = 9
+
+[entities.oak_28.transform]
+position = [-1.09, 0.0, -16.52]
+rotation = [0.0, 250.0, 0.0]
+[entities.oak_28.model]
+asset = "oak_living"
+[entities.oak_28.living_prop]
+lineage_seed = 10
+
+[entities.oak_29.transform]
+position = [25.15, 0.0, -14.76]
+rotation = [0.0, 27.5, 0.0]
+[entities.oak_29.model]
+asset = "oak_living"
+[entities.oak_29.living_prop]
+lineage_seed = 11
+
+[entities.oak_30.transform]
+position = [8.57, 0.0, -13.12]
+rotation = [0.0, 165.0, 0.0]
+[entities.oak_30.model]
+asset = "oak_living"
+[entities.oak_30.living_prop]
+lineage_seed = 7
+
+[entities.oak_31.transform]
+position = [-24.29, 0.0, -12.79]
+rotation = [0.0, 302.5, 0.0]
+[entities.oak_31.model]
+asset = "oak_living"
+[entities.oak_31.living_prop]
+lineage_seed = 8
+
+[entities.oak_32.transform]
+position = [-4.70, 0.0, -5.66]
+rotation = [0.0, 80.0, 0.0]
+[entities.oak_32.model]
+asset = "oak_living"
+[entities.oak_32.living_prop]
+lineage_seed = 9
+
+[entities.oak_33.transform]
+position = [20.78, 0.0, -5.10]
+rotation = [0.0, 217.5, 0.0]
+[entities.oak_33.model]
+asset = "oak_living"
+[entities.oak_33.living_prop]
+lineage_seed = 10
+
+[entities.oak_34.transform]
+position = [6.97, 0.0, -1.26]
+rotation = [0.0, 355.0, 0.0]
+[entities.oak_34.model]
+asset = "oak_living"
+[entities.oak_34.living_prop]
+lineage_seed = 11
+
+[entities.oak_35.transform]
+position = [-13.36, 0.0, 0.11]
+rotation = [0.0, 132.5, 0.0]
+[entities.oak_35.model]
+asset = "oak_living"
+[entities.oak_35.living_prop]
+lineage_seed = 7
+
+[entities.oak_36.transform]
+position = [-5.42, 0.0, 2.02]
+rotation = [0.0, 270.0, 0.0]
+[entities.oak_36.model]
+asset = "oak_living"
+[entities.oak_36.living_prop]
+lineage_seed = 8
+
+[entities.oak_37.transform]
+position = [16.04, 0.0, 2.32]
+rotation = [0.0, 47.5, 0.0]
+[entities.oak_37.model]
+asset = "oak_living"
+[entities.oak_37.living_prop]
+lineage_seed = 9
+
+[entities.oak_38.transform]
+position = [-9.11, 0.0, 9.77]
+rotation = [0.0, 185.0, 0.0]
+[entities.oak_38.model]
+asset = "oak_living"
+[entities.oak_38.living_prop]
+lineage_seed = 10
+
+[entities.oak_39.transform]
+position = [4.85, 0.0, 10.46]
+rotation = [0.0, 322.5, 0.0]
+[entities.oak_39.model]
+asset = "oak_living"
+[entities.oak_39.living_prop]
+lineage_seed = 11

@@ -1,4 +1,5 @@
 //! Integration tests: scene loading + script execution cross-crate
+#![allow(clippy::disallowed_methods)] // a test asserts on the TOML exactly as written
 
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;

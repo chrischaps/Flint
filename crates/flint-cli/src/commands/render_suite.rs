@@ -4,9 +4,10 @@
 //! stereo. Prints the same status lines as `play-suite` so offline and
 //! realtime evidence are textually comparable.
 //!
-//! Given a `*.goldens.toml` instead, it is the programmatic eyes: every
-//! case is rendered with `flint render` and compared with its golden PNG
-//! (#271, [`super::render_goldens`]).
+//! A `*.goldens.toml` (the programmatic eyes, #271) is `flint goldens`
+//! since #327; `render-suite` given one is routed there before parsing
+//! ([`super::render_goldens::route_render_suite_goldens`]), so these flags
+//! are the music suite's alone.
 
 use anyhow::{bail, Context, Result};
 use flint_music::event_script::EventScript;
@@ -17,19 +18,21 @@ use flint_music::{validate_manifest, validate_manifest_assets, Conductor, SuiteM
 use std::path::{Path, PathBuf};
 
 #[derive(clap::Args)]
+#[command(
+    after_help = "A `.goldens.toml` (scenes gated against golden PNGs) is \
+    `flint goldens`; given one, this command runs that instead."
+)]
 pub struct RenderSuiteArgs {
-    /// Path to the suite manifest: a `.suite.toml` renders music to WAV; a
-    /// `.goldens.toml` renders each case with `flint render` and gates it
-    /// against its golden PNG
+    /// Path to the music suite manifest (`.suite.toml`)
     pub manifest: String,
 
     /// Event script (.events.toml) of scheduled bus changes and markers
     #[arg(long)]
     pub script: Option<String>,
 
-    /// Output WAV path (32-bit float stereo; music suites)
+    /// Output WAV path (32-bit float stereo)
     #[arg(long, short)]
-    pub output: Option<String>,
+    pub output: String,
 
     /// Directory the manifest's file paths are relative to (default: cwd)
     #[arg(long)]
@@ -50,18 +53,10 @@ pub struct RenderSuiteArgs {
     /// Processing chunk size in frames (= scheduling granularity)
     #[arg(long, default_value_t = 128)]
     pub chunk_frames: usize,
-
-    #[command(flatten)]
-    pub goldens: super::render_goldens::GoldenArgs,
 }
 
 pub fn run(args: RenderSuiteArgs) -> Result<()> {
-    if args.manifest.ends_with(".goldens.toml") {
-        return super::render_goldens::run(&args.manifest, &args.goldens);
-    }
-    let Some(output) = args.output.clone() else {
-        bail!("--output <WAV> is required for a music suite (.suite.toml)");
-    };
+    let output = args.output.clone();
     let base_dir = args
         .base_dir
         .map(PathBuf::from)

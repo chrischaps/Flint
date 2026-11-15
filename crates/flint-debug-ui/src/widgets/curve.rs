@@ -39,7 +39,10 @@ pub struct CurveEditor<'a> {
 }
 
 impl<'a> CurveEditor<'a> {
-    pub fn new(id_salt: impl std::hash::Hash, keys: &'a mut Vec<[f32; 2]>) -> Self {
+    pub fn new(
+        id_salt: impl std::hash::Hash + std::fmt::Debug,
+        keys: &'a mut Vec<[f32; 2]>,
+    ) -> Self {
         Self {
             keys,
             range: 0.0..=1.0,
@@ -271,7 +274,10 @@ pub struct GradientEditor<'a> {
 }
 
 impl<'a> GradientEditor<'a> {
-    pub fn new(id_salt: impl std::hash::Hash, keys: &'a mut Vec<(f32, [f32; 4])>) -> Self {
+    pub fn new(
+        id_salt: impl std::hash::Hash + std::fmt::Debug,
+        keys: &'a mut Vec<(f32, [f32; 4])>,
+    ) -> Self {
         Self {
             keys,
             id: egui::Id::new(id_salt),
@@ -296,10 +302,8 @@ impl<'a> GradientEditor<'a> {
 
         let width = ui.available_width().max(120.0);
         let handle_h = 14.0;
-        let (rect, response) = ui.allocate_exact_size(
-            Vec2::new(width, height + handle_h),
-            Sense::click_and_drag(),
-        );
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(width, height + handle_h), Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         let bar = Rect::from_min_size(rect.min, Vec2::new(rect.width(), height));
         let margin = 6.0;
@@ -350,7 +354,12 @@ impl<'a> GradientEditor<'a> {
             );
             painter.rect_filled(r, 0.0, col);
         }
-        painter.rect_stroke(bar, 3.0, Stroke::new(1.0f32, ui.visuals().weak_text_color()));
+        painter.rect_stroke(
+            bar,
+            3.0,
+            Stroke::new(1.0f32, ui.visuals().weak_text_color()),
+            egui::StrokeKind::Middle,
+        );
 
         // Handles
         let pointer = response.hover_pos();

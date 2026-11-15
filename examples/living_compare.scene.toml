@@ -1,0 +1,183 @@
+# Living Props side by side (#246): pairs of one tree under two settings.
+#
+#   flint render examples/living_compare.scene.toml --time 3.5 --output compare.png
+#   flint render examples/living_compare.scene.toml --time 3.5 --report json --output compare.png
+#   flint play examples/living_compare.scene.toml
+#
+# Different species are different trees, so a fair pair isn't an oak beside a thorn.
+# It's one spec beside a copy of itself under a new meta.name
+# (examples/specs/grove_*_twin.procgen.toml): a species of its own, with the same lineage
+# seed, so it grows the same skeleton. Each pair also shares a phase offset, so both
+# trees hold and glide on the same beats, and the twin gets its own values in
+# [living.species.<twin>] below. Everything else is the clearing's: one field, one
+# light, the same paint and ink.
+#
+# What still differs within a pair: a pose's shape seed comes from the entity's
+# name, and two entities can't share one, so the twins pass through cousins of
+# each other's poses on the way. Their rest shapes, clocks and everything the
+# overrides don't touch are the same.
+#
+# Left to right: the oak as specced, the oak at the morph end (slow, never rests,
+# all of its drift, its echoes brighter), the thorn as specced, and the thorn at
+# the shiver end (fast, no glide, the jitter up and no echoes). The book's Living
+# Props chapter has the precedence table this rests on.
+
+[scene]
+name = "Living Compare"
+version = "1.0"
+description = "Two pairs of one tree under two settings: a spec beside its twin, which has species values of its own"
+
+[wooze]
+preset = "linklater"
+
+# The original of each pair says nothing of its own: it's the clearing's.
+[living.species.grove_oak_twin]
+step = 1.0
+glide = 1.0
+amplitude = 1.0
+echoes = { alpha = 0.35 }
+
+[living.species.grove_thorn_twin]
+step = 0.125
+glide = 0.0
+jitter = 2.2
+echoes = { count = 0 }
+
+[camera]
+position = [0.9, 2.2, -12.0]
+target = [0.9, 2.5, 0.0]
+fov = 60.0
+
+[environment]
+ambient_sky = [0.34, 0.40, 0.52]
+ambient_ground = [0.13, 0.10, 0.09]
+
+[post_process]
+exposure = 1.0
+bloom_enabled = true
+bloom_intensity = 0.07
+bloom_threshold = 1.15
+vignette_enabled = true
+vignette_intensity = 0.32
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+ssao_samples = 16
+fog_enabled = true
+fog_color = [0.90, 0.70, 0.56]
+fog_density = 0.012
+fog_start = 14.0
+fog_end = 150.0
+boil_on = 1
+grade_lift = [0.012, 0.018, 0.03]
+grade_gain = [1.05, 1.0, 0.95]
+
+[post_process.styles.kuwahara]
+radius = 3
+sharpness = 8.0
+hardness = 6.0
+boil = 0.5
+
+[post_process.styles.contour]
+width = 1.25
+boil = 1.0
+fade = 26.0
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.10, 0.22, 0.44, 1.0]
+horizon_color = [0.92, 0.68, 0.50, 1.0]
+haze_color = [0.98, 0.72, 0.52, 0.75]
+cloud_tint = [1.0, 0.82, 0.72, 0.8]
+cloud_coverage = 0.32
+sun_glow = 1.6
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [0.5, 0.55, -0.66]    # toward the sun, over the camera's shoulder
+color = [1.0, 0.80, 0.58]
+intensity = 2.9
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.light]
+type = "directional"
+direction = [-0.4, 0.8, 0.4]
+color = [0.52, 0.62, 0.88]
+intensity = 0.42
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-80, -0.4, -80]
+max = [80, 0, 80]
+[entities.ground.material]
+texture = "grove_floor"
+texture_scale = 0.00625
+roughness = 0.95
+metallic = 0.0
+[entities.ground.rigidbody]
+body_type = "static"
+[entities.ground.collider]
+shape = "box"
+size = [160, 0.4, 160]
+friction = 0.8
+
+[entities.player]
+archetype = "player"
+[entities.player.transform]
+position = [0.9, 1.0, -17.0]
+[entities.player.character_controller]
+move_speed = 3.6
+jump_force = 5.0
+camera_mode = "first_person"
+
+# --- The oaks: the original, then its twin ---
+
+[entities.oak_as_specced.transform]
+position = [9.4, 0.0, 3.0]
+rotation = [0.0, 20.0, 0.0]
+scale = [0.8, 0.8, 0.8]
+[entities.oak_as_specced.model]
+asset = "grove_oak"
+[entities.oak_as_specced.living_prop]
+lineage_seed = 11
+phase_offset = 0.25
+
+[entities.oak_twin.transform]
+position = [1.8, 0.0, 3.0]
+rotation = [0.0, 20.0, 0.0]
+scale = [0.8, 0.8, 0.8]
+[entities.oak_twin.model]
+asset = "grove_oak_twin"
+[entities.oak_twin.living_prop]
+lineage_seed = 11
+phase_offset = 0.25
+
+# --- The thorns: the original, then its twin ---
+
+[entities.thorn_as_specced.transform]
+position = [-3.4, 0.0, -2.0]
+rotation = [0.0, 177.5, 0.0]
+scale = [1.6, 1.6, 1.6]
+[entities.thorn_as_specced.model]
+asset = "grove_thorn"
+[entities.thorn_as_specced.living_prop]
+lineage_seed = 53
+phase_offset = 0.25
+
+[entities.thorn_twin.transform]
+position = [-7.6, 0.0, -2.0]
+rotation = [0.0, 177.5, 0.0]
+scale = [1.6, 1.6, 1.6]
+[entities.thorn_twin.model]
+asset = "grove_thorn_twin"
+[entities.thorn_twin.living_prop]
+lineage_seed = 53
+phase_offset = 0.25

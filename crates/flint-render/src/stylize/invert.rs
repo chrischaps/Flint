@@ -33,7 +33,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         pipeline: kit::fullscreen_pipeline(
             device,
             "Invert Pipeline",
-            &kit::shader(device, "Invert Shader", include_str!("invert.wgsl")),
+            &kit::shader(device, "Invert Shader", kit::wgsl!("invert.wgsl")),
             &[&uniform_bgl, &input_bgl],
             d.format,
         ),
@@ -53,7 +53,7 @@ struct InvertUniforms {
 }
 
 struct Invert {
-    pipeline: wgpu::RenderPipeline,
+    pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
     input_bgl: wgpu::BindGroupLayout,
