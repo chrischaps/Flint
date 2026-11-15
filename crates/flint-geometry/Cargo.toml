@@ -11,3 +11,6 @@ description = "Geometry above the core: the Gerstner ocean surface, spline paths
 [dependencies]
 flint-core = { workspace = true }
 toml = { workspace = true }
+
+[lints]
+workspace = true

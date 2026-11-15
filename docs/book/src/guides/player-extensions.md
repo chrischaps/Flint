@@ -21,8 +21,8 @@ impl PlayerExtension for MyGame {
     fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
         // apply network state to ctx.world before scripts run
     }
-    fn ui(&mut self, ctx: &egui::Context) {
-        egui::Window::new("Inventory").show(ctx, |ui| { ui.label("empty"); });
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        egui::Window::new("Inventory").show(ui, |ui| { ui.label("empty"); });
     }
 }
 
@@ -90,8 +90,7 @@ A scene that uses a part the build left out prints one line when it's entered, n
 | `script_command(&ScriptCommand, &mut ExtensionCtx) -> bool` | Each script command, after the scene's subsystems pass on it | Carrying out what the module's functions queued |
 | `on_window_event(&WindowEvent) -> bool` | Every window event that egui didn't take | Game input the scene's input config can't express |
 | `on_key(&KeyInput) -> bool` | Every key egui didn't take, real or from `--input-script` | Keys a capture should be able to press |
-| `ui(&egui::Context)` | Every frame, inside the player's egui pass, from `root_ui` | The game's own windows and areas |
-| `root_ui(&mut egui::Ui)` | Every frame, inside the player's egui pass; by default it calls `ui` | The game's own side and top panels, on the frame's root `Ui` (egui 0.36) |
+| `ui(&mut egui::Ui)` | Every frame, inside the player's egui pass, with the frame's root `Ui` | The game's own panels, windows and areas ([ADR 0121](https://github.com/chrischaps/Flint/blob/main/docs/adr/0121-extension-ui-takes-the-root-ui.md)) |
 | `fonts(&mut egui::FontDefinitions)` | Whenever the player installs egui's fonts | Fonts the project's `fonts/` folder can't give |
 | `debug_panels() -> Vec<String>` | When the player builds its debug panels: each scene load, and at `add_extension` | Naming the game's own [debug panels](debug-panels.md#adding-a-panel-from-a-game) ([ADR 0107](https://github.com/chrischaps/Flint/blob/main/docs/adr/0107-debug-panels-from-the-game.md)) |
 | `debug_panel_ui(name, &mut egui::Ui)` | Every frame one of them is open, after `ui` | Drawing that panel's contents from the game's state |
@@ -432,22 +431,26 @@ An upload without the option, or `remove_mesh`, stops it being a target. The tri
 `ui()` draws into the same egui pass as the script HUD and the debug panels. Back to front, the order is:
 
 1. script UI (`on_draw_ui`)
-2. each extension's `root_ui()` (by default, its `ui()`)
+2. each extension's `ui()`, in the order they were added
 3. script UI drawn between `push_over_ui()` and `pop_over_ui()` ([Scripting: Over the UI](../concepts/scripting.md#over-the-ui))
 4. the [debug panels](debug-panels.md)
 
 Egui popups and tooltips draw over the first three.
 
-Use `egui::Window` and `egui::Area` from `ui()`. Side and top panels go in `root_ui()`, which gets the frame's root `egui::Ui`: egui 0.36 shows an `egui::Panel` on a `Ui`, not a `Context`. The player calls `root_ui()` at the same point of the pass, and its default calls `ui()`, so override one or the other:
+`ui()` gets the frame's root `egui::Ui`, the one egui's `Context::run_ui` hands out: the shape of eframe's `App::ui` ([ADR 0121](https://github.com/chrischaps/Flint/blob/main/docs/adr/0121-extension-ui-takes-the-root-ui.md)). It covers the whole window, with no margin or background. Show panels on it (`Panel::show` takes a `Ui`), and windows and areas from it: `Window::show` and `Area::show` take a `&Context`, and a `Ui` derefs to its `Context`, so they take `ui` as it is. `ui.ctx()` is the `Context`, to clone and keep.
 
 ```rust
-fn root_ui(&mut self, ui: &mut egui::Ui) {
+fn ui(&mut self, ui: &mut egui::Ui) {
     egui::Panel::left("inventory").default_size(220.0).show(ui, |ui| {
         ui.heading("Inventory");
     });
-    egui::Window::new("Quests").show(ui.ctx(), |ui| ui.label("none yet"));
+    egui::Window::new("Quests").show(ui, |ui| ui.label("none yet"));
 }
 ```
+
+A panel on the root takes its room from the whole window and sits on the background layer; a window floats on the Middle layer, over the panels and under the debug panels. `crates/flint-player/examples/cave_game` draws both: a survey of its stones in a side panel and a field note in a window.
+
+Before ADR 0121, `ui()` took `&egui::Context`, and `root_ui(&mut egui::Ui)` (#946) was where panels went. `root_ui()` is deprecated and still called: rename it to `ui`. An old `fn ui(&mut self, ctx: &egui::Context)` no longer compiles; change the type to `ctx: &mut egui::Ui` and the body compiles as it was ([Upgrading the Engine](upgrading-the-engine.md#the-game-ui-hook)).
 
 Don't use a `CentralPanel`: it covers the whole window and takes every click away from the game. Coming from egui 0.30: [Upgrading the Engine](upgrading-the-engine.md#egui-030-to-036).
 

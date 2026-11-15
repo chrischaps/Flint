@@ -28,6 +28,7 @@
 //! off: the constant used as `comp::NAME` / `components::NAME`, or the name
 //! as a string literal. It can't tell a reader from a writer, so it catches
 //! a schema nobody mentions, not one nobody honours.
+#![allow(clippy::disallowed_methods)] // a test: reads its files off the disk, not through the vfs
 
 use flint_schema::diagnostic::codes;
 use flint_schema::{validate_component_data, SchemaRegistry, OLD_TYPE_NAMES, TYPE_NAMES};
@@ -416,8 +417,19 @@ fn scene_entities() -> Vec<(String, String, toml::Table)> {
     }
     let root = repo();
     let mut out = Vec::new();
-    for dir in ["examples", "tests", "showcase_game", "crates"] {
-        walk(&root.join(dir), &root, &mut out);
+    // ...and each game kept in the checkout: a top-level directory with a
+    // `flint.toml`, found by it so the engine names no game (#760)
+    let games = std::fs::read_dir(&root)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|d| d.join("flint.toml").is_file());
+    for dir in ["examples", "tests", "crates"]
+        .map(|d| root.join(d))
+        .into_iter()
+        .chain(games)
+    {
+        walk(&dir, &root, &mut out);
     }
     assert!(out.len() > 500, "the repository's scenes were not found");
     out

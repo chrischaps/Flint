@@ -18,7 +18,7 @@
 name = "The Sunken Crypt"
 version = "1.0"
 description = "Dark underground cavern with bioluminescent mushrooms and cave beetles"
-input_config = "showcase_game/config/input_ruins.toml"
+input_config = "config/input_ruins.toml"
 
 [post_process]
 bloom_enabled = true

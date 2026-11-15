@@ -24,8 +24,9 @@ cargo test                     # Run all tests
 cargo test -p flint-core       # Test a single crate
 cargo clippy                   # Lint
 cargo fmt --all                # Format (rustfmt.toml pins the edition; `rustfmt <file>` for one file)
-bash scripts/ci.sh             # What a PR must pass: formatting and a record for every cited ADR
-                               #   (scripts/adr-check.sh), in seconds. `issue.sh land` runs it.
+bash scripts/ci.sh             # What a PR must pass: formatting, a record for every cited ADR
+                               #   (scripts/adr-check.sh) and every clippy.toml made from the root's
+                               #   (scripts/clippy-conf.sh --check), in seconds. `issue.sh land` runs it.
 bash scripts/ci.sh --full      #   ...plus what CI's clippy and wasm jobs run (two builds)
 ```
 
@@ -77,7 +78,7 @@ Flint uses an **edit -> validate -> play** loop:
 
 ## Architecture
 
-31-crate Cargo workspace (plus `tools/arch-analyzer`, a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph and the book's crate table, checked in CI; neither is a default member):
+31-crate Cargo workspace (plus `tools/arch-analyzer`, a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph and the book's crate table, checked in CI). Every member but `flint-android` is a default member, so plain `cargo test` runs every desktop crate's tests (#758):
 
 ```
 flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, serve, preview, play, check,
@@ -146,7 +147,7 @@ A bullet below that names a feature in a line or two has its full text in one of
 - **All game UI is script-driven** -- no hardcoded HUD; `hud_controller` entity + `hud.rhai` pattern; engine provides draw primitives (`draw_text/rect/circle/line/sprite`), scripts compose UI
 - **Game project pattern** -- games in own repos with engine as git subtree at `engine/`; `schemas = ["engine/schemas", "schemas"]` under `[project]` in the game's `flint.toml` layers the game's schemas over the engine's with no flags, and `--schemas engine/schemas --schemas schemas` overrides it for a run
 - **Player extensions** (ADRs 0071-0075) -- a game binary embeds `PlayerApp` and installs `PlayerExtension`s (`add_extension`): native Rhai fns, `pre_update` before scripts' `on_update`, window events, egui UI. Book: guides/player-extensions.md
-- **Every runtime read goes through `flint_core::vfs`** (#97) -- `vfs::read` / `read_to_string` / `read_dir` / `exists` / `is_file` / `is_dir`, never `std::fs` or `Path::exists` in a runtime crate. Decode images with `flint_render::open_image` and glTF through `flint_import::import_gltf`. Tests and the CLI keep `std::fs`
+- **Every runtime read goes through `flint_core::vfs`** (#97) -- `vfs::read` / `read_to_string` / `read_dir` / `exists` / `is_file` / `is_dir`, never `std::fs` or `Path::exists` in a runtime crate. Decode images with `flint_render::open_image` and glTF through `flint_import::import_gltf`. Tests and the CLI keep `std::fs`. Plain `cargo clippy` warns on a read past the vfs and on `as_float` in every crate the player links (the root `clippy.toml`, #761; denied in the five that draw): a write path or test that means it says why, `#[allow(clippy::disallowed_methods)] // <reason>`, a test file once at its top (`#![allow(..)]`), a crate's unit tests in one `#![cfg_attr(test, allow(..))]` in its lib.rs. Change a rule in the root `clippy.toml`, then run `bash scripts/clippy-conf.sh`: it writes the tool crates' own copies (`TOOL_CRATES`: the CLI, viewer, asset-gen, procgen-ai and arch-analyzer hold only the wgpu seams) and `scripts/ci.sh` fails a stale one. The clock rules can't be native (there `web_time::Instant` is `std::time::Instant`): `scripts/wasm-clippy/wasm-only.toml`, added for the wasm check alone
 - **Fixed-timestep physics** (1/60s) via accumulator; animation/particles run at variable rate
 
 ## Critical Gotchas
@@ -158,10 +159,10 @@ A bullet below that names a feature in a line or two has its full text in one of
 - Kira v0.11: `Decibels(f32)` and `PlaybackRate(f64)` are tuple structs; uses `glam` via `mint`
 - `AudioManager::new()` / `Gilrs::new()` may fail in headless/CI -- wrap in `Option`
 - Rhai v1.24 `sync`: `call_fn()` Scope visible only to direct callee, NOT sub-functions; entity IDs as `i64`
-- `flint-android` excluded from `default-members` -- use `cargo ndk -p flint-android`; min API 26. `cargo test --workspace` fails on `ndk-sys` on Windows; use plain `cargo test`
+- `flint-android` is the one crate excluded from `default-members` (a new crate goes in both lists, #758) -- use `cargo ndk -p flint-android`; min API 26. `cargo test --workspace` fails on `ndk-sys` on Windows; use plain `cargo test`
 - Windows links a 1 MB main-thread stack; debug builds of flint-cli's clap parser overflow it -- `.cargo/config.toml` links with `/STACK:8388608`. Don't remove it, and don't grow `Commands` assuming stack is free.
 - Scene entity `merge_component()` does field-level merge INTO archetype defaults, not full replacement
-- Read a component through `world.view(id, comp::COLLIDER)` (`.f32("friction", 0.5)`, `.choice("shape", &[..], "box")`, `.opt_f32(..)`; ADR 0115, `crates/flint-core/CLAUDE.md`): it takes an integer as a number and reports a wrong type or unknown choice once per entity and field. Any other TOML goes through `flint_core::toml_util` (`toml_f64`/`toml_f32`/`toml_vec3`/...). Never `toml::Value::as_float` in a runtime crate: it reads `8` as nothing, and `scripts/wasm-check.sh` denies it
+- Read a component through `world.view(id, comp::COLLIDER)` (`.f32("friction", 0.5)`, `.choice("shape", &[..], "box")`, `.opt_f32(..)`; ADR 0115, `crates/flint-core/CLAUDE.md`): it takes an integer as a number and reports a wrong type or unknown choice once per entity and field. Any other TOML goes through `flint_core::toml_util` (`toml_f64`/`toml_f32`/`toml_vec3`/...). Never `toml::Value::as_float` in a runtime crate: it reads `8` as nothing, and `cargo clippy` warns on it (the root `clippy.toml`, #761) and `scripts/wasm-check.sh` denies it
 - `furniture`, `wall`, `floor`, `ceiling`, `pillar`, `room`, `door` (and the `door` component) are not the engine's: they are the examples' layer, `schemas/examples/` (#681). The root `flint.toml` lists it after `schemas/`, so every scene in this checkout resolves them with no flag; a `--schemas` flag is the whole list, so `--schemas schemas` alone leaves them out (add `--schemas schemas/examples`), and a game has none of them unless its own `flint.toml` lists `engine/schemas/examples`. In an example, never put `furniture` on a non-visual entity: it includes `bounds` and draws a teal box. The renderer still colours a `bounds` box by these names (`default_archetype_visuals`)
 - Every `flint_core::components` constant has a schema in `schemas/components/`, and every schema a reader: `cargo test -p flint-schema --test engine_schemas` holds it (ADR 0115; what it checks: `crates/flint-core/CLAUDE.md`). A schema field's `default` is written into the component at load, so give one only where the reader falls back to that same value
 - Per-frame GPU allocations are the renderer's CPU cliff: never `create_buffer`/`create_bind_group` inside a per-entity loop; what a draw needs per entity comes from a cache (`crates/flint-render/CLAUDE.md`)
@@ -175,7 +176,7 @@ A bullet below that names a feature in a line or two has its full text in one of
 
 The changelog is for games that carry the engine as a subtree (#765): a change a game can notice (a scene or schema key, a script function, a CLI flag, a format, a Cargo feature, a change in look or behaviour) gets an entry saying what changed and what to do. Each PR adds its own file, `bash scripts/changelog.sh new <issue> <slug>` (`changelog.d/<issue>-<slug>.md`, about 150 words), never an edit to `CHANGELOG.md` or `changelog/` (#788): after the merge the `Changelog` workflow moves it into `changelog/YYYY-MM.md` and `CHANGELOG.md` stays a short page linking the months. `changelog.sh since <date>` prints what is new. CI's `changelog` job (`scripts/changelog-check.sh`) fails a PR that touches `schemas/`, the script API or the scene format with no fragment; a commit-message line `Changelog: none (reason)` waives it for a change no game can notice.
 
-The book is `docs/book` (mdBook), published to docs.chaps.dev by hand from this machine. CI checks its generated parts, the script API (`flint script api --check-book`) and the crate table (`flint-arch-analyzer --check-book`), and `python scripts/docs-check.py` (#375) checks what the prose names against a built `flint`: every `--flag` on a `flint` command line (book and CLAUDE.md files), every `[post_process.styles.<name>]`, every image a page links. Nothing checks what the prose says a flag or key does. When a change alters a command, flag, key or component the book describes, update the book in the same PR, checking against the code rather than memory. There is no `tools/docs-check`, `DOCS_SYNC.md` or `.synced-to` (#175, #375): a ticket that names them is wrong.
+The book is `docs/book` (mdBook), published to docs.chaps.dev by hand from this machine. CI checks its generated parts, the script API (`flint script api --check-book`) and the crate table (`flint-arch-analyzer --check-book`), and `python scripts/docs-check.py` (#375) checks what the prose names against a built `flint`: every `--flag` on a `flint` command line (book and CLAUDE.md files), every `[post_process.styles.<name>]`, every image a page links, and the maps (#756): a crate or member count (in digits), every crate in this file's Architecture tree and the book's overview, and a `Commands:` list against `flint --help`. Nothing checks what the prose says a flag or key does. When a change alters a command, flag, key or component the book describes, update the book in the same PR, checking against the code rather than memory. There is no `tools/docs-check`, `DOCS_SYNC.md` or `.synced-to` (#175, #375): a ticket that names them is wrong.
 
 Build, preview and publish commands: `docs/CLAUDE.md`.
 
@@ -187,10 +188,12 @@ Build, preview and publish commands: `docs/CLAUDE.md`.
 - `styles/` -- AI style guides (`*.styleguide.toml`, #420; `*.style.toml` is a UI class file) and looks (`*.look.toml`)
 - `examples/` -- Curated example scenes and their assets (was `demo/`, #763); `examples/index.toml` gives each a topic and purpose, `flint examples` lists them, `flint examples --check` (CI) holds the index to the folder and validates each. Improve them freely: nothing pins their pixels
 - `tests/fixtures/scenes/` -- Frozen copies of the scenes the goldens and CLI tests load, with their assets. No golden may load from `examples/` (`no_golden_case_loads_an_example`); a change here is a change to a test
+- `showcase_game/` -- The Overgrown Ruins, the example game: a project with its own `flint.toml`, assets and sounds (its bartender's model it names as `../../examples/models/YBotWithIdle.glb`), the engine beside it (`../schemas`) rather than under it. A top-level directory with a `flint.toml` is a game kept in the checkout; tests find one by its manifest, so engine code never names it (#760), and `crates/flint-cli/tests/checkout_games_cli.rs` fails when one names a file it doesn't have
+- The root holds only manifests and docs, and nothing is a symlink (a Windows checkout without the privilege gets a text file): `scripts/ci.sh` refuses either. A default `flint render` writes `render.png` to the working directory, which `.gitignore` covers, as it does coverage runs' `*.profraw`
 - `crates/flint-cli/templates/` -- What `flint init` writes (#707): the game-project scaffold, compiled into the binary; `tests/init_cli.rs` builds and runs each
 - `docs/book/` -- mdBook source; `docs/build.ps1` / `docs/publish.sh` -- build, preview and publish it
-- `docs/design/flint-design-doc.md` -- Full design document for remaining phases
-- `docs/adr/` -- Architecture decision records from ADR 0111 on (earlier numbers live only in commit messages); `README.md` says how to take a number
+- `docs/design/` -- Living design notes (the web port, the showcase film, Living Props targets, spike and cost measurements); `docs/archive/` -- superseded plans and the March 2026 design doc, each with a banner naming the book page that is current (#756). A plan whose work has shipped moves to the archive
+- `docs/adr/` -- Architecture decision records, one file per number cited anywhere in the tree (0111 on written here; earlier ones rebuilt from commits and the Starchild repo, #374); `README.md` says how to take a number
 
 <!-- claims:begin (from chrischaps/Dashboard skills/setup-claims; re-run its install.sh to update) -->
 

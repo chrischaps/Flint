@@ -1610,7 +1610,8 @@ mod tests {
         }
     }
 
-    /// `showcase_game/specs/garden_tree.procgen.toml`, with the method open.
+    /// A game's garden tree spec (the example game's `specs/garden_tree`),
+    /// with the method open.
     const GARDEN_TREE: &str = r##"
 generator = "tree_v1"
 [meta]

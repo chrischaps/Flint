@@ -1275,13 +1275,11 @@ impl PlayerApp {
                 );
             }
 
-            // The game's own egui (PlayerExtension::root_ui, which calls
-            // ui unless the game overrides it). Its panels sit on the
-            // background layer and its windows on Middle, both below the
-            // debug panels, which float on Foreground.
-            for ext in extensions.iter_mut() {
-                ext.root_ui(ui);
-            }
+            // The game's own egui, on the root Ui (PlayerExtension::ui,
+            // ADR 0121). Its panels sit on the background layer and its
+            // windows on Middle, both below the debug panels, which float
+            // on Foreground.
+            crate::extension::draw_ui(&mut extensions, ui);
 
             // On-screen touch controls (#133), over the game's UI.
             super::touch_overlay::paint(ctx, &touch_widgets, touch_opacity);

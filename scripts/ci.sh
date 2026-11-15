@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # What a change must pass before it lands (#757).
 #
-#   scripts/ci.sh          formatting, and every cited ADR has a record
-#                          (scripts/adr-check.sh): seconds, no build. `scripts/issue.sh
+#   scripts/ci.sh          formatting, every cited ADR has a record
+#                          (scripts/adr-check.sh), and every clippy.toml is the
+#                          root list's copy (scripts/clippy-conf.sh --check, #761):
+#                          seconds, no build. `scripts/issue.sh
 #                          land` runs this (verify= in scripts/issue.conf), and
 #                          so does CI's rustfmt job.
 #   scripts/ci.sh --full   also what CI's clippy and wasm jobs run: native
@@ -31,6 +33,26 @@ fi
 
 echo "ci: scripts/adr-check.sh"
 bash scripts/adr-check.sh
+
+echo "ci: scripts/clippy-conf.sh --check"
+bash scripts/clippy-conf.sh --check
+
+# The tree (#760): a symlink checks out as a text file on Windows without the
+# symlink privilege, and the root is for manifests and docs (a render, spec
+# or texture there is a stray: specs/, examples/ and tests/fixtures/ hold them)
+echo "ci: no symlinks, a root of manifests and docs"
+links=$(git ls-files -s | awk '$1 == "120000" { print $4 }')
+if [ -n "$links" ]; then
+    echo "ci: these are symlinks; commit the files, or name the path they point at:" >&2
+    echo "$links" >&2
+    exit 1
+fi
+strays=$(git ls-files | grep -v / | grep -vxE '\.git(ignore|attributes)|[A-Z]+\.md|Cargo\.(toml|lock)|(clippy|rustfmt|flint)\.toml' || true)
+if [ -n "$strays" ]; then
+    echo "ci: these files are at the root, which holds only manifests and docs:" >&2
+    echo "$strays" >&2
+    exit 1
+fi
 
 if [ "${1:-}" = "--full" ]; then
     echo "ci: cargo clippy --all-targets"

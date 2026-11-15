@@ -371,6 +371,7 @@ fn to_premul(c: &[f32; 4]) -> [u8; 4] {
 /// own work, so this is the picture the GPU is handed, pixel for pixel.
 /// `FLINT_BLESS=1` rewrites it.
 #[test]
+#[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
 fn neon_numeral_golden() {
     let ctx = context(2.0);
     let face = [1.0, 0.97, 0.9, 1.0];

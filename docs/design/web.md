@@ -30,9 +30,12 @@ trunk build --release --cargo-profile web-release   # what the site ships (#123,
 CI keeps this compiling (#96). The `wasm32 check` job in
 `.github/workflows/ci.yml` runs `scripts/wasm-check.sh` on every PR: a wasm32
 clippy pass over `flint-player` and the workspace crates it links, with every
-lint off but `disallowed_methods`, configured in
-`scripts/wasm-clippy/clippy.toml` to deny `Instant::now`, `SystemTime::now`
-and their `elapsed()`. Those are the calls that compile but panic. #100
+lint off but `disallowed_methods`: the root `clippy.toml`'s list (reads past
+the vfs, `as_float`, the wgpu seams), which native `cargo clippy` reads too,
+plus `scripts/wasm-clippy/wasm-only.toml`, which denies `Instant::now`,
+`SystemTime::now` and their `elapsed()` (#761: on native `web_time::Instant`
+is `std::time::Instant`, so only a wasm build can tell them apart). Those are
+the calls that compile but panic. #100
 moved the 32 sites that predated the check to `web-time` and removed
 their allows, so a std time call in a runtime crate now fails the check.
 
@@ -1002,7 +1005,7 @@ release the cursor (`touch_overlay.rs`). On an iPad that release threw
 the game stopped: frozen on its last frame, with the page around it still
 answering. Chrome and Android have the API, so no Pixel or desktop run saw
 it. The wasm clippy check now denies `winit::window::Window::set_cursor_grab`
-(`scripts/wasm-clippy/clippy.toml`). `tools/web-touch/ipad.mjs` replays the
+(`scripts/wasm-clippy/wasm-only.toml`). `tools/web-touch/ipad.mjs` replays the
 iPad in desktop Chrome over CDP: touch emulation, a 1180x820 DPR 2 viewport,
 an iPadOS Chrome user agent, and optionally WebKit's missing APIs deleted
 (`coalesced`, `dpbox`, `lock`). It taps, drags and calls the game FROZEN or

@@ -262,7 +262,7 @@ This separation means `flint-terrain` can be used independently for tools, CLI c
 - **CPU-side simulation** --- no GPU compute for terrain generation
 - **Fixed PBR parameters** --- metallic and roughness are uniform across the entire terrain surface
 
-See the [Terrain Roadmap](../../../TERRAIN_ROADMAP.md) for planned features including LOD, sculpting, auto-splatting, triplanar mapping, and more.
+See the [Terrain Roadmap](https://github.com/chrischaps/Flint/blob/main/docs/TERRAIN_ROADMAP.md) for planned features: chunk LOD, per-layer normal maps, triplanar mapping, several terrains a scene, and more.
 
 ## Further Reading
 

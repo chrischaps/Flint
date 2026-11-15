@@ -9,6 +9,7 @@
 //! - `vfs` - The read-only file layer every runtime read goes through
 //! - `bundle` - Game bundles: a game's files in one fetchable blob for the vfs
 //! - `project` - A project's root and its `flint.toml` manifest, found through the vfs
+#![cfg_attr(test, allow(clippy::disallowed_methods))] // unit tests read their files off the disk and assert on TOML as written; the lib build still holds the rules (#761)
 
 pub mod bundle;
 pub mod callbacks;

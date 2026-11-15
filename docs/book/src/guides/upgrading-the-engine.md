@@ -19,7 +19,7 @@ A game made only of scenes, scripts, schemas and user styles (`.shader.toml` and
 
 A game with Rust of its own ports the parts that call wgpu or egui:
 
-- a `PlayerExtension` that draws egui UI ([egui 0.30 to 0.36](#egui-030-to-036));
+- a `PlayerExtension` that draws egui UI ([the game UI hook](#the-game-ui-hook) and [egui 0.30 to 0.36](#egui-030-to-036));
 - a Rust style built on `stylize::kit`, or a renderer or window of its own ([wgpu 23 to 30](#wgpu-23-to-30), [WGSL](#wgsl) and [Flint's shaders are trusted code](#flints-shaders-are-trusted-code)).
 
 **Cargo.** Name the same versions as the engine (`wgpu = "30.0.2"`, `egui = "0.36.2"`) or take them from the engine's workspace. A subtree game that builds for the web also adds the engine's patched egui-winit to its workspace root's `Cargo.toml`, which adds the one function the web build needs:
@@ -31,7 +31,9 @@ egui-winit = { path = "engine/vendor/egui-winit" }
 
 ### egui 0.30 to 0.36
 
-**Panels are shown on a `Ui`.** egui 0.36 has one `egui::Panel` type, shown on a `Ui` rather than a `Context`. `PlayerExtension::ui` gets a `&egui::Context`, so a game's side and top panels move to the new hook `root_ui`, which gets the frame's root `Ui`. The player calls `root_ui` where it called `ui`, and the default `root_ui` calls `ui`, so an extension with only windows and areas keeps working unchanged:
+#### The game UI hook
+
+**`PlayerExtension::ui` takes the frame's root `Ui`.** egui 0.36 shows its one `egui::Panel` type on a `Ui`, not a `Context`, and eframe's `App::ui` takes `&mut egui::Ui` (eframe 0.34 deprecated `App::update(&Context)` and 0.35 removed it). `PlayerExtension::ui` took a `&egui::Context`, so a game's side and top panels had no port. It now takes the root `Ui` that egui's `Context::run_ui` hands out ([ADR 0121](https://github.com/chrischaps/Flint/blob/main/docs/adr/0121-extension-ui-takes-the-root-ui.md)): show panels on it and windows and areas from it.
 
 ```rust
 // egui 0.30
@@ -43,15 +45,19 @@ fn ui(&mut self, ctx: &egui::Context) {
 }
 
 // egui 0.36
-fn root_ui(&mut self, ui: &mut egui::Ui) {
+fn ui(&mut self, ui: &mut egui::Ui) {
     egui::Panel::left("inventory").default_size(220.0).show(ui, |ui| {
         ui.heading("Inventory");
     });
-    egui::Window::new("Quests").show(ui.ctx(), |ui| ui.label("none yet"));
+    egui::Window::new("Quests").show(ui, |ui| ui.label("none yet"));
 }
 ```
 
-Override `root_ui` or `ui`, not both: the default `root_ui` is what calls `ui`. Don't show a `CentralPanel` from either one. It covers the whole window and takes every click from the game.
+An old `ui` no longer compiles (``method `ui` has an incompatible type for trait``): a Rust trait method can't be deprecated into a new signature. The port is the parameter's type. A `Ui` derefs to its `Context`, so with `fn ui(&mut self, ctx: &mut egui::Ui)` a body written for a `Context` compiles as it was: `Window::new(..).show(ctx, ..)`, `ctx.input(..)`, `ctx.clone()` (a `Context`) and passing `ctx` to a function that takes `&egui::Context`. Only the panels need the renames below.
+
+A game that took `root_ui(&mut egui::Ui)`, the hook #946 added for panels before this change, keeps drawing: `root_ui` is deprecated, the player still calls it, and its default calls `ui`. Rename it to `ui`. rustc doesn't warn on implementing a deprecated trait method, so this line is the reminder.
+
+Don't show a `CentralPanel` from `ui`. It covers the whole window and takes every click from the game.
 
 The renames Flint's own code needed, checked against egui 0.36.2:
 

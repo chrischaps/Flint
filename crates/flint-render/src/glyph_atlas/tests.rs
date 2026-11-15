@@ -866,8 +866,17 @@ fn the_cache_reloads_what_changes_on_disk() {
         Some(255)
     );
 
-    // The font file itself redrawn (same size: the stamp's time must see it)
+    // The font file itself redrawn (same size: the stamp's time must see it).
+    // Two writes inside one tick of the file system's clock share a modified
+    // time (Windows: one test in about fifteen, #489), so the redraw is dated
+    // later, as an edit by hand would be
     png(2);
+    std::fs::File::options()
+        .write(true)
+        .open(dir.join("fonts/grid.png"))
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
+        .unwrap();
     assert!(cache.poll());
     let grid = cache.get("grid").unwrap();
     assert_eq!(grid.atlas().sample('-', 3, 4), Some(0));

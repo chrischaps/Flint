@@ -2,6 +2,7 @@
 //!
 //! This crate provides asset management with content-addressed storage,
 //! metadata catalogs, and reference resolution.
+#![cfg_attr(test, allow(clippy::disallowed_methods))] // unit tests read their files off the disk and assert on TOML as written; the lib build still holds the rules (#761)
 
 mod catalog;
 // The store paths are tooling (the real disk); the player never asks. #179

@@ -323,6 +323,7 @@ fn as_loaded_puts_it_all_back() {
 
 #[cfg(feature = "debug-hud")]
 #[test]
+#[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
 fn a_panel_only_appears_in_a_scene_with_living_props_and_drives_them() {
     use flint_debug_ui::{LivingPanelAction, LivingPropsDebugPanel, PanelScope};
 
@@ -797,6 +798,7 @@ fn a_side_shown_by_a_flip_is_the_side_that_was_shown_all_along() {
 }
 
 /// A player with `n` of the real living oak, leaves and all, and no field.
+#[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
 fn oak_app(n: u64, folder: &Path) -> PlayerApp {
     let scene_path = folder.join("grove.scene.toml");
     let mut app = PlayerApp::new(
@@ -1258,6 +1260,7 @@ mod scopes {
 
     /// Woozy Grove's living props as the scene commits them, with no window:
     /// its four species, every tree, and its field with its zones.
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     pub(super) fn woozy_grove(folder: &Path) -> PlayerApp {
         let text = std::fs::read_to_string(repo().join("examples/woozy_grove.scene.toml")).unwrap();
         let scene: flint_scene::SceneFile = toml::from_str(&text).unwrap();
@@ -1960,6 +1963,7 @@ archetype = "x"
 
     /// A run of the scene file in `folder` as it stands now, as a fresh start
     /// reads it: its `[living]`, species and all, and its field.
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn fresh(folder: &Path) -> PlayerApp {
         let text = std::fs::read_to_string(scene_path(folder)).unwrap();
         let scene: flint_scene::SceneFile = toml::from_str(&text).unwrap();
@@ -2035,6 +2039,7 @@ archetype = "x"
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn committing_one_species_value_changes_exactly_its_line() {
         let (folder, mut app) = tuned_grove("commit_one");
         assert!(app.tune_species("thorn", &echo_count(1)).is_empty());
@@ -2060,6 +2065,7 @@ archetype = "x"
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn a_fresh_run_of_the_committed_scene_runs_on_the_tuned_values() {
         let (folder, mut app) = tuned_grove("commit_fresh");
         // One of each kind: a species value set and one cleared, a grove knob,
@@ -2139,6 +2145,7 @@ step = 0.75
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn a_preset_with_species_values_loads_them_whole_in_another_run() {
         let (folder, mut app) = tuned_grove("preset_species");
         // The thorns' step cleared, the oaks given a table of their own.

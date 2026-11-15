@@ -437,6 +437,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test reads its own files off the disk
     fn the_shipped_files_are_the_builtins() {
         // A new styles/*.look.toml is compiled in, or a game repo (or the
         // web) can't find it.
@@ -581,6 +582,7 @@ mod tests {
     /// Looks are found through the vfs (the web's bundle), nearest
     /// folder first, and a file shadows a built-in of its name.
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test asserts on the TOML exactly as written
     fn looks_are_found_through_the_vfs() {
         let source: MemorySource = [
             (
@@ -620,6 +622,7 @@ mod tests {
     /// mounted engine's; the nearest of a name wins, a file before a
     /// built-in; and a miss lists the paths tried.
     #[test]
+    #[allow(clippy::disallowed_methods)] // a test asserts on the TOML exactly as written
     fn a_nested_scene_finds_the_projects_looks_by_the_one_rule() {
         let look = |exposure: f32| format!("[post_process]\nexposure = {exposure}\n").into_bytes();
         let source: MemorySource = [

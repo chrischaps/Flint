@@ -34,8 +34,12 @@ members = [
     "crates/flint-android",
     "tools/arch-analyzer",
 ]
-# flint-android depends on ndk-sys which only compiles for Android targets.
-# Exclude it from default `cargo build`; build with `cargo ndk -p flint-android`.
+# What plain `cargo build`, `cargo test` and `cargo clippy` cover: every
+# member but one (#758). flint-android depends on ndk-sys, which compiles only
+# for Android targets: build it with `cargo ndk -p flint-android`. That is why
+# `cargo test --workspace` fails on a desktop and plain `cargo test` is the
+# command that runs all the tests. A new member goes in both lists unless it
+# too cannot build on a desktop, and then the reason goes here.
 default-members = [
     "crates/flint-core",
     "crates/flint-wooze",
@@ -65,7 +69,9 @@ default-members = [
     "crates/flint-terrain",
     "crates/flint-debug-ui",
     "crates/flint-procgen",
+    "crates/flint-procgen-ai",
     "crates/flint-cli",
+    "tools/arch-analyzer",
 ]
 
 [workspace.package]
@@ -73,6 +79,15 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Chris"]
+
+[workspace.lints.clippy]
+# The root clippy.toml's list (#761): the vfs reads and `as_float` in every
+# crate the player links, the wgpu and egui seams in the crates that draw.
+# Warned here so plain `cargo clippy` names a broken rule; flint-render,
+# flint-player, flint-viewer, flint-cli and flint-debug-ui deny it in their
+# own `[lints.clippy]`, and the wasm check (scripts/wasm-check.sh) denies it
+# for everything flint-player links. A crate opts in with `[lints] workspace = true`.
+disallowed_methods = "warn"
 
 [workspace.dependencies]
 # Core dependencies

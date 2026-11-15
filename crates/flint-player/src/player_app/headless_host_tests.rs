@@ -374,6 +374,7 @@ fn on_update() {
 "#;
 
 #[test]
+#[allow(clippy::disallowed_methods)] // a test asserts on the TOML exactly as written
 fn a_capture_styles_tweens_and_reads_as_the_player_does() {
     let (dir, scene) = scene_folder("styles", &[("styler.rhai", STYLER)]);
     let mut world = FlintWorld::new();
