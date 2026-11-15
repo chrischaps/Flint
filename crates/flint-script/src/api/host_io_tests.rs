@@ -177,14 +177,10 @@ fn test_play_sound_command() {
     let commands = engine.drain_commands();
     assert_eq!(commands.len(), 1);
     match &commands[0] {
-        ScriptCommand::PlaySound {
-            name,
-            volume,
-            pitch,
-        } => {
+        ScriptCommand::PlaySound { name, play, .. } => {
             assert_eq!(name, "bang.ogg");
-            assert!((volume - 1.0).abs() < 1e-10);
-            assert!((pitch - 1.0).abs() < 1e-10);
+            assert!((play.volume - 1.0).abs() < 1e-10);
+            assert!((play.pitch - 1.0).abs() < 1e-10);
         }
         _ => panic!("Expected PlaySound command"),
     }
@@ -250,9 +246,9 @@ fn test_play_sound_pitch_and_falloff() {
     let commands = engine.drain_commands();
     assert_eq!(commands.len(), 3);
     match &commands[0] {
-        ScriptCommand::PlaySound { volume, pitch, .. } => {
-            assert!((volume - 0.5).abs() < 1e-10);
-            assert!((pitch - 1.2).abs() < 1e-6);
+        ScriptCommand::PlaySound { play, .. } => {
+            assert!((play.volume - 0.5).abs() < 1e-10);
+            assert!((play.pitch - 1.2).abs() < 1e-6);
         }
         other => panic!("Expected PlaySound, got {other:?}"),
     }
@@ -260,15 +256,15 @@ fn test_play_sound_pitch_and_falloff() {
         ScriptCommand::PlaySoundAt {
             name,
             position,
-            volume,
-            pitch,
+            play,
             distances,
             rolloff,
+            ..
         } => {
             assert_eq!(name, "bell");
             assert_eq!(*position, (1.0, 2.0, 3.0));
-            assert!((volume - 0.8).abs() < 1e-6);
-            assert!((pitch - 1.0).abs() < 1e-10);
+            assert!((play.volume - 0.8).abs() < 1e-6);
+            assert!((play.pitch - 1.0).abs() < 1e-10);
             assert_eq!(*distances, Some((1.0, 400.0)));
             assert_eq!(*rolloff, Some(0.7));
         }
@@ -276,12 +272,12 @@ fn test_play_sound_pitch_and_falloff() {
     }
     match &commands[2] {
         ScriptCommand::PlaySoundAt {
-            volume,
+            play,
             distances,
             rolloff,
             ..
         } => {
-            assert!((volume - 1.0).abs() < 1e-10);
+            assert!((play.volume - 1.0).abs() < 1e-10);
             assert_eq!(*distances, None);
             assert_eq!(*rolloff, None);
         }

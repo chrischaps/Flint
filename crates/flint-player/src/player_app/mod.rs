@@ -56,6 +56,8 @@ mod scene_entry_tests;
 pub(crate) mod scene_loading;
 mod schemas;
 pub mod script_commands;
+#[cfg(test)]
+mod script_sound_tests;
 #[cfg(feature = "living")]
 mod shallow_wooze;
 mod state;

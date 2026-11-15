@@ -33,6 +33,7 @@ pub use context::StateScope;
 pub use context::{CameraOverrides, FrameRequests, PostProcessOverrides};
 pub use context::{DrawCommand, DrawItem};
 use context::{InputSnapshot, ScriptCommand};
+pub use context::{SoundPlay, SoundRef};
 use engine::ScriptEngine;
 use flint_core::Result;
 use flint_ecs::FlintWorld;
