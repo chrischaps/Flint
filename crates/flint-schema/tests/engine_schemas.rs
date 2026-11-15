@@ -747,3 +747,36 @@ fn engine_schemas_type_their_references() {
         FieldType::Fields { .. }
     ));
 }
+
+/// #751: the colours the renderer once kept in a table by name are in the
+/// archetypes' own files now, as they were: a scene of the examples' layer
+/// draws as it did. The renderer names none of them.
+#[test]
+fn the_first_demos_archetypes_carry_their_placeholder_colours() {
+    let registry = SchemaRegistry::load_from_directories(&[
+        repo().join("schemas"),
+        repo().join("schemas/examples"),
+    ])
+    .unwrap();
+    let was = [
+        ("room", [0.27, 0.53, 1.0, 0.5], true),
+        ("door", [1.0, 0.53, 0.27, 1.0], false),
+        ("furniture", [0.27, 1.0, 0.53, 1.0], false),
+        ("character", [1.0, 1.0, 0.27, 1.0], false),
+        ("wall", [0.76, 0.70, 0.60, 1.0], false),
+        ("floor", [0.55, 0.55, 0.52, 1.0], false),
+        ("ceiling", [0.65, 0.62, 0.58, 1.0], false),
+        ("pillar", [0.70, 0.65, 0.55, 1.0], false),
+    ];
+    for (name, color, wireframe) in was {
+        let visual = registry
+            .get_archetype(name)
+            .and_then(|a| a.visual)
+            .unwrap_or_else(|| panic!("archetype {name} has no [archetype.{name}.visual]"));
+        assert_eq!(
+            (visual.color, visual.wireframe),
+            (color, wireframe),
+            "{name}"
+        );
+    }
+}

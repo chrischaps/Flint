@@ -1300,22 +1300,20 @@ impl SceneRenderer {
         tex_cache: &TextureCache,
         world: &FlintWorld,
         entity_id: flint_core::EntityId,
-        visual: &super::ArchetypeVisual,
+        visual: &flint_schema::ArchetypeVisual,
         model_matrix: [[f32; 4]; 4],
         need_overlay: bool,
         need_normals: bool,
         arrow_length: f32,
     ) {
-        // Fall back to procedural shapes
-        let (size, bounds_center) = if let Some(components) = world.get_components(entity_id) {
-            if let Some(bounds) = components.get(comp::BOUNDS) {
-                extract_bounds_info(bounds).unwrap_or((visual.default_size, [0.0, 0.0, 0.0]))
-            } else {
-                (visual.default_size, [0.0, 0.0, 0.0])
-            }
-        } else {
-            (visual.default_size, [0.0, 0.0, 0.0])
-        };
+        // The entity's `bounds` box (the caller draws only entities that
+        // have one); a `min` or `max` that isn't three numbers is a unit box
+        // about the origin, which the archetype no longer sizes (#751)
+        let (size, bounds_center) = world
+            .get_components(entity_id)
+            .and_then(|components| components.get(comp::BOUNDS))
+            .and_then(extract_bounds_info)
+            .unwrap_or(([1.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
 
         // The box geometry is uploaded once per distinct size/colour/wireframe
         // and shared; the CPU-side mesh is only built for the debug overlays.

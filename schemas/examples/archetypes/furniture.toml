@@ -5,3 +5,7 @@ components = ["transform", "bounds"]
 [archetype.furniture.defaults.bounds]
 min = [0, 0, 0]
 max = [1, 1, 1]
+
+# The box it draws as when it has `bounds` and nothing else to draw (#751)
+[archetype.furniture.visual]
+color = [0.27, 1.0, 0.53]

@@ -427,6 +427,22 @@ max = [5, 4, 0.15]
 
 The `components` array lists which component schemas an entity of this archetype requires. The `defaults` section provides values used when a component field isn't explicitly set.
 
+### An Archetype's Placeholder Box
+
+An entity with a `bounds` box and nothing else to draw (no model, sprite or procedural shape) is drawn as that box. Its colour comes from its archetype's `visual` table:
+
+```toml
+# schemas/archetypes/crate.toml in a game
+[archetype.crate]
+components = ["transform", "bounds"]
+
+[archetype.crate.visual]
+color = [0.8, 0.55, 0.3]   # [r, g, b], or [r, g, b, a]: alpha under 1 is see-through
+wireframe = false          # true draws only the box's edges
+```
+
+An archetype with no `visual`, and an entity with no archetype, draws grey (`[0.5, 0.5, 0.5]`). The renderer knows no archetype by name: the colours the examples' `wall`, `room` and the rest draw in are in their own files under `schemas/examples/archetypes/`, and `character`'s is in `schemas/archetypes/character.toml`. An entity's own `material.color` still colours its box over the archetype's. A key in `visual` other than `color` and `wireframe`, or a colour that isn't three or four numbers, fails the schema load with the file named. `flint schema <archetype>` prints the table as `Placeholder:`, and the JSON export (`--format json`) has it as `visual`.
+
 ### Built-in Archetypes
 
 The engine's own set, `schemas/archetypes/`:
@@ -468,7 +484,7 @@ A game gets none of them by default: `flint schema furniture` in a game finds no
 schemas = ["engine/schemas", "engine/schemas/examples", "schemas"]
 ```
 
-Most games are better served by archetypes of their own. Every archetype with `bounds` draws a box, so `furniture` on an entity with no shape (a light, a script holder) draws a 1 m box where nothing was meant.
+Most games are better served by archetypes of their own, each with its [placeholder colour](#an-archetypes-placeholder-box). Every archetype with `bounds` draws a box, so `furniture` on an entity with no shape (a light, a script holder) draws a 1 m green box where nothing was meant.
 
 ## Introspecting Schemas
 

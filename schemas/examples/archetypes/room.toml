@@ -1,3 +1,8 @@
 [archetype.room]
 description = "A room or enclosed space (transform-only parent container)"
 components = ["transform"]
+
+# The box it draws as when it has `bounds` and nothing else to draw (#751)
+[archetype.room.visual]
+color = [0.27, 0.53, 1.0, 0.5]
+wireframe = true
