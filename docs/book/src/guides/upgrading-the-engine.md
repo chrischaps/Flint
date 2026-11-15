@@ -55,6 +55,26 @@ A new game, or one whose `Cargo.lock` has no `mach-dxcompiler-rs` in it (written
 cargo update -p mach-dxcompiler-rs
 ```
 
+**A `Cargo.lock` written before wgpu 30** (by any build of an engine from before [#945](https://github.com/chrischaps/Flint/issues/945)) breaks wgpu-hal on Windows ([#995](https://github.com/chrischaps/Flint/issues/995)). Such a lock holds `windows 0.58.0`, which wgpu-hal 23 used, and `windows 0.54.0`, which cpal (under Flint's audio) uses. wgpu-hal 30 is on `windows 0.62`. It hands its D3D12 device to gpu-allocator 0.28, which takes any `windows` from 0.53 to 0.62, and when cargo moves the lock forward it gives gpu-allocator a version the lock already holds. The two crates' D3D12 types are then different types, and wgpu-hal fails before any game code compiles:
+
+```
+wgpu-hal-30.0.2\src\dx12\suballocation.rs:83:71: error[E0308]: mismatched types: expected `ID3D12Device`, found a different `ID3D12Device`
+wgpu-hal-30.0.2\src\dx12\suballocation.rs:299:32: error[E0277]: the trait bound `ResourceCategory: From<&D3D12_RESOURCE_DESC>` is not satisfied
+wgpu-hal-30.0.2\src\dx12\suballocation.rs:306:17: error[E0277]: the trait bound `&ID3D12Heap: Param<ID3D12Heap, InterfaceType>` is not satisfied
+...
+error: could not compile `wgpu-hal` (lib) due to 10 previous errors
+```
+
+Only the dx12 backend uses gpu-allocator, so Linux and macOS build, but the lock is one file for every platform: mend it wherever the game is built. In the game's workspace root, before or after the first build, unlock every `windows` the lock holds other than wgpu-hal's 0.62:
+
+```bash
+cargo update -p windows@0.54.0 -p windows@0.58.0
+```
+
+gpu-allocator then gets wgpu-hal's `windows 0.62.2`, the only one left locked in its range, and the rest of the lock stays as it was. Moving The Capitol's lock forward this way removed `windows 0.58.0` and changed nothing else. Unlocking one crate is not enough: after `cargo update -p gpu-allocator`, or `cargo update -p windows@0.58.0` with or without `--precise 0.62.2`, cargo gives gpu-allocator cpal's 0.54 and the same ten errors follow.
+
+`flint check` on the game warns about it (`stale-cargo-lock`) once cargo has moved the lock (any build, or `cargo tree`), and its hint is the `cargo update` for the versions that lock holds. Seeding the lock from the engine's (`cp engine/Cargo.lock Cargo.lock`, then build) also works, but it moves the game's other crates to the engine's versions too: on The Capitol's lock it changed 15 more, 7 of them back to older releases (rustls from 0.23.45 to 0.23.36, http from 1.5.0 to 1.4.0).
+
 ### egui 0.30 to 0.36
 
 #### The game UI hook

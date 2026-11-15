@@ -146,6 +146,12 @@ pub mod codes {
     /// egui-winit, and cargo itself stops on a missing static DXC).
     pub const MISSING_CARGO_PATCH: &str = "missing-cargo-patch";
 
+    /// A game's `Cargo.lock`, moved forward from an older engine, gives
+    /// gpu-allocator a different `windows` crate from wgpu-hal's (#995), so
+    /// wgpu-hal's dx12 backend doesn't compile on Windows. A warning (every
+    /// other platform builds); the hint is the `cargo update` that mends it.
+    pub const STALE_CARGO_LOCK: &str = "stale-cargo-lock";
+
     // What `flint script check` adds (#694): the scripts, at a line and
     // column.
 
@@ -328,6 +334,11 @@ pub mod codes {
             MISSING_CARGO_PATCH,
             Severity::Warning,
             "a game's Cargo workspace lacks a [patch.crates-io] line of the engine it builds",
+        ),
+        (
+            STALE_CARGO_LOCK,
+            Severity::Warning,
+            "a game's Cargo.lock gives gpu-allocator a different windows crate from wgpu-hal's",
         ),
         (SCRIPT_SYNTAX, Severity::Error, "a script does not compile"),
         (
@@ -759,7 +770,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 42);
+        assert_eq!(seen.len(), 43);
     }
 
     /// A problem in a scene-level table names the table as its header is
