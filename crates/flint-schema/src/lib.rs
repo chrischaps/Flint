@@ -8,6 +8,7 @@ mod archetype;
 mod component;
 pub mod lint;
 pub mod panel;
+pub mod post_effects;
 mod registry;
 mod validation;
 

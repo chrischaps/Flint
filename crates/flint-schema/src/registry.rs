@@ -172,7 +172,14 @@ impl SchemaRegistry {
 
     fn insert_tables(&mut self, file: TableSchemaFile, source: &str) {
         for (name, def) in file.table {
-            let schema = Self::table_schema_of(&name, def, source);
+            let mut schema = Self::table_schema_of(&name, def, source);
+            // The built-in post effects' keys come from their descriptors
+            // (#741), not the file: a key the file declares is the file's
+            if name == "post_process" {
+                for (key, field) in crate::post_effects::field_schemas() {
+                    schema.fields.entry(key.to_string()).or_insert(field);
+                }
+            }
             self.tables.insert(name, schema);
         }
     }

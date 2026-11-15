@@ -467,7 +467,7 @@ fn hdr_and_display_styles_chain_in_one_frame() {
     let painted = gpu.frame(&mut renderer, &world);
 
     config.styles.set_enabled("invert", true);
-    config.fxaa_enabled = true;
+    config.fxaa = true;
     renderer.set_post_process_config(config);
     renderer.ensure_style_resources(gpu.device);
     renderer.ensure_fxaa_resources(gpu.device);
@@ -511,7 +511,7 @@ fn display_styles_with_fxaa_hold_two_full_size_textures() {
         for style in styles {
             config.styles.set_enabled(style, true);
         }
-        config.fxaa_enabled = true;
+        config.fxaa = true;
         renderer.set_post_process_config(config);
         renderer.ensure_style_resources(gpu.device);
         renderer.ensure_fxaa_resources(gpu.device);
@@ -554,7 +554,7 @@ fn fxaa_set_by_the_config_alone_is_drawn() {
     };
     let with_fxaa = |renderer: &mut SceneRenderer, on: bool| {
         let mut config = renderer.post_process_config().clone();
-        config.fxaa_enabled = on;
+        config.fxaa = on;
         renderer.set_post_process_config(config);
     };
 

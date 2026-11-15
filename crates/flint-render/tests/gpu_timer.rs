@@ -125,7 +125,7 @@ fn a_renderer_times_its_phases_once_asked() {
     // With FXAA on, it writes the target, so it's the scope apart and the
     // composite joins the chain.
     let mut config = renderer.post_process_config().clone();
-    config.fxaa_enabled = true;
+    config.fxaa = true;
     renderer.set_post_process_config(config);
     renderer.ensure_fxaa_resources(&device);
     for _ in 0..4 {
