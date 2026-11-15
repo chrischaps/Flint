@@ -3237,7 +3237,7 @@ dependencies = [
 
 [[package]]
 name = "mach-dxcompiler-rs"
-version = "0.1.7+flint.dxc-static-v1.9.2609-1"
+version = "0.1.947+flint.dxc-static-v1.9.2609-1"
 dependencies = [
  "cc",
  "sha2",

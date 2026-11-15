@@ -140,6 +140,12 @@ pub mod codes {
     /// A procgen spec a scene's model or texture is made from does not parse.
     pub const BAD_SPEC: &str = "bad-spec";
 
+    /// A game's Cargo workspace lacks a `[patch.crates-io]` line the engine
+    /// it builds by path has (#982): cargo applies `[patch]` only from the
+    /// workspace root. A warning (a native build compiles without the web's
+    /// egui-winit, and cargo itself stops on a missing static DXC).
+    pub const MISSING_CARGO_PATCH: &str = "missing-cargo-patch";
+
     // What `flint script check` adds (#694): the scripts, at a line and
     // column.
 
@@ -317,6 +323,11 @@ pub mod codes {
             BAD_SPEC,
             Severity::Error,
             "a procgen spec a scene's model or texture is made from does not parse",
+        ),
+        (
+            MISSING_CARGO_PATCH,
+            Severity::Warning,
+            "a game's Cargo workspace lacks a [patch.crates-io] line of the engine it builds",
         ),
         (SCRIPT_SYNTAX, Severity::Error, "a script does not compile"),
         (
@@ -748,7 +759,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 41);
+        assert_eq!(seen.len(), 42);
     }
 
     /// A problem in a scene-level table names the table as its header is

@@ -61,8 +61,21 @@ libloading = "0.8"
 
 # The linked DXC's version and notices (`gpu_select::static_dxc`): the
 # same crate wgpu-hal links, on the target it links it on.
+#
+# `=0.1.947` is Flint's vendor/static-dxc and nothing on crates.io (#982).
+# cargo applies [patch] only from the root of the workspace it builds, so a
+# game that builds flint-render (a game binary with the engine at engine/)
+# names the engine's patches in its own root Cargo.toml, on every platform:
+#
+#     [patch.crates-io]
+#     mach-dxcompiler-rs = { path = "engine/vendor/static-dxc" }
+#     egui-winit = { path = "engine/vendor/egui-winit" }
+#
+# Without it cargo stops with "failed to select a version for the
+# requirement `mach-dxcompiler-rs = "=0.1.947"`", pointing here. `flint
+# check` on the game names the missing lines too (`missing-cargo-patch`).
 [target.'cfg(all(windows, target_arch = "x86_64", target_env = "msvc"))'.dependencies]
-mach-dxcompiler-rs = { version = "0.1.7", optional = true }
+mach-dxcompiler-rs = { version = "=0.1.947", optional = true }
 
 # Built-in shader modules and frame acquisition go through flint-render's
 # seams; the list is the workspace clippy.toml (#944).

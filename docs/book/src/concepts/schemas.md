@@ -217,6 +217,7 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `bad-constraint` | error | a constraint file does not read, or a constraint's query does not parse or does not select entities |
 | `bad-manifest` | error | `flint.toml` does not read |
 | `bad-schemas` | error | a schema directory is missing, or a schema file does not read |
+| `missing-cargo-patch` | warning | a game's Cargo workspace root lacks a `[patch.crates-io]` line of the engine it builds by path, or points it elsewhere; the hint is the line to add ([Upgrading the Engine](../guides/upgrading-the-engine.md#cargo)) |
 
 The scripts pass, which `flint check`, `flint validate` and [`flint script check`](scripting.md#checking-your-scripts) run, adds the codes of a script, each at a line and a column (`line` and `column` in the JSON):
 

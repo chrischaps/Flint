@@ -37,11 +37,13 @@
 //! | constraints, and that each can be evaluated | `flint validate`; the second is new | `constraint` `bad-constraint` |
 //! | the manifest reads, its schema directories exist, its scene is there | new | `bad-manifest` `bad-schemas` `missing-asset` |
 //! | the scripts compile, and their calls, callbacks and imports fit the script API | `flint script check` (#694, [`scripts`]) | `script-syntax` `unknown-function` `wrong-arity` `bad-argument` `unknown-callback` `callback-arity` `missing-module` `deprecated-function` `mixed-numbers` |
+//! | a project with a `Cargo.toml` names the `[patch.crates-io]` of the engine it builds by path (a folder only) | new (#982, [`cargo`]) | `missing-cargo-patch` |
 //!
 //! The scripts pass reads every `.rhai` a project holds (or that a scene
 //! runs) and the modules they import; their string literals are also read
 //! for the files they name ([`references`]).
 
+pub mod cargo;
 mod references;
 mod report;
 pub mod scene;
@@ -290,6 +292,9 @@ impl Subject {
         let mut subject = Self::packed(files, Schemas::Resolve(flags.to_vec()));
         subject.root = from_here(&root);
         subject.preliminary = preliminary;
+        // A game with Rust of its own builds the engine from its own
+        // workspace, where only its own [patch] applies
+        subject.preliminary.extend(cargo::patches(&project.root));
         // The manifest's own promises
         if let Some(scene) = project.scene_path() {
             if !vfs::is_file(&scene) {
