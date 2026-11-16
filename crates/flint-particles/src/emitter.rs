@@ -299,15 +299,13 @@ impl Default for EmitterConfig {
 }
 
 impl EmitterConfig {
-    /// Parse an inline `particle_emitter` component table (lenient: unknown
-    /// keys ignored, malformed values fall back to defaults).
-    pub fn from_toml(table: &toml::value::Table) -> Self {
-        crate::effect::EmitterDef::from_component(table)
-            .and_then(|def| def.resolve(crate::effect::ResolveContext::inline()))
-            .unwrap_or_else(|e| {
-                tracing::warn!("particle_emitter component failed to parse: {e}");
-                Self::default()
-            })
+    /// Parse an inline `particle_emitter` component table. Unknown keys are
+    /// ignored (`EmitterDef::problems` lists them); a value that doesn't
+    /// parse or resolve is the error, at its key, and never a default
+    /// emitter in its place (#690).
+    pub fn from_toml(table: &toml::value::Table) -> Result<Self, crate::effect::EmitterProblem> {
+        crate::effect::EmitterDef::from_component(table)?
+            .resolve_keyed(crate::effect::ResolveContext::inline())
     }
 
     /// Does this emitter start playing on creation?
@@ -465,7 +463,7 @@ shape = "cone"
 shape_angle = 45.0
 "#;
         let table: toml::value::Table = toml::from_str(toml_str).unwrap();
-        let config = EmitterConfig::from_toml(&table);
+        let config = EmitterConfig::from_toml(&table).unwrap();
         assert!((config.emission_rate - 50.0).abs() < 0.01);
         assert_eq!(config.max_particles, 500);
         assert_eq!(config.blend_mode, ParticleBlendMode::Additive);
@@ -486,7 +484,7 @@ shape_angle = 45.0
         // TOML `gravity = [0, -10, 0]` gives integers for 0, float for -10
         let toml_str = "gravity = [0, -10, 0]\nsize_start = 1\nlifetime_min = 2";
         let table: toml::value::Table = toml::from_str(toml_str).unwrap();
-        let config = EmitterConfig::from_toml(&table);
+        let config = EmitterConfig::from_toml(&table).unwrap();
         assert!((config.gravity[0]).abs() < 0.01);
         assert!((config.gravity[1] - (-10.0)).abs() < 0.01);
         assert_eq!(config.size.first(), [1.0, 1.0]);

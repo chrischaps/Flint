@@ -150,6 +150,10 @@ pub mod codes {
     /// A `.spline.toml` a scene names does not parse, or a `spline_mesh`
     /// profile is no polygon (#750). Placed by line and column.
     pub const BAD_SPLINE: &str = "bad-spline";
+    /// An inline `particle_emitter` the engine can't play as written (#690):
+    /// a key it doesn't read, or a value that doesn't parse or resolve. At
+    /// run time the emitter keeps its last good settings (or makes none).
+    pub const BAD_EMITTER: &str = "bad-emitter";
 
     /// A game's Cargo workspace lacks a `[patch.crates-io]` line the engine
     /// it builds by path has (#982): cargo applies `[patch]` only from the
@@ -350,6 +354,11 @@ pub mod codes {
             BAD_SPLINE,
             Severity::Error,
             "a spline file a scene names does not parse, or a spline_mesh profile is no polygon",
+        ),
+        (
+            BAD_EMITTER,
+            Severity::Error,
+            "an inline particle_emitter has a key it does not read or a value it cannot use",
         ),
         (
             MISSING_CARGO_PATCH,
@@ -796,7 +805,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 46);
+        assert_eq!(seen.len(), 47);
     }
 
     /// A problem in a scene-level table names the table as its header is
