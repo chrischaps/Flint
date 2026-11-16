@@ -463,6 +463,8 @@ impl LivingSubsystem {
         tune: &WoozePreset,
         replace: bool,
     ) -> Result<(), String> {
+        // A knob set at once takes over from a ramp easing it (#514)
+        self.ramps.cancel_grove(&tune.living);
         let mut problems = self.tune_wooze(ctx, &tune.wooze);
         problems.extend(self.tune_props(ctx, &tune.living));
         for (name, species) in &tune.living.species {
@@ -503,13 +505,23 @@ impl LivingSubsystem {
     }
 
     fn tune_wooze(&mut self, ctx: &mut StageCtx<'_>, knobs: &WoozeKnobs) -> Vec<String> {
+        self.tune_wooze_over(ctx, knobs, 0.0)
+    }
+
+    /// The field's global knobs, eased there over `seconds` on its own ramps.
+    pub(super) fn tune_wooze_over(
+        &mut self,
+        ctx: &mut StageCtx<'_>,
+        knobs: &WoozeKnobs,
+        seconds: f64,
+    ) -> Vec<String> {
         let start = ctx
             .resolver
             .living_props()
             .props()
             .first()
             .map_or(WoozeSample::NEUTRAL, |prop| prop.wooze_below());
-        tune_field(&mut self.wooze, start, self.wooze_time, knobs)
+        tune_field(&mut self.wooze, start, self.wooze_time, knobs, seconds)
     }
 
     /// Stagger, echoes and variance. A field that's set goes to every prop, and
@@ -528,6 +540,7 @@ impl LivingSubsystem {
         name: &str,
         def: &LivingSpeciesDef,
     ) -> Vec<String> {
+        self.ramps.cancel_species(name, def);
         let (mut problems, grown) = tune_species(ctx.resolver.living_props_mut(), name, def);
         if !grown {
             problems.push(self.no_such_species(ctx, name));
@@ -543,6 +556,7 @@ impl LivingSubsystem {
         name: &str,
         def: &LivingSpeciesDef,
     ) -> Vec<String> {
+        self.ramps.cancel_keys(Some(name), &[]);
         let (mut problems, grown) = replace_species(ctx.resolver.living_props_mut(), name, def);
         if !grown {
             problems.push(self.no_such_species(ctx, name));
@@ -558,6 +572,7 @@ impl LivingSubsystem {
         name: &str,
         keys: &[String],
     ) -> Result<(), String> {
+        self.ramps.cancel_keys(Some(name), keys);
         if clear_species(ctx.resolver.living_props_mut(), name, keys)? {
             Ok(())
         } else {
@@ -740,6 +755,7 @@ impl LivingSubsystem {
         let Some(at_load) = self.tune.at_load.clone() else {
             return;
         };
+        self.ramps.clear();
         if let Err(problem) = self.tune_living(ctx, &at_load.knobs) {
             tracing::warn!("Living Props: {problem}");
         }
@@ -855,7 +871,8 @@ impl ScriptTune {
     }
 }
 
-/// Turn the field's global knobs to `knobs` at `time`. A scene with no `[wooze]`
+/// Turn the field's global knobs to `knobs` at `time`, easing there over
+/// `seconds` on the field's own ramps (0: at once). A scene with no `[wooze]`
 /// table has its specs' clocks: turning one of these is what gives it a field,
 /// starting from `start` (where the first prop stands), under any species' own
 /// clock. Returns what couldn't be used.
@@ -864,6 +881,7 @@ pub(crate) fn tune_field(
     start: WoozeSample,
     time: f64,
     knobs: &WoozeKnobs,
+    seconds: f64,
 ) -> Vec<String> {
     let wanted = [
         ("amplitude", knobs.amplitude),
@@ -878,18 +896,31 @@ pub(crate) fn tune_field(
         field.get_or_insert_with(|| WoozeField::new(start)),
         time,
         knobs,
+        seconds,
     )
 }
 
 /// [`tune_field`] on a field there is.
-pub(crate) fn tune_global(field: &mut WoozeField, time: f64, knobs: &WoozeKnobs) -> Vec<String> {
+pub(crate) fn tune_global(
+    field: &mut WoozeField,
+    time: f64,
+    knobs: &WoozeKnobs,
+    seconds: f64,
+) -> Vec<String> {
     let wanted = [
         ("amplitude", knobs.amplitude),
         ("step", knobs.step),
         ("glide", knobs.glide),
         ("jitter", knobs.jitter),
     ];
-    let now = field.global(time);
+    // A step compares with where a knob stands; an ease with where it's
+    // heading, so that asking again every frame for the same place lets the
+    // ramp under way get there rather than starting it over (#514).
+    let now = if seconds > 0.0 {
+        field.global_target()
+    } else {
+        field.global(time)
+    };
     let current = [now.amplitude, now.step, now.glide, now.jitter];
     // Only what's moved, so that the rest of a full set of knobs doesn't cut
     // short a ramp a script has going, and one at a time, so that one bad knob
@@ -899,7 +930,7 @@ pub(crate) fn tune_global(field: &mut WoozeField, time: f64, knobs: &WoozeKnobs)
         if let Some(value) = value.filter(|value| *value != current) {
             let mut table = toml::Table::new();
             table.insert(name.to_string(), toml::Value::Float(f64::from(value)));
-            if let Err(problem) = field.set_global(&table, time, 0.0) {
+            if let Err(problem) = field.set_global(&table, time, seconds) {
                 problems.push(problem);
             }
         }

@@ -138,9 +138,10 @@ fn tune_living_takes_what_a_preset_file_holds() {
             });
         "#,
     );
-    let [LivingCommand::Tune { knobs }] = &commands[..] else {
+    let [LivingCommand::Tune { knobs, seconds }] = &commands[..] else {
         panic!("{commands:?}");
     };
+    assert_eq!(*seconds, 0.0, "with no seconds, a step");
     let tune: flint_procgen::WoozePreset = knobs.clone().try_into().unwrap();
     assert_eq!(tune.wooze.step, Some(0.25));
     assert_eq!(tune.wooze.glide, Some(1.0));
@@ -153,6 +154,25 @@ fn tune_living_takes_what_a_preset_file_holds() {
     assert_eq!(variance.keep_size, Some(false));
     let boil = tune.boil.unwrap();
     assert_eq!((boil.contour, boil.on), (Some(0.5), Some(3)));
+}
+
+/// `tune_living(map, seconds)` (#514) takes its seconds as either kind of
+/// number, as `set_wooze` does.
+#[test]
+fn tune_living_takes_seconds_to_get_there_over() {
+    let commands = commands_of(
+        r#"
+            tune_living(#{ living: #{ echoes: #{ spread: 1.8 } } }, 2.0);
+            tune_living(#{ species: "grove_thorn", step: 0.25 }, 3);
+        "#,
+    );
+    let seconds: Vec<f64> = (commands.iter())
+        .map(|command| match command {
+            LivingCommand::Tune { seconds, .. } => *seconds,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(seconds, [2.0, 3.0]);
 }
 
 #[test]
@@ -192,7 +212,7 @@ fn a_script_can_tune_and_clear_one_species() {
             clear_living("grove_oak");
         "#,
     );
-    let [LivingCommand::Tune { knobs }, LivingCommand::Clear {
+    let [LivingCommand::Tune { knobs, .. }, LivingCommand::Clear {
         species: thorn,
         keys,
     }, LivingCommand::Clear {
@@ -251,7 +271,7 @@ fn the_living_modules_are_listed_with_when_they_are_enabled() {
             .filter(|e| e.module == module)
             .count()
     };
-    assert_eq!(count("living"), 7);
+    assert_eq!(count("living"), 8, "tune_living with seconds too (#514)");
     assert_eq!(count("wooze"), 8, "six changes and two reads (#505)");
     assert_eq!(count("debug"), 5);
     for module in ["living", "wooze", "debug"] {

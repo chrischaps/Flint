@@ -192,6 +192,7 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
             "tune_living",
             L::Tune {
                 knobs: toml::Value::Table(toml::Table::new()),
+                seconds: 0.0,
             },
         ),
         module(

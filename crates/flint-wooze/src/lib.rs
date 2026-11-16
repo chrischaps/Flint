@@ -330,6 +330,12 @@ impl WoozeField {
         WoozeSample::from_array(self.0.global(time))
     }
 
+    /// Where the global knobs are heading: the end of a ramp `set_global`
+    /// started, or the values themselves when none is running.
+    pub fn global_target(&self) -> WoozeSample {
+        WoozeSample::from_array(self.0.global_target())
+    }
+
     /// How woozy `position` is at `time`, in whichever clock the caller keeps
     /// this field on. A pure function: the same arguments give the same bits.
     #[inline]

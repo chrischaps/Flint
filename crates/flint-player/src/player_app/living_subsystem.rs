@@ -36,6 +36,8 @@ pub(crate) struct LivingSubsystem {
     pub(crate) grass_wooze: GrassWooze,
     /// What's been done to a running grove by hand (#218).
     pub(crate) tune: super::living_tuning::LivingTune,
+    /// The knobs a script's `tune_living(map, seconds)` is easing (#514).
+    pub(crate) ramps: super::living_ramps::KnobRamps,
     /// `Some` in a capture (`flint render`, #216, #725): see [`Capture`].
     pub(crate) capture: Option<Capture>,
     /// The field as the `wooze` module's reads last had it (#505), shared
@@ -182,6 +184,9 @@ impl LivingSubsystem {
 
     pub(super) fn tick(&mut self, ctx: &mut StageCtx, dt: f64) {
         let living_dt = dt + self.before_living_tick(ctx);
+        // Knobs a script is easing (#514), on the same clock, before the
+        // props read them
+        self.step_knob_ramps(ctx, living_dt);
         // A scene with a wooze field reads it where each prop now stands.
         if self.wooze.is_some() {
             self.wooze_time += living_dt;
@@ -378,8 +383,8 @@ impl LivingSubsystem {
                     Err(format!("there's no zone named '{name}' to remove"))
                 }
             }),
-            C::Tune { knobs } => {
-                if let Err(problem) = self.tune_living_from_script(ctx, knobs.clone()) {
+            C::Tune { knobs, seconds } => {
+                if let Err(problem) = self.tune_living_over(ctx, knobs.clone(), *seconds) {
                     tracing::warn!(target: "script", "tune_living: {problem}");
                 }
             }
