@@ -198,6 +198,8 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `bad-panel` | warning | a component schema's fields say something about its [F3 panel](../guides/debug-panels.md#a-panel-from-a-schema) the loader can't use (a role that is none, a key a field's panel doesn't hold, a `format` with no placeholder); that row is left off the panel |
 | `unknown-table` | warning | a top-level table of the scene that no loaded schema directory declares as a [`[table.<name>]`](#scene-level-tables); the hint is the nearest table name. Not raised when no table schema is loaded at all |
 | `post-range` | warning | a `[post_process]` value outside the range its built-in effect is tuned for (`flint render --list-effects` lists every key with its range); it still draws, as a style value past its range does |
+| `light-cap` | warning | a light past the number of its type the shader takes (4 directional, 16 point, 8 spot): the strongest directional lights and the point and spot lights nearest the camera are drawn, and this one is off while it isn't among them. Raised [while the game runs](#diagnostics-while-the-game-runs), by the renderer ([Lighting](lighting.md#when-a-light-cant-be-drawn)) |
+| `two-forms` | warning | a value written in two forms of which one is read, such as a spot's `inner_angle` (radians) beside `inner_angle_deg`; the degrees win. Raised while the game runs |
 
 `old-type-name`, `unknown-type`, `ignored-schema-key` and `bad-panel` are about a schema file, not the scene: `flint validate` and `flint check` print them with the file's name, for the game's own schema directories only. A schema file inside a Flint engine checkout (the engine's repository, or the `engine/` subtree a game carries) is the engine's, and is not reported.
 
@@ -252,7 +254,7 @@ WARN warning[needs-component] entity 'wall' component 'collider': a collider wit
 
 Each (entity, component, field) is reported **once**, however many frames read it, and again after the scene is reloaded. The codes are `bad-type` and `bad-enum-value`, as at load, and `needs-component`. An integer where a number is read (`move_speed = 8`) is not a mistake and is not reported. These are log lines only: `flint validate` does not run the game, so it does not print them.
 
-The components read this way are `rigidbody`, `collider`, `joint`, `character_controller`, `audio_source` and `audio_trigger`, and `material`'s `base_color_r/g/b/a`. A game's own Rust reads the same way: see [Player Extensions: Reading components](../guides/player-extensions.md#reading-components).
+The components read this way are `rigidbody`, `collider`, `joint`, `character_controller`, `audio_source`, `audio_trigger` and `light` (#682: an unknown `type`, a missing one, a spot angle in the wrong unit, a light past the shader's cap), and `material`'s `base_color_r/g/b/a`. A game's own Rust reads the same way: see [Player Extensions: Reading components](../guides/player-extensions.md#reading-components).
 
 ### Unknown fields and `strict`
 
@@ -300,15 +302,15 @@ runtime = { type = "bool" }                     # set by code that uploads a mes
 
 # schemas/components/light.toml
 [component.light.fields]
-type = { type = "enum", values = ["directional", "point", "spot"], default = "directional" }
+type = { type = "enum", values = ["directional", "point", "spot"] }
 color = { type = "vec3", default = [1.0, 1.0, 1.0] }
 intensity = { type = "f32", default = 1.0 }
 direction = { type = "vec3" }                   # directional: TOWARD the light
-# range, radius, source_radius, inner_angle, outer_angle, angular_size,
-# volumetric_intensity, volumetric_color
+# range, radius, source_radius, inner_angle_deg, outer_angle_deg,
+# inner_angle, outer_angle, angular_size, volumetric_intensity, volumetric_color
 ```
 
-Most light fields carry no `default`. A default is written into the component when a scene loads, and some of these mean something by being absent: `range` falls back to the older `radius`, and `volumetric_color` follows `color`. Their fallbacks are in the field descriptions. `spline` and `spline_mesh` have schemas too ([Scenes: Splines](scenes.md#splines)).
+Most light fields carry no `default`. A default is written into the component when a scene loads, and some of these mean something by being absent: `range` falls back to the older `radius`, `volumetric_color` follows `color`, `direction` follows the entity's rotation, and a missing `type` reaches the renderer, which says so ([Lighting](lighting.md#when-a-light-cant-be-drawn)). Their fallbacks are in the field descriptions. `spline` and `spline_mesh` have schemas too ([Scenes: Splines](scenes.md#splines)).
 
 ### Transform
 
