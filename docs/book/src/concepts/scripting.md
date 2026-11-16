@@ -968,8 +968,8 @@ Control the HDR post-processing pipeline at runtime from scripts:
 | `set_desaturation(amount: num)` | — | Desaturate toward ash grey (0 full colour, 1 grey). |
 | `set_dof(strength: num)` | — | Depth-of-field defocus strength (0 sharp, 1 full blur). |
 | `set_dof_focus(distance: num, range: num)` | — | The depth-of-field focus plane's distance and half-width, view metres. |
-| `set_render_mode(mode: int, mix: num)` | — | A stylized render mode (0 none, 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater, 6 a tear only props with `blend_source` = "tear" show) at a mix of 0..1; call it every frame it shows. |
-| `set_render_mode_params(x: num, y: num, z: num, w: num)` | — | The render mode's four tuning values (see Post-Processing: Render Modes). |
+| `set_tear(amount: num)` | — | How much of the frame tears open, 0..1 (\[`post_process`\] tear): a style with `blend_source` = "tear" (`set_post_style_param`) or a prop's style that follows it shows only in the holes. |
+| `set_tear_shape(scale: num, iris: bool)` | — | The tear's shape: patches across the frame's height (3 by default), or an iris from the centre. |
 | `set_lod_scale(scale: num)` | — | Multiply every level-of-detail switch distance (1 as authored, 0.5 simpler levels at half the distance). |
 | `set_draw_distance_scale(scale: num)` | — | Multiply every model's draw distance (1 as authored). |
 | `get_lod_scale()` | `num` | The level-of-detail scale in force, or the one just asked for. |
@@ -981,12 +981,11 @@ Control the HDR post-processing pipeline at runtime from scripts:
 
 These overrides are applied each frame and combine with the scene's `[post_process]` baseline settings. Useful for dynamic effects like speed vignetting, boost bloom, or exposure flashes.
 
-**All of these are sticky except `set_render_mode`.** Set an override once and
-it persists until you change it. The render mode is the deliberate exception:
-it is cleared the frame your script stops calling it, so a crashed or
-hot-reloaded script cannot strand the world inside an effect. Call it every
-frame the effect is active. See
-[Post-Processing: Render Modes](post-processing.md#render-modes).
+**All of these are sticky except the deprecated `set_render_mode`.** Set an
+override once and it persists until you change it, the tear (`set_tear`,
+`set_tear_shape`) included. The render mode, a shim for one release (#746),
+is cleared the frame your script stops calling it. Its looks are styles now:
+see [Post-Processing: The Reality Styles](post-processing.md#the-reality-styles).
 
 ### Quality Settings API
 

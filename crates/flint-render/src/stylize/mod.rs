@@ -623,6 +623,10 @@ pub struct StyleDescriptor {
     /// default) leaves every blend to the framework.
     pub draws_blend:
         Option<fn(&PostProcessConfig, Option<&crate::style_mask::StyleVariant>) -> bool>,
+    /// Where it stands in its stage's chain when a scene says nothing
+    /// (#746): `None` is its registration index ([`chain_order`]). Lets a
+    /// style registered late run early without moving any other's index.
+    pub default_order: Option<f32>,
     /// Build the style's pipelines. May panic on a broken driver; the
     /// framework catches it.
     pub create: fn(&StyleDevice) -> Box<dyn StylePass>,
@@ -664,6 +668,7 @@ impl StyleDescriptor {
             yields: true,
             blends_itself: false,
             draws_blend: None,
+            default_order: None,
             create,
         }
     }
@@ -738,6 +743,14 @@ impl StyleDescriptor {
         when: fn(&PostProcessConfig, Option<&crate::style_mask::StyleVariant>) -> bool,
     ) -> Self {
         self.draws_blend = Some(when);
+        self
+    }
+
+    /// Its place in its stage's chain when a scene gives none
+    /// ([`default_order`](Self::default_order)), in the units a table's
+    /// `order` uses: registration indices.
+    pub const fn default_order(mut self, order: f32) -> Self {
+        self.default_order = Some(order);
         self
     }
 }
@@ -1010,6 +1023,9 @@ pub fn style_toml(descriptor: &StyleDescriptor, config: &PostProcessConfig) -> S
     let blend = config.styles.blend(descriptor.name);
     if blend < 1.0 {
         out.push_str(&format!("blend = {}\n", toml_float(blend)));
+    }
+    if config.styles.follows_tear(descriptor.name) {
+        out.push_str("blend_source = \"tear\"\n");
     }
     if let Some(setting) = config.styles.get(descriptor.name) {
         out.push_str(&setting.reveal.toml_lines());
@@ -1605,6 +1621,12 @@ pub struct StyleSetting {
     /// the `reveal_*` keys, a ragged region the frame it read shows around.
     /// Empty is everywhere.
     pub reveal: reveal::StyleReveal,
+    /// `blend_source = "tear"` (#746): the style shows only where the frame
+    /// tears (`[post_process] tear`), its blend times the tear's mask at
+    /// each pixel, as a prop's does with the same key (#397). With no tear
+    /// it is left out of the chain. `"own"` (the default) is its blend
+    /// alone.
+    pub follows_tear: bool,
     /// Off everywhere (#376): not only the table but every entity whose
     /// component or `style_mask` would switch the style on for its own
     /// pixels. `--style <name>:off` sets it, so a styled scene renders
@@ -1616,11 +1638,12 @@ pub struct StyleSetting {
 /// Keys every style's table reads besides its own parameters and options;
 /// no style may name a parameter or option after one. The `reveal` keys
 /// (#406) are [`reveal::KEYS`].
-pub const RESERVED_KEYS: [&str; 18] = [
+pub const RESERVED_KEYS: [&str; 19] = [
     "enabled",
     "order",
     "feeds_bloom",
     "blend",
+    "blend_source",
     "reveal",
     "reveal_shape",
     "reveal_ink",
@@ -1636,6 +1659,16 @@ pub const RESERVED_KEYS: [&str; 18] = [
     "reveal_rim",
     "reveal_shadow",
 ];
+
+/// A table's `blend_source` (#746): `Some(true)` for `"tear"`, `Some(false)`
+/// for `"own"`, `None` for anything else.
+pub fn blend_source(value: &str) -> Option<bool> {
+    match value {
+        "tear" => Some(true),
+        "own" => Some(false),
+        _ => None,
+    }
+}
 
 /// The generic style settings on [`PostProcessConfig`], by style name.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -1803,13 +1836,41 @@ impl StyleSettings {
     /// Whether any of style `name` reaches the frame: a blend above 0
     /// (#399) and, when it has a reveal (#406), a reveal above 0. A style
     /// that doesn't is left out of its chain, so the frame is the one
-    /// without it, byte for byte.
+    /// without it, byte for byte. One that follows the tear (#746) needs
+    /// the frame torn too: [`shows_in`](Self::shows_in).
     pub fn shows(&self, name: &str) -> bool {
         self.blend(name) > 0.0
             && self
                 .reveal(name)
                 .and_then(|r| r.amount)
                 .is_none_or(|a| a > 0.0)
+    }
+
+    /// [`shows`](Self::shows), and, for a style that follows the tear
+    /// (#746), a frame that tears (`postprocess::tear_active`).
+    pub fn shows_in(&self, name: &str, config: &PostProcessConfig) -> bool {
+        self.shows(name) && (!self.follows_tear(name) || crate::postprocess::tear_active(config))
+    }
+
+    /// Whether style `name` shows only where the frame tears
+    /// (`blend_source = "tear"`, #746).
+    pub fn follows_tear(&self, name: &str) -> bool {
+        self.styles.get(name).is_some_and(|s| s.follows_tear)
+    }
+
+    /// Say whether style `name` follows the tear (#746). Leaves the style
+    /// on or off as it was.
+    pub fn set_follows_tear(&mut self, name: &str, follows: bool) {
+        match self.styles.get_mut(name) {
+            Some(setting) => setting.follows_tear = follows,
+            None if follows => {
+                self.styles
+                    .entry(name.to_string())
+                    .or_default()
+                    .follows_tear = true;
+            }
+            None => {}
+        }
     }
 
     /// Style `name`'s settings, if it has any.
@@ -1844,6 +1905,7 @@ impl StyleSettings {
             setting.feeds_bloom = None;
             setting.blend = None;
             setting.reveal = reveal::StyleReveal::default();
+            setting.follows_tear = false;
         }
     }
 
@@ -1921,6 +1983,16 @@ impl StyleSettings {
                         }
                         None => warnings
                             .push(format!("styles.{name}.blend must be a number from 0 to 1")),
+                    }
+                    continue;
+                }
+                if key == "blend_source" {
+                    // Where its blend comes from (#746)
+                    match value.as_str().and_then(blend_source) {
+                        Some(tear) => setting.follows_tear = tear,
+                        None => warnings.push(format!(
+                            "styles.{name}.blend_source must be \"own\" or \"tear\""
+                        )),
                     }
                     continue;
                 }
@@ -2352,7 +2424,7 @@ impl StyleSet {
             // A pass built from a descriptor since replaced waits for ensure
             .filter(|(((_, d), _), from)| **from == descriptor_id(d))
             .filter(|(((_, d), _), _)| d.stage == stage && d.is_on(config, ids))
-            .filter(|(((_, d), _), _)| config.styles.shows(d.name))
+            .filter(|(((_, d), _), _)| config.styles.shows_in(d.name, config))
             .filter_map(|(((i, d), built), _)| {
                 built
                     .as_deref()
@@ -2383,7 +2455,11 @@ pub fn solo<T: Copy>(
 /// (#299): its table's `order`, else the index itself, so a scene that
 /// orders nothing runs in registration order. Lower runs first.
 pub fn chain_order(index: usize, descriptor: &StyleDescriptor, config: &PostProcessConfig) -> f32 {
-    config.styles.order(descriptor.name).unwrap_or(index as f32)
+    config
+        .styles
+        .order(descriptor.name)
+        .or(descriptor.default_order)
+        .unwrap_or(index as f32)
 }
 
 /// Every registered style of `stage`, in the order its chain would run
@@ -2607,6 +2683,7 @@ macro_rules! register_styles {
 }
 
 mod blend;
+mod reality;
 
 register_styles!(
     kuwahara,
@@ -2620,7 +2697,17 @@ register_styles!(
     edges_view,
     // Last of the built-ins, so the ink goes over every other HDR style
     // (Kuwahara's paint) as the old post pass did (#599)
-    contour
+    contour,
+    // The reality styles (#746, render modes 1-5 until then). Registered
+    // after the rest so no older style's index (which a scene's `order`
+    // counts against) moves, and each placed by `default_order` first of
+    // the display chain, where the composite drew them: a prop's ASCII or
+    // pencil reads the code, the blood or the wire world they made
+    matrix,
+    blood,
+    drunk,
+    tron,
+    underwater
 );
 
 /// The built-ins followed by user styles registered at run time
@@ -3268,11 +3355,15 @@ mod tests {
         // Nothing said: registration order, which is today's
         let mut config = PostProcessConfig::default();
         assert_eq!(names(&config), ["watercolor", "ascii", "pencil", "invert"]);
-        let registered: Vec<&str> = registry()
+        // ... but for a descriptor's own default place (#746: the reality
+        // styles, registered last, run first)
+        let mut registered: Vec<&str> = registry()
             .iter()
-            .filter(|d| d.stage == StyleStage::Display)
+            .filter(|d| d.stage == StyleStage::Display && d.default_order.is_none())
             .map(|d| d.name)
             .collect();
+        let placed = ["matrix", "blood", "drunk", "tron", "underwater"];
+        registered.splice(0..0, placed);
         let chain: Vec<&str> = stage_chain(StyleStage::Display, &config)
             .iter()
             .map(|(d, _)| d.name)
@@ -3462,6 +3553,83 @@ mod tests {
                 .any(|w| w.contains("styles.ascii.tint: tint_g=1.5 is outside its range 0..1")),
             "{warnings:?}"
         );
+    }
+
+    /// #746: a whole-frame style follows the frame's tear by its table's
+    /// `blend_source`, from a scene, `--style` and a script alike; Copy TOML
+    /// writes it back, a reset takes it off, and with no tear the style
+    /// leaves the chain.
+    #[test]
+    fn a_whole_frame_style_follows_the_tear_by_its_table() {
+        let tables: BTreeMap<String, toml::Table> = toml::from_str(
+            "[matrix]\nblend_source = \"tear\"\n[tron]\nblend_source = \"own\"\n[blood]\nblend_source = \"torn\"\n",
+        )
+        .unwrap();
+        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        assert!(settings.follows_tear("matrix"));
+        assert!(!settings.follows_tear("tron"));
+        assert_eq!(
+            warnings,
+            ["styles.blood.blend_source must be \"own\" or \"tear\""]
+        );
+
+        let mut config = PostProcessConfig {
+            styles: settings,
+            ..Default::default()
+        };
+        assert!(config.styles.shows("matrix"));
+        assert!(
+            !config.styles.shows_in("matrix", &config),
+            "no tear: out of the chain"
+        );
+        assert!(
+            config.styles.shows_in("tron", &config),
+            "its own blend needs no tear"
+        );
+        config.tear = 0.4;
+        assert!(config.styles.shows_in("matrix", &config));
+        let matrix = find("matrix").unwrap();
+        assert!(style_toml(matrix, &config).contains("blend_source = \"tear\""));
+        config.styles.reset("matrix");
+        assert!(!config.styles.follows_tear("matrix"));
+
+        apply_style_spec(&mut config, "tron:blend_source=tear").unwrap();
+        assert!(config.styles.follows_tear("tron") && config.styles.is_enabled("tron"));
+        assert!(apply_style_spec(&mut config, "tron:blend_source=half").is_err());
+        crate::post_style::set_post_style_param(&mut config, "tron", "blend_source", "own".into())
+            .unwrap();
+        assert!(!config.styles.follows_tear("tron"));
+        assert!(crate::post_style::set_post_style_param(
+            &mut config,
+            "tron",
+            "blend_source",
+            1.0.into()
+        )
+        .is_err());
+    }
+
+    /// #746: the five reality styles are registered, display styles, and
+    /// run first of the display chain, where the composite drew them.
+    #[test]
+    fn the_reality_styles_run_first_of_the_display_chain() {
+        let config = PostProcessConfig::default();
+        let chain: Vec<&str> = stage_chain(StyleStage::Display, &config)
+            .iter()
+            .map(|(d, _)| d.name)
+            .collect();
+        assert_eq!(
+            chain[..5],
+            ["matrix", "blood", "drunk", "tron", "underwater"]
+        );
+        for name in crate::render_mode::STYLES {
+            let d = find(name).unwrap();
+            assert_eq!(d.stage, StyleStage::Display, "{name}");
+            assert!(
+                !d.yields,
+                "{name} draws over every pixel, as the composite did"
+            );
+            assert!(!d.is_enabled(&config), "{name} is off until asked for");
+        }
     }
 
     #[test]

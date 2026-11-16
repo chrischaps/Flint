@@ -324,9 +324,8 @@ impl StyleIds {
     /// Whether the frame tears (#397): an id whose shown roots all follow
     /// the tear is faded while it doesn't, so with no tear a torn prop's
     /// style is off, pass and mask skipped, as at blend 0. Hosts call it
-    /// each frame with the config the composite draws (`render_mode` and
-    /// `mode_mix` are a script's, set every frame). Returns whether it
-    /// changed.
+    /// each frame with the config the frame draws (a script's `set_tear`
+    /// lands after the world is read). Returns whether it changed.
     pub fn set_tear(&mut self, on: bool) -> bool {
         if self.tear_on == on {
             return false;
@@ -1001,26 +1000,23 @@ struct MaskDrawUniform {
     blend: u32,
     /// 1 when the blend follows the tear (#397).
     torn: u32,
-    /// The frame's tear (#397): the composite's `mode_params`, `mode_mix`
-    /// and post time, and the mask's size in pixels.
-    tear_params: [f32; 4],
-    tear_mix: f32,
-    tear_time: f32,
+    /// The frame's tear (#746): `postprocess::tear_params` (amount, scale,
+    /// iris, post time), then the mask's size in pixels.
+    tear: [f32; 4],
     size: [f32; 2],
+    _pad: [f32; 2],
 }
 
-/// The frame's reality tear, as the composite draws it (#397), for the
-/// mask draws whose blend follows it.
+/// The frame's tear (`[post_process] tear`, #397, #746), for the mask
+/// draws whose blend follows it.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub(crate) struct Tear {
     /// Whether the frame tears at all; while it doesn't, a torn draw
-    /// writes blend 0 (the fbm reaches past the threshold of mix 0 in
-    /// places, and the composite draws no tear below a mix of 0.001).
+    /// writes blend 0 (the fbm reaches past the threshold of a tear of 0
+    /// in places, and nothing tears below 0.001).
     pub on: bool,
-    pub mode_params: [f32; 4],
-    pub mix: f32,
-    /// The post time the composite reads (`mode_time`).
-    pub time: f32,
+    /// `postprocess::tear_params`: amount, scale, iris, post time.
+    pub params: [f32; 4],
 }
 
 /// One masked static (or procedural box) draw.
@@ -1737,10 +1733,9 @@ impl StyleMaskPass {
                 slope_tolerance: SLOPE_TOLERANCE,
                 blend: encode_blend(if d.torn && !tear.on { 0.0 } else { d.blend }),
                 torn: u32::from(d.torn && tear.on),
-                tear_params: tear.mode_params,
-                tear_mix: tear.mix,
-                tear_time: tear.time,
+                tear: tear.params,
                 size: [mask.width as f32, mask.height as f32],
+                _pad: [0.0; 2],
             };
             self.scratch[at..at + std::mem::size_of::<MaskDrawUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&uniform));
@@ -2495,7 +2490,21 @@ mod tests {
             .filter(|d| !d.yields)
             .map(|d| d.name)
             .collect();
-        assert_eq!(over, ["display_bloom", "mask_view", "edges_view"]);
+        // The reality styles (#746) were the composite's: they draw over
+        // every pixel as it did, so a prop in a tear reads their picture
+        assert_eq!(
+            over,
+            [
+                "display_bloom",
+                "mask_view",
+                "edges_view",
+                "matrix",
+                "blood",
+                "drunk",
+                "tron",
+                "underwater"
+            ]
+        );
     }
 
     /// #397: a root whose blend follows the tear is faded while the frame
@@ -2526,11 +2535,10 @@ mod tests {
         assert!(ids.is_faded(barrel), "no tear: the torn prop is at blend 0");
         assert!(!ids.is_faded(bench), "a prop at its own blend doesn't care");
 
-        // A tearing mode at a mix: shown, without resolving the world again
-        // (a script sets the mode each frame, after the world was read)
+        // A tear: shown, without resolving the world again (a script sets
+        // it each frame, after the world was read)
         let mut tearing = calm.clone();
-        tearing.render_mode = 6;
-        tearing.mode_mix = 0.5;
+        tearing.tear = 0.5;
         assert!(crate::postprocess::tear_active(&tearing));
         assert!(ids.set_tear(true));
         assert!(!ids.is_faded(barrel));
@@ -2538,19 +2546,19 @@ mod tests {
         resolve_at(&world, &tearing, &mut ids);
         assert!(!ids.is_faded(barrel), "resolving under the tear agrees");
 
-        // Every tearing mode tears; none, underwater and a mix of 0 don't
-        for mode in [1, 2, 3, 4, 6] {
-            tearing.render_mode = mode;
-            assert!(crate::postprocess::tear_active(&tearing), "mode {mode}");
+        // Any tear above the cut-off tears; 0, the cut-off itself and a
+        // frame with post-processing off don't
+        for amount in [0.01, 0.5, 1.0] {
+            tearing.tear = amount;
+            assert!(crate::postprocess::tear_active(&tearing), "{amount}");
         }
-        for (mode, mix) in [(0, 0.5), (5, 0.5), (1, 0.0), (6, 0.001)] {
-            calm.render_mode = mode;
-            calm.mode_mix = mix;
-            assert!(
-                !crate::postprocess::tear_active(&calm),
-                "mode {mode} at {mix}"
-            );
+        for amount in [0.0, 0.001] {
+            calm.tear = amount;
+            assert!(!crate::postprocess::tear_active(&calm), "{amount}");
         }
+        let mut off = tearing.clone();
+        off.enabled = false;
+        assert!(!crate::postprocess::tear_active(&off));
         assert!(ids.set_tear(false));
         assert!(ids.is_faded(barrel));
 
@@ -2561,7 +2569,7 @@ mod tests {
             "ascii_style",
             "blend_source = \"tear\"\nblend = 0.0",
         );
-        tearing.render_mode = 1;
+        tearing.tear = 0.5;
         let mut ids = StyleIds::default();
         let (out, _) = resolve_at(&world, &tearing, &mut ids);
         assert!(ids.is_faded(out[&barrel_e]));
@@ -2631,10 +2639,9 @@ mod tests {
             ),
             ("blend", offset_of!(MaskDrawUniform, blend)),
             ("torn", offset_of!(MaskDrawUniform, torn)),
-            ("tear_params", offset_of!(MaskDrawUniform, tear_params)),
-            ("tear_mix", offset_of!(MaskDrawUniform, tear_mix)),
-            ("tear_time", offset_of!(MaskDrawUniform, tear_time)),
+            ("tear", offset_of!(MaskDrawUniform, tear)),
             ("size", offset_of!(MaskDrawUniform, size)),
+            ("_pad", offset_of!(MaskDrawUniform, _pad)),
         ];
         let wgsl: Vec<_> = members
             .0

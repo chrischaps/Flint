@@ -144,7 +144,11 @@ fn copy_shaders(root: &Path) -> PathBuf {
             std::fs::copy(&path, dir.join(path.file_name().unwrap())).unwrap();
         }
     }
-    std::fs::copy(src.join("palette.wgsl"), root.join("palette.wgsl")).unwrap();
+    // The shared files built-in styles name from the folder above
+    // (`../palette.wgsl`; the tear's noise, `../tear_mask.wgsl`, #746)
+    for shared in ["palette.wgsl", "tear_mask.wgsl"] {
+        std::fs::copy(src.join(shared), root.join(shared)).unwrap();
+    }
     dir
 }
 

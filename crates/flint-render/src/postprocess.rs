@@ -29,20 +29,25 @@ pub const COMPOSITE_WGSL: &str = concat!(
     include_str!("composite_shader.wgsl")
 );
 
-/// The render modes with a reality tear (#397): Matrix (1), blood (2),
-/// drunk (3, which tears nothing it draws), Tron (4) and the tear alone (6),
-/// whose only look is the styled props that follow it. Underwater (5) masks
-/// by its waterline instead.
-pub fn tears(render_mode: u32) -> bool {
-    matches!(render_mode, 1..=4 | 6)
+/// Whether `config` tears the frame this frame (#746: the `[post_process]`
+/// `tear` key, which was render modes 1-4 and 6's mix): post-processing on
+/// and a tear above the mask's own cut-off. While it doesn't, a style or
+/// prop with `blend_source = "tear"` is at blend 0 everywhere, left out of
+/// the chain and the mask.
+pub fn tear_active(config: &PostProcessConfig) -> bool {
+    config.enabled && config.tear > 0.001
 }
 
-/// Whether `config` draws a reality tear this frame, as the composite sees
-/// it: post-processing on, a tearing mode, and a mix above the composite's
-/// own cut-off. While it doesn't, a `blend_source = "tear"` entity is at
-/// blend 0 everywhere.
-pub fn tear_active(config: &PostProcessConfig) -> bool {
-    config.enabled && tears(config.render_mode) && config.mode_mix > 0.001
+/// The tear's shape as `tear_mask_at` reads it: amount, scale (0 or less
+/// draws as 3), 1 for the iris, the post time. One place, so the style
+/// mask and the blend draw can't read it apart.
+pub fn tear_params(config: &PostProcessConfig, time: f32) -> [f32; 4] {
+    [
+        config.tear.clamp(0.0, 1.0),
+        config.tear_scale,
+        if config.tear_iris { 1.0 } else { 0.0 },
+        time,
+    ]
 }
 
 /// The macro [`flint_schema::post_effects!`] calls to make
@@ -142,19 +147,6 @@ flint_schema::post_effects!(post_process_config {
     /// it each frame with `SceneRenderer::set_boil`; a scene with no field never
     /// does, and its amount of 0 turns both boils off.
     pub boil: flint_wooze::BoilFrame = Default::default(),
-    /// Stylized render mode: 0 = none, 1 = Matrix code, 2 = blood ocean
-    /// grade, 3 = drunk, 4 = Tron wireframe (reality tears), 5 = underwater
-    /// (submerged-eye moments; masks by a per-pixel waterline, not the
-    /// tear mask), 6 = the tear alone (#397: no look of its own, so only
-    /// styled props with `blend_source = "tear"` show where it tears).
-    pub render_mode: u32 = 0,
-    /// Blend strength for the active render mode (0 = normal view).
-    pub mode_mix: f32 = 0.0,
-    /// Per-mode tuning. Tears (1-4): x = bleed-mask scale, y = mask style
-    /// (0 fbm / 1 iris), z = per-mode rate, w = spare. Underwater (5):
-    /// x = signed eye depth in meters (+ = submerged; waterline Y =
-    /// camera Y + x), y = sea energy 0..1, z = daylight 0..1, w = biolum 0..1.
-    pub mode_params: [f32; 4] = [0.0; 4],
     /// Registered stylize passes' settings by style name (#262), from a
     /// scene's `[post_process.styles.<name>]` (Kuwahara's included, #298:
     /// a scene's old `kuwahara_*` keys are folded in on the way).
@@ -247,12 +239,10 @@ pub struct PostProcessUniforms {
     pub dof_focus_distance: f32,
     pub dof_focus_range: f32,
     pub _pad2: f32,
-    // Reality-tear render mode (must mirror composite_shader.wgsl)
-    pub render_mode: u32,
-    pub mode_mix: f32,
-    pub mode_time: f32,
-    pub _pad_mode: f32,
-    pub mode_params: [f32; 4],
+    // The post time film grain reads (must mirror composite_shader.wgsl;
+    // the render modes that shared the row are styles since #746)
+    pub post_time: f32,
+    pub _pad_time: [f32; 3],
     // Color grade (ADR 0050) — three appended 16-byte rows; grade_enabled is
     // CPU-computed (see PostProcessConfig::grade_active) so the neutral path
     // never relies on pow(x, 1.0) float identity.
@@ -2298,11 +2288,8 @@ impl PostProcessPipeline {
             dof_focus_distance: config.dof_focus_distance,
             dof_focus_range: config.dof_focus_range.max(0.001),
             _pad2: 0.0,
-            render_mode: if effects_on { config.render_mode } else { 0 },
-            mode_mix: if effects_on { config.mode_mix } else { 0.0 },
-            mode_time: time,
-            _pad_mode: 0.0,
-            mode_params: config.mode_params,
+            post_time: time,
+            _pad_time: [0.0; 3],
             grade_lift: config.grade_lift,
             grade_enabled: if effects_on && config.grade_active() {
                 1.0
@@ -2720,7 +2707,7 @@ mod tests {
             assert_eq!(config.param(p.key), def.param(p.key), "{} copied", p.key);
             assert_ne!(config.param(p.key), Some(p.default), "{} changed", p.key);
         }
-        assert!(config.param("styles").is_none() && config.param("render_mode").is_none());
+        assert!(config.param("styles").is_none() && config.param("boil").is_none());
     }
 
     #[test]
@@ -2738,14 +2725,14 @@ mod tests {
     /// The Rust uniform struct must byte-match the WGSL PostProcessUniforms
     /// in composite_shader.wgsl. Layout: 12 scalars + texel_size vec2 +
     /// fog block (through dither_intensity) = 112 bytes, inv_view_proj mat4
-    /// at 112..176, DoF row (strength/focus/range/pad) at 176..192, mode
-    /// scalars (render_mode/mode_mix/mode_time/pad) at 192..208, mode_params
-    /// vec4 at 208..224, grade rows (lift+enabled / gamma+pad / gain+pad)
-    /// at 224..272 (ADR 0050; grain_intensity reused the former _pad @44),
+    /// at 112..176, DoF row (strength/focus/range/pad) at 176..192, the
+    /// post time row (time + 3 pads; the render modes' rows until #746) at
+    /// 192..208, grade rows (lift+enabled / gamma+pad / gain+pad)
+    /// at 208..256 (ADR 0050; grain_intensity reused the former _pad @44),
     /// fog rows (tint color+strength / tint start+end+height density+pad)
-    /// at 272..304 (ADR 0101), ground fog rows (color+density / origin+size
+    /// at 256..288 (ADR 0101), ground fog rows (color+density / origin+size
     /// / floor base, ceiling, falloff, steps / texel, max lod, enabled, pad)
-    /// at 304..368 (ADR 0106).
+    /// at 288..352 (ADR 0106).
     /// Boil is opt-in twice over: a scene asks for it, and has a field.
     #[test]
     fn boil_and_contour_default_off() {
@@ -2758,7 +2745,7 @@ mod tests {
 
     #[test]
     fn composite_uniforms_match_wgsl_layout() {
-        assert_eq!(std::mem::size_of::<PostProcessUniforms>(), 368);
+        assert_eq!(std::mem::size_of::<PostProcessUniforms>(), 352);
         assert_eq!(std::mem::size_of::<PostProcessUniforms>() % 16, 0);
     }
 

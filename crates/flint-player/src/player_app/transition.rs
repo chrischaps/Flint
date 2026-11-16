@@ -357,9 +357,9 @@ impl PlayerApp {
         // audio system clears (ADR 0017's producer→handles→device order)
         self.subsystems_leave_scene();
 
-        // A render mode a script held on: the next frame would
-        // otherwise switch the new scene's authored mode off
-        self.post.mode_was_active = false;
+        // A render mode a script held on: the next frame would otherwise
+        // put the old scene's settings back over the new scene's
+        self.post.mode_shim.forget();
 
         // Clear all systems
         self.core.script.clear();

@@ -95,9 +95,8 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--contour-boil <f32>` | `0.0` | How far each drawing moves the lines (enables contour) |
 | `--boil-on <u32>` | `2` | Film frames each drawing is held: 1, 2 or 3 |
 | `--boil-time <f64>` | `0` | Seconds of the wooze field to run, which picks the drawing |
-| `--render-mode <0-6>` | `0` | Stylized render mode (6: the tear alone, for `blend_source = "tear"` props) |
-| `--mode-mix <f32>` | `0` | Render mode blend, 0--1 |
-| `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters |
+| `--tear <f32>` | `0` | The frame's tear, which `blend_source = "tear"` styles and props show through |
+| `--render-mode <1-6>` | none | Deprecated (#746): the reality styles (`--style matrix`, `blood`, `drunk`, `tron`, `underwater`) |
 | `--film-grain <f32>` | `0` | Film grain intensity |
 | `--grain-time <f32>` | `0` | Post time driving grain and mode animation |
 | `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene, e.g. `ascii:cell=12,ramp=blocks`, `invert`, `kuwahara:radius=6`, `ascii:off` (off everywhere, entities' own included, #376); repeatable; `--style help` lists them, `--list-styles [--json]` with stages and ranges ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
@@ -190,7 +189,7 @@ Both wireframe modes include skinned meshes, drawn in their bind pose.
 
 `flint render` is built to be byte-stable so that pixel-diff gates can trust it. Identical scene, flags and GPU driver produce identical PNGs, with these caveats:
 
-- **Time is pinned.** Film grain, render-mode animation and animated styles read a post time that headless render fixes at 0. Pass `--style-time` (or `--grain-time`) to pick a different but equally repeatable frame; two renders at the same value match, different values differ.
+- **Time is pinned.** Film grain, the tear's drift and animated styles read a post time that headless render fixes at 0. Pass `--style-time` (or `--grain-time`) to pick a different but equally repeatable frame; two renders at the same value match, different values differ.
 - **MSAA and FXAA default off** precisely so the default path stays single-sample and single-pass. Turn them on for hero shots, not for baselines.
 - **Animation runs only when asked.** Without a flag skinned meshes render at bind pose. `--anim-time <s>` runs the scene's animation to that time first, as the player has it there ([Posed Characters](#posed-characters)). For one model on its own, the model previewer's render mode does the same: `flint edit model.glb --render out.png --anim-time 1.5`, or `--sequence file.sequence.toml --anim-time 2.0` to replay a timed sequence deterministically, or `--pose-bone joint:x,y,z` to turn a joint by hand.
 - **Particles start at t = 0**, so emitters appear empty unless you pass `--particle-time <s>`, which steps them deterministically before the capture. `--time` does this too.
@@ -349,7 +348,7 @@ A capture carries out what scripts ask through the same dispatcher as the player
 - everything scripts write to the world (`set_field`, `set_position`, a light's colour, a material);
 - entity styles: `set_entity_style`, `set_style_param`, `clear_entity_style`, and `tween_style_param`, whose tweens step on the scripts' clock as the player's do; `get_entity_style` and `get_style_param` read the config the capture draws with;
 - whole-frame styles (`set_post_style`, `set_post_style_param`, `reset_post_style`), `set_look` and `clear_look`, and `reset_style_history`;
-- the `set_camera_*` overrides, `set_camera_roll` included, the post-processing ones (`set_exposure`, `set_vignette`, `set_fog_color`, ...), render modes (`set_render_mode`, for the steps that ask), `set_lod_scale`, `set_draw_distance_scale` and `set_quality`;
+- the `set_camera_*` overrides, `set_camera_roll` included, the post-processing ones (`set_exposure`, `set_vignette`, `set_fog_color`, ...), the tear (`set_tear`) and the deprecated render modes (`set_render_mode`, for the steps that ask), `set_lod_scale`, `set_draw_distance_scale` and `set_quality`;
 - `tune_living` (its `boil` too: `kuwahara`, `contour`, `on`, `enabled`), `clear_living`, `freeze_living`, `step_living` (a whole beat for every prop, the boil and shallow wooze, frozen or not), `load_living_preset`, `set_wooze`, `set_wooze_zone`, `remove_wooze_zone`, in a scene with living props or a wooze field, where their modules are enabled as in the player (#698);
 - `push_state`, `pop_state` and `replace_state` (a state that pauses scripts pauses their `on_update`, as in the player), and `fire_event` between scripts;
 - particles (#579): `play_effect`, `stop_effect`, `set_effect_param` and `emit_burst` reach the capture's particles, which step on the scripts' clock in the fixed 1/60 s steps `--time` already took. A still with no `--time` or `--particle-time` draws no particles, and says so.

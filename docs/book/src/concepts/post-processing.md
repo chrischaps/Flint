@@ -1,6 +1,6 @@
 # Post-Processing
 
-Flint includes an HDR post-processing pipeline that transforms the raw scene render into polished final output: bloom, SSAO, fog, volumetric lighting, depth of field, a painterly Kuwahara filter, color grading, film grain, tonemapping, vignette, FXAA, and whole-screen render modes.
+Flint includes an HDR post-processing pipeline that transforms the raw scene render into polished final output: bloom, SSAO, fog, volumetric lighting, depth of field, a painterly Kuwahara filter, color grading, film grain, tonemapping, vignette, FXAA, and the frame's tear, which the reality styles and styled props show through.
 
 ## How It Works
 
@@ -11,8 +11,8 @@ Scene render        Depth       Kuwahara     Contour      SSAO       Volumetric 
 (PBR, skinned,  ->  resolve  -> (optional -> (optional -> depth-  -> shadow-   -> downsample  -> DoF, AO, god rays  -> (optional
  billboard,         (MSAA       painterly    ink          based      based        upsample       bloom, fog, exposure    edge AA)
  particles,         sample 0)   pre-pass)    lines)       AO         god rays                    ACES, grade, desat,
- sky, ocean,                                                                                     render mode, vignette,
- terrain, grass)                                                                                 grain, dither
+ sky, ocean,                                                                                     vignette, grain,
+ terrain, grass)                                                                                 dither
      |                 |            |            |           |           |            |                |                   |
  Rgba16Float       depth       filtered     inked        AO         vol          bloom          sRGB surface or       sRGB
  HDR buffer        texture     HDR          HDR          texture    texture      texture        FXAA intermediate     surface
@@ -326,7 +326,7 @@ These three are the "feel" levers scripts reach for most; see the script notes b
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `desaturate` | f32 | `0.0` | Mix toward a darkened ash grey (0 = full color, 1 = drained). Applied after the grade, before render modes ([ADR 0021](https://github.com/chrischaps/Flint/blob/main/docs/adr/0021-ladder-visuals-through-the-post-stack.md)) |
+| `desaturate` | f32 | `0.0` | Mix toward a darkened ash grey (0 = full color, 1 = drained). Applied after the grade, before the vignette ([ADR 0021](https://github.com/chrischaps/Flint/blob/main/docs/adr/0021-ladder-visuals-through-the-post-stack.md)) |
 | `chromatic_aberration` | f32 | `0.0` | Splits the red and blue channels radially from the screen center |
 | `radial_blur` | f32 | `0.0` | 8-tap blur that grows toward the screen edges while the center stays sharp |
 
@@ -416,7 +416,7 @@ warning[post-range] [post_process] bloom_intensity: bloom_intensity=3 is outside
 
 `bloom_soft_threshold` and `ssao_bias` became scene keys with the descriptors; they had been the renderer's (F4 and scripts) alone. Adding a key to an effect is its line in the descriptors, its field in the composite's uniform struct and the WGSL that reads it.
 
-When the pipeline is disabled (`--no-postprocess` or the menu checkbox), most effects are zeroed: bloom, vignette, fog, dither, desaturate, film grain, DoF, render mode and grade. Two are not: `chromatic_aberration` and `radial_blur` predate the gate and stay live even with post-processing off.
+When the pipeline is disabled (`--no-postprocess` or the menu checkbox), most effects are zeroed: bloom, vignette, fog, dither, desaturate, film grain, DoF, the tear and grade. Two are not: `chromatic_aberration` and `radial_blur` predate the gate and stay live even with post-processing off.
 
 The scene viewer applies the scene's `[post_process]` block on load ([ADR 0046](https://github.com/chrischaps/Flint/blob/main/docs/adr/0046-viewer-applies-scene-post-process.md)). The Rendering & Effects menu can swap between the authored block and the viewer's default look.
 
@@ -498,9 +498,10 @@ flint render scene.toml --bloom-intensity 0.1 --exposure 1.2 --volumetric-densit
 | `--grade-gamma <r,g,b>` | Color grade gamma |
 | `--grade-gain <r,g,b>` | Color grade gain |
 | `--fxaa` | Enable the FXAA pass |
-| `--render-mode <0-5>` | Stylized render mode (see below) |
-| `--mode-mix <f32>` | Render mode blend strength, 0--1 |
-| `--mode-params <x,y,z,w>` | Per-mode parameters |
+| `--tear <f32>` | How much of the frame tears open, 0--1 (see [The tear](#the-tear)) |
+| `--tear-scale <f32>` | The tear's patches across the frame's height (default 3) |
+| `--tear-iris` | Tear open from the centre in a circle instead |
+| `--render-mode <1-6>`, `--mode-mix`, `--mode-params` | Deprecated (#746), for one release: [the old render modes](#the-old-render-modes) |
 | `--oren-nayar`, `--sheen-strength`, `--sheen-color` | Lighting levers, documented in [Lighting](lighting.md) |
 
 CLI flags take precedence over scene TOML settings.
@@ -514,9 +515,8 @@ The effect sections are drawn from the effects' descriptors (#741), one a built-
 | Section | Controls |
 |---------|----------|
 | Post chain | Post-processing on/off. Player only: **Freeze script post overrides**, so a running script cannot fight your edits |
-| Exposure, Vignette, Lens, Bloom, SSAO, Depth of field, Fog, Volumetric light, Grade, Dither, FXAA, Shared edges, Held drawings | Every key of the effect (`flint render --list-effects`). Fog adds ground fog's density, colour, falloff and steps (the game's, ADR 0106); Grade adds a Neutral grade button; Held drawings adds what the wooze field says now (step, jitter and the drawing) |
+| Exposure, Vignette, Lens, Bloom, SSAO, Depth of field, Fog, Volumetric light, Grade, Dither, FXAA, Shared edges, Held drawings, Tear | Every key of the effect (`flint render --list-effects`). Fog adds ground fog's density, colour, falloff and steps (the game's, ADR 0106); Grade adds a Neutral grade button; Held drawings adds what the wooze field says now (step, jitter and the drawing) |
 | Styles | A section per registered style (Kuwahara and Contour among them, the shading boil's amounts in their `boil`), drawn from its declaration, with Defaults, Authored, Copy TOML and Commit to scene |
-| Render mode | Mode combo (None, Matrix, Blood, Drunk, Tron, Underwater, Tear (props)), mix, params |
 | Shadows | Enabled, resolution (512 / 1024 / 2048 / 4096; rebuilds the shadow pass) |
 | Lighting | Ambient sky, ambient ground, diffuse wrap, Oren-Nayar, sheen color, sheen strength, Reset lighting |
 | Camera | Vertical FOV |
@@ -530,126 +530,113 @@ When the pipeline is toggled off, the PBR shader's built-in ACES tonemapping and
 
 When the post-processing pipeline is active, the engine sets `enable_tonemapping = 0` in the PBR uniform buffer, forcing shaders to output raw linear HDR values. The composite pass then applies, in this order:
 
-1. **Drunk sway** --- render mode 3 warps the sample UV before anything is read
-2. **Radial blur** --- 8-tap gather from the HDR source, edges only
-3. **Depth of field** --- CoC-weighted disc gather from the same source
-4. **Chromatic aberration** --- radial red/blue channel split
-5. **SSAO** --- multiplies by the AO texture
-6. **Volumetric** --- adds the god-ray texture
-7. **Bloom** --- adds the bloom texture at `bloom_intensity`
-8. **Fog** --- blends fog color by depth and optional height falloff, still in linear HDR
-9. **Exposure** and **ACES tonemapping** --- maps HDR to displayable range
-10. **Color grade** --- lift/gamma/gain on the display-referred image
-11. **Desaturation** --- mix toward ash grey
-12. **Render mode** --- Matrix, Blood, Tron, or Underwater own the color from here
-13. **Vignette** --- edge darkening
-14. **Film grain** --- 24 Hz hash noise, before dither because grain is signal
-15. **Dither** --- 8x8 Bayer, always last inside composite
+1. **Radial blur** --- 8-tap gather from the HDR source, edges only
+2. **Depth of field** --- CoC-weighted disc gather from the same source
+3. **Chromatic aberration** --- radial red/blue channel split
+4. **SSAO** --- multiplies by the AO texture
+5. **Volumetric** --- adds the god-ray texture
+6. **Bloom** --- adds the bloom texture at `bloom_intensity`
+7. **Fog** --- blends fog color by depth and optional height falloff, still in linear HDR
+8. **Exposure** and **ACES tonemapping** --- maps HDR to displayable range
+9. **Color grade** --- lift/gamma/gain on the display-referred image
+10. **Desaturation** --- mix toward ash grey
+11. **Vignette** --- edge darkening
+12. **Film grain** --- 24 Hz hash noise, before dither because grain is signal
+13. **Dither** --- 8x8 Bayer, always last inside composite
+
+The composite is the same for every game: no game's look lives in it (#746). The looks that once did are [the reality styles](#the-reality-styles), display styles after it.
 
 The composite output stays linear; the sRGB render target applies gamma encoding in hardware. If FXAA is on, composite renders into an intermediate texture and the FXAA pass resolves it to the surface.
 
 When post-processing is disabled (via `--no-postprocess` or the menu), the shader handles tonemapping and gamma internally. This dual-path design ensures backward compatibility with scenes that don't use post-processing.
 
-## Render Modes
+## The Reality Styles
 
-Render modes are whole-screen stylizations that branch **after ACES tonemapping
-and before vignette**. They are not debug views: they are a supported way to
-make the world visibly stop being itself for a while.
+Five whole-frame [styles](stylize-passes.md) make the world visibly stop being itself for a while: `matrix`, `blood`, `drunk`, `tron` and `underwater`. They were render modes 1--5 of the composite until #746, one game's looks (Float's reality tears and its submerged eye) wired into every game's composite pass, tuned by four numbers whose meaning changed per mode. Each is a display style now, with named params and ranges, so `--style`, `--sweep`, `--list-styles`, F4 > Styles and `set_post_style_param` reach them as they reach every other style, and a game that never asks for one never builds it.
+
+They run first of the display chain, where the composite drew them, so a prop's ASCII or pencil in a tear reads the code, the blood or the wire world they made. A display style runs after the vignette, so each draws its look through the frame's vignette and reads the picture with it undone: on the A/B against the old modes, blood moved no pixel more than 5 levels, underwater no more than 21, and matrix, drunk and tron at most 0.11%, 0.16% and 0.11% of pixels by more than 48 (their luminance reads the finished picture, not the raw HDR).
 
 ![Tron render mode](../images/render-mode-tron.png)
 
-*Mode 4 over an ocean scene: depth-reconstructed world grid, Sobel edges on
-depth and luminance.*
+*`tron`: depth and luminance edges glowing over a dimmed scene, and a world-space grid rebuilt from depth that rides the swells.*
 
 ![Matrix render mode](../images/render-mode-matrix.png)
 
-*Mode 1: dot-matrix glyphs whose brightness and density track scene luminance.*
+*`matrix`: dot-matrix glyphs whose brightness and density track the picture's luminance, with a rain head falling down each column.*
 
 ![Blood render mode](../images/render-mode-blood.png)
 
-*Mode 2: the palette remap, with the ocean recoloring itself through its own shader.*
+*`blood`, with the ocean's own `tint`: the sea is a different sea rather than a red filter over a blue one.*
 
 ![Drunk render mode](../images/render-mode-drunk.png)
 
-*Mode 3: UV sway across the whole composite chain plus a ghosting double-tap.*
+*`drunk`: the frame sways and sees double.*
 
 ![Underwater render mode](../images/render-mode-underwater.png)
 
-*Mode 5: masked by the per-pixel waterline, with banded absorption and a foam lip on the line.*
+*`underwater`: masked by the waterline, with banded absorption, light shafts and a foam lip on the line.*
 
-| Mode | Name | What it does |
-|------|------|--------------|
-| 0 | None | Normal output. |
-| 1 | Matrix | Procedural dot-matrix glyphs per 8x12 px cell. Brightness *and* density track scene luminance, with per-column rain heads. |
-| 2 | Blood | Palette remap. Ocean scenes recolor through the ocean shader too, so the water is genuinely a different sea rather than a red filter over a blue one. |
-| 3 | Drunk | Pre-sample UV sway warping the whole composite chain, plus a ghosting double-tap. |
-| 4 | Tron | Depth Sobel + luminance edges in cyan over a dimmed scene, with a world-space grid reconstructed from depth so it rides real geometry. |
-| 5 | Underwater | Masks per pixel against a **waterline plane**, not a patch mask. Banded murk absorption, a wobbled foam lip on the line, light shafts, Snell-window brightening. |
-| 6 | Tear (props) | A tear with no look of its own (#397): the composite draws nothing, and only entities whose style has `blend_source = "tear"` show it, turning to their style where it passes ([A blend that follows the tear](stylize-passes.md#a-blend-that-follows-the-tear)). |
+| Style | What it does | Its settings (`flint render --list-styles`) |
+|---|---|---|
+| `matrix` | Glyph cells lit by the picture's luminance, rain heads falling | `cell_w`, `cell_h` (points), `rate` (rerolls a second), `fall`, `ink`, `ground`, `head`, `glow` |
+| `blood` | A crimson key that keeps luminance and spares what's already red | `strength`, `tint`, `shadow`, `knee`, `spare_red` |
+| `drunk` | Sway and a drifting double; its `blend` is how drunk | `sway`, `ghost`, `speed` |
+| `tron` | Glowing edges and a world grid over a ghost of the scene | `glow`, `edges`, `dim`, `sky_dim`, `grid`, `spacing` (m), `pulse`, `reach` (m) |
+| `underwater` | The eye under the sea, below a waterline `depth` metres over it; its `blend` is how far under | `depth` (m, + = under), `churn`, `daylight`, `glow`, `sway` |
 
-Four uniforms carry the state: `render_mode`, `mode_mix` (0..1 blend),
-`mode_time`, and a `mode_params` vec4 whose meaning is per-mode.
+`drunk` and `underwater` draw their own `blend`, since their sway grows with it; the other three mix by the framework's. The sea's half of the old blood and underwater modes is the `ocean` component's [`tint`](#the-oceans-tint).
 
-| Mode | `mode_params` |
-|------|---------------|
-| 1--4, 6 | `x` = bleed-mask scale (0 or less = the default 3), `y` = mask style (0 = fbm patches, 1 = radial iris), `z` = rate (Matrix glyph rerolls per second; 0 = the default 6), `w` = spare |
-| 5 | `x` = signed eye depth in meters (+ = submerged), `y` = sea energy 0..1, `z` = daylight 0..1, `w` = bioluminescence 0..1 |
+Demo: `examples/reality_tears.scene.toml`, a sea at dusk its script walks through all five.
 
-Modes 1--4 and 6 fade in through an fbm **bleed mask** whose threshold sweeps across
-the noise span, so patch coverage grows with `mode_mix` and pins to full
-coverage at 1. Mode 5 ignores the mask entirely: being underwater is a fact
-about where your eye is, not a patch that spreads.
+### The tear
+
+`[post_process] tear` (0--1) is a mask of holes the frame tears open in: fbm patches that spread from scattered holes to the whole frame as it rises, or with `tear_iris = true` a wobbling circle from the centre; `tear_scale` (default 3) is how many patches span the frame's height. It has no look of its own. A whole-frame style whose table says `blend_source = "tear"` shows only inside the holes (its blend times the mask at each pixel), and so does a prop whose style component or `style_mask` says it ([A blend that follows the tear](stylize-passes.md#a-blend-that-follows-the-tear)), so the two tear together. With no tear, such a style is left out of the chain, byte for byte. A reveal (`reveal_*`) is not drawn on a style that follows the tear.
+
+```toml
+[post_process]
+tear = 0.55
+
+[post_process.styles.matrix]
+blend_source = "tear"
+rate = 6.0
+```
+
+```bash
+flint render scene.toml --style matrix:blend_source=tear --tear 0.55
+flint render scene.toml --style tron:blend_source=tear --tear 0.45 --tear-iris
+```
+
+### The ocean's tint
+
+The `ocean` component's `tint` (0--1) moves its whole palette toward another before any use, so bands, subsurface, foam and reflections agree, and after a script's palette lands, so it can't race one: `tint_deep_color`, `tint_shallow_color`, `tint_sss_color`, `tint_foam_color`, `tint_sky` (what the sky's reflection is multiplied by), `tint_ramp_steps`, `tint_band_wobble`, `tint_pools` (world-anchored pools that spread with the tint; 0 tints evenly), `tint_keep_light` (scaled by the palette's own brightness, so a night sea stays dark) and `tint_below` (only the surface seen from below). The defaults are the crimson tide, off at 0. `flint schema ocean` lists them.
 
 ### From scripts
 
 ```rhai
-set_render_mode(4, 0.85);                  // mode, mix
-set_render_mode_params(3.0, 0.0, 6.0, 0.0);
-set_desaturation(0.5);                     // sticky
-set_dof(0.6);                              // sticky
-set_dof_focus(8.0, 4.0);                   // distance, range; sticky
+set_post_style("matrix", true);
+set_post_style_param("matrix", "blend_source", "tear");
+set_tear(0.6);                              // held until set again
+set_tear_shape(3.0, false);                 // scale, iris
+set_post_style_param("drunk", "blend", 0.4);
+set_field(get_entity("ocean"), "ocean", "tint", 0.7);
 ```
 
-**`set_render_mode` is transient, and it is the only post-process override that
-is.** Every other override (exposure, bloom, fog, chromatic aberration,
-desaturation, depth of field) is sticky: set it once and it persists. The
-render mode is zeroed the frame your script *stops calling it*.
+Unlike the old render mode, these hold until changed, as every other post override does. A script that wants a dead script to heal the world sets them back itself, or sets them every frame from an envelope that ends at 0.
 
-That asymmetry is deliberate. A sticky render mode plus a script that crashed,
-hot-reloaded, or was disabled mid-effect would leave the world permanently
-inside a hallucination with no way out. Instead, a dead script means a healed
-world. The cost is that you must call it every frame the effect is active:
+### The old render modes
 
-```rhai
-fn envelope(t) { max(1.0 - t / 4.0, 0.0) }   // your own: 1 at the start, 0 after 4 s
+`--render-mode N --mode-mix M --mode-params x,y,z,w` and Rhai's `set_render_mode(mode, mix)` / `set_render_mode_params(x, y, z, w)` are deprecated shims for one release (#746), mapped onto the above by `flint_render::render_mode`. As before, a mode shows only the frames a script asks for it: the shim puts back what it overwrote the frame no script asks.
 
-fn on_update() {
-    let m = envelope(total_time());
-    if m > 0.001 {
-        set_render_mode(3, m);          // 3 is drunk
-    }
-    // stop calling -> the engine restores the world by itself
-}
-```
+| Mode | Is now |
+|------|--------|
+| 1 Matrix | `matrix` with `blend_source = "tear"`, `tear` = mix, `tear_scale` = x, `tear_iris` = y >= 0.5, `rate` = z (0 reads as 6) |
+| 2 Blood | `blood` following the tear, and the ocean's tint at the mix (`OceanTint::blood`) |
+| 3 Drunk | `drunk` at `blend` = mix |
+| 4 Tron | `tron` following the tear |
+| 5 Underwater | `underwater` at `blend` = mix, `depth`, `churn`, `daylight`, `glow` = x, y, z, w, and the ocean's tint on its underside (`OceanTint::underside`) |
+| 6 Tear | the tear alone |
 
-Sticky effects a mode borrows (FOV, radial blur, chromatic aberration) are
-*not* covered by this, so zero them yourself when your effect ends. The
-player's F4 menu has a **Freeze script post overrides** checkbox for the
-moments you want to tune by hand while a script is still writing.
-
-### Headless
-
-```bash
-flint render scene.toml --schemas schemas \
-  --render-mode 4 --mode-mix 1.0 --mode-params 3,0,6,0
-```
-
-Since `flint render` runs no scripts, these flags **are** the fixture: there
-is no script to drive the mode for you.
-
-One practical note: modes 1 and 4 key off scene luminance, so they read best
-in daylight even if your game schedules them at night. A night scene renders
-the Matrix mode nearly black.
+The golden `render-mode-shim-matrix` holds `--render-mode 1` to the style and the tear pixel for pixel.
 
 ## Design Decisions
 

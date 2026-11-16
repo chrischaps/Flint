@@ -637,9 +637,14 @@ impl ScriptHost for CaptureFrame<'_> {
 }
 
 /// Lay `look` over a post-process config, as the player's frame does with its
-/// scripts' overrides. `before` is the look laid last time, so a render mode
-/// that has stopped being asked for is taken off, as the player's is.
-pub fn apply_look(config: &mut PostProcessConfig, look: &ScriptLook, before: &ScriptLook) {
+/// scripts' overrides. `shim` keeps what the deprecated render mode (#746)
+/// overwrote, so one that has stopped being asked for is taken off, as the
+/// player's is; a config replaced whole (a look) goes with `shim.forget()`.
+pub fn apply_look(
+    config: &mut PostProcessConfig,
+    look: &ScriptLook,
+    shim: &mut flint_render::render_mode::RenderModeShim,
+) {
     let post = &look.post;
     if let Some(v) = post.vignette {
         config.vignette_enabled = v > 0.001;
@@ -672,30 +677,31 @@ pub fn apply_look(config: &mut PostProcessConfig, look: &ScriptLook, before: &Sc
     if let Some(fd) = post.dof_focus_distance {
         config.dof_focus_distance = fd;
     }
+    if let Some(tear) = post.tear {
+        config.tear = tear;
+    }
+    if let Some(scale) = post.tear_scale {
+        config.tear_scale = scale;
+    }
+    if let Some(iris) = post.tear_iris {
+        config.tear_iris = iris;
+    }
     if let Some(fr) = post.dof_focus_range {
         config.dof_focus_range = fr;
     }
     if let Some(fc) = look.fog_color {
         config.fog_color = fc;
     }
-    // A reality tear: transient, unlike the sticky overrides above
-    match look.render_mode {
-        Some((mode, mix)) => {
-            config.render_mode = mode;
-            config.mode_mix = mix;
-        }
-        None if before
-            .render_mode
-            .is_some_and(|(mode, mix)| mode != 0 && mix > 0.0) =>
-        {
-            config.render_mode = 0;
-            config.mode_mix = 0.0;
-        }
-        None => {}
-    }
-    if let Some(mp) = look.mode_params {
-        config.mode_params = mp;
-    }
+    // The deprecated render mode: transient, unlike the sticky overrides
+    // above (#746)
+    let mode = look
+        .render_mode
+        .map(|(mode, mix)| flint_render::render_mode::RenderMode {
+            mode,
+            mix,
+            params: look.mode_params.unwrap_or_default(),
+        });
+    shim.stamp(config, mode);
 }
 
 // Every command is sampled, the living module's among them.

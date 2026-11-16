@@ -32,6 +32,22 @@ band_dither_scale = { type = "f32", description = "Halftone dot grid frequency i
 foam_glow_color = { type = "color", description = "Bioluminescent foam glow color (RGBA linear, emissive teal-green)", default = [0.35, 0.95, 0.75, 1.0] }
 foam_glow = { type = "f32", description = "Bioluminescent glow strength: emissive light from churned foam, brightest at contact foam (0 = off)", default = 0.0 }
 
+# ── Tint (#746): the palette moves toward another, which a game drives ───
+# Render modes 2 (a sea of blood) and 5 (the surface seen from a buried eye)
+# were two of one game's looks in the shader; they are two settings of
+# this. The defaults are the crimson tide, off at tint 0.
+tint = { type = "f32", description = "How far the palette moves to the tint's, 0..1; with tint_pools above 0, also how much of the sea the pools cover (0 = off)", default = 0.0 }
+tint_deep_color = { type = "color", description = "The tint's deep water colour (RGBA linear)", default = [0.10, 0.005, 0.01, 1.0] }
+tint_shallow_color = { type = "color", description = "The tint's shallow water colour (RGBA linear)", default = [0.45, 0.04, 0.05, 1.0] }
+tint_sss_color = { type = "color", description = "The tint's subsurface glow colour (RGBA linear)", default = [0.85, 0.05, 0.03, 1.0] }
+tint_foam_color = { type = "color", description = "The tint's foam colour, the shore foam's too (RGBA linear)", default = [0.95, 0.78, 0.76, 1.0] }
+tint_sky = { type = "color", description = "What the sky's reflection is multiplied by where tinted (RGB; [1, 1, 1] leaves it)", default = [1.1, 0.3, 0.32, 1.0] }
+tint_ramp_steps = { type = "f32", description = "Cel bands where tinted (0 = the sea's own ramp_steps)", default = 2.0 }
+tint_band_wobble = { type = "f32", description = "Added to band_wobble where tinted", default = 0.15 }
+tint_pools = { type = "f32", description = "World-anchored pools, this many per metre, spreading to full cover as tint rises (0 = tint evenly)", default = 0.08 }
+tint_keep_light = { type = "bool", description = "Scale the tint's deep and shallow by the palette's own brightness, so a night sea stays dark", default = true }
+tint_below = { type = "bool", description = "Tint only the surface seen from below, the ceiling over a submerged camera", default = false }
+
 # ── Contact foam (a splash ring round each ocean_contact entity) ────────
 splash_strength = { type = "f32", description = "Contact foam overall gain (0 disables)", default = 1.0 }
 splash_width = { type = "f32", description = "Max foam band width outward from the hull at full churn (m)", default = 0.35 }

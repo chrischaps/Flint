@@ -427,6 +427,11 @@ pub struct PostProcessOverrides {
     pub dof_strength: Option<f32>,
     pub dof_focus_distance: Option<f32>,
     pub dof_focus_range: Option<f32>,
+    /// `[post_process] tear`, `tear_scale` and `tear_iris` (#746:
+    /// `set_tear`, `set_tear_shape`).
+    pub tear: Option<f32>,
+    pub tear_scale: Option<f32>,
+    pub tear_iris: Option<bool>,
 }
 
 impl PostProcessOverrides {
@@ -448,7 +453,10 @@ impl PostProcessOverrides {
             desaturation,
             dof_strength,
             dof_focus_distance,
-            dof_focus_range
+            dof_focus_range,
+            tear,
+            tear_scale,
+            tear_iris
         );
     }
 }

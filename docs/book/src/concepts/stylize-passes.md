@@ -852,24 +852,23 @@ flint render examples/reveal_tear.scene.toml --sweep pencil.reveal=0.15,0.4,0.65
 
   Each is found by asking the region itself rather than trusting a distance worked out from the field's slope, which holds only right at the edge: a pixel is rim when some point on a ring round it, as wide as the rim, is outside, and the live side is shadowed by how much of the region lies back toward the light within the shadow's reach. So a pinhole casts a pinhole's shadow, and the sheet is not flecked with paper where the noise dips toward the cut without crossing it. They cost more than the line: with `--gpu-time 200` at 1080p on an RTX 4070, pencil at `reveal = 0.5` went from 0.585 ms p50 to 0.776 ms with `reveal_rim = 3`, 0.698 ms with `reveal_shadow = 0.4`, and 0.848 ms with both.
 - **One call animates it.** `tween_post_style_param("pencil", "reveal", 1.0, 4.0)` eases the reveal from where it is (0 for a style that has none) to 1 ([Scripting → Whole-frame styles](scripting.md#whole-frame-styles)). `examples/reveal_tear.scene.toml` starts live, tears open into pencil over 4 s, and pulls the live frame back in with a wipe.
-- **Deterministic.** The edge is the render-mode tears' noise (`tear_mask.wgsl`'s `fbm` and `value_noise`, with ridged teeth so it reads as torn paper, not a cut), on screen position and `reveal_boil` steps of post time. The same `--style-time` draws the same edge, byte for byte; the next step redraws its teeth.
+- **Deterministic.** The edge is the frame tear's noise (`tear_mask.wgsl`'s `fbm` and `value_noise`, with ridged teeth so it reads as torn paper, not a cut), on screen position and `reveal_boil` steps of post time. The same `--style-time` draws the same edge, byte for byte; the next step redraws its teeth.
 - **The ends are exact.** At `reveal = 0` the style leaves its stage's chain, as at `blend = 0`, so the frame is the live one byte for byte and costs nothing. At 1 the reveal draws nothing, so the frame is the style's own. In between the amount grows the region about with the share of the frame it covers; a tear's last scraps of live picture linger in the corners until the end.
 - **With `blend`.** Inside the region the style shows by its `blend`; outside, not at all. The ink is drawn at the blend too.
 - **How and what it costs.** The stage draws it in place of the [blend](#blending-a-whole-frame-style): after the style, one full-screen draw puts what the style read back outside the region and lays the ink, premultiplied, in the style's own GPU timing scope. Each revealing style takes a 256-byte slot of one uniform buffer (16 a frame), so nothing is allocated per frame. Measured with `--gpu-time 200` at 1080p on an RTX 4070: pencil's pass went from 0.477 to 0.568 ms p50 with `reveal = 0.5`, about 0.09 ms for the reveal, against 0.024 ms for a plain `blend = 0.5`.
 - **Goldens.** `pencil-reveal-tear-half` pins the half-torn frame at post time 0.6, `pencil-reveal-torn-paper` the same tear with `reveal_rim = 3` and `reveal_shadow = 0.4`, `pencil-reveal-panel` a panel, and `pencil-reveal-zero` compares reveal 0 with the frame without the style.
 
-### Style blends and render-mode tears
+### Style blends and the frame's tear
 
-`--render-mode` 1--4 (matrix, blood, drunk, tron) and a style blend can both look like reality tearing into text, but they work at different levels (and a blend can [follow the tear](#a-blend-that-follows-the-tear)):
+The [tear](post-processing.md#the-tear) (`[post_process] tear`) and a style blend can both look like reality tearing into text, but they work at different levels (and a blend can [follow the tear](#a-blend-that-follows-the-tear)):
 
-| | Render-mode tears | Style blend |
+| | The frame's tear | Style blend |
 |---|---|---|
-| Where | Composite pass, before display styles | Display-stage style, after the composite |
 | What it covers | The whole screen, through `tear_mask`: drifting fbm patches or an iris from the centre, in screen space | One entity and its subtree, through the style mask, on the entity's own cells |
-| Driven by | `mode_mix` and `mode_params` (a scene-wide value) | `blend` on each entity's component |
-| The look | Fixed per mode (mode 1's glyphs are an 8x12 dot-matrix built into `composite_shader.wgsl`) | Any style's settings: fonts, ramps, palettes, edges, grids |
+| Driven by | `tear`, `tear_scale`, `tear_iris` (one value a frame) | `blend` on each entity's component |
+| The look | None of its own: whatever follows it (`blend_source = "tear"`), a whole-frame style such as `matrix` or a prop's | Any style's settings: fonts, ramps, palettes, edges, grids |
 
-Neither duplicates the other's job. Tears change how the *world* is seen, and a blend changes how one *thing* is drawn. They compose: an ASCII prop inside a matrix tear is glyphized from the tear's picture, since display styles read the composite's output. Mode 1's glyphs and the ASCII style do overlap as looks, and the `matrix` look (`--look matrix`) is the ASCII style's take on it.
+Neither duplicates the other's job. A whole-frame style through the tear changes how the *world* is seen, and a blend changes how one *thing* is drawn. They compose: an ASCII prop inside a matrix tear is glyphized from the code rain, since the [reality styles](post-processing.md#the-reality-styles) run first of the display chain and draw over every pixel. The `matrix` style's glyphs and the ASCII style do overlap as looks, and the `matrix` look (`--look matrix`) is the ASCII style's take on it.
 
 ### A blend that follows the tear
 
@@ -881,29 +880,29 @@ blend_source = "tear"     # "own", the default, is the blend alone
 transition = "dissolve"   # cells turn whole at the tear's frayed rim
 ```
 
-Render mode 6 is a tear with no look of its own: the composite draws nothing for it, so the props that follow it are the only thing it shows. Modes 1--4 tear too, and then the props turn inside the mode's own holes (an ASCII prop in a matrix tear is glyphized from the code rain, as above). A script drives it as any mode, every frame it shows, and a scene can't set a render mode:
+The tear alone has no look of its own, so the props that follow it are the only thing it shows. With a whole-frame style following it too (`matrix` with `blend_source = "tear"`), the props turn inside the same holes the style shows in (an ASCII prop in a matrix tear is glyphized from the code rain, as above). A scene sets it in `[post_process]`, and a script with `set_tear`, which holds until set again:
 
 ```rust
 fn on_init() {
-    set_render_mode_params(2.4, 0.0, 6.0, 0.0);   // patch scale 2.4, fbm patches
+    set_tear_shape(2.4, false);   // patch scale 2.4, patches (not the iris)
 }
 
 fn on_update() {
-    set_render_mode(6, 0.5);                      // half the clearing torn
+    set_tear(0.5);                // half the clearing torn
 }
 ```
 
 ```bash
-flint render examples/ascii_tear.scene.toml --render-mode 6 --mode-mix 0.5 --mode-params 2.4,0,6,0
+flint render examples/ascii_tear.scene.toml --tear 0.5 --tear-scale 2.4
 ```
 
-![The clearing at tear mix 0, 0.3 and 0.55 under render mode 6, and at 0.3 under mode 1: the props turn to green glyphs only inside the tear's patches, which mode 1 shows as code rain, while the grass and ground stay as they were](../images/ascii-tear.png)
+![The clearing at tears of 0, 0.3 and 0.55 alone, and at 0.3 with the matrix style following it: the props turn to green glyphs only inside the tear's patches, which matrix shows as code rain, while the grass and ground stay as they were](../images/ascii-tear.png)
 
-*`flint render examples/ascii_tear.scene.toml --render-mode <m> --mode-mix <x> --mode-params 2.4,0,6,0 --no-grid`, cropped.*
+*`flint render examples/ascii_tear.scene.toml --tear <x> --tear-scale 2.4 [--style matrix:blend_source=tear] --no-grid`, cropped (rendered as render modes 6 and 1 before #746).*
 
-- **One mask, two readers.** The tear is `tear_mask_at` in `crates/flint-render/src/tear_mask.wgsl`, which Rust prepends to both the composite and the style mask's shader. The mask pass multiplies it into the blend it writes into the mask's `.g`, so every reader of the blend gets it: ASCII's fade and dissolve, and pencil, watercolor and user styles through the framework's [cross-fade](#blend-for-free). Its uv is the mask pixel's centre over the mask's size, the composite's own at any render scale, so a prop turns exactly where the composite tears.
-- **No tear, no cost.** While the frame draws no tear (`render_mode` not 1--4 or 6, `mode_mix` at most 0.001, or post-processing off), a torn entity counts as blend 0: its id is faded, so with nothing else styled neither the style's pass nor the mask is drawn and the frame is the unstyled one, byte for byte ([At blend 0](#blending-in-and-out)). The renderer checks the config each frame, since a script sets the mode after the world is read. The golden `ascii-tear-calm` holds it.
-- **Settings.** `mode_params` are the tear's ([Render modes](post-processing.md#render-modes)): `x` the patch scale (0 = 3), `y` fbm patches (0) or an iris from the centre (1). The uniform each masked draw has grew from 16 to 48 bytes to carry them, in its existing 256-byte slot.
+- **One mask, two readers.** The tear is `tear_mask_at` in `crates/flint-render/src/tear_mask.wgsl`, which Rust prepends to both the style mask's shader and the blend draw a whole-frame style that follows the tear gets (`stylize/blend_tear.wgsl`). The mask pass multiplies it into the blend it writes into the mask's `.g`, so every reader of the blend gets it: ASCII's fade and dissolve, and pencil, watercolor and user styles through the framework's [cross-fade](#blend-for-free). Its uv is the mask pixel's centre over the mask's size, the display's own at any render scale, so a prop turns exactly where a whole-frame style tears.
+- **No tear, no cost.** While the frame draws no tear (`tear` at most 0.001, or post-processing off), a torn entity counts as blend 0: its id is faded, so with nothing else styled neither the style's pass nor the mask is drawn and the frame is the unstyled one, byte for byte ([At blend 0](#blending-in-and-out)); a whole-frame style that follows the tear leaves the chain. The renderer checks the config each frame, since a script sets the tear after the world is read. The golden `ascii-tear-calm` holds it.
+- **Settings.** The tear's are `[post_process]` keys ([The tear](post-processing.md#the-tear)): `tear_scale` the patches across the frame's height (default 3; 0 or less draws as 3), `tear_iris` an iris from the centre instead. The uniform each masked draw has carries them in 48 bytes, in its existing 256-byte slot.
 - Scripts set it with `set_style_param(id, "blend_source", "tear")` and read it back with `get_style_param`; it is a choice, so it doesn't ease.
 
 `examples/ascii_tear.scene.toml` is a 12-second loop: the tear opens over the clearing, nearly swallows it, and closes. The goldens `ascii-tear` and `ascii-tear-matrix` pin it under modes 6 and 1 on `tests/fixtures/scenes/stylize_props_tear.scene.toml`.
@@ -1198,7 +1197,7 @@ scene (HDR, render scale)
   -> style mask (Rg16Uint: id + blend, only while a style reads it)
   -> HDR styles (Kuwahara)          linear Rgba16Float, scene resolution
   -> SSAO, volumetric (depth), bloom (the original HDR, or the HDR styles' result: feeds_bloom)
-  -> composite: fog, DoF, tonemap, grade, vignette, grain, render modes
+  -> composite: fog, DoF, tonemap, grade, vignette, grain
   -> Display styles (watercolor, ASCII, pencil, palette, display bloom, invert) surface format, output resolution
   -> FXAA -> surface -> HUD
 ```

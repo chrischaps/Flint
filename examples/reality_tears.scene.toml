@@ -1,0 +1,102 @@
+# Reality Tears: the five reality styles over an open sea at dusk (#746).
+# They were render modes 1-5 of the composite, one game's looks (Float's)
+# wired into every game, tuned by four numbers whose meaning changed per
+# mode. Each is a display style with named params now, and the tear is a
+# [post_process] key any style can follow:
+#
+#   cargo run --bin flint-player -- examples/reality_tears.scene.toml
+#
+# scripts/reality_tears.rhai walks a 30-second loop: the code rains through
+# the tear's patches (matrix), the sea turns to blood (the blood style and
+# the ocean's own `tint`), the world opens to wire through an iris (tron),
+# the frame rolls drunk, and a swell buries the eye (underwater). Each at
+# once from the command line:
+#
+#   flint render examples/reality_tears.scene.toml --style matrix:blend_source=tear --tear 0.6
+#   flint render examples/reality_tears.scene.toml --style tron:blend_source=tear --tear 0.5 --tear-iris
+#   flint render examples/reality_tears.scene.toml --style underwater:depth=0.3
+#   flint render examples/reality_tears.scene.toml --scripts --time 9
+#
+# `flint render --list-styles` lists their params; F4 > Styles tunes them.
+
+[scene]
+name = "Reality Tears"
+version = "1.0"
+description = "The five reality styles (matrix, blood, drunk, tron, underwater) over a sea at dusk, torn in by the frame's tear (#746)"
+
+[camera]
+position = [0.0, 1.6, 9.0]
+target = [0.0, 0.8, -6.0]
+fov = 60.0
+
+[environment]
+ambient_sky = [0.42, 0.36, 0.42]
+ambient_ground = [0.10, 0.08, 0.10]
+
+[entities.sky.sky]
+zenith_color = [0.12, 0.16, 0.38, 1.0]
+horizon_color = [0.92, 0.56, 0.42, 1.0]
+haze_color = [0.98, 0.64, 0.42, 0.35]
+cloud_coverage = 0.3
+
+[entities.sun.light]
+type = "directional"
+direction = [0.2, 0.18, -0.95]
+color = [1.0, 0.72, 0.52]
+intensity = 2.2
+
+[post_process]
+exposure = 1.05
+bloom_enabled = true
+bloom_threshold = 1.6
+bloom_intensity = 0.12
+vignette_enabled = true
+vignette_intensity = 0.2
+
+[entities.ocean.ocean]
+deep_color = [0.03, 0.08, 0.22, 1.0]
+shallow_color = [0.10, 0.26, 0.48, 1.0]
+sss_color = [0.20, 0.45, 0.55, 1.0]
+seed = 7
+amplitude = 0.55
+wavelength_min = 1.5
+wavelength_max = 22.0
+choppiness = 0.6
+wind_speed = 6.0
+fetch_km = 8.0
+foam_threshold = 0.52
+splash_strength = 1.0
+splash_baseline = 0.3
+
+# A raft, so the edges and the grid have something to hold
+[entities.raft]
+archetype = "furniture"
+[entities.raft.transform]
+position = [0.4, 0.05, 3.2]
+rotation = [0.0, 24.0, 0.0]
+[entities.raft.bounds]
+min = [-1.1, -0.15, -1.6]
+max = [1.1, 0.2, 1.6]
+[entities.raft.material]
+texture = "textures/wood_planks_old.png"
+roughness = 0.9
+[entities.raft.ocean_contact]
+half_x = 1.1
+half_z = 1.6
+
+# A post on the raft, a silhouette against the sky
+[entities.mast]
+archetype = "furniture"
+parent = "raft"
+[entities.mast.transform]
+position = [0.3, 1.2, -0.4]
+[entities.mast.bounds]
+min = [-0.08, -1.0, -0.08]
+max = [0.08, 1.0, 0.08]
+[entities.mast.material]
+color = [0.24, 0.17, 0.12, 1.0]
+roughness = 0.9
+
+[entities.director]
+[entities.director.script]
+source = "reality_tears.rhai"

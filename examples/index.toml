@@ -199,6 +199,11 @@ topic = "stylize"
 purpose = "A reality tear passes over a clearing and only the props inside it turn to text (blend_source = \"tear\", #397)"
 
 [[example]]
+scene = "reality_tears.scene.toml"
+topic = "stylize"
+purpose = "The five reality styles (matrix, blood, drunk, tron, underwater) over a sea at dusk, torn in by the frame's tear and tuned by name (#746)"
+
+[[example]]
 scene = "ascii_story.scene.toml"
 topic = "stylize"
 purpose = "A script flips props between smooth and ASCII at story beats (#269)"

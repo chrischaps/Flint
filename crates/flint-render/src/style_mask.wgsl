@@ -32,23 +32,22 @@ struct MaskDraw {
     blend: u32,
     // 1: the blend follows the tear (#397); 0: the entity's own
     torn: u32,
-    // The composite's tear, this frame: mode_params, then mix, post time
-    // and the mask target's size in pixels
-    tear_params: vec4<f32>,
-    tear_mix: f32,
-    tear_time: f32,
+    // The frame's tear (#746): amount, scale, iris, post time
+    // (`postprocess::tear_params`), then the mask target's size in pixels
+    tear: vec4<f32>,
     size: vec2<f32>,
+    _pad: vec2<f32>,
 };
 
 // The blend to write at pixel `frag_xy`: the draw's, scaled by what the
 // veil leaves (`covered`) and, for a torn draw, by the tear there. The
-// mask's pixel centres give the same uv as the composite's at any render
-// scale, so the tear lands where the composite draws it.
+// mask's pixel centres give the same uv as the display's at any render
+// scale, so the tear lands where a style following it shows.
 fn written_blend(frag_xy: vec2<f32>, covered: f32) -> u32 {
     var blend = f32(draw.blend) * (1.0 - covered);
     if draw.torn != 0u {
         let uv = frag_xy / draw.size;
-        blend *= tear_mask_at(uv, draw.size.x / draw.size.y, draw.tear_mix, draw.tear_params, draw.tear_time);
+        blend *= tear_mask_at(uv, draw.size.x / draw.size.y, draw.tear);
     }
     return u32(round(blend));
 }

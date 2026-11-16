@@ -40,6 +40,9 @@ pub(crate) struct WaterRenderer {
     contact_motion: std::collections::HashMap<flint_core::EntityId, ContactMotion>,
     /// The velocities the host gave this frame (`FrameInputs::contact_velocities`).
     contact_velocities: std::collections::HashMap<flint_core::EntityId, [f32; 3]>,
+    /// The host's tint over the component's this frame
+    /// (`FrameInputs::ocean_tint`, #746).
+    frame_tint: Option<crate::ocean_pipeline::OceanTint>,
     /// Hulls already warned about being left out, by name.
     contact_warned: std::cell::RefCell<std::collections::BTreeSet<String>>,
     /// Grab pass (refraction): opaque scene color+depth snapshots, at the
@@ -145,9 +148,6 @@ pub(crate) struct WaterFrame<'a> {
     /// The sky's colours, which the water reflects when the sky is active.
     pub(crate) sky: &'a SkyParams,
     pub(crate) sky_active: bool,
-    /// The reality tear's mode and mix, from the post-process config.
-    pub(crate) render_mode: u32,
-    pub(crate) mode_mix: f32,
 }
 
 impl WaterRenderer {
@@ -236,6 +236,7 @@ impl WaterRenderer {
             contacts: Vec::new(),
             contact_motion: std::collections::HashMap::new(),
             contact_velocities: std::collections::HashMap::new(),
+            frame_tint: None,
             contact_warned: Default::default(),
             grab: OceanGrab::default(),
             grab_dummy_bind_group: None,
@@ -525,6 +526,12 @@ impl WaterRenderer {
         self.contact_velocities.extend(given.iter().copied());
     }
 
+    /// The host's tint for this frame, over the `ocean` component's
+    /// (`FrameInputs::ocean_tint`, #746); `None` draws the component's.
+    pub(crate) fn set_frame_tint(&mut self, tint: Option<crate::ocean_pipeline::OceanTint>) {
+        self.frame_tint = tint;
+    }
+
     /// Every `ocean_contact` entity, as drawn (#749): its world matrix gives
     /// the centre, heading and scaled extents, so a hull under a parent or
     /// posed with `rotation_quat` (as physics writes one) foams where it is.
@@ -649,6 +656,7 @@ impl WaterRenderer {
                 (camera_pos[0] / q).floor() * q,
                 (camera_pos[2] / q).floor() * q,
             ];
+            let tint = self.frame_tint.unwrap_or(v.tint).to_gpu();
             let uniforms = crate::ocean_pipeline::OceanUniformsGpu {
                 waves: spectrum.to_gpu(frame.time),
                 deep_color: v.deep_color,
@@ -712,11 +720,11 @@ impl WaterRenderer {
                     v.foam_glow_color[2],
                     v.foam_glow,
                 ],
-                // Reality tear rides the shared post-process fields: the
-                // remap happens in-shader AFTER a script's palette lands in
-                // these uniforms, so it can never race it.
-                mode: frame.render_mode,
-                mode_mix: frame.mode_mix,
+                // The tint (#746): the remap happens in-shader AFTER a
+                // script's palette lands in these uniforms, so it can never
+                // race it
+                tint: tint.0,
+                tint_flags: tint.1,
                 // Shoreline foam reads the grab pass's depth: off
                 // without it, whatever the component says.
                 shore_foam_width: if self.grab_this_frame {
@@ -729,6 +737,11 @@ impl WaterRenderer {
                 shore_foam_speed: v.shore_foam_speed,
                 shore_foam_reach: v.shore_foam_reach,
                 _pad_shore: [0.0; 2],
+                tint_deep: tint.2[0],
+                tint_shallow: tint.2[1],
+                tint_sss: tint.2[2],
+                tint_foam: tint.2[3],
+                tint_sky: tint.2[4],
             };
             queue.write_buffer(ubuf, 0, bytemuck::cast_slice(&[uniforms]));
 
