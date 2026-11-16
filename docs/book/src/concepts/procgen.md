@@ -301,7 +301,7 @@ What a prop costs:
 
 At load the player builds every lineage and fills every ring, so the first frame finds them full: 40 oaks on 5 lineages take about 500 ms. `--procgen-defer` shows a placeholder under each lineage's name instead and does the same work on the queue, one lineage a frame and then the poses.
 
-In play, each frame fills the emptiest rings first with whatever the asset queue left of the frame budget (`runtime_max_generation_ms_per_frame`, 4 ms by default). A pose of the oak takes about 1.2 ms in a release build, and a grove needs `props / step` of them a second, so 40 oaks at a 0.5 s step need about 1.3 a frame at 60 fps. Poses have their own cache, apart from the meshes: a grove makes 80 a second, and they'd push the meshes out. It keeps 8 MB, so coming back to a scene doesn't regenerate them. A pose can't be cut short, so the budget is a soft cap: the fill stops when the slowest recent pose wouldn't fit, and a pose slower than that still runs over, on a frame or two a minute. A debug build is far slower, so it gets one pose a frame and overruns the budget.
+In play, each frame fills the emptiest rings first with whatever the asset queue left of the frame budget (`runtime_max_generation_ms_per_frame`, 4 ms by default). A pose of the oak takes about 1.2 ms in a release build, and a grove needs `props / step` of them a second, so 40 oaks at a 0.5 s step need about 1.3 a frame at 60 fps. Poses have their own cache, apart from the meshes: a grove makes 80 a second, and they'd push the meshes out. It keeps 8 MB, so coming back to a scene doesn't regenerate them. A pose can't be cut short, so the budget is a soft cap: the fill stops when a pose wouldn't fit, going by the last 32 poses, of which it takes the time three in four came in under. A slower pose still runs over, on a few frames in a hundred, more on a busy machine (the cost table below has the numbers). It doesn't go by the slowest pose: one the OS preempts takes 10 to 40 ms, and an estimate that counted it cut the fill to a pose a frame for seconds after, which 60 trees can't live on (#532). A debug build is far slower, so it gets one pose a frame and overruns the budget.
 
 A prop whose spec can't live, or whose component has a bad field, stays a still model, with a warning saying why. A catalog entry for the same name wins, as it does anywhere.
 
@@ -698,17 +698,28 @@ python tools/living-strip/living_strip.py --player target/release/flint-player
 
 Two runs write the same bytes on the same machine and driver.
 
-**What it costs.** 1920 x 1080 on an RTX 5070 laptop. Nothing is culled, so each row costs the same wherever the camera looks: the grove draws its 1.84 M triangles from any spot, 30 trees in the frame or fewer. The 60 is the grove plus 22 more copies, which isn't committed.
+**What it costs.** 1920 x 1080 on an RTX 5070 laptop with 24 threads, `flint-player --exit-after`, standing at the start. Nothing is culled, so each row costs the same wherever the camera looks: the grove draws its 1.84 M triangles from any spot, 30 trees in the frame or fewer. The 60 is `demo/woozy_grove_60.scene.toml`, the grove plus 22 more trees further in (`python tools/living-strip/grove_60.py` writes it). The load column says what else the machine was doing, since that decides the last two columns more than the trees do:
 
-| Living props | Run | Display rate | Uncapped | Blending and upload | Frames missing a pose |
-|--------------|-----|--------------|----------|---------------------|-----------------------|
-| 38 | Standing, 30 s | 59.9 to 60.0 fps | 138 to 155 fps | 1.2 to 1.7 ms | 0 |
-| 38 | The scripted walk, 48 s | 60.0 fps | | 1.3 ms | 0 |
-| 38 | Standing, 5 min | 60.0 fps | | 1.3 ms | 0 |
-| 60 | Standing, 30 s | 60.0 fps | 133 to 138 fps | 2.0 to 2.5 ms | 0 |
-| 60 | Standing, 5 min | 60.0 fps | | 2.3 ms | 0 |
+- **Idle:** nothing else running. The first rows (#219) were taken this way, on a 60 Hz display.
+- **Ordinary:** browsers, an editor and their background services, a few percent of the CPU. A 240 Hz panel, so the frame rate is the grove's own.
+- **Heavy:** a cold `cargo build --release --workspace` beside the player, every core busy for the whole run.
 
-Read the last column as well as the frame rate. A prop short of a pose keeps its last bones for that frame and the frame still arrives on time, so a grove can report 60 fps while its trees stutter. That's what happens on a machine with far more work than cores: 48 busy processes on 24 threads leave nearly every frame short of a pose while they run, at 59 fps. With 24 busy processes, none are short.
+| Living props | Run | Load | Frame rate | Blending and upload | Frames missing a pose | Kept their last bones |
+|--------------|-----|------|------------|---------------------|-----------------------|-----------------------|
+| 38 | Standing, 30 s | Idle | 59.9 to 60.0 fps (138 to 155 uncapped) | 1.2 to 1.7 ms | 0 | |
+| 38 | The scripted walk, 48 s | Idle | 60.0 fps | 1.3 ms | 0 | |
+| 38 | Standing, 5 min | Idle | 60.0 fps | 1.3 ms | 0 | |
+| 60 | Standing, 30 s | Idle | 60.0 fps (133 to 138 uncapped) | 2.0 to 2.5 ms | 0 | |
+| 60 | Standing, 5 min | Idle | 60.0 fps | 2.3 ms | 0 | |
+| 38 | Standing, 60 s | Ordinary | 105 fps | 2.4 ms | 0 | 0 |
+| 38, with grass | Standing, 60 s, twice | Ordinary | 90 to 105 fps | 2.6 to 2.7 ms | 0 | 0 |
+| 60 | Standing, 60 s, twice | Ordinary | 60 to 79 fps | 4.0 to 5.2 ms | 0 | 0 to 9 |
+| 60 | Standing, 60 s | Heavy | 52 fps | 5.9 ms | 0 | 7,565, 0.9% of blends |
+| 60, before #532 | Standing, 60 s | Heavy | 69 fps | 1.8 ms | 3,559 of 4,130 | 892,362, 86% of blends |
+
+Read the last two columns as well as the frame rate. A prop short of a pose keeps its last bones for that frame and the frame still arrives on time, so a grove can report 60 fps while its trees stutter. Frames missing a pose counts the frames where some prop's ring lacked a pose its clock reads. Kept their last bones counts each prop and echo that held for want of one, per frame; under heavy load it's the echoes, which read further along the clock, that go short.
+
+The last row is why the fill no longer goes by the slowest recent pose. Under heavy load the OS preempts a pose every so often, and each one set the estimate over the budget, after which the fill made one pose a frame. The grove made 5,165 of the 8,600 poses it needed, and its trees held still through most frames while the counter read 69 fps. Going by three poses in four, it makes them, and the frame rate falls instead, because blending poses that arrive costs more than keeping bones that don't. It spends 3.2 ms of the 4 ms budget a frame on average and goes over it on a quarter of the frames, its worst at 8.7 ms. With ordinary load it goes over on 2 to 23% of frames, the most where the machine was busiest.
 
 ## `flint gen`
 

@@ -55,11 +55,78 @@ pub const POSE_CACHE_BYTES: usize = 8 * 1024 * 1024;
 /// with making new ones. See [`LivingProp::rehold_span`].
 const REHOLD_PASS_REST: u8 = 2;
 
-/// How fast the pose estimate forgets its slowest pose, each pose. Poses vary
-/// by a factor of two, so an estimate that forgets within a frame or two lets a
-/// slow one overrun the budget. At this rate it takes about a second of a grove's
-/// poses to halve.
+/// How much a frame that turned every pose away takes off the estimate it turned
+/// them away by, until a pose is made and the window speaks again. See
+/// [`PoseTimes::refused`].
 const POSE_ESTIMATE_DECAY: f64 = 0.99;
+
+/// How many of the latest poses the estimate reads.
+const POSE_TIMES: usize = 32;
+
+/// Which of them, slowest first: the 9th slowest of 32, so the estimate is the
+/// time three poses in four come in under. Poses vary by a factor of two, so
+/// starting one with less than its slowest left can overrun the budget by up to
+/// a pose (about half a millisecond of a grove's), which nothing notices. What it
+/// buys is that a pose the OS preempts (10 to 40 ms) doesn't count: the slowest
+/// pose lately, which this used to be, put the estimate over the budget for
+/// seconds at a time, a pose a frame, and 60 trees ran dry at 60 fps (#532).
+const POSE_TIMES_SLOWER_IGNORED: usize = 8;
+
+/// How long the latest poses took, for guessing how long the next will.
+#[derive(Debug, Clone)]
+struct PoseTimes {
+    /// Milliseconds, oldest overwritten first once there are [`POSE_TIMES`].
+    times: Vec<f64>,
+    next: usize,
+    /// What turning poses away has taken off the estimate since the last pose.
+    /// Only making a pose teaches the window anything, so a window just under
+    /// the budget would be turned away by every frame after it: finding that out
+    /// takes some of the frame. This lets a later frame try.
+    discount: f64,
+}
+
+impl Default for PoseTimes {
+    fn default() -> Self {
+        Self {
+            times: Vec::with_capacity(POSE_TIMES),
+            next: 0,
+            discount: 1.0,
+        }
+    }
+}
+
+impl PoseTimes {
+    fn record(&mut self, ms: f64) {
+        if self.times.len() < POSE_TIMES {
+            self.times.push(ms);
+        } else {
+            self.times[self.next] = ms;
+        }
+        self.next = (self.next + 1) % POSE_TIMES;
+        self.discount = 1.0;
+    }
+
+    /// A frame made nothing because the estimate didn't fit.
+    fn refused(&mut self) {
+        self.discount *= POSE_ESTIMATE_DECAY;
+    }
+
+    /// How long the next pose is likely to take, or 0 before any has been made.
+    fn estimate_ms(&self) -> f64 {
+        if self.times.is_empty() {
+            return 0.0;
+        }
+        let mut sorted = self.times.clone();
+        sorted.sort_by(f64::total_cmp);
+        // A window that isn't full yet ignores its share of the slow ones.
+        let ignored = POSE_TIMES_SLOWER_IGNORED * sorted.len() / POSE_TIMES;
+        sorted[sorted.len() - 1 - ignored] * self.discount
+    }
+
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
 
 /// A leaf part's tint as no tint step can be: one that has to be sent again.
 const TINT_UNSENT: i32 = i32::MIN;
@@ -1074,8 +1141,8 @@ pub struct LivingProps {
     cache: PoseCache,
     /// The clock every prop reads, in seconds. It stops when the game pauses.
     time: f64,
-    /// How long the next pose is likely to take: the slowest one lately.
-    pose_estimate_ms: f64,
+    /// How long the latest poses took, to guess how long the next will.
+    pose_times: PoseTimes,
     stats: LivingStats,
     defaults: LivingDefaults,
     /// Whether any ring may hold poses at an old variance.
@@ -1098,7 +1165,7 @@ impl LivingProps {
             species: Vec::new(),
             cache: PoseCache::new(pose_cache_bytes),
             time: 0.0,
-            pose_estimate_ms: 0.0,
+            pose_times: PoseTimes::default(),
             stats: LivingStats::default(),
             defaults: LivingDefaults::default(),
             reholding: false,
@@ -1628,7 +1695,7 @@ impl LivingProps {
             species: self.species.clone(),
             cache: PoseCache::new(self.cache.max_bytes),
             time: self.time,
-            pose_estimate_ms: self.pose_estimate_ms,
+            pose_times: self.pose_times.clone(),
             stats: LivingStats::default(),
             defaults: self.defaults.clone(),
             reholding: self.reholding,
@@ -1693,7 +1760,7 @@ impl LivingProps {
                 break;
             }
         }
-        self.pose_estimate_ms = 0.0;
+        self.pose_times.clear();
     }
 
     /// Move every prop's clock on by exactly `beats` of its own steps, however
@@ -1973,7 +2040,7 @@ impl LivingProps {
             done.push(built);
         }
         while self.fill_one(registry).is_some() {}
-        self.pose_estimate_ms = 0.0;
+        self.pose_times.clear();
         // What load made wasn't made in play: the report is about the frames.
         self.stats = LivingStats::default();
         done
@@ -2044,14 +2111,11 @@ impl LivingProps {
         let mut made = false;
         loop {
             let used = start.elapsed().as_secs_f64() * 1000.0;
-            let estimate = self.pose_estimate_ms;
+            let estimate = self.pose_times.estimate_ms();
             let a_later_frame_fits_it = estimate > 0.0 && estimate <= budget_ms;
             if used + estimate > budget_ms && (made || budget_ms <= 0.0 || a_later_frame_fits_it) {
-                // Only making a pose teaches the estimate anything, so one that came
-                // down to just under the budget would be turned away by every frame
-                // after it, and the rings would run dry with the budget unspent.
                 if !made {
-                    self.pose_estimate_ms *= POSE_ESTIMATE_DECAY;
+                    self.pose_times.refused();
                 }
                 return made;
             }
@@ -2062,7 +2126,7 @@ impl LivingProps {
             if generated {
                 made = true;
                 let took = began.elapsed().as_secs_f64() * 1000.0;
-                self.pose_estimate_ms = (self.pose_estimate_ms * POSE_ESTIMATE_DECAY).max(took);
+                self.pose_times.record(took);
             }
         }
     }
@@ -3191,20 +3255,67 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
         assert_eq!(resolver.living_props().stats().pose_failures, 0);
     }
 
-    /// All of it at once with a pose a frame to do it in: six props at 0.12 s a step
-    /// want 50 poses a second out of 60, under a stagger that reaches far, a new
-    /// variance every frame, and echoes that want poses behind the props. There's
-    /// only room if what's being read wins every time.
-    /// A stall on a busy machine leaves the estimate over the budget, and it comes
-    /// down a little with each pose until it's just under. Exactly at the budget,
-    /// no frame can ever fit a pose, since finding that out takes some of the frame.
+    /// A pose the OS preempts takes 10 to 40 ms. Read as the slowest lately, one
+    /// put the estimate over a 4 ms budget, the fill fell to a pose a frame, and
+    /// 60 trees ran dry at 60 fps for seconds after each (#532). The window reads
+    /// past a quarter of its slowest, so it takes a run of slow poses to move it,
+    /// which is what a machine that has really slowed down makes.
+    #[test]
+    fn a_preempted_pose_does_not_set_the_estimate() {
+        let mut times = PoseTimes::default();
+        assert_eq!(times.estimate_ms(), 0.0, "nothing made, nothing to go on");
+        for n in 0..POSE_TIMES {
+            times.record(0.4 + 0.01 * (n % 10) as f64);
+            if n == 5 || n == 20 {
+                times.record(37.9);
+            }
+        }
+        assert!(times.estimate_ms() < 0.5, "{}", times.estimate_ms());
+
+        // The same stalls before the window had filled.
+        let mut early = PoseTimes::default();
+        for ms in [0.5, 30.0, 0.5, 0.5] {
+            early.record(ms);
+        }
+        assert_eq!(early.estimate_ms(), 0.5);
+
+        // A machine that is slower for good gets an estimate that says so within
+        // a window, and a stall rolls out of it as soon.
+        for _ in 0..POSE_TIMES - POSE_TIMES_SLOWER_IGNORED {
+            times.record(3.0);
+        }
+        assert_eq!(times.estimate_ms(), 3.0);
+        for _ in 0..POSE_TIMES {
+            times.record(0.45);
+        }
+        assert_eq!(times.estimate_ms(), 0.45);
+    }
+
+    /// A frame that turns poses away takes a little off the estimate each time,
+    /// and the next pose made puts it back to what the window says.
+    #[test]
+    fn turning_poses_away_lowers_the_estimate_until_one_is_made() {
+        let mut times = PoseTimes::default();
+        times.record(4.0);
+        times.refused();
+        times.refused();
+        assert!((times.estimate_ms() - 4.0 * POSE_ESTIMATE_DECAY.powi(2)).abs() < 1e-12);
+        times.record(4.0);
+        assert_eq!(times.estimate_ms(), 4.0);
+    }
+
+    /// A window of poses that all took the whole budget: exactly at the budget, no
+    /// frame can ever fit a pose, since finding that out takes some of the frame.
     /// The rings ran dry like this at 0.25 ms of a 4 ms budget, for as long as the
     /// game went on, at a steady 60 fps (#219). It takes a grove's worth of props:
     /// with a few, stepping their clocks fits inside the timer's resolution, the
     /// frame reads as having used nothing, and an estimate at the budget still fits.
+    /// A step of a second asks 256 poses a second of them, which a debug build makes
+    /// with room to spare; at 0.1 s it asked ten times that, and failed in debug
+    /// builds on any machine, whatever the estimate did.
     #[test]
     fn an_estimate_just_under_the_budget_does_not_stop_the_poses() {
-        let mut resolver = resolver_with(&sapling("step = 0.1"));
+        let mut resolver = resolver_with(&sapling("step = 1.0"));
         for n in 0..256u64 {
             let name = format!("oak_{n}");
             resolver.add_living_prop(request(n + 1, &name)).unwrap();
@@ -3212,7 +3323,9 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
         resolver.make_living_now();
         resolver.frame_budget_for_test(4.0);
         let made_before = resolver.living_props().stats().poses_made;
-        resolver.living_props_mut().pose_estimate_ms = 4.0;
+        for _ in 0..POSE_TIMES {
+            resolver.living_props_mut().pose_times.record(4.0);
+        }
 
         run(&mut resolver, 4.0, 1.0 / 60.0);
 
@@ -3227,6 +3340,10 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
         }
     }
 
+    /// All of it at once with a pose a frame to do it in: six props at 0.12 s a step
+    /// want 50 poses a second out of 60, under a stagger that reaches far, a new
+    /// variance every frame, and echoes that want poses behind the props. There's
+    /// only room if what's being read wins every time.
     #[test]
     fn a_pose_being_read_beats_every_other_use_of_a_tight_budget() {
         let mut resolver = resolver_with(&sapling(
