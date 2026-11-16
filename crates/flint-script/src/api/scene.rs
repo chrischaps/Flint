@@ -44,6 +44,14 @@ pub(crate) fn register(api: &mut ScriptApi) {
     }
 
     m.func(
+        "module_enabled",
+        "Whether a module an optional feature owns (living, wooze, debug, conducted) can be called in this scene, to ask before calling it.",
+    )
+    .arg("module", Str)
+    .returns(Bool, "true where the module's functions run")
+    .run(|call, (module,)| call.ctx_ref().module_enabled(&module));
+
+    m.func(
         "complete_transition",
         "Advance the scene transition to its next phase (the script's fade is done).",
     )

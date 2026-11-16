@@ -263,8 +263,10 @@ impl HeadlessGame {
         }
         core.procgen_resolver
             .step_living_now(0.0, field.as_ref().map(|field| (field, 0.0)));
-        core.subsystems
-            .push(Box::new(LivingSubsystem::for_capture(field, moment)));
+        let mut living = LivingSubsystem::for_capture(field, moment);
+        // For on_init's reads of the field (#505), as the player's scene start
+        living.publish_reading(&mut core.script, 0.0);
+        core.subsystems.push(Box::new(living));
         core.enable_script_modules();
     }
 

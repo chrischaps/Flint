@@ -252,7 +252,7 @@ fn the_living_modules_are_listed_with_when_they_are_enabled() {
             .count()
     };
     assert_eq!(count("living"), 7);
-    assert_eq!(count("wooze"), 6);
+    assert_eq!(count("wooze"), 8, "six changes and two reads (#505)");
     assert_eq!(count("debug"), 5);
     for module in ["living", "wooze", "debug"] {
         assert!(

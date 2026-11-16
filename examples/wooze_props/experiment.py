@@ -140,8 +140,8 @@ def motion(gif: Path, crops: dict) -> dict:
     return found
 
 
-# The bob (#251's question): the showcase creatures' idle bobs and sways on the wall
-# clock. Scripts don't run under flint render, so this one plays in flint-player, one
+# The bob (#251's question): the showcase creatures' idle bobs and sways, on the wall
+# clock until #505 and on the wooze field's beat since. Scripts don't run under flint render, so this one plays in flint-player, one
 # frame per 1/12 s of game time, from a camera low over the beetles (no player, so
 # the scene's [camera] is the view). Both beetles run examples/scripts/beetle_idle.rhai;
 # the left one (on screen too) also has shallow wooze. A run without the scripts is
@@ -197,7 +197,7 @@ def play(scene: Path, gif: Path) -> None:
 def bob(watch: bool) -> None:
     if not PLAYER.exists():
         raise SystemExit(f"build it first: cargo build --release -p flint-player ({PLAYER})")
-    print("bob: both beetles bob and sway on the wall clock; the left one also has shallow wooze")
+    print("bob: both beetles bob and sway on the wooze beat (#505); the left one also has shallow wooze")
     runs = [("bob", True, True, watch), ("bob_measure", True, False, False),
             ("bob_control", False, False, False)]
     for name, scripts, boil, keep in runs:
