@@ -379,7 +379,7 @@ Standalone player binary that wires together runtime, physics, audio, animation,
 - Optional asset catalog integration for runtime name-based asset resolution
 - Music-session lifecycle: starts a `flint-rhythm` `ChartSession` on the shared Kira manager and hands the gamepad to `flint-input-capture` while a `music_session` component is active
 - Summonable debug overlay (F3 scene panels, F4 Rendering & Effects, Music Guide and Manifest Map strips) behind the `debug-hud` feature
-- Has its own `--msaa` flag; `flint play` (the CLI wrapper) does not expose it
+- One launch (`player_args.rs`, #705): `flint_player::PlayerArgs` is every flag, `flint_player::launch` turns them into a running `PlayerApp`, and both `flint-player` (which adds `--bundle`) and `flint play` call it, so the two take the same flags and play a scene the same
 
 ### flint-cli
 

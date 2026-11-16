@@ -274,13 +274,8 @@ mod web {
         // start: the scene's user styles register later, at init (#274)
         app.launch.style_specs = args.styles;
         app.input.touch_controls_mut().set_mode(args.touch);
-        app.core.clock.frame_step = args.frame_step;
-        if let Some(seed) = args
-            .seed
-            .or(args.frame_step.map(|_| flint_player::SCRIPT_SEED))
-        {
-            app.core.script.seed_random(seed);
-        }
+        // The desktop's --frame-step and --seed rule (#705)
+        app.step_frames(args.frame_step, args.seed);
         app.launch.hold_at = args.hold_at;
         app.set_frame_rate(args.fps);
         if let Some(gpu) = args.perf {
