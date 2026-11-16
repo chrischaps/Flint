@@ -109,7 +109,9 @@ pub fn quat_to_euler_xyz(q: [f32; 4]) -> [f32; 3] {
 }
 
 /// Whether a `model` component names a mesh that code uploads at runtime
-/// (`runtime = true`) rather than a file on disk.
+/// (`runtime = true`) rather than a file on disk. For a table in hand (the
+/// CLI's checks); a runtime reader asks `world.view(id, comp::MODEL)
+/// .bool("runtime", false)`, which reports a wrong type.
 pub fn is_runtime_model(model: &toml::Value) -> bool {
     model
         .get("runtime")
@@ -324,18 +326,12 @@ pub fn load_models_from_world(
         .all_entities()
         .iter()
         .filter_map(|e| {
-            let components = world.get_components(e.id);
-            let model_asset = components
-                .and_then(|c| c.get(comp::MODEL).cloned())
-                .filter(|model| !is_runtime_model(model))
-                .and_then(|model| {
-                    model
-                        .get("asset")
-                        .and_then(|v| v.as_str().map(String::from))
-                });
-            let has_animator = components
-                .map(|c| c.get(comp::ANIMATOR).is_some())
-                .unwrap_or(false);
+            // Through the typed view (ADR 0115): a wrong type is reported once
+            let model = world.view(e.id, comp::MODEL);
+            let model_asset = (!model.bool("runtime", false))
+                .then(|| model.opt_str("asset").map(String::from))
+                .flatten();
+            let has_animator = world.get_component(e.id, comp::ANIMATOR).is_some();
             model_asset.map(|asset| (e.id, e.name.clone(), asset, has_animator))
         })
         .collect();
@@ -580,35 +576,26 @@ pub fn load_textures_from_world(
     let mut loaded = std::collections::HashSet::new();
 
     for entity in world.all_entities() {
-        let components = world.get_components(entity.id);
         let mut tex_names = Vec::new();
 
-        if let Some(comps) = &components {
-            if let Some(material) = comps.get(comp::MATERIAL) {
-                if let Some(tex) = material.get("texture").and_then(|v| v.as_str()) {
-                    tex_names.push(tex.to_string());
-                }
-            }
-            if let Some(sprite) = comps.get(comp::SPRITE) {
-                if let Some(tex) = sprite.get("texture").and_then(|v| v.as_str()) {
-                    if !tex.is_empty() {
-                        tex_names.push(tex.to_string());
-                    }
-                }
-            }
-            // Fonts ui_text names: built into glyph atlases and uploaded
-            // here, so extraction only lays text out (ADR 0113)
-            if let Some(ui_text) = comps.get(comp::UI_TEXT) {
-                if let Some(font) = ui_text.get("font").and_then(|v| v.as_str()) {
-                    if !font.is_empty() {
-                        let scope = flint_core::project::AssetScope::new(
-                            config.project.clone(),
-                            config.scene_dir.clone(),
-                        );
-                        renderer.load_ui_font(device, queue, font, &scope);
-                    }
-                }
-            }
+        // Through the typed view (ADR 0115): a name that is no string is
+        // reported once, as the frame's own reads of it are
+        if let Some(tex) = world.view(entity.id, comp::MATERIAL).opt_str("texture") {
+            tex_names.push(tex.to_string());
+        }
+        let sprite_texture = world.view(entity.id, comp::SPRITE).str("texture", "");
+        if !sprite_texture.is_empty() {
+            tex_names.push(sprite_texture.to_string());
+        }
+        // Fonts ui_text names: built into glyph atlases and uploaded
+        // here, so extraction only lays text out (ADR 0113)
+        let font = world.view(entity.id, comp::UI_TEXT).str("font", "");
+        if !font.is_empty() {
+            let scope = flint_core::project::AssetScope::new(
+                config.project.clone(),
+                config.scene_dir.clone(),
+            );
+            renderer.load_ui_font(device, queue, font, &scope);
         }
 
         for tex_name in tex_names {

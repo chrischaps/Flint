@@ -90,19 +90,11 @@ pub(crate) fn names_a_spec_would_make(
 ) -> Vec<String> {
     let mut asked: BTreeSet<String> = BTreeSet::new();
     for entity in world.all_entities() {
-        let Some(comps) = world.get_components(entity.id) else {
-            continue;
-        };
-        let model = comps
-            .get(comp::MODEL)
-            .and_then(|m| m.get("asset"))
-            .and_then(|v| v.as_str());
-        let textures = [comp::MATERIAL, comp::SPRITE].into_iter().filter_map(|c| {
-            comps
-                .get(c)
-                .and_then(|t| t.get("texture"))
-                .and_then(|v| v.as_str())
-        });
+        // Through the typed view (ADR 0115): a wrong type is reported once
+        let model = world.view(entity.id, comp::MODEL).opt_str("asset");
+        let textures = [comp::MATERIAL, comp::SPRITE]
+            .into_iter()
+            .filter_map(|c| world.view(entity.id, c).opt_str("texture"));
         asked.extend(model.into_iter().chain(textures).map(String::from));
     }
     if asked.is_empty() {

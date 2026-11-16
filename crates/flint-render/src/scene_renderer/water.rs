@@ -372,7 +372,9 @@ impl WaterRenderer {
             if needs_regen {
                 self.spectrum = Some(flint_geometry::ocean::WaveSpectrum::generate(&params));
             }
-            self.visuals = crate::ocean_pipeline::OceanVisuals::from_component(&ocean_comp);
+            self.visuals = crate::ocean_pipeline::OceanVisuals::from_component(
+                &world.view(entity_id, flint_geometry::components::OCEAN),
+            );
             self.ocean_active = has_pipeline;
             break; // one ocean per scene
         }
@@ -449,7 +451,9 @@ impl WaterRenderer {
             {
                 continue;
             }
-            let look = crate::water_body::WaterBodyLook::from_component(value);
+            let look = crate::water_body::WaterBodyLook::from_component(
+                &world.view(entity_id, flint_geometry::components::WATER_BODY),
+            );
             let body = crate::water_body::mesh_from_component(value)
                 .and_then(|mesh| self.build_body(device, pipeline, &name, &mesh, look));
             let body = match body {

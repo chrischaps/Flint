@@ -301,7 +301,7 @@ In the other direction, scripts call the native functions the extension register
 
 ### Reading components
 
-Components are TOML tables, so reading one by hand is a chain of `get`, a type test and a default, and each link fails in silence: `as_float` reads the integer `8` as nothing, and a misspelled option falls through to whatever the `match` ends with. Read through a **view** instead ([ADR 0115](https://github.com/chrischaps/Flint/blob/main/docs/adr/0115-scene-diagnostics-and-complete-schemas.md)), as the engine's physics and audio do:
+Components are TOML tables, so reading one by hand is a chain of `get`, a type test and a default, and each link fails in silence: `as_float` reads the integer `8` as nothing, and a misspelled option falls through to whatever the `match` ends with. Read through a **view** instead ([ADR 0115](https://github.com/chrischaps/Flint/blob/main/docs/adr/0115-scene-diagnostics-and-complete-schemas.md)), as the engine's physics, audio, animation, renderer and script system do:
 
 ```rust
 use flint_core::components as comp;
@@ -326,6 +326,7 @@ let hp = ctx.world.view(id, "health").i64("max", 100);
 | `vec3(field, default)` | `[x, y, z]`, or a table with any of `x`, `y`, `z` | `opt_vec3` |
 | `vec4(field, default)` | `[a, b, c, d]` | `opt_vec4` |
 | `color(field, default)` | `[r, g, b]` (alpha 1) or `[r, g, b, a]` | `opt_color` |
+| `tables(field)` | an array of tables; each entry is a view of its own, reported as `field[i].key` | (none: missing is no entries) |
 
 A field that isn't written reads as the default, and so does every field of a component the entity doesn't have (`exists()` says which); neither is reported. A value of the wrong type, or a string that is none of a `choice`'s values, reads as the default too, and is **reported once** for that entity, component and field: a warning in the log with the entity's name, what was expected and, for a choice, the allowed values and the nearest one.
 

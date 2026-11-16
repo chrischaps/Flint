@@ -27,7 +27,6 @@ use std::path::Path;
 
 use flint_core::components as comp;
 use flint_core::project::Project;
-use flint_core::toml_util::toml_vec3;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_procgen::{
@@ -145,26 +144,21 @@ pub fn collect_requests(
     };
 
     for entity in world.all_entities() {
-        let Some(comps) = world.get_components(entity.id) else {
+        if world.get_components(entity.id).is_none() {
             continue;
-        };
-        let position = comps
-            .get(comp::TRANSFORM)
-            .and_then(|t| t.get("position").and_then(toml_vec3))
-            .unwrap_or([0.0; 3]);
-        if let Some(model) = comps.get(comp::MODEL) {
-            if !model_loader::is_runtime_model(model) {
-                if let Some(name) = model.get("asset").and_then(|v| v.as_str()) {
-                    want(name, AssetKind::Model, position);
-                }
+        }
+        // Through the typed view (ADR 0115): a wrong type is reported once
+        let position = world
+            .view(entity.id, comp::TRANSFORM)
+            .vec3("position", [0.0; 3]);
+        let model = world.view(entity.id, comp::MODEL);
+        if !model.bool("runtime", false) {
+            if let Some(name) = model.opt_str("asset") {
+                want(name, AssetKind::Model, position);
             }
         }
         for comp_name in [comp::MATERIAL, comp::SPRITE] {
-            if let Some(tex) = comps
-                .get(comp_name)
-                .and_then(|c| c.get("texture"))
-                .and_then(|v| v.as_str())
-            {
+            if let Some(tex) = world.view(entity.id, comp_name).opt_str("texture") {
                 want(tex, AssetKind::Texture, position);
             }
         }

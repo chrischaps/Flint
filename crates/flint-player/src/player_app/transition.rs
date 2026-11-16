@@ -237,8 +237,7 @@ impl PlayerApp {
         let sources: Vec<(flint_core::EntityId, String)> = spawned_ids
             .iter()
             .filter_map(|&id| {
-                let source = self.core.world.get_components(id)?.get(comp::SCRIPT)?;
-                let source = source.get("source")?.as_str()?;
+                let source = self.core.world.view(id, comp::SCRIPT).opt_str("source")?;
                 (!source.is_empty()).then(|| (id, source.to_string()))
             })
             .collect();

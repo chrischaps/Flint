@@ -105,41 +105,8 @@ impl AnimLayer {
         toml::Value::Table(t)
     }
 
-    /// Parse from one `animator.layers` entry. Non-table values yield an
-    /// inactive slot so indices stay stable.
-    pub fn from_toml(v: &toml::Value) -> Self {
-        use flint_core::toml_util::{toml_f32, toml_f64};
-        let Some(t) = v.as_table() else {
-            return Self::default();
-        };
-        let weight = t.get("weight").and_then(toml_f32).unwrap_or(1.0);
-        Self {
-            clip: t
-                .get("clip")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            weight,
-            fade_target: t.get("fade_target").and_then(toml_f32).unwrap_or(weight),
-            fade_duration: t
-                .get("fade_duration")
-                .and_then(toml_f32)
-                .unwrap_or(0.0)
-                .max(0.0),
-            mode: t
-                .get("mode")
-                .and_then(|v| v.as_str())
-                .map(LayerMode::parse)
-                .unwrap_or_default(),
-            mask: t
-                .get("mask")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            time: 0.0,
-            speed: t.get("speed").and_then(toml_f64).unwrap_or(1.0),
-        }
-    }
+    // Read from one `animator.layers` entry by `crate::animator::layer`,
+    // through the typed view (ADR 0115).
 }
 
 /// Per-entity clip playback state shared by skeletal and node animation.

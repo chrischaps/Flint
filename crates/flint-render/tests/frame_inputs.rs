@@ -231,6 +231,85 @@ fn a_bound_scene_draws_its_terrain_masked_and_the_next_forgets_it() {
     );
 }
 
+/// #802: the renderer reads sprites, their 2D UI, materials and the terrain
+/// through the typed view, so a wrong type or an unknown choice is reported
+/// once by entity, component and field, however many frames read it.
+#[test]
+fn a_mistake_in_a_sprite_its_ui_a_material_or_the_terrain_is_said_once() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let (mut world, _) = terrain_world();
+    let spawn = |world: &mut FlintWorld, name: &str, text: &str| {
+        let id = world.spawn(name).unwrap();
+        let table: toml::Table = toml::from_str(text).unwrap();
+        for (component, data) in table {
+            world.set_component(id, &component, data).unwrap();
+        }
+    };
+    let ground = world.get_id("ground").unwrap();
+    world
+        .set_field(ground, "terrain", "texture_tile", "lots".into())
+        .unwrap();
+    spawn(
+        &mut world,
+        "coin",
+        "[transform]\nposition = [0, 0, 0]\n[sprite]\nmode = \"sprit2d\"\nwidth = \"wide\"",
+    );
+    spawn(
+        &mut world,
+        "score",
+        "[transform]\nposition = [0, 0, 0]\n[ui_text]\nfont = \"builtin\"\ntext = \"42\"\n\
+         align = \"centre\"\n[screen_anchor]\nanchor = \"top_left\"",
+    );
+    spawn(
+        &mut world,
+        "crate",
+        "[transform]\nposition = [0, 0, 0]\n[bounds]\nmin = [-1, -1, -1]\nmax = [1, 1, 1]\n\
+         [material]\nblend_mode = \"add\"\ncast_shadows = \"no\"",
+    );
+
+    let binding = SceneBinding::for_scene(&fixture_scene());
+    let mut renderer = gpu.renderer();
+    renderer.bind_scene(gpu.device, gpu.queue, &world, &binding);
+    for _ in 0..3 {
+        gpu.frame(&mut renderer, &world, &FrameInputs::default());
+    }
+
+    let mut said: Vec<String> = world
+        .read_reports()
+        .snapshot()
+        .iter()
+        .map(|d| d.one_line())
+        .collect();
+    said.sort();
+    assert_eq!(
+        said,
+        [
+            "error[bad-enum-value] entity 'coin' sprite.mode: \"sprit2d\" is not a value of \
+             `mode` (did you mean `sprite2d`? allowed values: billboard, sprite2d; the default \
+             \"billboard\" is used)",
+            "error[bad-enum-value] entity 'crate' material.blend_mode: \"add\" is not a value \
+             of `blend_mode` (allowed values: alpha, additive, multiply; the default \"alpha\" \
+             is used)",
+            "error[bad-enum-value] entity 'score' screen_anchor.anchor: \"top_left\" is not a \
+             value of `anchor` (did you mean `top-left`? allowed values: top-left, top-center, \
+             top-right, center-left, center, center-right, bottom-left, bottom-center, \
+             bottom-right; the default \"center\" is used)",
+            "error[bad-enum-value] entity 'score' ui_text.align: \"centre\" is not a value of \
+             `align` (did you mean `center`? allowed values: left, center, right; the default \
+             \"left\" is used)",
+            "error[bad-type] entity 'coin' sprite.width: expected a number, got string \"wide\" \
+             (the default 1 is used)",
+            "error[bad-type] entity 'crate' material.cast_shadows: expected true or false, got \
+             string \"no\" (read as if it were not set)",
+            "error[bad-type] entity 'ground' terrain.texture_tile: expected a number, got \
+             string \"lots\" (the default 16 is used)",
+        ]
+    );
+}
+
 /// #751: a placeholder box takes its colour from its archetype's schema,
 /// `[archetype.<name>.visual]`, which the binding hands over; the renderer
 /// knows no archetype by name, so a binding without the schemas draws it

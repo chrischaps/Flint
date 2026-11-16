@@ -30,6 +30,33 @@ pub struct TerrainConfig {
     pub grass: Option<GrassConfig>,
 }
 
+impl TerrainConfig {
+    /// Read a `terrain` component through the typed view (ADR 0115): a
+    /// wrong type reads as the default and is reported once by entity,
+    /// component and field. `grass` is left for [`GrassConfig::from_component`].
+    pub fn from_component(view: &flint_ecs::ComponentView<'_>) -> Self {
+        let text = |key: &str| view.str(key, "").to_string();
+        Self {
+            heightmap_path: text("heightmap"),
+            width: view.f32("width", 256.0),
+            depth: view.f32("depth", 256.0),
+            height_scale: view.f32("height_scale", 50.0),
+            chunk_resolution: view.i64("chunk_resolution", 64) as i32 as u32,
+            texture_tile: view.f32("texture_tile", 16.0),
+            splat_map_path: text("splat_map"),
+            layer_textures: [
+                text("layer0_texture"),
+                text("layer1_texture"),
+                text("layer2_texture"),
+                text("layer3_texture"),
+            ],
+            metallic: view.f32("metallic", 0.0),
+            roughness: view.f32("roughness", 0.85),
+            grass: None,
+        }
+    }
+}
+
 /// A complete terrain composed of chunks
 pub struct Terrain {
     /// The source heightmap

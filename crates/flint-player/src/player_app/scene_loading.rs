@@ -10,7 +10,6 @@ use flint_audio::decode::Need;
 use flint_audio::AudioSystem;
 use flint_core::components as comp;
 use flint_core::project::{AssetKind, Project};
-use flint_core::toml_util::toml_f64;
 use flint_core::vfs;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -137,10 +136,10 @@ pub(super) fn build_model_load_config(
     config.asked_first.insert(0, "the asset catalog");
 
     for entity in world.all_entities() {
-        if let Some(comps) = world.get_components(entity.id) {
+        if world.get_components(entity.id).is_some() {
             // Resolve model assets
-            if let Some(model) = comps.get(comp::MODEL) {
-                if let Some(name) = model.get("asset").and_then(|v| v.as_str()) {
+            if let Some(name) = world.view(entity.id, comp::MODEL).opt_str("asset") {
+                {
                     if !config.overrides.contains_key(name) {
                         if let Some(path) = resolve_catalog(cat, st, name) {
                             config.overrides.insert(name.to_string(), path);
@@ -150,12 +149,10 @@ pub(super) fn build_model_load_config(
             }
             // Resolve textures
             for comp_name in &[comp::MATERIAL, comp::SPRITE] {
-                if let Some(comp) = comps.get(*comp_name) {
-                    if let Some(tex) = comp.get("texture").and_then(|v| v.as_str()) {
-                        if !config.overrides.contains_key(tex) {
-                            if let Some(path) = resolve_catalog(cat, st, tex) {
-                                config.overrides.insert(tex.to_string(), path);
-                            }
+                if let Some(tex) = world.view(entity.id, comp_name).opt_str("texture") {
+                    if !config.overrides.contains_key(tex) {
+                        if let Some(path) = resolve_catalog(cat, st, tex) {
+                            config.overrides.insert(tex.to_string(), path);
                         }
                     }
                 }
@@ -317,21 +314,13 @@ pub(super) fn load_audio_from_world(
     // path from the scene's directory or from any directory up to the
     // project root (`audio/hit.ogg`), by the project's one search.
     for entity in world.all_entities() {
-        let Some(source) = world
-            .get_components(entity.id)
-            .and_then(|components| components.get(comp::AUDIO_SOURCE).cloned())
-        else {
-            continue;
-        };
-        let Some(file_name) = source.get("file").and_then(|v| v.as_str()) else {
+        // Through the typed view (ADR 0115), as flint-audio reads it
+        let source = world.view(entity.id, comp::AUDIO_SOURCE);
+        let Some(file_name) = source.opt_str("file") else {
             continue;
         };
         // Heard the moment it loads: an autoplay source above silence.
-        let audible = source
-            .get("autoplay")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true)
-            && source.get("volume").and_then(toml_f64).unwrap_or(1.0) > 0.0;
+        let audible = source.bool("autoplay", true) && source.f64("volume", 1.0) > 0.0;
         let need = if audible { Need::Audible } else { Need::Later };
 
         match project.resolve(AssetKind::Audio, file_name, scene_dir) {

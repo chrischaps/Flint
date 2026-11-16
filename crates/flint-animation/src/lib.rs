@@ -6,6 +6,7 @@
 //! - **Tier 3**: Node animation — per-node transform animation for scene graphs
 //! - **Tier 4**: Sprite sheet animation — frame-based sprite animation from `.sprite.toml` clips
 
+pub mod animator;
 pub mod blend;
 pub mod clip;
 pub mod ik_pass;
@@ -25,6 +26,7 @@ pub mod sprite_clip;
 pub mod sprite_sync;
 pub mod sync;
 
+pub use animator::{Animator, LAYER_MODES};
 pub use ik_pass::IkPass;
 pub use playback_state::{AnimLayer, ClipPlaybackState, LayerMode};
 pub use sequence::{

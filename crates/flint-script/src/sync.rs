@@ -213,29 +213,20 @@ impl ScriptSync {
                 continue;
             }
 
-            let script_comp = world
-                .get_components(entity_id)
-                .and_then(|comps| comps.get(comp::SCRIPT).cloned());
-
-            let Some(script_data) = script_comp else {
+            // Through the typed view (ADR 0115): a wrong type is reported once
+            let script_data = world.view(entity_id, comp::SCRIPT);
+            if !script_data.exists() {
                 continue;
-            };
+            }
 
             // Check enabled
-            let enabled = script_data
-                .get("enabled")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-            if !enabled {
+            if !script_data.bool("enabled", true) {
                 self.discovered.insert(entity_id);
                 continue;
             }
 
             // Get source file path
-            let source = script_data
-                .get("source")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let source = script_data.str("source", "");
             if source.is_empty() {
                 self.discovered.insert(entity_id);
                 continue;

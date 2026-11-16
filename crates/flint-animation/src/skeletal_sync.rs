@@ -2,6 +2,7 @@
 //!
 //! Manages per-entity skeleton state, skeletal clip playback, and bone matrix computation.
 
+use crate::animator::{self, Animator};
 use crate::blend::{
     blend_joint, blend_poses, quat_conjugate, quat_mul, quat_normalize, quat_slerp,
 };
@@ -10,8 +11,8 @@ use crate::skeletal_clip::{JointProperty, SkeletalClip};
 use crate::skeletal_sampler::sample_joint_track;
 use crate::skeleton::{JointPose, Skeleton};
 use flint_core::components as comp;
-use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::EntityId;
+use flint_ecs::ComponentView;
 use flint_ecs::FlintWorld;
 use std::collections::{BTreeMap, HashMap};
 
@@ -167,24 +168,8 @@ impl SkeletalSync {
 
     /// Parse the `animator.layers` array, falling back to the legacy
     /// `layer_clip` / `layer_weight` pair as a single additive layer.
-    pub fn read_layers(animator: &toml::Value) -> Vec<AnimLayer> {
-        if let Some(arr) = animator.get("layers").and_then(|v| v.as_array()) {
-            if !arr.is_empty() {
-                return arr.iter().map(AnimLayer::from_toml).collect();
-            }
-        }
-        let legacy = animator
-            .get("layer_clip")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        if legacy.is_empty() {
-            return Vec::new();
-        }
-        let weight = animator
-            .get("layer_weight")
-            .and_then(toml_f32)
-            .unwrap_or(1.0);
-        vec![AnimLayer::new(legacy, weight)]
+    pub fn read_layers(animator: &ComponentView<'_>) -> Vec<AnimLayer> {
+        animator::layers(animator)
     }
 
     /// Copy the ECS layer list onto the runtime state. Weight/mode/mask/
@@ -195,7 +180,7 @@ impl SkeletalSync {
     /// weight until it completes. Any other weight write cancels the ramp.
     fn apply_ecs_layers(
         state: &mut SkeletalPlaybackState,
-        animator: &toml::Value,
+        animator: &ComponentView<'_>,
         fades: &mut Vec<Option<LayerFade>>,
     ) {
         let ecs = Self::read_layers(animator);
@@ -321,29 +306,20 @@ impl SkeletalSync {
     /// Updates blend_target/blend_duration for existing entities if changed in ECS.
     pub fn sync_from_world(&mut self, world: &FlintWorld) {
         for entity_id in world.entities_with_components(&[comp::ANIMATOR, comp::SKELETON]) {
-            let Some(components) = world.get_components(entity_id) else {
+            let view = world.view(entity_id, comp::ANIMATOR);
+            if !view.exists() {
                 continue;
-            };
-
-            let Some(animator) = components.get(comp::ANIMATOR) else {
-                continue;
-            };
+            }
             // Must also have a skeleton registered for this entity
             if !self.skeletons.contains_key(&entity_id) {
                 continue;
             }
+            let animator = Animator::read(&view);
 
             // If already tracked, check for blend_target changes from ECS
             if let Some(state) = self.states.get_mut(&entity_id) {
-                let ecs_blend_target = animator
-                    .get("blend_target")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let ecs_blend_duration = animator
-                    .get("blend_duration")
-                    .and_then(toml_f32)
-                    .unwrap_or(0.3);
+                let ecs_blend_target = animator.blend_target.to_string();
+                let ecs_blend_duration = animator.blend_duration;
 
                 // Start a new crossfade if ECS sets a new blend_target
                 if !ecs_blend_target.is_empty()
@@ -357,46 +333,25 @@ impl SkeletalSync {
 
                 // Speed and loop are live dials too (previewer Speed
                 // field, `set_anim_speed` from scripts).
-                state.speed = animator.get("speed").and_then(toml_f64).unwrap_or(1.0);
-                state.looping = animator
-                    .get("loop")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
+                state.speed = animator.speed;
+                state.looping = animator.looping;
 
                 // Layers follow the ECS every frame (weights are live
                 // dials; changing a clip restarts that layer's clock).
                 let fades = self.fades.entry(entity_id).or_default();
-                Self::apply_ecs_layers(state, animator, fades);
+                Self::apply_ecs_layers(state, &view, fades);
                 continue;
             }
 
-            let clip_name = animator
-                .get("clip")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            let clip_name = animator.clip.to_string();
 
             if clip_name.is_empty() || !self.clips.contains_key(&clip_name) {
                 continue;
             }
 
-            let speed = animator.get("speed").and_then(toml_f64).unwrap_or(1.0);
-
-            let looping = animator
-                .get("loop")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-
-            let autoplay = animator
-                .get("autoplay")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-
-            let playing = animator
-                .get("playing")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-                || autoplay;
+            let speed = animator.speed;
+            let looping = animator.looping;
+            let playing = animator.starts_playing();
 
             // A resolved clip that is not playing holds its first frame
             // forever. Both flags default to false, and TOML makes it easy to
@@ -416,17 +371,10 @@ impl SkeletalSync {
             let mut state = SkeletalPlaybackState::new(clip_name, speed, looping, playing);
 
             // Read initial blend fields
-            state.blend_target = animator
-                .get("blend_target")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            state.blend_duration = animator
-                .get("blend_duration")
-                .and_then(toml_f32)
-                .unwrap_or(0.3);
+            state.blend_target = animator.blend_target.to_string();
+            state.blend_duration = animator.blend_duration;
             let fades = self.fades.entry(entity_id).or_default();
-            Self::apply_ecs_layers(&mut state, animator, fades);
+            Self::apply_ecs_layers(&mut state, &view, fades);
 
             self.states.insert(entity_id, state);
         }
@@ -890,6 +838,7 @@ mod tests {
     use super::*;
     use crate::clip::Interpolation;
     use crate::skeletal_clip::{JointKeyframe, JointTrack};
+    use flint_core::toml_util::toml_f32;
 
     const IDENT: [[f32; 4]; 4] = [
         [1.0, 0.0, 0.0, 0.0],

@@ -2,25 +2,18 @@
 //! in range, for `on_interact` and the HUD's prompt.
 
 use flint_core::components as comp;
-use flint_core::toml_util::toml_f64;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 
-/// Read interactable range and enabled state from entity components.
-/// Returns (range, enabled) — defaults to (3.0, true) if no interactable component.
+/// Read interactable range and enabled state through the typed view (ADR
+/// 0115: a wrong type is the default, reported once). Returns (range,
+/// enabled) — defaults to (3.0, true) if no interactable component.
 pub(super) fn get_interactable_config(entity: EntityId, world: &FlintWorld) -> (f64, bool) {
-    let Some(comps) = world.get_components(entity) else {
-        return (3.0, true);
-    };
-    let Some(interactable) = comps.get(comp::INTERACTABLE) else {
-        return (3.0, true);
-    };
-    let range = interactable.get("range").and_then(toml_f64).unwrap_or(3.0);
-    let enabled = interactable
-        .get("enabled")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    (range, enabled)
+    let interactable = world.view(entity, comp::INTERACTABLE);
+    (
+        interactable.f64("range", 3.0),
+        interactable.bool("enabled", true),
+    )
 }
 
 /// Information about the nearest interactable entity
@@ -50,22 +43,12 @@ pub fn find_nearest_interactable(world: &FlintWorld) -> Option<NearestInteractab
     let mut best: Option<NearestInteractable> = None;
 
     for entity in world.all_entities() {
-        let Some(comps) = world.get_components(entity.id) else {
-            continue;
-        };
-        let Some(interactable) = comps.get(comp::INTERACTABLE) else {
-            continue;
-        };
-
-        let enabled = interactable
-            .get("enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        if !enabled {
+        let interactable = world.view(entity.id, comp::INTERACTABLE);
+        if !interactable.exists() || !interactable.bool("enabled", true) {
             continue;
         }
 
-        let range = interactable.get("range").and_then(toml_f64).unwrap_or(3.0);
+        let range = interactable.f64("range", 3.0);
 
         let Some(et) = world.get_transform(entity.id) else {
             continue;
@@ -78,16 +61,8 @@ pub fn find_nearest_interactable(world: &FlintWorld) -> Option<NearestInteractab
         if dist <= range {
             let is_closer = best.as_ref().is_none_or(|b| dist < b.distance);
             if is_closer {
-                let prompt_text = interactable
-                    .get("prompt_text")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Interact")
-                    .to_string();
-                let interaction_type = interactable
-                    .get("interaction_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("use")
-                    .to_string();
+                let prompt_text = interactable.str("prompt_text", "Interact").to_string();
+                let interaction_type = interactable.str("interaction_type", "use").to_string();
                 best = Some(NearestInteractable {
                     entity_id: entity.id,
                     prompt_text,

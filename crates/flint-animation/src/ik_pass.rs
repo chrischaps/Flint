@@ -17,7 +17,6 @@
 use std::collections::{HashMap, HashSet};
 
 use flint_core::components as comp;
-use flint_core::toml_util::toml_f32;
 use flint_core::{
     mat4_to_rigid, quat_conjugate, quat_from_two_vectors, quat_mul, quat_nlerp, quat_normalize,
     quat_rotate_vec3, solve_two_bone, EntityId,
@@ -61,28 +60,18 @@ impl IkPass {
     }
 
     fn solve_entity(&mut self, world: &mut FlintWorld, id: EntityId) -> Result<(), String> {
-        let field = |world: &FlintWorld, name: &str| -> Option<toml::Value> {
-            world
-                .get_components(id)
-                .and_then(|c| c.get_field(comp::IK_TWO_BONE, name))
-                .cloned()
-        };
-        let enabled = field(world, "enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        let weight = field(world, "weight")
-            .as_ref()
-            .and_then(toml_f32)
-            .unwrap_or(1.0)
-            .clamp(0.0, 1.0);
+        // Through the typed view (ADR 0115): a wrong type is reported once
+        let ik = world.view(id, comp::IK_TWO_BONE);
+        let enabled = ik.bool("enabled", true);
+        let weight = ik.f32("weight", 1.0).clamp(0.0, 1.0);
         if !enabled || weight <= 0.0 {
             return Ok(());
         }
         let resolve = |world: &FlintWorld, key: &str| -> Result<EntityId, String> {
-            let name = field(world, key)
-                .and_then(|v| v.as_str().map(String::from))
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| format!("`{key}` is not set"))?;
+            let name = world.view(id, comp::IK_TWO_BONE).str(key, "").to_string();
+            if name.is_empty() {
+                return Err(format!("`{key}` is not set"));
+            }
             world
                 .get_id(&name)
                 .ok_or_else(|| format!("`{key}` entity {name} not found"))
