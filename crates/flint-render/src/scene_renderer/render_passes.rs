@@ -168,7 +168,8 @@ fn draw_caster<'p>(
 }
 
 impl SceneRenderer {
-    /// Render depth from light perspective for cascaded shadow mapping.
+    /// Render depth from light perspective for cascaded shadow mapping, and
+    /// from the casting spot's for its layer (#504).
     #[profiling::function]
     pub(super) fn render_shadow_pass(
         &mut self,
@@ -178,15 +179,19 @@ impl SceneRenderer {
         camera: &Camera,
         camera_pos: [f32; 3],
     ) {
-        // Off, forbidden by the scene, or no sun that gives any light (#627):
-        // nothing to draw
-        let drawn = self.shadows_drawn();
+        // Off, forbidden by the scene, or no sun that gives any light (#627)
+        // and no spot that casts (#504): nothing to draw
+        let sun_drawn = self.shadows_drawn();
+        let spot = self
+            .spot_shadow_drawn()
+            .then(|| self.lights.shadow_spot().copied())
+            .flatten();
         let shadow_pass = match &mut self.shadow_pass {
             Some(sp) => sp,
             None => return,
         };
 
-        if !drawn {
+        if !sun_drawn && spot.is_none() {
             // The shaders sample the maps whatever this pass does, so a pass
             // turned off at runtime would leave the last frame's shadows
             // standing (FlintKart#55). Zero splits read as "no shadows".
@@ -195,26 +200,50 @@ impl SceneRenderer {
         }
         shadow_pass.shadows_written_off = false;
 
-        // Use the first directional light for shadows
-        let light = &self.lights.uniforms.directional_lights[0];
+        let cascades = if sun_drawn {
+            // Use the first directional light for shadows
+            let light = &self.lights.uniforms.directional_lights[0];
 
-        // Update cascade matrices. The sun's angular size (radians, 0 =
-        // punctual) rides along as tan() for PCSS penumbra math (ADR 0057).
-        let camera_inv = camera.inverse_view_projection_matrix();
-        let sun_tan_angular = light.angular_size.tan().max(0.0);
-        // Quality settings (FlintKart#55): how far shadows reach and how many
-        // cascades cover it, 200 m and 3 unless a tier says otherwise. The
-        // camera's own planes map the split depths to its frustum.
-        let cascades = shadow_pass.cascades();
-        shadow_pass.update_cascades(
-            light.direction,
-            camera_pos,
-            camera_inv,
-            camera.near,
-            camera.far,
-            100.0,
-            sun_tan_angular,
-        );
+            // Update cascade matrices. The sun's angular size (radians, 0 =
+            // punctual) rides along as tan() for PCSS penumbra math (ADR 0057).
+            let camera_inv = camera.inverse_view_projection_matrix();
+            let sun_tan_angular = light.angular_size.tan().max(0.0);
+            // Quality settings (FlintKart#55): how far shadows reach and how many
+            // cascades cover it, 200 m and 3 unless a tier says otherwise. The
+            // camera's own planes map the split depths to its frustum.
+            shadow_pass.update_cascades(
+                light.direction,
+                camera_pos,
+                camera_inv,
+                camera.near,
+                camera.far,
+                100.0,
+                sun_tan_angular,
+            );
+            shadow_pass.cascades()
+        } else {
+            shadow_pass.clear_cascades();
+            0
+        };
+        shadow_pass.update_spot(spot.as_ref());
+
+        // The layers drawn, each with the matrix it is drawn through: the
+        // cascades, then the spot's (#504). Grass casts into the nearest
+        // cascades only: it takes no spot light.
+        let mut layers: Vec<(usize, [[f32; 4]; 4])> = (0..cascades)
+            .map(|cascade| {
+                (
+                    cascade,
+                    shadow_pass.shadow_uniforms().cascade_view_proj[cascade],
+                )
+            })
+            .collect();
+        if spot.is_some() {
+            layers.push((
+                crate::shadow::SPOT_SHADOW_LAYER,
+                shadow_pass.shadow_uniforms().spot_view_proj,
+            ));
+        }
 
         // Write shadow uniforms
         queue.write_buffer(
@@ -232,8 +261,7 @@ impl SceneRenderer {
         let mut draw_uniforms: Vec<ShadowDrawUniforms> = Vec::new();
         // Shallow wooze's drift, for the slots whose casters have any (#215).
         let mut draw_wooze = Vec::new();
-        for cascade in 0..cascades {
-            let cascade_vp = shadow_pass.shadow_uniforms().cascade_view_proj[cascade];
+        for &(_, cascade_vp) in &layers {
             let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
             for (item, caster) in shadow_casters(&self.draws, &self.terrain.draws) {
                 if !caster.visible(&cascade_frustum) {
@@ -297,14 +325,18 @@ impl SceneRenderer {
         // draws plain.
         let shadow_wooze = shadow_pass.wooze.as_ref();
 
-        // Render each cascade
-        for cascade in 0..cascades {
-            let cascade_vp = shadow_pass.shadow_uniforms().cascade_view_proj[cascade];
+        // Render each layer: the cascades, then the spot's
+        for &(cascade, cascade_vp) in &layers {
+            let label = if cascade == crate::shadow::SPOT_SHADOW_LAYER {
+                "Spot Shadow Pass"
+            } else {
+                "Shadow Cascade Pass"
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Shadow Cascade Pass"),
+                label: Some(label),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &shadow_pass.cascade_views[cascade],
+                    view: &shadow_pass.layer_views[cascade],
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,

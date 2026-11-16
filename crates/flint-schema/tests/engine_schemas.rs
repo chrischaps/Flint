@@ -523,6 +523,7 @@ fn the_four_schemas_say_what_their_readers_take() {
             "outer_angle",
             "inner_angle_deg",
             "outer_angle_deg",
+            "cast_shadows",
             "volumetric_intensity",
             "volumetric_color",
         ])

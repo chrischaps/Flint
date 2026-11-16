@@ -1197,6 +1197,26 @@ impl SceneRenderer {
         self.shadows_enabled() && self.lights.scene_shadows() && self.lights.sun_casts()
     }
 
+    /// Whether this frame draws a spot light's shadow map (#504): shadows
+    /// are on, the scene allows them, and a spot with `cast_shadows = true`
+    /// that gives light is among the spots the camera's frame uploaded.
+    /// Known once the frame's lights are uploaded (in `encode_to`); before
+    /// that, last frame's answer.
+    pub fn spot_shadow_drawn(&self) -> bool {
+        self.shadows_enabled() && self.lights.scene_shadows() && self.lights.shadow_spot().is_some()
+    }
+
+    /// The shadow map layers this frame draws: the cascades if a sun casts,
+    /// and the spot's if a spot does.
+    pub fn shadow_layers_drawn(&self) -> u32 {
+        let cascades = match &self.shadow_pass {
+            Some(sp) if self.shadows_drawn() => sp.cascades() as u32,
+            _ => 0,
+        };
+        let spot = (self.shadow_pass.is_some() && self.spot_shadow_drawn()) as u32;
+        cascades + spot
+    }
+
     /// Current shadow map resolution per cascade
     pub fn shadow_resolution(&self) -> u32 {
         self.shadow_pass
