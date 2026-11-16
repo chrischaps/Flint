@@ -394,17 +394,30 @@ fn check_value(
                 }
             }
         }
-        // ...or the older {r, g, b, a}, which no engine reader takes
+        // The older `{ r, g, b }` table and `0xRRGGBB` integer once passed
+        // here, and no engine reader takes either: the scene validated and
+        // the colour was never drawn (#804). Say what to write instead.
         (FieldType::Color, toml::Value::Table(t)) => {
-            if !["r", "g", "b"].iter().all(|k| t.contains_key(*k)) {
-                found.push(shape("a color table needs r, g and b"));
+            let channel = |k: &str| t.get(k).map_or("0".to_string(), |v| v.to_string());
+            let mut written = vec![channel("r"), channel("g"), channel("b")];
+            if t.contains_key("a") {
+                written.push(channel("a"));
             }
+            found.push(shape(&format!(
+                "a color is [r, g, b] or [r, g, b, a], and no reader takes a table: write [{}]",
+                written.join(", ")
+            )));
         }
-        // ...or a hex color like 0xFF8844
         (FieldType::Color, toml::Value::Integer(hex)) => {
-            if !(0..=0xFFFFFF).contains(hex) {
-                found.push(shape("a hex color is 0x000000 to 0xFFFFFF"));
-            }
+            let [_, r, g, b] = (*hex as u32).to_be_bytes();
+            let unit = |c: u8| format!("{:.3}", c as f32 / 255.0);
+            found.push(shape(&format!(
+                "a color is [r, g, b] or [r, g, b, a], and no reader takes an integer: write \
+                 [{}, {}, {}]",
+                unit(r),
+                unit(g),
+                unit(b)
+            )));
         }
         (FieldType::Enum { values }, toml::Value::String(s)) => {
             if !values.contains(s) {
@@ -912,12 +925,22 @@ mod tests {
                 "error[bad-type] rig.tint: expected color, got string",
             ]
         );
-        // The older colour forms still pass
+        // The older colour forms are refused, with the array to write
+        // instead: no reader takes them (#804)
         assert_eq!(
             said(&schema, "tint = { r = 1.0, g = 0.5, b = 0.0 }\n"),
-            NOTHING
+            [
+                "error[bad-type] rig.tint: a color is [r, g, b] or [r, g, b, a], and no reader \
+              takes a table: write [1.0, 0.5, 0.0]"
+            ]
         );
-        assert_eq!(said(&schema, "tint = 0xFF8844\n"), NOTHING);
+        assert_eq!(
+            said(&schema, "tint = 0xFF8800\n"),
+            [
+                "error[bad-type] rig.tint: a color is [r, g, b] or [r, g, b, a], and no reader \
+              takes an integer: write [1.000, 0.533, 0.000]"
+            ]
+        );
     }
 
     /// A table that declares fields is checked like a component, each

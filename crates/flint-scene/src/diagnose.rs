@@ -24,6 +24,8 @@
 
 use crate::format::{EntityDef, SceneFile};
 use crate::prefab;
+use flint_asset::held::CATALOG_DIR;
+use flint_asset::HeldAssets;
 use flint_core::diagnostic::{self, codes, Diagnostic};
 use flint_core::project::{self, AssetKind, Project};
 use flint_core::vfs;
@@ -35,6 +37,10 @@ use std::path::Path;
 /// reads it): its `name` is an asset the scene may name before any file is
 /// there.
 const ASSET_DEF: &str = "asset_def";
+
+/// The kinds the player asks the asset catalog for before the files: a
+/// model's `asset`, a material's or sprite's `texture` (#804).
+const CATALOGUED: &[AssetKind] = &[AssetKind::Models, AssetKind::Textures];
 
 /// Every problem in the scene at `scene_file`, prefab instances expanded as
 /// the loader expands them (their entities are named `<prefix>_<name>`).
@@ -105,14 +111,22 @@ pub fn diagnose_scene_in(
         scene,
         project,
         scene_dir,
-        to_be_made: scene
-            .entities
-            .values()
-            .filter_map(|entity| entity.components.get(ASSET_DEF)?.get("name")?.as_str())
-            .collect(),
+        to_be_made: declared_assets(scene),
         assets: HashMap::new(),
+        held: None,
     };
     diagnose_entities(scene, Some(file), registry, Some(&mut lookup))
+}
+
+/// The `name` of every `asset_def` in `scene`: assets it declares, which
+/// `flint asset resolve` makes, so a reference to one is not missing before
+/// its file is there. `flint check` passes them by this too (#804).
+pub fn declared_assets(scene: &SceneFile) -> HashSet<&str> {
+    scene
+        .entities
+        .values()
+        .filter_map(|entity| entity.components.get(ASSET_DEF)?.get("name")?.as_str())
+        .collect()
 }
 
 /// [`diagnose_scene_in`] without the references: the entities' archetypes
@@ -280,6 +294,9 @@ struct Lookup<'a> {
     /// and `flint asset resolve` makes, so no file need be there yet.
     to_be_made: HashSet<&'a str>,
     assets: HashMap<(Vec<AssetKind>, String), Option<String>>,
+    /// The project's asset catalog and store, read the first time a model
+    /// or texture is not found as a file (`None` inside: there is none).
+    held: Option<Option<HeldAssets>>,
 }
 
 impl Lookup<'_> {
@@ -339,20 +356,24 @@ impl Lookup<'_> {
         }
     }
 
-    /// `None` when a file of one of `kinds` is found for `name`, or an
-    /// `asset_def` of the scene declares it; otherwise every path tried, as
-    /// the hint.
+    /// `None` when a file of one of `kinds` is found for `name`, an
+    /// `asset_def` of the scene declares it, or (for a model or a texture,
+    /// as the player asks) the project's asset catalog holds it; otherwise
+    /// every path tried, as the hint.
     fn missing_asset(&mut self, kinds: &[AssetKind], name: &str) -> Option<String> {
         if self.to_be_made.contains(name) {
             return None;
         }
         let (project, scene_dir) = (self.project, self.scene_dir);
-        self.assets
+        let tried = self
+            .assets
             .entry((kinds.to_vec(), name.to_string()))
             .or_insert_with(|| {
                 let mut tried = Vec::new();
                 for kind in kinds {
-                    let resolution = project.explain(*kind, name, scene_dir);
+                    // What the loader registers under the name: a particle
+                    // effect or a sequence by the name its file states
+                    let resolution = project.explain_registered(*kind, name, scene_dir);
                     if resolution.found.is_some() {
                         return None;
                     }
@@ -360,7 +381,24 @@ impl Lookup<'_> {
                 }
                 Some(format!("tried {}", tried.join(", ")))
             })
-            .clone()
+            .clone()?;
+        let catalogued = kinds.iter().any(|kind| CATALOGUED.contains(kind));
+        if catalogued && self.catalog().is_some_and(|held| held.holds(name)) {
+            return None;
+        }
+        Some(if catalogued {
+            format!("{tried}; the asset catalog ({CATALOG_DIR}/) holds no such name either")
+        } else {
+            tried
+        })
+    }
+
+    /// The project's catalog and store, read once.
+    fn catalog(&mut self) -> Option<&HeldAssets> {
+        let project = self.project;
+        self.held
+            .get_or_insert_with(|| HeldAssets::of(project))
+            .as_ref()
     }
 }
 
@@ -369,6 +407,36 @@ impl Lookup<'_> {
 fn asset_noun(kinds: &[AssetKind]) -> String {
     let nouns: Vec<&str> = kinds.iter().map(|kind| kind.info().noun).collect();
     nouns.join(" or ")
+}
+
+/// `needs-component` (#804): a `collider` on an entity with no `rigidbody`,
+/// written or given by its archetype. Physics hands a collider to Rapier only
+/// as part of its entity's body, so this one collides with nothing; the
+/// player says the same once it runs (`flint_physics`'
+/// `report_lone_colliders`, #685), and this says it before. A terrain or a
+/// spline mesh makes its own static trimesh, so it is not this. A warning,
+/// as the player's is: a script may add the body later.
+fn lone_collider(
+    entity: &EntityDef,
+    archetype: Option<&flint_schema::ArchetypeSchema>,
+) -> Option<Diagnostic> {
+    use flint_core::components as comp;
+    let has = |component: &str| {
+        entity.components.contains_key(component)
+            || archetype.is_some_and(|a| a.components.iter().any(|c| c == component))
+    };
+    let own_trimesh = has(comp::TERRAIN) || has("spline_mesh");
+    (has(comp::COLLIDER) && !has(comp::RIGIDBODY) && !own_trimesh).then(|| {
+        Diagnostic::warning(
+            codes::NEEDS_COMPONENT,
+            "a collider with no rigidbody collides with nothing",
+        )
+        .component(comp::COLLIDER)
+        .hint(
+            "add a `rigidbody` to the entity, `body_type = \"static\"` for scenery, or remove \
+             the collider",
+        )
+    })
 }
 
 fn diagnose_entity(
@@ -414,6 +482,10 @@ fn diagnose_entity(
                 .hint(lookup.unknown_entity_hint(parent)),
             );
         }
+    }
+
+    if let Some(d) = lone_collider(entity, archetype) {
+        found.push(d.entity(name));
     }
 
     let mut components: Vec<(&String, &toml::Value)> = entity.components.iter().collect();
@@ -1221,7 +1293,8 @@ mesh = "nope"
             found[0].hint.as_deref(),
             Some(
                 "tried scenes/models/nope.glb, scenes/models/nope.gltf, models/nope.glb, \
-                 models/nope.gltf, scenes/specs, scenes/models, specs, models"
+                 models/nope.gltf, scenes/specs, scenes/models, specs, models; the asset \
+                 catalog (assets/) holds no such name either"
             )
         );
         assert_eq!(
@@ -1254,6 +1327,193 @@ mesh = "nope"
             said,
             ["error[missing-asset] entity 'b' rig.mesh: model or procgen spec 'oak_chair' not found"]
         );
+    }
+
+    /// The ticket's second box, first half (#804): a model registered only
+    /// in the asset catalog, with its content in the store, is there, as the
+    /// player finds it. A sidecar whose content is not stored is not, and a
+    /// sound is never asked of the catalog (the player asks it for models
+    /// and textures alone).
+    #[test]
+    fn a_catalog_only_asset_is_not_missing() {
+        const HASH: &str = "ab12000000000000000000000000000000000000000000000000000000000000";
+        let sidecar = |name: &str| {
+            format!("[asset]\nname = \"{name}\"\ntype = \"mesh\"\nhash = \"sha256:{HASH}\"\n")
+        };
+        let (table, chair, bell) = (
+            sidecar("oak_table"),
+            sidecar("oak_chair"),
+            sidecar("bell.ogg"),
+        );
+        let stored = format!(".flint/assets/ab/{HASH}.glb");
+        let scene = "[scene]\nname = \"s\"\n\
+                     [entities.a.rig]\nmesh = \"oak_table\"\n\
+                     [entities.b.rig]\nmesh = \"oak_chair\"\nsound = \"bell.ogg\"\n";
+        let found = with_scene(
+            &[
+                RIG,
+                ("flint.toml", "[project]\n"),
+                ("scenes/a.scene.toml", scene),
+                ("assets/oak_table.asset.toml", &table),
+                ("assets/oak_chair.asset.toml", &chair),
+                ("assets/bell.asset.toml", &bell),
+                (&stored, "glTF"),
+            ],
+            |registry, project| diagnose(Path::new("scenes/a.scene.toml"), registry, project),
+        );
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            ["error[missing-asset] entity 'b' rig.sound: sound 'bell.ogg' not found"],
+            "oak_table and oak_chair share the stored content, so both are there"
+        );
+
+        // With the store emptied, the catalog names them and holds nothing
+        let found = with_scene(
+            &[
+                RIG,
+                ("flint.toml", "[project]\n"),
+                (
+                    "scenes/a.scene.toml",
+                    "[scene]\nname = \"s\"\n[entities.a.rig]\nmesh = \"oak_table\"\n",
+                ),
+                ("assets/oak_table.asset.toml", &table),
+            ],
+            |registry, project| diagnose(Path::new("scenes/a.scene.toml"), registry, project),
+        );
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].code, codes::MISSING_ASSET);
+    }
+
+    /// The ticket's second box, second half (#804): a particle effect and an
+    /// animation sequence are named by the `name` in their file, not its
+    /// stem. One the file states passes, a stem whose file states another
+    /// name fails, and a misspelling fails with the paths read.
+    #[test]
+    fn effects_and_sequences_are_found_by_the_name_inside_their_file() {
+        let schemas: &[(&str, &str)] = &[
+            (
+                "schemas/components/particle_effect.toml",
+                "[component.particle_effect.fields]\n\
+                 effect = { type = \"asset\", kind = \"particles\", default = \"\" }\n",
+            ),
+            (
+                "schemas/components/animator.toml",
+                "[component.animator.fields]\n\
+                 sequence = { type = \"asset\", kind = \"sequences\", default = \"\" }\n",
+            ),
+        ];
+        let scene = r#"
+[scene]
+name = "s"
+
+[entities.hearth.particle_effect]
+effect = "campfire"
+
+[entities.stem.particle_effect]
+effect = "fx_fire"
+
+[entities.plain.particle_effect]
+effect = "smoke"
+
+[entities.typo.particle_effect]
+effect = "campfyre"
+
+[entities.idle.animator]
+sequence = "wave_hello"
+
+[entities.lost.animator]
+sequence = "wave_helo"
+
+[entities.unset.animator]
+sequence = ""
+"#;
+        let mut files: Vec<(&str, &str)> = schemas.to_vec();
+        files.extend([
+            ("flint.toml", "[project]\n"),
+            ("scenes/a.scene.toml", scene),
+            // Named inside: known as `campfire`, not `fx_fire`
+            ("particles/fx_fire.particles.toml", "name = \"campfire\"\n"),
+            // No name inside: its stem, as the loader takes it
+            ("particles/smoke.particles.toml", "[[emitters]]\n"),
+            (
+                "scenes/animations/greet.sequence.toml",
+                "name = \"wave_hello\"\n",
+            ),
+        ]);
+        let found = with_scene(&files, |registry, project| {
+            diagnose(Path::new("scenes/a.scene.toml"), registry, project)
+        });
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            [
+                "error[missing-asset] entity 'lost' animator.sequence: animation sequence \
+                 'wave_helo' not found",
+                "error[missing-asset] entity 'stem' particle_effect.effect: particle effect \
+                 'fx_fire' not found",
+                "error[missing-asset] entity 'typo' particle_effect.effect: particle effect \
+                 'campfyre' not found",
+            ]
+        );
+        assert_eq!(
+            found[2].hint.as_deref(),
+            Some("tried scenes/particles, particles")
+        );
+    }
+
+    /// The ticket's fourth box (#804): a collider with no rigidbody, written
+    /// or given by an archetype, is the warning the player gives once it
+    /// runs; a terrain makes its own trimesh and is not one.
+    #[test]
+    fn a_collider_with_no_rigidbody_is_reported_before_the_game_runs() {
+        let schemas: &[(&str, &str)] = &[
+            ("schemas/components/collider.toml", "[component.collider]\n"),
+            (
+                "schemas/components/rigidbody.toml",
+                "[component.rigidbody]\n",
+            ),
+            ("schemas/components/terrain.toml", "[component.terrain]\n"),
+            (
+                "schemas/archetypes/crate.toml",
+                "[archetype.crate]\ncomponents = [\"transform\", \"collider\"]\n",
+            ),
+        ];
+        let scene = r#"
+[scene]
+name = "s"
+
+[entities.wall.collider]
+[entities.wall.rigidbody]
+
+[entities.ghost.collider]
+
+[entities.box]
+archetype = "crate"
+
+[entities.ground.collider]
+[entities.ground.terrain]
+"#;
+        let mut files: Vec<(&str, &str)> = schemas.to_vec();
+        files.push(("scenes/a.scene.toml", scene));
+        let found = with_scene(&files, |registry, project| {
+            diagnose(Path::new("scenes/a.scene.toml"), registry, project)
+        });
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            [
+                "warning[needs-component] entity 'box' component 'collider': a collider with \
+                 no rigidbody collides with nothing",
+                "warning[needs-component] entity 'ghost' component 'collider': a collider \
+                 with no rigidbody collides with nothing",
+            ]
+        );
+        assert!(found[0]
+            .hint
+            .as_deref()
+            .unwrap()
+            .contains("body_type = \"static\""));
     }
 
     /// The loaders say the same things: a reference to nothing doesn't stop

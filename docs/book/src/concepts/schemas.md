@@ -28,7 +28,7 @@ open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
 | `entity` | the name of another entity in the scene, **checked to exist**; `""` means "not set" | `"left_hand"` |
 | `asset` | the name of a file of a `kind`, **checked through the project's asset search**; `""` means "not set" | `"barrel"` |
 | `vec2`, `vec3`, `vec4` | exactly that many numbers (`vec3` also takes `{ x, y, z }`) | `[1.0, 2.0, 3.0]` |
-| `color` | `[r, g, b]` or `[r, g, b, a]` | `[1.0, 0.8, 0.6]` |
+| `color` | `[r, g, b]` or `[r, g, b, a]`, and nothing else: a `{ r, g, b }` table or a `0xRRGGBB` integer is `bad-type`, as no reader takes either, and the error writes the array for you | `[1.0, 0.8, 0.6]` |
 | `transform` | a table of `position`, `rotation` and `scale` | see [Transform](#transform) |
 | `enum` | one of `values` | `"hinged"` |
 | `array` | a list of `element`, of any length (`string` if none is given) | `["a", "b"]` |
@@ -46,7 +46,7 @@ shot   = { type = "asset", kind = "audio" }
 ```
 
 - `entity`: the name must be an entity of the scene, after prefabs are expanded (a prefab writes `"${PREFIX}_hand"`). An empty string is "not set", for a reference a script fills while the game runs. An entity's own `parent = "..."` is checked the same way.
-- `asset`: `kind` is one of the kinds `flint asset where` takes (`models`, `textures`, `audio`, `scripts`, `files`, ...; [Assets](assets.md) has the table), or a list of them when a name may be either: a model may be a file or a procgen spec of that name. The name goes through the same search the engine loads with, so the error lists every path tried. `unless` names a sibling `bool` field that turns the search off when it is `true` (`model.runtime`: a mesh code uploads has no file). An empty string is "not set". An asset the scene declares with an `asset_def` of the same `name` passes: `flint asset resolve` makes it.
+- `asset`: `kind` is one of the kinds `flint asset where` takes (`models`, `textures`, `audio`, `scripts`, `files`, ...; [Assets](assets.md) has the table), or a list of them when a name may be either: a model may be a file or a procgen spec of that name. The name goes through the same search the engine loads with, so the error lists every path tried. `unless` names a sibling `bool` field that turns the search off when it is `true` (`model.runtime`: a mesh code uploads has no file). An empty string is "not set". An asset the scene declares with an `asset_def` of the same `name` passes: `flint asset resolve` makes it. So does a model or texture the project's [asset catalog](assets.md#asset-catalog) registers in `assets/*.asset.toml` with its content in the store, as the player loads it from there first. A particle effect (`kind = "particles"`) or a sequence (`kind = "sequences"`) is found by the `name` its file states, as the engine registers it, not by the file's stem: `effect = "campfire"` is any visible `particles/*.particles.toml` with `name = "campfire"` (or, stating none, the one called `campfire.particles.toml`).
 
 Both are errors ([`unknown-entity`, `missing-asset`](#diagnostic-codes)), and the player says them at load as it says the rest.
 
@@ -189,7 +189,7 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `file-unreadable` | error | the scene file could not be read |
 | `bad-prefab` | error | a `[prefabs.<name>]` instance whose template is missing, doesn't parse, or collides with an entity; the rest of the scene is still checked |
 | `no-schemas` | warning | no schema is loaded at all, so nothing was checked (said once, not per entity) |
-| `needs-component` | warning | a component that does nothing without another the entity lacks: a `collider` with no `rigidbody`. Raised [while the game runs](#diagnostics-while-the-game-runs), by the system that reads it |
+| `needs-component` | warning | a component that does nothing without another the entity lacks: a `collider` with no `rigidbody` (written or from its archetype; a terrain or spline mesh makes its own body). Raised by `flint validate` and at load, and again [while the game runs](#diagnostics-while-the-game-runs) by the system that reads it |
 | `unknown-entity` | error | an `entity` field, or an entity's `parent`, names no entity of the scene; the hint is the nearest name. An empty string is "not set" and passes |
 | `missing-asset` | error | an `asset` field names no file the project's asset search finds; the hint lists every path tried |
 | `old-type-name` | warning | a schema file of the game's spells a type the old way (`float` for `f32`); it still loads |
@@ -250,7 +250,7 @@ WARN error[bad-type] entity 'player' character_controller.jump_force: expected a
 WARN warning[needs-component] entity 'wall' component 'collider': a collider with no rigidbody collides with nothing (add a `rigidbody` to the entity, `body_type = "static"` for scenery, or remove the collider)
 ```
 
-Each (entity, component, field) is reported **once**, however many frames read it, and again after the scene is reloaded. The codes are `bad-type` and `bad-enum-value`, as at load, and `needs-component`. An integer where a number is read (`move_speed = 8`) is not a mistake and is not reported. These are log lines only: `flint validate` does not run the game, so it does not print them.
+Each (entity, component, field) is reported **once**, however many frames read it, and again after the scene is reloaded. The codes are `bad-type` and `bad-enum-value`, as at load, and `needs-component`. An integer where a number is read (`move_speed = 8`) is not a mistake and is not reported. These are log lines only: `flint validate` does not run the game, so it does not print them. The one it can see without running, a collider on an entity with no rigidbody, it reports before the game starts as well.
 
 The components read this way are `rigidbody`, `collider`, `joint`, `character_controller`, `audio_source` and `audio_trigger`, and `material`'s `base_color_r/g/b/a`. A game's own Rust reads the same way: see [Player Extensions: Reading components](../guides/player-extensions.md#reading-components).
 

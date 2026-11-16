@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 pub use flint_core::project::{set_override, Found, Project, ProjectError};
 
 /// Content store, relative to the project root.
-pub const STORE_DIR: &str = ".flint/assets";
+pub use crate::held::STORE_DIR;
 /// Procgen provenance index, relative to the project root.
 pub const PROCGEN_DIR: &str = ".flint/procgen";
 /// Generation jobs, relative to the project root.
@@ -35,7 +35,7 @@ pub const GENERATED_DIR: &str = ".flint/generated";
 /// Project-local config, relative to the project root.
 pub const CONFIG_FILE: &str = ".flint/config.toml";
 /// Sidecar catalog (`*.asset.toml`), relative to the project root.
-pub const CATALOG_DIR: &str = "assets";
+pub use crate::held::CATALOG_DIR;
 
 /// The paths of the asset state a [`Project`] owns.
 pub trait ProjectStore {
