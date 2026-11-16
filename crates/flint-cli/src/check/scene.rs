@@ -189,22 +189,12 @@ pub fn check(
     // scene file (#686): one that doesn't fit its type (a misspelt key)
     // refuses the scene when it is played (`flint_procgen::settle_scene`),
     // as it did when it failed the file's parse: an error in every kind of
-    // check, by the table's name
-    if let Err(problem) = flint_procgen::LivingTables::of(&file) {
-        // `[living]: unknown field ...`: the table, then what serde said
-        let (table, said) = problem
-            .strip_prefix('[')
-            .and_then(|rest| rest.split_once("]: "))
-            .map_or((None, problem.as_str()), |(table, said)| {
-                (Some(table), said)
-            });
-        let d = Diagnostic::error(codes::TOML_PARSE, said)
-            .file(scene)
-            .hint("the scene does not load until the table fits");
-        out.diagnostics.push(match table {
-            Some(table) => d.table(table),
-            None => d,
-        });
+    // check, by the table's name. One mistake is said once (#807): the
+    // scene pass has held the table to its `[table.<name>]` schema, which
+    // the type mirrors, and named the field; that diagnostic becomes the
+    // error, and serde's message stands only when the pass said nothing
+    for (table, said) in flint_procgen::LivingTables::problems(&file) {
+        refuses_the_load(&mut out.diagnostics, scene, table, &said);
     }
     if checks.files {
         assets(scene, scene_dir, &file, &project, memo, &mut out);
@@ -616,6 +606,36 @@ fn user_style_diagnostic(message: &str, scene_dir: &Path) -> Diagnostic {
         .hint("a style that doesn't load is drawn as a passthrough")
     };
     d.file(file)
+}
+
+/// What the player says of a `[living]` or `[wooze]` table that doesn't fit
+/// its type: it refuses the scene. When the scene pass has already named
+/// the mistake by field (an undeclared key is its `unknown-field` warning, a
+/// wrong type its error), those diagnostics are made the errors, with the
+/// load's hint; serde's `said` is added only when the pass found nothing,
+/// so one mistake is one diagnostic.
+fn refuses_the_load(found: &mut Vec<Diagnostic>, scene: &Path, table: &str, said: &str) {
+    const HINT: &str = "the scene does not load until the table fits";
+    let mut named = false;
+    for d in found
+        .iter_mut()
+        .filter(|d| d.table.as_deref() == Some(table) && d.entity.is_none())
+    {
+        named = true;
+        d.severity = Severity::Error;
+        d.hint = Some(match d.hint.take() {
+            Some(hint) => format!("{hint}; {HINT}"),
+            None => HINT.to_string(),
+        });
+    }
+    if !named {
+        found.push(
+            Diagnostic::error(codes::TOML_PARSE, said)
+                .file(scene)
+                .table(table)
+                .hint(HINT),
+        );
+    }
 }
 
 /// What's wrong with the scene's `[wooze]` table and the preset it names.

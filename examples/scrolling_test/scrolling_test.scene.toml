@@ -5,7 +5,7 @@ description = "Tests WP5: camera follow, parallax backgrounds, screen shake, chu
 [camera]
 position = [0, 5, 20]
 target = [0, 5, 0]
-orthographic = true
+projection = "orthographic"
 ortho_height = 10.0
 
 # ─── Player (dynamic, 2D mode, script-driven movement) ───

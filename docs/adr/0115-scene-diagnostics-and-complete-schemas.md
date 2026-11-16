@@ -207,7 +207,9 @@ Chris accepted the recommendations on 2026-11-10:
   `projection = "orthographic"`), so they have been drawn in perspective;
   `rolling_meadow` writes `flint render`'s `distance`/`pitch`/`yaw` as
   camera keys; `campfire` has `[lights.*]` tables. No frozen fixture is
-  flagged.
+  flagged. #807 repaired all six (the 2D four now draw orthographic,
+  rolling_meadow has the `position` those flags made, campfire's lights are
+  entities), and the list is empty.
 
 ### The living tables leave flint-scene (#686, second half)
 
@@ -226,7 +228,17 @@ Chris accepted the recommendations on 2026-11-10:
   binary built on it is unchanged. A call per host, not a registry of
   parse hooks in flint-scene: a hook a test or a tool forgets to install
   would change what a scene means without a word, where a missing call is a
-  missing line in the one place that reads the tables.
+  missing line in the one place that reads the tables. A host that misses
+  it is told (#807): the fill takes out every name that isn't a built-in
+  (laying in its file, or naming the miss), so the wooze field every host
+  builds knows a name still there was never settled, and warns
+  `preset 'x' was never filled in ... this host didn't call it`.
+- **One mistake in either table is one diagnostic** (#807). The scene pass
+  holds `[living]` / `[wooze]` to their `[table.<name>]` schemas, which
+  mirror the types, and names the field; when the type check then refuses
+  the table, `flint check` / `validate` make that diagnostic the error
+  rather than adding serde's `toml-parse` beside it. serde's message stands
+  only when the pass found nothing.
 - **A table that doesn't fit its type still refuses the scene**, from
   `settle_scene` instead of from the file's parse, so the message names the
   file and the table (`grove.scene.toml: [living]: unknown field glide`)

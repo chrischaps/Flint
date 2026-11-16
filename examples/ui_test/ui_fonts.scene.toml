@@ -5,7 +5,7 @@ description = "ui_text in every glyph source (#283, ADR 0113): a .font.toml PNG 
 [camera]
 position = [0, 0, 20]
 target = [0, 0, 0]
-orthographic = true
+projection = "orthographic"
 ortho_height = 10.0
 
 # ─── The older format: a PNG grid named by a .font.toml ───

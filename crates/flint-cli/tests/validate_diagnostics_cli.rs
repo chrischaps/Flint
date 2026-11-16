@@ -297,6 +297,85 @@ fn every_field_of_one_component_is_named_and_fails_when_constraints_pass() {
     );
 }
 
+/// #807: one mistake in `[living]` or `[wooze]` is one diagnostic. The scene
+/// pass names the field (an undeclared key is its `unknown-field`, a wrong
+/// type its `bad-type`), and the type check that refuses the load made a
+/// second, `toml-parse`, diagnostic of it with no field. Now the pass's is
+/// the error, with the load's hint, and nothing else is said of the table.
+#[test]
+fn one_mistake_in_living_or_wooze_is_one_diagnostic_with_its_field() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("validate_diagnostics_cli")
+        .join("living_once");
+    let _ = std::fs::remove_dir_all(&dir);
+    // The engine's own table schemas, so `[table.living]` is the real one
+    let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+    let manifest = format!(
+        "[project]\nschemas = [\"{}\"]\n",
+        engine.display().to_string().replace('\\', "/")
+    );
+    for (path, text) in [
+        ("flint.toml", manifest.as_str()),
+        (
+            "typo.scene.toml",
+            "[scene]\nname = \"Typo\"\n\n[living]\nshadowz = \"drift\"\n",
+        ),
+        (
+            "wrong_type.scene.toml",
+            "[scene]\nname = \"Type\"\n\n[living]\nsoftness = \"soft\"\n",
+        ),
+        (
+            "wooze.scene.toml",
+            "[scene]\nname = \"Wooze\"\n\n[wooze]\ngilde = 0.5\n",
+        ),
+    ] {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(path), text).unwrap();
+    }
+    for (scene, table, code, field, said) in [
+        (
+            "typo.scene.toml",
+            "living",
+            "unknown-field",
+            "shadowz",
+            "error[unknown-field] [living] shadowz: `living` has no field `shadowz`\n      \
+             hint: did you mean `shadows`?; the scene does not load until the table fits\n",
+        ),
+        (
+            "wrong_type.scene.toml",
+            "living",
+            "bad-type",
+            "softness",
+            "error[bad-type] [living] softness:",
+        ),
+        (
+            "wooze.scene.toml",
+            "wooze",
+            "unknown-field",
+            "gilde",
+            "error[unknown-field] [wooze] gilde: `wooze` has no field `gilde`",
+        ),
+    ] {
+        let o = flint(&dir, &["validate", scene]);
+        let out = stdout(&o);
+        assert_eq!(o.status.code(), Some(1), "{scene} refuses to load: {out}");
+        assert!(out.starts_with(&format!("{scene}: 1 error\n")), "{out}");
+        assert!(out.contains(said), "missing:\n{said}\nin:\n{out}");
+        assert!(!out.contains("toml-parse"), "{out}");
+
+        let o = flint(&dir, &["validate", scene, "--format", "json"]);
+        let doc: serde_json::Value = serde_json::from_str(&stdout(&o)).expect("one JSON document");
+        let found = doc["diagnostics"].as_array().unwrap();
+        assert_eq!(found.len(), 1, "{found:#?}");
+        let d = &found[0];
+        assert_eq!(
+            (&d["severity"], &d["code"], &d["table"], &d["field"]),
+            (&"error".into(), &code.into(), &table.into(), &field.into()),
+            "{d:#?}"
+        );
+    }
+}
+
 /// The ticket's fourth box: a file that is not TOML is named, by validate
 /// and by a command that loads the scene.
 #[test]
