@@ -71,6 +71,11 @@ impl ScriptSystem {
         self.engine.set_timing(on);
     }
 
+    /// Whether [`set_timing`](Self::set_timing) is on.
+    pub fn timing(&self) -> bool {
+        self.engine.timing()
+    }
+
     /// What the scripts took since the last take, ms: each callback under
     /// `<source>:<callback>` (`scripts/hud.rhai:on_draw_ui`), and the script
     /// system's own steps in brackets (`[hot reload]`, `[load]`), less the

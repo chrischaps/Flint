@@ -104,7 +104,7 @@ pub(crate) enum Cause {
     Elsewhere { present_ms: f32 },
 }
 
-// Read by the F2 graph and the hitch log (#1078, #1079); tested here.
+// Read by the hitch log (#1079); tested here.
 #[cfg_attr(not(test), allow(dead_code))]
 impl Cause {
     /// `player` or `elsewhere`, for a log line.
@@ -155,7 +155,7 @@ pub(crate) struct HitchCounts {
     pub missed_refreshes: u64,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, feature = "debug-hud")), allow(dead_code))]
 impl HitchCounts {
     /// Hitches a minute over the span.
     pub(crate) fn per_minute(&self) -> f64 {
@@ -335,19 +335,19 @@ impl HitchDetector {
     }
 
     /// The hitches kept, oldest first (the last [`HITCHES_KEPT`]).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "debug-hud")), allow(dead_code))]
     pub(crate) fn hitches(&self) -> &VecDeque<Hitch> {
         &self.hitches
     }
 
     /// The newest hitch.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "debug-hud")), allow(dead_code))]
     pub(crate) fn last(&self) -> Option<&Hitch> {
         self.hitches.back()
     }
 
     /// The counts since the run began.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "debug-hud")), allow(dead_code))]
     pub(crate) fn session(&self) -> HitchCounts {
         let mut c = self.session;
         let clean_from = self.clean_from.unwrap_or(self.judged_to);

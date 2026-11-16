@@ -182,6 +182,41 @@ A hitch is the player's when the player's own work (every phase but `present`) g
 
 `FLINT_HITCH_FACTOR` (at least 1, default 2) and `FLINT_HITCH_FLOOR_MS` (default 8) change the thresholds.
 
+### The frame-time graph
+
+F2 shows the history as it happens. The overlay opens with a graph of the last four seconds above the rendering stats:
+
+![The F2 overlay on examples/hitch_metronome at 240 Hz: two 100 ms script stalls as orange blocks with marks over them, a few small hitches elsewhere, and the counters and legend under the graph](../images/f2-frame-graph.png)
+
+Each pixel column is a slice of time, and its bar is the worst frame in that slice: one frame a column at 60 Hz, the worst of four at 240 Hz. A frame longer than a slice takes as many columns as it lasted, so a 100 ms stall is a block six columns wide, not a one-pixel line. A bar is as tall as its frame stood on screen. That is the time the hitch detector judges: whole refreshes under vsync pacing, so the 6, 6, 6, 45 ms bursts draw as an even row of single refreshes.
+
+A bar is split into the frame's phases, grouped into six bands, bottom up:
+
+| Band | Colour | Phases |
+|---|---|---|
+| scripts | orange | `scripts`, `script ui` |
+| physics | bluish green | `physics` |
+| other | yellow | `input`, `anim/fx` |
+| render | sky blue | `sync`, `render` |
+| hud/present | reddish purple | `hud`, `present` (under vsync, mostly the wait for the display) |
+| elsewhere | grey | the time no phase accounts for: the OS, the driver, the compositor |
+
+The colours are Okabe and Ito's palette, which stays distinguishable under the common colour-vision deficiencies. Vermillion is kept for hitches. The line across the graph is the display's refresh period, labelled in ms and fps, and the fainter one is twice that. The top of the graph eases to fit the tallest bar and falls back slowly once a spike has scrolled off. It never sits below about twice the budget, and it stops at 250 ms, so a scene load doesn't flatten everything for seconds.
+
+The graph is quiet when nothing is wrong. A bar within its refresh is drawn dim, a bar past it brightens as it gets later, and a hitch is drawn at full colour with a vermillion mark over it and a faint band behind it. Under the graph are the session's hitches, hitches a minute, the worst frame, and how long since the last hitch. The count turns vermillion for a couple of seconds after a hitch, then fades back to grey. The line below says what the last hitch was: `last 100 ms: stall.rhai:on_update took 100` when a script took it, `last 30 ms: render +14` for another phase of the player's work, and `last 13 ms: elsewhere, present 1` when it wasn't the player's. Scripts are timed while F2 is open, as under `--perf`, so a script hitch names its callback.
+
+Press F2 again for the graph alone, in a corner, small enough to leave on while playing:
+
+![The compact form: the graph and its counters, with no rendering stats](../images/f2-frame-graph-compact.png)
+
+A third press closes it. `flint-player --stats` opens the full overlay from the first frame, and `--stats=graph` the compact one, so a capture shows either. `examples/hitch_metronome.scene.toml` is a scene to try it on: a metronome whose `stall.rhai` holds the frame for 100 ms every three seconds.
+
+```bash
+flint-player examples/hitch_metronome.scene.toml --stats=graph
+```
+
+The overlay draws every bar into one mesh, which it keeps and refills from frame to frame, and it reads the history only while it is open. Closed, it costs nothing: a test counts no allocations for a frame with F2 closed, and none once it is warm with F2 open. Open, it is part of the `hud` phase it measures: with vsync off in a debug build, the `hud` phase took HUD_CLOSED ms a frame with the overlay closed, HUD_GRAPH ms with the graph alone and HUD_FULL ms with the full overlay (`--perf` on the metronome scene, RTX 5070 laptop). While the graph shows, the history keeps at least four and a half seconds of frames, which at 240 Hz is more than its 600.
+
 The history is flint-player's `frame-history` Cargo feature, on by default. A shipped game that wants none of it builds flint-player without it (`default-features = false` and the features it does want). The player then records frames only while `--perf` is on, as it did before, and each call the frame makes costs a branch (measured at nothing beside the `Instant::now` the player takes anyway). `FLINT_FRAME_HISTORY=0` turns the history off in a build that has it, and `FLINT_FRAME_HISTORY=1` turns it on in one that doesn't.
 
 ## Further Reading

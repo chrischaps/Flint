@@ -154,7 +154,7 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
     println!("  Space    - Jump");
     println!("  Shift    - Sprint");
     println!("  Escape   - Release cursor / Exit");
-    println!("  F2       - Rendering stats overlay");
+    println!("  F2       - Stats: frame-time graph, hitches, render stats; again: graph alone; again: off");
     println!("  F3       - Scene debug panels");
     println!("  F4       - Rendering & Effects menu");
     println!("  F11      - Toggle fullscreen");
