@@ -5,16 +5,14 @@
 //! scissor switch (#385), and the mask and albedo passes (#869).
 //!
 //! What the passes draw is gathered here too, by `SceneRenderer`'s
-//! `encode_style_mask` and `encode_style_albedo`, from the renderer's draw
-//! lists as they stand: the state never holds a draw list of its own, so
-//! step 5 (#737) can hand both one list of draw items instead.
+//! `encode_style_mask` and `encode_style_albedo`: each is a selector over
+//! the frame's one draw list (#737), and the state holds no draws of its own.
 
-use super::SceneRenderer;
+use super::{Blend, Draw, SceneRenderer};
 use crate::camera::Camera;
 use crate::postprocess::PostProcessConfig;
 use crate::style_albedo::StyleAlbedoPass;
 use crate::style_mask::{StyleIds, StyleMaskPass};
-use crate::terrain_pipeline::TerrainDrawCall;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::{HashMap, HashSet};
@@ -178,122 +176,87 @@ impl SceneRenderer {
                 .and_then(|e| blends.get(e).copied())
                 .unwrap_or(1.0)
         };
+        // The mask's selector: every item of a styled entity this camera
+        // draws, in list order. Terrain comes first (#310), and the props on
+        // it after: each fragment's depth test decides who owns a pixel
+        // anyway. Styled blended meshes come last, back to front as the
+        // scene drew them (#310): they write no depth, so the depth test
+        // keeps them behind the opaques in front of them and nothing else,
+        // and where one shows, it is the nearest styled surface and its id
+        // replaces what's behind. A styled glass is a lens, drawing what's
+        // seen through it in its style.
+        let frustum = self.camera_frustum.as_ref();
         let mut draws = Vec::new();
         if !ids.is_empty() {
-            // Terrain first (#310): the props on it are drawn after, and
-            // each fragment's depth test decides who owns a pixel anyway
-            if let Some(id) = id_of(&self.terrain.entity) {
-                let blend = blend_of(&self.terrain.entity);
-                let torn = torn_of(&self.terrain.entity);
-                let frustum = self.camera_frustum.as_ref();
-                let visible = |d: &&TerrainDrawCall| {
-                    frustum.is_none_or(|f| f.aabb_visible(d.aabb_min, d.aabb_max))
-                };
-                draws.extend(self.terrain.draws.iter().filter(visible).map(|d| {
-                    crate::style_mask::MaskDraw {
-                        vertex_buffer: &d.vertex_buffer,
-                        index_buffer: &d.index_buffer,
-                        index_count: d.index_count,
-                        transform_bind_group: &d.transform_bind_group,
-                        bones: None,
-                        id,
-                        blend,
-                        torn,
-                    }
-                }));
-            }
-            draws.extend(
-                self.entity_draws
-                    .iter()
-                    .filter(|d| !d.is_wireframe)
-                    .filter_map(|d| {
-                        Some(crate::style_mask::MaskDraw {
-                            vertex_buffer: &d.vertex_buffer,
-                            index_buffer: &d.index_buffer,
-                            index_count: d.index_count,
-                            transform_bind_group: &d.transform_bind_group,
-                            bones: None,
-                            id: id_of(&d.entity_id)?,
-                            blend: blend_of(&d.entity_id),
-                            torn: torn_of(&d.entity_id),
-                        })
-                    }),
-            );
-            draws.extend(self.skinned_entity_draws.iter().filter_map(|d| {
+            draws.extend(self.draws.drawn().filter_map(|item| {
+                let id = id_of(&item.entity)?;
+                let (vertex_buffer, index_buffer, index_count, transform_bind_group, bones) =
+                    match &item.draw {
+                        Draw::Terrain(n) => {
+                            let d = self.terrain.draws.get(*n as usize)?;
+                            if frustum.is_some_and(|f| !f.aabb_visible(d.aabb_min, d.aabb_max)) {
+                                return None;
+                            }
+                            let (v, i, t) =
+                                (&d.vertex_buffer, &d.index_buffer, &d.transform_bind_group);
+                            (v, i, d.index_count, t, None)
+                        }
+                        Draw::Static(d) if !d.is_wireframe => (
+                            &*d.vertex_buffer,
+                            &*d.index_buffer,
+                            d.index_count,
+                            &*d.transform_bind_group,
+                            None,
+                        ),
+                        Draw::Skinned(d) => (
+                            &*d.vertex_buffer,
+                            &*d.index_buffer,
+                            d.index_count,
+                            &*d.transform_bind_group,
+                            Some(&*d.bone_bind_group),
+                        ),
+                        Draw::Static(_) => return None,
+                        // A styled billboard isn't masked yet (#1011)
+                        Draw::Billboard(_) => return None,
+                        // A styled entity's echoes and particles stay unmasked
+                        Draw::Echo(_) | Draw::Particles(_) => return None,
+                    };
                 Some(crate::style_mask::MaskDraw {
-                    vertex_buffer: &d.vertex_buffer,
-                    index_buffer: &d.index_buffer,
-                    index_count: d.index_count,
-                    transform_bind_group: &d.transform_bind_group,
-                    bones: Some(&d.bone_bind_group),
-                    id: id_of(&d.entity_id)?,
-                    blend: blend_of(&d.entity_id),
-                    torn: torn_of(&d.entity_id),
-                })
-            }));
-            // Styled transparents last, back to front as the scene drew
-            // them (#310). They write no depth, so the depth test keeps them
-            // behind the opaques in front of them and nothing else: where
-            // one shows, it is the nearest styled surface and its id
-            // replaces what's behind. A styled glass is a lens, drawing
-            // what's seen through it in its style.
-            draws.extend(
-                self.transparent_draws
-                    .iter()
-                    .filter(|d| !d.is_wireframe)
-                    .filter_map(|d| {
-                        Some(crate::style_mask::MaskDraw {
-                            vertex_buffer: &d.vertex_buffer,
-                            index_buffer: &d.index_buffer,
-                            index_count: d.index_count,
-                            transform_bind_group: &d.transform_bind_group,
-                            bones: None,
-                            id: id_of(&d.entity_id)?,
-                            blend: blend_of(&d.entity_id),
-                            torn: torn_of(&d.entity_id),
-                        })
-                    }),
-            );
-            draws.extend(self.transparent_skinned_draws.iter().filter_map(|d| {
-                Some(crate::style_mask::MaskDraw {
-                    vertex_buffer: &d.vertex_buffer,
-                    index_buffer: &d.index_buffer,
-                    index_count: d.index_count,
-                    transform_bind_group: &d.transform_bind_group,
-                    bones: Some(&d.bone_bind_group),
-                    id: id_of(&d.entity_id)?,
-                    blend: blend_of(&d.entity_id),
-                    torn: torn_of(&d.entity_id),
+                    vertex_buffer,
+                    index_buffer,
+                    index_count,
+                    transform_bind_group,
+                    bones,
+                    id,
+                    blend: blend_of(&item.entity),
+                    torn: torn_of(&item.entity),
                 })
             }));
         }
-        // What's in front of them (#290): transparents that aren't styled
-        // themselves, and every particle
+        // The veil's selector (#290): what's in front of them, every item
+        // that blends and isn't styled itself, drawn as its coverage
         let mut veil = crate::style_mask::Veil {
             light_bind_group: &self.lights.bind_group,
             meshes: Vec::new(),
             particles: None,
         };
         if !draws.is_empty() {
-            let unstyled = |e: &Option<flint_core::EntityId>| id_of(e).is_none();
-            veil.meshes.extend(
-                self.transparent_draws
-                    .iter()
-                    .filter(|d| !d.is_wireframe && unstyled(&d.entity_id))
-                    .map(|d| crate::style_mask::VeilMesh {
-                        vertex_buffer: &d.vertex_buffer,
-                        index_buffer: &d.index_buffer,
-                        index_count: d.index_count,
-                        transform_bind_group: &d.transform_bind_group,
-                        material_bind_group: &d.material_bind_group,
-                        bones: None,
-                    }),
-            );
-            veil.meshes.extend(
-                self.transparent_skinned_draws
-                    .iter()
-                    .filter(|d| unstyled(&d.entity_id))
-                    .map(|d| crate::style_mask::VeilMesh {
+            let mut particles = false;
+            let veils =
+                |item: &&super::DrawItem| item.blend.blends() && id_of(&item.entity).is_none();
+            for item in self.draws.drawn().filter(veils) {
+                match &item.draw {
+                    Draw::Static(d) if !d.is_wireframe => {
+                        veil.meshes.push(crate::style_mask::VeilMesh {
+                            vertex_buffer: &d.vertex_buffer,
+                            index_buffer: &d.index_buffer,
+                            index_count: d.index_count,
+                            transform_bind_group: &d.transform_bind_group,
+                            material_bind_group: &d.material_bind_group,
+                            bones: None,
+                        })
+                    }
+                    Draw::Skinned(d) => veil.meshes.push(crate::style_mask::VeilMesh {
                         vertex_buffer: &d.vertex_buffer,
                         index_buffer: &d.index_buffer,
                         index_count: d.index_count,
@@ -301,13 +264,22 @@ impl SceneRenderer {
                         material_bind_group: &d.material_bind_group,
                         bones: Some(&d.bone_bind_group),
                     }),
-            );
+                    // Every particle draw goes in, as the upload sorted them
+                    Draw::Particles(_) => particles = true,
+                    // Echoes aren't in the veil yet: #737's next step
+                    Draw::Echo(_) => {}
+                    // Billboards and terrain don't blend; a wireframe isn't a surface
+                    Draw::Static(_) | Draw::Billboard(_) | Draw::Terrain(_) => {}
+                }
+            }
             veil.particles = match (&self.pipelines.particle, &self.particle_buffers) {
-                (Some(pipeline), Some(buffers)) => Some(crate::style_mask::VeilParticles {
-                    pipeline,
-                    buffers,
-                    draws: &self.particle_draws,
-                }),
+                (Some(pipeline), Some(buffers)) if particles => {
+                    Some(crate::style_mask::VeilParticles {
+                        pipeline,
+                        buffers,
+                        draws: &self.particle_draws,
+                    })
+                }
                 _ => None,
             };
         }
@@ -370,32 +342,46 @@ impl SceneRenderer {
             Some((view, _)) if self.pipelines.samples() > 1 => (view, self.pipelines.samples()),
             _ => (depth_view, 1),
         };
-        let mut meshes: Vec<crate::style_albedo::AlbedoMesh<'_>> = self
-            .entity_draws
-            .iter()
-            .filter(|d| !d.is_wireframe && d.wooze.is_none())
-            .map(|d| crate::style_albedo::AlbedoMesh {
-                vertex_buffer: &d.vertex_buffer,
-                index_buffer: &d.index_buffer,
-                index_count: d.index_count,
-                transform_bind_group: &d.transform_bind_group,
-                material_bind_group: &d.material_bind_group,
-                bones: None,
+        // The albedo's selector: opaque meshes with a plain vertex stage
+        let meshes: Vec<crate::style_albedo::AlbedoMesh<'_>> = self
+            .draws
+            .drawn()
+            .filter(|item| item.blend == Blend::Opaque && item.wooze().is_none())
+            .filter_map(|item| {
+                let (vertex_buffer, index_buffer, index_count, t, m, bones) = match &item.draw {
+                    Draw::Static(d) if !d.is_wireframe => (
+                        &d.vertex_buffer,
+                        &d.index_buffer,
+                        d.index_count,
+                        &d.transform_bind_group,
+                        &d.material_bind_group,
+                        None,
+                    ),
+                    Draw::Skinned(d) => (
+                        &d.vertex_buffer,
+                        &d.index_buffer,
+                        d.index_count,
+                        &d.transform_bind_group,
+                        &d.material_bind_group,
+                        Some(&*d.bone_bind_group),
+                    ),
+                    // Terrain and billboards read as no mesh
+                    Draw::Static(_)
+                    | Draw::Terrain(_)
+                    | Draw::Billboard(_)
+                    | Draw::Echo(_)
+                    | Draw::Particles(_) => return None,
+                };
+                Some(crate::style_albedo::AlbedoMesh {
+                    vertex_buffer,
+                    index_buffer,
+                    index_count,
+                    transform_bind_group: t,
+                    material_bind_group: m,
+                    bones,
+                })
             })
             .collect();
-        meshes.extend(
-            self.skinned_entity_draws
-                .iter()
-                .filter(|d| d.wooze.is_none())
-                .map(|d| crate::style_albedo::AlbedoMesh {
-                    vertex_buffer: &d.vertex_buffer,
-                    index_buffer: &d.index_buffer,
-                    index_count: d.index_count,
-                    transform_bind_group: &d.transform_bind_group,
-                    material_bind_group: &d.material_bind_group,
-                    bones: Some(&d.bone_bind_group),
-                }),
-        );
         let layouts = crate::style_albedo::AlbedoLayouts {
             transform: &self.layouts.transform_bind_group_layout,
             material: &self.layouts.material_bind_group_layout,

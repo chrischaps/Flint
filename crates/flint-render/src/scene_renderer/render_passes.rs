@@ -3,7 +3,7 @@
 //! Each method handles one stage of the multi-pass rendering pipeline.
 
 use super::helpers::identity_matrix;
-use super::SceneRenderer;
+use super::{Blend, Draw, DrawItem, DrawList, Layer, SceneRenderer};
 use crate::billboard_pipeline::BillboardUniforms;
 use crate::camera::Camera;
 use crate::debug::DebugMode;
@@ -33,6 +33,139 @@ impl RenderPhase {
 
 /// Shadow cascades the grass casts into: the nearest ones.
 const GRASS_SHADOW_CASCADES: usize = 2;
+
+/// What the main pass's selector keeps between the items of a layer, so it
+/// rebinds only what changes.
+#[derive(Default)]
+struct MainPassState<'a> {
+    /// Opaque skinned: woozy or not, double-sided or not.
+    skinned: Option<(bool, bool)>,
+    /// Echoes: lighten or not, and the transform and bones bound.
+    echo_lighten: Option<bool>,
+    transform: Option<&'a std::sync::Arc<wgpu::BindGroup>>,
+    bones: Option<&'a std::sync::Arc<wgpu::BindGroup>>,
+    /// Particles: the blend bound.
+    particles: Option<flint_particles::ParticleBlendMode>,
+}
+
+/// What the shadow map draws an item as.
+enum Caster<'a> {
+    Mesh(&'a super::DrawCall),
+    Skinned(&'a super::SkinnedDrawCall),
+    Terrain(&'a crate::terrain_pipeline::TerrainDrawCall),
+}
+
+impl Caster<'_> {
+    /// Whether it may be inside a cascade's `frustum`. Skinned meshes
+    /// always may: their bounds move with their bones.
+    fn visible(&self, frustum: &crate::frustum::Frustum) -> bool {
+        match self {
+            Caster::Mesh(d) => super::draw_visible(d, frustum),
+            Caster::Skinned(_) => true,
+            Caster::Terrain(d) => frustum.aabb_visible(d.aabb_min, d.aabb_max),
+        }
+    }
+
+    fn model(&self) -> [[f32; 4]; 4] {
+        match self {
+            Caster::Mesh(d) => d.model,
+            Caster::Skinned(d) => d.model,
+            Caster::Terrain(d) => d.model,
+        }
+    }
+}
+
+/// The shadow pass's selector: what an item casts as, if anything. Casting
+/// is the entity's `material.cast_shadows` (ADR 0100); a wireframe casts
+/// nothing, a translucent skinned mesh only when it is translucent for its
+/// soft edge alone (#582), and a draw past its level of detail nothing.
+fn shadow_caster<'a>(
+    item: &'a DrawItem,
+    terrain: &'a [crate::terrain_pipeline::TerrainDrawCall],
+) -> Option<Caster<'a>> {
+    if item.lod_culled() {
+        return None;
+    }
+    match &item.draw {
+        Draw::Static(d) => (item.casts_shadow && !d.is_wireframe).then_some(Caster::Mesh(d)),
+        Draw::Skinned(d) => (item.casts_shadow
+            && (item.blend == Blend::Opaque || d.soft_edge_only))
+            .then_some(Caster::Skinned(d)),
+        Draw::Terrain(n) => terrain.get(*n as usize).map(Caster::Terrain),
+        // Translucent copies, cut-out sprites and particles cast nothing
+        Draw::Echo(_) | Draw::Billboard(_) | Draw::Particles(_) => None,
+    }
+}
+
+/// Every item that casts, with what it casts as, in list order: the order
+/// both the uniform gather and the draws walk, so the slots line up.
+fn shadow_casters<'a>(
+    draws: &'a DrawList,
+    terrain: &'a [crate::terrain_pipeline::TerrainDrawCall],
+) -> impl Iterator<Item = (&'a DrawItem, Caster<'a>)> {
+    draws
+        .iter()
+        .filter_map(move |item| Some((item, shadow_caster(item, terrain)?)))
+}
+
+/// The pipeline a pass has bound, so it sets one only when it changes.
+#[derive(Default)]
+struct BoundPipeline<'p>(Option<&'p wgpu::RenderPipeline>);
+
+impl<'p> BoundPipeline<'p> {
+    fn set(&mut self, pass: &mut wgpu::RenderPass<'_>, pipeline: &'p wgpu::RenderPipeline) {
+        if self.0.is_none_or(|b| !std::ptr::eq(b, pipeline)) {
+            pass.set_pipeline(pipeline);
+            self.0 = Some(pipeline);
+        }
+    }
+}
+
+/// Draw one caster into a cascade, at the next slot of the shared uniforms.
+fn draw_caster<'p>(
+    pass: &mut wgpu::RenderPass<'_>,
+    bound: &mut BoundPipeline<'p>,
+    next_slot: &mut u32,
+    shadow_pass: &'p crate::shadow::ShadowPass,
+    woozy: Option<&'p crate::shadow::ShadowWooze>,
+    caster: &Caster<'_>,
+) {
+    let offset = (*next_slot as u64 * SHADOW_DRAW_STRIDE) as u32;
+    *next_slot += 1;
+    let sp = shadow_pass;
+    let (pipeline, bind) = match (caster, woozy) {
+        (Caster::Mesh(d), Some(w)) if d.double_sided => (&w.pipeline_double_sided, &w.bind_group),
+        (Caster::Mesh(_), Some(w)) => (&w.pipeline, &w.bind_group),
+        (Caster::Mesh(d), None) if d.double_sided => {
+            (&sp.shadow_pipeline_double_sided, &sp.draw_bind_group)
+        }
+        (Caster::Skinned(d), Some(w)) if d.double_sided => {
+            (&w.skinned_pipeline_double_sided, &w.bind_group)
+        }
+        (Caster::Skinned(_), Some(w)) => (&w.skinned_pipeline, &w.bind_group),
+        (Caster::Skinned(d), None) if d.double_sided => (
+            &sp.skinned_shadow_pipeline_double_sided,
+            &sp.draw_bind_group,
+        ),
+        (Caster::Skinned(_), None) => (&sp.skinned_shadow_pipeline, &sp.draw_bind_group),
+        (Caster::Mesh(_), None) | (Caster::Terrain(_), _) => {
+            (&sp.shadow_pipeline, &sp.draw_bind_group)
+        }
+    };
+    bound.set(pass, pipeline);
+    pass.set_bind_group(0, bind, &[offset]);
+    let (vertex, index, count) = match caster {
+        Caster::Mesh(d) => (&*d.vertex_buffer, &*d.index_buffer, d.index_count),
+        Caster::Skinned(d) => {
+            pass.set_bind_group(1, &*d.shadow_bone_bind_group, &[]);
+            (&*d.vertex_buffer, &*d.index_buffer, d.index_count)
+        }
+        Caster::Terrain(d) => (&d.vertex_buffer, &d.index_buffer, d.index_count),
+    };
+    pass.set_vertex_buffer(0, vertex.slice(..));
+    pass.set_index_buffer(index.slice(..), wgpu::IndexFormat::Uint32);
+    pass.draw_indexed(0..count, 0, 0..1);
+}
 
 impl SceneRenderer {
     /// Render depth from light perspective for cascaded shadow mapping.
@@ -102,39 +235,17 @@ impl SceneRenderer {
         for cascade in 0..cascades {
             let cascade_vp = shadow_pass.shadow_uniforms().cascade_view_proj[cascade];
             let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
-            let slot = |model| ShadowDrawUniforms {
-                light_view_proj: cascade_vp,
-                model,
-            };
-            // `casts_shadow` is the entity's `material.cast_shadows` (ADR 0100)
-            let casts = |d: &&super::DrawCall| {
-                d.casts_shadow && !d.is_wireframe && super::draw_visible(d, &cascade_frustum)
-            };
-            for draw in self.entity_draws.iter().filter(casts) {
-                if let Some(wooze) = draw.wooze {
-                    draw_wooze.push((draw_uniforms.len() as u32, wooze));
+            for (item, caster) in shadow_casters(&self.draws, &self.terrain.draws) {
+                if !caster.visible(&cascade_frustum) {
+                    continue;
                 }
-                draw_uniforms.push(slot(draw.model));
-            }
-            for draw in &self.terrain.draws {
-                if cascade_frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
-                    draw_uniforms.push(slot(draw.model));
+                if let Some(wooze) = item.wooze() {
+                    draw_wooze.push((draw_uniforms.len() as u32, *wooze));
                 }
-            }
-            for draw in self.transparent_draws.iter().filter(casts) {
-                if let Some(wooze) = draw.wooze {
-                    draw_wooze.push((draw_uniforms.len() as u32, wooze));
-                }
-                draw_uniforms.push(slot(draw.model));
-            }
-            for draw in Self::skinned_shadow_draws(
-                &self.skinned_entity_draws,
-                &self.transparent_skinned_draws,
-            ) {
-                if let Some(wooze) = draw.wooze {
-                    draw_wooze.push((draw_uniforms.len() as u32, wooze));
-                }
-                draw_uniforms.push(slot(draw.model));
+                draw_uniforms.push(ShadowDrawUniforms {
+                    light_view_proj: cascade_vp,
+                    model: caster.model(),
+                });
             }
         }
         shadow_pass.ensure_draw_capacity(device, draw_uniforms.len() as u32);
@@ -181,176 +292,87 @@ impl SceneRenderer {
             }
         }
         let mut next_slot: u32 = 0;
-        let bind_next = |pass: &mut wgpu::RenderPass<'_>, next_slot: &mut u32| {
-            let offset = (*next_slot as u64 * SHADOW_DRAW_STRIDE) as u32;
-            pass.set_bind_group(0, &shadow_pass.draw_bind_group, &[offset]);
-            *next_slot += 1;
-        };
         // A woozy caster draws through its own pipeline and a bind group that sees
-        // its drift, then the pass goes back to the plain one for what follows.
-        // If the pass was only just remade (a new resolution), a frame draws plain.
+        // its drift. If the pass was only just remade (a new resolution), a frame
+        // draws plain.
         let shadow_wooze = shadow_pass.wooze.as_ref();
-        let bind_woozy = |pass: &mut wgpu::RenderPass<'_>,
-                          next_slot: &mut u32,
-                          wooze: &crate::shadow::ShadowWooze,
-                          pipeline: &wgpu::RenderPipeline| {
-            let offset = (*next_slot as u64 * SHADOW_DRAW_STRIDE) as u32;
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &wooze.bind_group, &[offset]);
-            *next_slot += 1;
-        };
 
         // Render each cascade
         for cascade in 0..cascades {
             let cascade_vp = shadow_pass.shadow_uniforms().cascade_view_proj[cascade];
-
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Shadow Cascade Pass"),
-                    color_attachments: &[],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &shadow_pass.cascade_views[cascade],
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Shadow Cascade Pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &shadow_pass.cascade_views[cascade],
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
                     }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-
-                pass.set_pipeline(&shadow_pass.shadow_pipeline);
-                // Same per-cascade test as the uniform gather above, so the
-                // slots line up.
-                let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
-                let casts = |d: &super::DrawCall| {
-                    d.casts_shadow && !d.is_wireframe && super::draw_visible(d, &cascade_frustum)
-                };
-
-                // Render each solid entity
-                for draw in &self.entity_draws {
-                    if !casts(draw) {
-                        continue;
-                    }
-                    let woozy = draw.wooze.as_ref().and(shadow_wooze);
-                    if let Some(wooze) = woozy {
-                        let pipeline = if draw.double_sided {
-                            &wooze.pipeline_double_sided
-                        } else {
-                            &wooze.pipeline
-                        };
-                        bind_woozy(&mut pass, &mut next_slot, wooze, pipeline);
-                    } else {
-                        if draw.double_sided {
-                            pass.set_pipeline(&shadow_pass.shadow_pipeline_double_sided);
-                        }
-                        bind_next(&mut pass, &mut next_slot);
-                    }
-                    pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                    if woozy.is_some() || draw.double_sided {
-                        pass.set_pipeline(&shadow_pass.shadow_pipeline);
-                    }
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            // Same per-cascade test as the uniform gather above, so the slots
+            // line up.
+            let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
+            let mut bound = BoundPipeline::default();
+            let mut casters = shadow_casters(&self.draws, &self.terrain.draws).peekable();
+            // The terrain's chunks come first in the list; grass casts after them
+            while casters
+                .peek()
+                .is_some_and(|(item, _)| item.layer() == super::Layer::Terrain)
+            {
+                let (_, caster) = casters.next().expect("peeked");
+                if caster.visible(&cascade_frustum) {
+                    draw_caster(
+                        &mut pass,
+                        &mut bound,
+                        &mut next_slot,
+                        shadow_pass,
+                        None,
+                        &caster,
+                    );
                 }
+            }
 
-                // Render terrain chunks into shadow map (frustum cull per cascade)
-                for draw in &self.terrain.draws {
-                    if !cascade_frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
-                        continue;
-                    }
-                    bind_next(&mut pass, &mut next_slot);
-                    pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                }
-
-                // Render grass into shadow cascade (nearest 2 only)
-                if grass_casts && cascade < GRASS_SHADOW_CASCADES {
-                    if let (Some(gp), Some(render_bg), Some(instance_bg), Some(args)) = (
-                        &self.pipelines.grass,
-                        &self.grass.render_uniform_bind_group,
-                        &self.grass.render_instance_bind_group,
-                        &self.grass.draw_args_buffer,
-                    ) {
-                        {
-                            let grass_shadow_bind = &self.grass.shadow_binds[cascade].1;
-                            pass.set_pipeline(&gp.shadow_pipeline);
-                            pass.set_bind_group(0, grass_shadow_bind, &[]);
-                            pass.set_bind_group(1, render_bg, &[]);
-                            pass.set_bind_group(2, &gp.shadow_dummy_bind_group, &[]);
-                            pass.set_bind_group(3, instance_bg, &[]);
-                            pass.set_vertex_buffer(0, gp.blade_vertex_buffer.slice(..));
-                            pass.set_index_buffer(
-                                gp.blade_index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint16,
-                            );
-                            // The count is the compute pass's (ADR 0092)
-                            pass.draw_indexed_indirect(args, 0);
-                            // Back to the depth pipeline for the transparent
-                            // casters, which bind the shared dynamic-offset group
-                            pass.set_pipeline(&shadow_pass.shadow_pipeline);
-                        }
-                    }
-                }
-
-                // Render transparent entities into shadow map
-                for draw in &self.transparent_draws {
-                    if !casts(draw) {
-                        continue;
-                    }
-                    let woozy = draw.wooze.as_ref().and(shadow_wooze);
-                    if let Some(wooze) = woozy {
-                        let pipeline = if draw.double_sided {
-                            &wooze.pipeline_double_sided
-                        } else {
-                            &wooze.pipeline
-                        };
-                        bind_woozy(&mut pass, &mut next_slot, wooze, pipeline);
-                    } else {
-                        if draw.double_sided {
-                            pass.set_pipeline(&shadow_pass.shadow_pipeline_double_sided);
-                        }
-                        bind_next(&mut pass, &mut next_slot);
-                    }
-                    pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                    if woozy.is_some() || draw.double_sided {
-                        pass.set_pipeline(&shadow_pass.shadow_pipeline);
-                    }
-                }
-
-                // Render skinned entities into shadow map
-                pass.set_pipeline(&shadow_pass.skinned_shadow_pipeline);
-
-                for draw in Self::skinned_shadow_draws(
-                    &self.skinned_entity_draws,
-                    &self.transparent_skinned_draws,
+            // Render grass into shadow cascade (nearest 2 only)
+            if grass_casts && cascade < GRASS_SHADOW_CASCADES {
+                if let (Some(gp), Some(render_bg), Some(instance_bg), Some(args)) = (
+                    &self.pipelines.grass,
+                    &self.grass.render_uniform_bind_group,
+                    &self.grass.render_instance_bind_group,
+                    &self.grass.draw_args_buffer,
                 ) {
-                    let woozy = draw.wooze.as_ref().and(shadow_wooze);
-                    if let Some(wooze) = woozy {
-                        let pipeline = if draw.double_sided {
-                            &wooze.skinned_pipeline_double_sided
-                        } else {
-                            &wooze.skinned_pipeline
-                        };
-                        bind_woozy(&mut pass, &mut next_slot, wooze, pipeline);
-                    } else {
-                        if draw.double_sided {
-                            pass.set_pipeline(&shadow_pass.skinned_shadow_pipeline_double_sided);
-                        }
-                        bind_next(&mut pass, &mut next_slot);
-                    }
-                    pass.set_bind_group(1, &*draw.shadow_bone_bind_group, &[]);
-                    pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                    if woozy.is_some() || draw.double_sided {
-                        pass.set_pipeline(&shadow_pass.skinned_shadow_pipeline);
-                    }
+                    let grass_shadow_bind = &self.grass.shadow_binds[cascade].1;
+                    bound.set(&mut pass, &gp.shadow_pipeline);
+                    pass.set_bind_group(0, grass_shadow_bind, &[]);
+                    pass.set_bind_group(1, render_bg, &[]);
+                    pass.set_bind_group(2, &gp.shadow_dummy_bind_group, &[]);
+                    pass.set_bind_group(3, instance_bg, &[]);
+                    pass.set_vertex_buffer(0, gp.blade_vertex_buffer.slice(..));
+                    pass.set_index_buffer(
+                        gp.blade_index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint16,
+                    );
+                    // The count is the compute pass's (ADR 0092)
+                    pass.draw_indexed_indirect(args, 0);
+                }
+            }
+
+            for (item, caster) in casters {
+                if caster.visible(&cascade_frustum) {
+                    let woozy = item.wooze().and(shadow_wooze);
+                    draw_caster(
+                        &mut pass,
+                        &mut bound,
+                        &mut next_slot,
+                        shadow_pass,
+                        woozy,
+                        &caster,
+                    );
                 }
             }
         }
@@ -366,46 +388,9 @@ impl SceneRenderer {
         tonemapping_u32: u32,
         camera: &Camera,
     ) {
-        // Sort transparent draws back-to-front (descending distance from camera)
-        {
-            let cam = camera_pos;
-            for draw in &mut self.transparent_draws {
-                let dx = draw.model[3][0] - cam[0];
-                let dy = draw.model[3][1] - cam[1];
-                let dz = draw.model[3][2] - cam[2];
-                draw.sort_depth = dx * dx + dy * dy + dz * dz;
-            }
-            self.transparent_draws.sort_by(|a, b| {
-                b.sort_depth
-                    .partial_cmp(&a.sort_depth)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-
-            for draw in &mut self.transparent_skinned_draws {
-                let dx = draw.model[3][0] - cam[0];
-                let dy = draw.model[3][1] - cam[1];
-                let dz = draw.model[3][2] - cam[2];
-                draw.sort_depth = dx * dx + dy * dy + dz * dz;
-            }
-            self.transparent_skinned_draws.sort_by(|a, b| {
-                b.sort_depth
-                    .partial_cmp(&a.sort_depth)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-
-            // Stable, so each entity's echoes stay in their order.
-            for draw in &mut self.echo_draws {
-                let dx = draw.origin[0] - cam[0];
-                let dy = draw.origin[1] - cam[1];
-                let dz = draw.origin[2] - cam[2];
-                draw.sort_depth = dx * dx + dy * dy + dz * dz;
-            }
-            self.echo_draws.sort_by(|a, b| {
-                b.sort_depth
-                    .partial_cmp(&a.sort_depth)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
+        // Blended draws back to front for this camera (each entity's echoes
+        // keep their order)
+        self.draws.sort_blended(camera_pos);
 
         // Cached draws' transforms are staged in the arena and go up a page
         // at a time at the end (#139); others are written at once.
@@ -433,84 +418,64 @@ impl SceneRenderer {
             put(&grid.transform, &uniforms, None);
         }
 
-        // Update entity transforms and write debug_mode + tonemapping into each
-        // material buffer whose flags changed. Draws of the same look share a
-        // material buffer (`SharedMaterial`).
-        for draw in &self.entity_draws {
-            let uniforms = TransformUniforms {
-                view_proj,
-                model: draw.model,
-                model_inv_transpose: draw.model_inv_transpose,
-                camera_pos,
-                _pad: 0.0,
-            };
-            put(&draw.transform, &uniforms, draw.wooze.as_ref());
-
-            draw.material_buffer
-                .write_flags(queue, debug_mode_u32, tonemapping_u32);
-        }
-
-        // Update skinned entity transforms
-        for draw in &self.skinned_entity_draws {
-            let uniforms = TransformUniforms {
-                view_proj,
-                model: draw.model,
-                model_inv_transpose: draw.model_inv_transpose,
-                camera_pos,
-                _pad: 0.0,
-            };
-            put(&draw.transform, &uniforms, draw.wooze.as_ref());
-
-            draw.material_buffer
-                .write_flags(queue, debug_mode_u32, tonemapping_u32);
-        }
-
-        // Update transparent entity transforms
-        for draw in &self.transparent_draws {
-            let uniforms = TransformUniforms {
-                view_proj,
-                model: draw.model,
-                model_inv_transpose: draw.model_inv_transpose,
-                camera_pos,
-                _pad: 0.0,
-            };
-            put(&draw.transform, &uniforms, draw.wooze.as_ref());
-
-            draw.material_buffer
-                .write_flags(queue, debug_mode_u32, tonemapping_u32);
-        }
-
-        // Update transparent skinned entity transforms
-        for draw in &self.transparent_skinned_draws {
-            let uniforms = TransformUniforms {
-                view_proj,
-                model: draw.model,
-                model_inv_transpose: draw.model_inv_transpose,
-                camera_pos,
-                _pad: 0.0,
-            };
-            put(&draw.transform, &uniforms, draw.wooze.as_ref());
-
-            draw.material_buffer
-                .write_flags(queue, debug_mode_u32, tonemapping_u32);
-        }
-
-        // Echoes read their entity's transform, so only their materials' flags
-        for draw in &self.echo_draws {
-            draw.material_buffer
-                .write_flags(queue, debug_mode_u32, tonemapping_u32);
-        }
-
-        // Update terrain chunk transforms
-        for draw in &self.terrain.draws {
-            let uniforms = TransformUniforms {
-                view_proj,
-                model: draw.model,
-                model_inv_transpose: draw.model_inv_transpose,
-                camera_pos,
-                _pad: 0.0,
-            };
-            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        // Each item's uniforms for this camera: transforms (static draws
+        // only where this camera draws them), the debug mode and tonemapping
+        // in each material buffer whose flags changed (draws of the same look
+        // share one, `SharedMaterial`), the billboards' camera vectors.
+        let billboard_uniforms = BillboardUniforms {
+            view_proj,
+            camera_right: camera.right_vector(),
+            _pad0: 0.0,
+            camera_up: camera.up_vector(),
+            _pad1: 0.0,
+        };
+        let transform = |model, model_inv_transpose| TransformUniforms {
+            view_proj,
+            model,
+            model_inv_transpose,
+            camera_pos,
+            _pad: 0.0,
+        };
+        for item in self.draws.iter() {
+            match &item.draw {
+                Draw::Static(draw) => {
+                    if !item.drawn() {
+                        continue;
+                    }
+                    let uniforms = transform(draw.model, draw.model_inv_transpose);
+                    put(&draw.transform, &uniforms, item.wooze());
+                    draw.material_buffer
+                        .write_flags(queue, debug_mode_u32, tonemapping_u32);
+                }
+                Draw::Skinned(draw) => {
+                    let uniforms = transform(draw.model, draw.model_inv_transpose);
+                    put(&draw.transform, &uniforms, item.wooze());
+                    draw.material_buffer
+                        .write_flags(queue, debug_mode_u32, tonemapping_u32);
+                }
+                // Echoes read their entity's transform, so only their materials' flags
+                Draw::Echo(draw) => {
+                    draw.material_buffer
+                        .write_flags(queue, debug_mode_u32, tonemapping_u32)
+                }
+                Draw::Billboard(draw) => queue.write_buffer(
+                    &draw.billboard_buffer,
+                    0,
+                    bytemuck::cast_slice(&[billboard_uniforms]),
+                ),
+                Draw::Terrain(n) => {
+                    if let Some(chunk) = self.terrain.draws.get(*n as usize) {
+                        let uniforms = transform(chunk.model, chunk.model_inv_transpose);
+                        queue.write_buffer(
+                            &chunk.transform_buffer,
+                            0,
+                            bytemuck::cast_slice(&[uniforms]),
+                        );
+                    }
+                }
+                // The particles' one uniform buffer is written below
+                Draw::Particles(_) => {}
+            }
         }
 
         // Grass view uniforms (its vertex shader reads only view_proj and camera_pos)
@@ -558,27 +523,7 @@ impl SceneRenderer {
                 camera_pos,
                 _pad: 0.0,
             };
-            put(&draw.transform, &uniforms, draw.wooze.as_ref());
-        }
-
-        // Update billboard uniforms with camera vectors
-        {
-            let cam_right = camera.right_vector();
-            let cam_up = camera.up_vector();
-            let billboard_uniforms = BillboardUniforms {
-                view_proj,
-                camera_right: cam_right,
-                _pad0: 0.0,
-                camera_up: cam_up,
-                _pad1: 0.0,
-            };
-            for draw in &self.billboard_draws {
-                queue.write_buffer(
-                    &draw.billboard_buffer,
-                    0,
-                    bytemuck::cast_slice(&[billboard_uniforms]),
-                );
-            }
+            put(&draw.transform, &uniforms, None);
         }
 
         // Update particle uniforms with camera vectors
@@ -622,7 +567,7 @@ impl SceneRenderer {
                 camera_pos,
                 _pad: 0.0,
             };
-            put(&draw.transform, &uniforms, draw.wooze.as_ref());
+            put(&draw.transform, &uniforms, None);
         }
 
         // Update skeleton + debug overlay transforms
@@ -638,7 +583,7 @@ impl SceneRenderer {
                 camera_pos,
                 _pad: 0.0,
             };
-            put(&draw.transform, &uniforms, draw.wooze.as_ref());
+            put(&draw.transform, &uniforms, None);
         }
 
         arena.upload(queue);
@@ -753,11 +698,15 @@ impl SceneRenderer {
             return;
         };
         render_pass.set_pipeline(&sp.wire_line_pipeline);
-        for draw in self
-            .skinned_entity_draws
-            .iter()
-            .chain(self.transparent_skinned_draws.iter())
-        {
+        for item in self.draws.iter() {
+            let draw = match &item.draw {
+                Draw::Skinned(draw) => draw,
+                Draw::Static(_)
+                | Draw::Echo(_)
+                | Draw::Billboard(_)
+                | Draw::Terrain(_)
+                | Draw::Particles(_) => continue,
+            };
             let Some(wire_ib) = &draw.wire_index_buffer else {
                 continue;
             };
@@ -783,23 +732,32 @@ impl SceneRenderer {
         }
 
         // Also render entities that are already wireframe (rooms etc.)
-        for draw in &self.entity_draws {
-            if draw.is_wireframe {
-                render_pass.set_pipeline(&self.pipelines.main.overlay_line_pipeline);
-                render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
-                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-            }
+        for item in self.draws.layer(Layer::OpaqueStatic) {
+            let draw = match &item.draw {
+                Draw::Static(draw) if draw.is_wireframe && item.drawn() => draw,
+                Draw::Static(_)
+                | Draw::Skinned(_)
+                | Draw::Echo(_)
+                | Draw::Billboard(_)
+                | Draw::Terrain(_)
+                | Draw::Particles(_) => continue,
+            };
+            render_pass.set_pipeline(&self.pipelines.main.overlay_line_pipeline);
+            render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+            render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
         }
 
         // Skinned meshes: edges posed by the bone matrices
         self.draw_skinned_wireframes(render_pass);
     }
 
-    /// Normal mode rendering: terrain → entities → skinned → billboards → sprites → transparent → particles → wireframe.
+    /// Normal mode rendering: terrain → grass → (ocean) → opaque statics →
+    /// skinned → billboards → grid → sprites → blended statics → blended
+    /// skinned → echoes → particles → wireframe. The list's layers in their
+    /// order, with what isn't a draw item between them.
     fn render_normal_pass<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
@@ -807,30 +765,7 @@ impl SceneRenderer {
     ) {
         // Terrain rendering (early in pass — fills depth buffer for occlusion)
         if phase.draws_opaque() {
-            if let (Some(tp), Some(mat_bg)) =
-                (&self.pipelines.terrain, &self.terrain.material_bind_group)
-            {
-                if !self.terrain.draws.is_empty() {
-                    render_pass.set_pipeline(&tp.pipeline);
-                    render_pass.set_bind_group(1, mat_bg, &[]);
-                    render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
-
-                    for draw in &self.terrain.draws {
-                        if let Some(ref frustum) = self.camera_frustum {
-                            if !frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
-                                continue;
-                            }
-                        }
-                        render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                        render_pass.set_index_buffer(
-                            draw.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                    }
-                }
-            }
+            self.draw_layer(render_pass, Layer::Terrain);
 
             // Grass rendering (after terrain -- also writes depth)
             if let (Some(gp), Some(render_bg), Some(instance_bg), Some(args)) = (
@@ -871,83 +806,10 @@ impl SceneRenderer {
         }
 
         if phase.draws_opaque() {
-            // Normal entity rendering
-            for draw in &self.entity_draws {
-                if draw.is_wireframe {
-                    render_pass.set_pipeline(&self.pipelines.main.line_pipeline);
-                } else if let Some(woozy) = draw
-                    .wooze
-                    .as_ref()
-                    .and(self.pipelines.wooze_standard.as_deref())
-                {
-                    render_pass.set_pipeline(if draw.double_sided {
-                        &woozy.opaque_double_sided
-                    } else {
-                        &woozy.opaque
-                    });
-                } else if draw.double_sided {
-                    render_pass.set_pipeline(&self.pipelines.main.pipeline_double_sided);
-                } else {
-                    render_pass.set_pipeline(&self.pipelines.main.pipeline);
-                }
-                render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
-                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-            }
-
-            // Render skinned entities
-            if let Some(sp) = &self.pipelines.skinned {
-                if !self.skinned_entity_draws.is_empty() {
-                    // Rebound only when a draw needs another of the four
-                    // (woozy or not, double-sided or not)
-                    let mut bound = None;
-                    for draw in &self.skinned_entity_draws {
-                        let woozy = draw
-                            .wooze
-                            .as_ref()
-                            .and(self.pipelines.wooze_skinned.as_deref());
-                        let wants = (woozy.is_some(), draw.double_sided);
-                        if bound != Some(wants) {
-                            bound = Some(wants);
-                            render_pass.set_pipeline(match (woozy, draw.double_sided) {
-                                (Some(w), true) => &w.opaque_double_sided,
-                                (Some(w), false) => &w.opaque,
-                                (None, true) => &sp.pipeline_double_sided,
-                                (None, false) => &sp.pipeline,
-                            });
-                        }
-                        render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
-                        render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
-                        // Light bind group 2 is already set
-                        render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                        render_pass.set_index_buffer(
-                            draw.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                    }
-                }
-            }
-
+            self.draw_layer(render_pass, Layer::OpaqueStatic);
+            self.draw_layer(render_pass, Layer::OpaqueSkinned);
             // Billboard sprites (after geometry, uses depth test)
-            if let Some(bp) = &self.pipelines.billboard {
-                if !self.billboard_draws.is_empty() {
-                    render_pass.set_pipeline(&bp.pipeline);
-                    for draw in &self.billboard_draws {
-                        render_pass.set_bind_group(0, &draw.billboard_bind_group, &[]);
-                        render_pass.set_bind_group(1, &draw.texture_bind_group, &[]);
-                        render_pass.set_index_buffer(
-                            bp.quad_index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
-                        render_pass.draw_indexed(0..6, 0, 0..1);
-                    }
-                }
-            }
+            self.draw_layer(render_pass, Layer::Billboard);
 
             // After every opaque draw: an overlay, not geometry (#346)
             self.draw_editor_grid(render_pass);
@@ -972,157 +834,15 @@ impl SceneRenderer {
             }
         }
 
-        // Transparent PBR entities (sorted back-to-front, depth write OFF; alpha
-        // blend draws back faces then front faces so a mesh cannot blend over itself)
-        if !self.transparent_draws.is_empty() {
-            // Re-bind lights for group 2 (may have been displaced by billboard binds)
-            render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
-
-            for draw in &self.transparent_draws {
-                if draw.is_wireframe {
-                    continue;
-                }
-                let pipeline = match draw.blend_mode {
-                    crate::pipeline::BlendMode::Alpha => {
-                        &self.pipelines.main.transparent_alpha_pipeline
-                    }
-                    crate::pipeline::BlendMode::Additive => {
-                        &self.pipelines.main.transparent_additive_pipeline
-                    }
-                    crate::pipeline::BlendMode::Multiply => {
-                        &self.pipelines.main.transparent_multiply_pipeline
-                    }
-                };
-                let woozy = draw
-                    .wooze
-                    .as_ref()
-                    .and(self.pipelines.wooze_standard.as_deref());
-                render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
-                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                if draw.blend_mode == crate::pipeline::BlendMode::Alpha {
-                    // Back faces first so the front faces blend over them.
-                    render_pass.set_pipeline(
-                        woozy.map_or(&self.pipelines.main.transparent_alpha_back_pipeline, |w| {
-                            &w.alpha_back
-                        }),
-                    );
-                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                }
-                render_pass.set_pipeline(woozy.map_or(pipeline, |w| w.blended(draw.blend_mode)));
-                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-            }
-        }
-
-        // Transparent skinned entities (sorted back-to-front, depth write OFF)
-        if let Some(sp) = &self.pipelines.skinned {
-            if !self.transparent_skinned_draws.is_empty() {
-                for draw in &self.transparent_skinned_draws {
-                    let pipeline = match draw.blend_mode {
-                        crate::pipeline::BlendMode::Alpha => &sp.transparent_alpha_pipeline,
-                        crate::pipeline::BlendMode::Additive => &sp.transparent_additive_pipeline,
-                        crate::pipeline::BlendMode::Multiply => &sp.transparent_multiply_pipeline,
-                    };
-                    render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
-                    render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
-                    render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
-                    render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    render_pass
-                        .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    let woozy = draw
-                        .wooze
-                        .as_ref()
-                        .and(self.pipelines.wooze_skinned.as_deref());
-                    if draw.soft_edge_only && woozy.is_none() {
-                        render_pass.set_pipeline(&sp.soft_edge_pipeline);
-                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                        continue;
-                    }
-                    if draw.blend_mode == crate::pipeline::BlendMode::Alpha {
-                        render_pass.set_pipeline(
-                            woozy.map_or(&sp.transparent_alpha_back_pipeline, |w| &w.alpha_back),
-                        );
-                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                    }
-                    render_pass
-                        .set_pipeline(woozy.map_or(pipeline, |w| w.blended(draw.blend_mode)));
-                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                }
-            }
-        }
-
-        // Living props' echoes (#228). Front faces only, and in a fixed order with
-        // no depth write, so they can't hide each other: drawing the back faces as
-        // well would double every two-sided leaf card and muddy the crown. They
-        // test against depth, so the part of a copy behind its own tree stays hidden.
-        // A prop whose echoes may only add light (`echo_blend = "lighten"`)
-        // draws them with a max blend instead.
-        if let Some(sp) = &self.pipelines.skinned {
-            if !self.echo_draws.is_empty() {
-                let mut lighten = None;
-                render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
-                // A tree's echoes share a transform, and an echo's parts its
-                // bones, so a grove rebinds those far less often than it draws.
-                let mut transform = None;
-                let mut bones = None;
-                for draw in &self.echo_draws {
-                    if lighten != Some(draw.lighten) {
-                        render_pass.set_pipeline(if draw.lighten {
-                            &sp.echo_lighten_pipeline
-                        } else {
-                            &sp.transparent_alpha_pipeline
-                        });
-                        lighten = Some(draw.lighten);
-                    }
-                    if transform
-                        .is_none_or(|t| !std::sync::Arc::ptr_eq(t, &draw.transform_bind_group))
-                    {
-                        render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
-                        transform = Some(&draw.transform_bind_group);
-                    }
-                    if bones.is_none_or(|b| !std::sync::Arc::ptr_eq(b, &draw.bone_bind_group)) {
-                        render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
-                        bones = Some(&draw.bone_bind_group);
-                    }
-                    render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    render_pass
-                        .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
-                }
-            }
-        }
-
-        // Particle systems (after billboards + transparent, before wireframe overlay).
-        // Draws arrive pre-sorted (order-dependent blends far-to-near, additive
-        // last) and all index one shared instance buffer (ADR 0068).
-        if let (Some(pipeline), Some(pp)) = (&self.pipelines.particle, &self.particle_buffers) {
-            if !self.particle_draws.is_empty() {
-                render_pass
-                    .set_index_buffer(pp.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.set_bind_group(0, &pp.uniform_bind_group, &[]);
-                render_pass.set_bind_group(1, pp.instance_bind_group(), &[]);
-
-                let mut current: Option<flint_particles::ParticleBlendMode> = None;
-                for draw in &self.particle_draws {
-                    if current != Some(draw.blend) {
-                        render_pass.set_pipeline(pipeline.pipeline(draw.blend));
-                        current = Some(draw.blend);
-                    }
-                    render_pass.set_bind_group(2, draw.texture_bind_group.as_ref(), &[]);
-                    let first = draw.first_instance;
-                    render_pass.draw_indexed(0..6, 0, first..first + draw.instance_count);
-                }
-                // Restore the light bind group at slot 2: every line/overlay
-                // pipeline that follows (wireframe overlay, normal arrows,
-                // skeleton, gizmos) expects it there, and wgpu validates the
-                // layout at draw time.
-                render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
-            }
-        }
+        // Blended PBR entities, then blended skinned ones (each sorted back to
+        // front, depth write off; alpha blend draws back faces then front
+        // faces so a mesh cannot blend over itself)
+        self.draw_layer(render_pass, Layer::BlendedStatic);
+        self.draw_layer(render_pass, Layer::BlendedSkinned);
+        // Living props' echoes (#228)
+        self.draw_layer(render_pass, Layer::Echo);
+        // Particle systems (after billboards + transparent, before wireframe overlay)
+        self.draw_layer(render_pass, Layer::Particles);
 
         // Wireframe overlay pass (on top of solid geometry)
         if self.debug_state.mode == DebugMode::WireframeOverlay {
@@ -1136,6 +856,269 @@ impl SceneRenderer {
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
             self.draw_skinned_wireframes(render_pass);
+        }
+    }
+
+    /// Draw one layer of the list in the main pass: what the layer sets up
+    /// once, then each item this camera draws through the main pass's
+    /// selector, then what it puts back.
+    fn draw_layer<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, layer: Layer) {
+        let items = self.draws.layer(layer);
+        if !items.iter().any(DrawItem::drawn) {
+            return;
+        }
+        match layer {
+            Layer::Terrain => {
+                let (Some(tp), Some(mat_bg)) =
+                    (&self.pipelines.terrain, &self.terrain.material_bind_group)
+                else {
+                    return;
+                };
+                render_pass.set_pipeline(&tp.pipeline);
+                render_pass.set_bind_group(1, mat_bg, &[]);
+                render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
+            }
+            Layer::Billboard => {
+                let Some(bp) = &self.pipelines.billboard else {
+                    return;
+                };
+                render_pass.set_pipeline(&bp.pipeline);
+            }
+            // Re-bind lights for group 2 (billboard binds may have displaced them)
+            Layer::BlendedStatic | Layer::Echo => {
+                render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
+            }
+            // Draws arrive pre-sorted (order-dependent blends far-to-near,
+            // additive last) and all index one shared instance buffer (ADR 0068).
+            Layer::Particles => {
+                let (Some(_), Some(pp)) = (&self.pipelines.particle, &self.particle_buffers) else {
+                    return;
+                };
+                render_pass
+                    .set_index_buffer(pp.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.set_bind_group(0, &pp.uniform_bind_group, &[]);
+                render_pass.set_bind_group(1, pp.instance_bind_group(), &[]);
+            }
+            Layer::OpaqueStatic | Layer::OpaqueSkinned | Layer::BlendedSkinned => {}
+        }
+        let mut state = MainPassState::default();
+        for item in items.iter().filter(|i| i.drawn()) {
+            self.draw_main(render_pass, item, &mut state);
+        }
+        match layer {
+            // Restore the light bind group at slot 2: every line/overlay
+            // pipeline that follows (wireframe overlay, normal arrows,
+            // skeleton, gizmos) expects it there, and wgpu validates the
+            // layout at draw time.
+            Layer::Particles => render_pass.set_bind_group(2, &self.lights.bind_group, &[]),
+            Layer::Terrain
+            | Layer::OpaqueStatic
+            | Layer::OpaqueSkinned
+            | Layer::Billboard
+            | Layer::BlendedStatic
+            | Layer::BlendedSkinned
+            | Layer::Echo => {}
+        }
+    }
+
+    /// The main pass's selector: one item, through the pipeline its kind,
+    /// blend and vertex stage ask for.
+    fn draw_main<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        item: &'a DrawItem,
+        state: &mut MainPassState<'a>,
+    ) {
+        let main = &self.pipelines.main;
+        match &item.draw {
+            Draw::Terrain(n) => {
+                let Some(draw) = self.terrain.draws.get(*n as usize) else {
+                    return;
+                };
+                if let Some(ref frustum) = self.camera_frustum {
+                    if !frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
+                        return;
+                    }
+                }
+                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+            }
+            Draw::Static(draw) if item.blend == Blend::Opaque => {
+                if draw.is_wireframe {
+                    render_pass.set_pipeline(&main.line_pipeline);
+                } else if let Some(woozy) =
+                    item.wooze().and(self.pipelines.wooze_standard.as_deref())
+                {
+                    render_pass.set_pipeline(if draw.double_sided {
+                        &woozy.opaque_double_sided
+                    } else {
+                        &woozy.opaque
+                    });
+                } else if draw.double_sided {
+                    render_pass.set_pipeline(&main.pipeline_double_sided);
+                } else {
+                    render_pass.set_pipeline(&main.pipeline);
+                }
+                render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+            }
+            Draw::Static(draw) => {
+                if draw.is_wireframe {
+                    return;
+                }
+                let mode = item.blend.mesh_mode();
+                let pipeline = match mode {
+                    crate::pipeline::BlendMode::Alpha => &main.transparent_alpha_pipeline,
+                    crate::pipeline::BlendMode::Additive => &main.transparent_additive_pipeline,
+                    crate::pipeline::BlendMode::Multiply => &main.transparent_multiply_pipeline,
+                };
+                let woozy = item.wooze().and(self.pipelines.wooze_standard.as_deref());
+                render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                if mode == crate::pipeline::BlendMode::Alpha {
+                    // Back faces first so the front faces blend over them.
+                    render_pass.set_pipeline(
+                        woozy.map_or(&main.transparent_alpha_back_pipeline, |w| &w.alpha_back),
+                    );
+                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+                render_pass.set_pipeline(woozy.map_or(pipeline, |w| w.blended(mode)));
+                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+            }
+            Draw::Skinned(draw) if item.blend == Blend::Opaque => {
+                let Some(sp) = &self.pipelines.skinned else {
+                    return;
+                };
+                // Rebound only when a draw needs another of the four (woozy or
+                // not, double-sided or not)
+                let woozy = item.wooze().and(self.pipelines.wooze_skinned.as_deref());
+                let wants = (woozy.is_some(), draw.double_sided);
+                if state.skinned != Some(wants) {
+                    state.skinned = Some(wants);
+                    render_pass.set_pipeline(match (woozy, draw.double_sided) {
+                        (Some(w), true) => &w.opaque_double_sided,
+                        (Some(w), false) => &w.opaque,
+                        (None, true) => &sp.pipeline_double_sided,
+                        (None, false) => &sp.pipeline,
+                    });
+                }
+                render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
+                // Light bind group 2 is already set
+                render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+            }
+            Draw::Skinned(draw) => {
+                let Some(sp) = &self.pipelines.skinned else {
+                    return;
+                };
+                let mode = item.blend.mesh_mode();
+                let pipeline = match mode {
+                    crate::pipeline::BlendMode::Alpha => &sp.transparent_alpha_pipeline,
+                    crate::pipeline::BlendMode::Additive => &sp.transparent_additive_pipeline,
+                    crate::pipeline::BlendMode::Multiply => &sp.transparent_multiply_pipeline,
+                };
+                render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
+                render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
+                render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                let woozy = item.wooze().and(self.pipelines.wooze_skinned.as_deref());
+                if draw.soft_edge_only && woozy.is_none() {
+                    render_pass.set_pipeline(&sp.soft_edge_pipeline);
+                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                    return;
+                }
+                if mode == crate::pipeline::BlendMode::Alpha {
+                    render_pass.set_pipeline(
+                        woozy.map_or(&sp.transparent_alpha_back_pipeline, |w| &w.alpha_back),
+                    );
+                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+                render_pass.set_pipeline(woozy.map_or(pipeline, |w| w.blended(mode)));
+                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+            }
+            Draw::Billboard(draw) => {
+                let Some(bp) = &self.pipelines.billboard else {
+                    return;
+                };
+                render_pass.set_bind_group(0, &draw.billboard_bind_group, &[]);
+                render_pass.set_bind_group(1, &draw.texture_bind_group, &[]);
+                render_pass
+                    .set_index_buffer(bp.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..6, 0, 0..1);
+            }
+            // Front faces only, and in a fixed order with no depth write, so
+            // they can't hide each other: drawing the back faces as well would
+            // double every two-sided leaf card and muddy the crown. They test
+            // against depth, so the part of a copy behind its own tree stays
+            // hidden. A prop whose echoes may only add light (`echo_blend =
+            // "lighten"`) draws them with a max blend instead.
+            Draw::Echo(draw) => {
+                let Some(sp) = &self.pipelines.skinned else {
+                    return;
+                };
+                let lighten = item.blend == Blend::Lighten;
+                if state.echo_lighten != Some(lighten) {
+                    render_pass.set_pipeline(if lighten {
+                        &sp.echo_lighten_pipeline
+                    } else {
+                        &sp.transparent_alpha_pipeline
+                    });
+                    state.echo_lighten = Some(lighten);
+                }
+                // A tree's echoes share a transform, and an echo's parts its
+                // bones, so a grove rebinds those far less often than it draws.
+                if state
+                    .transform
+                    .is_none_or(|t| !std::sync::Arc::ptr_eq(t, &draw.transform_bind_group))
+                {
+                    render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                    state.transform = Some(&draw.transform_bind_group);
+                }
+                if state
+                    .bones
+                    .is_none_or(|b| !std::sync::Arc::ptr_eq(b, &draw.bone_bind_group))
+                {
+                    render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
+                    state.bones = Some(&draw.bone_bind_group);
+                }
+                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+            }
+            Draw::Particles(n) => {
+                let (Some(pipeline), Some(draw)) = (
+                    &self.pipelines.particle,
+                    self.particle_draws.get(*n as usize),
+                ) else {
+                    return;
+                };
+                if state.particles != Some(draw.blend) {
+                    render_pass.set_pipeline(pipeline.pipeline(draw.blend));
+                    state.particles = Some(draw.blend);
+                }
+                render_pass.set_bind_group(2, draw.texture_bind_group.as_ref(), &[]);
+                let first = draw.first_instance;
+                render_pass.draw_indexed(0..6, 0, first..first + draw.instance_count);
+            }
         }
     }
 
@@ -1158,28 +1141,24 @@ impl SceneRenderer {
             Some((min, max)) => IdBounds::of_box(view_proj, min, max),
             None => IdBounds::Everywhere,
         };
-        let id_of = |e: &Option<flint_core::EntityId>| e.as_ref().and_then(|e| ids.get(e).copied());
-        if let Some(id) = id_of(&self.terrain.entity) {
-            for d in &self.terrain.draws {
-                bounds.add(id, of(Some((d.aabb_min, d.aabb_max))));
-            }
-        }
-        for d in self.entity_draws.iter().chain(&self.transparent_draws) {
-            if d.is_wireframe {
+        for item in self.draws.drawn() {
+            let Some(id) = item.entity.as_ref().and_then(|e| ids.get(e).copied()) else {
                 continue;
-            }
-            if let Some(id) = id_of(&d.entity_id) {
-                bounds.add(id, of(d.world_aabb.or(d.style_aabb)));
-            }
-        }
-        for d in self
-            .skinned_entity_draws
-            .iter()
-            .chain(&self.transparent_skinned_draws)
-        {
-            if let Some(id) = id_of(&d.entity_id) {
-                bounds.add(id, of(d.world_aabb));
-            }
+            };
+            // What the mask draws for an id, and where
+            let aabb = match &item.draw {
+                Draw::Terrain(n) => match self.terrain.draws.get(*n as usize) {
+                    Some(d) => Some((d.aabb_min, d.aabb_max)),
+                    None => continue,
+                },
+                Draw::Static(d) if !d.is_wireframe => d.world_aabb.or(d.style_aabb),
+                Draw::Skinned(d) => d.world_aabb,
+                // Not in the mask (a styled billboard is #1011)
+                Draw::Static(_) | Draw::Echo(_) | Draw::Billboard(_) | Draw::Particles(_) => {
+                    continue
+                }
+            };
+            bounds.add(id, of(aabb));
         }
         bounds
     }

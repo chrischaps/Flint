@@ -19,12 +19,13 @@ Styles, the style mask and user styles: `src/stylize/CLAUDE.md`. Flags: `crates/
 
 | File | What lives there |
 |---|---|
-| `mod.rs` | the `SceneRenderer` struct and the draw types (`DrawCall`, `SkinnedDrawCall`, `EchoDrawCall`, the bind-cache types); `build` behind `new`/`new_headless`; `update_from_world`; the public forwards to the subsystems (terrain, skinning, lights, shadows, sky, water, ground fog) |
+| `mod.rs` | the `SceneRenderer` struct and the per-kind draw payloads (`DrawCall`, `SkinnedDrawCall`, `EchoDrawCall`, the bind-cache types); `build` behind `new`/`new_headless`; `update_from_world`; the public forwards to the subsystems (terrain, skinning, lights, shadows, sky, water, ground fog) |
+| `draw_list.rs` | the frame's draws as one list (ADR 0118 decision 4, #737): `DrawItem` (entity, `Blend`, `VertexStage`, `casts_shadow`, its `Draw`), `Draw` (`Static`, `Skinned`, `Echo`, `Billboard`, `Terrain(n)`, `Particles(n)`), the `DrawList` kept a vector per `Layer` in the main pass's order, the cull flags and the back-to-front sort. **A new kind of draw is a new `Draw` variant**: every pass's selector matches on `Draw` with no wildcard arm (shadow caster, per-frame uniforms, main pass, wireframes, style bounds, mask, veil, albedo, selection, stats, culls, shallow wooze), so the compiler asks each one what to do with it |
 | `binding.rs` | the scene a host binds once a load (#739): `SceneBinding` (made by registering the scene's user styles), `bind_scene` and what it returns (`BoundScene`, `LoadedTerrain`, `BoundGrass`), and the one terrain loader every host shares |
 | `frame.rs` | the frame: `FrameInputs`, `View2d`, `prepare` / `prepare_again` (#739), then `render`, `render_to`, `encode_to` (the order the frame is recorded in), `encode_again_to`, `frame_submitted`, world lines |
 | `pipelines.rs` | `ScenePipelines` (every sample-count-baked pipeline) and `SceneLayouts` |
-| `extract.rs` | per-entity extraction into the draw lists (static, skinned, echoes, billboards, sprites, UI text) |
-| `draws.rs` | the bind cache, shared materials, procedural boxes, LOD and frustum culls, building a draw call's bind groups, shallow wooze's per-draw drift |
+| `extract.rs` | per-entity extraction into the draw list's items (static, skinned, echoes, billboards) and the 2D sprites and UI text |
+| `draws.rs` | the bind cache, shared materials, procedural boxes, the LOD and frustum culls (flags on the items, set at each `render_to`), building a draw call's bind groups, shallow wooze's per-draw drift (an item's `VertexStage::Wooze`) |
 | `render_passes.rs` | the passes: shadows, per-frame uniforms, main pass, wireframe, post chain, style bounds |
 | `post.rs` | post-process and quality config: HDR chain size and render scale, drawn vs authored config, `set_quality`/`set_msaa`, building style and FXAA resources, style text/edge read-outs, `post_time` |
 | `assets.rs` | loading: models and their textures, procedural meshes, textures, `ui_text` fonts, ray targets, the asset scope |

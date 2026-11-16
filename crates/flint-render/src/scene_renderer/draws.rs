@@ -1,7 +1,8 @@
 //! Building and keeping draws (ADR 0118, #736): the per-entity bind cache,
 //! shared materials, procedural boxes, LOD and frustum culls, the bind
 //! groups a draw call is made of, and shallow wooze's per-draw drift.
-//! The draw types themselves are in `mod.rs` until #737's `DrawItem`.
+//! The per-kind draw payloads are in `mod.rs`, the list of items that
+//! carries them in `draw_list.rs` (#737).
 
 use super::*;
 
@@ -146,28 +147,22 @@ impl SceneRenderer {
         binds: &CachedDrawBinds,
         model: [[f32; 4]; 4],
         model_inv_transpose: [[f32; 4]; 4],
-        entity_id: flint_core::EntityId,
-        blend_mode: BlendMode,
     ) -> DrawCall {
         DrawCall {
             vertex_buffer: vertex_buffer.clone(),
             index_buffer: index_buffer.clone(),
             index_count,
             is_wireframe,
-            casts_shadow: true,
             transform: binds.transform.clone(),
             transform_bind_group: binds.transform_bind_group.clone(),
             material_buffer: binds.material_buffer.clone(),
             material_bind_group: binds.material_bind_group.clone(),
             model,
             model_inv_transpose,
-            entity_id: Some(entity_id),
-            blend_mode,
             sort_depth: 0.0,
             world_aabb: None,
             style_aabb: None,
             lod: None,
-            wooze: None,
             double_sided: false,
         }
     }
@@ -203,55 +198,51 @@ impl SceneRenderer {
         self.lod_culled
     }
 
-    /// Move draws whose level of detail isn't the one for a camera at `eye`,
-    /// or which are past their draw distance, into the culled lists, before
-    /// the shadow pass: a far chunk's shadow comes from its simple level too.
+    /// Cull the draws whose level of detail isn't the one for a camera at
+    /// `eye`, or which are past their draw distance, before the shadow pass:
+    /// a far chunk's shadow comes from its simple level too. Only static
+    /// draws have a level of detail.
     pub(super) fn cull_draws_to_lod(&mut self, eye: [f32; 3]) {
         let LodSettings {
             lod_scale,
             draw_distance_scale,
         } = self.lod_settings;
         let mut culled = 0u32;
-        let mut split = |draws: &mut Vec<DrawCall>, out: &mut Vec<DrawCall>| {
-            if !draws.iter().any(|d| d.lod.is_some()) {
-                return;
-            }
-            let (keep, cull): (Vec<_>, Vec<_>) = draws.drain(..).partition(|d| {
-                d.lod.map_or(true, |l| {
-                    l.visible_from(eye, lod_scale, draw_distance_scale)
-                })
-            });
-            *draws = keep;
-            culled += cull.len() as u32;
-            out.extend(cull);
-        };
-        split(&mut self.entity_draws, &mut self.culled_entity_draws);
-        split(
-            &mut self.transparent_draws,
-            &mut self.culled_transparent_draws,
-        );
+        for item in self.draws.iter_mut() {
+            let lod = match &item.draw {
+                Draw::Static(d) => d.lod,
+                Draw::Skinned(_)
+                | Draw::Echo(_)
+                | Draw::Billboard(_)
+                | Draw::Terrain(_)
+                | Draw::Particles(_) => None,
+            };
+            let out = lod.is_some_and(|l| !l.visible_from(eye, lod_scale, draw_distance_scale));
+            item.set_lod_culled(out);
+            culled += out as u32;
+        }
         self.lod_culled = culled;
     }
 
-    /// Move opaque and transparent draws whose world bounds miss the camera
-    /// frustum into the culled lists. Wireframe draws and draws without
-    /// bounds always stay (ADR 0074).
+    /// Cull the static draws whose world bounds miss the camera frustum, for
+    /// the rest of the frame after the shadow pass. Wireframe draws and
+    /// draws without bounds always stay (ADR 0074); terrain chunks are
+    /// tested by each pass that draws them.
     pub(super) fn cull_draws_to_camera(&mut self) {
         let Some(frustum) = &self.camera_frustum else {
             return;
         };
-        let split = |draws: &mut Vec<DrawCall>, culled: &mut Vec<DrawCall>| {
-            let (keep, cull): (Vec<_>, Vec<_>) = draws
-                .drain(..)
-                .partition(|d| d.is_wireframe || draw_visible(d, frustum));
-            *draws = keep;
-            culled.extend(cull);
-        };
-        split(&mut self.entity_draws, &mut self.culled_entity_draws);
-        split(
-            &mut self.transparent_draws,
-            &mut self.culled_transparent_draws,
-        );
+        for item in self.draws.iter_mut() {
+            let out = match &item.draw {
+                Draw::Static(d) => !d.is_wireframe && !draw_visible(d, frustum),
+                Draw::Skinned(_)
+                | Draw::Echo(_)
+                | Draw::Billboard(_)
+                | Draw::Terrain(_)
+                | Draw::Particles(_) => false,
+            };
+            item.set_camera_culled(out);
+        }
     }
 
     pub(super) fn create_draw_call(
@@ -285,20 +276,16 @@ impl SceneRenderer {
             index_buffer: Arc::new(index_buffer),
             index_count: mesh.indices.len() as u32,
             is_wireframe,
-            casts_shadow: true,
             transform: TransformTarget::Own(Arc::new(transform_buffer)),
             transform_bind_group: Arc::new(transform_bind_group),
             material_buffer: Arc::new(MaterialBuffer::new(material_buffer)),
             material_bind_group: Arc::new(material_bind_group),
             model: transform_uniforms.model,
             model_inv_transpose: transform_uniforms.model_inv_transpose,
-            entity_id: None,
-            blend_mode: BlendMode::Alpha,
             sort_depth: 0.0,
             world_aabb: None,
             style_aabb: None,
             lod: None,
-            wooze: None,
             double_sided: false,
         }
     }
@@ -451,34 +438,28 @@ impl SceneRenderer {
         let map = &self.shallow_wooze;
         let drift = |id: Option<flint_core::EntityId>| Some(map.get(&id?)?.uniforms());
 
-        let mut any_standard = false;
-        for draw in self
-            .entity_draws
-            .iter_mut()
-            .chain(self.transparent_draws.iter_mut())
-            .filter(|d| !d.is_wireframe)
-        {
-            let Some(wooze) = drift(draw.entity_id) else {
+        let (mut any_standard, mut any_skinned) = (false, false);
+        for item in self.draws.iter_mut() {
+            // The kinds whose meshes have a woozy vertex stage
+            let woozy = match &item.draw {
+                Draw::Static(d) => !d.is_wireframe,
+                Draw::Skinned(_) => true,
+                Draw::Echo(_) | Draw::Billboard(_) | Draw::Terrain(_) | Draw::Particles(_) => false,
+            };
+            let Some(wooze) = drift(item.entity).filter(|_| woozy) else {
                 continue;
             };
-            if let Some(bounds) = &mut draw.world_aabb {
-                grow_bounds(bounds, &wooze);
+            match &mut item.draw {
+                Draw::Static(d) => {
+                    if let Some(bounds) = &mut d.world_aabb {
+                        grow_bounds(bounds, &wooze);
+                    }
+                    any_standard = true;
+                }
+                Draw::Skinned(_) => any_skinned = true,
+                Draw::Echo(_) | Draw::Billboard(_) | Draw::Terrain(_) | Draw::Particles(_) => {}
             }
-            draw.wooze = Some(wooze);
-            any_standard = true;
-        }
-
-        let mut any_skinned = false;
-        for draw in self
-            .skinned_entity_draws
-            .iter_mut()
-            .chain(self.transparent_skinned_draws.iter_mut())
-        {
-            let Some(wooze) = drift(draw.entity_id) else {
-                continue;
-            };
-            draw.wooze = Some(wooze);
-            any_skinned = true;
+            item.vertex = VertexStage::Wooze(wooze);
         }
 
         self.pipelines

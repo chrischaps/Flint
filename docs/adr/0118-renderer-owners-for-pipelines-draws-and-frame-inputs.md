@@ -52,21 +52,37 @@ Behind the misses is the shape of `SceneRenderer`:
 
    ```rust
    struct DrawItem {
-       entity: EntityId,
-       mesh: MeshRef,
-       binds: DrawBinds,
-       kind: DrawKind,          // Static, Skinned, Terrain, Billboard, Particles, Echo
-       blend: Blend,            // Opaque, AlphaBlend, Additive, Lighten
-       vertex: VertexStage,     // Plain, Wooze
+       entity: Option<EntityId>,
+       blend: Blend,            // Opaque, Alpha, Premultiplied, Additive, Multiply, Lighten
+       vertex: VertexStage,     // Plain, Wooze(drift)
        casts_shadow: bool,
-       writes_depth: bool,
+       draw: Draw,              // what only its kind carries:
+   }
+   enum Draw {
+       Static(DrawCall), Skinned(SkinnedDrawCall), Echo(EchoDrawCall),
+       Billboard(BillboardDrawCall), Terrain(u32), Particles(u32),
    }
    ```
 
    Each pass is a filter and a pipeline selector over the list: the veil
-   takes every item that blends and doesn't write depth, the mask takes every
+   takes every item that blends and isn't styled, the mask takes every
    item whose entity has a style id, and so on. A new kind of draw is one new
-   variant, and the compiler asks each pass's selector what to do with it.
+   variant, and the compiler asks each pass's selector what to do with it:
+   the selectors match on `Draw` with no wildcard arm.
+
+   *Amended by #737 to what was built.* The sketch had a flat `mesh` and
+   `binds` on every item, which doesn't fit three of the six kinds: a
+   billboard has no vertex buffer and binds its own camera and sprite
+   groups, particles index one shared instance buffer, and terrain chunks
+   belong to the bound terrain (`bind_scene` loads them once a scene, so an
+   item names chunk `n`; particles likewise name draw `n` of the upload).
+   So the shared fields stay on the item and the rest rides in `Draw`.
+   `writes_depth` went too: it follows from the blend (a billboard is
+   opaque, cut out by its alpha), and the veil asks only whether an item
+   blends. The list is kept a vector per layer, in the order the main pass
+   draws (terrain, opaque static and skinned, billboards, blended static and
+   skinned, echoes, particles), and the LOD and frustum culls are flags on
+   the items, so nothing moves between vectors and no item allocates.
 
 5. **Hosts pass inputs in, and bind a scene once.**
 

@@ -2,6 +2,7 @@
 
 mod assets;
 mod binding;
+mod draw_list;
 mod draws;
 mod extract;
 mod frame;
@@ -25,6 +26,7 @@ mod terrain;
 mod water;
 
 pub use binding::{BoundGrass, BoundScene, LoadedTerrain, SceneBinding};
+use draw_list::{Blend, Draw, DrawItem, DrawList, Layer, VertexStage};
 pub use frame::{FrameInputs, View2d};
 pub use grass_ground::{load_grass_ground_in, load_scene_grass_ground, LoadedGrassGround};
 pub use particles::load_scene_particle_textures;
@@ -45,7 +47,7 @@ use crate::grass_pipeline::{
     GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu, MAX_GRASS_ENTITIES,
 };
 use crate::particle_pipeline::{ParticleBuffers, ParticleDrawCall};
-use crate::pipeline::{BlendMode, MaterialUniforms, SceneLayouts, TransformUniforms};
+use crate::pipeline::{MaterialUniforms, SceneLayouts, TransformUniforms};
 use crate::postprocess::{
     PostProcessConfig, PostProcessPipeline, PostProcessResources, HDR_FORMAT,
 };
@@ -94,17 +96,12 @@ pub(super) struct DrawCall {
     index_buffer: Arc<wgpu::Buffer>,
     index_count: u32,
     is_wireframe: bool,
-    /// Whether the draw goes into the shadow cascades: the entity's
-    /// `material.cast_shadows`, true unless it says otherwise (ADR 0100).
-    casts_shadow: bool,
     transform: TransformTarget,
     transform_bind_group: Arc<wgpu::BindGroup>,
     material_buffer: Arc<MaterialBuffer>, // kept alive for bind group
     material_bind_group: Arc<wgpu::BindGroup>,
     model: [[f32; 4]; 4],
     model_inv_transpose: [[f32; 4]; 4],
-    entity_id: Option<flint_core::EntityId>,
-    blend_mode: BlendMode,
     sort_depth: f32,
     /// World-space bounds for frustum culling. `None` draws are never culled.
     world_aabb: Option<([f32; 3], [f32; 3])>,
@@ -115,8 +112,6 @@ pub(super) struct DrawCall {
     /// The camera distances this draw is drawn at: its mesh's level of detail
     /// and the entity's `lod.draw_distance`. `None` draws at every distance.
     lod: Option<DrawLod>,
-    /// Its drift this frame, if its entity has shallow wooze (#215).
-    wooze: Option<ShallowWoozeUniforms>,
     /// Drawn with no face culled, in the scene and shadow passes: its
     /// material is glTF `doubleSided` (#623).
     double_sided: bool,
@@ -456,39 +451,17 @@ struct SkinnedDrawCall {
     wire_index_count: u32,
     model: [[f32; 4]; 4],
     model_inv_transpose: [[f32; 4]; 4],
-    entity_id: Option<flint_core::EntityId>,
-    blend_mode: BlendMode,
     sort_depth: f32,
-    /// As [`DrawCall::casts_shadow`].
-    casts_shadow: bool,
     /// World-space bounds of the posed mesh (#385): its bind-pose box
     /// under every bone matrix, which holds any blend of them. `None`
     /// when the bones aren't known on the CPU.
     world_aabb: Option<([f32; 3], [f32; 3])>,
-    /// As [`DrawCall::wooze`].
-    wooze: Option<ShallowWoozeUniforms>,
     /// As [`DrawCall::double_sided`].
     double_sided: bool,
     /// Translucent only for its soft edge (#582): it still casts a whole
     /// shadow, since softness is how the outline looks to the eye, not how
     /// much light the body stops.
     soft_edge_only: bool,
-}
-
-impl SceneRenderer {
-    /// The skinned draws that go into the shadow map, in the order every
-    /// shadow loop walks them: the opaque ones that cast, then the translucent
-    /// ones that are translucent only for their softness (#582).
-    /// Over the two lists, not `self`, so the shadow pass can hold its own
-    /// borrow of the renderer's shadow state.
-    fn skinned_shadow_draws<'a>(
-        opaque: &'a [SkinnedDrawCall],
-        translucent: &'a [SkinnedDrawCall],
-    ) -> impl Iterator<Item = &'a SkinnedDrawCall> + Clone {
-        let opaque = opaque.iter().filter(|d| d.casts_shadow);
-        let soft = (translucent.iter()).filter(|d| d.casts_shadow && d.soft_edge_only);
-        opaque.chain(soft)
-    }
 }
 
 /// A draw of one part of one echo. It reads the entity's transform slot rather
@@ -501,8 +474,6 @@ struct EchoDrawCall {
     material_buffer: Arc<MaterialBuffer>,
     material_bind_group: Arc<wgpu::BindGroup>,
     bone_bind_group: Arc<wgpu::BindGroup>,
-    /// Whether it may only add light: its entity's `[living] echo_blend`.
-    lighten: bool,
     /// Where the entity stands, since all its echoes sort as one.
     origin: [f32; 3],
     /// Which echo: they draw in this order, so farthest from now first.
@@ -557,16 +528,10 @@ pub struct SceneRenderer {
     /// Where the ray targets stood at the last `update_from_world`.
     ray_scene: Arc<flint_geometry::ray_mesh::RayScene>,
     grid_draw: Option<DrawCall>,
-    entity_draws: Vec<DrawCall>,
-    skinned_entity_draws: Vec<SkinnedDrawCall>,
-    transparent_draws: Vec<DrawCall>,
-    transparent_skinned_draws: Vec<SkinnedDrawCall>,
-    echo_draws: Vec<EchoDrawCall>,
-    /// Draws outside the camera frustum in the last `render_to`, set aside
-    /// from `entity_draws` / `transparent_draws` after the shadow pass.
-    culled_entity_draws: Vec<DrawCall>,
-    culled_transparent_draws: Vec<DrawCall>,
-    billboard_draws: Vec<crate::billboard_pipeline::BillboardDrawCall>,
+    /// The frame's draws, one list of items every pass filters (ADR 0118
+    /// decision 4, #737): static, skinned, echo, billboard, terrain and
+    /// particle draws, culled per camera by flags.
+    draws: DrawList,
     debug_state: DebugState,
     wireframe_overlay_draws: Vec<DrawCall>,
     normal_arrow_draws: Vec<DrawCall>,
@@ -812,14 +777,7 @@ impl SceneRenderer {
             ray_scene: Arc::default(),
             skinning: Default::default(),
             grid_draw,
-            entity_draws: Vec::new(),
-            skinned_entity_draws: Vec::new(),
-            transparent_draws: Vec::new(),
-            transparent_skinned_draws: Vec::new(),
-            echo_draws: Vec::new(),
-            culled_entity_draws: Vec::new(),
-            culled_transparent_draws: Vec::new(),
-            billboard_draws: Vec::new(),
+            draws: DrawList::default(),
             debug_state: DebugState::default(),
             wireframe_overlay_draws: Vec::new(),
             normal_arrow_draws: Vec::new(),
@@ -1254,14 +1212,9 @@ impl SceneRenderer {
         if self.device_lost {
             return;
         }
-        self.entity_draws.clear();
-        self.skinned_entity_draws.clear();
-        self.transparent_draws.clear();
-        self.transparent_skinned_draws.clear();
-        self.echo_draws.clear();
-        self.culled_entity_draws.clear();
-        self.culled_transparent_draws.clear();
-        self.billboard_draws.clear();
+        self.draws.clear_extracted();
+        self.draws
+            .sync_terrain(self.terrain.draws.len(), self.terrain.entity);
         self.sprite2d_batches.clear();
         self.wireframe_overlay_draws.clear();
         self.normal_arrow_draws.clear();

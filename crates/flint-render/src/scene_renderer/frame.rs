@@ -353,10 +353,11 @@ impl SceneRenderer {
         self.camera_frustum = Some(crate::frustum::Frustum::from_view_projection(&view_proj));
 
         // Draws an earlier render_to culled (another camera, same extract)
-        // come back for the shadow pass and this camera's test.
-        self.entity_draws.append(&mut self.culled_entity_draws);
-        self.transparent_draws
-            .append(&mut self.culled_transparent_draws);
+        // come back for the shadow pass and this camera's test, and the
+        // terrain's chunks are items as the bound terrain has them now.
+        self.draws.uncull();
+        self.draws
+            .sync_terrain(self.terrain.draws.len(), self.terrain.entity);
 
         // Pick each model's level of detail for this camera and drop what is
         // past its draw distance (#56), before the shadow pass sees them.

@@ -49,20 +49,14 @@ impl SceneRenderer {
         if let Some(tc) = &mut self.texture_cache {
             tc.clear_user_textures();
         }
-        self.entity_draws.clear();
-        self.skinned_entity_draws.clear();
-        self.transparent_draws.clear();
-        self.transparent_skinned_draws.clear();
-        self.echo_draws.clear();
-        self.culled_entity_draws.clear();
-        self.culled_transparent_draws.clear();
-        self.billboard_draws.clear();
+        self.draws.clear_extracted();
         self.sprite2d_batches.clear();
         self.wireframe_overlay_draws.clear();
         self.normal_arrow_draws.clear();
         self.skeleton_overlay_draws.clear();
         self.debug_overlay_draws.clear();
         self.particle_draws.clear();
+        self.draws.set_particles(std::iter::empty());
         self.particle_texture_bind_groups.clear();
         self.bitmap_font_cache.clear();
         self.bitmap_font_scope = None;

@@ -28,14 +28,64 @@ impl SceneRenderer {
     pub fn collect_stats(&self) -> crate::render_stats::RenderStats {
         use crate::grass_pipeline::BLADE_INDEX_COUNT;
 
-        let entity_draws = self.entity_draws.len() as u32;
-        let skinned_draws = self.skinned_entity_draws.len() as u32;
+        // One walk over the list: what each kind counts as
+        let (mut entity_draws, mut skinned_draws, mut echo_draws) = (0u32, 0u32, 0u32);
+        let (mut blended_draws, mut billboard_draws, mut culled_draws) = (0u32, 0u32, 0u32);
+        let mut triangles: u32 = 0;
+        // What casts into the shadow cascades (ADR 0100), as an estimate:
+        // the opaque statics and the skinned meshes the shadow pass takes
+        let (mut shadow_casters, mut shadow_caster_triangles) = (0u32, 0u32);
+        for item in self.draws.iter() {
+            let opaque = item.blend == Blend::Opaque;
+            match &item.draw {
+                Draw::Static(_) if !item.drawn() => culled_draws += 1,
+                Draw::Static(d) => {
+                    triangles += d.index_count / 3;
+                    if opaque {
+                        entity_draws += 1;
+                        if item.casts_shadow {
+                            shadow_casters += 1;
+                            shadow_caster_triangles += d.index_count / 3;
+                        }
+                    } else {
+                        blended_draws += 1;
+                    }
+                }
+                Draw::Skinned(d) => {
+                    triangles += d.index_count / 3;
+                    if opaque {
+                        skinned_draws += 1;
+                    } else {
+                        blended_draws += 1;
+                    }
+                    if item.casts_shadow && (opaque || d.soft_edge_only) {
+                        shadow_casters += 1;
+                        shadow_caster_triangles += d.index_count / 3;
+                    }
+                }
+                Draw::Echo(d) => {
+                    triangles += d.index_count / 3;
+                    echo_draws += 1;
+                    blended_draws += 1;
+                }
+                // Each a fixed quad (2 triangles)
+                Draw::Billboard(_) => {
+                    billboard_draws += 1;
+                    triangles += 2;
+                }
+                // Every chunk, and the visible ones as draw calls below
+                Draw::Terrain(n) => {
+                    let chunk = self.terrain.draws.get(*n as usize);
+                    let t = chunk.map_or(0, |d| d.index_count / 3);
+                    triangles += t;
+                    shadow_caster_triangles += t;
+                }
+                // Counted from the upload below
+                Draw::Particles(_) => {}
+            }
+        }
         let terrain_draws = self.terrain.visible_chunks;
-        let echo_draws = self.echo_draws.len() as u32;
-        let transparent_draws = (self.transparent_draws.len()
-            + self.transparent_skinned_draws.len()
-            + self.echo_draws.len()) as u32;
-        let billboard_draws = self.billboard_draws.len() as u32;
+        let transparent_draws = blended_draws;
         let particle_draws = self.particle_draws.len() as u32;
         let sprite_batches = self.sprite2d_batches.len() as u32;
         let grass_draw_calls = if self.grass.drawing { 1u32 } else { 0 };
@@ -49,28 +99,6 @@ impl SceneRenderer {
             + sprite_batches
             + grass_draw_calls;
 
-        // Triangles: sum index_count/3 for types that have it, fixed counts for others
-        let mut triangles: u32 = 0;
-        for d in &self.entity_draws {
-            triangles += d.index_count / 3;
-        }
-        for d in &self.skinned_entity_draws {
-            triangles += d.index_count / 3;
-        }
-        for d in &self.transparent_draws {
-            triangles += d.index_count / 3;
-        }
-        for d in &self.transparent_skinned_draws {
-            triangles += d.index_count / 3;
-        }
-        for d in &self.echo_draws {
-            triangles += d.index_count / 3;
-        }
-        for d in &self.terrain.draws {
-            triangles += d.index_count / 3;
-        }
-        // Billboards: each is a fixed quad (2 triangles)
-        triangles += billboard_draws * 2;
         // Particles: instanced quads (2 triangles per instance)
         let particle_instances: u32 = self.particle_draws.iter().map(|d| d.instance_count).sum();
         triangles += particle_instances * 2;
@@ -86,25 +114,9 @@ impl SceneRenderer {
             Some(sp) if self.shadows_drawn() => sp.cascades() as u32,
             _ => 0,
         };
-        let casting = self.entity_draws.iter().filter(|d| d.casts_shadow);
-        let casting_skinned =
-            Self::skinned_shadow_draws(&self.skinned_entity_draws, &self.transparent_skinned_draws);
-        let shadow_entity_draws =
-            (casting.clone().count() + casting_skinned.clone().count()) as u32 + terrain_draws;
+        let shadow_entity_draws = shadow_casters + terrain_draws;
         let shadow_draw_calls = shadow_entity_draws * cascade_count;
-        let shadow_triangles = {
-            let mut t: u32 = 0;
-            for d in casting {
-                t += d.index_count / 3;
-            }
-            for d in casting_skinned {
-                t += d.index_count / 3;
-            }
-            for d in &self.terrain.draws {
-                t += d.index_count / 3;
-            }
-            t * cascade_count
-        };
+        let shadow_triangles = shadow_caster_triangles * cascade_count;
 
         let style_memory = self.style_target_summary();
         let fxaa_target = self
@@ -116,8 +128,7 @@ impl SceneRenderer {
             triangles,
             echo_draws,
             entity_draws,
-            culled_draws: (self.culled_entity_draws.len() + self.culled_transparent_draws.len())
-                as u32,
+            culled_draws,
             lod_culled_draws: self.lod_culled,
             skinned_draws,
             terrain_draws,
