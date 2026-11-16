@@ -72,6 +72,11 @@ topic = "rendering"
 purpose = "A spot light with no direction swings with the arm it hangs from; its cone in degrees"
 
 [[example]]
+scene = "dark_stage.scene.toml"
+topic = "rendering"
+purpose = "A near-black stage under one soft pool of light: dither in display levels hides the dark's banding (#503)"
+
+[[example]]
 scene = "transparency_test.scene.toml"
 topic = "rendering"
 purpose = "Transparent materials beside opaque ones"

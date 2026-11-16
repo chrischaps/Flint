@@ -132,6 +132,7 @@ fxaa = false
 | `fog_tint_end` | f32 | `1000.0` | Distance at which it reaches full strength |
 | `dither_enabled` | bool | `false` | Ordered dither |
 | `dither_intensity` | f32 | `0.03` | Dither strength |
+| `dither_style` | u32 | `0` | `0` linear light, `1` Bayer in display levels, `2` triangular noise in display levels (#503) |
 | `volumetric_enabled` | bool | `false` | Volumetric light (god rays) |
 | `volumetric_samples` | u32 | `32` | Ray-march steps |
 | `volumetric_density` | f32 | `1.0` | Scattering density |
