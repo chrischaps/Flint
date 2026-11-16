@@ -1,0 +1,3 @@
+### A script's `log()` prints once under `flint render --scripts` (#1013)
+**What changed.** `log`, `log_warn` and `log_error` wrote every line twice in a headless capture (`flint render --scripts`), though once in the player. A capture looked up each command's name by carrying out a copy of it on a probe host, and the probe's `log` printed. The name now comes from a table, `flint_script::host::command_name`, which carries nothing out; it names each command as its `ScriptHost` default does, and `None` for `log`.
+**What to do.** Nothing. A tool that counted a capture's script lines, or dropped every second one, now sees each once.

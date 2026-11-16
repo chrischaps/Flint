@@ -14,8 +14,9 @@
 //!
 //! Adding a command (`crates/flint-script/CLAUDE.md` has the recipe): a
 //! variant on `ScriptCommand`, the script function that queues it (in its
-//! `api/` module), and a method here with its default and its arm in
-//! [`apply`], which the compiler insists on. Then each host that can do it
+//! `api/` module), and a method here with its default, its arm in
+//! [`apply`] and its name in [`command_name`], which the compiler insists
+//! on. Then each host that can do it
 //! overrides the method; a headless capture that can't names it on its
 //! presentation-only list (`flint_player::PRESENTATION_ONLY`).
 
@@ -346,6 +347,66 @@ pub fn apply<H: ScriptHost + ?Sized>(host: &mut H, cmd: ScriptCommand) {
         C::UnloadChunk { chunk_id } => host.unload_chunk(chunk_id),
         C::SetVelocity2D { entity, vx, vy } => host.set_velocity_2d(entity, vx, vy),
     }
+}
+
+/// The script function `cmd` is, as its [`ScriptHost`] default names it to
+/// [`ScriptHost::unsupported`]; `None` for `log`, which every host does.
+///
+/// A table, so asking carries nothing out (#1013): a capture's refusal used
+/// to find the name by applying a copy of the command to a probe host, whose
+/// default `log` then wrote each script line a second time. A test in
+/// flint-player (`headless_host_tests::the_name_table_is_what_each_default_reports`)
+/// holds every variant's entry to what its default reports.
+pub fn command_name(cmd: &ScriptCommand) -> Option<&'static str> {
+    use ScriptCommand as C;
+    Some(match cmd {
+        C::PlaySound { .. } => "play_sound",
+        C::PlaySoundAt { .. } => "play_sound_at",
+        C::StopSound { .. } => "stop_sound",
+        C::SetSoundVolume { .. } => "set_sound_volume",
+        C::SetAudioLowpass { .. } => "set_audio_lowpass",
+        C::FireEvent { .. } => "fire_event",
+        C::Log { .. } => return None,
+        C::EmitBurst { .. } => "emit_burst",
+        C::PlayEffect { .. } => "play_effect",
+        C::StopEffect { .. } => "stop_effect",
+        C::SetEffectParam { .. } => "set_effect_param",
+        C::SetEntityStyle { .. } => "set_entity_style",
+        C::SetStyleParam { .. } => "set_style_param",
+        C::TweenStyleParam { .. } => "tween_style_param",
+        C::ClearEntityStyle { .. } => "clear_entity_style",
+        C::SetPostStyle { .. } => "set_post_style",
+        C::SetPostStyleParam { .. } => "set_post_style_param",
+        C::TweenPostStyleParam { .. } => "tween_post_style_param",
+        C::ResetPostStyle { .. } => "reset_post_style",
+        C::ResetStyleHistory => "reset_style_history",
+        C::SetCameraCutDetection { .. } => "set_camera_cut_detection",
+        C::SetPanels { .. } => "set_panels",
+        C::SetPanel { .. } => "set_panel",
+        C::RemovePanel { .. } => "remove_panel",
+        C::ClearPanels => "clear_panels",
+        C::Rumble { .. } => "rumble",
+        C::SetLook { .. } => "set_look",
+        C::SetCamera { .. } => "set_camera_*",
+        C::SetPostProcess { .. } => "set_vignette and the post-process overrides",
+        C::SetFogColor { .. } => "set_fog_color",
+        C::SetRenderMode { .. } => "set_render_mode",
+        C::SetLodScales { .. } => "set_lod_scale",
+        C::SetQuality { .. } => "set_quality",
+        C::SetTimeScale { .. } => "set_time_scale",
+        C::SetTouchControls { .. } => "set_touch_controls",
+        C::SetCursorCaptured { .. } => "set_cursor_captured",
+        C::Module(command) => command.function(),
+        C::LoadScene { .. } => "load_scene",
+        C::ReloadScene => "reload_scene",
+        C::QuitGame => "quit_game",
+        C::PushState { .. } => "push_state",
+        C::PopState => "pop_state",
+        C::ReplaceState { .. } => "replace_state",
+        C::LoadChunk { .. } => "load_chunk",
+        C::UnloadChunk { .. } => "unload_chunk",
+        C::SetVelocity2D { .. } => "set_velocity_2d",
+    })
 }
 
 /// [`apply`] each of `commands`, in order.

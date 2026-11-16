@@ -464,21 +464,6 @@ struct CaptureFrame<'a> {
     gpu: Option<(&'a wgpu::Device, &'a wgpu::Queue)>,
 }
 
-/// The script function a command is, as [`ScriptHost`] names it to
-/// `unsupported`.
-fn command_name(command: &ScriptCommand) -> Option<&'static str> {
-    #[derive(Default)]
-    struct Name(Option<&'static str>);
-    impl ScriptHost for Name {
-        fn unsupported(&mut self, command: &'static str) {
-            self.0 = Some(command);
-        }
-    }
-    let mut name = Name::default();
-    flint_script::host::apply(&mut name, command.clone());
-    name.0
-}
-
 impl FrameHost for CaptureFrame<'_> {
     fn lend(&mut self) -> (&mut GameCore, Lent<'_>) {
         let game = &mut *self.game;
@@ -526,7 +511,8 @@ impl FrameHost for CaptureFrame<'_> {
                 return true;
             }
         }
-        let Some(name) = command_name(command) else {
+        // The name from a table, never by carrying the command out (#1013)
+        let Some(name) = flint_script::host::command_name(command) else {
             return false;
         };
         let game = &mut *self.game;
