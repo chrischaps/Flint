@@ -844,6 +844,10 @@ fn fs_main(input: VertexOutput, @builtin(front_facing) front: bool) -> @location
 // are read; the targets are single-sample R8Unorm with "over" blending.
 @fragment
 fn fs_veil(in: VertexOutput) -> @location(0) vec4<f32> {
+    return vec4<f32>(veil_alpha(in));
+}
+
+fn veil_alpha(in: VertexOutput) -> f32 {
     let scaled_uv = in.uv * material.texture_scale;
     var alpha = material.base_color.a;
     if (material.use_vertex_color == 1u) {
@@ -855,7 +859,26 @@ fn fs_veil(in: VertexOutput) -> @location(0) vec4<f32> {
     if (material.has_base_color_tex == 1u) {
         alpha = textureSample(base_color_texture, material_sampler, scaled_uv).a * alpha;
     }
-    return vec4<f32>(clamp(alpha * material.opacity, 0.0, 1.0));
+    return clamp(alpha * material.opacity, 0.0, 1.0);
+}
+
+// The fog veil (#513): this surface's weight and depth, so the composite
+// fogs it at its own depth and not at the depth of what's behind it.
+// r = weight x (1 - depth), g = weight, a = its coverage, "over" blended
+// into an Rgba16Float target cleared to (0, 0, 0, 1) whose alpha keeps
+// 1 - alpha of what's behind (`fog_veil.rs`).
+@fragment
+fn fs_fog_veil(in: VertexOutput) -> @location(0) vec4<f32> {
+    let w = veil_alpha(in);
+    return vec4<f32>(w * (1.0 - in.clip_position.z), w, 0.0, w);
+}
+
+// The fog veil of a surface that only adds light (additive): it weighs in
+// where it is, and hides nothing behind it.
+@fragment
+fn fs_fog_veil_light(in: VertexOutput) -> @location(0) vec4<f32> {
+    let w = veil_alpha(in);
+    return vec4<f32>(w * (1.0 - in.clip_position.z), w, 0.0, 0.0);
 }
 
 // The style albedo (#869): the surface's own colour, as fs_main builds it

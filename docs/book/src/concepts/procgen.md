@@ -219,7 +219,28 @@ fn rig(&self, spec: &ProcGenSpec, lineage_seed: u64) -> Result<LivingRig>;
 fn full_pose(&self, spec: &ProcGenSpec, skeleton: &LivingSkeleton, shape_seed: u64) -> Result<LivingPose>;
 ```
 
-`pose` is `full_pose` held to the spec's variance. `LivingSkeleton::posed_segments` and `posed_leaf_mesh` turn a pose back into geometry. `tree_v1` supports the built-in L-system only, where every seed grows the same segments in the same order. Space colonization grows a different structure for each seed, a stochastic text grammar does too, and a fixed grammar grows the same tree for every seed, so all three report themselves unsupported.
+`pose` is `full_pose` held to the spec's variance. `LivingSkeleton::posed_segments` and `posed_leaf_mesh` turn a pose back into geometry. By default a `tree_v1` pose is **regrown**, which only the built-in L-system can do: it grows the same segments in the same order for every seed. Space colonization grows a different structure for each seed, a stochastic text grammar does too, and a fixed grammar grows the same tree for every seed. Those three live by **noise** instead (below), and without `pose = "noise"` they report themselves unsupported.
+
+#### Noise poses
+
+`[living] pose = "noise"` (#506) keeps the lineage's own branches and bends them. Each pose turns every segment by smooth 3D noise sampled at its midpoint and seeded by the shape seed: a bend about an axis across the segment, never a twist, and a small change of length. A child starts at its parent's posed end, so limbs stay attached. Because a pose never grows anything, any branch method can live, and the grove's oak can too.
+
+```toml
+[living]
+lineage_seed = 7
+pose = "noise"                                            # regrow (the default) | noise
+noise = { turn = 12.0, wavelength = 3.0, stretch = 0.08 }  # these are the defaults
+```
+
+- `turn` is the degrees a segment turns at one standard deviation of the noise, 0 to 90.
+- `wavelength` is the metres between swells, at least 0.05. Well above a limb's length the whole limb turns together. Near it, the limb bends along its length.
+- `stretch` is how much a length can change at one standard deviation, 0 to 0.5. A length stays within half and one and a half of its rest length.
+
+`variance`, the clock, echoes and jitter work as they do for regrowth. At the oak's own variance, 12° moves a frame about half as far as regrowth does, and the crown keeps its outline where regrowth reshuffles its limbs. Near 30° it moves as far, but the whole crown leans one way, like a gust.
+
+A colonized tree's grown `depth` counts growth steps along a limb, 31 on the pine. With that depth, per-level stagger spread the pine over five beats and it never held. So a colonization skeleton's `depth` is its **branch order**: 1 for a limb off the trunk, plus one at each fork for every child except the one that carries its parent on (the thickest, then the straightest). That gives the pine three levels, so it holds on every beat under per-level stagger, and its variance weights the twigs over the limbs. Leaves are still placed by the grown depth, as `flint gen` places them. A grammar's depth is its bracket nesting, which is already a branch order, so it is left as it is.
+
+A tree with more segments than bones folds its tips into their parents ([below](#the-skinned-rest-mesh)). The pine folds 397 of its 640 segments, and the willow 1,137 of its 1,380. `examples/noise_trees.scene.toml` puts the colonized pine (`examples/specs/grove_pine`) and the grammar willow (`grove_willow`) beside the grove's regrowing oak.
 
 A spec declares it with a `[living]` table. Only `lineage_seed` is required:
 
@@ -260,7 +281,7 @@ The player keeps both forms of each pose in its rings and holds them again with 
 
 Otherwise `flint gen` writes the lineage's rest mesh as a skinned GLB. It's the same geometry as the still tree `flint gen --seed <lineage>` bakes without a `[living]` table, plus joints and weights, so it holds still until something poses it. It grows from `lineage_seed`, so `[seed]` plays no part, and `--seed` or `--batch` pick the lineage instead.
 
-- **Bones.** Bone 0, `trunk`, holds the trunk still. Then each segment gets a bone, `seg_0042` for segment 42, at its start with +Y along it. The renderer's limit is 256 bones (`MAX_SKINNED_BONES`), and the player keeps the last 12 for leaf jitter, so a tree with more than 243 segments folds its shortest twigs into their parents' bones, from the tips in. `LivingRig::segment_bones` says which bone moves a segment.
+- **Bones.** Bone 0, `trunk`, holds the trunk still. Then each segment gets a bone, `seg_0042` for segment 42, at its start with +Y along it. The renderer's limit is 256 bones (`MAX_SKINNED_BONES`), and the player keeps the last 12 for leaf jitter, so a tree with more than 243 segments folds twigs into their parents' bones, from the tips in. The next to fold is the one that leaves the shortest run riding its parent's bone rigidly: its own length plus the longest run already folded into it. A tree that folds a few twigs loses its shortest tips. A colonized pine, whose limbs are long chains of equal steps, loses a step from every twig in turn, not a whole twig at once. Its folded twig ends sit 1.5 cm from their pose on average and 9 cm at worst, on a tree 9 m tall (whole twigs at once: 3.2 and 20 cm). `LivingRig::segment_bones` says which bone moves a segment.
 - **Weights.** A ring where a limb carries on from one segment to the next is shared half and half by the two bones, and a limb's first and last rings belong to their own segment. Rings are single vertices, so a joint can't tear. A leaf card rides the bone of its segment, whole.
 - **Poses.** `LivingRig::palette` turns a pose into bone matrices, ready to upload, and `skinned_mesh` applies them on the CPU. All of a pose's scale lives in those matrices: glTF's parent-child transforms can't carry a stretch without shearing the children, so the GLB's skeleton holds none.
 
@@ -712,7 +733,7 @@ It's 38 living trees in four species, from `examples/specs/`: an oak, a cypress,
 
 A few things the grove had to work around, which any scene like it will meet:
 
-- **Every species is the built-in L-system with no `[[lod]]`.** The conifer is a cypress and not a fir because the rule makes too few scaffold limbs for whorls, and space colonization can't live at all.
+- **Every species is the built-in L-system with no `[[lod]]`.** The conifer is a cypress and not a fir because the rule makes too few scaffold limbs for whorls. When the grove was planted, space colonization couldn't live at all. Now a pine can, by [noise](#noise-poses) (`grove_pine`, in `examples/noise_trees.scene.toml`).
 - **A trunk's collider is a sibling, not on the tree.** Physics assumes unit scale, and the trees are scaled. Trunks hold still, so they can be solid. Limbs drift, so they aren't.
 - **The floor is a `texture_v1` spec covering the ground once.** A box's UVs are in metres, so `texture_scale = 1 / width` fits it, which is also the only way to avoid seams while pipeline noise doesn't tile.
 - **A character always starts facing +Z,** so a scene's way in has to be laid out along it.

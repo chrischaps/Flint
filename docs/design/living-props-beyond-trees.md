@@ -22,15 +22,17 @@ rest). `python examples/wooze_props/experiment.py` reproduces them.
 | 1 | `garden_vine`, living | **keep**: the stem holds and the shoots are redrawn. `examples/specs/grove_vine` is it | none for the wooze. The vine doesn't climb, which is a procgen question |
 | 2 | beetle, shallow wooze | **keep** at 0.04 m / 0.35 m; deeper and whole-body swells parked. The showcase idle bob, on the wall clock, takes away its holds | #505: Rhai reads the field's clock |
 | 3 | grass on the field's clock | **keep** (PR #259) | none |
-| 4 | noise pose | **keep**: pine (colonization) and willow (grammar) live, limbs attached, silhouette kept. At regrowth's strength it reads as wind. Colonization depth breaks per-level stagger | #506: the noise pose in the engine |
+| 4 | noise pose | **keep**: pine (colonization) and willow (grammar) live, limbs attached, silhouette kept. At regrowth's strength it reads as wind. Colonization depth breaks per-level stagger | #506: done, `[living] pose = "noise"`, with branch order as a colonization tree's depth |
 
 ## What there is to make woozy
 
-| Generator | Specs | Living today? | Why |
+Updated for #506. The "Living" column was "No" for colonization and grammars when this note was written.
+
+| Generator | Specs | Living? | How |
 |---|---|---|---|
-| `tree_v1`, built-in L-system | 12 | Yes | Every seed grows the same segments (#207) |
-| `tree_v1`, space colonization | 2 (`pine_tree`, `garden_tree`) | No | A different structure for every seed |
-| `tree_v1`, text grammar | 1 (`weeping_willow`) | No | A stochastic grammar changes structure; a fixed one never changes |
+| `tree_v1`, built-in L-system | 12 | Yes | Regrowth: every seed grows the same segments (#207). Noise works too |
+| `tree_v1`, space colonization | 2 (`pine_tree`, `garden_tree`), and `grove_pine` | With `pose = "noise"` (#506) | Regrowth can't: a different structure for every seed. Depth is the branch order (3 levels on the pine, not 31 growth steps) |
+| `tree_v1`, text grammar | 1 (`weeping_willow`), and `grove_willow` | With `pose = "noise"` (#506) | Regrowth can't: a stochastic grammar changes structure and a fixed one never changes. Depth is the bracket nesting, a branch order already |
 | `creature_v1` | 6 (`beetle` and the showcase bugs) | No | `generate` never reads its RNG (`_rng`, `creature/mod.rs:40`), so every seed grows the same creature and there's nothing to regrow a pose from |
 | `texture_v1` | 19 | n/a | An image, not a mesh: it reaches the screen only on a material |
 
@@ -99,8 +101,8 @@ Tree-specific, and what each would have to become:
 
 | Where | Assumption | Hit by |
 |---|---|---|
-| `TreeGenerator::full_pose` (`tree/living.rs`) | A pose comes from **regrowing** from the shape seed, and must give the same depth list | Colonization, grammars, creatures (#4). Needs a pose source that doesn't depend on the generator's own randomness |
-| `TreeGenerator::check_living` | Only the built-in L-system can live | Pine, garden_tree, willow (#4) |
+| `TreeGenerator::full_pose` (`tree/living.rs`) | A pose comes from **regrowing** from the shape seed, and must give the same depth list | Lifted for trees by #506: `[living] pose = "noise"` (`tree/noise_pose.rs`) doesn't touch the generator's randomness. Creatures (#4) still need parts that aren't tubes |
+| `TreeGenerator::check_living` | Only the built-in L-system can live | Lifted by #506: with `pose = "noise"` any branch method lives |
 | `LivingSkeleton` (`living.rs`) | Parts are `BranchSegment` tubes plus `leaf_mesh` / `leaf_bindings`, the only rigid attachment kind | Creatures (#4): body parts would have to ride as "cards" |
 | `SegmentPose` (`living.rs`) | A pose is a turn of the rest direction plus length and mean-radius scale: a tube's vocabulary | Creatures (#4): an ellipsoid body part has no three-axis scale |
 | `rig` bone 0 `trunk` (`tree/living.rs`) | The trunk is held still and never drifts | `library_root`, whose trunk is most of the prop, so it barely moves (its strip is on the presentation page). Fine for the vine |

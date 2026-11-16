@@ -6,7 +6,10 @@
 //   0 to 30 s: echo count, 0 to 16 and back, twice
 //  30 to 60 s: echo spread, 0 to 1.818 steps and back, twice, at 16 echoes
 //  60 to 90 s: both, out of step, with variance and stagger moving under them
-//  from 90 s:  back as the scene set them, and holding still
+//  90 to 93 s: back as the scene set them, eased over 3 s (#514): the counts,
+//              stagger and keep_size switch at 90, the rest glide there
+//  95 to 97 s: the spread out to 1.8 steps over 2 s, then at 98 back over 2 s
+//  from 100 s: holding still
 
 fn tri(x) {
     1.0 - (2.0 * (x - x.floor()) - 1.0).abs()
@@ -43,7 +46,14 @@ fn on_update() {
             stagger: "per_level",
             echoes: #{ count: 6, spread: 0.9, alpha: 0.2 },
             variance: #{ amount: 0.35, steady: 0.8, keep_size: true },
-        } });
-        log("sweep: done, back as the scene set them");
+        } }, 3.0);
+        log("sweep: easing back as the scene set them");
+    }
+    if crossed(95.0) {
+        tune_living(#{ living: #{ echoes: #{ spread: 1.8 } } }, 2.0);
+    }
+    if crossed(98.0) {
+        tune_living(#{ living: #{ echoes: #{ spread: 0.9 } } }, 2.0);
+        log("sweep: done, holding still from 100 s");
     }
 }

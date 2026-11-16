@@ -487,7 +487,9 @@ fn resolve(p: vec2<f32>) -> Owner {
     o.slot = 0u;
     o.blend = 1.0;
     o.read_at = p;
-    if u.variant_meta.x <= 1u {
+    // Far from every variant's draws (#507): no id here, nor in any cell
+    // or silhouette test this pixel would make
+    if u.variant_meta.x <= 1u || !in_mask_rect(p) {
         return o;
     }
     let m = mask_texel(p);
@@ -670,8 +672,11 @@ fn variant_pixel(slot: u32, p: vec2<f32>) -> vec3<f32> {
 // Whether the pixel at `p`, of variant `slot`, lies within `width` output
 // pixels of a pixel of another slot: rings of the 8 compass neighbours at
 // each whole pixel out to the width (at most 4), the last at the width.
+// A ring's 8 reads are all made, not left at the first hit, so they are in
+// flight together (#507: 0.004 ms of a styled prop's 0.007 at 1080p)
 fn on_silhouette(slot: u32, p: vec2<f32>, width: f32) -> bool {
     let rings = min(i32(ceil(width)), 4);
+    var hit = false;
     for (var k = 1; k <= rings; k++) {
         let r = min(f32(k), width);
         for (var i = 0; i < 8; i++) {
@@ -682,12 +687,13 @@ fn on_silhouette(slot: u32, p: vec2<f32>, width: f32) -> bool {
             if (i & 1) == 1 {
                 d = sign(d);
             }
-            if slot_at(p + d * r) != slot {
-                return true;
-            }
+            hit = hit | (slot_at(p + d * r) != slot);
+        }
+        if hit {
+            break;
         }
     }
-    return false;
+    return hit;
 }
 
 @fragment

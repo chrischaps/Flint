@@ -150,7 +150,7 @@ renders each frame with `flint edit <glb> --render` from one fixed camera.
   as the oak does.
 
 **Verdict: keep, as the way pine, willow and the other colonization and grammar
-trees live.** Follow-up: #506, a `[living]` noise pose in the engine, with a branch-order depth for colonization. Creatures by noise pose stay parked: their body
+trees live.** Follow-up: #506, a `[living]` noise pose in the engine, with a branch-order depth for colonization. Done: `[living] pose = "noise"`, and `living_spike noise` now drives the engine's own (the numbers above are the prototype's, from before branch order). `examples/noise_trees.scene.toml` puts the living pine and willow beside the oak. Creatures by noise pose stay parked: their body
 parts would have to ride as cards, and `SegmentPose` has no three-axis scale (#251).
 
 ## What to look at

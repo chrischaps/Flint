@@ -160,3 +160,21 @@ fn fs_veil_additive(in: VertexOutput) -> @location(0) vec4<f32> {
     let light = max(c.r, max(c.g, c.b));
     return vec4<f32>(clamp(c.a * min(light, 1.0), 0.0, 1.0));
 }
+
+// The fog veil (#513), as shader.wgsl's: the particle's weight and depth
+// for the composite's fog, and how much of what's behind it hides.
+@fragment
+fn fs_fog_veil(in: VertexOutput) -> @location(0) vec4<f32> {
+    let c = textureSample(particle_texture, particle_sampler, in.uv) * in.color;
+    let w = clamp(c.a, 0.0, 1.0);
+    return vec4<f32>(w * (1.0 - in.clip_position.z), w, 0.0, w);
+}
+
+// An additive particle weighs in by the light it adds and hides nothing.
+@fragment
+fn fs_fog_veil_light(in: VertexOutput) -> @location(0) vec4<f32> {
+    let c = textureSample(particle_texture, particle_sampler, in.uv) * in.color;
+    let light = max(c.r, max(c.g, c.b));
+    let w = clamp(c.a * min(light, 1.0), 0.0, 1.0);
+    return vec4<f32>(w * (1.0 - in.clip_position.z), w, 0.0, 0.0);
+}

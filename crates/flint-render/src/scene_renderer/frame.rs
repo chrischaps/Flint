@@ -453,6 +453,21 @@ impl SceneRenderer {
             }
         }
 
+        // The fog veil (#513): while the fog reaches a translucent draw, the
+        // main pass ends before the first one, the picture behind them is
+        // copied, and the veil is drawn after, so the composite can fog them
+        // at their own depth.
+        let fog_veiled = has_postprocess && !wireframe_only && self.fog_meets_translucents();
+        self.fog_veil.drawn = false;
+        if fog_veiled {
+            let res = self.postprocess_resources.as_mut().unwrap();
+            if res.fog_veil.is_none() {
+                res.fog_veil = Some(crate::postprocess::FogVeilTargets::new(
+                    device, res.width, res.height,
+                ));
+            }
+        }
+
         // Update all per-frame uniforms and sort transparent draws
         self.update_per_frame_uniforms(
             queue,
@@ -499,38 +514,46 @@ impl SceneRenderer {
         let scene_scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Scene");
 
         if !self.water.grab_this_frame {
-            // Single-pass path (unchanged for scenes without an ocean).
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: pass_color_view,
-                    resolve_target: pass_resolve_target,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear_color),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: pass_depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+            // Single-pass path (unchanged for scenes without an ocean), split
+            // before the translucent draws while the fog veil is drawn.
+            let mut render_pass = scene_pass(
+                encoder,
+                "Render Pass",
+                pass_color_view,
+                pass_resolve_target,
+                pass_depth_view,
+                Some(clear_color),
+            );
             self.render_main_pass(
                 &mut render_pass,
                 wireframe_only,
                 queue,
                 camera,
-                RenderPhase::All,
+                if fog_veiled {
+                    RenderPhase::OPAQUE_AND_OCEAN
+                } else {
+                    RenderPhase::ALL
+                },
             );
             drop(render_pass);
+            if fog_veiled {
+                self.copy_fog_veil_behind(encoder);
+                let mut render_pass = scene_pass(
+                    encoder,
+                    "Render Pass (translucent)",
+                    pass_color_view,
+                    pass_resolve_target,
+                    pass_depth_view,
+                    None,
+                );
+                self.render_main_pass(
+                    &mut render_pass,
+                    wireframe_only,
+                    queue,
+                    camera,
+                    RenderPhase::REST,
+                );
+            }
             if msaa_active {
                 self.msaa.resolve_depth_into(device, encoder, depth_view);
             }
@@ -538,35 +561,20 @@ impl SceneRenderer {
             // ── Grab-pass split: opaque scene → snapshot → ocean + rest ──
             // Pass A: sky + all opaque geometry (including the legs).
             {
-                let mut pass_a = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Render Pass A (pre-ocean)"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: pass_color_view,
-                        resolve_target: pass_resolve_target,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(clear_color),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: pass_depth_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
+                let mut pass_a = scene_pass(
+                    encoder,
+                    "Render Pass A (pre-ocean)",
+                    pass_color_view,
+                    pass_resolve_target,
+                    pass_depth_view,
+                    Some(clear_color),
+                );
                 self.render_main_pass(
                     &mut pass_a,
                     wireframe_only,
                     queue,
                     camera,
-                    RenderPhase::PreOcean,
+                    RenderPhase::PRE_OCEAN,
                 );
             }
 
@@ -637,37 +645,45 @@ impl SceneRenderer {
                 blit_pass.draw(0..3, 0..1);
             }
 
-            // Pass B: ocean (sampling the snapshots) + transparents/particles.
+            // Pass B: ocean (sampling the snapshots) + transparents/particles,
+            // split after the ocean while the fog veil is drawn.
             {
-                let mut pass_b = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Render Pass B (ocean + transparents)"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: pass_color_view,
-                        resolve_target: pass_resolve_target,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: pass_depth_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
+                let mut pass_b = scene_pass(
+                    encoder,
+                    "Render Pass B (ocean + transparents)",
+                    pass_color_view,
+                    pass_resolve_target,
+                    pass_depth_view,
+                    None,
+                );
                 self.render_main_pass(
                     &mut pass_b,
                     wireframe_only,
                     queue,
                     camera,
-                    RenderPhase::PostOcean,
+                    if fog_veiled {
+                        RenderPhase::OCEAN
+                    } else {
+                        RenderPhase::POST_OCEAN
+                    },
+                );
+            }
+            if fog_veiled {
+                self.copy_fog_veil_behind(encoder);
+                let mut pass_c = scene_pass(
+                    encoder,
+                    "Render Pass C (transparents)",
+                    pass_color_view,
+                    pass_resolve_target,
+                    pass_depth_view,
+                    None,
+                );
+                self.render_main_pass(
+                    &mut pass_c,
+                    wireframe_only,
+                    queue,
+                    camera,
+                    RenderPhase::REST,
                 );
             }
 
@@ -679,6 +695,14 @@ impl SceneRenderer {
         }
 
         crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scene_scope);
+
+        // The fog veil (#513): the translucent draws' weight, depth and
+        // coverage, against the finished frame's single-sample depth
+        if fog_veiled {
+            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Fog veil");
+            self.fog_veil.drawn = self.encode_fog_veil(device, encoder, depth_view);
+            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
+        }
 
         // The entity style mask (#263): the styled entities' ids, drawn
         // against the frame's single-sample depth, while a style reads it.
@@ -825,4 +849,59 @@ impl SceneRenderer {
             &view,
         );
     }
+
+    /// Copy the HDR picture as the scene passes left it into the fog veil's
+    /// picture behind (#513): everything drawn so far, which is everything
+    /// behind the translucent draws still to come.
+    fn copy_fog_veil_behind(&self, encoder: &mut wgpu::CommandEncoder) {
+        let Some(res) = &self.postprocess_resources else {
+            return;
+        };
+        if let Some(targets) = &res.fog_veil {
+            encoder.copy_texture_to_texture(
+                res.hdr_texture.as_image_copy(),
+                targets.behind.as_image_copy(),
+                targets.behind.size(),
+            );
+        }
+    }
+}
+
+/// Begin one of the frame's scene passes: cleared to `clear` (and depth to
+/// 1) for the first, loading what's there for the ones after a split.
+fn scene_pass<'e>(
+    encoder: &'e mut wgpu::CommandEncoder,
+    label: &str,
+    color: &wgpu::TextureView,
+    resolve_target: Option<&wgpu::TextureView>,
+    depth: &wgpu::TextureView,
+    clear: Option<wgpu::Color>,
+) -> wgpu::RenderPass<'e> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: color,
+            resolve_target,
+            depth_slice: None,
+            ops: wgpu::Operations {
+                load: clear.map_or(wgpu::LoadOp::Load, wgpu::LoadOp::Clear),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: depth,
+            depth_ops: Some(wgpu::Operations {
+                load: if clear.is_some() {
+                    wgpu::LoadOp::Clear(1.0)
+                } else {
+                    wgpu::LoadOp::Load
+                },
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
 }

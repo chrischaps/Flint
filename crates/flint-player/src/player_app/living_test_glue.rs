@@ -303,6 +303,14 @@ impl PlayerApp {
         })
     }
 
+    pub(crate) fn tune_living_over(
+        &mut self,
+        knobs: toml::Value,
+        seconds: f64,
+    ) -> Result<(), String> {
+        self.with_living(|living, ctx| living.tune_living_over(ctx, knobs, seconds))
+    }
+
     pub(crate) fn tune_species(&mut self, name: &str, def: &LivingSpeciesDef) -> Vec<String> {
         self.with_living(|living, ctx| {
             let _ = &ctx;
