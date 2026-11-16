@@ -52,12 +52,12 @@ A machine that only renders, generates or packs (a CI runner, a cloud agent, a b
 cargo build -p flint-cli --no-default-features
 ```
 
-Every command is still there. `flint render`, `gen`, `bundle`, `validate`, `render-suite`, `query` and the rest work exactly as in the full build, and their output is byte for byte the same, but nothing links ALSA or libudev, so a Linux box needs only `build-essential` and `pkg-config` from the list above, and about sixty crates (the audio and gamepad backends and the dialogs' async D-Bus stack) aren't built at all. What leaves is each device:
+Every command is still there. `flint render`, `gen`, `bundle`, `validate`, `music render`, `query` and the rest work exactly as in the full build, and their output is byte for byte the same, but nothing links ALSA or libudev, so a Linux box needs only `build-essential` and `pkg-config` from the list above, and about sixty crates (the audio and gamepad backends and the dialogs' async D-Bus stack) aren't built at all. What leaves is each device:
 
 | Feature | Off means |
 |---------|-----------|
-| `audio` | `flint play` runs silent, as on a machine with no sound card (sounds still load, scripts still play them). `calibrate` and `play-chart` won't start. `render-suite` renders offline either way. |
-| `gamepad` | No pads are seen and a script's `rumble()` does nothing; `spike-rumble` says the build left them out. Keyboard, mouse, touch and `--input-script` still work. |
+| `audio` | `flint play` runs silent, as on a machine with no sound card (sounds still load, scripts still play them). `music calibrate` and `music chart play` won't start. `music render` renders offline either way. |
+| `gamepad` | No pads are seen and a script's `rumble()` does nothing; the rumble spike says the build left them out. Keyboard, mouse, touch and `--input-script` still work. |
 | `dialogs` | The editors' Save As, Export and Browse buttons open no dialog and say why on stderr. |
 
 Put back any one of them with `--features`, for example `--no-default-features --features audio`. `bash scripts/headless-check.sh` checks that no device crate has crept back into the headless build's dependency tree, and CI builds it on a Linux runner with the ALSA and libudev headers removed.
@@ -105,7 +105,7 @@ For example:
 
 ```bash
 cargo run --bin flint -- init ../my-game     # a game goes beside the checkout, not inside it
-cargo run --bin flint -- serve examples/showcase.scene.toml --watch
+cargo run --bin flint -- edit examples/showcase.scene.toml --watch
 ```
 
 `cargo run` only works inside the checkout, and the program runs in the directory you called it from: `flint init my-game` would make `my-game/` inside the engine's repository. Outside the checkout, in a game's folder, call the build by its path instead (`../flint/target/release/flint check`), or install it ([below](#optional-add-to-path)). Add `--release` to `cargo run` to use the release build rather than compiling a debug one.

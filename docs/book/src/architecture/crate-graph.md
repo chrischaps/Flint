@@ -107,7 +107,7 @@ The workspace has 31 crates under `crates/`, plus one tool (`tools/arch-analyzer
 7. **Applications** --- player, android
 8. **Interface** --- CLI binary (`flint-cli`), player binary (`flint-player`)
 
-**Two entry points.** The CLI binary (`flint-cli`) serves scene authoring, validation, and the rhythm-game tooling (`play-chart`, `replay-chart`, `render-suite`). The player binary (`flint-player`) serves interactive gameplay, and `flint-cli` embeds it so `flint play` and `flint-player` run the same code. Both share the same underlying crate hierarchy.
+**Two entry points.** The CLI binary (`flint-cli`) serves scene authoring, validation, and the rhythm-game tooling (`flint music`). The player binary (`flint-player`) serves interactive gameplay, and `flint-cli` embeds it so `flint play` and `flint-player` run the same code. Both share the same underlying crate hierarchy.
 
 **Mostly independent subsystems.** The constraint, asset, physics, audio, particles, asset generation, and render systems don't depend on each other. The exceptions are deliberate: `flint-script` depends on `flint-physics` (raycasts, camera direction) and `flint-animation` (layer and sequence bindings); `flint-input-capture` depends on `flint-music` for the `InputEvent` type and clock bridge, and on `flint-runtime` for the gamepad backend it shares with the player; `flint-render` depends on `flint-terrain` for the shared vertex format and on `flint-scene` for the post-process and environment definitions; and `flint-debug-ui` depends on `flint-render` because its panels mirror and write through to renderer state. Most subsystems can still be built and tested in isolation.
 
@@ -126,7 +126,7 @@ Key third-party crates used across the workspace:
 | `kira` | flint-audio, flint-music, flint-rhythm | Spatial audio engine; stem playback and the stem mixer |
 | `glam` | flint-audio | Vec3/Quat types for Kira spatial positioning (via mint interop) |
 | `symphonia` | flint-music | Stem decoding for validation and offline rendering |
-| `hound` | flint-music | WAV output for `flint render-suite` |
+| `hound` | flint-music | WAV output for `flint music render` |
 | `egui` | flint-viewer, flint-player, flint-cli, flint-debug-ui | Immediate-mode GUI framework (inspector, HUD, debug panels) |
 | `egui-snarl` | flint-cli | Node graph widget for the texture pipeline editor |
 | `rfd` | flint-cli | Native file dialogs in the editors |

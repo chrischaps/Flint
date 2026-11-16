@@ -129,7 +129,7 @@ User / AI Agent
                                              flint-core
 ```
 
-`flint-cli` depends on `flint-player` directly: `flint play` is the player embedded in the CLI, and the rhythm commands (`play-chart`, `replay-chart`, `render-suite`, ...) drive `flint-music`, `flint-rhythm` and `flint-input-capture` without a scene at all. `flint-procgen-ai` is tool-time only: `flint-cli` links it, the player does not. Every crate but `flint-android` is a default workspace member, so plain `cargo test` runs all their tests.
+`flint-cli` depends on `flint-player` directly: `flint play` is the player embedded in the CLI, and the rhythm commands (`flint music chart play`, `chart replay`, `render`, ...) drive `flint-music`, `flint-rhythm` and `flint-input-capture` without a scene at all. `flint-procgen-ai` is tool-time only: `flint-cli` links it, the player does not. Every crate but `flint-android` is a default workspace member, so plain `cargo test` runs all their tests.
 
 ## Crate Details
 
@@ -264,7 +264,7 @@ Music for any game, with no game rules in it:
 - `Conductor`, `TempoMap`, `MusicalPosition` --- beat/bar arithmetic and the `ClockBridge` that maps the audio clock onto game time
 - `SuiteSession`, `BusMixer`, `Scheduler` / `EventScript` --- stems sample-locked on one clock tick, per-bus gain, low-pass and detune, bus events on the musical grid
 - `latency` --- the newest output-latency measurement and tap calibration on record
-- `render_offline` / `write_wav` --- headless suite rendering behind `flint render-suite`
+- `render_offline` / `write_wav` --- headless suite rendering behind `flint music render`
 - Depends only on `flint-core` plus kira, symphonia, hound, toml_edit
 
 ### flint-rhythm
@@ -383,7 +383,7 @@ Standalone player binary that wires together runtime, physics, audio, animation,
 
 ### flint-cli
 
-Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: `init`, `entity`, `scene`, `query`, `schema`, `script`, `edit`, `validate`, `check`, `examples`, `bundle`, `export`, `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `spike-rumble`, `replay-chart`, `render-suite`, `goldens`, `prefab`, `asset`, `play`, `gen`, `render`, `dxc` and `style`, of which `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `spike-rumble`, `replay-chart` and `render-suite` are the rhythm-game tools. The pre-`edit` tools (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`, `spline-edit`) survive as hidden subcommands. [The CLI reference](../cli-reference/overview.md) covers each one.
+Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: `init`, `entity`, `scene`, `query`, `schema`, `script`, `edit`, `validate`, `check`, `examples`, `bundle`, `export`, `music`, `goldens`, `prefab`, `asset`, `play`, `gen`, `render`, `dxc` and `style`, of which `music` holds the rhythm-game tools (`validate`, `play`, `render`, `calibrate`, `chart play`, `chart replay`; top-level commands until #709, whose old names still run for one release). The pre-`edit` tools (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`, `spline-edit`) survive as hidden subcommands. [The CLI reference](../cli-reference/overview.md) covers each one.
 
 ### tools/arch-analyzer
 

@@ -39,15 +39,15 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
 | `flint bundle <game>` | Pack a game folder into `.flintpack` bundles for the web player, running `flint check`'s file and load checks over the packed files first. Given a `.scene.toml`, it packs that scene alone with only what it reaches ([One scene](../guides/publishing-to-the-web.md#one-scene-flint-bundle-scene)) |
 | `flint export web <game>` | A folder any static server plays the game from: the web player, the bundles and `games.json` ([Publishing to the Web](../guides/publishing-to-the-web.md)) |
-| `flint validate-suite <manifest>` | Validate a musical suite manifest and optional chart ([music commands](music.md)) |
-| `flint play-suite <manifest>` | Play a suite's stems sample-locked, no judgment |
-| `flint calibrate <manifest>` | Tap-to-beat latency calibration, written to `logs/latency/` |
-| `flint play-chart <manifest>` | Play a suite against its chart with live gamepad capture |
-| `flint replay-chart <manifest>` | Replay a recorded or synthetic session through judgment, headless |
-| `flint render-suite <manifest>` | Render a music `.suite.toml` to WAV, offline and deterministically |
-| `flint spike-rumble` | Time the gamepad rumble command paths |
+| `flint music validate <manifest>` | Validate a musical suite manifest and optional chart ([music commands](music.md)) |
+| `flint music play <manifest>` | Play a suite's stems sample-locked, no judgment |
+| `flint music calibrate <manifest>` | Tap-to-beat latency calibration, written to `logs/latency/` |
+| `flint music chart play <manifest>` | Play a suite against its chart with live gamepad capture |
+| `flint music chart replay <manifest>` | Replay a recorded or synthetic session through judgment, headless |
+| `flint music render <manifest>` | Render a music `.suite.toml` to WAV, offline and deterministically |
+| `flint goldens <file>.goldens.toml` | Render a list of scenes and gate each against its golden PNG ([Golden Suites](../guides/headless-rendering.md#golden-suites)) |
 
-The seven music commands are documented on their own page: [Music Commands](music.md).
+The music commands are documented on their own page: [Music Commands](music.md). Until #709 they were top-level (`validate-suite`, `play-suite`, `calibrate`, `play-chart`, `replay-chart`, `render-suite`); those names still run for one release, printing their new spelling, and the rumble spike is an example program now.
 
 ## The `init` Command
 
@@ -773,7 +773,7 @@ When an entity is selected, a **translate gizmo** appears with colored axis arro
 | Ctrl+S | Save spline to disk |
 | Ctrl+Z | Undo |
 
-> **Legacy aliases:** `flint serve`, `flint preview`, `flint gen-preview`, `flint tex-edit`, `flint terrain-edit`, and `flint spline-edit` still work. They are hidden subcommands that open the same tools `flint edit` dispatches to; they are omitted from `flint --help`.
+> **Legacy aliases:** `flint serve`, `flint preview`, `flint gen-preview`, `flint tex-edit`, `flint terrain-edit`, and `flint spline-edit` still work (`serve` has no code of its own: it opens the scene viewer `flint edit <scene>` does). They are hidden subcommands that open the same tools `flint edit` dispatches to; they are omitted from `flint --help`.
 
 ## The `asset generate` Command
 

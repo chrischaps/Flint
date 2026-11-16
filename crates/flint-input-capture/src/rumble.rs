@@ -419,6 +419,23 @@ impl RumbleSpikeReport {
         }
         out
     }
+
+    /// What the spike prints when it's done: a line a command path.
+    pub fn summary(&self) -> String {
+        let d = &self.direct;
+        let mut out = format!(
+            "direct set_ff_state: median {:.1} us, p99 {:.1} us, max {:.1} us (n={})",
+            d.median_us, d.p99_us, d.max_us, d.n
+        );
+        if let Some(ep) = &self.effect_play {
+            out.push_str(&format!(
+                "\nEffect::play call:   median {:.1} us (n={}) — plus the ff server's \
+                 structural 0-50 ms tick quantization on top",
+                ep.median_us, ep.n
+            ));
+        }
+        out
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

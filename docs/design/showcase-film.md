@@ -334,7 +334,7 @@ six stems flint-music mixes (foundation, harmony, world voice, theme,
 the figure's motif, texture); `music.py` writes the suite and its event
 script (`tools/showcase/music/<cut>.suite.toml`, `.events.toml`: a marker
 at every shot, each shot's bus levels, the watercolor and menu low-passes,
-the last bar's fade), renders them with `flint render-suite`, and masters
+the last bar's fade), renders them with `flint music render`, and masters
 to -14 LUFS integrated (BS.1770-4) under a -1.5 dBTP ceiling, 48 kHz
 24-bit. Each WAV is exactly its cut's length, and two builds are
 byte-identical on one machine (numpy 2.3, scipy 1.17).
