@@ -33,9 +33,9 @@ fn repo() -> PathBuf {
 const WINDOWS: &[&str] = &[
     "play",
     "edit",
-    "play-suite",
-    "calibrate",
-    "play-chart",
+    "music play",
+    "music calibrate",
+    "music chart play",
     "spike-rumble",
     "prefab view",
 ];
@@ -424,16 +424,17 @@ fn every_command_answers_with_one_json_document() {
         })
         .collect();
     flint_music::write_wav(&dir.join("stems/pad.wav"), &tone, 8_000).unwrap();
-    run("validate-suite");
+    run("music validate");
     assert_eq!(
-        ok(&dir, &["validate-suite", "one.suite.toml"])["valid"],
+        ok(&dir, &["music", "validate", "one.suite.toml"])["valid"],
         true
     );
-    run("render-suite");
+    run("music render");
     let mixed = ok(
         &dir,
         &[
-            "render-suite",
+            "music",
+            "render",
             "one.suite.toml",
             "--output",
             "mix.wav",
@@ -442,7 +443,7 @@ fn every_command_answers_with_one_json_document() {
         ],
     );
     assert_eq!(mixed["written"], serde_json::json!(["mix.wav"]));
-    run("replay-chart");
+    run("music chart replay");
     std::fs::copy(
         repo.join("crates/flint-music/tests/data/tempo_change.suite.toml"),
         dir.join("tempo.suite.toml"),
@@ -452,7 +453,9 @@ fn every_command_answers_with_one_json_document() {
     let replayed = ok(
         &dir,
         &[
-            "replay-chart",
+            "music",
+            "chart",
+            "replay",
             "tempo.suite.toml",
             "--chart",
             "tiny.chart.toml",
@@ -538,8 +541,9 @@ fn every_command_answers_with_one_json_document() {
         assert_eq!(snap["written"], serde_json::json!(["renders/box.png"]));
     }
 
-    // Every command --help lists is run above or is a window (47 of them
-    // when this was written: the help parse must keep finding them)
+    // Every command --help lists is run above or is a window (46 of them
+    // after #709 moved the music commands under `flint music`: the help
+    // parse must keep finding them)
     let every = every_command();
     assert!(every.len() >= 40, "found only {every:?} in --help");
     let missing: Vec<String> = every

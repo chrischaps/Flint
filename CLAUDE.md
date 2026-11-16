@@ -82,10 +82,10 @@ Flint uses an **edit -> validate -> play** loop:
 31-crate Cargo workspace (plus `tools/arch-analyzer`, a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph and the book's crate table, checked in CI). Every member but `flint-android` is a default member, so plain `cargo test` runs every desktop crate's tests (#758):
 
 ```
-flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, serve, preview, play, check,
-  │                 validate, examples, asset, render, style, gen, gen-preview, prefab, bundle, export, spline-edit,
-  │                 terrain-edit, tex-edit, validate-suite, play-suite, calibrate, play-chart, replay-chart, render-suite,
-  │                 goldens, spike-rumble, dxc
+flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, check, validate,
+  │                 examples, asset, render, style, gen, prefab, bundle, export, music, goldens, dxc
+  │                 (`music`: validate, play, render, calibrate, chart play|replay, #709; hidden aliases: serve, preview,
+  │                 gen-preview, spline-edit, terrain-edit, tex-edit, and for one release the old music names, spike-rumble)
   ├── flint-asset-gen AI asset generation: pluggable providers (Flux, Meshy, ElevenLabs, Mock)
   ├── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
   └── flint-procgen-ai AI-assisted procgen: ProcGenAgent trait, spec creation/refinement

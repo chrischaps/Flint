@@ -16,6 +16,7 @@ pub mod entity_style;
 mod file_watch;
 pub mod frustum;
 pub mod glyph_atlas;
+pub mod gpu_labels;
 mod gpu_mesh;
 pub mod gpu_select;
 pub mod gpu_timer;

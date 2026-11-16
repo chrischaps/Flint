@@ -991,12 +991,13 @@ impl PlayerApp {
 
         let mut egui_renderer = self.hud.egui_renderer.take().unwrap();
 
-        // The HUD's GPU time, with the renderer's phases (ADR 0108).
-        let ui_scope = self
-            .scene_renderer
-            .as_mut()
-            .and_then(|r| r.gpu_timer_mut())
-            .map(|t| t.begin(encoder, "UI"));
+        // The HUD's GPU time, with the renderer's phases (ADR 0108), and its
+        // debug group for GPU debuggers (#1083).
+        let ui_scope = flint_render::gpu_labels::begin(
+            self.scene_renderer.as_mut().and_then(|r| r.gpu_timer_mut()),
+            encoder,
+            "UI",
+        );
 
         for (id, deltas) in &full_output.textures_delta.set {
             for image_delta in deltas {
@@ -1050,12 +1051,11 @@ impl PlayerApp {
             egui_renderer.render(&mut render_pass, &paint_jobs, &screen_descriptor);
         }
 
-        if let (Some(timer), Some(scope)) = (
+        flint_render::gpu_labels::end(
             self.scene_renderer.as_mut().and_then(|r| r.gpu_timer_mut()),
+            encoder,
             ui_scope,
-        ) {
-            timer.end(encoder, scope);
-        }
+        );
 
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);

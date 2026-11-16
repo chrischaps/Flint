@@ -1642,7 +1642,9 @@ fn time_gpu(
     for _ in 0..frames.max(1) {
         let mut encoder = ctx
             .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("GPU Time Frame"),
+            });
         renderer.encode_to(
             &ctx.device,
             &ctx.queue,

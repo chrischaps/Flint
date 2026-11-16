@@ -1,5 +1,5 @@
 """The showcase film's instruments (#438): a small additive/FM synthesizer in
-numpy that writes the stems `flint render-suite` mixes.
+numpy that writes the stems `flint music render` mixes.
 
 Every sound in the film is made here, from sines, noise and arithmetic: no
 samples, no presets, nothing from anywhere else, so YouTube's Content ID

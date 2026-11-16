@@ -121,6 +121,10 @@ mod web {
         quality: String,
         /// `style=name[:key=value,...]`, repeatable (#328).
         styles: Vec<String>,
+        /// `gpu_labels=1|groups|0`: name the frame for a GPU debugger, as
+        /// `FLINT_GPU_LABELS` does natively (#1083); none by default, so a
+        /// frame makes no WebGPU call more.
+        gpu_labels: Option<flint_render::gpu_labels::GpuLabels>,
     }
 
     impl WebArgs {
@@ -179,6 +183,9 @@ mod web {
                             .collect()
                     })
                     .unwrap_or_default(),
+                gpu_labels: flint_render::gpu_labels::GpuLabels::parse(
+                    get("gpu_labels").as_deref(),
+                ),
             }
         }
     }
@@ -223,6 +230,10 @@ mod web {
 
     async fn start() -> Result<(), String> {
         let args = WebArgs::from_query();
+        // Before the renderer reads it
+        if let Some(level) = args.gpu_labels {
+            flint_render::gpu_labels::set_level(level);
+        }
         if let Some((w, h)) = args.size {
             fix_canvas_size(w, h);
         }
@@ -274,13 +285,8 @@ mod web {
         // start: the scene's user styles register later, at init (#274)
         app.launch.style_specs = args.styles;
         app.input.touch_controls_mut().set_mode(args.touch);
-        app.core.clock.frame_step = args.frame_step;
-        if let Some(seed) = args
-            .seed
-            .or(args.frame_step.map(|_| flint_player::SCRIPT_SEED))
-        {
-            app.core.script.seed_random(seed);
-        }
+        // The desktop's --frame-step and --seed rule (#705)
+        app.step_frames(args.frame_step, args.seed);
         app.launch.hold_at = args.hold_at;
         app.set_frame_rate(args.fps);
         if let Some(gpu) = args.perf {

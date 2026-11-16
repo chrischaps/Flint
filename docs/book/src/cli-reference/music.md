@@ -1,18 +1,29 @@
 # Music Commands
 
-Seven subcommands drive the rhythm system described in [Music Sessions](../concepts/music-sessions.md). They work on a **suite manifest** (`*.suite.toml`), a **chart** (`*.chart.toml`) and the optional tuning files under `config/`; see [File Formats: Music Session Files](../formats/overview.md#music-session-files) for the file grammar.
+`flint music` and its subcommands drive the rhythm system described in [Music Sessions](../concepts/music-sessions.md). They work on a **suite manifest** (`*.suite.toml`), a **chart** (`*.chart.toml`) and the optional tuning files under `config/`; see [File Formats: Music Session Files](../formats/overview.md#music-session-files) for the file grammar.
 
 The usual order is: validate the suite, play it raw to hear the stems, calibrate the player's latency, play the chart live, replay the recording headless to reproduce judgment, and render a scripted session to WAV for listening or CI.
 
+| Command | What it does |
+|---------|--------------|
+| `flint music validate <manifest>` | Check a suite manifest, its stems and an optional chart |
+| `flint music play <manifest>` | Play the stems sample-locked, no judgment |
+| `flint music calibrate <manifest>` | Tap-to-beat latency calibration |
+| `flint music chart play <manifest> --chart <chart>` | Play a chart live with gamepad capture |
+| `flint music chart replay <manifest> --chart <chart>` | Replay a session through judgment, headless |
+| `flint music render <manifest> -o out.wav` | Render a scripted session to WAV |
+
+Until #709 these were top-level commands: `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `replay-chart` and `render-suite`. The old names still run for one release, each printing a note naming its new spelling on stderr, and are left out of `flint --help`. The rumble spike that sat beside them is an example program now ([below](#the-rumble-spike)).
+
 Every command takes `--base-dir <path>`: the directory the manifest's file paths are relative to (default: the current directory). Reports and logs land under that directory's `logs/`.
 
-## `flint validate-suite`
+## `flint music validate`
 
 Check a suite manifest, and optionally cross-check a chart against it.
 
 ```bash
-flint validate-suite music/prototype.suite.toml
-flint validate-suite music/prototype.suite.toml --chart music/prototype.chart.toml --no-assets
+flint music validate music/prototype.suite.toml
+flint music validate music/prototype.suite.toml --chart music/prototype.chart.toml --no-assets
 ```
 
 | Flag | Default | Description |
@@ -27,12 +38,12 @@ A suite that only plays music (any buses, named as it likes, no `[reintegration]
 
 Validation is shape-tolerant: unknown channels or pulse kinds parse fine and are reported here rather than rejected at load.
 
-## `flint play-suite`
+## `flint music play`
 
 Play a validated suite's stems on its buses, sample-locked, with no chart and no judgment. This is the "does the music itself work" check.
 
 ```bash
-flint play-suite music/prototype.suite.toml --bars 8
+flint music play music/prototype.suite.toml --bars 8
 ```
 
 | Flag | Default | Description |
@@ -41,12 +52,12 @@ flint play-suite music/prototype.suite.toml --bars 8
 | `--bars <n>` | (to the end) | Stop after this many bars |
 | `--base-dir <path>` | cwd | Manifest path root |
 
-## `flint calibrate`
+## `flint music calibrate`
 
-Tap-to-beat latency calibration. Plays the suite's beat grid, collects the player's taps, and writes the median offset to `logs/latency/calibration-*.toml`. Later `play-chart` sessions read the offset so judgment is measured against what the player heard, not what the clock said.
+Tap-to-beat latency calibration. Plays the suite's beat grid, collects the player's taps, and writes the median offset to `logs/latency/calibration-*.toml`. Later `music chart play` sessions read the offset so judgment is measured against what the player heard, not what the clock said.
 
 ```bash
-flint calibrate music/prototype.suite.toml --taps 24
+flint music calibrate music/prototype.suite.toml --taps 24
 ```
 
 | Flag | Default | Description |
@@ -55,13 +66,13 @@ flint calibrate music/prototype.suite.toml --taps 24
 | `--taps <n>` | `16` | Number of taps to collect |
 | `--base-dir <path>` | cwd | Manifest path root |
 
-## `flint play-chart`
+## `flint music chart play`
 
 Play a suite against its chart with live gamepad capture. This is the development harness for the whole reactive loop: coherence, the disintegration ladder, the seam and reintegration, the audio gradient and haptics. A gamepad is expected; input is captured on a dedicated 1 kHz thread using the XInput backend.
 
 ```bash
-flint play-chart music/prototype.suite.toml --chart music/prototype.chart.toml
-flint play-chart music/prototype.suite.toml --chart music/prototype.chart.toml \
+flint music chart play music/prototype.suite.toml --chart music/prototype.chart.toml
+flint music chart play music/prototype.suite.toml --chart music/prototype.chart.toml \
   --window --record take_03 --ladder config/ladder.toml --input-map full
 ```
 
@@ -83,17 +94,17 @@ flint play-chart music/prototype.suite.toml --chart music/prototype.chart.toml \
 
 If the input backend sees no gamepad the command warns loudly at startup rather than recording a silent session. The player's debug keyboard fallback (arrows = lean, Space = pulse) applies only to `flint play` scenes with a `music_session` component, not to this command.
 
-## `flint replay-chart`
+## `flint music chart replay`
 
 Replay a recorded or synthetic session through judgment, fully headless. The same recording replayed twice produces the same judgment log, which is what makes the feel work reviewable.
 
 ```bash
 # Reproduce a recorded take
-flint replay-chart music/prototype.suite.toml --chart music/prototype.chart.toml \
+flint music chart replay music/prototype.suite.toml --chart music/prototype.chart.toml \
   --session logs/sessions/take_03.session.jsonl
 
 # Synthetic player, 40 ms late on everything, with reactive audio rendered to WAV
-flint replay-chart music/prototype.suite.toml --chart music/prototype.chart.toml \
+flint music chart replay music/prototype.suite.toml --chart music/prototype.chart.toml \
   --synthetic late:40 --ladder config/ladder.toml --render out/late40.wav
 ```
 
@@ -112,15 +123,15 @@ flint replay-chart music/prototype.suite.toml --chart music/prototype.chart.toml
 | `--save-session <path>` | (none) | Also save the replayed event stream as a session file (useful after `--synthetic`) |
 | `--render <path>` | (none) | Also render the suite audio over the replayed span to this WAV |
 
-## `flint render-suite`
+## `flint music render`
 
-Golden image suites (`*.goldens.toml`) have their own command, `flint goldens`; see [Golden Suites](../guides/headless-rendering.md#golden-suites). Given one, `render-suite` runs that command instead, as it did before #327, so its flags below are the music suite's only.
+Golden image suites (`*.goldens.toml`) have their own command, `flint goldens`; see [Golden Suites](../guides/headless-rendering.md#golden-suites). The old `render-suite` given one still runs that command, as it did before #327, so the flags below are the music suite's only.
 
 Render a scripted suite session to a 32-bit float stereo WAV, offline and deterministic. The event script schedules bus gain, low-pass and detune changes on bars or beats, so a whole arrangement can be auditioned or diffed without playing it.
 
 ```bash
-flint render-suite music/prototype.suite.toml --script music/intro.events.toml -o out/intro.wav
-flint render-suite music/prototype.suite.toml -o out/full.wav --duration-bars 32 --status-every beat
+flint music render music/prototype.suite.toml --script music/intro.events.toml -o out/intro.wav
+flint music render music/prototype.suite.toml -o out/full.wav --duration-bars 32 --status-every beat
 ```
 
 | Flag | Default | Description |
@@ -134,16 +145,18 @@ flint render-suite music/prototype.suite.toml -o out/full.wav --duration-bars 32
 | `--status-every <unit>` | `bar` | Status line cadence: `bar` or `beat` |
 | `--chunk-frames <n>` | `128` | Processing chunk size in frames, which is also the scheduling granularity |
 
-## `flint spike-rumble`
+## The rumble spike
 
-Fire the gamepad's force-feedback motors, time the command paths, and write the report beside the audio-latency and input-granularity spikes in `logs/latency/`. Used to characterise a controller before enabling haptics.
+Fire the gamepad's force-feedback motors, time the command paths, and write the report beside the audio-latency and input-granularity spikes in `logs/latency/`. Used to characterise a controller before enabling haptics ([ADR 0025](https://github.com/chrischaps/Flint/blob/main/docs/adr/0025-rumble-through-direct-xinput.md)).
+
+It is an experiment rather than a tool a game needs, so since #709 it is an example program in `flint-input-capture`, run from the engine checkout (`flint spike-rumble` still runs it for one release):
 
 ```bash
-flint spike-rumble
-flint spike-rumble --no-feel
+cargo run -p flint-input-capture --example spike_rumble
+cargo run -p flint-input-capture --example spike_rumble -- --no-feel --base-dir path/to/game
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--base-dir <path>` | cwd | Directory whose `logs/latency/` receives the report |
-| `--no-feel` | `false` | Skip the operator-felt tick / thump / grind demo; timing only |
+| `--no-feel` | off | Skip the operator-felt tick / thump / grind demo; timing only |

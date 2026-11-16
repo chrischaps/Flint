@@ -42,7 +42,7 @@ CLAUDE.md asks.
 | `showcase/build_scenes.py` | Writes `demo/film/*.scene.toml` from the set and each beat; `--check` for staleness | | standard library |
 | `showcase/capture.py` | Captures each beat as a PNG sequence, unattended | `flint-player` | flint-player |
 | `showcase/compare.py` | Two captures of one take, frame by frame: is it deterministic? | | numpy, Pillow |
-| `showcase/music.py` (`score.py`, `synth.py`) | The film's score: synthesizes stems, then mixes them | `flint render-suite` | numpy, scipy (matplotlib for the plot), flint |
+| `showcase/music.py` (`score.py`, `synth.py`) | The film's score: synthesizes stems, then mixes them | `flint music render` | numpy, scipy (matplotlib for the plot), flint |
 | `showcase/cut.py` | Cuts the takes into the master, web and reel files | | numpy, Pillow, ffmpeg |
 | `showcase/check_cut.py` | Checks the encoded files frame by frame, and their sound | | numpy, ffmpeg |
 | **The web player** | | | |

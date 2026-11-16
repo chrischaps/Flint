@@ -1,8 +1,8 @@
 //! A suite that only plays music, through the real binary (#745).
 //!
 //! Two stems on buses the suite names itself (`drums`, `pad`), no
-//! `[reintegration]`, no judgment windows: `flint validate-suite` passes it
-//! and `flint render-suite` mixes it offline, both stems sample-locked. The
+//! `[reintegration]`, no judgment windows: `flint music validate` passes it
+//! and `flint music render` mixes it offline, both stems sample-locked. The
 //! rhythm layer's contract is still there for a suite that asks for it:
 //! `--rhythm` names what such a suite lacks.
 
@@ -97,7 +97,7 @@ fn text(out: &Output) -> String {
 #[test]
 fn a_suite_with_two_named_buses_and_no_reintegration_validates() {
     let dir = project("validate");
-    let out = flint(&dir, &["validate-suite", "two.suite.toml"]);
+    let out = flint(&dir, &["music", "validate", "two.suite.toml"]);
     let said = text(&out);
     assert!(out.status.success(), "{said}");
     assert!(said.contains("OK: suite 'two-buses'"), "{said}");
@@ -108,7 +108,7 @@ fn a_suite_with_two_named_buses_and_no_reintegration_validates() {
 #[test]
 fn the_rhythm_contract_names_what_a_music_suite_lacks() {
     let dir = project("rhythm");
-    let out = flint(&dir, &["validate-suite", "two.suite.toml", "--rhythm"]);
+    let out = flint(&dir, &["music", "validate", "two.suite.toml", "--rhythm"]);
     let said = text(&out);
     assert!(!out.status.success(), "{said}");
     for code in [
@@ -127,7 +127,8 @@ fn a_suite_with_two_named_buses_renders_offline() {
     let out = flint(
         &dir,
         &[
-            "render-suite",
+            "music",
+            "render",
             "two.suite.toml",
             "--script",
             "two.events.toml",

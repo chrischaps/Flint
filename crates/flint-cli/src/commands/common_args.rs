@@ -3,12 +3,12 @@
 //!
 //! Only flags whose semantics *and* help text are identical across the
 //! commands belong here — a flag whose doc comment differs per command
-//! (e.g. `--ladder`, whose replay-chart help documents the `--render`
+//! (e.g. `--ladder`, whose `chart replay` help documents the `--render`
 //! coupling) stays declared on each command so `--help` keeps saying the
 //! right thing.
 
-/// The manifest/chart/base-dir trio shared by `play-chart` and
-/// `replay-chart`.
+/// The manifest/chart/base-dir trio shared by `music chart play` and
+/// `music chart replay`.
 #[derive(clap::Args)]
 pub struct ChartCommonArgs {
     /// Path to the suite manifest (.suite.toml)

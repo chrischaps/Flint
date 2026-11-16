@@ -413,6 +413,23 @@ impl PlayerApp {
         self.schema_dirs = dirs;
     }
 
+    /// Advance the game exactly `step` seconds a frame, whatever the wall
+    /// time (`--frame-step`, the web's `?frame_step=`; none or 0 is the
+    /// wall clock), and seed scripts' `random()` with `seed`. A stepped run
+    /// is meant to repeat, so with no seed it takes the one `flint render
+    /// --scripts` uses (#635); neither leaves the clock-started sequence.
+    pub fn step_frames(&mut self, step: Option<f64>, seed: Option<u64>) {
+        self.core.clock.frame_step = step.filter(|s| *s > 0.0);
+        if let Some(seed) = seed.or(self
+            .core
+            .clock
+            .frame_step
+            .map(|_| super::headless_game::SCRIPT_SEED))
+        {
+            self.core.script.seed_random(seed);
+        }
+    }
+
     /// Set the schema directories as the one resolver named them (ADR
     /// 0114), with where the list came from: `--schemas` flags stay as they
     /// are across transitions, a manifest's list is read again for the new

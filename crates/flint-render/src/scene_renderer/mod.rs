@@ -1441,6 +1441,11 @@ impl SceneRenderer {
         self.skinning.bone_binds.retain(|_, b| b.touched == frame);
         self.ray_scene = Arc::new(ray_scene);
 
+        // Who each draw is, for a GPU debugger's draw markers (#1083)
+        if crate::gpu_labels::draws() {
+            self.draws.name_entities(|id| world.get_name(id));
+        }
+
         // Put texture cache back
         self.texture_cache = tex_cache;
     }

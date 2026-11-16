@@ -1,13 +1,14 @@
 //! Render a scripted suite session to WAV, offline and deterministic — the
 //! agent-facing "programmatic ears". Validates the manifest, runs the event
 //! script through the same `SuiteSession` used live, and writes 32-bit float
-//! stereo. Prints the same status lines as `play-suite` so offline and
-//! realtime evidence are textually comparable.
+//! stereo. Prints the same status lines as `flint music play` so offline
+//! and realtime evidence are textually comparable. This is
+//! `flint music render`, the old `render-suite` (#709).
 //!
 //! A `*.goldens.toml` (the programmatic eyes, #271) is `flint goldens`
-//! since #327; `render-suite` given one is routed there before parsing
-//! ([`super::render_goldens::route_render_suite_goldens`]), so these flags
-//! are the music suite's alone.
+//! since #327; the old `render-suite` given one is routed there before
+//! parsing ([`super::legacy_names::route`]), so these flags are the music
+//! suite's alone.
 
 use anyhow::{bail, Context, Result};
 use flint_music::event_script::EventScript;
@@ -20,7 +21,7 @@ use std::path::{Path, PathBuf};
 #[derive(clap::Args)]
 #[command(
     after_help = "A `.goldens.toml` (scenes gated against golden PNGs) is \
-    `flint goldens`; given one, this command runs that instead."
+    `flint goldens`."
 )]
 pub struct RenderSuiteArgs {
     /// Path to the music suite manifest (`.suite.toml`)

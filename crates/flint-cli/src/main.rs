@@ -8,10 +8,9 @@ mod output;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, bundle, calibrate, check as check_cmd, dxc, edit_router, entity, examples, export, gen,
-    gen_preview, init, play, play_chart, play_suite, prefab, preview, query, render,
-    render_goldens, render_suite, replay_chart, scene, schema, script, spike_rumble, spline_edit,
-    style, terrain_edit, tex_edit, validate, validate_suite,
+    asset, bundle, check as check_cmd, dxc, edit_router, entity, examples, export, gen,
+    gen_preview, init, legacy_names, music, play, prefab, preview, query, render, render_goldens,
+    scene, schema, script, spike_rumble, spline_edit, style, terrain_edit, tex_edit, validate,
 };
 
 #[derive(Parser)]
@@ -126,28 +125,15 @@ enum Commands {
     #[command(subcommand)]
     Export(export::ExportCommands),
 
-    /// Validate a musical suite manifest (and optional beatmap chart)
-    ValidateSuite(validate_suite::ValidateSuiteArgs),
+    /// Music suites and rhythm charts: validate, play, render to WAV,
+    /// calibrate, chart play / chart replay
+    #[command(subcommand)]
+    Music(music::MusicCommands),
 
-    /// Play a validated suite manifest's stems sample-locked (Milestone 0)
-    PlaySuite(play_suite::PlaySuiteArgs),
-
-    /// Tap-to-beat calibration: write the player's median offset to logs/latency/
-    Calibrate(calibrate::CalibrateArgs),
-
-    /// Play a suite against its beatmap chart with live gamepad capture (Phase 2 dev harness)
-    PlayChart(play_chart::PlayChartArgs),
-
-    /// Rumble spike (ADR 0025): fire the ff motors, time the command paths,
-    /// log to logs/latency/
+    /// The rumble spike (ADR 0025), an example since #709:
+    /// `cargo run -p flint-input-capture --example spike_rumble`
+    #[command(hide = true)]
     SpikeRumble(spike_rumble::SpikeRumbleArgs),
-
-    /// Replay a recorded or synthetic session through judgment, fully headless
-    ReplayChart(replay_chart::ReplayChartArgs),
-
-    /// Render a music suite (`.suite.toml`) to WAV, offline and
-    /// deterministically
-    RenderSuite(render_suite::RenderSuiteArgs),
 
     /// Render a `.goldens.toml` of scenes and gate each against its golden
     /// PNG (`--bless` rewrites them)
@@ -209,8 +195,12 @@ fn main() -> std::process::ExitCode {
         .with_writer(std::io::stderr)
         .init();
 
-    // `render-suite <x>.goldens.toml` is `goldens` (#327)
-    let argv = render_goldens::route_render_suite_goldens(std::env::args_os().collect());
+    // The old names (`play-chart` is `music chart play`, #709;
+    // `render-suite <x>.goldens.toml` is `goldens`, #327) still run
+    let (argv, moved) = legacy_names::route(std::env::args_os().collect());
+    if let Some(note) = moved {
+        eprintln!("{note}");
+    }
     let cli = match Cli::try_parse_from(&argv) {
         Ok(cli) => cli,
         Err(e) => {
@@ -269,13 +259,8 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Bundle(args) => bundle::run(args),
         Commands::Export(cmd) => export::run(cmd),
         Commands::Dxc(cmd) => dxc::run(cmd),
-        Commands::ValidateSuite(args) => validate_suite::run(args),
-        Commands::PlaySuite(args) => play_suite::run(args),
-        Commands::Calibrate(args) => calibrate::run(args),
-        Commands::PlayChart(args) => play_chart::run(args),
+        Commands::Music(cmd) => music::run(cmd),
         Commands::SpikeRumble(args) => spike_rumble::run(args),
-        Commands::ReplayChart(args) => replay_chart::run(args),
-        Commands::RenderSuite(args) => render_suite::run(args),
         Commands::Goldens(args) => render_goldens::run_command(args),
         Commands::Play(args) => play::run(args),
         Commands::Prefab(cmd) => prefab::run(cmd),
@@ -331,9 +316,11 @@ impl Commands {
         Some(match self {
             Commands::Serve { .. } => "serve",
             Commands::SplineEdit(_) => "spline-edit",
-            Commands::PlaySuite(_) => "play-suite",
-            Commands::Calibrate(_) => "calibrate",
-            Commands::PlayChart(_) => "play-chart",
+            Commands::Music(music::MusicCommands::Play(_)) => "music play",
+            Commands::Music(music::MusicCommands::Calibrate(_)) => "music calibrate",
+            Commands::Music(music::MusicCommands::Chart(music::ChartCommands::Play(_))) => {
+                "music chart play"
+            }
             Commands::SpikeRumble(_) => "spike-rumble",
             Commands::Play(_) => "play",
             Commands::Preview(args) if args.render.is_none() => "preview",
