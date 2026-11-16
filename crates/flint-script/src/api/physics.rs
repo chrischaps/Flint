@@ -61,13 +61,20 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("y", Num)
     .arg("w", Num)
     .arg("h", Num)
-    .returns(Array, "their ids; empty with no physics")
+    .returns(Array, "their ids, in name order; empty with no physics")
     .run(|call, (x, y, w, h)| match call.physics() {
-        Some(p) => p
-            .overlap_rect(x as f32, y as f32, w as f32, h as f32)
-            .into_iter()
-            .map(|eid| Dynamic::from(eid.raw() as i64))
-            .collect(),
+        Some(p) => {
+            let hits = p.overlap_rect(x as f32, y as f32, w as f32, h as f32);
+            // Rapier answers in its own order, which follows body insertion
+            // (hash order, #688): the same contract as every entity list.
+            let hits = match call.world() {
+                Ok(world) => world.in_name_order(hits),
+                Err(_) => hits,
+            };
+            hits.into_iter()
+                .map(|eid| Dynamic::from(eid.raw() as i64))
+                .collect()
+        }
         None => rhai::Array::new(),
     });
 

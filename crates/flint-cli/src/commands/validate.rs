@@ -79,11 +79,17 @@ struct Found {
     violations: Vec<Violation>,
     /// Everything else (ADR 0115).
     diagnostics: Vec<Diagnostic>,
+    /// How many the project's `[project.diagnostics] allow` left out (#795).
+    allowed: usize,
 }
 
 impl Found {
-    fn from(found: Vec<Diagnostic>) -> Self {
-        let mut out = Self::default();
+    fn from(found: check::scene::SceneFound) -> Self {
+        let mut out = Self {
+            allowed: found.allowed,
+            ..Self::default()
+        };
+        let found = found.diagnostics;
         let violation = |constraint: &str, entity: String, d: &Diagnostic| Violation {
             constraint_name: constraint.to_string(),
             entity_name: entity,
@@ -189,6 +195,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
         warnings,
         violations: table_violations,
         mut diagnostics,
+        allowed,
     } = Found::from(check::scene(
         Path::new(&args.scene),
         &schemas,
@@ -211,9 +218,9 @@ pub fn run(args: ValidateArgs) -> Result<()> {
             }
             if json {
                 let nothing = ValidationReport::new();
-                print_json(report_json(&nothing, &diagnostics, None));
+                print_json(report_json(&nothing, &diagnostics, allowed, None));
             } else {
-                print!("{}", diagnostics_text(&args.scene, &diagnostics));
+                print!("{}", diagnostics_text(&args.scene, &diagnostics, allowed));
                 println!("The scene does not load, so nothing else was checked.");
             }
             std::process::exit(1);
@@ -230,9 +237,9 @@ pub fn run(args: ValidateArgs) -> Result<()> {
     if !(args.fix || args.dry_run) {
         let report = evaluate(&world);
         if json {
-            print_json(report_json(&report, &diagnostics, None));
+            print_json(report_json(&report, &diagnostics, allowed, None));
         } else {
-            print_report_text(&args.scene, &report, &diagnostics, no_constraints);
+            print_report_text(&args.scene, &report, &diagnostics, allowed, no_constraints);
         }
         if !report.is_valid() || diagnostic::has_errors(&diagnostics) {
             std::process::exit(1);
@@ -279,7 +286,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
     };
 
     if json {
-        print_json(report_json(&report, &diagnostics, Some(&fixed)));
+        print_json(report_json(&report, &diagnostics, allowed, Some(&fixed)));
     } else {
         print!("{}", fix_text(&args.scene, &fixed));
         for problem in &fixed.not_written {
@@ -289,7 +296,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
         // with no fix, so a fixed scene can still be a bad one
         if !report.violations.is_empty() || !diagnostics.is_empty() {
             println!();
-            print_report_text(&args.scene, &report, &diagnostics, no_constraints);
+            print_report_text(&args.scene, &report, &diagnostics, allowed, no_constraints);
         }
     }
     if !report.is_valid() || diagnostic::has_errors(&diagnostics) {
@@ -344,11 +351,12 @@ fn print_report_text(
     scene: &str,
     report: &ValidationReport,
     diagnostics: &[Diagnostic],
+    allowed: usize,
     no_constraints: bool,
 ) {
-    print!("{}", diagnostics_text(scene, diagnostics));
+    print!("{}", diagnostics_text(scene, diagnostics, allowed));
     if no_constraints && report.violations.is_empty() {
-        if diagnostics.is_empty() {
+        if diagnostics.is_empty() && allowed == 0 {
             println!("No problems found.");
         }
         println!("No constraints found in the schema directories; schemas were checked.");
@@ -358,15 +366,19 @@ fn print_report_text(
 }
 
 /// The full list (ADR 0115 decision 2), errors first: a count line, then
-/// each diagnostic with its hint on the line below. Empty when there are
-/// none.
-fn diagnostics_text(scene: &str, diagnostics: &[Diagnostic]) -> String {
-    if diagnostics.is_empty() {
+/// each diagnostic with its hint on the line below. The count line says how
+/// many the project allowed (#795). Empty when there is nothing to say.
+fn diagnostics_text(scene: &str, diagnostics: &[Diagnostic], allowed: usize) -> String {
+    if diagnostics.is_empty() && allowed == 0 {
         return String::new();
     }
     let mut ordered = diagnostics.to_vec();
     diagnostic::sort_errors_first(&mut ordered);
-    let mut out = format!("{scene}: {}\n\n", diagnostic::counts_line(diagnostics));
+    let mut out = format!(
+        "{scene}: {}{}\n\n",
+        diagnostic::counts_line(diagnostics),
+        diagnostic::allowed_note(allowed)
+    );
     for d in &ordered {
         // One about another file (a schema file's lint) names it
         let elsewhere = d
@@ -427,6 +439,7 @@ fn print_json(document: serde_json::Value) {
 fn report_json(
     report: &ValidationReport,
     diagnostics: &[Diagnostic],
+    allowed: usize,
     fixed: Option<&Fixed>,
 ) -> serde_json::Value {
     let violations: Vec<serde_json::Value> = report
@@ -469,6 +482,7 @@ fn report_json(
         "info": report.info_count(),
         "violations": violations,
         "diagnostics": diagnostics,
+        "allowed": allowed,
     });
     if let Some(fixed) = fixed {
         let actions: Vec<serde_json::Value> = fixed

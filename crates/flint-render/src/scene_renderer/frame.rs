@@ -386,7 +386,7 @@ impl SceneRenderer {
         let wireframe_only = self.debug_state.mode == DebugMode::WireframeOnly;
 
         // Update light uniforms
-        self.lights.upload(queue);
+        self.lights.upload(queue, camera_pos);
 
         // Grass compute (ADR 0092): scatters this camera's blades, culled to
         // its view, and counts them into the indirect draw arguments. It goes

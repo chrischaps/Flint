@@ -31,6 +31,9 @@
 //! input = "config/input.toml"
 //! strict = true                             # an undeclared component field is an error
 //! save_version = 2                          # the version saves are written at
+//!
+//! [project.diagnostics]
+//! allow = ["unknown-field:material.wetness"] # diagnostics this project accepts (#795)
 //! ```
 //!
 //! Every key is optional and so is the table: an empty `flint.toml` is a
@@ -79,7 +82,15 @@ pub use root::guessed_root;
 pub const MANIFEST_FILE: &str = "flint.toml";
 
 /// The keys `[project]` may hold.
-const PROJECT_KEYS: [&str; 6] = ["id", "schemas", "scene", "input", "strict", "save_version"];
+const PROJECT_KEYS: [&str; 7] = [
+    "id",
+    "schemas",
+    "scene",
+    "input",
+    "strict",
+    "save_version",
+    "diagnostics",
+];
 
 /// Why a directory was taken as the project root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,10 +149,21 @@ pub enum ProjectError {
 
     /// `[project]` holds a key this version doesn't know.
     #[error(
-        "{}: unknown key `{key}` in [project] (the keys are id, schemas, scene, input, strict, save_version)",
+        "{}: unknown key `{key}` in [project] (the keys are id, schemas, scene, input, strict, save_version, diagnostics)",
         file.display()
     )]
     UnknownKey { file: PathBuf, key: String },
+
+    /// An entry of `[project.diagnostics] allow` that names no code a
+    /// project may allow (#795), or a key of `[project.diagnostics]` other
+    /// than `allow`.
+    #[error("{}: `{key}`: {message}", file.display())]
+    BadDiagnostics {
+        file: PathBuf,
+        /// `project.diagnostics.allow[2]`, or the unknown key.
+        key: String,
+        message: String,
+    },
 }
 
 /// A located project: its root, how it was found, and what its manifest says.
@@ -172,6 +194,10 @@ pub struct Project {
     /// (#726). A save file at a lower one is handed to the scripts'
     /// `on_persist_migrate(from)`. 0 when the manifest doesn't say.
     pub save_version: i64,
+    /// `[project.diagnostics] allow` (#795): the diagnostics this project
+    /// accepts, left out of what `flint_scene::diagnose`, the loaders,
+    /// `flint validate` and `flint check` report (they say how many).
+    pub allow: Vec<crate::diagnostic::Allow>,
 }
 
 static OVERRIDE: OnceLock<Project> = OnceLock::new();
@@ -277,6 +303,7 @@ impl Project {
             input: None,
             strict: false,
             save_version: 0,
+            allow: Vec::new(),
         }
     }
 
@@ -364,6 +391,9 @@ impl Project {
                 ))
             }
         };
+        if let Some(value) = table.get("diagnostics") {
+            self.allow = read_allow(file, value)?;
+        }
         if let Some(value) = table.get("schemas") {
             let list = value
                 .as_array()
@@ -631,6 +661,24 @@ pub fn host_schema_dirs(listed: &[impl AsRef<Path>], scene: Option<&Path>) -> Sc
     }
 }
 
+/// The schema directories of a game whose files were packed where the
+/// packer put the engine's schemas, as an Android APK unpacks into the app's
+/// files (#797): the scene's manifest list when its project names one, as
+/// every other host reads it (so a game that lists `engine/schemas/examples`
+/// gets the room-builder archetypes), else `packed` as a host list, the
+/// pair the packer copied in for a game with no manifest list. A manifest
+/// naming a directory that wasn't packed is [`schema_dirs`]'s error.
+pub fn packed_schema_dirs(
+    scene: &Path,
+    packed: &[impl AsRef<Path>],
+) -> Result<SchemaDirs, SchemaDirsError> {
+    let resolved = schema_dirs(Some(scene), &[] as &[&Path])?;
+    if resolved.source != SchemaSource::Discovery {
+        return Ok(resolved);
+    }
+    Ok(host_schema_dirs(packed, Some(scene)))
+}
+
 impl SchemaDirs {
     /// TEMPORARY, for one release (ADR 0114 decision 3, #765): one line for
     /// each directory in [`dropped`](Self::dropped), for a command that
@@ -763,6 +811,54 @@ fn marker(dir: &Path, home: Option<&Path>) -> Option<Found> {
         return Some(Found::Layout);
     }
     None
+}
+
+/// `[project.diagnostics]`: a table holding `allow`, a list of
+/// [`Allow`](crate::diagnostic::Allow) entries.
+fn read_allow(
+    file: &Path,
+    value: &toml::Value,
+) -> Result<Vec<crate::diagnostic::Allow>, ProjectError> {
+    let wrong = |key: &str, expected: &'static str, got: &toml::Value| ProjectError::WrongType {
+        file: file.to_path_buf(),
+        key: key.to_string(),
+        expected,
+        got: kind_of(got),
+    };
+    let table = value
+        .as_table()
+        .ok_or_else(|| wrong("project.diagnostics", "a table", value))?;
+    if let Some(key) = table.keys().find(|k| k.as_str() != "allow") {
+        return Err(ProjectError::BadDiagnostics {
+            file: file.to_path_buf(),
+            key: format!("project.diagnostics.{key}"),
+            message: "unknown key (the one key is `allow`)".to_string(),
+        });
+    }
+    let Some(list) = table.get("allow") else {
+        return Ok(Vec::new());
+    };
+    let list = list.as_array().ok_or_else(|| {
+        wrong(
+            "project.diagnostics.allow",
+            "a list of strings like \"unknown-field:material.wetness\"",
+            list,
+        )
+    })?;
+    list.iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let key = format!("project.diagnostics.allow[{i}]");
+            let text = entry
+                .as_str()
+                .ok_or_else(|| wrong(&key, "a string", entry))?;
+            crate::diagnostic::Allow::parse(text).map_err(|message| ProjectError::BadDiagnostics {
+                file: file.to_path_buf(),
+                key,
+                message,
+            })
+        })
+        .collect()
 }
 
 fn kind_of(value: &toml::Value) -> &'static str {
@@ -1128,6 +1224,61 @@ save_version = 1.5
                 assert!(said.contains(&format!("`{key}`")), "{said}");
             });
         }
+    }
+
+    /// `[project.diagnostics] allow` (#795): each entry a code a project may
+    /// allow, with or without its place; anything else is refused by key.
+    #[test]
+    fn the_manifest_allows_diagnostics_by_code_and_place() {
+        let text = "[project]\nid = \"x\"\n\n[project.diagnostics]\n\
+                    allow = [\"unknown-field:material.wetness\", \"unknown-table\"]\n";
+        with_files(&[("game/flint.toml", text)], || {
+            let project = discover("game").unwrap();
+            let allowed: Vec<String> = project.allow.iter().map(|a| a.to_string()).collect();
+            assert_eq!(allowed, ["unknown-field:material.wetness", "unknown-table"]);
+        });
+        let refused = [
+            (
+                "[project.diagnostics]\nallow = [\"unknown-feild\"]\n",
+                "project.diagnostics.allow[0]",
+                "did you mean `unknown-field`?",
+            ),
+            (
+                "[project.diagnostics]\nallow = [\"bad-type\", \"toml-parse\"]\n",
+                "project.diagnostics.allow[1]",
+                "did not load",
+            ),
+            (
+                "[project.diagnostics]\nalow = []\n",
+                "project.diagnostics.alow",
+                "the one key is `allow`",
+            ),
+        ];
+        for (text, key, says) in refused {
+            with_files(&[("game/flint.toml", text)], || {
+                let err = discover("game").unwrap_err();
+                assert!(
+                    matches!(&err, ProjectError::BadDiagnostics { key: k, .. } if k == key),
+                    "{err:?}"
+                );
+                let said = err.to_string();
+                assert!(said.contains(says), "{said}");
+                assert!(said.contains("flint.toml"), "{said}");
+            });
+        }
+        with_files(
+            &[(
+                "game/flint.toml",
+                "[project.diagnostics]\nallow = \"bad-type\"\n",
+            )],
+            || {
+                let err = discover("game").unwrap_err();
+                assert!(
+                    matches!(&err, ProjectError::WrongType { key, .. } if key == "project.diagnostics.allow"),
+                    "{err:?}"
+                );
+            },
+        );
     }
 
     #[test]
@@ -1536,6 +1687,55 @@ save_version = 1.5
                 assert!(schema_dirs(None, &["s"]).is_ok());
             },
         );
+    }
+
+    /// Android (#797): what the APK unpacked is read by the manifest like
+    /// every other host, so a game can list the examples layer; with no list
+    /// it is the pair the packer copied in, as before.
+    #[test]
+    fn a_packed_game_reads_its_manifest_else_the_packed_pair() {
+        let packed = ["data/engine/schemas", "data/schemas"];
+        let scene = Path::new("data/scenes/a.scene.toml");
+        let tree = |manifest: Option<&'static str>| {
+            let mut files = vec![
+                ("data/engine/schemas/", ""),
+                ("data/engine/schemas/examples/", ""),
+                ("data/schemas/", ""),
+                ("data/scenes/a.scene.toml", ""),
+            ];
+            if let Some(text) = manifest {
+                files.push(("data/flint.toml", text));
+            }
+            files
+        };
+        let listed =
+            "[project]\nschemas = [\"engine/schemas\", \"engine/schemas/examples\", \"schemas\"]\n";
+        with_files(&tree(Some(listed)), || {
+            let dirs = packed_schema_dirs(scene, &packed).unwrap();
+            assert_eq!(dirs.source.name(), "manifest");
+            assert_eq!(
+                paths(&dirs),
+                [
+                    "data/engine/schemas",
+                    "data/engine/schemas/examples",
+                    "data/schemas"
+                ]
+            );
+        });
+        // A manifest with no list, or none at all: the packed pair
+        for manifest in [Some("[project]\nid = \"kart\"\n"), None] {
+            with_files(&tree(manifest), || {
+                let dirs = packed_schema_dirs(scene, &packed).unwrap();
+                assert_eq!(dirs.source, SchemaSource::Host, "{manifest:?}");
+                assert_eq!(paths(&dirs), packed, "{manifest:?}");
+            });
+        }
+        // A list naming what wasn't packed says so
+        let missing = "[project]\nschemas = [\"engine/schemas\", \"extra\"]\n";
+        with_files(&tree(Some(missing)), || {
+            let err = packed_schema_dirs(scene, &packed).unwrap_err();
+            assert!(err.to_string().contains("extra"), "{err}");
+        });
     }
 
     #[test]

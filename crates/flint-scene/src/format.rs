@@ -2,7 +2,7 @@
 
 use flint_core::toml_util::edit_distance;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Root structure of a scene TOML file: `[scene]`, the scene-level tables,
 /// `[prefabs.*]` and `[entities.*]`.
@@ -29,8 +29,12 @@ pub struct SceneFile {
     /// extension's own.
     #[serde(flatten)]
     pub tables: toml::Table,
-    pub prefabs: HashMap<String, PrefabInstance>,
-    pub entities: HashMap<String, EntityDef>,
+    /// By name, as `entities` is
+    pub prefabs: BTreeMap<String, PrefabInstance>,
+    /// By name (#688): the loader spawns in this order, so a scene's ids
+    /// are the same every load, and a saved file lists entities the same
+    /// way every time
+    pub entities: BTreeMap<String, EntityDef>,
     /// The typed tables ([`SceneFile::TYPED_TABLES`]) as the file wrote
     /// them, before their defaults were filled in: what
     /// [`diagnose`](crate::diagnose) checks against their `[table.*]`
@@ -89,7 +93,7 @@ impl<'de> Deserialize<'de> for SceneFile {
 pub struct PrefabFile {
     pub prefab: PrefabMetadata,
     #[serde(default)]
-    pub entities: HashMap<String, EntityDef>,
+    pub entities: BTreeMap<String, EntityDef>,
 }
 
 /// Metadata for a prefab template
@@ -106,7 +110,7 @@ pub struct PrefabInstance {
     pub template: String,
     pub prefix: String,
     #[serde(default)]
-    pub overrides: HashMap<String, HashMap<String, toml::Value>>,
+    pub overrides: BTreeMap<String, BTreeMap<String, toml::Value>>,
 }
 
 /// The macro [`flint_schema::post_effects!`] calls to make
@@ -610,9 +614,10 @@ pub struct EntityDef {
     /// Optional parent entity name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
-    /// Component data - all other fields are treated as components
+    /// Component data - all other fields are treated as components. By
+    /// name, so a load merges them in the same order every time
     #[serde(flatten)]
-    pub components: HashMap<String, toml::Value>,
+    pub components: BTreeMap<String, toml::Value>,
 }
 
 impl EntityDef {
@@ -620,7 +625,7 @@ impl EntityDef {
         Self {
             archetype: None,
             parent: None,
-            components: HashMap::new(),
+            components: BTreeMap::new(),
         }
     }
 
@@ -700,8 +705,8 @@ impl SceneFile {
             environment: None,
             post_process: None,
             tables: toml::Table::new(),
-            prefabs: HashMap::new(),
-            entities: HashMap::new(),
+            prefabs: BTreeMap::new(),
+            entities: BTreeMap::new(),
             written: toml::Table::new(),
         }
     }

@@ -753,6 +753,13 @@ pub struct ScriptCallContext {
     pub quality: flint_core::quality::QualitySettings,
     /// What the GPU is, for `gpu_info()`. The host sets it once.
     pub gpu_info: flint_core::quality::GpuInfo,
+    /// The look the scene draws with now, for `get_look()` (#497): the one
+    /// it names, or the one a script or F4 chose since; `""` for none. The
+    /// host sets it whenever it changes and once a frame.
+    pub look: String,
+    /// Every look the scene can see, by name, for `list_looks()` (#497).
+    /// The host sets it at each scene's entry.
+    pub looks: Vec<String>,
     /// Whether the cursor is captured now, for `is_cursor_captured()`
     /// (ADR 0110). The host sets it each frame.
     pub cursor_captured: bool,
@@ -894,6 +901,8 @@ impl ScriptCallContext {
             draw_distance_scale: 1.0,
             quality: Default::default(),
             gpu_info: Default::default(),
+            look: String::new(),
+            looks: Vec::new(),
             cursor_captured: false,
             state_machine: std::ptr::null_mut(),
             persistent_store: std::ptr::null_mut(),

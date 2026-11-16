@@ -178,13 +178,13 @@ The `flint-scene` crate handles serialization. Scenes are loaded into the ECS wo
 
 When a scene is loaded:
 1. The TOML is parsed into a scene structure. A file that is not TOML is an error that names the file as well as the line
-2. Each entity definition creates an ECS entity with a stable `EntityId`
+2. Each entity definition creates an ECS entity with a stable `EntityId`, in name order, so the ids are the same every load
 3. If the entity names an archetype, the archetype's `defaults` are written in first for every component the entity did not author itself
 4. Every entity is checked against the schemas in one pass: its archetype, each component and each field (see [Scene Diagnostics](schemas.md#scene-diagnostics)). Nothing found here stops the load: the loader logs one summary line and the first five problems through `tracing`, as warnings, and keeps going. An unknown archetype gives the entity no defaults. A scene that loads is not necessarily a scene that validates: `flint validate` prints the whole list and fails on an error.
 5. The authored data is merged field-by-field into whatever the archetype put there (see [Schemas](schemas.md))
 6. For every component the entity explicitly lists, any field that has a `default` in its component schema and is still unset is filled in. Defaults are applied only to components the entity wrote a table for, not to archetype-required components it left out entirely. Step 4 knows about them: a `required` field that an archetype default or the field's own `default` will fill is not reported as missing.
 7. Parent-child relationships are established
-8. The entity ID counter is adjusted to be above any existing ID (preventing collisions on subsequent creates)
+8. The world's id counter is past every entity's id, so an entity spawned later never collides
 
 Step 6 is why scripts can read `get_field(id, "item", "enabled")` and get a bool rather than `()` even when the scene author never wrote the field.
 

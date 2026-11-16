@@ -48,10 +48,24 @@ const CATALOGUED: &[AssetKind] = &[AssetKind::Models, AssetKind::Textures];
 /// archetype declared in any of them is known. `project` finds the prefabs
 /// and the assets, and its `[project] strict = true` makes an unknown field
 /// an error, as [`diagnostic::promote_strict`] does for
-/// `flint validate --strict`.
+/// `flint validate --strict`. What its `[project.diagnostics] allow` names
+/// is left out ([`diagnose_all`] keeps it, for a host that counts it).
 ///
 /// Entities are reported in name order, so two runs print the same list.
 pub fn diagnose(
+    scene_file: &Path,
+    registry: &SchemaRegistry,
+    project: &Project,
+) -> Vec<Diagnostic> {
+    let mut found = diagnose_all(scene_file, registry, project);
+    diagnostic::drop_allowed(&mut found, &project.allow);
+    found
+}
+
+/// [`diagnose`] with nothing left out for the project's allow list: what
+/// `flint validate` and `flint check` run, applying the list (and counting
+/// what it took) once every check of theirs has spoken.
+pub fn diagnose_all(
     scene_file: &Path,
     registry: &SchemaRegistry,
     project: &Project,
@@ -177,10 +191,80 @@ fn diagnose_entities(
             );
         }
     }
+    // A loop of parents needs the whole scene to see, and no schema
+    if lookup.is_some() {
+        found.extend(parent_cycles(scene));
+    }
     if let Some(file) = file {
         for d in &mut found {
             d.file = Some(file.to_path_buf());
         }
+    }
+    found
+}
+
+/// Every loop the scene's `parent`s close (#680), once each: `parent =
+/// "lamp"` on `lamp`, or `cart` under `wheel` under `cart`. The loader
+/// refuses the first link that closes one (`FlintWorld::set_parent`), which
+/// link that is depends on the order the entities load in, so the
+/// diagnostic is put on the loop's first entity by name and its chain
+/// starts there: the same words every run.
+fn parent_cycles(scene: &SceneFile) -> Vec<Diagnostic> {
+    let mut names: Vec<&str> = scene.entities.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    let parent_of = |name: &str| {
+        scene
+            .entities
+            .get(name)
+            .and_then(|e| e.parent.as_deref())
+            .filter(|p| scene.entities.contains_key(*p))
+    };
+    let mut done: HashSet<&str> = HashSet::new();
+    let mut found = Vec::new();
+    for &start in &names {
+        // Up from `start` until a name walked before: in this walk, a loop;
+        // in an earlier one, nothing new
+        let mut path: Vec<&str> = Vec::new();
+        let mut at = Some(start);
+        while let Some(name) = at {
+            if done.contains(name) {
+                break;
+            }
+            if let Some(i) = path.iter().position(|n| *n == name) {
+                let ring = &path[i..];
+                let first = (0..ring.len()).min_by_key(|&k| ring[k]).unwrap_or(0);
+                let mut chain: Vec<&str> = ring[first..]
+                    .iter()
+                    .chain(&ring[..first])
+                    .copied()
+                    .collect();
+                let entity = chain[0];
+                let message = if chain.len() == 1 {
+                    format!("`{entity}` is its own parent, so the scene does not load")
+                } else {
+                    chain.push(entity);
+                    format!(
+                        "the parents loop: {}, each the child of the next, so the scene does \
+                         not load",
+                        chain.join(" -> ")
+                    )
+                };
+                found.push(
+                    Diagnostic::error(codes::PARENT_CYCLE, message)
+                        .entity(entity)
+                        .field("parent")
+                        .hint(if ring.len() == 1 {
+                            format!("remove `parent = \"{entity}\"` from `{entity}`")
+                        } else {
+                            "remove or change the `parent` of one of them".to_string()
+                        }),
+                );
+                break;
+            }
+            path.push(name);
+            at = parent_of(name);
+        }
+        done.extend(path);
     }
     found
 }
@@ -1118,12 +1202,41 @@ intensity = 1.0
     /// hint says what a light is.
     #[test]
     fn a_stale_light_table_says_what_a_light_is() {
-        let found =
-            found_in("[scene]\nname = \"s\"\n[entities.sun.directional_light]\nintensity = 2.0\n");
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].code, codes::UNKNOWN_COMPONENT);
-        let hint = found[0].hint.as_deref().unwrap();
-        assert!(hint.contains("type = \"directional\""), "{hint}");
+        for kind in ["directional", "point", "spot"] {
+            let found = found_in(&format!(
+                "[scene]\nname = \"s\"\n[entities.sun.{kind}_light]\nintensity = 2.0\n"
+            ));
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].code, codes::UNKNOWN_COMPONENT);
+            let hint = found[0].hint.as_deref().unwrap();
+            assert!(hint.contains("a `light` component"), "{hint}");
+            assert!(hint.contains(&format!("type = \"{kind}\"")), "{hint}");
+        }
+    }
+
+    /// `[project.diagnostics] allow` (#795): what it names is left out of
+    /// `diagnose` and of a load's list, kept by `diagnose_all`, and nothing
+    /// else is touched.
+    #[test]
+    fn the_manifest_allows_a_code_at_a_field() {
+        let scene = "[scene]\nname = \"s\"\n[entities.sun.light]\nintensty = 3.0\nwetness = 1.0\n";
+        let manifest = "[project.diagnostics]\nallow = [\"unknown-field:light.wetness\"]\n";
+        let files = [("scenes/a.scene.toml", scene), ("flint.toml", manifest)];
+        let (all, allowed, loaded) = with_scene(&files, |registry, project| {
+            let path = Path::new("scenes/a.scene.toml");
+            let loaded = crate::load_scene_diagnosed(path, registry).unwrap().2;
+            (
+                diagnose_all(path, registry, project),
+                diagnose(path, registry, project),
+                loaded,
+            )
+        });
+        let fields = |list: &[Diagnostic]| -> Vec<String> {
+            list.iter().filter_map(|d| d.field.clone()).collect()
+        };
+        assert_eq!(fields(&all), ["intensty", "wetness"]);
+        assert_eq!(fields(&allowed), ["intensty"]);
+        assert_eq!(fields(&loaded), ["intensty"]);
     }
 
     #[test]
@@ -1203,6 +1316,58 @@ target = "nope"
         );
         assert_eq!(found[2].hint.as_deref(), Some("did you mean `hand`?"));
         assert!(found.iter().all(Diagnostic::is_error));
+    }
+
+    /// #680: every loop of parents, once, on its first entity by name, with
+    /// the chain from there; a chain hanging off a loop is not one more.
+    #[test]
+    fn a_loop_of_parents_is_one_error_on_its_first_entity() {
+        let scene = r#"
+[scene]
+name = "s"
+
+[entities.lamp]
+parent = "lamp"
+
+[entities.wheel]
+parent = "cart"
+
+[entities.cart]
+parent = "hub"
+
+[entities.hub]
+parent = "wheel"
+
+[entities.spoke]
+parent = "hub"
+
+[entities.ground]
+
+[entities.tree]
+parent = "ground"
+"#;
+        let found = with_scene(
+            &[RIG, ("scenes/a.scene.toml", scene)],
+            |registry, project| diagnose(Path::new("scenes/a.scene.toml"), registry, project),
+        );
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            [
+                "error[parent-cycle] entity 'cart' field 'parent': the parents loop: \
+                 cart -> hub -> wheel -> cart, each the child of the next, so the scene \
+                 does not load",
+                "error[parent-cycle] entity 'lamp' field 'parent': `lamp` is its own parent, \
+                 so the scene does not load",
+            ]
+        );
+        assert_eq!(
+            found[1].hint.as_deref(),
+            Some("remove `parent = \"lamp\"` from `lamp`")
+        );
+        assert!(found
+            .iter()
+            .all(|d| d.file.as_deref() == Some(Path::new("scenes/a.scene.toml"))));
     }
 
     /// A prefab's references are written `${PREFIX}_<name>` and checked

@@ -8,11 +8,20 @@
 //! layer over it.
 
 use flint_schema::{
-    ArchetypeSchema, ComponentSchema, FieldSchema, FieldType, SchemaRegistry, OLD_TYPE_NAMES,
-    TYPE_NAMES,
+    ArchetypeSchema, ComponentSchema, FieldSchema, FieldType, SchemaOrigin, SchemaRegistry,
+    OLD_TYPE_NAMES, TYPE_NAMES,
 };
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
+use std::path::Path;
+
+/// A schema file as `flint schema` names it: from the working directory
+/// where it is under it, so the output doesn't carry one machine's folders.
+pub fn shown_file(path: &Path) -> String {
+    let cwd = std::env::current_dir().ok();
+    let from_here = cwd.as_deref().and_then(|cwd| path.strip_prefix(cwd).ok());
+    flint_core::project::shown(from_here.unwrap_or(path))
+}
 
 fn to_json(value: &toml::Value) -> Value {
     serde_json::to_value(value).unwrap_or(Value::Null)
@@ -82,27 +91,42 @@ fn fields_json(fields: &HashMap<String, FieldSchema>) -> Value {
 }
 
 /// One component: its description, whether it is open (no fields: known,
-/// and nothing in it checked) and its fields by name.
-pub fn component_json(component: &ComponentSchema) -> Value {
-    json!({
-        "kind": "component",
-        "name": component.name,
-        "description": component.description,
-        "open": component.is_open(),
-        "fields": fields_json(&component.fields),
-    })
+/// and nothing in it checked), its fields by name, and where it and each
+/// field was declared (`declared_in`, `extended_by`, each field's `file`;
+/// #794), when it was read from a file.
+pub fn component_json(component: &ComponentSchema, origin: Option<&SchemaOrigin>) -> Value {
+    fielded_json("component", component, origin)
 }
 
 /// One scene-level table (#686): what a component has, under
 /// `"kind": "table"`.
-pub fn table_json(table: &ComponentSchema) -> Value {
-    json!({
-        "kind": "table",
-        "name": table.name,
-        "description": table.description,
-        "open": table.is_open(),
-        "fields": fields_json(&table.fields),
-    })
+pub fn table_json(table: &ComponentSchema, origin: Option<&SchemaOrigin>) -> Value {
+    fielded_json("table", table, origin)
+}
+
+fn fielded_json(kind: &str, schema: &ComponentSchema, origin: Option<&SchemaOrigin>) -> Value {
+    let mut fields = fields_json(&schema.fields);
+    let mut out = json!({
+        "kind": kind,
+        "name": schema.name,
+        "description": schema.description,
+        "open": schema.is_open(),
+    });
+    if let Some(origin) = origin {
+        for (name, field) in fields.as_object_mut().expect("fields are an object") {
+            if let Some(file) = origin.field_file(name) {
+                field["file"] = json!(shown_file(file));
+            }
+        }
+        out["declared_in"] = json!(origin.declared_in.as_deref().map(shown_file));
+        out["extended_by"] = json!(origin
+            .extended_by
+            .iter()
+            .map(|file| shown_file(file))
+            .collect::<Vec<_>>());
+    }
+    out["fields"] = fields;
+    out
 }
 
 /// One archetype: its components, and the defaults it gives them.
@@ -136,12 +160,20 @@ pub fn registry_json(registry: &SchemaRegistry, dirs: &[String]) -> Value {
     let components: Map<String, Value> = registry
         .components()
         .into_iter()
-        .map(|c| (c.name.clone(), component_json(c)))
+        .map(|c| {
+            let origin = registry.component_origin(&c.name);
+            (c.name.clone(), component_json(c, origin))
+        })
         .collect();
     let tables: Map<String, Value> = registry
         .tables()
         .into_iter()
-        .map(|t| (t.name.clone(), table_json(t)))
+        .map(|t| {
+            (
+                t.name.clone(),
+                table_json(t, registry.table_origin(&t.name)),
+            )
+        })
         .collect();
     let archetypes: Map<String, Value> = registry
         .archetypes()

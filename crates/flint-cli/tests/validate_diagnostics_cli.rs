@@ -208,6 +208,63 @@ fn strict_makes_an_unknown_field_an_error() {
     );
 }
 
+/// #795: `[project.diagnostics] allow` leaves out what it names, at the
+/// place it names, and `flint validate` and `flint check` say how many,
+/// in text and JSON. An allowed error no longer fails the scene; an entry
+/// that names no code fails every command, naming the key.
+#[test]
+fn the_manifest_allows_a_code_and_validate_counts_it() {
+    let manifest = "[project]\nschemas = [\"schemas\"]\n\n[project.diagnostics]\n\
+                    allow = [\"unknown-field:lamp.brightnes\", \"unknown-component:lapm\"]\n";
+    let dir = project("allowed", manifest);
+    let broken = "scenes/broken.scene.toml";
+
+    let o = flint(&dir, &["validate", broken]);
+    let out = stdout(&o);
+    assert_eq!(o.status.code(), Some(1), "three errors are left: {out}");
+    assert!(
+        out.starts_with("scenes/broken.scene.toml: 3 errors (2 allowed by flint.toml)\n"),
+        "{out}"
+    );
+    assert!(!out.contains("lamp.brightnes"), "{out}");
+    assert!(!out.contains("lapm"), "{out}");
+    assert!(
+        out.contains("error[bad-enum-value]"),
+        "the rest stays: {out}"
+    );
+
+    let o = flint(&dir, &["validate", broken, "--format", "json"]);
+    let doc: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(doc["allowed"], 2, "{doc}");
+    assert_eq!(doc["errors"], 3, "{doc}");
+    assert_eq!(doc["warnings"], 0, "{doc}");
+
+    let o = flint(&dir, &["check", broken, "--json"]);
+    let doc: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(doc["allowed"], 2, "{doc}");
+    let summary = doc["summary"].as_str().unwrap();
+    assert!(summary.ends_with("(2 allowed by flint.toml)"), "{summary}");
+
+    // The one warning allowed: nothing left, and still said
+    let o = flint(&dir, &["validate", "scenes/typo_only.scene.toml"]);
+    let out = stdout(&o);
+    assert!(o.status.success(), "{out}");
+    assert!(
+        out.starts_with("scenes/typo_only.scene.toml: no problems (1 allowed by flint.toml)\n"),
+        "{out}"
+    );
+
+    let bad = project(
+        "allowed_typo",
+        "[project.diagnostics]\nallow = [\"unknown-feild\"]\n",
+    );
+    let o = flint(&bad, &["validate", broken]);
+    let said = String::from_utf8_lossy(&o.stderr);
+    assert_ne!(o.status.code(), Some(0), "{said}");
+    assert!(said.contains("project.diagnostics.allow[0]"), "{said}");
+    assert!(said.contains("did you mean `unknown-field`?"), "{said}");
+}
+
 /// #339's scene: three mistakes in one component, with a constraint that
 /// passes. Before ADR 0115 the loader logged a warning for the first field
 /// (`cell`), and validate printed "All constraints passed." and exited 0.
