@@ -7,6 +7,7 @@ authors.workspace = true
 
 [dependencies]
 flint-core = { workspace = true }
+flint-ecs = { workspace = true }
 image = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }

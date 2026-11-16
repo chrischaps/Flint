@@ -167,6 +167,10 @@ pub struct ComponentView<'a> {
     component: &'a str,
     data: Option<&'a toml::Value>,
     reports: &'a ReadReports,
+    /// For one entry of an array of tables ([`ComponentView::tables`]): the
+    /// array's field and the entry's index, so a report names
+    /// `layers[1].mode`.
+    within: Option<(&'a str, usize)>,
 }
 
 impl FlintWorld {
@@ -179,6 +183,7 @@ impl FlintWorld {
             component,
             data,
             reports: self.read_reports(),
+            within: None,
         };
         view.check_is_table();
         view
@@ -199,6 +204,7 @@ impl<'a> ComponentView<'a> {
             component,
             data,
             reports,
+            within: None,
         };
         view.check_is_table();
         view
@@ -343,6 +349,45 @@ impl<'a> ComponentView<'a> {
         )
     }
 
+    // -- arrays of tables ------------------------------------------------
+
+    /// Each entry of an array of tables (`animator.layers`), as a view of
+    /// its own whose reports name the entry: `animator.layers[1].mode`.
+    /// Missing is no entries, in silence. A field that is not an array is
+    /// no entries and a report; an entry that is not a table reads as all
+    /// defaults (so indices stay put) and is reported.
+    pub fn tables(&self, field: &'a str) -> Vec<ComponentView<'a>> {
+        let Some(value) = self.raw(field) else {
+            return Vec::new();
+        };
+        let Some(entries) = value.as_array() else {
+            self.wrong_type(field, "an array of tables", value, None);
+            return Vec::new();
+        };
+        entries
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let view = ComponentView {
+                    data: Some(entry),
+                    within: Some((field, i)),
+                    ..*self
+                };
+                if !entry.is_table() {
+                    view.report("", || {
+                        Diagnostic::error(
+                            codes::BAD_TYPE,
+                            format!("each entry of `{field}` is a table, got {}", shown(entry)),
+                        )
+                        .hint("this entry reads as all defaults")
+                    });
+                    return ComponentView { data: None, ..view };
+                }
+                view
+            })
+            .collect()
+    }
+
     // -- reporting -------------------------------------------------------
 
     /// Report something a reader found that no typed read covers (a value
@@ -350,6 +395,19 @@ impl<'a> ComponentView<'a> {
     /// this entity, component and `field`. `make` builds the diagnostic; the
     /// entity, component and field are filled in.
     pub fn report(&self, field: &str, make: impl FnOnce() -> Diagnostic) {
+        // Only a report gets here, so the entry's path may allocate
+        let path;
+        let field = match self.within {
+            None => field,
+            Some((array, i)) => {
+                path = if field.is_empty() {
+                    format!("{array}[{i}]")
+                } else {
+                    format!("{array}[{i}].{field}")
+                };
+                path.as_str()
+            }
+        };
         self.with_entity(|entity| {
             self.reports.once(entity, self.component, field, || {
                 let d = make().entity(entity).component(self.component);
@@ -778,6 +836,45 @@ mod tests {
         assert!(said[0].hint.as_deref().unwrap().contains("`music`"));
         assert_eq!(said[1].field.as_deref(), Some("file"));
         assert_eq!(view.component(), comp::AUDIO_SOURCE);
+    }
+
+    #[test]
+    fn an_array_of_tables_reports_each_entry_by_index() {
+        let (world, id) = world_with(
+            "hero",
+            comp::ANIMATOR,
+            "layers = [{ clip = \"wave\", weight = 0.5 }, 3, { clip = \"nod\", weight = \"half\" }]",
+        );
+        let view = world.view(id, comp::ANIMATOR);
+        let layers = view.tables("layers");
+        assert_eq!(layers.len(), 3, "a bad entry keeps its index");
+        assert_eq!(layers[0].f32("weight", 1.0), 0.5);
+        assert!(
+            !layers[1].exists(),
+            "an entry that is no table is all defaults"
+        );
+        assert_eq!(layers[2].f32("weight", 1.0), 1.0);
+        assert_eq!(layers[2].f32("weight", 1.0), 1.0);
+        let lines: Vec<String> = world
+            .read_reports()
+            .snapshot()
+            .iter()
+            .map(|d| d.to_string())
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "error[bad-type] entity 'hero' animator.layers[1]: each entry of `layers` is a \
+                 table, got integer 3",
+                "error[bad-type] entity 'hero' animator.layers[2].weight: expected a number, \
+                 got string \"half\"",
+            ]
+        );
+        // Missing is nothing; a field that is no array is reported
+        assert!(view.tables("absent").is_empty());
+        let (world, id) = world_with("hero", comp::ANIMATOR, "layers = \"wave\"");
+        assert!(world.view(id, comp::ANIMATOR).tables("layers").is_empty());
+        assert_eq!(world.read_reports().len(), 1);
     }
 
     #[test]

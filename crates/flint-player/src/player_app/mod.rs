@@ -26,6 +26,8 @@ mod extension_tests;
 pub mod fonts;
 mod frame;
 mod frame_history;
+#[cfg(test)]
+mod frame_notes_tests;
 pub mod frame_rate;
 pub mod game_core;
 pub mod headless_animation;

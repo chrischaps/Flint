@@ -556,6 +556,34 @@ mod tests {
     }
 }
 
+/// `sprite.mode`'s values (`schemas/components/sprite.toml` lists the same;
+/// a test holds the two together).
+pub const SPRITE_MODES: &[&str] = &["billboard", "sprite2d"];
+
+/// `screen_anchor.anchor`'s values, as [`anchor_origin`] matches them.
+pub const SCREEN_ANCHORS: &[&str] = &[
+    "top-left",
+    "top-center",
+    "top-right",
+    "center-left",
+    "center",
+    "center-right",
+    "bottom-left",
+    "bottom-center",
+    "bottom-right",
+];
+
+/// `ui_fill.direction`'s values, as [`apply_fill`] matches them.
+pub const FILL_DIRECTIONS: &[&str] = &[
+    "left_to_right",
+    "right_to_left",
+    "bottom_to_top",
+    "top_to_bottom",
+];
+
+/// `ui_text.align`'s values, as `BitmapFont::layout_text` matches them.
+pub const TEXT_ALIGNS: &[&str] = &["left", "center", "right"];
+
 /// Compute the screen-space origin for a named anchor point.
 ///
 /// * `half_w` = `ortho_height * aspect_ratio / 2.0`

@@ -441,11 +441,7 @@ pub fn resolve(
             continue;
         };
         let name = &entity.name;
-        let Some(spec_name) = comps
-            .get(comp::MODEL)
-            .and_then(|m| m.get("asset"))
-            .and_then(|a| a.as_str())
-        else {
+        let Some(spec_name) = world.view(entity.id, comp::MODEL).opt_str("asset") else {
             tracing::warn!("Living prop '{name}' has no model.asset naming its spec; ignoring it");
             continue;
         };

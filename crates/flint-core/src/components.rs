@@ -72,3 +72,4 @@ pub const SKY: &str = "sky";
 pub const SCREEN_ANCHOR: &str = "screen_anchor";
 pub const UI_TEXT: &str = "ui_text";
 pub const UI_FILL: &str = "ui_fill";
+pub const PARALLAX: &str = "parallax";

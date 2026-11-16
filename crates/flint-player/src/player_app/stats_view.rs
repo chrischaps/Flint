@@ -391,6 +391,7 @@ mod tests {
                     player_ms: 4.0,
                     refreshes: Some(3),
                     cause: Cause::Elsewhere { present_ms: 44.0 },
+                    notes: Vec::new(),
                 },
             );
             assert_eq!(out, "last 50 ms: elsewhere, present 44");
