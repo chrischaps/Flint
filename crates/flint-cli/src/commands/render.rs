@@ -598,20 +598,39 @@ pub struct RenderArgs {
     #[arg(long)]
     pub edge_normal: Option<f32>,
 
-    /// Stylized render mode (0=none, 1=matrix, 2=blood, 3=drunk, 4=tron,
-    /// 5=underwater, 6=tear: a tear only `blend_source = "tear"` props show)
+    /// Deprecated (#746; for one release): a render mode is a style now.
+    /// 1 = `--style matrix:blend_source=tear --tear M`, 2 = blood (and the
+    /// ocean's tint), 3 = `--style drunk:blend=M`, 4 = tron, 5 =
+    /// `--style underwater:blend=M,depth=..`, 6 = `--tear M` alone
     #[arg(long)]
     pub render_mode: Option<u32>,
 
-    /// Render mode blend strength 0..1 (default: 0.0)
+    /// Deprecated with --render-mode: its mix 0..1 (default 1)
     #[arg(long)]
     pub mode_mix: Option<f32>,
 
-    /// Render mode params as X,Y,Z,W. Tears 1-4: mask scale (0 = 3), mask
-    /// style, rate (0 = 6), spare. Underwater 5: eye depth m, sea energy,
-    /// daylight, biolum
+    /// Deprecated with --render-mode: X,Y,Z,W. Tears 1-4 and 6: tear scale,
+    /// iris (1), matrix rate. Underwater 5: the style's depth, churn,
+    /// daylight, glow
     #[arg(long, value_parser = crate::commands::common_args::parse_vec4)]
     pub mode_params: Option<[f32; 4]>,
+
+    /// `[post_process] tear` (#746): how much of the frame tears open, 0..1.
+    /// Shows a style with `blend_source = "tear"` (`--style
+    /// matrix:blend_source=tear`) or a prop's style that follows it, only in
+    /// the holes
+    #[arg(long)]
+    pub tear: Option<f32>,
+
+    /// `[post_process] tear_scale`: patches across the frame's height
+    /// (default 3)
+    #[arg(long)]
+    pub tear_scale: Option<f32>,
+
+    /// `[post_process] tear_iris`: tear open from the centre in a circle
+    /// instead of in patches
+    #[arg(long)]
+    pub tear_iris: bool,
 
     /// How far each drawing moves the paint, as a share of the Kuwahara radius
     /// (0 = still; needs the scene's [wooze] table): `--style kuwahara:boil=..`
@@ -2332,16 +2351,18 @@ fn post_process_config(
         if let Some(range) = args.dof_range {
             pp_config.dof_focus_range = range;
         }
-        if let Some(mode) = args.render_mode {
-            pp_config.render_mode = mode;
-            // A mode with no explicit mix defaults to fully torn through.
-            pp_config.mode_mix = args.mode_mix.unwrap_or(1.0);
+        if let Some(tear) = args.tear {
+            pp_config.tear = tear;
         }
-        if let Some(mix) = args.mode_mix {
-            pp_config.mode_mix = mix;
+        if let Some(scale) = args.tear_scale {
+            pp_config.tear_scale = scale;
         }
-        if let Some(params) = args.mode_params {
-            pp_config.mode_params = params;
+        if args.tear_iris {
+            pp_config.tear_iris = true;
+        }
+        // The deprecated render mode (#746), as the styles that replaced it
+        if let Some(mode) = legacy_render_mode(args) {
+            mode.apply(&mut pp_config);
         }
         if let Some(density) = args.volumetric_density {
             pp_config.volumetric_density = density;
@@ -3477,6 +3498,8 @@ struct Stage {
     laid_styles: flint_render::stylize::StyleSettings,
     /// What the scripts' look was when it last went to the renderer.
     look_applied: ScriptLook,
+    /// What the deprecated render mode overwrote (#746), to put back.
+    mode_shim: flint_render::render_mode::RenderModeShim,
     /// The scene's own `[post_process]` block, which a script's `set_look`
     /// lays a look under (#697), as the player's does.
     scene_post: Option<flint_scene::PostProcessDef>,
@@ -3789,6 +3812,7 @@ impl Stage {
             post_generation,
             laid_styles,
             look_applied: ScriptLook::default(),
+            mode_shim: Default::default(),
             scene_post: scene_file.post_process.clone(),
             pixels_per_point,
             view_2d,
@@ -3833,6 +3857,7 @@ impl Stage {
                     }
                     // The scripts' overrides go over the new look
                     self.look_applied = ScriptLook::default();
+                    self.mode_shim.forget();
                     changed = true;
                 }
                 Err(e) => tracing::warn!("set_look: {e}"),
@@ -3840,7 +3865,7 @@ impl Stage {
         }
         let look = self.game.look();
         if look != self.look_applied {
-            flint_player::apply_look(&mut config, &look, &self.look_applied);
+            flint_player::apply_look(&mut config, &look, &mut self.mode_shim);
             self.look_applied = look;
             changed = true;
         }
@@ -3914,6 +3939,11 @@ impl Stage {
             boil: self.pinned_boil,
             pixels_per_point: self.pixels_per_point,
             view_2d: self.view_2d,
+            // The deprecated render mode's sea (#746), a script's or the flag's
+            ocean_tint: self
+                .mode_shim
+                .ocean_tint()
+                .or_else(|| legacy_render_mode(args).and_then(|m| m.ocean_tint())),
             ..Default::default()
         };
         // The game's boil, shallow wooze and woozy grass, as the player's
@@ -3965,6 +3995,7 @@ impl Stage {
         self.renderer.reset_style_history();
         // The scripts' look goes over the candidate's, as over the scene's
         self.look_applied = ScriptLook::default();
+        self.mode_shim.forget();
         self.captured = None;
         self.capture(args, ctx, t, frame_step)
     }
@@ -4308,6 +4339,28 @@ fn still_inputs(args: &RenderArgs, camera: &Camera, time: f64) -> FrameInputs<'s
         grass_time: Some(0.0),
         pixels_per_point: args.pixels_per_point.unwrap_or(1.0),
         view_2d: capture_view_2d(camera),
+        ocean_tint: legacy_render_mode(args).and_then(|m| m.ocean_tint()),
         ..Default::default()
     }
+}
+
+/// The deprecated `--render-mode` (#746), with its mix (1 when not given)
+/// and params, as the shim maps it onto the styles that replaced it; warned
+/// about once a process.
+fn legacy_render_mode(args: &RenderArgs) -> Option<flint_render::render_mode::RenderMode> {
+    let mode = args.render_mode?;
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+        tracing::warn!(
+            "--render-mode is deprecated (#746) and goes in the next release: \
+             the modes are styles now (`flint render --list-styles`: matrix, blood, drunk, \
+             tron, underwater), torn in by --tear and `blend_source=tear`"
+        );
+    });
+    Some(flint_render::render_mode::RenderMode {
+        mode,
+        // A mode with no explicit mix defaults to fully torn through
+        mix: args.mode_mix.unwrap_or(1.0),
+        params: args.mode_params.unwrap_or_default(),
+    })
 }

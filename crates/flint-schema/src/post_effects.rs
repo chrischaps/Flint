@@ -449,6 +449,15 @@ macro_rules! post_effects {
                 motion_hold: f32 = 0.0, [0.0, 60.0] slider;
                     "Motion hold", "Motion on twos for the whole frame: entities with no motion_hold of their own are drawn on ticks, this many a second, and the post time styles read holds to them (12 = on twos at 24 fps). 0 = off"
             }
+
+            tear "Tear" "Holes the frame tears open in: a whole-frame style or a styled prop with blend_source = \"tear\" shows only inside them (#746)" {
+                tear: f32 = 0.0, [0.0, 1.0] slider;
+                    "Amount", "How much of the frame is torn: 0 none, scattered holes growing to the whole frame at 1"
+                tear_scale: f32 = 3.0, [0.5, 12.0] slider;
+                    "Scale", "How many patches span the frame's height; 0 or less draws as 3"
+                tear_iris: bool = false, toggle;
+                    "Iris", "Tear open from the frame's centre in a wobbling circle instead of in patches"
+            }
         }
     };
 }

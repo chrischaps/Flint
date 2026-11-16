@@ -284,14 +284,12 @@ impl SceneRenderer {
             };
         }
         let veiled = !veil.is_empty();
-        // The tear the composite draws this frame (#397), for the draws
-        // whose blend follows it: the same config and post time
+        // The frame's tear (#397, #746), for the draws whose blend follows
+        // it: the same config and post time the styles that follow it read
         let config = &self.postprocess_config;
         let tear = crate::style_mask::Tear {
             on: crate::postprocess::tear_active(config),
-            mode_params: config.mode_params,
-            mix: config.mode_mix,
-            time: self.post_time(),
+            params: crate::postprocess::tear_params(config, self.post_time()),
         };
         if let Some(pass) = &mut self.style_mask.passes.mask {
             pass.encode(

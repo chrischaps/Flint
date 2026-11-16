@@ -84,6 +84,11 @@ pub struct FrameInputs<'a> {
     /// knows it (the player's physics, for a dynamic body; #749). A hull
     /// not listed has its drawn position differenced across frames instead.
     pub contact_velocities: &'a [(flint_core::EntityId, [f32; 3])],
+    /// A tint for the sea this frame over its `ocean` component's (#746),
+    /// from a host that drives one without the component: the
+    /// `set_render_mode` shim's blood (2) and underside (5). `None` draws
+    /// the component's.
+    pub ocean_tint: Option<crate::ocean_pipeline::OceanTint>,
 }
 
 impl Default for FrameInputs<'_> {
@@ -102,6 +107,7 @@ impl Default for FrameInputs<'_> {
             world_lines: &[],
             grass_benders: &[],
             contact_velocities: &[],
+            ocean_tint: None,
         }
     }
 }
@@ -219,6 +225,7 @@ impl SceneRenderer {
         self.set_shallow_wooze(inputs.shallow_wooze.iter().copied());
         self.update_grass_entities(queue, inputs.grass_benders);
         self.water.set_contact_velocities(inputs.contact_velocities);
+        self.water.set_frame_tint(inputs.ocean_tint);
         self.world_lines.clear();
         self.world_lines.extend_from_slice(inputs.world_lines);
         self.world_line_px_per_point = inputs.pixels_per_point;

@@ -110,6 +110,11 @@ impl StyleSpec {
             }
             if key == "order" || key == "blend" {
                 number(name, key, value)?;
+            } else if key == "blend_source" {
+                // Its blend from the tear (#746)
+                if super::blend_source(value).is_none() {
+                    return Err(format!("{name}: blend_source must be own or tear"));
+                }
             } else if super::reveal::is_key(key) {
                 // Where it shows (#406): checked, ranges and all
                 super::StyleReveal::default()
@@ -136,6 +141,12 @@ impl StyleSpec {
             if key == "blend" {
                 config.styles.set_blend(&self.name, value.parse().ok());
             }
+            // Where its blend comes from (#746)
+            if key == "blend_source" {
+                config
+                    .styles
+                    .set_follows_tear(&self.name, super::blend_source(value) == Some(true));
+            }
             // Where it shows (#406)
             if super::reveal::is_key(key) {
                 let mut reveal = super::StyleReveal::default();
@@ -158,7 +169,11 @@ impl StyleSpec {
             config.styles.set_off_everywhere(&self.name);
         }
         for (key, value) in &self.settings {
-            if key == "order" || key == "blend" || super::reveal::is_key(key) {
+            if key == "order"
+                || key == "blend"
+                || key == "blend_source"
+                || super::reveal::is_key(key)
+            {
                 continue;
             }
             if descriptor.options.iter().any(|o| o.name == key) {

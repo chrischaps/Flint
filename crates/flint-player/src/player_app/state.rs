@@ -219,13 +219,15 @@ pub(super) struct PostOverrides {
     /// radial blur, SSAO, fog density, desaturation and depth of field.
     pub(super) script: flint_script::PostProcessOverrides,
     pub(super) fog_color: Option<[f32; 3]>,
+    /// The deprecated `set_render_mode` (#746): this frame's mode and mix,
+    /// and the params, held from the last `set_render_mode_params`.
     pub(super) render_mode: Option<(u32, f32)>,
     pub(super) mode_params: Option<[f32; 4]>,
-    /// True while a script-driven reality tear is on screen. Unlike the
-    /// other (sticky) overrides, the mode is zeroed the frame the script
-    /// stops calling set_render_mode — a dead or hot-reloaded script must
-    /// never freeze a tear over the world.
-    pub(super) mode_was_active: bool,
+    pub(super) held_mode_params: [f32; 4],
+    /// What the mode overwrote, put back the frame the script stops asking
+    /// (a dead or hot-reloaded script must never freeze a tear over the
+    /// world), and the ocean tint it draws (`flint_render::render_mode`).
+    pub(super) mode_shim: flint_render::render_mode::RenderModeShim,
     /// Rendering & Effects panel's "freeze script post overrides" switch
     /// (ADR 0053): while true the per-frame script/ladder override stamp is
     /// skipped so panel edits to contended post fields stick. Cached from
@@ -242,6 +244,9 @@ impl PostOverrides {
         self.fog_color = requests.fog_color.take();
         self.render_mode = requests.render_mode.take();
         self.mode_params = requests.mode_params.take();
+        if let Some(params) = self.mode_params {
+            self.held_mode_params = params;
+        }
     }
 
     /// Whether anything is to be stamped this frame: a value asked for, or
@@ -259,10 +264,13 @@ impl PostOverrides {
             || s.dof_strength.is_some()
             || s.dof_focus_distance.is_some()
             || s.dof_focus_range.is_some()
+            || s.tear.is_some()
+            || s.tear_scale.is_some()
+            || s.tear_iris.is_some()
             || self.fog_color.is_some()
             || self.render_mode.is_some()
             || self.mode_params.is_some()
-            || self.mode_was_active
+            || self.mode_shim.active()
     }
 
     /// Write what was asked over `config`. A render mode is transient,
@@ -301,29 +309,37 @@ impl PostOverrides {
         if let Some(fd) = s.dof_focus_distance {
             config.dof_focus_distance = fd;
         }
+        if let Some(tear) = s.tear {
+            config.tear = tear;
+        }
+        if let Some(scale) = s.tear_scale {
+            config.tear_scale = scale;
+        }
+        if let Some(iris) = s.tear_iris {
+            config.tear_iris = iris;
+        }
         if let Some(fr) = s.dof_focus_range {
             config.dof_focus_range = fr;
         }
         if let Some(fc) = self.fog_color {
             config.fog_color = fc;
         }
-        // Reality tear: transient, unlike the sticky overrides above.
-        match self.render_mode {
-            Some((mode, mix)) => {
-                config.render_mode = mode;
-                config.mode_mix = mix;
-                self.mode_was_active = mode != 0 && mix > 0.0;
-            }
-            None if self.mode_was_active => {
-                config.render_mode = 0;
-                config.mode_mix = 0.0;
-                self.mode_was_active = false;
-            }
-            None => {}
-        }
-        if let Some(mp) = self.mode_params {
-            config.mode_params = mp;
-        }
+        // The deprecated render mode (#746): transient, unlike the sticky
+        // overrides above
+        let mode = self
+            .render_mode
+            .map(|(mode, mix)| flint_render::render_mode::RenderMode {
+                mode,
+                mix,
+                params: self.held_mode_params,
+            });
+        self.mode_shim.stamp(config, mode);
+    }
+
+    /// The ocean tint the render mode draws (blood, the underside), for the
+    /// frame's inputs.
+    pub(super) fn ocean_tint(&self) -> Option<flint_render::OceanTint> {
+        self.mode_shim.ocean_tint()
     }
 }
 

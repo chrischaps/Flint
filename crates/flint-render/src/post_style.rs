@@ -43,7 +43,8 @@ pub fn set_post_style(
 /// Set one setting of style `name`: a parameter (a number, clamped to the
 /// style's range), an option (a string, one of its choices when the list is
 /// closed), a colour (`tint`: three numbers or `"#rrggbb"`), `enabled`
-/// (true or false), `blend` (0 to 1), `order` (a number), the reveal's
+/// (true or false), `blend` (0 to 1), `blend_source` (`"own"` or `"tear"`,
+/// #746), `order` (a number), the reveal's
 /// keys (#406: `reveal` 0 to 1, `reveal_shape`, `reveal_ink`,
 /// `reveal_rim_color`, the `reveal_*` numbers) or, for an HDR style, `feeds_bloom` (true or
 /// false). Setting a parameter doesn't switch the style on.
@@ -84,6 +85,10 @@ pub fn set_post_style_param(
         "order" => match number {
             Some(n) => styles.set_order(d.name, Some(n as f32)),
             None => return wrong("a number"),
+        },
+        "blend_source" => match value.as_str().and_then(stylize::blend_source) {
+            Some(tear) => styles.set_follows_tear(d.name, tear),
+            None => return wrong("\"own\" or \"tear\""),
         },
         "feeds_bloom" => match value.as_bool() {
             Some(_) if d.stage != StyleStage::Hdr => {

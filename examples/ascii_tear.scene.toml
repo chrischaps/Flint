@@ -5,16 +5,17 @@
 #   cargo run --bin flint-player -- examples/ascii_tear.scene.toml
 #
 # Each prop's ascii_style has `blend_source = "tear"`: its blend is
-# multiplied by the reality tear's mask at each pixel. scripts/ascii_tear.rhai
-# drives the tear with render mode 6, the tear with no look of its own, so
-# the props are the only thing it shows. Mode 1 (Matrix) instead would
-# rain code through the same holes, and the props would still turn in them.
+# multiplied by the frame's tear mask at each pixel. scripts/ascii_tear.rhai
+# drives the tear (`set_tear`, the `[post_process] tear` key), which has no
+# look of its own, so the props are the only thing it shows. The matrix
+# style with the same key (`--style matrix:blend_source=tear`) would rain
+# code through the same holes, and the props would still turn in them.
 #
-#   flint render examples/ascii_tear.scene.toml --render-mode 6 --mode-mix 0.5
+#   flint render examples/ascii_tear.scene.toml --tear 0.5
 #
-# With no tear on (mode 0, or a mix of 0) a torn prop is at blend 0: its
-# style is off, pass and mask skipped. How a tear differs from a blend a
-# script ramps: book, concepts/stylize-passes.md.
+# With no tear on (a tear of 0) a torn prop is at blend 0: its style is off,
+# pass and mask skipped. How a tear differs from a blend a script ramps:
+# book, concepts/stylize-passes.md.
 
 [scene]
 name = "ASCII Tear"

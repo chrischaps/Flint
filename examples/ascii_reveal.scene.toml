@@ -12,7 +12,7 @@
 # A blend is a field of the entity's style component (ascii_style.blend, or
 # style_mask.blend), 0 to 1. It rides in the style mask beside the id, so a
 # ramp keeps one variant a prop and makes no GPU allocation. How it differs
-# from the screen-wide render-mode tears: book, concepts/stylize-passes.md.
+# from the frame's tear (`[post_process] tear`): book, concepts/stylize-passes.md.
 
 [scene]
 name = "ASCII Reveal"

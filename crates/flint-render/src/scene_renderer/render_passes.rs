@@ -508,8 +508,6 @@ impl SceneRenderer {
                     tonemapping: tonemapping_u32,
                     sky: self.sky.params(),
                     sky_active: self.sky.active(),
-                    render_mode: self.postprocess_config.render_mode,
-                    mode_mix: self.postprocess_config.mode_mix,
                 },
             );
         }

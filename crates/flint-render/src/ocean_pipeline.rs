@@ -83,11 +83,11 @@ pub struct OceanUniformsGpu {
     // ── Bioluminescent foam ──
     /// Emissive glow rgb + strength in .a (0 = off).
     pub foam_glow: [f32; 4],
-    // ── Reality-tear render mode (mirrors PostProcessConfig) ──
-    /// 2 = blood ocean; other modes leave the water alone.
-    pub mode: u32,
-    /// Blend strength 0..1 for the active mode.
-    pub mode_mix: f32,
+    // ── Tint (#746: was render modes 2 and 5's remap) ──
+    /// How far the palette moves to the tint's, 0..1 (0 = off).
+    pub tint: f32,
+    /// [`TINT_BELOW`] | [`TINT_KEEP_LIGHT`].
+    pub tint_flags: u32,
     // ── Shoreline foam (from the grab pass's depth) ──
     /// Band width in metres of water depth below the surface (0 = off).
     pub shore_foam_width: f32,
@@ -101,9 +101,148 @@ pub struct OceanUniformsGpu {
     /// the screen-space search measures to (0 = no search).
     pub shore_foam_reach: f32,
     pub _pad_shore: [f32; 2],
+    /// The tint's palette (#746): deep rgb + pool scale, shallow rgb +
+    /// band count (0 = keep), sss rgb + band wobble added, foam rgb (shore
+    /// foam too) + spare, the reflections' rgb multiplier + spare.
+    pub tint_deep: [f32; 4],
+    pub tint_shallow: [f32; 4],
+    pub tint_sss: [f32; 4],
+    pub tint_foam: [f32; 4],
+    pub tint_sky: [f32; 4],
     /// The hulls the sea foams round this frame, the first `contact_count`
     /// of them (#749).
     pub hulls: [ContactHullGpu; MAX_CONTACTS],
+}
+
+/// [`OceanUniformsGpu::tint_flags`]: tint only the surface seen from
+/// below (the ceiling over a submerged eye).
+pub const TINT_BELOW: u32 = 1;
+/// [`OceanUniformsGpu::tint_flags`]: scale the tint's deep and shallow by
+/// the palette's own brightness, so a night sea stays dark.
+pub const TINT_KEEP_LIGHT: u32 = 2;
+
+/// A tint the sea's palette moves toward (#746): the `ocean` component's
+/// `tint*` fields, which a game drives (a sea turned to blood at dusk, the
+/// underside seen from a buried eye). It was render modes 2 and 5's remap,
+/// two looks of one game in the ocean shader; now it is one general
+/// recolour with named settings. Applied to the palette before any use, so
+/// bands, subsurface, foam and reflections agree, and after a script's
+/// palette lands, so it can't race one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OceanTint {
+    /// How far the palette moves to the tint's, 0..1. With `pools` above
+    /// 0 it is also how much of the sea the pools cover.
+    pub amount: f32,
+    pub deep: [f32; 3],
+    pub shallow: [f32; 3],
+    pub sss: [f32; 3],
+    /// The foam's, and the shore foam's.
+    pub foam: [f32; 3],
+    /// What the sky's reflection is multiplied by.
+    pub sky: [f32; 3],
+    /// The cel bands the tinted water takes (0 = the sea's own).
+    pub ramp_steps: f32,
+    /// Added to the bands' wobble where tinted.
+    pub band_wobble: f32,
+    /// World-anchored pools, this many per metre (the fbm's frequency),
+    /// spreading to full cover as `amount` rises; 0 tints evenly.
+    pub pools: f32,
+    /// Scale deep and shallow by the palette's own brightness.
+    pub keep_light: bool,
+    /// Only the surface seen from below.
+    pub below: bool,
+}
+
+impl Default for OceanTint {
+    /// The crimson tide (Float's blood tear) at amount 0: off.
+    fn default() -> Self {
+        Self::blood(0.0)
+    }
+}
+
+impl OceanTint {
+    /// The sea turned to blood (Float's render mode 2): pools that spread
+    /// with `amount`, night-dark, viscous (two wobbling bands).
+    pub fn blood(amount: f32) -> Self {
+        Self {
+            amount,
+            deep: [0.10, 0.005, 0.01],
+            shallow: [0.45, 0.04, 0.05],
+            sss: [0.85, 0.05, 0.03],
+            foam: [0.95, 0.78, 0.76],
+            sky: [1.1, 0.3, 0.32],
+            ramp_steps: 2.0,
+            band_wobble: 0.15,
+            pools: 0.08,
+            keep_light: true,
+            below: false,
+        }
+    }
+
+    /// The surface seen from under it (Float's render mode 5): murk blues
+    /// and flat white foam panes on the underside only, two bands.
+    pub fn underside(amount: f32) -> Self {
+        Self {
+            amount,
+            deep: [0.02, 0.12, 0.26],
+            shallow: [0.07, 0.30, 0.46],
+            sss: [0.10, 0.45, 0.55],
+            foam: [0.94, 0.98, 1.0],
+            sky: [1.0, 1.0, 1.0],
+            ramp_steps: 2.0,
+            band_wobble: 0.0,
+            pools: 0.0,
+            keep_light: false,
+            below: true,
+        }
+    }
+
+    /// The tint from an `ocean` component's `tint*` fields, each falling
+    /// back on the crimson tide's.
+    pub fn from_component(value: &toml::Value) -> Self {
+        let d = Self::default();
+        let f = |name: &str, dv: f32| value.get(name).and_then(toml_f32).unwrap_or(dv);
+        let c = |name: &str, dv: [f32; 3]| {
+            value
+                .get(name)
+                .and_then(toml_color)
+                .map(|c| [c[0], c[1], c[2]])
+                .unwrap_or(dv)
+        };
+        let b = |name: &str, dv: bool| value.get(name).and_then(|v| v.as_bool()).unwrap_or(dv);
+        Self {
+            amount: f("tint", d.amount).clamp(0.0, 1.0),
+            deep: c("tint_deep_color", d.deep),
+            shallow: c("tint_shallow_color", d.shallow),
+            sss: c("tint_sss_color", d.sss),
+            foam: c("tint_foam_color", d.foam),
+            sky: c("tint_sky", d.sky),
+            ramp_steps: f("tint_ramp_steps", d.ramp_steps).clamp(0.0, 8.0),
+            band_wobble: f("tint_band_wobble", d.band_wobble).clamp(0.0, 1.0),
+            pools: f("tint_pools", d.pools).clamp(0.0, 4.0),
+            keep_light: b("tint_keep_light", d.keep_light),
+            below: b("tint_below", d.below),
+        }
+    }
+
+    /// Its share of the uniform: (amount, flags, deep, shallow, sss,
+    /// foam, sky).
+    pub(crate) fn to_gpu(self) -> (f32, u32, [[f32; 4]; 5]) {
+        let row = |c: [f32; 3], w: f32| [c[0], c[1], c[2], w];
+        let flags = if self.below { TINT_BELOW } else { 0 }
+            | if self.keep_light { TINT_KEEP_LIGHT } else { 0 };
+        (
+            self.amount.clamp(0.0, 1.0),
+            flags,
+            [
+                row(self.deep, self.pools),
+                row(self.shallow, self.ramp_steps),
+                row(self.sss, self.band_wobble),
+                row(self.foam, 0.0),
+                row(self.sky, 0.0),
+            ],
+        )
+    }
 }
 
 /// How many `ocean_contact` hulls foam at once. Past this the ones nearest
@@ -184,6 +323,8 @@ pub struct OceanVisuals {
     /// measured across the water to it, so it keeps its width from any
     /// angle. 0 = off: depth along the view ray only (ADR 0088).
     pub shore_foam_reach: f32,
+    /// The palette's tint (#746), off at amount 0.
+    pub tint: OceanTint,
 }
 
 impl Default for OceanVisuals {
@@ -223,6 +364,7 @@ impl Default for OceanVisuals {
             shore_foam_speed: 1.0,
             shore_foam_color: [0.96, 0.99, 1.0, 1.0],
             shore_foam_reach: 0.0,
+            tint: OceanTint::default(),
         }
     }
 }
@@ -269,6 +411,7 @@ impl OceanVisuals {
             shore_foam_speed: f("shore_foam_speed", d.shore_foam_speed).clamp(0.0, 10.0),
             shore_foam_color: c("shore_foam_color", d.shore_foam_color),
             shore_foam_reach: f("shore_foam_reach", d.shore_foam_reach).clamp(0.0, 50.0),
+            tint: OceanTint::from_component(value),
         }
     }
 
@@ -572,11 +715,12 @@ mod tests {
         // + absorption vec3+turbidity(16) + refr/near/far/grab(16)
         // + sky snapshot 3×vec4 + strength(64, incl. 3 splash scalars)
         // + splash baseline/noise/response + count (16) + band edge 4×f32(16)
-        // + foam_glow vec4(16) + mode u32 + mode_mix + shore width/strength (16)
+        // + foam_glow vec4(16) + tint + tint flags + shore width/strength (16)
         // + shore colour vec4(16) + shore speed + pad3 (16)
-        // + MAX_CONTACTS hulls of 3×vec4 (4 × 48) = 1008
-        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 1008);
-        assert_eq!(1008 % 16, 0, "uniform size must be 16-byte aligned");
+        // + the tint's 5 vec4s (80, #746)
+        // + MAX_CONTACTS hulls of 3×vec4 (4 × 48) = 1088
+        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 1088);
+        assert_eq!(1088 % 16, 0, "uniform size must be 16-byte aligned");
     }
 
     /// The Rust block and the shader's agree field by field: naga's offsets
@@ -623,7 +767,37 @@ mod tests {
             offset("shore_foam_color"),
             offset_of!(OceanUniformsGpu, shore_foam_color)
         );
+        assert_eq!(offset("tint"), offset_of!(OceanUniformsGpu, tint));
+        assert_eq!(
+            offset("tint_flags"),
+            offset_of!(OceanUniformsGpu, tint_flags)
+        );
+        assert_eq!(offset("tint_deep"), offset_of!(OceanUniformsGpu, tint_deep));
+        assert_eq!(offset("tint_sky"), offset_of!(OceanUniformsGpu, tint_sky));
         assert_eq!(offset("hulls"), offset_of!(OceanUniformsGpu, hulls));
+    }
+
+    /// #746: the component's `tint*` fields, each falling back on the
+    /// crimson tide's, and off with no `tint`.
+    #[test]
+    fn the_tint_reads_from_the_component() {
+        let none: toml::Value = toml::from_str("deep_color = [0.1, 0.2, 0.3, 1.0]").unwrap();
+        let t = OceanTint::from_component(&none);
+        assert_eq!(t, OceanTint::blood(0.0));
+        assert_eq!(t.to_gpu().0, 0.0, "off with no tint");
+        let some: toml::Value = toml::from_str(
+            "tint = 0.6\ntint_deep_color = [0.0, 0.1, 0.0, 1.0]\ntint_pools = 0.0\ntint_below = true",
+        )
+        .unwrap();
+        let t = OceanTint::from_component(&some);
+        assert_eq!(t.amount, 0.6);
+        assert_eq!(t.deep, [0.0, 0.1, 0.0]);
+        assert_eq!(t.pools, 0.0);
+        assert!(t.below && t.keep_light);
+        let (amount, flags, rows) = t.to_gpu();
+        assert_eq!((amount, flags), (0.6, TINT_BELOW | TINT_KEEP_LIGHT));
+        assert_eq!(rows[0], [0.0, 0.1, 0.0, 0.0]);
+        assert_eq!(rows[1][3], 2.0, "the bands ride the shallow row");
     }
 
     #[test]

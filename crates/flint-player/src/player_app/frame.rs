@@ -680,6 +680,9 @@ impl PlayerApp {
             world_lines: &self.hud.world_lines,
             grass_benders: &benders,
             contact_velocities: &contact_velocities,
+            // The deprecated render mode's sea (#746): a frame behind its
+            // drain, as the stamp that sets it lands after this
+            ocean_tint: self.post.ocean_tint(),
             ..Default::default()
         };
         // What the subsystems draw: the boil, shallow wooze, woozy grass

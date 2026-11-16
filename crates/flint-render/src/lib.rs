@@ -37,6 +37,7 @@ pub mod post_style;
 pub mod postprocess;
 mod primitives;
 pub mod quality;
+pub mod render_mode;
 pub mod render_scale;
 pub mod render_stats;
 mod scene_renderer;
@@ -76,7 +77,7 @@ pub use gpu_wait::{gpu_wait_timeout, wait_for_gpu};
 pub use grass_pipeline::{GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu};
 pub use ground_fog::GroundFog;
 pub use headless::HeadlessContext;
-pub use ocean_pipeline::OceanVisuals;
+pub use ocean_pipeline::{OceanTint, OceanVisuals};
 pub use orbit_controller::OrbitCameraController;
 pub use particle_pipeline::{ParticleBlendMode, ParticleDrawData, ParticleInstance};
 pub use pipeline::LightUniforms;
@@ -287,17 +288,17 @@ mod tests {
     #[test]
     fn post_process_uniforms_layout() {
         // Desaturate reused a pre-existing pad slot (176 bytes); the DoF row
-        // (strength/focus/range/_pad2) and the render-mode rows
-        // (render_mode/mode_mix/mode_time/pad + mode_params vec4) were
-        // appended after inv_view_proj (224); the color-grade rows
-        // (lift+enabled / gamma+pad / gain+pad, ADR 0050) grew it to 272,
-        // with film grain reusing the former _pad slot; the fog rows (aerial
-        // tint, height fog density, ADR 0101) grew it to 304, and the ground
-        // fog rows (ADR 0106) to 368. Any other size means the Rust struct
-        // and the WGSL mirror have diverged.
+        // (strength/focus/range/_pad2) and the post time row (the render
+        // modes' two rows until #746 made them styles) were appended after
+        // inv_view_proj (208); the color-grade rows (lift+enabled /
+        // gamma+pad / gain+pad, ADR 0050) grew it to 256, with film grain
+        // reusing the former _pad slot; the fog rows (aerial tint, height fog
+        // density, ADR 0101) grew it to 288, and the ground fog rows (ADR
+        // 0106) to 352. Any other size means the Rust struct and the WGSL
+        // mirror have diverged.
         let size = std::mem::size_of::<crate::postprocess::PostProcessUniforms>();
         assert_eq!(size % 16, 0, "PostProcessUniforms not 16-byte aligned");
-        assert_eq!(size, 368, "PostProcessUniforms size changed");
+        assert_eq!(size, 352, "PostProcessUniforms size changed");
     }
 
     #[test]

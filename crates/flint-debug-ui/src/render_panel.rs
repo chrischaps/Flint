@@ -367,6 +367,14 @@ impl RenderDebugPanel {
                         ui.label("Boil amounts: Styles > Kuwahara / Contour > Boil");
                         ui.label(boil_status(&self.pp.boil));
                     }
+                    "tear" => {
+                        // What tears (#746): the render modes' looks are
+                        // styles now, and follow the tear by a table key
+                        ui.weak(
+                            "Shown through it: a style with blend_source = \"tear\" \
+                             (Styles: matrix, blood, tron...) or a prop's style component",
+                        );
+                    }
                     _ => {}
                 }
             });
@@ -391,43 +399,6 @@ impl RenderDebugPanel {
                 f.styles_committed = true;
             }
             ui.weak("The shared geometry edges every style reads: Shared edges, above");
-        });
-
-        section(ui, "Render mode", false, |ui| {
-            let labels = [
-                "None",
-                "Matrix",
-                "Blood",
-                "Drunk",
-                "Tron",
-                "Underwater",
-                "Tear (props)",
-            ];
-            let cur = (self.pp.render_mode as usize).min(labels.len() - 1);
-            egui::ComboBox::from_label("Mode")
-                .selected_text(labels[cur])
-                .show_ui(ui, |ui| {
-                    for (i, label) in labels.iter().enumerate() {
-                        if ui.selectable_label(cur == i, *label).clicked() && cur != i {
-                            self.pp.render_mode = i as u32;
-                            f.pp_changed = true;
-                        }
-                    }
-                });
-            f.pp_changed |= slider(ui, "Mix", &mut self.pp.mode_mix, 0.0..=1.0);
-            let hover = "Tears (1-4, 6): x = mask scale (0 = 3), y = mask style (0 fbm / 1 iris), \
-                         z = rate (0 = 6), w = spare. Underwater (5): x = signed eye depth m, \
-                         y = sea energy, z = daylight, w = biolum.";
-            let r = ui.horizontal(|ui| {
-                ui.label("Params");
-                let mut changed = false;
-                for v in self.pp.mode_params.iter_mut() {
-                    changed |= ui.add(egui::DragValue::new(v).speed(0.05)).changed();
-                }
-                changed
-            });
-            r.response.on_hover_text(hover);
-            f.pp_changed |= r.inner;
         });
 
         section(ui, "Shadows", false, |ui| {

@@ -1,10 +1,10 @@
 //! The `post_process` module: overrides on the scene's `[post_process]`
-//! settings, the stylized render modes and the renderer's distance levers
-//! (ADR 0116). Each is a request the host applies after the script batch;
-//! all are held until changed but the render mode, which lasts only while
-//! a script keeps calling it.
+//! settings, the frame's tear, the deprecated render modes and the
+//! renderer's distance levers (ADR 0116). Each is a request the host
+//! applies after the script batch; all are held until changed but the
+//! render mode, which lasts only while a script keeps calling it.
 
-use super::builder::kind::{Int, Num};
+use super::builder::kind::{Bool, Int, Num};
 use super::builder::ScriptApi;
 
 pub(crate) fn register(api: &mut ScriptApi) {
@@ -91,8 +91,32 @@ pub(crate) fn register(api: &mut ScriptApi) {
     });
 
     m.func(
+        "set_tear",
+        "How much of the frame tears open, 0..1 ([post_process] tear): a style with blend_source = \"tear\" (set_post_style_param) or a prop's style that follows it shows only in the holes.",
+    )
+    .arg("amount", Num)
+    .run(|call, (amount,)| {
+        call.ctx().requests.post.tear = Some(amount.clamp(0.0, 1.0) as f32);
+    });
+
+    m.func(
+        "set_tear_shape",
+        "The tear's shape: patches across the frame's height (3 by default), or an iris from the centre.",
+    )
+    .arg("scale", Num)
+    .arg("iris", Bool)
+    .run(|call, (scale, iris)| {
+        let c = call.ctx();
+        c.requests.post.tear_scale = Some(scale as f32);
+        c.requests.post.tear_iris = Some(iris);
+    });
+
+    m.func(
         "set_render_mode",
-        "A stylized render mode (0 none, 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater, 6 a tear only props with blend_source = \"tear\" show) at a mix of 0..1; call it every frame it shows.",
+        "A render mode (1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater, 6 the tear alone) at a mix of 0..1, shown the frames it is called; each is a style now.",
+    )
+    .deprecated(
+        "the modes are styles (#746): set_post_style(\"matrix\", true) with set_post_style_param(\"matrix\", \"blend_source\", \"tear\") and set_tear(mix); drunk and underwater take their blend",
     )
     .arg("mode", Int)
     .arg("mix", Num)
@@ -103,7 +127,10 @@ pub(crate) fn register(api: &mut ScriptApi) {
 
     m.func(
         "set_render_mode_params",
-        "The render mode's four tuning values (see Post-Processing: Render Modes).",
+        "The render mode's four values: tear scale, iris, Matrix rate; underwater's depth, churn, daylight, glow.",
+    )
+    .deprecated(
+        "name them (#746): set_tear_shape(scale, iris), set_post_style_param(\"matrix\", \"rate\", r), set_post_style_param(\"underwater\", \"depth\", d)...",
     )
     .arg("x", Num)
     .arg("y", Num)

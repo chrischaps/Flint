@@ -173,7 +173,7 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 | `--gpu <name>` | GPU adapter to use (case-insensitive substring, e.g. `NVIDIA`). See [GPU Selection](#gpu-selection) |
 | `--list-gpus` | Print available GPU adapters and exit |
 | `--style <name[:k=v,...]>` | Turn a registered style on over the scene's post-processing, as `flint render --style` does: `ascii`, `ascii:cell=12,ramp=blocks`, `ascii:off` (off everywhere, entities' own included, #376). Repeatable; a later word wins. Written over every scene again after a transition, so it survives them (#328) |
-| `--style-time <s>` | Hold the post time animated styles see (shared with the ocean, grain and render modes) at this many seconds |
+| `--style-time <s>` | Hold the post time animated styles see (shared with the ocean, grain, the tear and the reality styles) at this many seconds |
 | `--motion-hold <rate>` | Motion on twos for the whole frame (#405): every entity's drawn position and pose, and the post time styles read, change only this many times a second (12 = on twos at 24 fps). Over every scene's `[post_process] motion_hold`, kept through transitions. See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
 | `--expression-timeline <file>` | Play expression states from a JSON timeline on the game clock, for scripts' `expression()` and `on_expression` (see [Expression API](../concepts/scripting.md#expression-api)) |
 | `--expression-listen <ip:port>` | Take expression states as newline-delimited JSON over TCP at a loopback address, e.g. `127.0.0.1:7777`. Off unless given |
@@ -354,7 +354,7 @@ Built-in panels:
 | Camera | `camera_tuning` | Vertical FOV |
 | Grass Debug | `grass` | Density, height, wind, LOD distances |
 | (its schema's title) | any component whose schema puts a field on a panel (`panel = "status"`, `"tune"`, `"trigger"`) | A status line, trigger buttons and tune fields, from the schema alone ([A Panel From a Schema](../guides/debug-panels.md#a-panel-from-a-schema)) |
-| Rendering & Effects | (always, when a renderer is active) | Post chain, SSAO, depth of field, fog, bloom, grade/grain/FXAA, Kuwahara, contour, shading boil, render mode, dither/volumetric, shadows and resolution, lighting levers, camera FOV, debug shading mode. Owned by **F4**, not F3 |
+| Rendering & Effects | (always, when a renderer is active) | Post chain, SSAO, depth of field, fog, bloom, grade/grain/FXAA, Kuwahara, contour, shading boil, tear, dither/volumetric, shadows and resolution, lighting levers, camera FOV, debug shading mode. Owned by **F4**, not F3 |
 | Music Guide | `music_session` | Upcoming pulse/press/flick windows with countdown, per-channel targets beside the live stick and trigger state (`` ` ``) |
 | Manifest Map | `music_session` | Full-width bottom strip: sections, bar ruler, tempo/meter changes, re-entry points, playhead and this run's judged pulses and seams (`\`) |
 
@@ -506,7 +506,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--motion-hold <rate>` | `0` | Motion on twos for the whole frame (#405): entities' drawn positions and poses, and the post time styles read, change only this many times a second (sets `[post_process] motion_hold`; 0 = off). See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
 | `--boil-time <f64>` | `0` | Seconds of the wooze field to run, which picks the drawing |
 | `--film-grain <f32>` | `0` | Animated film grain (0 = off; 0.02–0.05 is subtle) |
-| `--grain-time <s>` | `0.0` | Post time for grain and render-mode animation. Deterministic: two renders at the same value are identical |
+| `--grain-time <s>` | `0.0` | Post time for grain and the styles' animation. Deterministic: two renders at the same value are identical |
 | `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene's post-processing: `ascii`, `ascii:cell=12,ramp=blocks`, `invert:strength=0.5`, `kuwahara:radius=6`, `ascii:off` (off everywhere, entities' own included, #376). Repeatable; a later word wins; `--style help` lists every style and its keys ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
 | `--style-time <s>` | `0.0` | Post time animated styles read; the same clock as `--grain-time`, and it wins when both are given |
 | `--particle-time <s>` | (none) | Simulate particle emitters and effects for this long at a fixed 1/60 s step before capturing. Deterministic; without it no particles are drawn |
@@ -527,9 +527,12 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--oren-nayar <f32>` | `0` | Oren-Nayar diffuse blend (0 = Lambert, 1 = full); see [Lighting](../concepts/lighting.md) |
 | `--sheen-strength <f32>` | `0` | Charlie-sheen rim strength (keep at or below about 0.3) |
 | `--sheen-color <r,g,b>` | `1,1,1` | Charlie-sheen rim tint |
-| `--render-mode <n>` | `0` | Stylized render mode: 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater, 6 a tear only `blend_source = "tear"` props show (#397) |
-| `--mode-mix <f32>` | `0.0` | Render mode blend strength, 0--1 |
-| `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters (see [Render Modes](../concepts/post-processing.md#render-modes)) |
+| `--tear <f32>` | `0.0` | `[post_process] tear`: how much of the frame tears open; a style or prop with `blend_source = "tear"` shows only in the holes ([The tear](../concepts/post-processing.md#the-tear)) |
+| `--tear-scale <f32>` | `3.0` | The tear's patches across the frame's height |
+| `--tear-iris` | off | Tear open from the centre in a circle |
+| `--render-mode <n>` | none | Deprecated (#746): 1 matrix, 2 blood, 3 drunk, 4 tron, 5 underwater, 6 the tear alone, as the styles that replaced them ([The old render modes](../concepts/post-processing.md#the-old-render-modes)) |
+| `--mode-mix <f32>` | `1.0` | Deprecated with `--render-mode`: its mix |
+| `--mode-params <x,y,z,w>` | `0,0,0,0` | Deprecated with `--render-mode`: its four values |
 | `--schemas <path>` | manifest, else discovered | Schemas directory (repeatable; see [Common Flags](#common-flags)) |
 
 When no camera flags are given, the render starts from the scene's `[camera]` block if it has one. The camera and post flags override the scene's authored `[camera]` and `[post_process]` values.

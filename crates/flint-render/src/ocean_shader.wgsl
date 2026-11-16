@@ -83,9 +83,11 @@ struct OceanUniforms {
     band_dither_scale: f32,        // halftone dot grid frequency (dots/m)
     rain_ripple: f32,              // rain impact-ring density 0..1
     foam_glow: vec4<f32>,          // bioluminescence: rgb + strength in .a
-    // Reality tear (mirrors PostProcessConfig): 2 = blood ocean.
-    mode: u32,
-    mode_mix: f32,
+    // Tint (#746; render modes 2 and 5 before it): how far the palette
+    // moves to tint_*'s, and flags (1 = the underside only, 2 = keep the
+    // palette's own brightness).
+    tint: f32,
+    tint_flags: u32,
     // Shoreline foam (ADR 0088): a band where the opaque scene behind the
     // water lies within shore_foam_width m below the surface. 0 = off, and
     // the renderer forces 0 when the grab pass didn't run.
@@ -98,6 +100,13 @@ struct OceanUniforms {
     shore_foam_reach: f32,
     _pad_shore1: f32,
     _pad_shore2: f32,
+    // The tint's palette (OceanTint::to_gpu): rgb, then deep: pool scale
+    // (0 = even), shallow: band count (0 = the sea's), sss: band wobble added.
+    tint_deep: vec4<f32>,
+    tint_shallow: vec4<f32>,
+    tint_sss: vec4<f32>,
+    tint_foam: vec4<f32>,
+    tint_sky: vec4<f32>,
     // The hulls the sea foams round, the first contact_count of them.
     hulls: array<ContactHull, 4>,
 };
@@ -570,11 +579,12 @@ fn fs_main(in: VertexOutput,
     // bloomed sun-disc on the water right under the camera.
     let fresnel = 0.02 + 0.98 * pow(clamp(1.0 - ndv, 0.0, 1.0), 5.0);
 
-    // ── Reality tear, mode 2: the sea turns to blood ────────────────────
+    // ── Tint (#746): the palette moves toward the tint's ────────────────
     // The whole palette is remapped through locals BEFORE any use, so every
     // downstream term (bands, SSS, foam, reflections) agrees. Remapping here
     // — after a script's palette (a time of day) landed in the uniforms —
-    // means the tear can never race it.
+    // means the tint can never race it. Float's blood tide and the ceiling
+    // over a buried eye are two settings of it (OceanTint::blood, ::underside).
     var deep_rgb = body.deep_color.rgb;
     var shallow_rgb = body.shallow_color.rgb;
     var sss_rgb = ocean.sss_color.rgb;
@@ -585,45 +595,42 @@ fn fs_main(in: VertexOutput,
     var sky_haze_rgb = ocean.sky_haze.rgb;
     var ramp_steps = max(ocean.ramp_steps, 1.0);
     var band_wobble = ocean.band_wobble;
-    if (ocean.mode == 2u && ocean.mode_mix > 0.001) {
-        // Blood pools: world-anchored patches that spread to full coverage
-        // as the tear deepens. Threshold sweeps the fbm span (~[0, 0.875],
-        // mean ≈ 0.44) so coverage tracks mode_mix; pinned full at mix = 1.
-        let pool = fbm(in.param_xz * 0.08 + vec2<f32>(ocean.time * 0.01, 0.0));
-        let th = 0.44 + 0.4 * (1.0 - 2.0 * ocean.mode_mix);
-        let m = max(smoothstep(th - 0.12, th + 0.12, pool),
-                    smoothstep(0.85, 1.0, ocean.mode_mix));
-        // Scale by the TOD palette's own luminance so night blood stays
+    let below_only = (ocean.tint_flags & 1u) != 0u;
+    if (ocean.tint > 0.001 && (!below_only || !front)) {
+        // Pools: world-anchored patches that spread to full coverage as the
+        // tint deepens. The threshold sweeps the fbm span (~[0, 0.875], mean
+        // ≈ 0.44) so coverage tracks the amount; pinned full at 1. No pools
+        // (scale 0): the amount itself, evenly.
+        var m = ocean.tint;
+        let pools = ocean.tint_deep.w;
+        if (pools > 0.0) {
+            let pool = fbm(in.param_xz * pools + vec2<f32>(ocean.time * 0.01, 0.0));
+            let th = 0.44 + 0.4 * (1.0 - 2.0 * ocean.tint);
+            m = max(smoothstep(th - 0.12, th + 0.12, pool),
+                    smoothstep(0.85, 1.0, ocean.tint));
+        }
+        // Scaled by the palette's own luminance, so a night sea stays
         // night-dark instead of glowing.
-        let deep_l = dot(deep_rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
-        let k = clamp(deep_l / 0.25, 0.35, 1.3);
-        deep_rgb = mix(deep_rgb, vec3<f32>(0.10, 0.005, 0.01) * k, m);
-        shallow_rgb = mix(shallow_rgb, vec3<f32>(0.45, 0.04, 0.05) * k, m);
-        sss_rgb = mix(sss_rgb, vec3<f32>(0.85, 0.05, 0.03), m);
-        foam_rgb = mix(foam_rgb, vec3<f32>(0.95, 0.78, 0.76), m);
-        shore_rgb = mix(shore_rgb, vec3<f32>(0.95, 0.78, 0.76), m);
-        // Reflections must bleed too or the pools stay sky-blue at grazing.
-        sky_zen_rgb = mix(sky_zen_rgb, sky_zen_rgb * vec3<f32>(1.0, 0.25, 0.3), m);
-        sky_hor_rgb = mix(sky_hor_rgb, sky_hor_rgb * vec3<f32>(1.1, 0.3, 0.32), m);
-        sky_haze_rgb = mix(sky_haze_rgb, sky_haze_rgb * vec3<f32>(1.1, 0.3, 0.32), m);
-        // Viscosity: fewer, wider bands with a raggedier ink line.
-        ramp_steps = mix(ramp_steps, 2.0, m);
-        band_wobble = band_wobble + 0.15 * m;
-    }
-
-    // ── Underwater, mode 5 (back faces only): the surface as a ceiling ──
-    // The composite pass owns the murk/waterline; here the underside just
-    // has to AGREE with it — murk-matched blues, luminous flat-white foam
-    // patches (crests read as glowing panes from below), fewer bands. Top
-    // faces are untouched: looking down through the line stays the normal
-    // sea.
-    if (ocean.mode == 5u && ocean.mode_mix > 0.001 && !front) {
-        let m = ocean.mode_mix;
-        deep_rgb = mix(deep_rgb, vec3<f32>(0.02, 0.12, 0.26), m);
-        shallow_rgb = mix(shallow_rgb, vec3<f32>(0.07, 0.30, 0.46), m);
-        sss_rgb = mix(sss_rgb, vec3<f32>(0.10, 0.45, 0.55), m);
-        foam_rgb = mix(foam_rgb, vec3<f32>(0.94, 0.98, 1.0), m);
-        ramp_steps = mix(ramp_steps, 2.0, m);
+        var k = 1.0;
+        if ((ocean.tint_flags & 2u) != 0u) {
+            let deep_l = dot(deep_rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+            k = clamp(deep_l / 0.25, 0.35, 1.3);
+        }
+        deep_rgb = mix(deep_rgb, ocean.tint_deep.rgb * k, m);
+        shallow_rgb = mix(shallow_rgb, ocean.tint_shallow.rgb * k, m);
+        sss_rgb = mix(sss_rgb, ocean.tint_sss.rgb, m);
+        foam_rgb = mix(foam_rgb, ocean.tint_foam.rgb, m);
+        shore_rgb = mix(shore_rgb, ocean.tint_foam.rgb, m);
+        // Reflections must take it too, or tinted pools stay sky-blue at
+        // grazing angles.
+        sky_zen_rgb = mix(sky_zen_rgb, sky_zen_rgb * ocean.tint_sky.rgb, m);
+        sky_hor_rgb = mix(sky_hor_rgb, sky_hor_rgb * ocean.tint_sky.rgb, m);
+        sky_haze_rgb = mix(sky_haze_rgb, sky_haze_rgb * ocean.tint_sky.rgb, m);
+        // Fewer, wider bands with a raggedier ink line (viscosity).
+        if (ocean.tint_shallow.w > 0.0) {
+            ramp_steps = mix(ramp_steps, ocean.tint_shallow.w, m);
+        }
+        band_wobble = band_wobble + ocean.tint_sss.w * m;
     }
 
     // Primary light (the sun). Fall back to top-down white if scene has none.

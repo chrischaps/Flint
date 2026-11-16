@@ -62,7 +62,7 @@ The renderer currently uses binary alpha only — pixels are either fully opaque
 
 > Partly delivered. The [ocean](concepts/ocean.md) pipeline already does a grab
 > pass with screen-space refraction, per-channel absorption and turbidity, and
-> [render mode 5](concepts/post-processing.md#render-modes) handles being
+> the [`underwater` style](concepts/post-processing.md#the-reality-styles) handles being
 > underwater. What remains here is the *general* case: sorted alpha blending
 > and an `opacity` material field for glass, shields and smoke.
 
