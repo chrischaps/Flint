@@ -182,18 +182,22 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 `--music-volume 0` is the quickest way to audition a scene's sound design
 without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).
 
-The standalone `flint-player` binary takes the same flags (the window ones
-too, #611) plus `--msaa <1|4>`
-(default `1`) for multisample anti-aliasing of the scene passes; `flint play`
-does not expose `--msaa`. Its `--procgen-defer` shows placeholders for a
-scene's procgen assets at once and generates them over the following frames
-instead of during load (see [Specs in Scenes](../concepts/procgen.md#specs-in-scenes)).
+The standalone `flint-player` binary is the same player: both flatten one
+set of flags (`flint_player::PlayerArgs`) and launch through one function
+(`flint_player::launch`), so their `--help` differs only by `flint-player`'s
+`--bundle <file>`, which plays a game bundle made by `flint bundle` (#705).
+Every flag below, the capture and quality ones included, works on either, and
+a scene plays the same under both. Among them: `--msaa <1|4>` (default `1`)
+for multisample anti-aliasing of the scene passes, `--render-scale` and
+`--quality`, and `--procgen-defer`, which shows placeholders for a scene's
+procgen assets at once and generates them over the following frames instead
+of during load (see [Specs in Scenes](../concepts/procgen.md#specs-in-scenes)).
 
 ### Player Screenshots (HUD included)
 
 `flint render` is headless and never runs scripts, so it cannot show a
-script-drawn HUD. The standalone `flint-player` can capture the frame it
-actually presents — scene *and* egui overlay — and exit on its own, which
+script-drawn HUD. The player (`flint play` or the standalone `flint-player`)
+can capture the frame it actually presents — scene *and* egui overlay — and exit on its own, which
 makes it the tool for verifying `on_draw_ui` output:
 
 ```bash
@@ -227,8 +231,8 @@ adapter, no window) also exits 1 now, from `flint play` too.
 | `--input-script <file>` | Play timed keys, typed text, axes, gamepad buttons, the wheel and the mouse, one event per line (below). Scripted keys reach egui and the debug keys too, so `2.0 tap F2` opens the stats overlay |
 | `--stats` | Open the F2 rendering stats overlay from the first frame. F2 still closes it |
 | `--perf` | Print a perf line every 10 s: frame p50/p99/max, each phase's CPU time (mean/max), each pass's GPU time where the adapter can time, draws and triangles. The same line the web page's `?perf=1` copies, so a desktop and a browser can be set side by side |
-| `--no-hot-reload` | Don't watch the game's files: scripts, UI documents, user styles, glyph sets and palettes load once and never reload, and nothing polls the disk (#633). Also on `flint play` |
-| `--strict-scripts` | Exit 1 when any script failed, to load, to compile or while running (#693). Without it script errors are still counted and `--exit-after` prints them, a line each with its count ([When a script fails while running](../concepts/scripting.md#when-a-script-fails-while-running)). Also on `flint play` |
+| `--no-hot-reload` | Don't watch the game's files: scripts, UI documents, user styles, glyph sets and palettes load once and never reload, and nothing polls the disk (#633) |
+| `--strict-scripts` | Exit 1 when any script failed, to load, to compile or while running (#693). Without it script errors are still counted and `--exit-after` prints them, a line each with its count ([When a script fails while running](../concepts/scripting.md#when-a-script-fails-while-running)) |
 
 A stepped run is repeatable as long as its scripts are. `--frame-step` (or `--seed`) takes care of `random()`; a script that reads `timestamp()` still sees the wall clock. Two stepped runs of `examples/seeded_stars.scene.toml`, which scatters a sky with `random()` every second, write byte-identical screenshots; before #635 every run drew its own sky:
 
@@ -309,7 +313,8 @@ wall-clock seconds since launch, so a capture lands on the same gameplay
 moment regardless of load time. The capture reads the swapchain back on the
 GPU, so it requires a surface that advertises `COPY_SRC`; on adapters that do
 not (some GL/Android surfaces) the player logs a warning and skips the
-screenshot rather than failing. `flint play` does not expose these flags.
+screenshot rather than failing. `flint play` takes every one of these flags
+too (#705).
 
 ### Player Controls (Defaults)
 
