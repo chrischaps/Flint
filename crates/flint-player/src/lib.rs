@@ -61,6 +61,7 @@ pub use player_app::web_page::begin as web_begin;
 #[cfg(target_arch = "wasm32")]
 pub use player_app::web_startup::WEB_CANVAS_ID;
 pub use player_app::ProcGenMode;
+pub use player_app::StatsView;
 pub use player_app::{CaptureConfig, GameCore, LaunchOptions, PlayerApp, SceneSettings};
 pub use window_args::WindowArgs;
 

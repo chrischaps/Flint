@@ -395,6 +395,11 @@ topic = "runtime"
 purpose = "The YBot on a looping idle: skeletal animation"
 
 [[example]]
+scene = "hitch_metronome.scene.toml"
+topic = "runtime"
+purpose = "A metronome whose frame stalls 100 ms every 3 s: what the F2 frame-time graph and its hitch counters show (#1078)"
+
+[[example]]
 scene = "audio_clock.scene.toml"
 topic = "runtime"
 purpose = "Pads lit by audio_position() on a looping click track"

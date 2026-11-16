@@ -112,7 +112,6 @@ pub(crate) enum Cause {
 }
 
 // Read by the F2 graph and the hitch log (#1078, #1079); tested here.
-#[cfg_attr(not(test), allow(dead_code))]
 impl Cause {
     /// `player` or `elsewhere`, for a log line.
     pub(crate) fn label(&self) -> &'static str {
@@ -164,7 +163,7 @@ pub(crate) const NO_ENGINE_EVENT: &str = "no engine event";
 /// How many top-level notes [`Hitch::likely_cause`] names before "N more".
 const CAUSES_NAMED: usize = 3;
 
-#[cfg_attr(not(test), allow(dead_code))] // the hitch log's (#1079)
+// Read by the hitch log, the report and the readouts (#1079)
 impl Hitch {
     /// The notes that say what the engine was doing (not a clock stall,
     /// which is the long frame itself).
@@ -288,7 +287,7 @@ pub(crate) struct HitchCounts {
     pub missed_refreshes: u64,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, feature = "debug-hud")), allow(dead_code))]
 impl HitchCounts {
     /// Hitches a minute over the span.
     pub(crate) fn per_minute(&self) -> f64 {
@@ -483,19 +482,17 @@ impl HitchDetector {
     }
 
     /// The hitches kept, oldest first (the last [`HITCHES_KEPT`]).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn hitches(&self) -> &VecDeque<Hitch> {
         &self.hitches
     }
 
     /// The newest hitch.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "debug-hud")), allow(dead_code))]
     pub(crate) fn last(&self) -> Option<&Hitch> {
         self.hitches.back()
     }
 
     /// The counts since the run began.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn session(&self) -> HitchCounts {
         let mut c = self.session;
         let clean_from = self.clean_from.unwrap_or(self.judged_to);

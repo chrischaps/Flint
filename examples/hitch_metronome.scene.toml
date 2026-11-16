@@ -1,0 +1,156 @@
+# A metronome that misses a beat every three seconds (#1078).
+#
+# The arm swings at 100 beats a minute (scripts/metronome.rhai), and every
+# three seconds scripts/stall.rhai holds the frame for 100 ms of wall time.
+# Open F2 and each stall is a tall bar in the scripts' orange with a mark
+# over it, counted under the graph; press F2 again for the graph alone,
+# small enough to leave on. The arm jumps on each one.
+#
+#   flint-player examples/hitch_metronome.scene.toml --stats
+#   flint-player examples/hitch_metronome.scene.toml --stats=graph
+#
+# The stall reads the wall clock (Rhai's timestamp()), which a
+# deterministic capture refuses, so `flint render --scripts` shows the
+# metronome without its stalls.
+
+[scene]
+name = "Hitch Metronome"
+description = "A metronome whose frame stalls 100 ms every 3 s: the F2 graph's test scene"
+
+[environment]
+ambient_sky = [0.025, 0.028, 0.04]
+ambient_ground = [0.012, 0.01, 0.008]
+
+[camera]
+position = [0.3, 1.0, 3.4]
+target = [0.0, 0.78, 0.0]
+fov = 42.0
+
+[post_process]
+bloom_intensity = 0.05
+vignette_intensity = 0.4
+
+# A warm lamp above and to the left: a pool on the table, the arm's
+# shadow on the wall
+[entities.lamp.transform]
+position = [-1.2, 3.0, 1.4]
+rotation = [38.0, -38.0, 0.0]
+
+[entities.lamp.light]
+type = "spot"
+color = [1.0, 0.82, 0.6]
+intensity = 26.0
+range = 9.0
+inner_angle_deg = 14
+outer_angle_deg = 30
+source_radius = 0.08
+
+# A cold window light from the right, faint
+[entities.window_light.light]
+type = "directional"
+direction = [0.7, 0.35, 0.6]
+color = [0.55, 0.65, 1.0]
+intensity = 0.18
+
+# The stall: no body, a script alone
+[entities.stall.script]
+source = "stall.rhai"
+
+# --- the metronome ----------------------------------------------------------
+
+# A tapered case, in three steps
+[entities.case_low.transform]
+position = [0.0, 0.0, 0.0]
+
+[entities.case_low.bounds]
+min = [-0.42, 0.0, -0.26]
+max = [0.42, 0.18, 0.26]
+
+[entities.case_low.material]
+color = [0.36, 0.2, 0.11, 1.0]
+roughness = 0.45
+
+[entities.case_mid.transform]
+position = [0.0, 0.18, 0.0]
+
+[entities.case_mid.bounds]
+min = [-0.32, 0.0, -0.2]
+max = [0.32, 0.22, 0.2]
+
+[entities.case_mid.material]
+color = [0.42, 0.24, 0.13, 1.0]
+roughness = 0.45
+
+# The scale behind the arm
+[entities.scale_plate.transform]
+position = [0.0, 0.4, -0.12]
+
+[entities.scale_plate.bounds]
+min = [-0.2, 0.0, -0.01]
+max = [0.2, 1.3, 0.01]
+
+[entities.scale_plate.material]
+color = [0.5, 0.44, 0.33, 1.0]
+roughness = 0.7
+
+# The pivot: the script swings it about z
+[entities.arm.transform]
+position = [0.0, 0.42, 0.0]
+
+[entities.arm.script]
+source = "metronome.rhai"
+
+[entities.rod]
+parent = "arm"
+
+[entities.rod.transform]
+position = [0.0, 0.0, 0.0]
+
+[entities.rod.bounds]
+min = [-0.012, 0.0, -0.012]
+max = [0.012, 1.45, 0.012]
+
+[entities.rod.material]
+color = [0.86, 0.84, 0.8, 1.0]
+roughness = 0.3
+metallic = 0.35
+
+# The sliding weight, brass, a little below the top
+[entities.weight]
+parent = "arm"
+
+[entities.weight.transform]
+position = [0.0, 1.05, 0.0]
+
+[entities.weight.bounds]
+min = [-0.07, -0.06, -0.04]
+max = [0.07, 0.06, 0.04]
+
+[entities.weight.material]
+color = [0.95, 0.7, 0.3, 1.0]
+roughness = 0.28
+metallic = 0.4
+
+# --- the room ---------------------------------------------------------------
+
+[entities.table.transform]
+position = [0.0, -0.08, 0.0]
+
+[entities.table.bounds]
+min = [-6.0, 0.0, -3.0]
+max = [6.0, 0.08, 3.0]
+
+[entities.table.material]
+color = [0.2, 0.12, 0.07, 1.0]
+roughness = 0.5
+
+[entities.wall.transform]
+position = [0.0, 0.0, -1.6]
+
+[entities.wall.bounds]
+min = [-8.0, 0.0, -0.1]
+max = [8.0, 5.0, 0.0]
+
+[entities.wall.material]
+color = [0.24, 0.27, 0.3, 1.0]
+roughness = 0.95

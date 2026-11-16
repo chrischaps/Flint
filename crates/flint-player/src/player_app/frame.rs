@@ -139,7 +139,9 @@ impl PlayerApp {
         // F2's stats show the GPU's time too (ADR 0108), as does the perf
         // readout unless it was asked not to (#120): time the frame while
         // either is up. Timing the game turned on stays on after.
-        if self.stats.show || (self.stats.perf.readout && self.stats.perf.gpu_wanted) {
+        if self.stats.view == super::StatsView::Full
+            || (self.stats.perf.readout && self.stats.perf.gpu_wanted)
+        {
             if !renderer.gpu_timing() {
                 self.stats.gpu_timing =
                     renderer.set_gpu_timing(&context.device, &context.queue, true);
@@ -466,7 +468,11 @@ impl PlayerApp {
 
         // `--stats`: the overlay starts open, and F2 can still close it.
         if std::mem::take(&mut self.capture.show_stats) {
-            self.stats.show = true;
+            let view = match self.capture.stats_view {
+                super::StatsView::Off => super::StatsView::Full,
+                view => view,
+            };
+            self.set_stats_view(view);
         }
 
         // Scripted input due by now (`--input-script`), before anything reads it.
@@ -800,7 +806,8 @@ impl PlayerApp {
         let touch_widgets = self.input.touch_controls().widgets();
         let touch_opacity = self.input.touch_controls().opacity();
 
-        let show_stats = self.stats.show;
+        let stats_view = self.stats.view;
+        let show_stats = stats_view == super::StatsView::Full;
         // The adapter, and on DX12 its shader compiler (#912)
         let gpu_label = if show_stats {
             flint_render::gpu_select::adapter_short(&context.adapter.get_info())
@@ -827,6 +834,20 @@ impl PlayerApp {
         } else {
             None
         };
+        // The frame-time graph's frames and counters (#1078), while F2
+        // shows anything: nothing is read or allocated while it doesn't
+        #[cfg(feature = "debug-hud")]
+        let clock = &self.core.clock;
+        #[cfg(feature = "debug-hud")]
+        let mut graph = self.stats.overlay_graph(|| {
+            // The display's refresh: the budget line
+            clock.vsync_period().or_else(|| {
+                let mhz = window.current_monitor()?.refresh_rate_millihertz()?;
+                (mhz > 0).then(|| 1000.0 / mhz as f64)
+            })
+        });
+        #[cfg(not(feature = "debug-hud"))]
+        let mut graph: Option<OverlayGraph> = None;
 
         // User styles that don't compile (#275) or don't load (#425), and
         // built-in shaders read from FLINT_STYLE_SHADER_DIR that don't
@@ -908,8 +929,14 @@ impl PlayerApp {
             #[cfg(not(feature = "debug-hud"))]
             let debug_width = 0.0;
 
-            if let Some(ref stats) = stats_data {
-                render_stats_overlay(ctx, stats, &gpu_label, debug_width);
+            match (stats_view, stats_data.as_ref()) {
+                (super::StatsView::Full, Some(stats)) => {
+                    render_stats_overlay(ctx, stats, &gpu_label, graph.as_mut(), debug_width)
+                }
+                (super::StatsView::Graph, _) => {
+                    render_graph_overlay(ctx, graph.as_mut(), debug_width)
+                }
+                _ => {}
             }
 
             // On the web, above the page's wordmark in the same corner
@@ -1297,146 +1324,215 @@ impl super::game_core::FrameHost for PlayerApp {
     }
 }
 
+use super::stats_view::OverlayGraph;
+
+/// The full overlay's graph and the compact one's, in points.
+#[cfg(feature = "debug-hud")]
+const GRAPH_FULL: egui::Vec2 = egui::vec2(360.0, 72.0);
+#[cfg(feature = "debug-hud")]
+const GRAPH_COMPACT: egui::Vec2 = egui::vec2(280.0, 40.0);
+
+/// The F2 overlay's panel: dark, a hairline edge, monospace.
+fn overlay_frame() -> egui::Frame {
+    egui::Frame::NONE
+        .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 209))
+        .stroke(egui::Stroke::new(
+            1.0f32,
+            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 38),
+        ))
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::same(10))
+}
+
+/// The overlay's corner, beside the debug columns rather than over them.
+fn overlay_area(id: &str, right_inset: f32) -> egui::Area {
+    egui::Area::new(egui::Id::new(id))
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0 - right_inset, 8.0))
+        .order(egui::Order::Foreground)
+        .interactable(false)
+}
+
+/// The graph, its counters and, in the full form, the bands' legend.
+#[cfg(feature = "debug-hud")]
+fn show_graph(ui: &mut egui::Ui, g: &mut OverlayGraph, full: bool) {
+    use flint_debug_ui::widgets::{band_legend, hitch_counters, GraphLayout};
+    let layout = GraphLayout {
+        size: if full { GRAPH_FULL } else { GRAPH_COMPACT },
+        window_secs: if full {
+            super::stats_view::GRAPH_SECS
+        } else {
+            super::stats_view::COMPACT_SECS
+        },
+        budget_ms: g.budget_ms,
+        fps_labels: full,
+    };
+    g.graph.widget.show(ui, &g.graph.frames, layout);
+    ui.add_space(3.0);
+    ui.scope(|ui| {
+        let size = if full { 10.0 } else { 9.5 };
+        ui.style_mut().override_font_id = Some(egui::FontId::monospace(size));
+        ui.set_max_width(layout.size.x);
+        hitch_counters(ui, &g.graph.counters(g.hitches), !full);
+        if full {
+            ui.style_mut().override_font_id = Some(egui::FontId::monospace(8.5));
+            band_legend(ui);
+        }
+    });
+}
+
+/// F2's compact form (`--stats=graph`): the graph and its counters alone.
+fn render_graph_overlay(ctx: &egui::Context, graph: Option<&mut OverlayGraph>, right_inset: f32) {
+    let Some(graph) = graph else { return };
+    overlay_area("render_stats_graph", right_inset).show(ctx, |ui| {
+        overlay_frame()
+            .inner_margin(egui::Margin::same(7))
+            .show(ui, |ui| {
+                #[cfg(feature = "debug-hud")]
+                show_graph(ui, graph, false);
+                #[cfg(not(feature = "debug-hud"))]
+                let _ = (ui, graph);
+            });
+    });
+}
+
 /// `right_inset`: width the debug columns take at the right edge, so the
 /// overlay sits beside them rather than over them.
 fn render_stats_overlay(
     ctx: &egui::Context,
     stats: &flint_render::RenderStats,
     gpu: &str,
+    graph: Option<&mut OverlayGraph>,
     right_inset: f32,
 ) {
     use flint_render::format_count;
 
-    egui::Area::new(egui::Id::new("render_stats_overlay"))
-        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0 - right_inset, 8.0))
-        .order(egui::Order::Foreground)
-        .interactable(false)
-        .show(ctx, |ui| {
-            egui::Frame::NONE
-                .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 209))
-                .stroke(egui::Stroke::new(
-                    1.0f32,
-                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 38),
-                ))
-                .corner_radius(egui::CornerRadius::same(4))
-                .inner_margin(egui::Margin::same(10))
-                .show(ui, |ui| {
-                    ui.style_mut().override_font_id = Some(egui::FontId::monospace(11.0));
-                    ui.set_min_width(180.0);
+    overlay_area("render_stats_overlay", right_inset).show(ctx, |ui| {
+        overlay_frame().show(ui, |ui| {
+            ui.style_mut().override_font_id = Some(egui::FontId::monospace(11.0));
+            ui.set_min_width(180.0);
 
-                    // Header
+            // Header
+            ui.colored_label(
+                egui::Color32::from_gray(136),
+                egui::RichText::new("RENDERING STATS").size(9.0),
+            );
+            ui.separator();
+
+            // Frame times, a bar a frame, and the hitches (#1078)
+            #[cfg(feature = "debug-hud")]
+            if let Some(graph) = graph {
+                show_graph(ui, graph, true);
+                ui.separator();
+            }
+            #[cfg(not(feature = "debug-hud"))]
+            let _ = graph;
+
+            // Core metrics
+            ui.horizontal(|ui| {
+                ui.label("FPS:");
+                ui.colored_label(
+                    egui::Color32::from_rgb(74, 222, 128),
+                    format!("{:.0}", stats.fps),
+                );
+                ui.colored_label(
+                    egui::Color32::from_gray(102),
+                    format!("({:.1}ms)", stats.frame_time_ms),
+                );
+            });
+            ui.label(format!("Draw Calls: {}", stats.draw_calls));
+            ui.label(format!("Triangles: {}", format_count(stats.triangles)));
+
+            ui.separator();
+
+            // Breakdown
+            if stats.culled_draws > 0 {
+                ui.label(format!(
+                    "Entities: {} ({} culled)",
+                    stats.entity_draws, stats.culled_draws
+                ));
+            } else {
+                ui.label(format!("Entities: {}", stats.entity_draws));
+            }
+            if stats.skinned_draws > 0 {
+                ui.label(format!("Skinned: {}", stats.skinned_draws));
+            }
+            ui.label(format!(
+                "Terrain: {}/{} chunks",
+                stats.terrain_draws, stats.terrain_total_chunks
+            ));
+            if stats.transparent_draws > 0 {
+                ui.label(format!("Transparent: {}", stats.transparent_draws));
+            }
+            if stats.billboard_draws > 0 {
+                ui.label(format!("Billboards: {}", stats.billboard_draws));
+            }
+            if stats.particle_draws > 0 {
+                ui.label(format!(
+                    "Particles: {} ({} inst)",
+                    stats.particle_draws,
+                    format_count(stats.particle_instances)
+                ));
+            }
+            if stats.sprite_batches > 0 {
+                ui.label(format!("Sprites: {}", stats.sprite_batches));
+            }
+            if stats.grass_instances > 0 {
+                ui.label(format!(
+                    "Grass: {} inst",
+                    format_count(stats.grass_instances)
+                ));
+            }
+            // Style chain memory (#302): every target, and how
+            // many are full output size (FXAA's included)
+            if stats.style_targets > 0 {
+                ui.label(format!(
+                    "Style targets: {} ({:.1} MB, {} full-size)",
+                    stats.style_targets,
+                    stats.style_target_bytes as f64 / (1024.0 * 1024.0),
+                    stats.full_size_targets
+                ));
+            }
+
+            ui.separator();
+
+            // Shadow pass
+            ui.label(format!("Shadow Calls: {}", stats.shadow_draw_calls));
+            ui.label(format!(
+                "Shadow Tris: {}",
+                format_count(stats.shadow_triangles)
+            ));
+
+            ui.separator();
+
+            // What draws: the adapter, its backend and, on DX12,
+            // the shader compiler (#912)
+            ui.colored_label(egui::Color32::from_gray(170), gpu);
+
+            // GPU time per phase (ADR 0108), where the device can time
+            if !stats.gpu_passes.is_empty() {
+                ui.label(format!("GPU: {:.2}ms", stats.gpu_frame_ms));
+                for pass in &stats.gpu_passes {
                     ui.colored_label(
-                        egui::Color32::from_gray(136),
-                        egui::RichText::new("RENDERING STATS").size(9.0),
+                        egui::Color32::from_gray(170),
+                        format!("  {:<13}{:>6.2}", pass.label, pass.ms),
                     );
-                    ui.separator();
+                }
+                ui.separator();
+            }
 
-                    // Core metrics
-                    ui.horizontal(|ui| {
-                        ui.label("FPS:");
-                        ui.colored_label(
-                            egui::Color32::from_rgb(74, 222, 128),
-                            format!("{:.0}", stats.fps),
-                        );
-                        ui.colored_label(
-                            egui::Color32::from_gray(102),
-                            format!("({:.1}ms)", stats.frame_time_ms),
-                        );
-                    });
-                    ui.label(format!("Draw Calls: {}", stats.draw_calls));
-                    ui.label(format!("Triangles: {}", format_count(stats.triangles)));
-
-                    ui.separator();
-
-                    // Breakdown
-                    if stats.culled_draws > 0 {
-                        ui.label(format!(
-                            "Entities: {} ({} culled)",
-                            stats.entity_draws, stats.culled_draws
-                        ));
-                    } else {
-                        ui.label(format!("Entities: {}", stats.entity_draws));
-                    }
-                    if stats.skinned_draws > 0 {
-                        ui.label(format!("Skinned: {}", stats.skinned_draws));
-                    }
-                    ui.label(format!(
-                        "Terrain: {}/{} chunks",
-                        stats.terrain_draws, stats.terrain_total_chunks
-                    ));
-                    if stats.transparent_draws > 0 {
-                        ui.label(format!("Transparent: {}", stats.transparent_draws));
-                    }
-                    if stats.billboard_draws > 0 {
-                        ui.label(format!("Billboards: {}", stats.billboard_draws));
-                    }
-                    if stats.particle_draws > 0 {
-                        ui.label(format!(
-                            "Particles: {} ({} inst)",
-                            stats.particle_draws,
-                            format_count(stats.particle_instances)
-                        ));
-                    }
-                    if stats.sprite_batches > 0 {
-                        ui.label(format!("Sprites: {}", stats.sprite_batches));
-                    }
-                    if stats.grass_instances > 0 {
-                        ui.label(format!(
-                            "Grass: {} inst",
-                            format_count(stats.grass_instances)
-                        ));
-                    }
-                    // Style chain memory (#302): every target, and how
-                    // many are full output size (FXAA's included)
-                    if stats.style_targets > 0 {
-                        ui.label(format!(
-                            "Style targets: {} ({:.1} MB, {} full-size)",
-                            stats.style_targets,
-                            stats.style_target_bytes as f64 / (1024.0 * 1024.0),
-                            stats.full_size_targets
-                        ));
-                    }
-
-                    ui.separator();
-
-                    // Shadow pass
-                    ui.label(format!("Shadow Calls: {}", stats.shadow_draw_calls));
-                    ui.label(format!(
-                        "Shadow Tris: {}",
-                        format_count(stats.shadow_triangles)
-                    ));
-
-                    ui.separator();
-
-                    // What draws: the adapter, its backend and, on DX12,
-                    // the shader compiler (#912)
-                    ui.colored_label(egui::Color32::from_gray(170), gpu);
-
-                    // GPU time per phase (ADR 0108), where the device can time
-                    if !stats.gpu_passes.is_empty() {
-                        ui.label(format!("GPU: {:.2}ms", stats.gpu_frame_ms));
-                        for pass in &stats.gpu_passes {
-                            ui.colored_label(
-                                egui::Color32::from_gray(170),
-                                format!("  {:<13}{:>6.2}", pass.label, pass.ms),
-                            );
-                        }
-                        ui.separator();
-                    }
-
-                    // Resolution, and the scene's below render scale 1 (#122)
-                    let scene = stats.scene_resolution;
-                    let resolution = if scene == stats.resolution || scene == [0, 0] {
-                        format!("{}x{}", stats.resolution[0], stats.resolution[1])
-                    } else {
-                        format!(
-                            "{}x{}, scene {}x{}",
-                            stats.resolution[0], stats.resolution[1], scene[0], scene[1]
-                        )
-                    };
-                    ui.colored_label(egui::Color32::from_gray(102), resolution);
-                });
+            // Resolution, and the scene's below render scale 1 (#122)
+            let scene = stats.scene_resolution;
+            let resolution = if scene == stats.resolution || scene == [0, 0] {
+                format!("{}x{}", stats.resolution[0], stats.resolution[1])
+            } else {
+                format!(
+                    "{}x{}, scene {}x{}",
+                    stats.resolution[0], stats.resolution[1], scene[0], scene[1]
+                )
+            };
+            ui.colored_label(egui::Color32::from_gray(102), resolution);
         });
+    });
 }
 
 /// `hud.png` + 3 -> `hud_0003.png`; extension-less paths get `.png`.
