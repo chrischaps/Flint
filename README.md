@@ -10,17 +10,54 @@ Flint is a 3D game engine written from scratch in Rust, and the foundation under
 
 ## Running it
 
-You need a stable Rust toolchain. On Windows that is all; Android and the web need the extra targets described in the [documentation](https://docs.chaps.dev/flint).
+You need a stable Rust toolchain. On Windows that is all; Linux needs a few system packages, and Android and the web need extra targets, all described in the [documentation](https://docs.chaps.dev/flint).
+
+From the Flint checkout:
 
 ```bash
 cargo build --release
-cargo run --bin flint -- play examples/phase4_runtime.scene.toml   # play a demo scene
-cargo run --bin flint -- render examples/phase4_runtime.scene.toml --output shot.png --schemas schemas
-cargo run --bin flint -- edit examples/phase4_runtime.scene.toml    # scene viewer with live inspector
+cargo run --release --bin flint -- play examples/phase4_runtime.scene.toml   # play a demo scene
+cargo run --release --bin flint -- render examples/phase4_runtime.scene.toml --output shot.png
+cargo run --release --bin flint -- edit examples/phase4_runtime.scene.toml    # scene viewer with live inspector
 cargo test
 ```
 
-`flint init <name>` starts a new game: a `flint.toml` manifest, a lit scene with a player, a HUD script, an input config and a `CLAUDE.md` for agents, then the three commands that validate, render and play it. By default the manifest names this checkout's schemas by path, so those commands work at once. `flint init <name> --engine subtree` writes the pattern every game in the family uses, with the engine carried inside the game as a git subtree at `engine/` and the game's schemas layered over the engine's (`schemas = ["engine/schemas", "schemas"]` in its `flint.toml`), and prints the `git subtree add` to run.
+`--release` makes `cargo run` use the build above; without it Cargo compiles a second, debug build first.
+
+### Putting `flint` on your PATH
+
+From here on, and in what `flint init` prints, commands call `flint` by name. To make that work, install it from the checkout:
+
+```bash
+cargo install --path crates/flint-cli
+```
+
+That copies the binary into Cargo's bin folder (`~/.cargo/bin`, which rustup puts on your PATH). It is a copy, so run the command again after pulling engine changes, or `flint` stays the old version. To skip installing, call the build by its path: `target/release/flint` in the checkout (`flint.exe` on Windows).
+
+### Starting a game
+
+A game lives in its own folder, outside the Flint checkout. `flint init <name>` creates `<name>` under the directory you run it from, so step out of the checkout first:
+
+```bash
+cd ..                 # beside the Flint checkout, not inside it
+flint init my-game
+cd my-game
+flint check
+flint render scenes/main.scene.toml --output renders/main.png
+flint play
+```
+
+Without installing, run `init` through Cargo from the checkout and give it a path outside, then call the build by path from the game's folder (here the checkout is `../Flint`):
+
+```bash
+cargo run --release --bin flint -- init ../my-game
+cd ../my-game
+../Flint/target/release/flint check
+../Flint/target/release/flint render scenes/main.scene.toml --output renders/main.png
+../Flint/target/release/flint play
+```
+
+`flint init` writes a `flint.toml` manifest, a lit scene with a player, a HUD script, an input config and a `CLAUDE.md` for agents, and prints the commands above. By default the manifest names the engine's schemas by the absolute path of the checkout that `flint` was built from, so those commands work at once, on this machine, as long as the checkout stays where it is. `flint init <name> --engine subtree` writes the pattern every game in the family uses, with the engine carried inside the game as a git subtree at `engine/` and the game's schemas layered over the engine's (`schemas = ["engine/schemas", "schemas"]` in its `flint.toml`), and prints the `git subtree add` to run.
 
 To run the web player locally (see `docs/design/web.md`):
 

@@ -104,9 +104,11 @@ cargo run --bin flint -- <command>
 For example:
 
 ```bash
-cargo run --bin flint -- init my-game
+cargo run --bin flint -- init ../my-game     # a game goes beside the checkout, not inside it
 cargo run --bin flint -- serve examples/showcase.scene.toml --watch
 ```
+
+`cargo run` only works inside the checkout, and the program runs in the directory you called it from: `flint init my-game` would make `my-game/` inside the engine's repository. Outside the checkout, in a game's folder, call the build by its path instead (`../flint/target/release/flint check`), or install it ([below](#optional-add-to-path)). Add `--release` to `cargo run` to use the release build rather than compiling a debug one.
 
 ## Running Tests
 
@@ -127,6 +129,8 @@ cargo install --path crates/flint-cli
 ```
 
 Or copy the release binary to a directory on your PATH.
+
+`cargo install` puts a copy in `~/.cargo/bin`, which rustup already put on your PATH. Run it again after pulling engine changes, or `flint` stays the version you installed. The copy still knows the checkout it was built from: `flint init` names that checkout's schemas by absolute path, so leave the checkout where it is.
 
 ## What's Next
 
