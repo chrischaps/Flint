@@ -11,6 +11,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 - **numbers**: A num parameter takes an int or a float; an int parameter takes an int or a float with nothing after the point. A function marked \[typed\] takes exactly the types listed.
 - **missing entity**: An entity parameter given -1 (what `get_entity` returns for a name it can't find) or a despawned id skips the call and warns once per script and function. A setter or command then does nothing and queues nothing; a getter returns the empty value of what it returns ((), `#{}`, \[\], false, 0, "") unless its returns line names another: -1 for an id, -1.0 for a time, the largest float for a distance. `entity_exists(id)` never warns: ask it where an entity may be missing.
 - **nothing found**: A query of a live entity or the world that finds nothing (no hit, no such component or body, no physics) returns () where the answer would be a map or a value, -1 where it would be an id and -1.0 where it would be a time; each function's returns line says which. The entity module's transform getters return `#{}` for an entity without a transform.
+- **order**: A function that returns entities returns them in name order (`find_entities_with`, `get_children`, `overlap_rect`), and `persist_keys` returns its keys sorted, so a loop over the result does the same thing every run, however and in whatever order the world was built. Ids are not an order: they depend on what was spawned first.
 - **names**: A name puts its verb first, then what it acts on: `play_sprite`, `set_sprite_speed`, `shake_camera`, `stop_camera_shake`. A value a script can change is read with get_\<noun\> and changed with set_\<noun\>, the same noun (`get_lod_scale` and `set_lod_scale`, `get_current_scene`); a yes-or-no question starts is_ or has_ (`is_sprite_playing`). What no script sets is named for what it returns, with no get_: this frame's input, the clocks and the screen (`mouse_x`, `touch_x`, `delta_time`, `screen_width`) and a calculation (distance, raycast, `measure_text`). A family one module owns keeps its prefix before the verb (persist_, ui_, spline_, conducted_). One name a function: no aliases and no _ex variants. A renamed function's old name works for one release, listed as deprecated with its new name, and flint script check warns at each call.
 - **opts maps**: A draw call takes what places it as positional numbers (a position and a size, two points, a centre and a radius) and then either its colour as four numbers (r, g, b, a, 0..1) or an opts map holding everything else, every key optional: `draw_rect`(x, y, w, h, `#{color: "#ff8800", rounding: 6, layer: 2}`). In a map a colour is \[r, g, b\], \[r, g, b, a\] or "#rrggbb(aa)", white when left out; layer orders draws (higher on top, 0); thickness is in points (1). Each function's description lists its keys; a key it doesn't take, or a value of the wrong shape, is ignored with a warning once per function and key. A map costs a call 0.15 to 0.22 us more than four colour numbers (`draw_rect`: 315 ns positional, 534 ns with a three-key map), so a loop of hundreds of draws a frame that needs only a colour keeps the positional form.
 - **modules**: Most modules are core: every scene can call them. A module an optional feature owns (living, wooze, debug, conducted) is declared by that feature and enabled where its subsystem runs: living, wooze and debug in a scene with living props, a \[living\] or \[wooze\] table, shallow wooze or woozy grass; conducted in a scene whose `music_session` has a chart. Each such module's heading says when it is enabled. Calling one of its functions anywhere else is a script error saying the module is not enabled, at the call's line.
@@ -55,7 +56,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `get_component(id: entity, component: str)` | `map`: its fields, or () when the entity hasn't it | The whole component as a map. |
 | `get_field(id: entity, component: str, field: str)` | `any`: its value, or () when it isn't there | One field of a component. |
 | `set_field(id: entity, component: str, field: str, value: any)` | — | Set one field of a component, making the component if it isn't there. |
-| `find_entities_with(component: str)` | `array`: their ids | Every entity that has a component of this name. |
+| `find_entities_with(component: str)` | `array`: their ids, in name order | Every entity that has a component of this name. |
 | `entity_count_with(component: str)` | `int` | How many entities have a component of this name. |
 | `get_position(id: entity)` | `map`: `#{x, y, z}`; empty when it has no transform | The entity's position in its parent's space. |
 | `set_position(id: entity, x: num, y: num, z: num)` | — | Move the entity to a position in its parent's space. |
@@ -74,7 +75,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `distance(a: entity, b: entity)` | `num`: metres; f64::MAX when either has no transform | The distance between two entities' positions. |
 | `set_parent(child: entity, parent: entity)` | — | Make one entity the child of another. |
 | `get_parent(id: entity)` | `entity`: its id, or -1 when it has none | The entity's parent. |
-| `get_children(id: entity)` | `array`: their ids | The entity's children. |
+| `get_children(id: entity)` | `array`: their ids, in name order | The entity's children. |
 | `get_world_position(id: entity)` | `map`: `#{x, y, z}`; empty when it has no transform | The entity's position in the world, through its parents. |
 | `set_material_color(id: entity, r: num, g: num, b: num, a: num)` | — | Set the entity's material base colour. |
 | `set_material_override(id: entity, material: str, r: num, g: num, b: num, a: num)` | — | Tint one named glTF material on the entity and its descendants. |
@@ -167,7 +168,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 
 | Function | Returns | Description |
 |---|---|---|
-| `overlap_rect(x: num, y: num, w: num, h: num)` | `array`: their ids; empty with no physics | Every entity whose 2D collider overlaps a rectangle on the sprite plane. |
+| `overlap_rect(x: num, y: num, w: num, h: num)` | `array`: their ids, in name order; empty with no physics | Every entity whose 2D collider overlaps a rectangle on the sprite plane. |
 | `raycast_2d(ox: num, oy: num, dx: num, dy: num, max_dist: num)` | `map`: `#{entity, distance, point_x, point_y, normal_x, normal_y}`, or () for no hit or no physics | The nearest 2D collider a ray on the sprite plane meets, the calling entity's own excluded. |
 | `set_velocity_2d(id: entity, vx: num, vy: num)` | — | Set a 2D body's velocity, applied after the script batch. |
 | `get_velocity_2d(id: entity)` | `map`: `#{vx, vy}`, or () when it has no 2D body or there is no physics | A 2D body's velocity. |
@@ -536,7 +537,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `persist_has(key: str)` | `bool` | Whether a value is saved under a key. |
 | `persist_remove(key: str)` | — | Forget the value saved under a key. |
 | `persist_clear()` | — | Forget every saved value in the slot held. |
-| `persist_keys()` | `array`: the keys, as strings | Every key with a saved value. |
+| `persist_keys()` | `array`: the keys, as strings, sorted | Every key with a saved value. |
 | `persist_save()` | — | Write the save file now, not waiting for the player's own write. |
 | `persist_save(path: str)` | — | Write the saved values to a file at this path, at once. |
 | `persist_load(path: str)` | — | Read saved values from a file at this path into the slot held. |

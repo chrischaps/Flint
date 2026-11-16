@@ -27,10 +27,15 @@ pub struct FlintWorld {
     id_map: BiMap<EntityId, hecs::Entity>,
     /// Entity name -> EntityId mapping
     name_map: HashMap<String, EntityId>,
+    /// EntityId -> entity name: the other way, so `get_name` and sorting by
+    /// name are lookups, not scans of `name_map`
+    names: HashMap<EntityId, String>,
     /// Dynamic components for each entity
     components: HashMap<EntityId, DynamicComponents>,
     /// Parent relationships: child -> parent
     parents: HashMap<EntityId, EntityId>,
+    /// The other way: parent -> its children, in name order (#689)
+    children: HashMap<EntityId, Vec<EntityId>>,
     /// Reverse index: component name -> set of entities that have it
     component_index: HashMap<String, HashSet<EntityId>>,
     /// What the typed readers ([`FlintWorld::view`]) have reported, once each
@@ -44,8 +49,10 @@ impl FlintWorld {
             world: hecs::World::new(),
             id_map: BiMap::new(),
             name_map: HashMap::new(),
+            names: HashMap::new(),
             components: HashMap::new(),
             parents: HashMap::new(),
+            children: HashMap::new(),
             component_index: HashMap::new(),
             read_reports: ReadReports::new(),
         }
@@ -69,6 +76,7 @@ impl FlintWorld {
         let hecs_entity = self.world.spawn(());
 
         self.id_map.insert(entity_id, hecs_entity);
+        self.names.insert(entity_id, name.clone());
         self.name_map.insert(name, entity_id);
         self.components.insert(entity_id, DynamicComponents::new());
 
@@ -89,6 +97,7 @@ impl FlintWorld {
         let hecs_entity = self.world.spawn(());
 
         self.id_map.insert(id, hecs_entity);
+        self.names.insert(id, name.clone());
         self.name_map.insert(name, id);
         self.components.insert(id, DynamicComponents::new());
 
@@ -134,7 +143,9 @@ impl FlintWorld {
             .ok_or_else(|| FlintError::EntityNotFound(id.to_string()))?;
 
         // Remove from name map
-        self.name_map.retain(|_, v| *v != id);
+        if let Some(name) = self.names.remove(&id) {
+            self.name_map.remove(&name);
+        }
 
         // Remove from world
         self.world
@@ -151,10 +162,12 @@ impl FlintWorld {
             }
         }
         self.components.remove(&id);
-        self.parents.remove(&id);
+        self.unlink_from_parent(id);
 
-        // Remove as parent from any children
-        self.parents.retain(|_, parent| *parent != id);
+        // Its children lose their parent and become roots
+        for child in self.children.remove(&id).unwrap_or_default() {
+            self.parents.remove(&child);
+        }
 
         Ok(())
     }
@@ -177,10 +190,28 @@ impl FlintWorld {
 
     /// Get entity name by ID
     pub fn get_name(&self, id: EntityId) -> Option<&str> {
-        self.name_map
-            .iter()
-            .find(|(_, v)| **v == id)
-            .map(|(k, _)| k.as_str())
+        self.names.get(&id).map(String::as_str)
+    }
+
+    /// These entities in name order (#689): the order every list a script
+    /// is handed comes in, so it is the same however and in whatever order
+    /// the world was built. Names are unique; an id that names nothing (a
+    /// despawned entity) goes last, by id.
+    pub fn in_name_order(&self, ids: impl IntoIterator<Item = EntityId>) -> Vec<EntityId> {
+        let mut ids: Vec<EntityId> = ids.into_iter().collect();
+        ids.sort_unstable_by(|a, b| self.name_order(*a, *b));
+        ids
+    }
+
+    /// Name order between two entities: by name, then by id, an entity with
+    /// no name after every named one.
+    fn name_order(&self, a: EntityId, b: EntityId) -> std::cmp::Ordering {
+        match (self.names.get(&a), self.names.get(&b)) {
+            (Some(x), Some(y)) => x.cmp(y).then(a.cmp(&b)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.cmp(&b),
+        }
     }
 
     /// Get components for an entity
@@ -255,8 +286,30 @@ impl FlintWorld {
             return Err(FlintError::EntityNotFound(parent.to_string()));
         }
 
+        if self.parents.get(&child) == Some(&parent) {
+            return Ok(());
+        }
+        self.unlink_from_parent(child);
         self.parents.insert(child, parent);
+        let at = {
+            let siblings = self.children.get(&parent).map_or(&[][..], Vec::as_slice);
+            siblings.partition_point(|s| self.name_order(*s, child).is_lt())
+        };
+        self.children.entry(parent).or_default().insert(at, child);
         Ok(())
+    }
+
+    /// Take `child` out of its parent's children list, and forget the parent.
+    fn unlink_from_parent(&mut self, child: EntityId) {
+        let Some(parent) = self.parents.remove(&child) else {
+            return;
+        };
+        if let Some(siblings) = self.children.get_mut(&parent) {
+            siblings.retain(|s| *s != child);
+            if siblings.is_empty() {
+                self.children.remove(&parent);
+            }
+        }
     }
 
     /// Set parent by name
@@ -276,13 +329,10 @@ impl FlintWorld {
         self.parents.get(&child).copied()
     }
 
-    /// Get children of an entity
+    /// The entity's children, in name order (#689). A lookup in the
+    /// children index, not a scan of every entity.
     pub fn get_children(&self, parent: EntityId) -> Vec<EntityId> {
-        self.parents
-            .iter()
-            .filter(|(_, p)| **p == parent)
-            .map(|(c, _)| *c)
-            .collect()
+        self.children.get(&parent).cloned().unwrap_or_default()
     }
 
     /// Get info about all entities, by name.
@@ -341,8 +391,10 @@ impl FlintWorld {
         self.world.clear();
         self.id_map.clear();
         self.name_map.clear();
+        self.names.clear();
         self.components.clear();
         self.parents.clear();
+        self.children.clear();
         self.component_index.clear();
         self.read_reports.clear();
     }
@@ -457,8 +509,10 @@ impl FlintWorld {
 
     /// Get all entity IDs that have a given component. O(1) lookup.
     ///
-    /// Returns a reference to the internal `HashSet`; returns an empty set
-    /// for components that no entity currently has.
+    /// Returns a reference to the internal `HashSet`, in hash order, which
+    /// differs run to run; returns an empty set for components that no
+    /// entity currently has. What a script or a capture sees goes through
+    /// [`Self::in_name_order`].
     pub fn entities_with_component(&self, component: &str) -> &HashSet<EntityId> {
         self.component_index
             .get(component)
@@ -626,6 +680,70 @@ mod tests {
 
         assert_eq!(world.get_parent(child), Some(parent));
         assert!(world.get_children(parent).contains(&child));
+    }
+
+    fn names_of(world: &FlintWorld, ids: &[EntityId]) -> Vec<String> {
+        ids.iter()
+            .map(|id| world.get_name(*id).unwrap().to_string())
+            .collect()
+    }
+
+    /// The children index (#689) is in name order and follows every change
+    /// to the hierarchy: a reparent moves the child, despawning a child
+    /// takes it out, despawning a parent leaves its children as roots.
+    #[test]
+    fn children_are_in_name_order_and_follow_the_hierarchy() {
+        let mut world = FlintWorld::new();
+        let a = world.spawn("a").unwrap();
+        let b = world.spawn("b").unwrap();
+        let kids: Vec<EntityId> = ["mid", "zed", "alpha", "kilo"]
+            .iter()
+            .map(|n| world.spawn(*n).unwrap())
+            .collect();
+        for &k in &kids {
+            world.set_parent(k, a).unwrap();
+        }
+        assert_eq!(
+            names_of(&world, &world.get_children(a)),
+            ["alpha", "kilo", "mid", "zed"]
+        );
+
+        // Setting the same parent again changes nothing.
+        world.set_parent(kids[0], a).unwrap();
+        assert_eq!(world.get_children(a).len(), 4);
+
+        // Reparent: out of a's list, into b's.
+        world.set_parent(kids[1], b).unwrap();
+        assert_eq!(
+            names_of(&world, &world.get_children(a)),
+            ["alpha", "kilo", "mid"]
+        );
+        assert_eq!(names_of(&world, &world.get_children(b)), ["zed"]);
+
+        // Despawn a child: gone from its parent's list.
+        world.despawn(kids[3]).unwrap();
+        assert_eq!(names_of(&world, &world.get_children(a)), ["alpha", "mid"]);
+        assert_eq!(world.get_name(kids[3]), None);
+
+        // Despawn the parent: its children are roots.
+        world.despawn(a).unwrap();
+        assert_eq!(world.get_parent(kids[0]), None);
+        assert_eq!(world.get_parent(kids[2]), None);
+        assert_eq!(world.get_parent(kids[1]), Some(b));
+        assert!(world.get_children(a).is_empty());
+
+        world.clear();
+        assert!(world.get_children(b).is_empty());
+    }
+
+    #[test]
+    fn in_name_order_sorts_by_name_and_puts_the_unnamed_last() {
+        let mut world = FlintWorld::new();
+        let z = world.spawn("z").unwrap();
+        let m = world.spawn("m").unwrap();
+        let gone = world.spawn("a").unwrap();
+        world.despawn(gone).unwrap();
+        assert_eq!(world.in_name_order([gone, z, m]), [m, z, gone]);
     }
 
     #[test]
