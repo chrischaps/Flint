@@ -90,25 +90,6 @@ fn android_main(app: AndroidApp) {
     let asset_manager = app.asset_manager();
     asset_extractor::extract_assets(&asset_manager, &data_dir, version);
 
-    // Load schemas
-    let schema_dir = data_dir.join("schemas");
-    let engine_schema_dir = data_dir.join("engine").join("schemas");
-
-    let mut schema_paths: Vec<String> = Vec::new();
-    if engine_schema_dir.is_dir() {
-        schema_paths.push(engine_schema_dir.to_string_lossy().to_string());
-    }
-    if schema_dir.is_dir() {
-        schema_paths.push(schema_dir.to_string_lossy().to_string());
-    }
-
-    let schema_path_refs: Vec<&str> = schema_paths.iter().map(|s| s.as_str()).collect();
-    let registry = flint_schema::SchemaRegistry::load_from_directories(&schema_path_refs)
-        .unwrap_or_else(|e| {
-            log::warn!("Failed to load schemas: {e}");
-            flint_schema::SchemaRegistry::new()
-        });
-
     // A device profiling run's overrides (FlintKart#54), if one was pushed.
     // Read before the scene and the renderer, so its env vars are set when
     // the engine looks for them.
@@ -128,6 +109,12 @@ fn android_main(app: AndroidApp) {
 
     log::info!("Loading scene: {}", scene_path.display());
 
+    // Schemas through the one resolver (ADR 0114, #797): the game's
+    // `flint.toml` was packed with it, so its `[project] schemas` names
+    // them, `engine/schemas/examples` included; a game with no list gets
+    // the two directories Gradle copies in, engine's then game's.
+    let (registry, schema_dirs) = load_schemas(&data_dir, &scene_path);
+
     // Parse scene
     let (world, scene_file) = flint_scene::load_scene(&scene_path, &registry).unwrap_or_else(|e| {
         panic!("Failed to load scene {}: {e}", scene_path.display());
@@ -144,8 +131,9 @@ fn android_main(app: AndroidApp) {
         scene_input_config,
     );
 
-    // Set schema paths for scene transitions
-    player.set_schema_paths(schema_paths);
+    // The registry the scene loaded with, kept for chunks and transitions
+    // (ADR 0115, #683), and where its directories came from
+    player.set_schemas(registry, schema_dirs);
 
     // Register the JNI gamepad axis reader so PlayerApp can poll trigger/right-stick values
     player.set_android_axis_reader(read_gamepad_axes);
@@ -176,6 +164,44 @@ fn android_main(app: AndroidApp) {
 
     log::info!("Entering event loop");
     event_loop.run_app(&mut player).expect("Event loop error");
+}
+
+/// The schema registry for `scene` and the directories it was read from:
+/// the manifest's list, else `engine/schemas` and `schemas` as packed
+/// ([`flint_core::project::packed_schema_dirs`]). A list naming a directory
+/// the APK doesn't hold is logged with the name, and the packed pair loads
+/// instead, so the game still starts and logcat says what to fix.
+fn load_schemas(
+    data_dir: &std::path::Path,
+    scene: &std::path::Path,
+) -> (
+    flint_schema::SchemaRegistry,
+    flint_core::project::SchemaDirs,
+) {
+    use flint_core::project;
+    let packed = [
+        data_dir.join("engine").join("schemas"),
+        data_dir.join("schemas"),
+    ];
+    let dirs = project::packed_schema_dirs(scene, &packed).unwrap_or_else(|e| {
+        log::error!("Schemas: {e}. Loading the packed engine and game schemas instead");
+        project::host_schema_dirs(&packed, Some(scene))
+    });
+    log::info!(
+        "Schemas ({}): {}",
+        dirs.source.name(),
+        dirs.dirs
+            .iter()
+            .map(|d| project::shown(d))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let registry =
+        flint_schema::SchemaRegistry::load_from_directories(&dirs.dirs).unwrap_or_else(|e| {
+            log::warn!("Failed to load schemas: {e}");
+            flint_schema::SchemaRegistry::new()
+        });
+    (registry, dirs)
 }
 
 /// Read the `scene` field from `android.toml` if present in extracted assets.

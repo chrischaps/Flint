@@ -241,6 +241,16 @@ let lamp = ImportedMaterial {
 
 Vertex RGB may go past 1 for bright lights. In this mode vertex alpha is no longer opacity, but the entity's `material.opacity` still applies. A glowing face keeps its normal, so it can still take a faint specular highlight on top, like lit glass.
 
+#### A glowing box
+
+An entity drawn from its `bounds` has no mesh to carry emission, so it takes it from **`material.emissive`** (#797): `[r, g, b]`, linear, added after lighting. Above 1 is what bloom takes up, so a placeholder lamp or a sun marker glows before it has a model. `emissive_scale` multiplies it, and unset is no light. On a model the key is not read: its emission is the GLB's, recoloured with `material_overrides` (below).
+
+```toml
+[entities.lamp.material]
+color = [1.0, 0.8, 0.5, 1.0]
+emissive = [9.0, 6.0, 2.5]
+```
+
 #### Changing the glow after upload
 
 A mesh's emission is set when it's uploaded, but an entity can scale it every frame with **`material.emissive_scale`** ([ADR 0090](https://github.com/chrischaps/Flint/blob/main/docs/adr/0090-emission-scale-after-upload.md)). It multiplies all of the mesh's emission: the material's own `emissive` and the per-vertex kind. The default is 1, which is the mesh as uploaded. Nothing is re-uploaded, so a city's worth of windows can come on with the evening as one number per entity.
@@ -250,7 +260,7 @@ A mesh's emission is set when it's uploaded, but an entity can scale it every fr
 emissive_scale = 0.0   # off by day; a script or extension raises it at dusk
 ```
 
-- **Where it applies:** imported and runtime meshes, skinned or not. An entity with no scale of its own takes its parent's, so a GLB expanded into child nodes dims as one.
+- **Where it applies:** imported and runtime meshes, skinned or not, and boxes drawn from `bounds`, whose light is their own `material.emissive` (below). An entity with no scale of its own takes its parent's, so a GLB expanded into child nodes dims as one.
 - **Zero is dark.** At 0, a per-vertex light face goes black, like an unlit bulb. It doesn't turn back into a lit, see-through surface, and surface vertices are lit as usual. Negative values count as 0.
 - **Only the strength changes.** To slide a face from lit paint by day to light by night, use `glow_surface` as well (below). Glass that is lit like any surface and gives off light from its material's `emissive` is often enough: at 0 it's plain glass.
 - **Cost:** a new scale rebuilds that draw's small material uniform on the next frame, as a new `opacity` does. If hundreds of entities glow at once, change the value in steps rather than by a hair every frame.
