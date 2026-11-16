@@ -321,6 +321,11 @@ topic = "living"
 purpose = "One tree under two settings, twice: a spec beside a twin with species values of its own"
 
 [[example]]
+scene = "noise_trees.scene.toml"
+topic = "living"
+purpose = "A colonized pine and a grammar willow that live by noise poses, beside an oak that regrows (#506)"
+
+[[example]]
 scene = "soft_form.scene.toml"
 topic = "living"
 purpose = "A pale living form whose silhouette feathers at rest (#582)"
