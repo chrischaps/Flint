@@ -12,7 +12,7 @@ For each cut list `cuts/<cut>.toml` it
   2. writes the suite and its mix automation beside this script,
      `music/<cut>.suite.toml` and `music/<cut>.events.toml`,
   3. renders them with Flint's own offline mixer:
-     `flint render-suite music/<cut>.suite.toml --script music/<cut>.events.toml`,
+     `flint music render music/<cut>.suite.toml --script music/<cut>.events.toml`,
   4. masters the result to -14 LUFS integrated (EBU R128 / BS.1770-4, what
      YouTube and Instagram normalize to) under a -1.5 dBTP ceiling, and
      writes <out>/many-hands-<cut>.wav (48 kHz, 24-bit) and a report,
@@ -173,12 +173,12 @@ def build(cut_path: Path, out: Path, flint: list[str], quiet: bool = False,
     events.write_text(score.events_toml(cut), encoding="utf-8", newline="\n")
 
     raw = out / f"many-hands-{cut.name}.raw.wav"
-    cmd = flint + ["render-suite", str(suite), "--script", str(events), "--output", str(raw),
+    cmd = flint + ["music", "render", str(suite), "--script", str(events), "--output", str(raw),
                    "--base-dir", str(out), "--duration-bars", str(int(cut.bars))]
     run = subprocess.run(cmd, capture_output=True, text=True)
     if run.returncode != 0:
         sys.stderr.write(run.stdout + run.stderr)
-        raise SystemExit(f"flint render-suite failed for {cut.name}")
+        raise SystemExit(f"flint music render failed for {cut.name}")
     fired = sum(1 for line in run.stdout.splitlines() if line.startswith("fired"))
     late = sum(1 for line in run.stdout.splitlines() if "(LATE)" in line)
 

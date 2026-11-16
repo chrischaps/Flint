@@ -111,7 +111,7 @@ A suite a chart is judged against keeps `flint-rhythm`'s contract on top of that
 - **`[reintegration]`** (`MissingReintegration`): `re_entry_sections` naming declared sections, a `lead_bus` that is a motif bus, `reassembly_bars` of 1 or 2.
 - **A judgment window** on every section, `pulse_window_ms` (`PulseWindowMissing`; a non-positive one is `PulseWindowInvalid` in either layer).
 
-`flint validate-suite` holds a suite to the rhythm contract when it declares `[reintegration]`, when it is given a `--chart`, or with `--rhythm`; otherwise to the general one.
+`flint music validate` holds a suite to the rhythm contract when it declares `[reintegration]`, when it is given a `--chart`, or with `--rhythm`; otherwise to the general one.
 
 The **chart** (`*.chart.toml`) says what the player should do, in beats:
 
@@ -120,7 +120,7 @@ The **chart** (`*.chart.toml`) says what the player should do, in beats:
 - `[[cues]]`: `beat`, `cue` name, optional `params` table. Cues reach scripts through `conducted_cues()` ([ADR 0033](https://github.com/chrischaps/Flint/blob/main/docs/adr/0033-chart-cues-fire-with-params.md), cue params and conducted cues).
 - `[[intensity]]` keys: `beat`, `value`.
 
-Both parsers are shape-tolerant on purpose. Unknown channels or kinds, and buses outside a rhythm suite's six, parse fine and are reported by `flint validate-suite` as coded issues; only structurally unreadable input fails to parse.
+Both parsers are shape-tolerant on purpose. Unknown channels or kinds, and buses outside a rhythm suite's six, parse fine and are reported by `flint music validate` as coded issues; only structurally unreadable input fails to parse.
 
 ## The `music_session` Component
 
@@ -146,7 +146,7 @@ quit_on_finish = false
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `manifest` | string | required | Suite manifest, from the project root |
-| `events` | string | | Event script of bus changes on the musical grid (`*.events.toml`, as `flint render-suite` plays) |
+| `events` | string | | Event script of bus changes on the musical grid (`*.events.toml`, as `flint music render` plays) |
 | `chart` | string | | Beatmap chart: judge the player against it (the rhythm layer, the player's `rhythm` feature) |
 | `lean_mode` | string | `"arrival"` | `arrival` judges gross motion toward beat-anchored targets ([ADR 0013](https://github.com/chrischaps/Flint/blob/main/docs/adr/0013-arrival-lean-mode.md), arrival lean mode); `track` judges the stick against the curve on a fine grid |
 | `input_map` | string | `"prototype"` | Verb map, `prototype` or `full` |
@@ -166,7 +166,7 @@ Paths are from the project root (the folder of the scene's `flint.toml`). A suit
 The session is a player subsystem ([ADR 0117](https://github.com/chrischaps/Flint/blob/main/docs/adr/0117-player-subsystems-and-one-game-step.md)), built when a scene with the component is entered and dropped when it unloads. A suite with no chart takes steps 1, 2 and 4 below; a chart adds the gamepad handoff and the judgment.
 
 1. **Shared audio manager.** The session opens on the player's existing Kira manager rather than its own ([ADR 0017](https://github.com/chrischaps/Flint/blob/main/docs/adr/0017-one-shared-audio-manager.md), shared audio manager). Stems and `audio_source` sounds share one device, one clock. If there is no audio device the session is skipped with a console notice and everything else in the scene runs.
-2. **Timing offsets.** Measured output latency and tap calibration are read from the newest files under `logs/latency/` in the game root. Missing values are announced loudly on the console: run the latency harness for the former and `flint calibrate` for the latter.
+2. **Timing offsets.** Measured output latency and tap calibration are read from the newest files under `logs/latency/` in the game root. Missing values are announced loudly on the console: run the latency harness for the former and `flint music calibrate` for the latter.
 3. **Gamepad handoff.** The capture thread takes the pad for the session's duration ([ADR 0018](https://github.com/chrischaps/Flint/blob/main/docs/adr/0018-gamepad-handoff-and-inputstate-downsample.md), gilrs handoff and InputState downsample). The same event stream is down-sampled into the ordinary `InputState` so `is_action_pressed` and friends keep working frame-quantised, with a pulse press released on the *next* tick so edge detection sees a full down/up pair.
 4. **Teardown** fades the stems over 50 ms, before the player clears its audio, and restores the scene's authored post-processing values. On the web, where there is no device until the Begin click, the session starts on the first frame after it.
 
@@ -260,7 +260,7 @@ Scripts are read-only toward the session. Nothing in Rhai can change a bus gain,
 
 ## Recording, Replay and Offline Render
 
-Every judgment is logged, and the input stream can be recorded to `logs/sessions/<name>.session.jsonl`: one JSON header line (suite, chart, sample rate, both offsets, config snapshots) then one event per line, each stamped with its compensated suite sample. Because the stamp is already musical time, `flint replay-chart` feeds the identical judgment and coherence code with no clock, no audio and no gamepad, and produces the same numbers. Synthetic profiles (`perfect`, `late:<ms>`, `neglect`) generate a stream from the chart alone. `flint render-suite` plays a scripted `*.events.toml` (bus gain, low-pass and detune changes at `bar:N`, `beat:F` or `sample:N` times) through the real scheduler and mixer into a WAV, deterministically.
+Every judgment is logged, and the input stream can be recorded to `logs/sessions/<name>.session.jsonl`: one JSON header line (suite, chart, sample rate, both offsets, config snapshots) then one event per line, each stamped with its compensated suite sample. Because the stamp is already musical time, `flint music chart replay` feeds the identical judgment and coherence code with no clock, no audio and no gamepad, and produces the same numbers. Synthetic profiles (`perfect`, `late:<ms>`, `neglect`) generate a stream from the chart alone. `flint music render` plays a scripted `*.events.toml` (bus gain, low-pass and detune changes at `bar:N`, `beat:F` or `sample:N` times) through the real scheduler and mixer into a WAV, deterministically.
 
 ## Debug Surfaces
 
@@ -278,12 +278,12 @@ With no gamepad visible, a debug-hud build arms a **keyboard fallback** ([ADR 00
 
 The CLI harnesses form a pipeline; each is documented in the [Music CLI reference](../cli-reference/music.md):
 
-1. `flint validate-suite` cross-checks manifest, chart and stem files.
-2. `flint play-suite` plays the stems sample-locked with a console readout of position and per-bus state.
-3. `flint calibrate` records the player's median tap offset to `logs/latency/`.
-4. `flint play-chart` runs the full reactive loop with live capture; `--window` adds wordless visual cues, `--record` writes a session file.
-5. `flint replay-chart` re-judges a recorded or synthetic session headlessly.
-6. `flint render-suite` renders a scripted session to WAV for listening tests and automated evidence.
+1. `flint music validate` cross-checks manifest, chart and stem files.
+2. `flint music play` plays the stems sample-locked with a console readout of position and per-bus state.
+3. `flint music calibrate` records the player's median tap offset to `logs/latency/`.
+4. `flint music chart play` runs the full reactive loop with live capture; `--window` adds wordless visual cues, `--record` writes a session file.
+5. `flint music chart replay` re-judges a recorded or synthetic session headlessly.
+6. `flint music render` renders a scripted session to WAV for listening tests and automated evidence.
 
 Once the suite plays well in the harness, the `music_session` component brings the same session into `flint play`.
 

@@ -1,4 +1,4 @@
-//! Windowed front end for `flint play-chart` — a bare wgpu window over the
+//! Windowed front end for `flint music chart play` — a bare wgpu window over the
 //! same [`ChartSession`] the console loop drives.
 //!
 //! Exists for two reasons. Practical: gamepad-to-keyboard mappers (Legion
