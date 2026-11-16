@@ -76,8 +76,8 @@ nudge.
 
 ### The bob
 
-The showcase creatures run `creature_idle.rhai`: a 3 cm bob and a sway on the wall
-clock. `examples/scripts/beetle_idle.rhai` is the same motion. `experiment.py` plays both
+The showcase creatures run `creature_idle.rhai`: a 3 cm bob and a sway, on the wall
+clock when this was first measured. `examples/scripts/beetle_idle.rhai` is the same motion. `experiment.py` plays both
 beetles with it in `flint-player` (scripts don't run under `flint render`), from a
 camera low over them, and once without it as the control.
 
@@ -88,6 +88,14 @@ boil off:
 |---|---|---|
 | no scripts (the control) | 41/48, mean 0.95, holds `..` on the beat | 33/48, mean 0.15 |
 | both bob | 48/48, mean 1.18, never holds | 48/48, mean 0.63 |
+| both bob on the wooze beat (#505) | 42/48, mean 1.02, `######.######.####.######.################..####` | 39/48, mean 0.50 |
+
+The last row is the same run with `beetle_idle.rhai` reading `wooze_beat()` (#505).
+On one binary, the wall-clock script measured 48/48 and 48/48 again, and the control
+41/48 and 39/48. Per frame pair the woozy beetle's crop now falls to 0.01-0.06 on
+pairs 6-7, 12-13, 18-19 and so on, where the control's does, against no pair under
+0.34 on the wall clock; the `#` that remain on a hold are the player's floor, which
+moves the control's plain beetle too.
 
 The control's plain beetle shows the player's floor. Its crop changes by a fraction of
 a level (0.15, against the bob's 0.63), and summed over the run the change isn't on
@@ -99,9 +107,10 @@ swell and the whole-body swell**, both of which are fair alternatives to try by 
 **The bob fights the beat.** With it, the woozy beetle never rests (48/48), so the
 held beat that makes it belong beside the trees is gone. A 3 cm bob on the wall clock
 is bigger than the wooze, which is 0.04 m times linklater's amplitude of 0.5, so 2 cm.
-A script can't fix this today: Rhai can set the field (`set_wooze`) but can't read its
-clock. Follow-up: #505, a Rhai read of the field and its clock, so a bob can hold on
-the beat.
+#505 gave scripts the field's clock (`wooze_beat`, and `wooze_at` for its knobs), and
+`beetle_idle.rhai` and `creature_idle.rhai` move on it where the scene has a `[wooze]`
+table: the bob holds on the beat again, and scales by the field's amplitude, so here it
+is 1.5 cm. Scenes with no table keep the wall clock.
 
 ## 3. The noise pose (prototype)
 

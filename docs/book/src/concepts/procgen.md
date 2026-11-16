@@ -672,6 +672,23 @@ It needs a `[wooze]` table: without one the player warns once and the grass keep
 
 Bench: `examples/woozy_grove_grass.scene.toml`, the Woozy Grove grown over with a meadow worn along its paths. `python examples/woozy_grove_grass/experiment.py` renders every variant tried from three places and measures how the grass moves; `examples/woozy_grove_grass/README.md` has what was found.
 
+### Scripted motion on the beat
+
+A script that moves something on the wall clock (`total_time()`) fights the field: a creature with shallow wooze that also bobs never rests, so the held beat that makes it belong beside the trees is gone. `wooze_beat(x, y, z)` is the field's hold-and-glide clock at a place, the one shallow wooze keeps, and `wooze_at(x, y, z)` is the field's knobs there, zones included ([Wooze API](scripting.md#wooze-api)). Written on the beat's `time` and `delta`, a bob holds when the props round it hold and glides when they glide:
+
+```rust
+let t = total_time();
+let dt = delta_time();
+if module_enabled("wooze") {
+    let beat = wooze_beat(pos.x, pos.y, pos.z);
+    if "time" in beat { t = beat.time; dt = beat.delta; }   // a scene with no [wooze] keeps the wall clock
+}
+set_position(me, pos.x, sin(t * 1.5) * 0.03, pos.z);
+set_rotation(me, rot.x, rot.y + sin(t * 0.8) * 2.0 * dt, rot.z);
+```
+
+`time` keeps the wall clock's pace on average, so a motion tuned on `total_time()` keeps its speed. In `examples/wooze_props.scene.toml`'s bob run (`python examples/wooze_props/experiment.py --only bob`), the beetle with shallow wooze and that bob moved on all 48 frame pairs on the wall clock, and on 42 of 48 on the beat, against 41 for the same beetle with no script: the holds are back, every six frames. `showcase_game/scripts/creature_idle.rhai` reads it the same way, and in its levels, which have no `[wooze]`, renders byte for byte as it did.
+
 ### Woozy Grove
 
 The benches each test one thing from a fixed camera. `examples/woozy_grove.scene.toml` puts them together in a place to walk through, since the look can only be judged by eye, from inside it:
