@@ -306,6 +306,11 @@ topic = "living"
 purpose = "Forty living oaks, to check their pose rings stay full"
 
 [[example]]
+scene = "fog_veil.scene.toml"
+topic = "living"
+purpose = "A living oak's echoes in front of a fogged horizon, to check translucent draws are fogged at their own depth"
+
+[[example]]
 scene = "living_sweep.scene.toml"
 topic = "living"
 purpose = "Forty living oaks with every knob moving, to check no frame goes without a pose"

@@ -743,6 +743,10 @@ fn shade_skinned(in: VertexOutput) -> vec4<f32> {
 // are read; the targets are single-sample R8Unorm with "over" blending.
 @fragment
 fn fs_veil(in: VertexOutput) -> @location(0) vec4<f32> {
+    return vec4<f32>(veil_alpha(in));
+}
+
+fn veil_alpha(in: VertexOutput) -> f32 {
     let scaled_uv = in.uv * material.texture_scale;
     var alpha = material.base_color.a;
     if (material.use_vertex_color == 1u) {
@@ -754,7 +758,22 @@ fn fs_veil(in: VertexOutput) -> @location(0) vec4<f32> {
     if (material.has_base_color_tex == 1u) {
         alpha = textureSample(base_color_texture, material_sampler, scaled_uv).a * alpha;
     }
-    return vec4<f32>(clamp(alpha * material.opacity * edge_feather(in), 0.0, 1.0));
+    return clamp(alpha * material.opacity * edge_feather(in), 0.0, 1.0);
+}
+
+// The fog veil (#513), as shader.wgsl's: this surface's weight and depth
+// for the composite's fog, and how much of what's behind it hides.
+@fragment
+fn fs_fog_veil(in: VertexOutput) -> @location(0) vec4<f32> {
+    let w = veil_alpha(in);
+    return vec4<f32>(w * (1.0 - in.clip_position.z), w, 0.0, w);
+}
+
+// An additive mesh's or a lightening echo's: it weighs in, hiding nothing.
+@fragment
+fn fs_fog_veil_light(in: VertexOutput) -> @location(0) vec4<f32> {
+    let w = veil_alpha(in);
+    return vec4<f32>(w * (1.0 - in.clip_position.z), w, 0.0, 0.0);
 }
 
 // The style albedo (#869): the surface's own colour before any light, as
