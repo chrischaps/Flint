@@ -185,8 +185,8 @@ impl ScriptHost for PlayerApp {
         }
     }
 
-    fn set_look(&mut self, name: Option<String>) {
-        if let Err(e) = PlayerApp::set_look(self, name.as_deref()) {
+    fn set_look(&mut self, name: Option<String>, seconds: f64) {
+        if let Err(e) = PlayerApp::fade_to_look(self, name.as_deref(), seconds) {
             tracing::warn!("set_look: {e}");
         }
     }

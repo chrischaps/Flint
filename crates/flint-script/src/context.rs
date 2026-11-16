@@ -323,9 +323,12 @@ pub enum ScriptCommand {
     },
     /// Lay a look under the scene's `[post_process]` keys in place of the
     /// one it has (#356): a `styles/<name>.look.toml` or a built-in.
-    /// `None` takes the look off (the scene's keys alone).
+    /// `None` takes the look off (the scene's keys alone). `seconds` above
+    /// 0 cross-fades from the look drawn now to the new one (#496);
+    /// 0 is a cut.
     SetLook {
         name: Option<String>,
+        seconds: f64,
     },
     /// A function of a module an optional feature owns (#698): Living
     /// Props' knobs, the wooze field, the A/B. The subsystem that declared

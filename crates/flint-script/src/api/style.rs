@@ -296,6 +296,20 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .run(|call, (name,)| {
         call.ctx().commands.push(ScriptCommand::SetLook {
             name: look_name(&name),
+            seconds: 0.0,
+        });
+    });
+
+    m.func(
+        "set_look",
+        "Cross-fade from the look drawn now to another over seconds of game time (numbers ease, a style in one look alone fades by its blend); look_faded fires on arrival.",
+    )
+    .arg("name", Str)
+    .arg("seconds", Num)
+    .run(|call, (name, seconds)| {
+        call.ctx().commands.push(ScriptCommand::SetLook {
+            name: look_name(&name),
+            seconds: fade_seconds(seconds),
         });
     });
 
@@ -304,9 +318,22 @@ pub(crate) fn register(api: &mut ScriptApi) {
         "Take the look off: the scene's own post-processing keys alone.",
     )
     .run(|call, ()| {
-        call.ctx()
-            .commands
-            .push(ScriptCommand::SetLook { name: None });
+        call.ctx().commands.push(ScriptCommand::SetLook {
+            name: None,
+            seconds: 0.0,
+        });
+    });
+
+    m.func(
+        "clear_look",
+        "Fade the look off over seconds of game time, to the scene's own post-processing keys.",
+    )
+    .arg("seconds", Num)
+    .run(|call, (seconds,)| {
+        call.ctx().commands.push(ScriptCommand::SetLook {
+            name: None,
+            seconds: fade_seconds(seconds),
+        });
     });
 }
 
@@ -315,6 +342,15 @@ fn warn(message: String) -> ScriptCommand {
     ScriptCommand::Log {
         level: LogLevel::Warn,
         message,
+    }
+}
+
+/// A look fade's length: 0 (a cut) for a negative or non-finite one.
+fn fade_seconds(seconds: f64) -> f64 {
+    if seconds.is_finite() {
+        seconds.max(0.0)
+    } else {
+        0.0
     }
 }
 

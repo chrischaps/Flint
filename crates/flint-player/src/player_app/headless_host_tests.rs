@@ -163,6 +163,7 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
         },
         C::SetLook {
             name: Some(s("graphite")),
+            seconds: 2.0,
         },
         // The living subsystem's module commands (#698), one a function
         module(

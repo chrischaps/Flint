@@ -95,6 +95,7 @@ impl PlayerApp {
                 panel.set_asset_scope(scene_dir);
                 panel.set_looks(&looks, current.as_deref());
                 panel.set_scene_file(scene_file);
+                panel.offer_look_fade(true);
                 self.debug_panels.push(Box::new(panel));
             }
         }

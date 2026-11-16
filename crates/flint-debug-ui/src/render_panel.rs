@@ -90,6 +90,10 @@ pub struct RenderDebugPanel {
     /// The look the scene draws with (`None`: its own keys alone); the
     /// picker writes the choice here and raises `look_changed`.
     pub look: Option<String>,
+    /// Seconds a picked look fades in over (#496; 0 cuts), offered only
+    /// by a host that fades looks ([`offer_look_fade`](Self::offer_look_fade)).
+    pub look_seconds: f32,
+    fades_looks: bool,
     flags: RenderPanelFlags,
     open: bool,
     dirty: bool,
@@ -120,6 +124,8 @@ impl RenderDebugPanel {
             style_legend: Vec::new(),
             looks: Vec::new(),
             look: None,
+            look_seconds: 0.0,
+            fades_looks: false,
             flags: RenderPanelFlags::default(),
             open: false,
             dirty: false,
@@ -201,6 +207,13 @@ impl RenderDebugPanel {
             })
             .collect();
         self.look = current.map(str::to_string);
+    }
+
+    /// Offer a fade time beside the Look picker (#496): the player eases
+    /// to a picked look over it; a host that can only cut (the viewer)
+    /// leaves it off.
+    pub fn offer_look_fade(&mut self, on: bool) {
+        self.fades_looks = on;
     }
 
     /// The look in use, as the host last said (a script's `set_look`,
@@ -290,6 +303,22 @@ impl RenderDebugPanel {
                          under the scene's own [post_process] keys and replaces what this \
                          menu changed since.",
                     );
+                if self.fades_looks {
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut self.look_seconds)
+                                .range(0.0..=30.0)
+                                .speed(0.05)
+                                .suffix(" s"),
+                        )
+                        .on_hover_text(
+                            "How long a picked look takes to fade in: numbers ease, a style \
+                             in one look alone fades by its blend, options switch halfway. \
+                             0 cuts. A script's set_look(name, seconds) does the same.",
+                        );
+                        ui.label("Fade");
+                    });
+                }
                 if let Some(look) = current.as_deref() {
                     ui.weak(format!("[post_process] look = \"{look}\""));
                 }
@@ -695,6 +724,11 @@ impl DebugPanel for RenderDebugPanel {
             let flags = self.take_flags();
             if flags.look_changed {
                 ctx.host.look = Some(self.look.clone());
+                ctx.host.look_seconds = if self.fades_looks {
+                    self.look_seconds as f64
+                } else {
+                    0.0
+                };
             }
             if flags.styles_committed {
                 ctx.host.committed_styles = self.authored_styles.clone();

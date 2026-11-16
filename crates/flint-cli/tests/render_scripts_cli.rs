@@ -629,6 +629,52 @@ fn entity_styles_and_their_tweens_reach_the_capture() {
     );
 }
 
+/// #496: `set_look(name, seconds)` in a capture fades from the moment it was
+/// asked, each still at its own time: the start is the frame without the
+/// look, the end the cut's bytes, and the middle neither.
+#[test]
+fn a_look_fade_is_captured_at_each_moment_of_it() {
+    let dir = project("look_fade");
+    let o = render(&dir, "plain.png", &["--time", "0"]);
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    std::fs::write(
+        dir.join("scripts/tint.rhai"),
+        "fn on_init() { set_look(\"graphite\", 2.0); }\n",
+    )
+    .unwrap();
+    for t in ["0", "1", "2"] {
+        let o = render(&dir, &format!("fade{t}.png"), &["--scripts", "--time", t]);
+        ok(&o);
+        assert!(!stderr(&o).contains("set_look"), "{}", stderr(&o));
+    }
+    std::fs::write(
+        dir.join("scripts/tint.rhai"),
+        "fn on_init() { set_look(\"graphite\"); }\n",
+    )
+    .unwrap();
+    ok(&render(&dir, "cut.png", &["--scripts", "--time", "2"]));
+    let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
+    assert!(
+        read("fade0.png") == read("plain.png"),
+        "the fade's start moved"
+    );
+    assert!(
+        read("fade2.png") == read("cut.png"),
+        "the fade didn't end on the cut"
+    );
+    assert!(
+        read("fade1.png") != read("fade0.png"),
+        "nothing faded by 1 s"
+    );
+    assert!(
+        read("fade1.png") != read("fade2.png"),
+        "the fade arrived at 1 s"
+    );
+}
+
 // #579: the boil, step_living and particles from scripts.
 
 /// A block on a floor under the shading boil, which nothing else moves: what

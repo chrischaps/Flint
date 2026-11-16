@@ -168,8 +168,9 @@ pub trait ScriptHost {
     fn rumble(&mut self, pad: i64, strength: f64, seconds: f64) {
         self.unsupported("rumble");
     }
-    /// `set_look(name)`, or `clear_look()` with `None`.
-    fn set_look(&mut self, name: Option<String>) {
+    /// `set_look(name[, seconds])`, or `clear_look([seconds])` with `None`;
+    /// `seconds` 0 is a cut, above it a cross-fade (#496).
+    fn set_look(&mut self, name: Option<String>, seconds: f64) {
         self.unsupported("set_look");
     }
 
@@ -318,7 +319,7 @@ pub fn apply<H: ScriptHost + ?Sized>(host: &mut H, cmd: ScriptCommand) {
             strength,
             seconds,
         } => host.rumble(pad, strength, seconds),
-        C::SetLook { name } => host.set_look(name),
+        C::SetLook { name, seconds } => host.set_look(name, seconds),
         C::SetCamera { camera } => host.set_camera(camera),
         C::SetPostProcess { post } => host.set_post_process(post),
         C::SetFogColor { color } => host.set_fog_color(color),

@@ -264,6 +264,11 @@ topic = "stylize"
 purpose = "A scene that names a look, and a script that tours the built-in ones (#356)"
 
 [[example]]
+scene = "look_fade.scene.toml"
+topic = "stylize"
+purpose = "Looks that cross-fade into one another: graphite eases into watercolor with set_look(name, seconds) (#496)"
+
+[[example]]
 scene = "user_styles.scene.toml"
 topic = "stylize"
 purpose = "Styles a game writes itself: WGSL beside a .shader.toml, loaded at run time (#274)"

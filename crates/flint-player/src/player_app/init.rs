@@ -282,7 +282,20 @@ impl PlayerApp {
     /// draw with it from the next frame (#356). Script post overrides keep
     /// stamping their fields over it, as they do over the scene's. A scene
     /// with no `[post_process]` block takes the look over the defaults.
+    /// A cut: [`fade_to_look`](Self::fade_to_look) eases into it instead.
     pub fn set_look(&mut self, look: Option<&str>) -> Result<(), String> {
+        self.fade_to_look(look, 0.0)
+    }
+
+    /// [`set_look`](Self::set_look) as a cross-fade over `seconds` of game
+    /// time (#496): from the config drawn now to the one `look` resolves
+    /// to, by `flint_render::look_fade` (numbers lerp, a style in one look
+    /// alone fades by its blend, options switch at the midpoint), and
+    /// `look_faded` fires to scripts at the end. 0 seconds, or no renderer
+    /// yet, is the cut. The look is the current one at once
+    /// ([`current_look`](Self::current_look)); a later look, faded or cut,
+    /// starts from wherever this fade has reached.
+    pub fn fade_to_look(&mut self, look: Option<&str>, seconds: f64) -> Result<(), String> {
         let base = match &self.scene.post_process {
             Some(def) => def.clone(),
             None => flint_scene::PostProcessDef::from_authored(toml::Table::new())
@@ -291,16 +304,56 @@ impl PlayerApp {
         let def = flint_render::look::resolve_in(&base, look, &self.asset_scope())?;
         self.scene.post_process = Some(def);
         let config = self.scene_post_config();
-        if let (Some(renderer), Some(context)) =
-            (self.scene_renderer.as_mut(), self.render_context.as_ref())
-        {
-            renderer.set_post_process_config(config);
-            renderer.ensure_style_resources(&context.device);
-            renderer.ensure_fxaa_resources(&context.device);
+        self.style.look_fade = None;
+        let device = self.render_context.as_ref().map(|c| &c.device);
+        #[cfg(test)]
+        let device = device.or(self.test_gpu.map(|g| &g.device));
+        if let (Some(renderer), Some(device)) = (self.scene_renderer.as_mut(), device) {
+            let from = renderer.post_process_config().clone();
+            // Everything the new look switches on is built now, not on the
+            // fade's first frame
+            renderer.set_post_process_config(config.clone());
+            renderer.ensure_style_resources(device);
+            renderer.ensure_fxaa_resources(device);
+            if seconds > 0.0 && seconds.is_finite() {
+                renderer.set_post_process_config(from.clone());
+                let fade = flint_render::look_fade::LookFade::new(from, config, seconds as f32);
+                self.style.look_fade = Some((fade, look.map(str::to_string)));
+            }
         }
         #[cfg(feature = "debug-hud")]
         self.refresh_style_panels_after_look();
         Ok(())
+    }
+
+    /// Whether a look's cross-fade is under way (#496).
+    pub fn look_fading(&self) -> bool {
+        self.style.look_fade.is_some()
+    }
+
+    /// Move a look's cross-fade on by `dt` seconds of game time and lay it
+    /// on the renderer's config (only what the two looks differ in); at its
+    /// end, fire `look_faded` with `#{ look }` and drop it. Each render
+    /// calls it once, before the scripts' overrides are stamped.
+    pub(super) fn step_look_fade(&mut self, dt: f64) {
+        let (Some((fade, look)), Some(renderer)) =
+            (self.style.look_fade.as_mut(), self.scene_renderer.as_mut())
+        else {
+            return;
+        };
+        fade.step(dt as f32);
+        let mut config = renderer.post_process_config().clone();
+        fade.apply(&mut config);
+        renderer.set_post_process_config(config);
+        if fade.done() {
+            let mut data = toml::Table::new();
+            data.insert("look".into(), look.clone().unwrap_or_default().into());
+            self.core.events.push(flint_runtime::GameEvent::Custom {
+                name: super::style_commands::LOOK_FADED.into(),
+                data: toml::Value::Table(data),
+            });
+            self.style.look_fade = None;
+        }
     }
 
     /// Set the schema directories transitions and chunks load from, as a

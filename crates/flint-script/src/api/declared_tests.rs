@@ -673,6 +673,8 @@ fn the_last_modules_are_declared_under_their_subsystems() {
         ("particle", "play_effect", 4),
         ("style", "tween_style_param", 5),
         ("style", "set_look", 1),
+        ("style", "set_look", 2),
+        ("style", "clear_look", 1),
         ("expression", "expression", 0),
         ("state", "register_state", 2),
         ("scene", "quit_game", 0),

@@ -30,7 +30,7 @@ pub use player_app::fonts::project_font_definitions;
 pub use player_app::frame_rate::FrameRateSetting;
 pub use player_app::headless_animation::HeadlessAnimation;
 pub use player_app::headless_game::{
-    apply_look, HeadlessGame, ScriptLook, Skipped, PRESENTATION_ONLY, SCRIPT_SEED,
+    apply_look, HeadlessGame, LookRequest, ScriptLook, Skipped, PRESENTATION_ONLY, SCRIPT_SEED,
 };
 pub use player_app::input_script::{Applied, InputScript, PointerEvent, ScriptEvent};
 #[cfg(feature = "living")]
@@ -49,7 +49,7 @@ pub use player_app::scene_loading::{
 pub use player_app::script_commands::apply_camera_overrides;
 pub use player_app::style_commands::{
     reset_post_style, set_post_style, set_post_style_param, Easing, SceneStyles, StyleApplied,
-    StyleTweens, TweenStep, POST_STYLE_CHANGED, POST_STYLE_TWEEN_DONE, STYLE_CHANGED,
+    StyleTweens, TweenStep, LOOK_FADED, POST_STYLE_CHANGED, POST_STYLE_TWEEN_DONE, STYLE_CHANGED,
     STYLE_TWEEN_DONE,
 };
 #[cfg(target_arch = "wasm32")]
