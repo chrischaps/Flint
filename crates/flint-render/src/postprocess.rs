@@ -23,8 +23,20 @@ pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// exactly where the composite tears. Prepended to each: WGSL has no include.
 pub const TEAR_MASK_WGSL: &str = include_str!("tear_mask.wgsl");
 
-/// The composite's source: [`TEAR_MASK_WGSL`], then `composite_shader.wgsl`.
+/// The composite's source: [`TEAR_MASK_WGSL`], then `composite_shader.wgsl`,
+/// with the fog veil's path (#513) folded out.
 pub const COMPOSITE_WGSL: &str = concat!(
+    "const FOG_VEILED: bool = false;\n",
+    include_str!("tear_mask.wgsl"),
+    include_str!("composite_shader.wgsl")
+);
+
+/// The composite for a frame whose fog reaches a translucent draw (#513):
+/// it reads the fog veil and the picture behind, and fogs each veiled pixel
+/// as two layers. A pipeline of its own, so the frames without the veil
+/// draw from code that never names it.
+pub const COMPOSITE_VEILED_WGSL: &str = concat!(
+    "const FOG_VEILED: bool = true;\n",
     include_str!("tear_mask.wgsl"),
     include_str!("composite_shader.wgsl")
 );
@@ -343,6 +355,53 @@ pub struct SsaoBlurUniforms {
 /// SSAO texture format (single-channel occlusion).
 const SSAO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
+/// What the composite fogs translucent draws at their own depth with
+/// (#513, `scene_renderer/fog_veil.rs`): the HDR picture as it stood before
+/// the first translucent draw, and the veil the translucent draws leave
+/// their weight, depth and coverage in. The size of the HDR buffer.
+pub struct FogVeilTargets {
+    pub behind: wgpu::Texture,
+    pub behind_view: wgpu::TextureView,
+    pub veil_view: wgpu::TextureView,
+}
+
+impl FogVeilTargets {
+    pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        let size = wgpu::Extent3d {
+            width: width.max(1),
+            height: height.max(1),
+            depth_or_array_layers: 1,
+        };
+        let texture = |label, format, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let behind = texture(
+            "Fog Veil Behind",
+            HDR_FORMAT,
+            wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let veil = texture(
+            "Fog Veil",
+            crate::scene_renderer::FOG_VEIL_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        Self {
+            behind_view: behind.create_view(&Default::default()),
+            veil_view: veil.create_view(&Default::default()),
+            behind,
+        }
+    }
+}
+
 /// Intermediate target for the FXAA pass (ADR 0050) — only allocated when
 /// `fxaa` (Kuwahara lazy pattern). The composite pass renders into
 /// this instead of the swapchain; the FXAA pass then samples it and writes
@@ -514,6 +573,9 @@ pub struct PostProcessResources {
     pub styles: crate::stylize::StyleTargets,
     // FXAA intermediate (full resolution, surface format) — only allocated when enabled
     pub fxaa: Option<FxaaResources>,
+    /// The picture behind the translucent draws and their fog veil (#513),
+    /// made the first frame the fog reaches a translucent draw.
+    pub fog_veil: Option<FogVeilTargets>,
     /// The chain's bind groups, kept until a resize replaces it (#139).
     pub binds: crate::bind_cache::BindCache,
 }
@@ -533,6 +595,10 @@ pub struct PostProcessPipeline {
     // them. Their buffers and textures stay this renderer's
     // Composite (HDR + bloom → tonemapped sRGB surface)
     pub composite_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    /// The composite that reads the fog veil (#513), made the first frame
+    /// that draws one.
+    composite_veiled: std::sync::OnceLock<std::sync::Arc<wgpu::RenderPipeline>>,
+    composite_pipeline_layout: wgpu::PipelineLayout,
     pub composite_uniform_bgl: wgpu::BindGroupLayout,
     pub composite_scene_bgl: wgpu::BindGroupLayout,
     pub composite_bloom_bgl: wgpu::BindGroupLayout,
@@ -743,6 +809,29 @@ impl PostProcessPipeline {
                         },
                         count: None,
                     },
+                    // The fog veil's picture behind (#513), read through
+                    // group 1's sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // The fog veil itself, read through binding 3
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -763,34 +852,13 @@ impl PostProcessPipeline {
             "post: composite_pipeline",
             surface_format,
             || {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("Composite Pipeline"),
-                    layout: Some(&composite_pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &composite_shader,
-                        entry_point: Some("vs_composite"),
-                        buffers: &[],
-                        compilation_options: Default::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &composite_shader,
-                        entry_point: Some("fs_composite"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: surface_format,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: Default::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        ..Default::default()
-                    },
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview_mask: None,
-                    cache: None,
-                })
+                composite_pipeline(
+                    device,
+                    "Composite Pipeline",
+                    &composite_shader,
+                    &composite_pipeline_layout,
+                    surface_format,
+                )
             },
         );
 
@@ -1610,6 +1678,8 @@ impl PostProcessPipeline {
 
         Self {
             composite_pipeline,
+            composite_veiled: std::sync::OnceLock::new(),
+            composite_pipeline_layout,
             composite_uniform_bgl,
             composite_scene_bgl,
             composite_bloom_bgl,
@@ -2177,6 +2247,7 @@ impl PostProcessPipeline {
         time: f32,
         ground_fog: Option<&crate::ground_fog::GroundFogGpu>,
         scene: &crate::stylize::StyleInput<'_>,
+        fog_veil: Option<&FogVeilTargets>,
         timer: Option<&mut crate::gpu_timer::GpuTimer>,
     ) {
         // SSAO: use blurred AO if enabled, white fallback otherwise
@@ -2198,7 +2269,8 @@ impl PostProcessPipeline {
         // The variant: which views it binds, and whose fog map
         let variant = u64::from(ssao_on)
             | u64::from(volumetric_on) << 1
-            | ground_fog.map_or(0, |g| g.id) << 2;
+            | u64::from(fog_veil.is_some()) << 2
+            | ground_fog.map_or(0, |g| g.id) << 3;
         let ssao_depth_bg =
             resources
                 .binds
@@ -2235,6 +2307,21 @@ impl PostProcessPipeline {
                                 binding: 6,
                                 resource: wgpu::BindingResource::TextureView(
                                     ground_fog.map_or(&self.ground_fog_empty_view, |g| &g.view),
+                                ),
+                            },
+                            // The fog veil's (#513), or 1x1 stand-ins the
+                            // plain composite never reads
+                            wgpu::BindGroupEntry {
+                                binding: 7,
+                                resource: wgpu::BindingResource::TextureView(
+                                    fog_veil
+                                        .map_or(&self.volumetric_black_view, |v| &v.behind_view),
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 8,
+                                resource: wgpu::BindingResource::TextureView(
+                                    fog_veil.map_or(&self.volumetric_black_view, |v| &v.veil_view),
                                 ),
                             },
                         ],
@@ -2395,13 +2482,81 @@ impl PostProcessPipeline {
             "Composite Pass",
             target_view,
             Some(wgpu::Color::BLACK),
-            &self.composite_pipeline,
+            match fog_veil {
+                Some(_) => self.composite_veiled(device),
+                None => &self.composite_pipeline,
+            },
             &[&uniform_bg, &scene_bg, &bloom_bg, &ssao_depth_bg],
         );
         if let Some((timer, scope)) = timed {
             timer.end(encoder, scope);
         }
     }
+}
+
+impl PostProcessPipeline {
+    /// The composite that reads the fog veil (#513), built the first time.
+    fn composite_veiled(&self, device: &wgpu::Device) -> &wgpu::RenderPipeline {
+        self.composite_veiled.get_or_init(|| {
+            crate::pipeline_cache::shared(
+                device,
+                "post: composite_veiled",
+                self.surface_format,
+                || {
+                    let module =
+                        device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
+                            label: Some("Composite Shader (fog veil)"),
+                            source: wgpu::ShaderSource::Wgsl(COMPOSITE_VEILED_WGSL.into()),
+                        });
+                    composite_pipeline(
+                        device,
+                        "Composite Pipeline (fog veil)",
+                        &module,
+                        &self.composite_pipeline_layout,
+                        self.surface_format,
+                    )
+                },
+            )
+        })
+    }
+}
+
+/// A composite pipeline over `module`, into `format`.
+fn composite_pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some("vs_composite"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some("fs_composite"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 /// What the volumetric pass reads of the shadow pass and the lights.
@@ -2463,7 +2618,10 @@ impl PostProcessResources {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: HDR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            // Copied from into the fog veil's picture behind (#513)
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let hdr_view = hdr_texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -2597,6 +2755,7 @@ impl PostProcessResources {
             styles: Default::default(),
             // FXAA intermediate is allocated on demand (ADR 0050)
             fxaa: None,
+            fog_veil: None,
             binds: Default::default(),
         }
     }

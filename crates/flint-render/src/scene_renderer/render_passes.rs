@@ -12,22 +12,47 @@ use crate::pipeline::TransformUniforms;
 use crate::shadow::{ShadowDrawUniforms, SHADOW_DRAW_STRIDE};
 use crate::sprite2d_pipeline::Sprite2dUniforms;
 
-/// Which slice of the main pass to render. `All` is the classic single-pass
-/// path; Pre/PostOcean split around the refraction grab (opaque scene is
-/// snapshotted between them so the ocean can sample it).
+/// Which slice of the main pass to render: the opaque scene (sky, terrain,
+/// grass, meshes, billboards, the grid), the ocean, and the rest (2D
+/// sprites, the blended draws, echoes, particles, the overlays). `ALL` is
+/// the single pass. The ocean's refraction grab ends the pass after the
+/// opaque scene (ADR 0094), and the fog veil (#513) after the ocean, to keep
+/// a copy of the picture behind the translucent draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RenderPhase {
-    All,
-    PreOcean,
-    PostOcean,
+pub(super) struct RenderPhase {
+    opaque: bool,
+    ocean: bool,
+    rest: bool,
 }
 
 impl RenderPhase {
-    fn draws_opaque(self) -> bool {
-        self != RenderPhase::PostOcean
+    pub const ALL: Self = Self::of(true, true, true);
+    /// Before the ocean's grab
+    pub const PRE_OCEAN: Self = Self::of(true, false, false);
+    /// After the ocean's grab
+    pub const POST_OCEAN: Self = Self::of(false, true, true);
+    /// After the grab, before the fog veil's copy
+    pub const OCEAN: Self = Self::of(false, true, false);
+    /// No grab, before the fog veil's copy
+    pub const OPAQUE_AND_OCEAN: Self = Self::of(true, true, false);
+    /// After the fog veil's copy
+    pub const REST: Self = Self::of(false, false, true);
+
+    const fn of(opaque: bool, ocean: bool, rest: bool) -> Self {
+        Self {
+            opaque,
+            ocean,
+            rest,
+        }
     }
-    fn draws_ocean_and_after(self) -> bool {
-        self != RenderPhase::PreOcean
+    fn draws_opaque(self) -> bool {
+        self.opaque
+    }
+    fn draws_ocean(self) -> bool {
+        self.ocean
+    }
+    fn draws_rest(self) -> bool {
+        self.rest
     }
 }
 
@@ -658,7 +683,7 @@ impl SceneRenderer {
         }
 
         // Normal arrows pass (always uses line pipeline)
-        if self.debug_state.show_normals && phase.draws_ocean_and_after() {
+        if self.debug_state.show_normals && phase.draws_rest() {
             render_pass.set_pipeline(&self.pipelines.main.line_pipeline);
             for draw in &self.normal_arrow_draws {
                 render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
@@ -671,7 +696,7 @@ impl SceneRenderer {
         }
 
         // Skeleton overlay pass (bone lines, drawn on top of everything — no depth test)
-        if self.debug_state.show_skeleton && phase.draws_ocean_and_after() {
+        if self.debug_state.show_skeleton && phase.draws_rest() {
             render_pass.set_pipeline(&self.pipelines.main.skeleton_line_pipeline);
             render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
             for draw in &self.skeleton_overlay_draws {
@@ -686,7 +711,7 @@ impl SceneRenderer {
 
         // Editor/gizmo overlay (ADR 0068): same line pipeline, never gated
         // behind the skeleton toggle.
-        if !self.debug_overlay_draws.is_empty() && phase.draws_ocean_and_after() {
+        if !self.debug_overlay_draws.is_empty() && phase.draws_rest() {
             render_pass.set_pipeline(&self.pipelines.main.skeleton_line_pipeline);
             // The particle pass may have left its texture bind group at slot 2.
             render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
@@ -827,7 +852,7 @@ impl SceneRenderer {
 
         // Ocean rendering (after all opaque — writes depth so fog applies;
         // group 3 holds the grab-pass snapshots, or dummies when disabled)
-        if self.water_active() && phase.draws_ocean_and_after() {
+        if self.water_active() && phase.draws_ocean() {
             self.water.draw(
                 render_pass,
                 self.pipelines.ocean.as_deref(),
@@ -845,7 +870,7 @@ impl SceneRenderer {
             self.draw_editor_grid(render_pass);
         } // end opaque phase (entities + skinned + billboards + grid)
 
-        if !phase.draws_ocean_and_after() {
+        if !phase.draws_rest() {
             return;
         }
 
@@ -1474,6 +1499,13 @@ impl SceneRenderer {
             self.post_time(),
             self.ground_fog.as_ref(),
             &scene,
+            // The fog veil (#513), while this frame drew it and the
+            // composite reads the HDR buffer it was drawn over (an HDR
+            // style's result isn't that picture)
+            resources
+                .fog_veil
+                .as_ref()
+                .filter(|_| self.fog_veil.drawn && hdr_scene.is_none()),
             if fxaa_active {
                 None
             } else {
