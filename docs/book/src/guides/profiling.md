@@ -40,6 +40,17 @@ The ASCII numbers from #313 (RTX 4070 laptop, Vulkan, `flint render --gpu-time 2
 
 The last row is the noise. At footprint 1 neither binary runs the pre-pass, yet they read 8% apart, so only the two 4K footprint-2 close-ups (−16% and −20%, in separate runs) are a measured win. The rest are within noise. Other sessions shared the GPU: take the least of several processes, and check a pass the change doesn't touch.
 
+Whole-frame ASCII over styled props, from #507 (the same GPU, `examples/ascii_entities` at 1080p, `--ascii-scope screen --ascii-edges 0 --gpu-time 240`, the least of 3 processes per binary, main and the branch taking turns; runs agreed to 1 µs). The four scenes are the demo with no prop styled, every prop's `enabled = false` (only the mask is read), the barrel without `normalize`, and the demo as it is:
+
+| Case | Before | After |
+|---|---|---|
+| No styled props (the plain case) | 0.055 ms | 0.056 ms |
+| Props styled, all off | 0.066 ms | 0.057 ms |
+| Props drawn, no `normalize` | 0.090 ms | 0.075 ms |
+| Props drawn, barrel normalised | 0.112 ms | 0.088 ms |
+
+The mask is read only near the variants' screen bounds, so a frame of props that are all off costs what the plain one does. What's left of the gap is the four passes the props add (the three tone statistics passes and the variant cell pre-pass), about 2 µs each even when empty, and the props' own pixels: their outline test, their variant row and their cell texel. Stubbing a pass's shader to return at once is how these were measured: it leaves the pass's fixed cost and removes its work.
+
 - `Composite`: that last pass, or `FXAA` when FXAA is on, since then FXAA is what writes the window.
 - `World lines`.
 

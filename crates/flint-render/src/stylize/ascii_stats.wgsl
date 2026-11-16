@@ -30,16 +30,20 @@ fn stats_shown(p: vec2<i32>) -> vec3<f32> {
     return select(c, to_display(c), u.srgb == 1u);
 }
 
-// The variant slot under `p` (output pixels), as the glyph pass finds it
-fn stats_slot(p: vec2<f32>) -> u32 {
-    if u.variant_meta.x <= 1u {
+// The mask id under `p` (output pixels) the glyph pass finds its slot by:
+// 0 with no variants, and outside `rect` (#507), where the slot being
+// summed has no pixel
+fn stats_id(p: vec2<f32>, rect: vec4<f32>) -> u32 {
+    if u.variant_meta.x <= 1u || any(p < rect.xy) || any(p >= rect.zw) {
         return 0u;
     }
     let msize = vec2<i32>(textureDimensions(stats_mask));
     let mp = vec2<i32>(floor(p * vec2<f32>(msize) / u.size));
-    let id = textureLoad(stats_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).r;
-    return slot_of(id);
+    return textureLoad(stats_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).r;
 }
+
+// Samples in a run
+const STATS_RUN: u32 = STATS_COLS / STATS_CHUNKS;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -53,17 +57,48 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let run = STATS_COLS / STATS_CHUNKS;
     let first = (texel.y / STATS_ROWS) * run;
     let y = (f32(row) + 0.5) / f32(STATS_ROWS) * u.size.y;
+    // Where the slot's pixels can be (#507): a variant's own bounds, any
+    // variant's for the whole frame's (which is every pixel outside them).
+    // A variant's run wholly outside its bounds meets none of its pixels:
+    // the zeros the loop would sum
+    var rect = u.mask_rect;
+    if slot != 0u {
+        rect = variants[slot].bounds;
+    }
+    let x0 = (f32(first) + 0.5) / f32(STATS_COLS) * u.size.x;
+    let x1 = (f32(first + run - 1u) + 0.5) / f32(STATS_COLS) * u.size.x;
+    if slot != 0u && (y < rect.y || y >= rect.w || x1 < rect.x || x0 >= rect.z) {
+        return vec4<f32>(0.0);
+    }
+    // A step at a time over the run (#507), each step's loads independent
+    // of one another: the mask ids, their slots, then the picture. Sample
+    // after sample, a run waited on memory 60 times in a row, and that
+    // wait, not the work, was the pass's time
+    var s: array<u32, STATS_RUN>;
+    for (var j = 0u; j < STATS_RUN; j++) {
+        let p = vec2<f32>((f32(first + j) + 0.5) / f32(STATS_COLS) * u.size.x, y);
+        s[j] = stats_id(p, rect);
+    }
+    var ours = 0u;
+    for (var j = 0u; j < STATS_RUN; j++) {
+        ours |= u32(slot_of(s[j]) == slot) << j;
+    }
+    if ours == 0u {
+        return vec4<f32>(0.0);
+    }
+    // The sums in sample order: every sample loaded, a weight of 0
+    // adding nothing
     var n = 0.0;
     var sum = 0.0;
     var sq = 0.0;
-    for (var i = first; i < first + run; i++) {
-        let p = vec2<f32>((f32(i) + 0.5) / f32(STATS_COLS) * u.size.x, y);
-        if stats_slot(p) == slot {
-            let l = luma(exposed(stats_shown(vec2<i32>(floor(p))), gain));
-            n += 1.0;
-            sum += l;
-            sq += l * l;
-        }
+    for (var j = 0u; j < STATS_RUN; j++) {
+        let p = vec2<f32>((f32(first + j) + 0.5) / f32(STATS_COLS) * u.size.x, y);
+        let w = f32((ours >> j) & 1u);
+        let l = luma(exposed(stats_shown(vec2<i32>(floor(p))), gain));
+        let lw = l * w;
+        n += w;
+        sum += lw;
+        sq += l * lw;
     }
     return vec4<f32>(n, sum, sq, 0.0);
 }
