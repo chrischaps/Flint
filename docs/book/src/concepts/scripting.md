@@ -142,7 +142,7 @@ A map costs a call about 0.15 to 0.22 µs more than four colour numbers: buildin
 | `get_shear(id: entity)` | `map`: `#{xy, xz, yx, yz, zx, zy}`; zeros when it has none | The entity's shear, all six terms. |
 | `clear_shear(id: entity)` | — | Remove the entity's shear: back to rotation and scale. |
 | `distance(a: entity, b: entity)` | `num`: metres; f64::MAX when either has no transform | The distance between two entities' positions. |
-| `set_parent(child: entity, parent: entity)` | — | Make one entity the child of another. |
+| `set_parent(child: entity, parent: entity)` | — | Make one entity the child of another; a script error if the parent is the child or below it. |
 | `get_parent(id: entity)` | `entity`: its id, or -1 when it has none | The entity's parent. |
 | `get_children(id: entity)` | `array`: their ids, in name order | The entity's children. |
 | `get_world_position(id: entity)` | `map`: `#{x, y, z}`; empty when it has no transform | The entity's position in the world, through its parents. |

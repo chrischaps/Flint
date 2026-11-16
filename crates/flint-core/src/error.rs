@@ -49,6 +49,16 @@ pub enum FlintError {
     #[error("Duplicate entity name: {0}")]
     DuplicateEntityName(String),
 
+    /// `set_parent(child, parent)` refused because `parent` is `child` or
+    /// one of its descendants (#680). `chain` is the walk from `parent` up
+    /// to `child`, by name: `[child]` for an entity given itself.
+    #[error("{}", parent_cycle_message(.child, .parent, .chain))]
+    ParentCycle {
+        child: String,
+        parent: String,
+        chain: Vec<String>,
+    },
+
     /// `field` is the dotted path inside the component (ADR 0115).
     #[error("Invalid field type: `{field}` expected {expected}, got {got}")]
     InvalidFieldType {
@@ -124,5 +134,47 @@ impl From<toml::de::Error> for FlintError {
 impl From<toml::ser::Error> for FlintError {
     fn from(err: toml::ser::Error) -> Self {
         FlintError::TomlSerError(err.to_string())
+    }
+}
+
+/// [`FlintError::ParentCycle`]'s message: `parent = "lamp"` on `lamp`
+/// itself, or the chain that would close into a loop.
+fn parent_cycle_message(child: &str, parent: &str, chain: &[String]) -> String {
+    if chain.len() <= 1 {
+        format!("Parent cycle: `{child}` can't be parented to itself")
+    } else {
+        format!(
+            "Parent cycle: `{child}` can't be parented to `{parent}`, which is below it \
+             ({}, each the child of the next)",
+            chain.join(" -> ")
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_parent_cycle_names_every_entity_on_the_loop() {
+        let itself = FlintError::ParentCycle {
+            child: "lamp".into(),
+            parent: "lamp".into(),
+            chain: vec!["lamp".into()],
+        };
+        assert_eq!(
+            itself.to_string(),
+            "Parent cycle: `lamp` can't be parented to itself"
+        );
+        let two = FlintError::ParentCycle {
+            child: "cart".into(),
+            parent: "wheel".into(),
+            chain: vec!["wheel".into(), "axle".into(), "cart".into()],
+        };
+        assert_eq!(
+            two.to_string(),
+            "Parent cycle: `cart` can't be parented to `wheel`, which is below it \
+             (wheel -> axle -> cart, each the child of the next)"
+        );
     }
 }
