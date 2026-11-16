@@ -139,7 +139,7 @@ impl PlayerApp {
         // F2's stats show the GPU's time too (ADR 0108), as does the perf
         // readout unless it was asked not to (#120): time the frame while
         // either is up. Timing the game turned on stays on after.
-        if self.stats.show || self.stats.perf.as_ref().is_some_and(|p| p.gpu_wanted) {
+        if self.stats.show || (self.stats.perf.readout && self.stats.perf.gpu_wanted) {
             if !renderer.gpu_timing() {
                 self.stats.gpu_timing =
                     renderer.set_gpu_timing(&context.device, &context.queue, true);
@@ -200,9 +200,7 @@ impl PlayerApp {
             self.core.subsystems.post_encode(&mut ctx);
         }
         // A field borrow, not `perf_mark`: `context` is still held.
-        if let Some(perf) = &mut self.stats.perf {
-            perf.mark(super::perf::Phase::Render);
-        }
+        self.stats.perf.mark(super::perf::Phase::Render);
 
         // Render egui HUD overlay on top of the 3D scene
         // HUD draws into a non-sRGB view of the same texture (see
@@ -213,6 +211,8 @@ impl PlayerApp {
             renderer.encode_gpu_timings(&context.device, &mut encoder);
             context.queue.submit(std::iter::once(encoder.finish()));
             renderer.frame_submitted();
+            // The GPU time read back this frame, for the frame history
+            self.stats.perf.gpu_ms(renderer.take_gpu_frame_ms());
         }
         self.perf_mark(super::perf::Phase::Hud);
 
@@ -232,6 +232,7 @@ impl PlayerApp {
             context.queue.present(output);
         }
         let presented = web_time::Instant::now();
+        self.stats.perf.presented_at(presented);
         self.perf_mark(super::perf::Phase::Present);
         #[cfg(target_arch = "wasm32")]
         self.show_perf();
@@ -407,10 +408,8 @@ impl PlayerApp {
 
     #[profiling::function]
     pub(super) fn tick(&mut self) {
-        // A frame begins: the perf readout's clock (#120).
-        if let Some(perf) = &mut self.stats.perf {
-            perf.begin_frame();
-        }
+        // A frame begins: the frame history's clock (#120, #1076).
+        self.stats.perf.begin_frame();
         use super::perf::Phase;
 
         // The page's Begin click and the browser's pointer lock (#102).
@@ -432,8 +431,15 @@ impl PlayerApp {
             self.poll_gamepad_events();
         }
 
-        // Advance game clock
+        // Advance game clock. Its tick measured the frame just closed: that
+        // is the history's newest frame, which is judged now (#1076).
         self.core.clock.tick();
+        if self.stats.perf.recording() {
+            self.stats
+                .perf
+                .clock_ticked(super::frame_history::ClockSample::of(&self.core.clock));
+            self.stats.hitches.observe(&self.stats.perf);
+        }
         if self
             .launch
             .hold_at
@@ -465,6 +471,7 @@ impl PlayerApp {
 
         // Script audio/cursor frame overrides, then per-frame input clear
         self.finish_frame();
+        self.stats.perf.fixed_steps(self.core.fixed_steps);
         self.perf_mark(Phase::Sync);
     }
 
@@ -1110,8 +1117,10 @@ impl super::game_core::FrameHost for PlayerApp {
         self.perf_mark(phase);
         // Every phase can call scripts (on_update, on_draw_ui, animation
         // ends, scene changes): what each called is this frame's (#703)
-        if let Some(perf) = &mut self.stats.perf {
-            perf.record_scripts(&self.core.script.take_times());
+        // Empty, and no allocation, unless script timing is on (`--perf`)
+        let times = self.core.script.take_times();
+        if !times.is_empty() {
+            self.stats.perf.record_scripts(&times);
         }
     }
 
