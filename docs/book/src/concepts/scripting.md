@@ -144,14 +144,14 @@ A map costs a call about 0.15 to 0.22 µs more than four colour numbers: buildin
 | `distance(a: entity, b: entity)` | `num`: metres; f64::MAX when either has no transform | The distance between two entities' positions. |
 | `set_parent(child: entity, parent: entity)` | — | Make one entity the child of another; a script error if the parent is the child or below it. |
 | `get_parent(id: entity)` | `entity`: its id, or -1 when it has none | The entity's parent. |
-| `get_children(id: entity)` | `array`: their ids | The entity's children. |
+| `get_children(id: entity)` | `array`: their ids, in name order | The entity's children. |
 | `get_world_position(id: entity)` | `map`: `#{x, y, z}`; empty when it has no transform | The entity's position in the world, through its parents. |
 | `set_material_color(id: entity, r: num, g: num, b: num, a: num)` | — | Set the entity's material base colour. |
 | `set_material_override(id: entity, material: str, r: num, g: num, b: num, a: num)` | — | Tint one named glTF material on the entity and its descendants. |
 | `set_material_emissive(id: entity, material: str, r: num, g: num, b: num)` | — | Recolour one named glTF material's emission (linear RGB) on the entity and its descendants. |
 | `set_material_emissive(id: entity, material: str, r: num, g: num, b: num, strength: num)` | — | Recolour one named glTF material's emission and set its strength. |
 | `clear_material_override(id: entity, material: str)` | — | Drop the entity's own override of one material, colour and light alike. |
-| `find_entities_with(component: str)` | `array`: their ids | Every entity that has a component of this name. |
+| `find_entities_with(component: str)` | `array`: their ids, in name order | Every entity that has a component of this name. |
 | `entity_count_with(component: str)` | `int` | How many entities have a component of this name. |
 | `spawn_entity(name: str)` | `entity`: its id, or -1 when the name is taken | Make an entity with this name, with no components. |
 | `despawn_entity(id: entity)` | — | Remove the entity (and its children's link to it). |
@@ -168,6 +168,10 @@ Every number in the Entity API takes an integer as well as a float: `set_positio
 Any other transform field goes through `set_field`, e.g. `set_field(id, "transform", "scale", [2.0, 1.0, 2.0])`; `set_position`, `set_rotation` and `set_scale` are that with the numbers checked for you.
 
 A function given an entity that isn't there does nothing, and says so once. `get_entity` returns `-1` for a name it can't find (an entity a scene builder hasn't made yet, say), and every function with an entity parameter (the Entity API, `play_clip` and the rest of the Animation API, `audio_position`, `set_velocity_2d`, `get_velocity_2d`, `move_character`, `get_collider_extents`, `camera_follow`, the Sprite API, the screen-UI setters `set_text`, `set_text_color`, `ui_set_value`, `set_anchor` and `set_anchor_offset`, the particle emitter calls, the Style API's entity functions and the Spline API) given it, or a despawned id, logs a warning the first time for each script and function: `seeded_stars.rhai: line 17: set_position(-1, ...) did nothing: there is no entity -1 (-1 is what get_entity returns for a name it can't find)`. A setter that queues work for the engine, like `set_velocity_2d`, `emit_burst` or `set_entity_style`, queues nothing. A getter returns its empty value as well (`#{}`, `()`, `""`, `false`, `0`; `get_parent` gives `-1`, `audio_position` `-1.0` and `distance` the largest float), and warns too. `entity_exists(id)` never warns: test with it where a missing entity is expected.
+
+#### Lists come in name order
+
+`find_entities_with`, `get_children` and `overlap_rect` return entities sorted by name, and `persist_keys` returns its keys sorted. The world keeps entities in hash maps, whose order changes from one run to the next, so a loop that spawned, played a sound or drew for each result used to do it in a different order each run, and `find_entities_with("enemy")[0]` could be a different enemy. Now the same scene gives the same order every run, whatever order its entities were spawned in, which is what keeps a `flint render --scripts` capture byte-identical. Name entities for the order you want (`wave_01`, `wave_02`), or sort the array yourself; never rely on ids, which depend on what was spawned first.
 
 #### Hiding entities
 
@@ -732,7 +736,7 @@ For sprite games the physics world is a flat plane. These mirror the 3D calls ab
 
 | Function | Returns | Description |
 |---|---|---|
-| `overlap_rect(x: num, y: num, w: num, h: num)` | `array`: their ids; empty with no physics | Every entity whose 2D collider overlaps a rectangle on the sprite plane. |
+| `overlap_rect(x: num, y: num, w: num, h: num)` | `array`: their ids, in name order; empty with no physics | Every entity whose 2D collider overlaps a rectangle on the sprite plane. |
 | `raycast_2d(ox: num, oy: num, dx: num, dy: num, max_dist: num)` | `map`: `#{entity, distance, point_x, point_y, normal_x, normal_y}`, or () for no hit or no physics | The nearest 2D collider a ray on the sprite plane meets, the calling entity's own excluded. |
 | `set_velocity_2d(id: entity, vx: num, vy: num)` | — | Set a 2D body's velocity, applied after the script batch. |
 | `get_velocity_2d(id: entity)` | `map`: `#{vx, vy}`, or () when it has no 2D body or there is no physics | A 2D body's velocity. |
@@ -1252,7 +1256,7 @@ Key-value store that survives scene transitions:
 | `persist_has(key: str)` | `bool` | Whether a value is saved under a key. |
 | `persist_remove(key: str)` | — | Forget the value saved under a key. |
 | `persist_clear()` | — | Forget every saved value in the slot held. |
-| `persist_keys()` | `array`: the keys, as strings | Every key with a saved value. |
+| `persist_keys()` | `array`: the keys, as strings, sorted | Every key with a saved value. |
 | `persist_save()` | — | Write the save file now, not waiting for the player's own write. |
 | `persist_save(path: str)` | — | Write the saved values to a file at this path, at once. |
 | `persist_load(path: str)` | — | Read saved values from a file at this path into the slot held. |

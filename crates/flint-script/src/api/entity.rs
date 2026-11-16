@@ -158,13 +158,13 @@ pub(crate) fn register(api: &mut ScriptApi) {
         "Every entity that has a component of this name.",
     )
     .arg("component", Str)
-    .returns(Array, "their ids")
+    .returns(Array, "their ids, in name order")
     .run(|call, (component,)| {
         let world = call.world()?;
         Ok(world
-            .entities_with_component(&component)
-            .iter()
-            .map(|id| Dynamic::from(id_of(*id)))
+            .in_name_order(world.entities_with_component(&component).iter().copied())
+            .into_iter()
+            .map(|id| Dynamic::from(id_of(id)))
             .collect::<rhai::Array>())
     });
 
@@ -442,7 +442,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
 
     m.func("get_children", "The entity's children.")
         .arg("id", Entity)
-        .returns(Array, "their ids")
+        .returns(Array, "their ids, in name order")
         .run(|call, (id,)| {
             Ok(call
                 .world()?
