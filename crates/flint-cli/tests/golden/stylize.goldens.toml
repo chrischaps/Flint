@@ -826,6 +826,18 @@ height = 360
 args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.brightness=0,0.3",
         "--sweep", "ascii.contrast=1,2.2", "--sweep-crop", "220,130,240,135"]
 
+# The same crop in fractions of the frame (#501): the one-renderer path draws
+# the pixel crop's sheet exactly, the header's locator included
+[[case]]
+name = "look-sweep-grid-crop-fraction"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+width = 640
+height = 360
+args = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.brightness=0,0.3",
+        "--sweep", "ascii.contrast=1,2.2", "--sweep-crop", "0.34375,0.3611,0.375,0.375"]
+matches = ["--no-grid", "--look", "ascii_noir", "--sweep", "ascii.brightness=0,0.3",
+           "--sweep", "ascii.contrast=1,2.2", "--sweep-crop", "220,130,240,135"]
+
 # Terrain and styled transparents in the mask (#310): ASCII hills cut
 # around smooth props, and a styled glass pane drawing what's behind it in
 # glyphs; then the mask itself

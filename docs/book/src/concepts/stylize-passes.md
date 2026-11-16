@@ -1164,14 +1164,16 @@ A style sized in points, such as ASCII's `cell` or pencil's `spacing`, draws as 
 - **`--sweep-crop X,Y,W,H`** draws every cell at `--width`x`--height` (1920x1080 unless you set them) and keeps that region pixel for pixel. The glyphs come out exactly the size the final render draws them, but you only see part of the frame. Choose a region that holds what the key affects, such as a prop's edge for glow or a gradient for a ramp.
 - **`--sweep-scale full`** draws every cell at the full size and shrinks it to 640 wide. The composition matches the final render (where glyphs land, how much of the frame the tone fills), but the glyphs blur.
 
-Both flags work with a grid. The sheet's subtitle states the scale, for example `1:1 640x360 at 760,520 of 1920x1080` or `1920x1080 shown at 33%`, so a reader knows what they are looking at. A crop that goes past the frame is refused before anything is drawn. `--sweep-scale cell` is the default.
+Both flags work with a grid. The sheet's subtitle states the scale, for example `1:1 640x360 at 760,520 of 1920x1080` or `1920x1080 shown at 33%`, so a reader knows what they are looking at. A crop sheet also carries a **locator** in its header, top right: the first cell's whole frame, shrunk, with the kept region outlined and the rest dimmed, so you can see which part of the scene every cell comes from (#501). A pixel crop that goes past the frame is refused before anything is drawn. `--sweep-scale cell` is the default.
+
+A crop can be given **in fractions** of the frame instead of pixels: when any value has a decimal point, all four are shares of the width and height, from 0 to 1. `--sweep-crop 0.4,0.48,0.33,0.33` keeps the same part of the frame at 1920x1080 or at 1280x720, so a crop you've found works at any `--width`/`--height`. Its edges are rounded to pixels, and the subtitle gives the region it came to.
 
 ```bash
 flint render examples/stylize_props.scene.toml --look ascii_noir \
     --sweep ascii.glow=0,0.6,1.2 --sweep-crop 760,520,640,360 -o glow.png
 ```
 
-![ascii_noir's glow swept as 1:1 crops of a 1080p frame: the radio and the barrel at their final glyph size](../images/sweep-crop-noir-glow.png)
+![ascii_noir's glow swept as 1:1 crops of a 1080p frame: the chair and the crate at their final glyph size, and top right the locator, the whole frame with the crop boxed in amber](../images/sweep-crop-noir-glow.png)
 
 Rendering at full size costs more: each cell is a whole 1080p frame. The pixel-identical check compares the full frames before they're cropped, so a crop can't hide a difference elsewhere in the frame.
 
