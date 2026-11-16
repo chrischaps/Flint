@@ -335,7 +335,11 @@ pub struct SpotLight {
     /// Rides the former _pad0 slot — layout unchanged; only shader.wgsl's
     /// mirror renames the field (sole reader).
     pub source_radius: f32, // was _pad0
-    pub _pad1: f32,
+    /// 1.0 on the one spot whose shadow map is drawn this frame (#504),
+    /// else 0.0. Rides the former _pad1 slot, so the layout is unchanged;
+    /// the mirrors that draw spot light (shader, skinned, terrain) name it
+    /// `shadow`, the rest keep `_pad1`.
+    pub shadow: f32, // was _pad1
     pub _pad2: f32,
 }
 
@@ -350,7 +354,7 @@ impl Default for SpotLight {
             outer_angle: 0.5,
             intensity: 0.0,
             source_radius: 0.0,
-            _pad1: 0.0,
+            shadow: 0.0,
             _pad2: 0.0,
         }
     }

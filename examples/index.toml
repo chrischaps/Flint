@@ -77,6 +77,11 @@ topic = "rendering"
 purpose = "A near-black stage under one soft pool of light: dither in display levels hides the dark's banding (#503)"
 
 [[example]]
+scene = "spot_shadow.scene.toml"
+topic = "rendering"
+purpose = "One spot light with cast_shadows: a contact shadow under a figure, softened by source_radius"
+
+[[example]]
 scene = "transparency_test.scene.toml"
 topic = "rendering"
 purpose = "Transparent materials beside opaque ones"

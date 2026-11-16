@@ -108,12 +108,10 @@ impl SceneRenderer {
         // Grass: BLADE_INDEX_COUNT indices per instance
         triangles += self.grass.instance_count * BLADE_INDEX_COUNT / 3;
 
-        // Shadow stats: estimate as main pass × the cascades drawn, counting
-        // only the draws that cast (ADR 0100)
-        let cascade_count = match &self.shadow_pass {
-            Some(sp) if self.shadows_drawn() => sp.cascades() as u32,
-            _ => 0,
-        };
+        // Shadow stats: estimate as main pass × the layers drawn (the
+        // cascades, and a spot's, #504), counting only the draws that cast
+        // (ADR 0100)
+        let cascade_count = self.shadow_layers_drawn();
         let shadow_entity_draws = shadow_casters + terrain_draws;
         let shadow_draw_calls = shadow_entity_draws * cascade_count;
         let shadow_triangles = shadow_caster_triangles * cascade_count;

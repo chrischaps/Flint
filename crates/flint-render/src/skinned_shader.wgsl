@@ -95,8 +95,9 @@ struct SpotLight {
     color: vec3<f32>,
     outer_angle: f32,
     intensity: f32,
-    _pad0: f32,
-    _pad1: f32,
+    source_radius: f32,
+    // 1.0 on the spot whose shadow map is drawn (#504); was _pad1
+    shadow: f32,
     _pad2: f32,
 };
 
@@ -128,6 +129,10 @@ struct ShadowUniforms {
     // PCSS (ADR 0057): xyz = per-cascade light-ortho depth range (world
     // units), w = tan(sun angular size); w = 0 -> legacy 3x3 PCF verbatim.
     pcss: vec4<f32>,
+    // The spot's shadow (#504): world to layer 3's clip space, and
+    // (near, far, tan of the half-angle, 1 when drawn); w = 0 -> no spot shadow.
+    spot_view_proj: mat4x4<f32>,
+    spot: vec4<f32>,
 };
 
 @group(2) @binding(3)
@@ -253,6 +258,136 @@ fn attenuation(distance: f32, radius: f32) -> f32 {
     let factor = d2 / r2;
     let falloff = saturate(1.0 - factor * factor);
     return falloff * falloff / max(d2, 0.0001);
+}
+
+// The spot light's shadow (#504, ADR 0124): layer 3 of the shadow map array,
+// a perspective map drawn from the spot that `cast_shadows` chose. Returns
+// 1.0 (lit) to 0.0 (shadowed). `source_radius` above 0 softens it the way a
+// sun's `angular_size` softens the cascades (PCSS, ADR 0057): sharp where a
+// caster meets what it shadows, wider as they part. 0 is a 3x3 PCF.
+// N is the geometric normal, for the receiver's normal offset; frag_xy the
+// fragment's pixel, which turns the soft kernel a little each pixel so its
+// taps blend into fine grain instead of stepping in rings.
+const SPOT_SHADOW_LAYER: i32 = 3;
+
+// A depth from the spot map back to metres along the light's axis
+fn spot_linear_depth(d: f32) -> f32 {
+    let near = shadow.spot.x;
+    let far = shadow.spot.y;
+    return near * far / max(far - d * (far - near), 1e-6);
+}
+
+// Metres along the light's axis back to the spot map's depth
+fn spot_map_depth(z: f32) -> f32 {
+    let near = shadow.spot.x;
+    let far = shadow.spot.y;
+    return far * (z - near) / ((far - near) * max(z, 1e-6));
+}
+
+fn spot_shadow_factor(world_pos: vec3<f32>, N: vec3<f32>, light_pos: vec3<f32>, light_dir: vec3<f32>, source_radius: f32, frag_xy: vec2<f32>) -> f32 {
+    if (shadow.spot.w <= 0.0) {
+        return 1.0;
+    }
+    let near = shadow.spot.x;
+    let tan_half = shadow.spot.z;
+    var texel_size = shadow.cascade_splits.w;
+    if (texel_size <= 0.0) {
+        texel_size = 1.0 / 2048.0;
+    }
+
+    // Normal offset by ~1.5 texels as wide as the map is at this depth: a
+    // perspective map's texels grow with distance from the lamp
+    let z_axis = max(dot(world_pos - light_pos, normalize(light_dir)), near);
+    let texel_world = 2.0 * z_axis * tan_half * texel_size;
+    let biased_pos = world_pos + N * texel_world * 1.5;
+
+    let clip = shadow.spot_view_proj * vec4<f32>(biased_pos, 1.0);
+    if (clip.w <= near) {
+        return 1.0; // behind the lamp
+    }
+    let proj = clip.xyz / clip.w;
+    let shadow_uv = proj.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
+    let depth = proj.z;
+    if (depth >= 1.0) {
+        return 1.0; // past the light's range, which it doesn't reach
+    }
+    // Fade at the map's edge, which sits outside the cone
+    let edge_fade = min(
+        min(smoothstep(0.0, 0.02, shadow_uv.x), smoothstep(0.0, 0.02, 1.0 - shadow_uv.x)),
+        min(smoothstep(0.0, 0.02, shadow_uv.y), smoothstep(0.0, 0.02, 1.0 - shadow_uv.y))
+    );
+    if (edge_fade <= 0.0) {
+        return 1.0;
+    }
+
+    var raw_shadow = 1.0;
+    if (source_radius > 0.0) {
+        // === PCSS for a lamp with a size ===
+        // From the receiver, the lamp's disc of radius R spans, at depth z,
+        // R (z_r - z) / z_r metres; the map is 2 z tan_half metres wide
+        // there. Blockers hide anywhere in that disc, widest at the near
+        // plane, so the search covers that, capped.
+        let z_r = spot_linear_depth(depth);
+        // A surface the key grazes tilts away along the map: a tap w metres
+        // off the centre lands on the receiver's own plane up to w * slope
+        // nearer the lamp. Each tap is held that far under the receiver, so
+        // the wide kernel never reads the surface as its own blocker.
+        let cos_l = max(dot(N, normalize(light_pos - world_pos)), 0.05);
+        let slope = min(sqrt(1.0 - cos_l * cos_l) / cos_l, 8.0);
+        let world_per_uv = 2.0 * z_r * tan_half;
+        let max_radius_uv = 48.0 * texel_size; // kernel cost cap
+        let resolution = 1.0 / texel_size;
+        let max_coord = i32(resolution) - 1;
+        // Interleaved gradient noise (Jimenez 2014): a turn of the disk per pixel
+        let spin = 6.2831853 * fract(52.9829189 * fract(dot(frag_xy, vec2<f32>(0.06711056, 0.00583715))));
+        let search_uv = clamp(
+            source_radius * (z_r - near) / (z_r * 2.0 * near * tan_half),
+            texel_size, max_radius_uv);
+        var blocker_sum = 0.0;
+        var blocker_count = 0.0;
+        for (var i = 0; i < 16; i = i + 1) {
+            let r = sqrt((f32(i) + 0.5) / 16.0);
+            let theta = f32(i) * 2.39996 + spin;
+            let tap_uv = shadow_uv + vec2<f32>(cos(theta), sin(theta)) * r * search_uv;
+            let coords = clamp(vec2<i32>(tap_uv * resolution),
+                vec2<i32>(0), vec2<i32>(max_coord));
+            let z_d = spot_linear_depth(textureLoad(shadow_maps, coords, SPOT_SHADOW_LAYER, 0));
+            if (z_d < z_r - r * search_uv * world_per_uv * slope - texel_world) {
+                blocker_sum += z_d;
+                blocker_count += 1.0;
+            }
+        }
+        if (blocker_count > 0.0) {
+            // Penumbra radius on the receiver: R (z_r - z_b) / z_b metres,
+            // over the map's width at the receiver
+            let z_b = max(blocker_sum / blocker_count, near);
+            let penumbra_world = source_radius * max(z_r - z_b, 0.0) / z_b;
+            let filter_uv = clamp(penumbra_world / (2.0 * z_r * tan_half),
+                texel_size, max_radius_uv);
+            var shadow_sum = 0.0;
+            for (var i = 0; i < 32; i = i + 1) {
+                let r = sqrt((f32(i) + 0.5) / 32.0);
+                let theta = f32(i) * 2.39996 + spin;
+                let offset = vec2<f32>(cos(theta), sin(theta)) * r * filter_uv;
+                let tap_depth = spot_map_depth(max(z_r - r * filter_uv * world_per_uv * slope, near));
+                shadow_sum += textureSampleCompareLevel(
+                    shadow_maps, shadow_sampler, shadow_uv + offset, SPOT_SHADOW_LAYER, tap_depth);
+            }
+            raw_shadow = shadow_sum / 32.0;
+        }
+        // No blockers found -> fully lit
+    } else {
+        var shadow_sum = 0.0;
+        for (var y = -1; y <= 1; y = y + 1) {
+            for (var x = -1; x <= 1; x = x + 1) {
+                let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+                shadow_sum += textureSampleCompareLevel(
+                    shadow_maps, shadow_sampler, shadow_uv + offset, SPOT_SHADOW_LAYER, depth);
+            }
+        }
+        raw_shadow = shadow_sum / 9.0;
+    }
+    return mix(1.0, raw_shadow, edge_fade);
 }
 
 fn spot_cone_factor(light_to_frag: vec3<f32>, spot_dir: vec3<f32>, inner_angle: f32, outer_angle: f32) -> f32 {
@@ -566,7 +701,14 @@ fn shade_skinned(in: VertexOutput) -> vec4<f32> {
         // up and lit nothing it was aimed at (#682). The terrain shader passes -L.
         let cone = spot_cone_factor(-light_vec, light.direction, light.inner_angle, light.outer_angle);
         let radiance = light.color * light.intensity * atten * cone;
-        Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v);
+        var contribution = evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v);
+        // The one spot whose shadow map is drawn (#504), where it gives
+        // light: outside its cone and range the filter would darken nothing
+        if (light.shadow > 0.5 && atten * cone > 0.0) {
+            contribution = contribution * spot_shadow_factor(in.world_pos, normalize(in.normal),
+                light.position, light.direction, light.source_radius, in.clip_position.xy);
+        }
+        Lo += contribution;
     }
 
     let sky_color = lights.ambient_sky.rgb;

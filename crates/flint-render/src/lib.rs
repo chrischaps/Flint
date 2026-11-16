@@ -414,13 +414,39 @@ mod tests {
     #[test]
     fn shadow_uniforms_layout() {
         // ShadowUniforms is mirrored in six WGSL shaders (same set as
-        // LightUniforms); the PCSS vec4 (ADR 0057) grew it 208 → 224 bytes.
+        // LightUniforms); the PCSS vec4 (ADR 0057) grew it 208 → 224 bytes,
+        // and the spot's matrix and vec4 (ADR 0124) to 304. The spot's two
+        // fields are declared only in shader, skinned and terrain WGSL; the
+        // other three mirrors stop at `pcss`, the first 224 bytes.
         let size = std::mem::size_of::<crate::shadow::ShadowUniforms>();
         assert_eq!(size % 16, 0, "ShadowUniforms not 16-byte aligned");
         assert_eq!(
-            size, 224,
+            size, 304,
             "ShadowUniforms size changed — update all six WGSL mirrors"
         );
+        assert_eq!(
+            std::mem::offset_of!(crate::shadow::ShadowUniforms, spot_view_proj),
+            224,
+            "the spot's fields follow `pcss`, so the shorter mirrors read the same bytes"
+        );
+    }
+
+    #[test]
+    fn shadow_uniforms_default_spot_is_off() {
+        use bytemuck::Zeroable;
+        // spot.w = 0 lights every spot as before (#504)
+        assert_eq!(crate::shadow::ShadowUniforms::default().spot, [0.0; 4]);
+        assert_eq!(crate::shadow::ShadowUniforms::zeroed().spot, [0.0; 4]);
+    }
+
+    #[test]
+    fn spot_shadow_mark_rides_the_old_pad() {
+        // `SpotLight::shadow` is the former `_pad1`: the struct stays 64 bytes
+        // and the five mirrors that keep `_pad1` read the same layout
+        use crate::pipeline::SpotLight;
+        assert_eq!(std::mem::size_of::<SpotLight>(), 64);
+        assert_eq!(std::mem::offset_of!(SpotLight, shadow), 56);
+        assert_eq!(SpotLight::default().shadow, 0.0);
     }
 
     #[test]

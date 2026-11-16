@@ -63,6 +63,7 @@ outer_angle_deg = 23
 | `outer_angle_deg` | spot | f32 | about 28.6 | Cone edge half-angle, degrees (0 to 90). Wins over `outer_angle` |
 | `inner_angle` | spot | f32 | `0.3` | The older form, radians; read when `inner_angle_deg` is unset |
 | `outer_angle` | spot | f32 | `0.5` | The older form, radians; read when `outer_angle_deg` is unset |
+| `cast_shadows` | spot | bool | `false` | The spot casts a shadow from a shadow map of its own, softened by `source_radius`; one spot casts, the first by name that asks ([Spot light shadows](#spot-light-shadows)) |
 | `volumetric_intensity` | directional | f32 | `0.0` | God-ray strength for this light; see [Post-Processing](post-processing.md#volumetric-lighting-god-rays) |
 | `volumetric_color` | directional | [f32; 3] | light color | Tint of the shafts |
 
@@ -98,7 +99,7 @@ Limits: the shader takes 4 directional, 16 point and 8 spot lights. Past that, i
 
 ## Shadows
 
-Directional lights cast shadows through cascaded shadow maps: several cascades cover increasing distance bands from the camera, giving crisp shadows nearby and broad coverage far away. Shadows can be disabled per launch with `--no-shadows`, toggled at runtime in the Rendering & Effects menu (F4), and turned off for a whole scene with `[environment] shadows = false` (below).
+Directional lights cast shadows through cascaded shadow maps: several cascades cover increasing distance bands from the camera, giving crisp shadows nearby and broad coverage far away. One spot light can cast too ([below](#spot-light-shadows)). Shadows can be disabled per launch with `--no-shadows`, toggled at runtime in the Rendering & Effects menu (F4), and turned off for a whole scene with `[environment] shadows = false` (below).
 
 **A dark sun casts nothing.** When the shadow-casting directional light has `intensity = 0` (and no `volumetric_intensity`, whose god rays read the maps), or there is no directional light at all, the shadow pass is skipped with every caster in it (#627). Nothing it drew could have darkened a pixel, so the frame is byte-identical; the stats line's `in shadows` reads 0. The tavern with its sun at 0 went from 166,884 shadow triangles a frame to 0.
 
@@ -119,6 +120,36 @@ cast_shadows = false
 - **Where it applies:** imported, runtime, skinned and procedural (`bounds`) meshes, opaque or transparent. An entity with no value of its own takes its parent's, so a GLB expanded into child nodes stops casting as one.
 - **It's read every frame**, so a script or extension can turn it on and off. It costs nothing: the draw just stays out of the cascades. The mesh still takes shadows from everything else.
 - **Terrain and grass** don't read it: terrain chunks always cast, and grass casts into the two nearest cascades.
+
+### Spot light shadows
+
+A spot light with **`cast_shadows = true`** casts a shadow of its own (#504, [ADR 0124](https://github.com/chrischaps/Flint/blob/main/docs/adr/0124-one-spot-shadow-as-a-layer-of-the-shadow-map-array.md)). It is the case the cascades can't serve: one key light over one subject on a dark floor. A sun placed along the key to get its shadow floods the whole floor and erases the pool the key makes; the spot's own shadow keeps the pool and gives the subject its contact with the ground.
+
+```toml
+[entities.key.transform]
+position = [0.6, 4.2, 1.4]
+
+[entities.key.light]
+type = "spot"
+direction = [-0.14, -1.0, -0.33]
+intensity = 34.0
+range = 9.0
+outer_angle_deg = 34.0
+source_radius = 0.3      # softens the shadow: sharp at contact, wider as caster and floor part
+cast_shadows = true
+```
+
+![A figure and a floating ball under one spot light, each with its own shadow](../images/spot-shadow.png)
+
+*`examples/spot_shadow.scene.toml`: the only light is the spot. The figure's feet meet their shadow; the ball, a metre up, casts a wider and softer one.*
+
+- **One spot casts**: the first by entity name that asks. Another spot that asks lights without a shadow and says so once (`shadow-cap`). It must be among the 8 spots the frame draws, and give light.
+- **It works with or without a sun.** The spot's map is the last layer of the cascades' texture, drawn from the light down its axis out to its `range`, and covering its cone up to 80 degrees from the axis. A wider cone is shadowed out to 80 degrees and lit past it.
+- **Softness is `source_radius`**, the size of the lamp in metres, as `angular_size` is the sun's: a blocker search finds how far the caster is from what it shadows, and the penumbra widens with that gap (PCSS). The kernel turns a little each pixel, so its edge is a fine grain rather than rings. `source_radius = 0` is a hard 3x3 PCF shadow.
+- **What it shadows**: meshes, skinned meshes and terrain receive it. Grass and the ocean take no spot light at all yet (#1048), so they take no spot shadow either; grass doesn't cast into it.
+- **Off** the same ways as every shadow: `--no-shadows`, F4, `[environment] shadows = false`, the quality tier's `shadows`. `material.cast_shadows = false` keeps a mesh out of the spot's map as it does out of the cascades.
+- **Cost**: one more depth pass over the casters in the spot's view, the filter on the pixels the spot lights (it is skipped outside the cone and past `range`), and one more layer of the texture (16 MB at the default 2048 texels, allocated whether or not a scene uses it). `examples/spot_shadow.scene.toml` at 1920 x 1080 on an RTX 4070 (debug build, `--gpu-time 240`, p50): the depth pass 0.024 ms, the scene pass 0.075 ms without the shadow and 0.316 ms with it, so about 0.26 ms a frame. A scene with no spot asking draws exactly what it drew before.
+- **Point lights cast no shadow yet.** A point light with `cast_shadows = true` lights without one and says so; cube shadow maps are #1112. The strongest directional light casts the cascades whatever `cast_shadows` says, and a `false` on it is said once too.
 
 ## The `[environment]` Block
 
