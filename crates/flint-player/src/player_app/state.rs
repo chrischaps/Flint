@@ -413,8 +413,12 @@ impl Default for Hud {
 
 /// The F2 stats overlay, the frame history and the perf readout.
 pub(super) struct Stats {
-    /// The F2 overlay is open
-    pub(super) show: bool,
+    /// What the F2 overlay shows (#1078): nothing, all of it, or the
+    /// frame-time graph alone
+    pub(super) view: super::StatsView,
+    /// The frame-time graph's buffers and ceiling, kept across frames
+    #[cfg(feature = "debug-hud")]
+    pub(super) graph: super::stats_view::StatsGraph,
     pub(super) frame_times: std::collections::VecDeque<f64>,
     /// The player turned the renderer's GPU timing on for the overlay
     /// (ADR 0108), so it turns it off again when the overlay closes
@@ -432,7 +436,9 @@ pub(super) struct Stats {
 impl Default for Stats {
     fn default() -> Self {
         Self {
-            show: false,
+            view: super::StatsView::Off,
+            #[cfg(feature = "debug-hud")]
+            graph: Default::default(),
             frame_times: Default::default(),
             gpu_timing: false,
             // `frame-history`, and `FLINT_FRAME_HISTORY` over it

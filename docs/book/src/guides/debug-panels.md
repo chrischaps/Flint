@@ -8,6 +8,7 @@ Panels are dev surface. They compile only when the player's `debug-hud` cargo fe
 
 | Key | What it toggles | Host |
 |-----|-----------------|------|
+| `F2` | The **stats overlay**: the [frame-time graph](profiling.md#the-frame-time-graph) and its hitch counters over the rendering stats; a second press shows the graph alone in a corner, a third closes it | player (the scene viewer's F2 shows its rendering stats alone) |
 | `F3` | Every scene-component panel the current scene created (ocean, grass, camera, particles, styles, Living Props), a [panel for each component whose schema asks for one](#a-panel-from-a-schema), and every panel a game added | player |
 | `F4` | The **Rendering & Effects** panel, on its own so it never flips out of phase with F3 | player and scene viewer |
 | `` ` `` (backquote) | **Music Guide**, only while a [music session](../concepts/music-sessions.md) runs | player |

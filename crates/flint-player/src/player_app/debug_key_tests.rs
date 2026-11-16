@@ -26,21 +26,39 @@ fn with_script(src: &str) -> PlayerApp {
 }
 
 #[test]
-fn scripted_f2_toggles_the_stats_overlay() {
-    // Frames at t = 0, 0.25, 0.5: press, release, press.
-    let mut app = with_script("0 tap F2\n0.5 tap F2\n");
+fn scripted_f2_steps_the_stats_overlay() {
+    use super::StatsView;
+    // Frames at t = 0, 0.25, 0.5, 0.75: press, release, press, press.
+    let mut app = with_script("0 tap F2\n0.5 tap F2\n0.75 tap F2\n");
     app.core.clock.frame_step = Some(0.25);
-    assert!(!app.stats.show);
+    assert_eq!(app.stats.view, StatsView::Off);
+    assert!(!app.core.script.timing(), "nothing timed while it's closed");
     app.tick();
-    assert!(app.stats.show, "the first tap opens it");
+    assert_eq!(app.stats.view, StatsView::Full, "the first tap opens it");
+    assert!(app.core.script.timing(), "scripts are timed while it shows");
     // Still pressed this frame, as a real key would be.
     assert!(app.input.is_key_down(KeyCode::F2));
     app.input.end_frame();
     app.tick();
-    assert!(app.stats.show, "the release doesn't toggle it");
+    assert_eq!(
+        app.stats.view,
+        StatsView::Full,
+        "the release doesn't step it"
+    );
     app.input.end_frame();
     app.tick();
-    assert!(!app.stats.show, "the second tap closes it");
+    let second = if cfg!(feature = "debug-hud") {
+        StatsView::Graph
+    } else {
+        StatsView::Off
+    };
+    assert_eq!(app.stats.view, second, "the second tap: the graph alone");
+    app.input.end_frame();
+    app.tick();
+    if cfg!(feature = "debug-hud") {
+        assert_eq!(app.stats.view, StatsView::Off, "the third tap closes it");
+        assert!(!app.core.script.timing());
+    }
 }
 
 /// A debug key with nothing behind it says so where the person pressing it
@@ -71,7 +89,7 @@ fn scripted_game_keys_reach_input_state_as_before() {
     let mut app = with_script("0 down KeyW\n");
     app.tick();
     assert!(app.input.is_key_down(KeyCode::KeyW));
-    assert!(!app.stats.show);
+    assert!(!app.stats.view.is_open());
 }
 
 #[test]
@@ -81,12 +99,32 @@ fn show_stats_opens_the_overlay_once() {
     app.core.clock.frame_step = Some(0.25);
     app.capture.show_stats = true;
     app.tick();
-    assert!(app.stats.show);
+    assert_eq!(
+        app.stats.view,
+        super::StatsView::Full,
+        "`--stats`: all of it"
+    );
     app.input.end_frame();
     app.tick();
     app.input.end_frame();
     app.tick();
-    assert!(!app.stats.show, "F2 still closes it");
+    assert_ne!(app.stats.view, super::StatsView::Full, "F2 still steps it");
+}
+
+#[cfg(feature = "debug-hud")]
+#[test]
+fn stats_graph_opens_the_graph_alone_and_f2_closes_it() {
+    let mut app = with_script("0.5 tap F2\n");
+    app.core.clock.frame_step = Some(0.25);
+    app.capture.show_stats = true;
+    app.capture.stats_view = super::StatsView::Graph;
+    app.tick();
+    assert_eq!(app.stats.view, super::StatsView::Graph);
+    app.input.end_frame();
+    app.tick();
+    app.input.end_frame();
+    app.tick();
+    assert_eq!(app.stats.view, super::StatsView::Off, "F2 closes it");
 }
 
 /// An extension with nothing but defaults, so egui sees input first.
@@ -115,7 +153,10 @@ fn a_focused_egui_field_keeps_scripted_keys_from_the_game() {
     assert!(!app.input.is_key_down(KeyCode::KeyW), "the field took it");
     app.tick();
     app.tick();
-    assert!(!app.stats.show, "the debug keys don't see it either");
+    assert!(
+        !app.stats.view.is_open(),
+        "the debug keys don't see it either"
+    );
 }
 
 #[test]

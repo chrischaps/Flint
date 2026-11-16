@@ -346,7 +346,7 @@ impl FrameHistory {
     }
 
     /// The newest whole frame.
-    #[cfg_attr(not(test), allow(dead_code))] // the F2 graph's (#1078)
+    #[cfg_attr(not(test), allow(dead_code))] // nothing reads it yet
     pub(crate) fn newest(&self) -> Option<&Frame> {
         self.frames.back()
     }
