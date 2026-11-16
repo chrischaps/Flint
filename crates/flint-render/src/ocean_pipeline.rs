@@ -14,7 +14,6 @@
 
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
-use flint_core::toml_util::{toml_color, toml_f32};
 use flint_geometry::ocean::MAX_WAVES;
 use wgpu::util::DeviceExt;
 
@@ -199,17 +198,17 @@ impl OceanTint {
 
     /// The tint from an `ocean` component's `tint*` fields, each falling
     /// back on the crimson tide's.
-    pub fn from_component(value: &toml::Value) -> Self {
+    /// Read the `tint*` fields of an `ocean` component through the typed
+    /// view (ADR 0115): a wrong type reads as the default and is reported
+    /// once.
+    pub fn from_component(view: &flint_ecs::ComponentView<'_>) -> Self {
         let d = Self::default();
-        let f = |name: &str, dv: f32| value.get(name).and_then(toml_f32).unwrap_or(dv);
+        let f = |name: &str, dv: f32| view.f32(name, dv);
         let c = |name: &str, dv: [f32; 3]| {
-            value
-                .get(name)
-                .and_then(toml_color)
-                .map(|c| [c[0], c[1], c[2]])
-                .unwrap_or(dv)
+            let c = view.color(name, [dv[0], dv[1], dv[2], 1.0]);
+            [c[0], c[1], c[2]]
         };
-        let b = |name: &str, dv: bool| value.get(name).and_then(|v| v.as_bool()).unwrap_or(dv);
+        let b = |name: &str, dv: bool| view.bool(name, dv);
         Self {
             amount: f("tint", d.amount).clamp(0.0, 1.0),
             deep: c("tint_deep_color", d.deep),
@@ -370,10 +369,12 @@ impl Default for OceanVisuals {
 }
 
 impl OceanVisuals {
-    pub fn from_component(value: &toml::Value) -> Self {
+    /// Read an `ocean` component's look through the typed view (ADR 0115):
+    /// a wrong type reads as the default and is reported once.
+    pub fn from_component(view: &flint_ecs::ComponentView<'_>) -> Self {
         let d = Self::default();
-        let f = |name: &str, dv: f32| value.get(name).and_then(toml_f32).unwrap_or(dv);
-        let c = |name: &str, dv: [f32; 4]| value.get(name).and_then(toml_color).unwrap_or(dv);
+        let f = |name: &str, dv: f32| view.f32(name, dv);
+        let c = |name: &str, dv: [f32; 4]| view.color(name, dv);
         Self {
             deep_color: c("deep_color", d.deep_color),
             shallow_color: c("shallow_color", d.shallow_color),
@@ -388,10 +389,7 @@ impl OceanVisuals {
             specular_strength: f("specular_strength", d.specular_strength).max(0.0),
             turbidity: f("turbidity", d.turbidity).max(0.0),
             refraction_strength: f("refraction_strength", d.refraction_strength).max(0.0),
-            absorption_color: value
-                .get("absorption_color")
-                .and_then(flint_core::toml_util::toml_vec3)
-                .unwrap_or(d.absorption_color),
+            absorption_color: view.vec3("absorption_color", d.absorption_color),
             sky_reflection_strength: f("sky_reflection_strength", d.sky_reflection_strength)
                 .clamp(0.0, 2.0),
             splash_strength: f("splash_strength", d.splash_strength).clamp(0.0, 4.0),
@@ -411,7 +409,7 @@ impl OceanVisuals {
             shore_foam_speed: f("shore_foam_speed", d.shore_foam_speed).clamp(0.0, 10.0),
             shore_foam_color: c("shore_foam_color", d.shore_foam_color),
             shore_foam_reach: f("shore_foam_reach", d.shore_foam_reach).clamp(0.0, 50.0),
-            tint: OceanTint::from_component(value),
+            tint: OceanTint::from_component(view),
         }
     }
 
@@ -781,15 +779,17 @@ mod tests {
     /// crimson tide's, and off with no `tint`.
     #[test]
     fn the_tint_reads_from_the_component() {
+        let reports = flint_ecs::ReadReports::new();
+        let view = |v| flint_ecs::ComponentView::of("sea", "ocean", Some(v), &reports);
         let none: toml::Value = toml::from_str("deep_color = [0.1, 0.2, 0.3, 1.0]").unwrap();
-        let t = OceanTint::from_component(&none);
+        let t = OceanTint::from_component(&view(&none));
         assert_eq!(t, OceanTint::blood(0.0));
         assert_eq!(t.to_gpu().0, 0.0, "off with no tint");
         let some: toml::Value = toml::from_str(
             "tint = 0.6\ntint_deep_color = [0.0, 0.1, 0.0, 1.0]\ntint_pools = 0.0\ntint_below = true",
         )
         .unwrap();
-        let t = OceanTint::from_component(&some);
+        let t = OceanTint::from_component(&view(&some));
         assert_eq!(t.amount, 0.6);
         assert_eq!(t.deep, [0.0, 0.1, 0.0]);
         assert_eq!(t.pools, 0.0);
@@ -798,6 +798,20 @@ mod tests {
         assert_eq!((amount, flags), (0.6, TINT_BELOW | TINT_KEEP_LIGHT));
         assert_eq!(rows[0], [0.0, 0.1, 0.0, 0.0]);
         assert_eq!(rows[1][3], 2.0, "the bands ride the shallow row");
+        assert!(reports.is_empty());
+
+        // #802: a wrong type is the default, and said once
+        let wrong: toml::Value = toml::from_str("tint = \"red\"\ntint_below = 1").unwrap();
+        for _ in 0..3 {
+            let t = OceanTint::from_component(&view(&wrong));
+            assert_eq!(t, OceanTint::blood(0.0));
+        }
+        let fields: Vec<_> = reports
+            .snapshot()
+            .into_iter()
+            .map(|d| d.field.unwrap())
+            .collect();
+        assert_eq!(fields, ["tint", "tint_below"]);
     }
 
     #[test]

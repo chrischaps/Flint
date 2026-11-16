@@ -409,12 +409,8 @@ impl SequenceSync {
             .copied()
             .collect();
         for entity_id in ids {
-            let wanted = world
-                .get_components(entity_id)
-                .and_then(|c| c.get(comp::ANIMATOR))
-                .and_then(|a| a.get("sequence"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
+            let wanted = crate::animator::Animator::of(world, entity_id)
+                .sequence
                 .to_string();
             let seen = self.last_seen.get(&entity_id).cloned().unwrap_or_default();
             if wanted == seen {

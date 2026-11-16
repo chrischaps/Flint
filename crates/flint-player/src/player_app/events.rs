@@ -824,7 +824,8 @@ impl PlayerApp {
         }
         match key_code {
             KeyCode::F2 => {
-                self.stats.show = !self.stats.show;
+                // Off, the full overlay, the graph alone, off (#1078)
+                self.set_stats_view(self.stats.view.next());
             }
             #[cfg(feature = "debug-hud")]
             KeyCode::F3 => {

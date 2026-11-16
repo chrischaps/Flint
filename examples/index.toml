@@ -72,6 +72,11 @@ topic = "rendering"
 purpose = "A spot light with no direction swings with the arm it hangs from; its cone in degrees"
 
 [[example]]
+scene = "dark_stage.scene.toml"
+topic = "rendering"
+purpose = "A near-black stage under one soft pool of light: dither in display levels hides the dark's banding (#503)"
+
+[[example]]
 scene = "spot_shadow.scene.toml"
 topic = "rendering"
 purpose = "One spot light with cast_shadows: a contact shadow under a figure, softened by source_radius"
@@ -393,6 +398,11 @@ purpose = "Forty-eight crates tumbling into a tray: a pile that settles the same
 scene = "skeletal_test.scene.toml"
 topic = "runtime"
 purpose = "The YBot on a looping idle: skeletal animation"
+
+[[example]]
+scene = "hitch_metronome.scene.toml"
+topic = "runtime"
+purpose = "A metronome whose frame stalls 100 ms every 3 s: what the F2 frame-time graph and its hitch counters show (#1078)"
 
 [[example]]
 scene = "audio_clock.scene.toml"

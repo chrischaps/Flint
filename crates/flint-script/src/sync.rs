@@ -9,12 +9,17 @@ use crate::errors::Failure;
 use crate::module_resolver::ModuleBase;
 use flint_core::components as comp;
 use flint_core::file_watch;
+use flint_core::frame_notes::{self, NoteKind};
 use flint_core::project::{AssetKind, Project};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+/// A hot-reload poll that takes this long is a frame note (#1077); one
+/// under it, every frame's, is not news.
+const POLL_NOTE_MS: f32 = 1.0;
 
 /// Tracks which entities have scripts and manages file-based hot-reload
 #[derive(Default)]
@@ -213,29 +218,20 @@ impl ScriptSync {
                 continue;
             }
 
-            let script_comp = world
-                .get_components(entity_id)
-                .and_then(|comps| comps.get(comp::SCRIPT).cloned());
-
-            let Some(script_data) = script_comp else {
+            // Through the typed view (ADR 0115): a wrong type is reported once
+            let script_data = world.view(entity_id, comp::SCRIPT);
+            if !script_data.exists() {
                 continue;
-            };
+            }
 
             // Check enabled
-            let enabled = script_data
-                .get("enabled")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-            if !enabled {
+            if !script_data.bool("enabled", true) {
                 self.discovered.insert(entity_id);
                 continue;
             }
 
             // Get source file path
-            let source = script_data
-                .get("source")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let source = script_data.str("source", "");
             if source.is_empty() {
                 self.discovered.insert(entity_id);
                 continue;
@@ -253,6 +249,10 @@ impl ScriptSync {
             let script_path = located.path.clone();
             self.located.insert(entity_id, located);
 
+            // Read, compiled and its top level queued, on the frame (#1077)
+            let _note = flint_core::frame_notes::begin(NoteKind::ScriptLoad, || {
+                flint_core::project::shown(&script_path)
+            });
             match engine.compile_file(&script_path) {
                 Ok(ast) => {
                     // stderr, so a caller's stdout stays its own (`flint render
@@ -297,6 +297,25 @@ impl ScriptSync {
         if file_watch::mode() == file_watch::Mode::Off {
             return;
         }
+        // The poll itself runs every frame: a frame note only when it took
+        // long enough to matter (#1077; #633 was a poll that waited on the
+        // disk). What it reloads notes itself, inside this one.
+        let began = frame_notes::listening().then(web_time::Instant::now);
+        self.poll_hot_reload(engine, world);
+        if let Some(began) = began {
+            let ms = began.elapsed().as_secs_f32() * 1000.0;
+            if ms >= POLL_NOTE_MS {
+                let watched = engine.scripts.len();
+                frame_notes::note(
+                    NoteKind::ReloadPoll,
+                    || format!("{watched} scripts watched"),
+                    Some(ms),
+                );
+            }
+        }
+    }
+
+    fn poll_hot_reload(&mut self, engine: &mut ScriptEngine, world: &mut FlintWorld) {
         let worker = self.reload_worker();
         if worker {
             self.take_finished(engine, world);
@@ -384,6 +403,14 @@ impl ScriptSync {
             return;
         }
         let (entity_id, script_path) = self.to_reload.remove(0);
+        // Compiled here, on the frame: the read and compile are the note's
+        // too, where the worker's reloads note only the swap (#1077)
+        let _note = frame_notes::begin(NoteKind::ScriptReload, || {
+            format!(
+                "{}, compiled on the frame",
+                flint_core::project::shown(&script_path)
+            )
+        });
         // What it is now, taken before the read: a write after it is a change
         let modified = file_watch::modified(&script_path);
         let ast = engine.compile_file(&script_path);
@@ -429,8 +456,13 @@ impl ScriptSync {
                 if let Some(script) = engine.scripts.get(&entity_id) {
                     tracing::info!(target: "script", "Hot-reloaded: {}", script.source_path);
                 }
-                // New top-level lets get their initial values (#634)
-                let added = engine.reload_script(world, entity_id, ast);
+                // New top-level lets get their initial values (#634). The
+                // swap and its top level run on the frame (#1077)
+                let added = frame_notes::timed(
+                    NoteKind::ScriptReload,
+                    || flint_core::project::shown(&script_path),
+                    || engine.reload_script(world, entity_id, ast),
+                );
                 if !added.is_empty() {
                     tracing::info!(
                         target: "script",

@@ -27,7 +27,6 @@ use std::path::Path;
 
 use flint_core::components as comp;
 use flint_core::project::Project;
-use flint_core::toml_util::toml_vec3;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_procgen::{
@@ -145,26 +144,21 @@ pub fn collect_requests(
     };
 
     for entity in world.all_entities() {
-        let Some(comps) = world.get_components(entity.id) else {
+        if world.get_components(entity.id).is_none() {
             continue;
-        };
-        let position = comps
-            .get(comp::TRANSFORM)
-            .and_then(|t| t.get("position").and_then(toml_vec3))
-            .unwrap_or([0.0; 3]);
-        if let Some(model) = comps.get(comp::MODEL) {
-            if !model_loader::is_runtime_model(model) {
-                if let Some(name) = model.get("asset").and_then(|v| v.as_str()) {
-                    want(name, AssetKind::Model, position);
-                }
+        }
+        // Through the typed view (ADR 0115): a wrong type is reported once
+        let position = world
+            .view(entity.id, comp::TRANSFORM)
+            .vec3("position", [0.0; 3]);
+        let model = world.view(entity.id, comp::MODEL);
+        if !model.bool("runtime", false) {
+            if let Some(name) = model.opt_str("asset") {
+                want(name, AssetKind::Model, position);
             }
         }
         for comp_name in [comp::MATERIAL, comp::SPRITE] {
-            if let Some(tex) = comps
-                .get(comp_name)
-                .and_then(|c| c.get("texture"))
-                .and_then(|v| v.as_str())
-            {
+            if let Some(tex) = world.view(entity.id, comp_name).opt_str("texture") {
                 want(tex, AssetKind::Texture, position);
             }
         }
@@ -526,6 +520,10 @@ impl AssetSink for GpuSink<'_> {
                 let Ok(path) = model_loader::resolve_model_path(self.config, name) else {
                     return false;
                 };
+                let _note = flint_core::frame_notes::begin(
+                    flint_core::frame_notes::NoteKind::ModelLoad,
+                    || flint_core::project::shown(&path),
+                );
                 match flint_import::import_gltf(&path) {
                     Ok(import) => {
                         self.renderer.remove_mesh(name);
@@ -578,6 +576,18 @@ pub fn resolve_scene(
     let before = resolver.cache_stats();
     resolve(&requests, resolver, &mut sink, mode);
     let stats = resolver.cache_stats();
+    // A frame note (#1077) when the scene had assets to make or find
+    flint_core::frame_notes::note(
+        flint_core::frame_notes::NoteKind::Procgen,
+        || {
+            format!(
+                "{} asset(s) for {}",
+                requests.len(),
+                flint_core::project::shown(std::path::Path::new(scene_path))
+            )
+        },
+        Some(started.elapsed().as_secs_f32() * 1000.0),
+    );
     // One line a load: how long procgen held the scene up, and where the
     // assets came from (#181: the disk tier is what makes a relaunch fast).
     // Deferred assets are queued, so they appear in none of the three.

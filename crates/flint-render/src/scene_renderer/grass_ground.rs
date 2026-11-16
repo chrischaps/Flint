@@ -6,7 +6,6 @@ use super::SceneRenderer;
 use crate::grass_pipeline::{GrassGround, GrassHeight};
 use flint_core::components as comp;
 use flint_core::project::Project;
-use flint_core::toml_util::{toml_f32, toml_vec3};
 use flint_ecs::FlintWorld;
 use std::path::Path;
 
@@ -47,14 +46,16 @@ pub fn load_grass_ground_in(
     renderer: &mut SceneRenderer,
 ) -> Option<LoadedGrassGround> {
     for entity in world.all_entities() {
-        let Some(ground) = world.get_component(entity.id, comp::GRASS_GROUND) else {
+        // Through the typed view (ADR 0115): a wrong type is reported once
+        let ground = world.view(entity.id, comp::GRASS_GROUND);
+        if !ground.exists() {
             continue;
-        };
-        let config = flint_terrain::GrassConfig::from_component(ground, true);
+        }
+        let config = flint_terrain::GrassConfig::from_component(&ground, true);
         if !config.enabled {
             return None;
         }
-        let mask_rel = ground.get("mask").and_then(|v| v.as_str()).unwrap_or("");
+        let mask_rel = ground.str("mask", "");
         if mask_rel.is_empty() {
             tracing::warn!("grass_ground '{}': missing mask path", entity.name);
             return None;
@@ -72,13 +73,9 @@ pub fn load_grass_ground_in(
                 return None;
             }
         };
-        let get_f32 = |key: &str, default: f32| -> f32 {
-            ground.get(key).and_then(toml_f32).unwrap_or(default)
-        };
         let pos = world
-            .get_component(entity.id, comp::TRANSFORM)
-            .and_then(|t| t.get("position").and_then(toml_vec3))
-            .unwrap_or([0.0; 3]);
+            .view(entity.id, comp::TRANSFORM)
+            .vec3("position", [0.0; 3]);
         let (mask_width, mask_height) = mask.dimensions();
         let result = renderer.set_grass_ground(
             device,
@@ -86,14 +83,11 @@ pub fn load_grass_ground_in(
             &config,
             &GrassGround {
                 origin: [pos[0], pos[2]],
-                size: [get_f32("width", 64.0), get_f32("depth", 64.0)],
+                size: [ground.f32("width", 64.0), ground.f32("depth", 64.0)],
                 mask: mask.as_raw(),
                 mask_width,
                 mask_height,
-                scale_by_mask: ground
-                    .get("scale_by_mask")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true),
+                scale_by_mask: ground.bool("scale_by_mask", true),
                 height: GrassHeight::Flat(pos[1]),
             },
         );

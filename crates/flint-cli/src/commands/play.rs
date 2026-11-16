@@ -88,6 +88,12 @@ pub struct PlayArgs {
     /// time (#693). Every error is counted either way
     #[arg(long)]
     pub strict_scripts: bool,
+
+    /// `--hitch-log FILE` (a JSON line for every hitch), `--max-hitches N`,
+    /// `--max-hitches-startup N` and `--max-hitches-of CLASS` (exit
+    /// non-zero past them) (#1079)
+    #[command(flatten)]
+    pub hitches: flint_player::HitchArgs,
 }
 
 pub fn run(mut args: PlayArgs) -> Result<()> {
@@ -154,7 +160,7 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
     println!("  Space    - Jump");
     println!("  Shift    - Sprint");
     println!("  Escape   - Release cursor / Exit");
-    println!("  F2       - Rendering stats overlay");
+    println!("  F2       - Stats: frame-time graph, hitches, render stats; again: graph alone; again: off");
     println!("  F3       - Scene debug panels");
     println!("  F4       - Rendering & Effects menu");
     println!("  F11      - Toggle fullscreen");
@@ -173,6 +179,7 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
 
     app.launch.save_dir = args.save_dir.clone();
     app.launch.strict_scripts = args.strict_scripts;
+    args.hitches.apply(&mut app)?;
     app.launch.window_size = args.window.size();
     app.launch.window_options = args.window.clone();
     app.launch.expression_feed = expression_feed;

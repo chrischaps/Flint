@@ -9,6 +9,7 @@
 //!                [--screenshot-every <secs>] [--exit-after <secs>]
 //!                [--frame-step <secs>] [--input-script <file>]
 //!                [--expression-timeline <file>] [--expression-listen <ip:port>]
+//!                [--hitch-log <file>] [--max-hitches <n>]
 //!   flint-player --bundle <game.flintpack> [scene.toml]
 //!
 //! Screenshots capture the presented frame — the 3D scene *and* the egui
@@ -216,9 +217,18 @@ struct Args {
     expression_listen: Option<String>,
 
     /// Open the rendering stats overlay (F2) from the first frame, so a
-    /// capture shows it
-    #[arg(long)]
-    stats: bool,
+    /// capture shows it: `--stats` the whole of it (the frame-time graph,
+    /// its hitch counters and the rendering stats), `--stats=graph` the
+    /// graph and counters alone, in a corner
+    #[arg(
+        long,
+        value_enum,
+        value_name = "VIEW",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "full"
+    )]
+    stats: Option<flint_player::StatsView>,
 
     /// Print a perf line every 10 s: frame p50/p99, each phase's CPU time
     /// and each pass's GPU time, as the web page's `?perf=1` copies it
@@ -243,6 +253,11 @@ struct Args {
     /// Every error is counted either way, and --exit-after prints them
     #[arg(long)]
     strict_scripts: bool,
+
+    /// `--hitch-log`, `--max-hitches`, `--max-hitches-startup` and
+    /// `--max-hitches-of` (#1079)
+    #[command(flatten)]
+    hitches: flint_player::HitchArgs,
 }
 
 fn main() -> Result<()> {
@@ -339,7 +354,7 @@ fn main() -> Result<()> {
     println!("  Space    - Jump");
     println!("  Shift    - Sprint");
     println!("  Escape   - Release cursor / Exit (the game's, if it binds Escape)");
-    println!("  F2       - Rendering stats overlay");
+    println!("  F2       - Stats: frame-time graph, hitches, render stats; again: graph alone; again: off");
     println!("  F3       - Scene debug panels");
     println!("  F4       - Rendering & Effects menu");
     println!("  F11      - Toggle fullscreen");
@@ -402,6 +417,7 @@ fn main() -> Result<()> {
     }
     app.launch.touch_device = args.touch_device;
     app.launch.strict_scripts = args.strict_scripts;
+    args.hitches.apply(&mut app)?;
     app.launch.pixels_per_point = args.pixels_per_point.filter(|p| *p > 0.0);
     if let Some(name) = &args.look {
         // Refuse a bad name now. The scene's user styles first: a look may
@@ -432,7 +448,10 @@ fn main() -> Result<()> {
         args.expression_timeline.as_deref(),
         args.expression_listen.as_deref(),
     )?;
-    app.capture.show_stats = args.stats;
+    if let Some(view) = args.stats {
+        app.capture.show_stats = true;
+        app.capture.stats_view = view;
+    }
     if let Some(compare) = &args.compare {
         let (a, b) = compare
             .split_once(',')

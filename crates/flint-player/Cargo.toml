@@ -30,7 +30,14 @@ name = "flint-web"
 path = "src/bin/flint_web.rs"
 
 [features]
-default = ["debug-hud", "audio", "gamepad", "music", "rhythm", "living"]
+default = ["debug-hud", "audio", "gamepad", "music", "rhythm", "living", "frame-history"]
+# The always-on frame history (#1076): every frame's phases, clock, present,
+# physics steps and GPU time kept for the last 600 frames, and each judged
+# for a hitch, about 0.65 us a frame. Off (a shipped game that wants none of
+# it), frames are recorded only while `--perf` / `?perf=1` is on, as before,
+# each of the frame's calls a branch. `FLINT_FRAME_HISTORY=0|1` overrides
+# either way at run time.
+frame-history = []
 # The sound card (kira's cpal backend: ALSA on Linux). Off, the player runs
 # silent and a music session's stems don't play, as on a machine without a
 # device (its beat still counts, on the game clock).

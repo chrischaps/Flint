@@ -5,8 +5,13 @@
 //! own copies of `drag_f32`/`drag_vec3`; they now live here (ADR 0068).
 
 pub mod curve;
+pub mod frame_graph;
 
 pub use curve::{CurveEditor, CurveResponse, GradientEditor};
+pub use frame_graph::{
+    band_legend, hitch_counters, Band, FrameGraph, GraphFrame, GraphLayout, HitchCounters, BANDS,
+    HITCH_COLOR,
+};
 
 /// Single labeled drag value. Returns true if the value changed.
 pub fn drag_f32(

@@ -8,7 +8,6 @@
 
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
-use flint_core::toml_util::{toml_color, toml_f32};
 
 /// Uniform block — layout must match `SkyUniforms` in sky_shader.wgsl.
 #[repr(C)]
@@ -75,10 +74,12 @@ impl Default for SkyParams {
 }
 
 impl SkyParams {
-    pub fn from_component(value: &toml::Value) -> Self {
+    /// Read a `sky` component through the typed view (ADR 0115): a wrong
+    /// type reads as the default and is reported once.
+    pub fn from_component(view: &flint_ecs::ComponentView<'_>) -> Self {
         let d = Self::default();
-        let f = |name: &str, dv: f32| value.get(name).and_then(toml_f32).unwrap_or(dv);
-        let c = |name: &str, dv: [f32; 4]| value.get(name).and_then(toml_color).unwrap_or(dv);
+        let f = |name: &str, dv: f32| view.f32(name, dv);
+        let c = |name: &str, dv: [f32; 4]| view.color(name, dv);
         Self {
             zenith_color: c("zenith_color", d.zenith_color),
             horizon_color: c("horizon_color", d.horizon_color),
@@ -92,8 +93,8 @@ impl SkyParams {
             cloud_scale: f("cloud_scale", d.cloud_scale).max(0.01),
             cloud_drift_x: f("cloud_drift_x", d.cloud_drift_x),
             cloud_drift_y: f("cloud_drift_y", d.cloud_drift_y),
-            ambient_sky: value.get("ambient_sky").and_then(toml_color),
-            ambient_ground: value.get("ambient_ground").and_then(toml_color),
+            ambient_sky: view.opt_color("ambient_sky"),
+            ambient_ground: view.opt_color("ambient_ground"),
         }
     }
 }

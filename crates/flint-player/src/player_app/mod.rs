@@ -3,6 +3,8 @@
 //! Runs the game loop with physics, input, and first-person camera.
 
 #[cfg(test)]
+mod alloc_count;
+#[cfg(test)]
 mod asset_search_tests;
 mod camera_cut;
 #[cfg(test)]
@@ -23,10 +25,17 @@ mod extension_hooks_tests;
 mod extension_tests;
 pub mod fonts;
 mod frame;
+mod frame_history;
+#[cfg(test)]
+mod frame_notes_tests;
 pub mod frame_rate;
 pub mod game_core;
 pub mod headless_animation;
 pub mod headless_game;
+mod hitch;
+#[cfg(test)]
+mod hitch_log_tests;
+mod hitch_watch;
 #[cfg(test)]
 mod hold_tests;
 mod hud_render;
@@ -65,6 +74,7 @@ mod script_error_card;
 #[cfg(test)]
 mod script_sound_tests;
 mod state;
+mod stats_view;
 pub mod style_commands;
 pub(crate) mod subsystem;
 #[cfg(test)]
@@ -96,6 +106,7 @@ use flint_runtime::pad::Gilrs;
 use flint_runtime::InputState;
 pub use game_core::GameCore;
 pub use state::{LaunchOptions, ProcGenMode, SceneSettings};
+pub use stats_view::StatsView;
 use std::collections::HashMap;
 use std::sync::Arc;
 use transition::TransitionPhase;
@@ -124,9 +135,12 @@ pub struct CaptureConfig {
     pub exit_after: Option<f64>,
     /// Timed input played into `InputState` (`--input-script`).
     pub input_script: Option<input_script::InputScript>,
-    /// Open the F2 stats overlay on the first frame (`--stats`). F2 still
-    /// closes it.
+    /// Open the F2 stats overlay on the first frame (`--stats`), in the
+    /// form `stats_view` names. F2 still steps it on and closes it.
     pub show_stats: bool,
+    /// What `show_stats` opens: the full overlay (the default, and what
+    /// `Off` means here) or the graph alone (`--stats=graph`, #1078).
+    pub stats_view: StatsView,
     /// Internal: the first capture has been written.
     pub(crate) taken: bool,
     /// Internal: number of numbered frames written so far.

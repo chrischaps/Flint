@@ -37,7 +37,10 @@ struct PostProcessUniforms {
     dof_strength: f32,
     dof_focus_distance: f32,
     dof_focus_range: f32,
-    _pad2: f32,
+    // Where dither is added (#503; rides the former _pad2): 0 = linear
+    // light, 1 = Bayer in display levels, 2 = triangular noise in display
+    // levels.
+    dither_style: f32,
     // The post time film grain reads. The render modes that shared this
     // row are display styles since #746 (stylize/matrix.rs and the rest).
     post_time: f32,
@@ -371,6 +374,37 @@ fn bayer8(pos: vec2<f32>) -> f32 {
     return f32(value) / 64.0;
 }
 
+// The exact sRGB curves (IEC 61966-2-1), the ones the target's encode uses,
+// so a value dithered in display levels comes back out where it was put.
+// Not linear_to_srgb above, which is a 2.2 power.
+fn srgb_encode(c: vec3<f32>) -> vec3<f32> {
+    let x = max(c, vec3<f32>(0.0));
+    let lo = x * 12.92;
+    let hi = 1.055 * pow(x, vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, x <= vec3<f32>(0.0031308));
+}
+
+fn srgb_decode(c: vec3<f32>) -> vec3<f32> {
+    let x = max(c, vec3<f32>(0.0));
+    let lo = x / 12.92;
+    let hi = pow((x + 0.055) / 1.055, vec3<f32>(2.4));
+    return select(hi, lo, x <= vec3<f32>(0.04045));
+}
+
+// Roberts' R2 sequence over the pixel grid, in [0, 1): a quasi-random mask
+// with blue-noise-like spacing and no 8x8 tile to read.
+fn r2_dither(pos: vec2<f32>) -> f32 {
+    let p = floor(pos);
+    return fract(0.5 + p.x * 0.75487766624669 + p.y * 0.56984029099805);
+}
+
+// A uniform [0, 1) value to a triangular one in (-1, 1), through the
+// triangle's inverse CDF, so the mask keeps its spacing.
+fn tpdf(u: f32) -> f32 {
+    let r = u * 2.0 - 1.0;
+    return sign(r) * (1.0 - sqrt(1.0 - abs(r)));
+}
+
 // hash2 (film grain's) lives in tear_mask.wgsl, which Rust prepends to
 // this file (`postprocess::COMPOSITE_WGSL`). The tear itself is drawn by
 // the styles that follow it and the style mask, not here (#746).
@@ -508,11 +542,32 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
         mapped = max(mapped, vec3<f32>(0.0));
     }
 
-    // ── Ordered (Bayer) Dither ──
+    // ── Dither (#503) ──
+    // Style 0 adds Bayer in linear light, before the target's sRGB encode,
+    // so its size on screen follows the encode's slope: about 13x one level
+    // near black, well under one in the highlights. Kept as it was, a look
+    // of its own. Styles 1 and 2 add it in display levels, where the 8-bit
+    // quantization happens, so dither_intensity is the same number of
+    // levels at every brightness (1/255 = one step) and then decode again
+    // for the hardware to encode.
     if (params.dither_intensity > 0.0) {
-        let dither = bayer8(in.position.xy) - 0.5;
-        mapped = mapped + vec3<f32>(dither * params.dither_intensity);
-        mapped = max(mapped, vec3<f32>(0.0));
+        if (params.dither_style < 0.5) {
+            let dither = bayer8(in.position.xy) - 0.5;
+            mapped = mapped + vec3<f32>(dither * params.dither_intensity);
+            mapped = max(mapped, vec3<f32>(0.0));
+        } else {
+            var d: f32;
+            if (params.dither_style < 1.5) {
+                // [-0.5, 0.5): one step of intensity is ±half a step
+                d = bayer8(in.position.xy) - 0.5;
+            } else {
+                // Triangular in (-1, 1): one step of intensity is ±1 step,
+                // which leaves no banding and no error tied to the signal
+                d = tpdf(r2_dither(in.position.xy));
+            }
+            let encoded = srgb_encode(mapped) + vec3<f32>(d * params.dither_intensity);
+            mapped = srgb_decode(max(encoded, vec3<f32>(0.0)));
+        }
     }
 
     return vec4<f32>(mapped, 1.0);

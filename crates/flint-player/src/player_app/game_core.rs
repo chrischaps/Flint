@@ -78,6 +78,9 @@ pub struct GameCore {
     /// Script commands no part of this scene takes that have been warned
     /// about, once a run each (`set_wooze` in a scene with no field).
     pub(crate) commands_warned: std::collections::HashSet<&'static str>,
+    /// The fixed physics steps that ran last frame (the frame history,
+    /// #1076); a step a paused state skipped isn't one.
+    pub(crate) fixed_steps: u32,
     /// The script modules the game's extensions declared (#754): enabled
     /// for the whole run, beside the subsystems'.
     pub(crate) extension_modules: Vec<&'static str>,
@@ -105,6 +108,7 @@ impl GameCore {
             procgen_resolver: ProcGenResolver::new(),
             script_requests: Default::default(),
             commands_warned: Default::default(),
+            fixed_steps: 0,
             extension_modules: Vec::new(),
         }
     }
@@ -512,10 +516,12 @@ impl GameCore {
         camera: &mut Camera,
     ) -> Option<Listener> {
         self.physics.begin_frame(self.clock.pending_fixed_ratio());
+        self.fixed_steps = 0;
         while self.clock.should_fixed_update() {
             let dt = self.clock.fixed_timestep;
 
             if steps && config.runs(PHYSICS) {
+                self.fixed_steps += 1;
                 if has_fps_player {
                     self.physics.update_character(input, &mut self.world, dt);
                 }
@@ -667,6 +673,10 @@ impl GameCore {
     #[cfg(feature = "procgen")]
     #[profiling::function]
     pub(crate) fn tick_procgen(&mut self, lent: Lent<'_>) {
+        use flint_core::frame_notes::{self, NoteKind};
+        // Whether the queue made anything is known only after: timed by
+        // hand, noted (#1077) when it did
+        let began = frame_notes::listening().then(web_time::Instant::now);
         let completed = self
             .procgen_resolver
             .process_frame(lent.camera.position_array());
@@ -674,6 +684,7 @@ impl GameCore {
         if completed.is_empty() && failures.is_empty() {
             return;
         }
+        let detail = began.map(|_| procgen_note(&completed, failures.len()));
         if let (Some(renderer), Some((device, queue))) = (lent.renderer, lent.gpu) {
             // Catalog names never reach the queue, so the file fallback
             // needs only the scene's own search paths.
@@ -690,7 +701,28 @@ impl GameCore {
             super::procgen_assets::apply_completed(&completed, &mut sink);
             super::procgen_assets::apply_failures(&failures, &mut sink);
         }
+        if let (Some(began), Some(detail)) = (began, detail) {
+            let ms = began.elapsed().as_secs_f32() * 1000.0;
+            frame_notes::note(NoteKind::Procgen, || detail, Some(ms));
+        }
     }
+}
+
+/// `2 generated: oak_tree, stone_wall; 1 failed`, for a frame note.
+#[cfg(feature = "procgen")]
+fn procgen_note(completed: &[flint_procgen::CompletedAsset], failed: usize) -> String {
+    let mut line = String::new();
+    if !completed.is_empty() {
+        let names: Vec<&str> = completed.iter().map(|c| c.spec_name.as_str()).collect();
+        line = format!("{} generated: {}", completed.len(), names.join(", "));
+    }
+    if failed > 0 {
+        if !line.is_empty() {
+            line.push_str("; ");
+        }
+        line.push_str(&format!("{failed} failed"));
+    }
+    line
 }
 
 /// Carry out what the scripts have asked since the last drain (#697), in

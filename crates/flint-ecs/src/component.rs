@@ -2,7 +2,7 @@
 
 use flint_core::EntityId;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Dynamic components stored as TOML values
 ///
@@ -13,9 +13,11 @@ pub struct DynamicComponents {
     /// The archetype name for this entity (if any)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archetype: Option<String>,
-    /// Component data: component_name -> field data
+    /// Component data: component_name -> field data. Ordered by name, so
+    /// any walk of it is the same in every process (#1115): a `HashMap`
+    /// here gave the viewer's inspector a new component order each launch.
     #[serde(flatten)]
-    pub data: HashMap<String, toml::Value>,
+    pub data: BTreeMap<String, toml::Value>,
 }
 
 impl DynamicComponents {
@@ -28,7 +30,7 @@ impl DynamicComponents {
     pub fn with_archetype(archetype: impl Into<String>) -> Self {
         Self {
             archetype: Some(archetype.into()),
-            data: HashMap::new(),
+            data: BTreeMap::new(),
         }
     }
 
@@ -59,9 +61,7 @@ impl DynamicComponents {
 
     /// The names of the components held, in name order (#688)
     pub fn component_names(&self) -> Vec<&str> {
-        let mut names: Vec<&str> = self.data.keys().map(|s| s.as_str()).collect();
-        names.sort_unstable();
-        names
+        self.data.keys().map(|s| s.as_str()).collect()
     }
 
     /// Get a field value from a component
@@ -244,6 +244,34 @@ impl std::ops::Deref for ComponentsMut<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A walk of an entity's components is in name order, whatever order
+    /// they were set in (#1115): the viewer's inspector walks `data` itself.
+    #[test]
+    fn components_walk_in_name_order() {
+        let mut comps = DynamicComponents::new();
+        for name in [
+            "transform",
+            "script",
+            "light",
+            "audio_source",
+            "model",
+            "bounds",
+        ] {
+            comps.set(name, toml::Value::Table(toml::map::Map::new()));
+        }
+        let walked: Vec<&str> = comps.data.keys().map(String::as_str).collect();
+        let expected = [
+            "audio_source",
+            "bounds",
+            "light",
+            "model",
+            "script",
+            "transform",
+        ];
+        assert_eq!(walked, expected);
+        assert_eq!(comps.component_names(), expected);
+    }
 
     #[test]
     fn test_merge_component_table_into_table() {

@@ -91,10 +91,10 @@ impl SkyRenderer {
     ) {
         self.active = false;
         for &entity_id in world.entities_with_component(comp::SKY) {
-            let sky_comp = world
-                .get_components(entity_id)
-                .and_then(|components| components.get(comp::SKY).cloned());
-            let Some(sky_comp) = sky_comp else { continue };
+            let sky_comp = world.view(entity_id, comp::SKY);
+            if !sky_comp.exists() {
+                continue;
+            }
 
             self.params = SkyParams::from_component(&sky_comp);
             if let Some(ambient_sky) = self.params.ambient_sky {

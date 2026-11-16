@@ -338,7 +338,7 @@ fn show(name: &str, scene_path: &str, format: &str, schemas: &[String]) -> Resul
     struct EntityDetails {
         #[serde(flatten)]
         info: flint_ecs::EntityInfo,
-        data: Option<std::collections::HashMap<String, toml::Value>>,
+        data: Option<std::collections::BTreeMap<String, toml::Value>>,
     }
 
     let details = EntityDetails {

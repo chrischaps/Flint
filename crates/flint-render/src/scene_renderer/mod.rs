@@ -1337,13 +1337,9 @@ impl SceneRenderer {
 
             // Check if entity has a model component
             let model_asset = world
-                .get_components(entity.id)
-                .and_then(|components| components.get(comp::MODEL).cloned())
-                .and_then(|model| {
-                    model
-                        .get("asset")
-                        .and_then(|v| v.as_str().map(String::from))
-                });
+                .view(entity.id, comp::MODEL)
+                .opt_str("asset")
+                .map(String::from);
 
             if let Some(asset_name) = &model_asset {
                 if let Some(mesh) = self.ray_meshes.get(asset_name) {
@@ -1380,33 +1376,29 @@ impl SceneRenderer {
             }
 
             // Check for sprite component — render as billboard or 2D sprite
-            if let Some(components) = world.get_components(entity.id) {
-                if let Some(sprite) = components.get(comp::SPRITE) {
-                    self.extract_sprite_entity(
-                        device,
-                        tex_cache_ref,
-                        world,
-                        entity.id,
-                        components,
-                        sprite,
-                        world_pos,
-                        &mut sprite2d_collected,
-                    );
-                    continue;
-                }
+            let sprite = world.view(entity.id, comp::SPRITE);
+            if sprite.exists() {
+                self.extract_sprite_entity(
+                    device,
+                    tex_cache_ref,
+                    world,
+                    entity.id,
+                    &sprite,
+                    world_pos,
+                    &mut sprite2d_collected,
+                );
+                continue;
             }
 
             // Standalone ui_text: entities with ui_text but no sprite
-            if let Some(components) = world.get_components(entity.id) {
-                if self.extract_ui_text_entity(
-                    tex_cache_ref,
-                    entity.id,
-                    components,
-                    world_pos,
-                    &mut sprite2d_collected,
-                ) {
-                    continue;
-                }
+            if self.extract_ui_text_entity(
+                tex_cache_ref,
+                world,
+                entity.id,
+                world_pos,
+                &mut sprite2d_collected,
+            ) {
+                continue;
             }
 
             // Only draw fallback geometry for entities that explicitly have bounds

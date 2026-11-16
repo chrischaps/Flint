@@ -238,7 +238,9 @@ pub struct PostProcessUniforms {
     pub dof_strength: f32,
     pub dof_focus_distance: f32,
     pub dof_focus_range: f32,
-    pub _pad2: f32,
+    /// Where dither is added (#503; the former _pad2): 0 linear light,
+    /// 1 Bayer in display levels, 2 triangular noise in display levels.
+    pub dither_style: f32,
     // The post time film grain reads (must mirror composite_shader.wgsl;
     // the render modes that shared the row are styles since #746)
     pub post_time: f32,
@@ -2287,7 +2289,7 @@ impl PostProcessPipeline {
             dof_strength: if effects_on { config.dof_strength } else { 0.0 },
             dof_focus_distance: config.dof_focus_distance,
             dof_focus_range: config.dof_focus_range.max(0.001),
-            _pad2: 0.0,
+            dither_style: config.dither_style as f32,
             post_time: time,
             _pad_time: [0.0; 3],
             grade_lift: config.grade_lift,

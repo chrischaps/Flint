@@ -71,6 +71,11 @@ impl ScriptSystem {
         self.engine.set_timing(on);
     }
 
+    /// Whether [`set_timing`](Self::set_timing) is on.
+    pub fn timing(&self) -> bool {
+        self.engine.timing()
+    }
+
     /// What the scripts took since the last take, ms: each callback under
     /// `<source>:<callback>` (`scripts/hud.rhai:on_draw_ui`), and the script
     /// system's own steps in brackets (`[hot reload]`, `[load]`), less the
@@ -454,6 +459,10 @@ impl ScriptSystem {
         entity_id: flint_core::EntityId,
         script_path: &std::path::Path,
     ) {
+        let _note =
+            flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::ScriptLoad, || {
+                flint_core::project::shown(script_path)
+            });
         match self.engine.compile_file(script_path) {
             Ok(ast) => {
                 let source = script_path

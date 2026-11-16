@@ -428,7 +428,9 @@ macro_rules! post_effects {
                 dither_enabled: bool = false, toggle;
                     "Enabled", "Dither the final image against banding"
                 dither_intensity: f32 = 0.03, [0.0, 0.1] slider;
-                    "Intensity", "How strong the dither is"
+                    "Intensity", "How strong the dither is. In style 0 it is linear light, so the same value is far stronger in the dark; in styles 1 and 2 it is display levels, and 0.004 (one 8-bit step) hides banding without showing a pattern"
+                dither_style: u32 = 0, [0.0, 2.0] count;
+                    "Style", "Where the dither is added: 0 = linear light (the original, a crosshatch that shows most near black), 1 = 8x8 Bayer in display levels (the same size at every brightness), 2 = triangular noise in display levels (no tile; the one to hide banding with)"
             }
 
             fxaa "FXAA" "Fast approximate anti-aliasing on the final composite" {

@@ -8,7 +8,7 @@
 //! did, and every read and write is the same one through the group.
 
 use super::input_config::{InputConfigPaths, PendingRebind};
-use super::{camera_cut, expression_feed, fonts, perf};
+use super::{camera_cut, expression_feed, fonts, hitch, hitch_watch, perf};
 use super::{egui_input, render_scale, text_halo, world_text};
 use flint_asset::{AssetCatalog, ContentStore};
 use flint_runtime::{InputConfig, SaveDebounce};
@@ -411,18 +411,46 @@ impl Default for Hud {
     }
 }
 
-/// The F2 stats overlay and the perf readout.
-#[derive(Default)]
+/// The F2 stats overlay, the frame history and the perf readout.
 pub(super) struct Stats {
-    /// The F2 overlay is open
-    pub(super) show: bool,
+    /// What the F2 overlay shows (#1078): nothing, all of it, or the
+    /// frame-time graph alone
+    pub(super) view: super::StatsView,
+    /// The frame-time graph's buffers and ceiling, kept across frames
+    #[cfg(feature = "debug-hud")]
+    pub(super) graph: super::stats_view::StatsGraph,
     pub(super) frame_times: std::collections::VecDeque<f64>,
     /// The player turned the renderer's GPU timing on for the overlay
     /// (ADR 0108), so it turns it off again when the overlay closes
     pub(super) gpu_timing: bool,
-    /// The perf readout's recorder (`?perf=1` on the web, #120): frame and
-    /// phase times for the last ten seconds. `None` costs nothing.
-    pub(super) perf: Option<perf::PerfRecorder>,
+    /// The frame recorder: the frame history (#1076, the last
+    /// `HISTORY_FRAMES` frames, recorded always where the build has
+    /// `frame-history`), which the perf readout (`--perf`, `?perf=1`,
+    /// #120) sums up when it is on (`perf.readout`).
+    pub(super) perf: perf::PerfRecorder,
+    /// What counts as a hitch, and the hitches so far (#1076), judged as
+    /// each frame's clock comes in.
+    pub(super) hitches: hitch::HitchDetector,
+    /// What the run keeps of them (#1079): the hitch log, the exit
+    /// report's counts and the `--max-hitches` gate.
+    pub(super) watch: hitch_watch::HitchWatch,
+}
+
+impl Default for Stats {
+    fn default() -> Self {
+        Self {
+            view: super::StatsView::Off,
+            #[cfg(feature = "debug-hud")]
+            graph: Default::default(),
+            frame_times: Default::default(),
+            gpu_timing: false,
+            // `frame-history`, and `FLINT_FRAME_HISTORY` over it
+            perf: perf::PerfRecorder::recording_always(super::frame_history::always_on_from_env()),
+            // `FLINT_HITCH_FACTOR` / `FLINT_HITCH_FLOOR_MS`, read once.
+            hitches: hitch::HitchDetector::new(hitch::HitchThresholds::from_env()),
+            watch: Default::default(),
+        }
+    }
 }
 
 /// When the `persist_*` store (the game core's) is written (see

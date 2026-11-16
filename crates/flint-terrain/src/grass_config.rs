@@ -1,6 +1,6 @@
 //! Grass configuration — parsed from `[grass]` TOML section
 
-use flint_core::toml_util::{toml_f32, toml_vec3};
+use flint_ecs::ComponentView;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,20 +117,16 @@ impl GrassConfig {
         self.max_instances(width, depth).min(near).max(1)
     }
 
-    /// Read the `grass.*` fields of a `terrain` or `grass_ground` component.
-    /// `enabled_default` is what a missing `grass.enabled` means.
-    pub fn from_component(comp_value: &toml::Value, enabled_default: bool) -> Self {
+    /// Read the `grass.*` fields of a `terrain` or `grass_ground` component,
+    /// through the typed view (ADR 0115): a wrong type reads as the default
+    /// and is reported once. `enabled_default` is what a missing
+    /// `grass.enabled` means.
+    pub fn from_component(view: &ComponentView<'_>, enabled_default: bool) -> Self {
         let mut gc = Self::default();
-        let enabled = comp_value
-            .get("grass.enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(enabled_default);
-        if !enabled {
+        if !view.bool("grass.enabled", enabled_default) {
             return gc;
         }
-        let get_f32 = |key: &str, default: f32| -> f32 {
-            comp_value.get(key).and_then(toml_f32).unwrap_or(default)
-        };
+        let get_f32 = |key: &str, default: f32| -> f32 { view.f32(key, default) };
         gc.enabled = true;
         gc.density = get_f32("grass.density", gc.density);
         gc.max_distance = get_f32("grass.max_distance", gc.max_distance);
@@ -143,32 +139,16 @@ impl GrassConfig {
         gc.bend_radius = get_f32("grass.bend_radius", gc.bend_radius);
         gc.bend_strength = get_f32("grass.bend_strength", gc.bend_strength);
         gc.density_threshold = get_f32("grass.density_threshold", gc.density_threshold);
-        gc.density_layer = comp_value
-            .get("grass.density_layer")
-            .and_then(|v| v.as_integer())
-            .map(|i| i as u32)
-            .unwrap_or(gc.density_layer);
+        gc.density_layer = view.i64("grass.density_layer", gc.density_layer as i64) as u32;
         gc.dry_amount = get_f32("grass.dry_amount", gc.dry_amount);
-        gc.wooze = comp_value
-            .get("grass.wooze")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(gc.wooze);
+        gc.wooze = view.bool("grass.wooze", gc.wooze);
         gc.wooze_amplitude = get_f32("grass.wooze_amplitude", gc.wooze_amplitude).max(0.0);
         gc.wooze_wavelength = get_f32("grass.wooze_wavelength", gc.wooze_wavelength);
 
-        // Parse vec3 fields
-        if let Some(v) = comp_value.get("grass.color_base").and_then(toml_vec3) {
-            gc.color_base = v;
-        }
-        if let Some(v) = comp_value.get("grass.color_tip").and_then(toml_vec3) {
-            gc.color_tip = v;
-        }
-        if let Some(v) = comp_value.get("grass.color_dry").and_then(toml_vec3) {
-            gc.color_dry = v;
-        }
-        if let Some(v) = comp_value.get("grass.wind_direction").and_then(toml_vec3) {
-            gc.wind_direction = v;
-        }
+        gc.color_base = view.vec3("grass.color_base", gc.color_base);
+        gc.color_tip = view.vec3("grass.color_tip", gc.color_tip);
+        gc.color_dry = view.vec3("grass.color_dry", gc.color_dry);
+        gc.wind_direction = view.vec3("grass.wind_direction", gc.wind_direction);
         gc
     }
 }
@@ -231,6 +211,60 @@ fn default_density_threshold() -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use flint_core::components as comp;
+    use flint_ecs::FlintWorld;
+
+    fn world_with(component: &str, text: &str) -> (FlintWorld, flint_core::EntityId) {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("hills").unwrap();
+        let data: toml::Value = toml::from_str(text).unwrap();
+        world.set_component(id, component, data).unwrap();
+        (world, id)
+    }
+
+    #[test]
+    fn a_wrong_type_in_a_terrain_is_the_default_and_reported_once() {
+        let (world, id) = world_with(
+            comp::TERRAIN,
+            "heightmap = \"h.png\"\nwidth = \"wide\"\nchunk_resolution = 32\n\
+             \"grass.enabled\" = true\n\"grass.density\" = [4]\n\"grass.color_tip\" = \"green\"",
+        );
+        for _ in 0..3 {
+            let terrain = crate::TerrainConfig::from_component(&world.view(id, comp::TERRAIN));
+            assert_eq!(terrain.width, 256.0);
+            assert_eq!(terrain.chunk_resolution, 32);
+            assert_eq!(terrain.heightmap_path, "h.png");
+            let grass = GrassConfig::from_component(&world.view(id, comp::TERRAIN), false);
+            assert!(grass.enabled);
+            assert_eq!(grass.density, 8.0);
+            assert_eq!(grass.color_tip, default_color_tip());
+        }
+        let said: Vec<String> = world
+            .read_reports()
+            .snapshot()
+            .iter()
+            .map(|d| d.to_string())
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "error[bad-type] entity 'hills' terrain.width: expected a number, got string \"wide\"",
+                "error[bad-type] entity 'hills' terrain.grass.density: expected a number, got array [4]",
+                "error[bad-type] entity 'hills' terrain.grass.color_tip: expected 3 numbers, \
+                 [x, y, z], got string \"green\"",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_grass_ground_is_on_unless_it_says_otherwise() {
+        let (world, id) = world_with(comp::GRASS_GROUND, "\"grass.density\" = 3");
+        let grass = GrassConfig::from_component(&world.view(id, comp::GRASS_GROUND), true);
+        assert!(grass.enabled);
+        assert_eq!(grass.density, 3.0, "an integer is a number");
+        assert!(world.read_reports().is_empty());
+    }
 
     #[test]
     fn default_config_has_grass_disabled() {

@@ -128,6 +128,11 @@ pub fn write_preset_in(
 /// it hasn't set a value, and nothing to fill in with no such table: the passes
 /// that boil are off. What's wrong with the file comes back to be named.
 ///
+/// A name that is neither a file nor a built-in is taken out too, and named
+/// (#807). So after this, `[wooze] preset` is unset or a built-in, and a
+/// [`WoozeDef::field`] that meets any other name knows the scene was never
+/// settled and says so.
+///
 /// The scene's `[wooze]` and `[living]` are read out of its tables
 /// ([`LivingTables`]) and the filled ones put back. A scene whose tables
 /// don't fit their types is left as it is: [`settle_scene`](super::settle_scene)
@@ -143,7 +148,15 @@ pub fn apply_preset_file(scene: &mut SceneFile, scene_path: &Path) -> Vec<WoozeI
         return Vec::new();
     };
     let found = match read_preset(scene_path, &name) {
-        None => return Vec::new(),
+        None if preset(&name).is_some() => return Vec::new(),
+        None => {
+            def.preset = None;
+            tables.put(scene);
+            return vec![WoozeIssue {
+                zone: None,
+                message: no_such_preset(&name),
+            }];
+        }
         Some(found) => found,
     };
     // It's been dealt with, whichever way this goes, so nothing goes looking for
@@ -184,6 +197,21 @@ pub fn apply_preset_file(scene: &mut SceneFile, scene_path: &Path) -> Vec<WoozeI
         }
     }
     issues
+}
+
+/// The built-in presets' names, `linklater, boil, ...`.
+fn built_in_names() -> String {
+    let names: Vec<&str> = flint_wooze::PRESETS.iter().map(|p| p.0).collect();
+    names.join(", ")
+}
+
+/// What is said of a `[wooze] preset` that is neither a file the scene can
+/// see nor a built-in.
+fn no_such_preset(name: &str) -> String {
+    format!(
+        "preset '{name}' isn't a file in wooze/ or one of {}",
+        built_in_names()
+    )
 }
 
 fn echoes_over(a: Option<LivingEchoesDef>, b: Option<LivingEchoesDef>) -> Option<LivingEchoesDef> {
@@ -466,11 +494,16 @@ impl WoozeDef {
 
         let base = match self.preset.as_deref() {
             None => WoozeSample::NEUTRAL,
+            // `apply_preset_file` takes out every name that isn't a built-in,
+            // laying in the file it names or naming the miss; one still here
+            // is a scene no host settled (#807), and its preset file is lost
             Some(name) => preset(name).unwrap_or_else(|| {
-                let names: Vec<&str> = flint_wooze::PRESETS.iter().map(|p| p.0).collect();
                 issues.push(global(format!(
-                    "preset '{name}' isn't a file in wooze/ or one of {}",
-                    names.join(", ")
+                    "preset '{name}' was never filled in: it is not one of {}, so it \
+                     names a file (wooze/{name}{PRESET_SUFFIX}), which a host lays in \
+                     with flint_procgen::settle_scene after load_scene, and this \
+                     host didn't call it",
+                    built_in_names()
                 )));
                 WoozeSample::NEUTRAL
             }),
@@ -820,6 +853,49 @@ mod preset_tests {
         assert!(said.contains("misty") && said.contains("stepp"), "{said}");
         // And nothing goes on to say it isn't a built-in, too.
         assert!(wooze_of(&scene).unwrap().field().1.is_empty());
+    }
+
+    /// A name that is neither a file nor a built-in is named once, by the
+    /// fill, and taken out, so the field says nothing more of it (#807).
+    #[test]
+    fn a_preset_that_is_nothing_is_named_once() {
+        let folder = Folder::new("nothing");
+        let mut scene = scene_naming("");
+        let issues = apply_preset_file(&mut scene, &folder.scene());
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        let said = issues[0].to_string();
+        assert!(
+            said.contains("preset 'misty' isn't a file in wooze/ or one of linklater"),
+            "{said}"
+        );
+        let wooze = wooze_of(&scene).unwrap();
+        assert_eq!(wooze.preset, None);
+        assert!(wooze.field().1.is_empty());
+    }
+
+    /// The fill is an explicit call (#686): a host that loads a scene naming
+    /// a preset file and never calls `settle_scene` loses the file's knobs.
+    /// It is told, by the field every host builds, in words that name the
+    /// call it skipped; the same scene settled says nothing (#807).
+    #[test]
+    fn a_host_that_never_settles_is_told() {
+        let folder = Folder::new("unsettled");
+        write_preset(&folder.scene(), "misty", &tuned()).unwrap();
+
+        let unsettled = scene_naming("");
+        let (field, issues) = wooze_of(&unsettled).unwrap().field();
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        let said = issues[0].to_string();
+        for words in ["preset 'misty' was never filled in", "settle_scene"] {
+            assert!(said.contains(words), "{words} in {said}");
+        }
+        assert_eq!(field.sample([0.0; 3], 0.0).jitter, 1.0, "neutral");
+
+        let mut settled = scene_naming("");
+        crate::settle_scene(&mut settled, &folder.scene()).unwrap();
+        let (field, issues) = wooze_of(&settled).unwrap().field();
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(field.sample([0.0; 3], 0.0).jitter, 2.0, "the file's");
     }
 
     #[test]

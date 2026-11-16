@@ -38,6 +38,18 @@ pub(crate) struct LivingSubsystem {
     pub(crate) tune: super::living_tuning::LivingTune,
     /// `Some` in a capture (`flint render`, #216, #725): see [`Capture`].
     pub(crate) capture: Option<Capture>,
+    /// The field as the `wooze` module's reads last had it (#505), shared
+    /// until it changes, so a frame that changes nothing copies nothing.
+    published: Option<std::sync::Arc<flint_wooze::WoozeField>>,
+    /// This run of the subsystem, so scripts' beat clocks start again in
+    /// each scene.
+    scene_token: u64,
+}
+
+/// A new [`LivingSubsystem::scene_token`].
+fn next_scene_token() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// How a capture's grove differs from the player's: every pose a step asks
@@ -125,13 +137,32 @@ impl LivingSubsystem {
         }
         let mut living = Self {
             wooze,
+            scene_token: next_scene_token(),
             ..Default::default()
         };
         // What --compare asked for, before any scene was: which presets, and
         // whether to start comparing; the picks outlive the scene
         living.tune.ab_picks = ctx.launch.compare.clone();
         living.tune.compare_at_start = ctx.launch.compare_at_start.take();
+        // The scripts' on_init reads the field at the scene's first moment
+        living.publish_reading(ctx.script, 0.0);
         Some(Box::new(living))
+    }
+
+    /// Hand the `wooze` module's reads (#505) the field and the time on its
+    /// clock `time`, replacing what an earlier scene or frame handed them.
+    pub(crate) fn publish_reading(&mut self, script: &mut flint_script::ScriptSystem, time: f64) {
+        let field = match (&self.wooze, &self.published) {
+            (Some(field), Some(published)) if **published == *field => Some(published.clone()),
+            (Some(field), _) => Some(std::sync::Arc::new(field.clone())),
+            (None, _) => None,
+        };
+        self.published = field.clone();
+        script.set_module_state(super::living_api::WoozeReading {
+            field,
+            time,
+            scene: self.scene_token,
+        });
     }
 
     /// One frame of living props, on `dt` of the living clock: the clock and
@@ -144,6 +175,7 @@ impl LivingSubsystem {
         Self {
             wooze,
             capture: Some(Capture { shallow: moment }),
+            scene_token: next_scene_token(),
             ..Default::default()
         }
     }
@@ -406,6 +438,13 @@ impl Subsystem for LivingSubsystem {
     }
 
     fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
+        // Before on_update, the field and the moment its clock reaches this
+        // frame (#505): what this frame's poses and shallow wooze are drawn
+        // at, so a script's motion holds on the same beat as theirs.
+        if stage == Stage::PreScripts {
+            let time = self.wooze_time + self.living_dt(ctx);
+            self.publish_reading(ctx.script, time);
+        }
         // What the panel asked this frame, then the clock it may have
         // frozen. What it draws goes to the renderer in `frame_inputs`.
         if stage == Stage::Procgen {

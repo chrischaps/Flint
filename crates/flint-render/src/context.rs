@@ -339,6 +339,10 @@ impl RenderContext {
             .map_err(|e| RenderError::SurfaceCreation(e.to_string()))?;
 
         // Reconfigure with current format but new dimensions
+        let _note = flint_core::frame_notes::begin(
+            flint_core::frame_notes::NoteKind::SurfaceReconfigure,
+            || format!("{}x{}, a new surface", size.width, size.height),
+        );
         self.config.width = size.width.max(1);
         self.config.height = size.height.max(1);
         surface.configure(&self.device, &self.config);
@@ -357,6 +361,11 @@ impl RenderContext {
     /// Resize the surface
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
+            // The swapchain made again is a likely hitch (#1077)
+            let _note = flint_core::frame_notes::begin(
+                flint_core::frame_notes::NoteKind::SurfaceReconfigure,
+                || format!("{}x{}", new_size.width, new_size.height),
+            );
             self.size = new_size;
             self.config.width = new_size.width;
             self.config.height = new_size.height;

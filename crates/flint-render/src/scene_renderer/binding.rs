@@ -17,7 +17,6 @@
 use super::SceneRenderer;
 use flint_core::components as comp;
 use flint_core::project::{AssetScope, Project};
-use flint_core::toml_util::{toml_f32, toml_vec3};
 use flint_core::{EntityId, Transform, Vec3};
 use flint_ecs::FlintWorld;
 use flint_schema::{ArchetypeVisual, SchemaRegistry};
@@ -178,7 +177,7 @@ impl SceneRenderer {
         let terrain = load_scene_terrain(world, project, scene_dir, device, queue, self);
         let mut grass = terrain.as_ref().and_then(|t| {
             let config = flint_terrain::GrassConfig::from_component(
-                world.get_component(t.entity, comp::TERRAIN)?,
+                &world.view(t.entity, comp::TERRAIN),
                 false,
             );
             // The terrain's grass is in only when its splat map loaded
@@ -252,17 +251,18 @@ fn load_scene_terrain(
     use flint_terrain::{Heightmap, Terrain, TerrainConfig};
 
     for entity in world.all_entities() {
-        let Some(terrain_comp) = world.get_component(entity.id, comp::TERRAIN) else {
+        // Through the typed view (ADR 0115): a wrong type is reported once
+        let terrain_comp = world.view(entity.id, comp::TERRAIN);
+        if !terrain_comp.exists() {
             continue;
-        };
-        let heightmap_rel = match terrain_comp.get("heightmap").and_then(|v| v.as_str()) {
-            Some(s) if !s.is_empty() => s.to_string(),
-            _ => {
-                tracing::warn!("Terrain entity '{}': missing heightmap path", entity.name);
-                continue;
-            }
-        };
-        let hm_path = project.file_or_beside("terrain heightmap", &heightmap_rel, scene_dir);
+        }
+        let config = TerrainConfig::from_component(&terrain_comp);
+        if config.heightmap_path.is_empty() {
+            tracing::warn!("Terrain entity '{}': missing heightmap path", entity.name);
+            continue;
+        }
+        let hm_path =
+            project.file_or_beside("terrain heightmap", &config.heightmap_path, scene_dir);
         let heightmap = match Heightmap::from_png(&hm_path) {
             Ok(hm) => hm,
             Err(e) => {
@@ -271,47 +271,12 @@ fn load_scene_terrain(
             }
         };
 
-        let get_f32 =
-            |key: &str, default: f32| terrain_comp.get(key).and_then(toml_f32).unwrap_or(default);
-        let get_i32 = |key: &str, default: i32| {
-            terrain_comp
-                .get(key)
-                .and_then(|v| v.as_integer())
-                .map(|i| i as i32)
-                .unwrap_or(default)
-        };
-        let get_str = |key: &str| {
-            terrain_comp
-                .get(key)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string()
-        };
-        let config = TerrainConfig {
-            heightmap_path: heightmap_rel,
-            width: get_f32("width", 256.0),
-            depth: get_f32("depth", 256.0),
-            height_scale: get_f32("height_scale", 50.0),
-            chunk_resolution: get_i32("chunk_resolution", 64) as u32,
-            texture_tile: get_f32("texture_tile", 16.0),
-            splat_map_path: get_str("splat_map"),
-            layer_textures: [
-                get_str("layer0_texture"),
-                get_str("layer1_texture"),
-                get_str("layer2_texture"),
-                get_str("layer3_texture"),
-            ],
-            metallic: get_f32("metallic", 0.0),
-            roughness: get_f32("roughness", 0.85),
-            grass: None,
-        };
         let terrain = Terrain::generate(&heightmap, &config);
 
         // Only the position: a terrain is never rotated or scaled
         let pos = world
-            .get_component(entity.id, comp::TRANSFORM)
-            .and_then(|t| t.get("position").and_then(toml_vec3))
-            .unwrap_or([0.0; 3]);
+            .view(entity.id, comp::TRANSFORM)
+            .vec3("position", [0.0; 3]);
         let transform = Transform {
             position: Vec3::new(pos[0], pos[1], pos[2]),
             ..Default::default()
@@ -332,7 +297,7 @@ fn load_scene_terrain(
         // A style_mask on the terrain entity masks its chunks (#310)
         renderer.set_terrain_entity(Some(entity.id));
 
-        let grass_config = flint_terrain::GrassConfig::from_component(terrain_comp, false);
+        let grass_config = flint_terrain::GrassConfig::from_component(&terrain_comp, false);
         if grass_config.enabled {
             let splat_path =
                 project.file_or_beside("terrain splat map", &config.splat_map_path, scene_dir);
