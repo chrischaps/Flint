@@ -467,7 +467,9 @@ impl SceneRenderer {
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let mut encoder = device.create_command_encoder(&Default::default());
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Grass Blade Read-back"),
+            });
             encoder.copy_buffer_to_buffer(buffer, offset, &staging, 0, size);
             queue.submit([encoder.finish()]);
             staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});

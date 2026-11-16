@@ -121,6 +121,10 @@ mod web {
         quality: String,
         /// `style=name[:key=value,...]`, repeatable (#328).
         styles: Vec<String>,
+        /// `gpu_labels=1|groups|0`: name the frame for a GPU debugger, as
+        /// `FLINT_GPU_LABELS` does natively (#1083); none by default, so a
+        /// frame makes no WebGPU call more.
+        gpu_labels: Option<flint_render::gpu_labels::GpuLabels>,
     }
 
     impl WebArgs {
@@ -179,6 +183,9 @@ mod web {
                             .collect()
                     })
                     .unwrap_or_default(),
+                gpu_labels: flint_render::gpu_labels::GpuLabels::parse(
+                    get("gpu_labels").as_deref(),
+                ),
             }
         }
     }
@@ -223,6 +230,10 @@ mod web {
 
     async fn start() -> Result<(), String> {
         let args = WebArgs::from_query();
+        // Before the renderer reads it
+        if let Some(level) = args.gpu_labels {
+            flint_render::gpu_labels::set_level(level);
+        }
         if let Some((w, h)) = args.size {
             fix_canvas_size(w, h);
         }

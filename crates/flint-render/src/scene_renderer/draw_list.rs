@@ -18,6 +18,7 @@ use crate::billboard_pipeline::BillboardDrawCall;
 use crate::pipeline::BlendMode;
 use crate::wooze_pipeline::ShallowWoozeUniforms;
 use flint_core::EntityId;
+use std::collections::HashMap;
 
 /// What an item draws: its kind, and what only that kind carries.
 pub(super) enum Draw {
@@ -36,6 +37,21 @@ pub(super) enum Draw {
     Terrain(u32),
     /// Draw `n` of the frame's particle upload (`particle_draws`).
     Particles(u32),
+}
+
+impl Draw {
+    /// The kind's name, for GPU debuggers' draw markers (#1083).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Draw::Static(d) if d.is_wireframe => "Wire box",
+            Draw::Static(_) => "Static",
+            Draw::Skinned(_) => "Skinned",
+            Draw::Echo(_) => "Echo",
+            Draw::Billboard(_) => "Billboard",
+            Draw::Terrain(_) => "Terrain chunk",
+            Draw::Particles(_) => "Particles",
+        }
+    }
 }
 
 /// How an item's colour goes onto what's behind it.
@@ -205,6 +221,20 @@ pub(super) enum Layer {
 }
 
 impl Layer {
+    /// Its name as a debug group in a GPU debugger (#1083).
+    pub fn label(self) -> &'static str {
+        match self {
+            Layer::Terrain => "Terrain",
+            Layer::OpaqueStatic => "Opaque static",
+            Layer::OpaqueSkinned => "Opaque skinned",
+            Layer::Billboard => "Billboards",
+            Layer::BlendedStatic => "Blended static",
+            Layer::BlendedSkinned => "Blended skinned",
+            Layer::Echo => "Echoes",
+            Layer::Particles => "Particles",
+        }
+    }
+
     pub const COUNT: usize = 8;
     pub const ALL: [Layer; Layer::COUNT] = [
         Layer::Terrain,
@@ -241,9 +271,48 @@ impl Layer {
 #[derive(Default)]
 pub(super) struct DrawList {
     layers: [Vec<DrawItem>; Layer::COUNT],
+    /// Each drawn entity's name, for the draw markers GPU debuggers show
+    /// (#1083). Filled only while they are on, and kept, so a frame copies
+    /// only a name that is new or changed (ids are never reused).
+    names: HashMap<EntityId, String>,
 }
 
 impl DrawList {
+    /// Learn the names of the entities the items draw, for
+    /// [`mark`](Self::mark). Only while draw markers are on.
+    pub fn name_entities<'w>(&mut self, name_of: impl Fn(EntityId) -> Option<&'w str>) {
+        for id in self.layers.iter().flatten().filter_map(|i| i.entity) {
+            let Some(name) = name_of(id) else { continue };
+            if self.names.get(&id).is_none_or(|n| n != name) {
+                self.names.insert(id, name.to_owned());
+            }
+        }
+    }
+
+    /// Mark the next draw in `pass` with `item`'s entity and kind
+    /// (`Barrel · Static`, `ground · Terrain chunk 3`), for GPU debuggers.
+    pub fn mark(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        label: &mut crate::gpu_labels::DrawLabel,
+        item: &DrawItem,
+    ) {
+        let name = item.entity.and_then(|id| self.names.get(&id));
+        let id = item.entity.map(|id| id.0);
+        let who: &dyn std::fmt::Display = match (&name, &id) {
+            (Some(name), _) => name,
+            (None, Some(id)) => id,
+            (None, None) => &"(no entity)",
+        };
+        match item.draw {
+            Draw::Terrain(n) => label.mark(pass, format_args!("{who} · Terrain chunk {n}")),
+            Draw::Particles(n) => label.mark(pass, format_args!("Particles · draw {n}")),
+            Draw::Static(_) | Draw::Skinned(_) | Draw::Echo(_) | Draw::Billboard(_) => {
+                label.mark(pass, format_args!("{who} · {}", item.draw.kind()))
+            }
+        }
+    }
+
     /// Empty the layers extraction fills, keeping their allocations.
     pub fn clear_extracted(&mut self) {
         for layer in Layer::ALL.into_iter().filter(|l| l.extracted()) {
