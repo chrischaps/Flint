@@ -31,12 +31,15 @@ fn cell_shown(p: vec2<i32>) -> vec3<f32> {
     return select(c, to_display(c), u.srgb == 1u);
 }
 
-// As the glyph pass's `slot_at`
-fn cell_slot(p: vec2<f32>) -> u32 {
+// The mask id the glyph pass's `slot_at` looks up; 0 with no load where the
+// mask can hold no variant's id (#507)
+fn cell_id(p: vec2<f32>) -> u32 {
+    if !in_mask_rect(p) {
+        return 0u;
+    }
     let msize = vec2<i32>(textureDimensions(cell_mask));
     let mp = vec2<i32>(floor(p * vec2<f32>(msize) / u.size));
-    let id = textureLoad(cell_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).r;
-    return slot_of(id);
+    return textureLoad(cell_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).r;
 }
 
 struct Entries {
@@ -86,18 +89,32 @@ fn fs_main(in: VertexOutput) -> Entries {
     var first_bits = 0u;
     var second_bits = 0u;
     var more = 0u;
+    // A step at a time over all 16 samples, each step's loads independent
+    // of one another (#507): the mask ids, their slots, whether each slot
+    // is the band's. One sample after another, a cell waited on memory
+    // 48 times in a row, and with few cells on screen that wait was the
+    // pass's time.
+    var s: array<u32, 16>;
     for (var k = 0u; k < 16u; k++) {
         let q = floor(centre + ((vec2<f32>(f32(k & 3u), f32(k >> 2u)) + 0.5) / 4.0 - 0.5) * foot);
-        let s = cell_slot(q);
+        s[k] = cell_id(q);
+    }
+    for (var k = 0u; k < 16u; k++) {
+        s[k] = slot_of(s[k]);
+    }
+    var ours = 0u;
+    for (var k = 0u; k < 16u; k++) {
         // Pass-through variants have no band, so no row of theirs matches
-        if s == 0u || variants[s].cell_row != member {
-            continue;
-        }
-        if first == 0u || first == s {
-            first = s;
+        // (`&`, not `&&`: row 0 is there to read)
+        ours |= u32((s[k] != 0u) & (variants[s[k]].cell_row == member)) << k;
+    }
+    for (var k = 0u; k < 16u; k++) {
+        if ((ours >> k) & 1u) == 0u {
+        } else if first == 0u || first == s[k] {
+            first = s[k];
             first_bits |= 1u << k;
-        } else if second == 0u || second == s {
-            second = s;
+        } else if second == 0u || second == s[k] {
+            second = s[k];
             second_bits |= 1u << k;
         } else {
             more = 1u;
@@ -106,21 +123,15 @@ fn fs_main(in: VertexOutput) -> Entries {
     if first == 0u {
         return out;
     }
-    // Each sum in sample order, as the glyph pass adds them
+    // Each sum in sample order, as the glyph pass adds them: every sample
+    // loaded, a weight of 0 adding nothing
     var sum_a = vec3<f32>(0.0);
     var sum_b = vec3<f32>(0.0);
     for (var k = 0u; k < 16u; k++) {
-        let bit = 1u << k;
-        if ((first_bits | second_bits) & bit) == 0u {
-            continue;
-        }
         let q = floor(centre + ((vec2<f32>(f32(k & 3u), f32(k >> 2u)) + 0.5) / 4.0 - 0.5) * foot);
         let c = cell_shown(vec2<i32>(q)) * 1.0;
-        if (first_bits & bit) != 0u {
-            sum_a += c;
-        } else {
-            sum_b += c;
-        }
+        sum_a += c * f32((first_bits >> k) & 1u);
+        sum_b += c * f32((second_bits >> k) & 1u);
     }
     out.first = entry(sum_a, first, countOneBits(first_bits), more);
     out.second = entry(sum_b, second, countOneBits(second_bits), more);

@@ -852,6 +852,10 @@ struct AsciiUniforms {
     /// Beside `ramp`, each step's least tone for a calibrated ramp (#281),
     /// four a vec4; [`EQUAL_BANDS`] at a ramp's first step for equal bands.
     ramp_tone: [[f32; 4]; MAX_RAMP / 4],
+    /// Where the style mask can hold a variant's id (#507), output pixels
+    /// (x0, y0, x1, y1): outside it the passes read no mask
+    /// ([`StyleFrame::mask_rect`], the whole frame when that is `None`).
+    mask_rect: [f32; 4],
 }
 
 /// One per-entity variant's settings (#266), a row of the variant table's
@@ -908,6 +912,33 @@ struct VariantUniform {
     /// with an `edge_start` of its own.
     corners: u32,
     _pad_dissolve: [u32; 2],
+    /// Where the mask can hold the variant's id (#507), output pixels
+    /// (x0, y0, x1, y1): its draws' screen bounds and the mask's rounding
+    /// ([`StyleFrame::variant_rect`]), the whole frame when they have none.
+    bounds: [f32; 4],
+}
+
+/// The rect [`rect_corners`] made, back.
+fn corners_rect(c: [f32; 4]) -> kit::PixelRect {
+    kit::PixelRect {
+        x: c[0] as u32,
+        y: c[1] as u32,
+        width: (c[2] - c[0]).max(0.0) as u32,
+        height: (c[3] - c[1]).max(0.0) as u32,
+    }
+}
+
+/// A rect as the shaders take one, (x0, y0, x1, y1) in pixels; `None` is
+/// the whole `size` frame.
+fn rect_corners(rect: Option<kit::PixelRect>, size: [u32; 2]) -> [f32; 4] {
+    rect.map_or([0.0, 0.0, size[0] as f32, size[1] as f32], |r| {
+        [
+            r.x as f32,
+            r.y as f32,
+            (r.x + r.width) as f32,
+            (r.y + r.height) as f32,
+        ]
+    })
 }
 
 /// A variant whose edge glyphs are the uniform's own; `NO_EDGE_START` in
@@ -1315,9 +1346,21 @@ pub const MAX_BANDS: usize = 8;
 /// of picture and the pre-pass wins (0.485 -> 0.405 ms close up).
 const MIN_BAND_FOOTPRINT: f32 = 2.0;
 
+/// The least footprint summed in the pre-pass when the mask's ids have
+/// screen bounds (#507): the pass then draws only the cells near them
+/// ([`band_cells_in`]), and at footprint 1 one texel a pixel beats the 16
+/// lattice loads.
+const MIN_BAND_FOOTPRINT_BOUNDED: f32 = 1.0;
+
 /// The variant cell state's widest and tallest, inside the least texture
 /// size every backend offers.
 const MAX_BAND_TEXELS: u32 = 8192;
+
+/// The highest slot a band's texel can name: it packs the slot in 8 bits
+/// (`slot | count << 8 | more << 16`, ascii_variant_cells.wgsl). A row past
+/// it samples for itself (#507: `examples/ascii_crowd`'s 500 pillars put
+/// slots past 255 on the banded grids).
+const MAX_BAND_SLOT: usize = 255;
 
 /// One grid's rows in the variant cell state (#313).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1332,16 +1375,19 @@ struct Band {
 }
 
 /// Gives each drawn per-entity variant (rows past 0) with a footprint of
-/// at least [`MIN_BAND_FOOTPRINT`] the band of its grid: variants with the
-/// same cell, origin and footprint share one, so their cells are summed in
-/// one pass. Narrower variants, variants past [`MAX_BANDS`] grids and
-/// ones past the texture's size get none and sample in the glyph pass.
-fn assign_bands(rows: &mut [VariantUniform], size: [u32; 2]) -> Vec<Band> {
+/// at least `min_footprint` ([`MIN_BAND_FOOTPRINT`], or
+/// [`MIN_BAND_FOOTPRINT_BOUNDED`] when the pass is cut to the ids' bounds)
+/// the band of its grid: variants with the same cell, origin and footprint
+/// share one, so their cells are summed in one pass. Narrower variants,
+/// variants past [`MAX_BANDS`] grids or [`MAX_BAND_SLOT`] and ones past the
+/// texture's size get none and sample in the glyph pass.
+fn assign_bands(rows: &mut [VariantUniform], size: [u32; 2], min_footprint: f32) -> Vec<Band> {
     let mut bands: Vec<Band> = Vec::new();
     let mut next = 0u32;
-    for row in rows.iter_mut().skip(1) {
+    for (slot, row) in rows.iter_mut().enumerate().skip(1) {
         row.cell_row = 0;
-        if row.flags & PASS_THROUGH != 0 || row.footprint < MIN_BAND_FOOTPRINT {
+        if row.flags & PASS_THROUGH != 0 || row.footprint < min_footprint || slot > MAX_BAND_SLOT
+        {
             continue;
         }
         let same = |b: &&Band| {
@@ -1431,6 +1477,35 @@ fn band_texture_size(bands: &[Band]) -> [u32; 2] {
     let wide = bands.iter().map(|b| b.cols).max().unwrap_or(0);
     let tall = bands.last().map_or(0, |b| b.row + b.rows);
     [wide.max(1), tall.max(1)]
+}
+
+/// The texels of band `b` in the variant cell state whose cells' lattice
+/// can sample a pixel of `mask` (#507): every cell whose footprint, centred
+/// on it, meets the rect, and one more on every side. Texel t of a row
+/// holds cell t - 1 (`CELL_OFFSET`). Any other cell's 16 samples read only
+/// unstyled mask texels, so the pass would write it empty.
+fn band_cells_in(b: &Band, mask: kit::PixelRect) -> kit::PixelRect {
+    if mask.is_empty() {
+        return kit::PixelRect::EMPTY;
+    }
+    let reach = |c: f32| 0.5 * c * b.footprint.max(1.0);
+    let texels = |start: u32, len: u32, c: f32, o: f32, n: u32| {
+        // Cell k's centre is o + (k + 0.5) c; its lattice lies within
+        // `reach` of it
+        let lo = ((start as f32 - reach(c) - o) / c - 0.5).floor() as i64 - 1;
+        let hi = (((start + len) as f32 + reach(c) - o) / c - 0.5).ceil() as i64 + 1;
+        let t0 = (lo + 1).clamp(0, n as i64);
+        let t1 = (hi + 2).clamp(t0, n as i64);
+        (t0 as u32, (t1 - t0) as u32)
+    };
+    let (x, width) = texels(mask.x, mask.width, b.cell[0], b.origin[0], b.cols);
+    let (y, height) = texels(mask.y, mask.height, b.cell[1], b.origin[1], b.rows);
+    kit::PixelRect {
+        x,
+        y: b.row + y,
+        width,
+        height,
+    }
 }
 
 /// The tone statistics (#289): a texel per (slot, lattice row) of count,
@@ -2066,6 +2141,8 @@ fn variant_uniform(
         dissolve_row: 0,
         corners: 0,
         _pad_dissolve: [0; 2],
+        // The caller's (#507)
+        bounds: [0.0; 4],
     }
 }
 
@@ -2570,6 +2647,9 @@ impl Ascii {
             row.corners = corner_glyphs(frame, &set);
             // The row holds the outline in points; the shader wants pixels
             row.outline = outline_pixels(row.outline, frame.pixels_per_point);
+            // Its own bounds (#507): the tone statistics and the variant
+            // cell pass look for its pixels only there
+            row.bounds = rect_corners(frame.variant_rect(id, 0), [frame.width, frame.height]);
             rows.push(row);
         }
         (rows, slots)
@@ -3096,7 +3176,13 @@ impl StylePass for Ascii {
         let origin = grid_origin(size, cell);
         let grid = cell_grid(size, cell, origin);
         // Each per-entity variant's band of cells (#313)
-        let bands = assign_bands(&mut variants, size);
+        let bounded = frame.mask_rect(0).is_some();
+        let min_footprint = if bounded {
+            MIN_BAND_FOOTPRINT_BOUNDED
+        } else {
+            MIN_BAND_FOOTPRINT
+        };
+        let bands = assign_bands(&mut variants, size, min_footprint);
         let snapping = snap_grids(&variants);
         // Each dissolving variant's band of cells (#398)
         let dissolving = assign_dissolve(&mut variants, size);
@@ -3115,6 +3201,10 @@ impl StylePass for Ascii {
         let glyph_rect = frame
             .styled_rect((2.0 * reach).ceil() as u32)
             .filter(|_| frame.debug_mode != crate::DebugMode::StyleEdges);
+        // Where the mask can hold any variant's id, opt-outs too (#507): a
+        // pixel further than a cell from it asks no grid of the mask, so a
+        // whole frame over a few props reads the mask only near them
+        let mask_rect = frame.mask_rect((2.0 * reach).ceil() as u32);
 
         // Edges (#267): line glyphs from geometry, one texel a cell on the
         // same grid as the cell state
@@ -3271,6 +3361,7 @@ impl StylePass for Ascii {
             dissolve_meta: [dissolving.len() as u32, 0, 0, 0],
             dissolve: [[0; 4]; MAX_DISSOLVE],
             ramp_tone: [[EQUAL_BANDS; 4]; MAX_RAMP / 4],
+            mask_rect: rect_corners(mask_rect, size),
         };
         let mut uniforms = uniforms;
         // Every font the frame draws in, stacked; the whole frame's is at
@@ -3372,12 +3463,27 @@ impl StylePass for Ascii {
             ),
         ];
         if !bands.is_empty() {
-            kit::fullscreen_pass_targets(
+            // Only the cells whose lattice can meet one of the band's own
+            // variants (#507); the rest stay cleared, which is what they
+            // would sum to
+            let rects: Vec<_> = bands
+                .iter()
+                .map(|b| {
+                    let near = variants
+                        .iter()
+                        .skip(1)
+                        .filter(|v| v.cell_row == b.row + 1)
+                        .fold(kit::PixelRect::EMPTY, |r, v| r.union(corners_rect(v.bounds)));
+                    band_cells_in(b, near)
+                })
+                .collect();
+            kit::fullscreen_pass_targets_in(
                 encoder,
                 "ASCII Variant Cells",
                 &[&variant_cells[0].view, &variant_cells[1].view],
                 &self.variant_cells_pipeline,
                 &[&uniform, &self.picture_bind(frame, input, true)],
+                Some(&rects),
             );
         }
 
@@ -3624,9 +3730,10 @@ mod tests {
         // look, then #335's glyph cell and edge start), and the variant cell
         // bands' two vec4 each (#313), reprojection's two mat4 and its
         // vec4<u32> (#344), #351's edge colour, then #398's dissolve bands
-        // (a vec4 header and MAX_DISSOLVE vec4s). A row is 160 bytes since
-        // #398's dissolve row, padded to 16
-        assert_eq!(std::mem::size_of::<VariantUniform>(), 160);
+        // (a vec4 header and MAX_DISSOLVE vec4s), then #507's mask rect. A
+        // row is 176 bytes since #507's bounds, after #398's dissolve row
+        // padded to 16
+        assert_eq!(std::mem::size_of::<VariantUniform>(), 176);
         assert_eq!(std::mem::offset_of!(VariantUniform, glyph), 128);
         assert_eq!(
             std::mem::size_of::<AsciiUniforms>(),
@@ -3642,16 +3749,18 @@ mod tests {
                 + 16
                 + MAX_DISSOLVE * 16
                 + MAX_RAMP * 4
+                + 16
         );
         assert_eq!(
             std::mem::offset_of!(AsciiUniforms, inv_view_proj) % 16,
             0,
             "a mat4x4 is 16-aligned in WGSL"
         );
-        // #351's edge colour, #398's dissolve bands, then #281's ramp tones, last
+        // #351's edge colour, #398's dissolve bands, #281's ramp tones, then
+        // #507's mask rect, last
         assert_eq!(
             std::mem::offset_of!(AsciiUniforms, edge_color),
-            std::mem::size_of::<AsciiUniforms>() - 32 - MAX_DISSOLVE * 16 - MAX_RAMP * 4
+            std::mem::size_of::<AsciiUniforms>() - 32 - MAX_DISSOLVE * 16 - MAX_RAMP * 4 - 16
         );
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edges), 128);
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 160);
@@ -4261,7 +4370,7 @@ mod tests {
             // A footprint of 1 samples in the glyph pass, from the cache
             variant_row(8.0, [0.0, 0.0], 1.0, 0),
         ];
-        let bands = assign_bands(&mut rows, size);
+        let bands = assign_bands(&mut rows, size, MIN_BAND_FOOTPRINT);
         assert_eq!(bands.len(), 3);
         let grid = cell_grid(size, [8.0; 2], [0.0; 2]);
         assert_eq!(
@@ -4282,12 +4391,98 @@ mod tests {
     }
 
     #[test]
+    fn a_slot_past_what_a_band_texel_holds_samples_for_itself() {
+        // One grid, 300 variants on it: the texel names a slot in 8 bits
+        let mut rows = vec![VariantUniform::zeroed()];
+        rows.extend((0..300).map(|_| variant_row(8.0, [0.0, 0.0], 2.0, 0)));
+        let bands = assign_bands(&mut rows, [1280, 720], MIN_BAND_FOOTPRINT);
+        assert_eq!(bands.len(), 1);
+        assert!(rows[1..=MAX_BAND_SLOT].iter().all(|r| r.cell_row == 1));
+        assert!(rows[MAX_BAND_SLOT + 1..].iter().all(|r| r.cell_row == 0));
+    }
+
+    #[test]
+    fn a_footprint_of_one_takes_a_band_only_when_the_ids_have_bounds() {
+        let size = [1280, 720];
+        let mut rows = vec![VariantUniform::zeroed(), variant_row(8.0, [0.0, 0.0], 1.0, 0)];
+        assert!(assign_bands(&mut rows, size, MIN_BAND_FOOTPRINT).is_empty());
+        assert_eq!(rows[1].cell_row, 0);
+        let bands = assign_bands(&mut rows, size, MIN_BAND_FOOTPRINT_BOUNDED);
+        assert_eq!(bands.len(), 1);
+        assert_eq!(rows[1].cell_row, 1);
+    }
+
+    #[test]
+    fn a_bands_drawn_cells_hold_every_cell_whose_lattice_meets_the_rect() {
+        // Every cell a pass would write anything into: one of its 16 lattice
+        // samples (ascii_variant_cells.wgsl) is a pixel of the rect
+        let size = [1280u32, 720u32];
+        for (cell, origin, footprint) in [
+            (8.0, grid_origin(size, [8.0, 8.0]), 1.0),
+            (8.0, grid_origin(size, [8.0, 8.0]), 2.0),
+            (12.0, [3.0, 5.0], 1.0),
+            (10.0, [-4.5, 7.25], 3.5),
+        ] {
+            let grid = cell_grid(size, [cell; 2], origin);
+            let band = Band {
+                cell: [cell; 2],
+                origin,
+                footprint,
+                row: 40,
+                rows: grid[1],
+                cols: grid[0],
+            };
+            let rects = [
+                kit::PixelRect { x: 0, y: 0, width: 7, height: 5 },
+                kit::PixelRect { x: 300, y: 200, width: 41, height: 63 },
+                kit::PixelRect { x: 1270, y: 715, width: 10, height: 5 },
+                kit::PixelRect::full(size[0], size[1]),
+            ];
+            for rect in rects {
+                let drawn = band_cells_in(&band, rect);
+                assert!(drawn.x + drawn.width <= band.cols);
+                assert!(drawn.y >= band.row && drawn.y + drawn.height <= band.row + band.rows);
+                let inside = |t: u32, lo: u32, n: u32| t >= lo && t < lo + n;
+                for ty in 0..band.rows {
+                    for tx in 0..band.cols {
+                        let c = [tx as f32 - 1.0, ty as f32 - 1.0];
+                        let centre = [
+                            c[0] * cell + origin[0] + 0.5 * cell,
+                            c[1] * cell + origin[1] + 0.5 * cell,
+                        ];
+                        let foot = cell * footprint;
+                        let meets = (0..16).any(|k| {
+                            let q = [
+                                (centre[0] + (((k & 3) as f32 + 0.5) / 4.0 - 0.5) * foot).floor(),
+                                (centre[1] + (((k >> 2) as f32 + 0.5) / 4.0 - 0.5) * foot).floor(),
+                            ];
+                            q[0] >= rect.x as f32
+                                && q[0] < (rect.x + rect.width) as f32
+                                && q[1] >= rect.y as f32
+                                && q[1] < (rect.y + rect.height) as f32
+                        });
+                        if meets {
+                            assert!(
+                                inside(tx, drawn.x, drawn.width)
+                                    && inside(band.row + ty, drawn.y, drawn.height),
+                                "cell {c:?} of grid {cell} @ {origin:?} x{footprint} meets \
+                                 {rect:?} but {drawn:?} leaves it out"
+                            );
+                        }
+                    }
+                }
+            }
+            assert!(band_cells_in(&band, kit::PixelRect::EMPTY).is_empty());
+        }
+    }
+
+    #[test]
     fn grids_past_the_band_limit_sample_for_themselves() {
         let mut rows = vec![VariantUniform::zeroed()];
         for i in 0..MAX_BANDS + 2 {
             rows.push(variant_row(8.0 + i as f32, [0.0, 0.0], 2.0, 0));
         }
-        let bands = assign_bands(&mut rows, [640, 360]);
+        let bands = assign_bands(&mut rows, [640, 360], MIN_BAND_FOOTPRINT);
         assert_eq!(bands.len(), MAX_BANDS);
         assert!(rows[1..=MAX_BANDS].iter().all(|r| r.cell_row > 0));
         assert!(rows[MAX_BANDS + 1..].iter().all(|r| r.cell_row == 0));
@@ -4296,7 +4491,7 @@ mod tests {
         for footprint in 2..=MAX_BANDS + 1 {
             tall.push(variant_row(2.0, [0.0, 0.0], footprint as f32, 0));
         }
-        let bands = assign_bands(&mut tall, [3840, 2160]);
+        let bands = assign_bands(&mut tall, [3840, 2160], MIN_BAND_FOOTPRINT);
         let [w, h] = band_texture_size(&bands);
         assert!(w <= MAX_BAND_TEXELS && h <= MAX_BAND_TEXELS);
         assert_eq!(bands.len(), MAX_BANDS - 1);

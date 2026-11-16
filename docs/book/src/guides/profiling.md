@@ -1,6 +1,6 @@
 # Profiling
 
-Two tools say where a frame's time goes. **GPU timing** shows how long the GPU spends on each phase of the frame, in the F2 overlay and in `RenderStats`. The **`profile` feature** sends the frame loop's CPU time to [Tracy](https://github.com/wolfpld/tracy), scope by scope. Both are off until asked for, and a build without the feature carries none of the profiler.
+Two tools say where a frame's time goes. **GPU timing** shows how long the GPU spends on each phase of the frame, in the F2 overlay and in `RenderStats`. The **`profile` feature** sends the frame loop's CPU time to [Tracy](https://github.com/wolfpld/tracy), scope by scope. Both are off until asked for, and a build without the feature carries none of the profiler. For what a frame drew and with which GPU state, [capture it in RenderDoc or PIX](#capturing-a-frame-in-renderdoc), where Flint's frames are named part by part.
 
 ## GPU timing
 
@@ -39,6 +39,17 @@ The ASCII numbers from #313 (RTX 4070 laptop, Vulkan, `flint render --gpu-time 2
 | Close-up, footprint 1, 4K (the same code in both) | 0.360 ms | 0.389 ms |
 
 The last row is the noise. At footprint 1 neither binary runs the pre-pass, yet they read 8% apart, so only the two 4K footprint-2 close-ups (−16% and −20%, in separate runs) are a measured win. The rest are within noise. Other sessions shared the GPU: take the least of several processes, and check a pass the change doesn't touch.
+
+Whole-frame ASCII over styled props, from #507 (the same GPU, `examples/ascii_entities` at 1080p, `--ascii-scope screen --ascii-edges 0 --gpu-time 240`, the least of 3 processes per binary, main and the branch taking turns; runs agreed to 1 µs). The four scenes are the demo with no prop styled, every prop's `enabled = false` (only the mask is read), the barrel without `normalize`, and the demo as it is:
+
+| Case | Before | After |
+|---|---|---|
+| No styled props (the plain case) | 0.055 ms | 0.056 ms |
+| Props styled, all off | 0.066 ms | 0.057 ms |
+| Props drawn, no `normalize` | 0.090 ms | 0.075 ms |
+| Props drawn, barrel normalised | 0.112 ms | 0.088 ms |
+
+The mask is read only near the variants' screen bounds, so a frame of props that are all off costs what the plain one does. What's left of the gap is the four passes the props add (the three tone statistics passes and the variant cell pre-pass), about 2 µs each even when empty, and the props' own pixels: their outline test, their variant row and their cell texel. Stubbing a pass's shader to return at once is how these were measured: it leaves the pass's fixed cost and removes its work.
 
 - `Composite`: that last pass, or `FXAA` when FXAA is on, since then FXAA is what writes the window.
 - `World lines`.
@@ -131,6 +142,79 @@ renderer.finish_gpu_timings(&device, &queue); // after the frame's last timed su
 ```
 
 `begin_submit` and `end_submit` put the timestamps in submissions of their own, for work that makes its own encoders. A frame holds up to 32 scopes; past that, scopes time nothing.
+
+To have the scope show up in a GPU debugger too, open it with `flint_render::gpu_labels::begin(renderer.gpu_timer_mut(), &mut encoder, "My pass")` and close it with `gpu_labels::end`. Each call opens a debug group of the same name (next section) and, when the renderer is timing, the timer's scope inside it. Without timing, they open only the group.
+
+## Capturing a frame in RenderDoc
+
+[RenderDoc](https://renderdoc.org) on Vulkan or DX12, and [PIX](https://devblogs.microsoft.com/pix/) on DX12, capture one of Flint's frames as wgpu recorded it. Every draw, bind and resource is there, down to the GPU state of each draw. Flint names the frame for them (#1083). Each part the F2 overlay times is a **debug group** of the same name, so the event list starts with the same rows as F2's GPU section. Inside the scene and shadow passes, the draws are grouped by layer. With draw markers on, each draw is named by its entity and kind:
+
+```text
+Shadows
+  Shadow cascade 0
+    Terrain
+      ground · Terrain chunk 0
+    Grass
+    Opaque static
+      barrel · Static
+    Opaque skinned
+      bartender · Skinned
+  Shadow cascade 1
+  Shadow cascade 2
+  Spot shadow
+Scene
+  Render Pass
+    Sky
+    Terrain
+    Grass
+    Water
+    Opaque static
+      barrel · Static
+    Billboards
+    2D sprites
+    Blended static
+    Echoes
+    Particles
+      Particles · draw 0
+SSAO
+Bloom
+Composite
+UI
+```
+
+Other groups are `Grass` (the compute, ahead of the shadows), `Fog veil`, `Style mask`, `Style albedo`, `Selection mask`, each effect and style (`Kuwahara`, `Volumetric`, `ASCII`, ...), `FXAA`, `Selection outline` and `World lines`. Debug views add `Wireframe`, `Wireframe overlay`, `Normal arrows`, `Skeletons`, `Gizmos` and `Editor grid` inside the scene pass. Only what the frame draws appears: a layer with nothing in view has no group. While F2 is open, each group also holds the timer's `GPU Timestamp` compute passes. Passes and resources keep the names they are made with (`Composite Pass`, `HDR Scene Texture`, `barrel Vertex Buffer`, each texture by the name it was loaded under), so the resource list reads the same way.
+
+### What is named, and when
+
+`FLINT_GPU_LABELS` sets how much of the frame is named:
+
+| `FLINT_GPU_LABELS` | Groups | Draw markers |
+|---|---|---|
+| unset, no capture tool | yes (native), no (web) | no |
+| unset, launched from RenderDoc or PIX | yes | yes |
+| `groups` | yes | no |
+| `1` | yes | yes |
+| `0` or `off` | no | no |
+
+Flint notices a capture tool at start-up. RenderDoc gives itself away through its Vulkan layer's switch (`ENABLE_VULKAN_RENDERDOC_CAPTURE=1`, set in the program it launches) or through `renderdoc.dll` (`librenderdoc.so` on Linux) loaded into the process, and PIX through `WinPixGpuCapturer.dll`. A tool attached to a program that is already running isn't seen. Set `FLINT_GPU_LABELS=1` for that, or for Nsight Graphics.
+
+Groups name parts of the frame, not draws, so they cost a few dozen calls a frame and Flint formats nothing for them (wgpu copies each name into its command list). Natively they are always on. A draw marker writes the entity's name into a buffer kept for the pass, so draw markers are off unless asked for. With them off, a frame formats no string for a draw. With them on, the instance is also made with wgpu's `InstanceFlags::DEBUG`. Without that flag, Vulkan passes no label to the driver in a release build. With it, shaders carry their debug information, so RenderDoc can show their source. Labels change no pixel: every example and golden renders the same bytes at all three levels.
+
+### RenderDoc
+
+1. In RenderDoc's **Launch Application** tab, set **Executable Path** to the player (`target/release/flint-player.exe`, or `target/debug/`). Set **Working Directory** to the game's folder and **Command-line Arguments** to the scene, e.g. `examples/phase4_runtime.scene.toml`. A game binary that embeds `PlayerApp` is launched the same way.
+2. Under **Environment Variables**, add `WGPU_BACKEND=vulkan` or `WGPU_BACKEND=dx12`. Both backends work, but Vulkan's captures are what RenderDoc reads best. Without it, wgpu picks the backend.
+3. **Launch**, play to the moment you want, and press **F12** or **Print Screen** in the game window. The capture shows up in RenderDoc's list. Open it and the **Event Browser** holds the groups above.
+
+Capture the player rather than `flint render`: RenderDoc ends a frame at a present, and a headless render never presents. Use a release build to judge timings. A debug build runs wgpu's validation, which adds its own work to each call.
+
+### PIX
+
+PIX reads DX12 only. In **Launch Win32**, set the player, its working directory and the scene as above, add `WGPU_BACKEND=dx12` to the environment, and launch it for GPU capture. Then take a capture with **Print Screen** or PIX's capture button. The **Events** view shows the groups as PIX events, nested the same way.
+
+### On the web
+
+The browser's WebGPU makes each debug group a call of its own, so the web player adds none unless the page asks: `?gpu_labels=1` (or `groups`) names the frame as `FLINT_GPU_LABELS` does natively. Without it, `?perf=1`'s WebGPU call counts are what they were before groups existed.
 
 ## The `profile` feature
 

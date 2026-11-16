@@ -16,6 +16,7 @@ pub mod entity_style;
 mod file_watch;
 pub mod frustum;
 pub mod glyph_atlas;
+pub mod gpu_labels;
 mod gpu_mesh;
 pub mod gpu_select;
 pub mod gpu_timer;
@@ -249,15 +250,20 @@ mod tests {
 
     #[test]
     fn composite_shader_wgsl_parses_and_validates() {
-        let source = crate::postprocess::COMPOSITE_WGSL;
-        let module =
-            naga::front::wgsl::parse_str(source).expect("composite_shader.wgsl failed to parse");
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::default(),
-        )
-        .validate(&module)
-        .expect("composite_shader.wgsl failed validation");
+        // Both: the plain composite and the fog veil's (#513)
+        for source in [
+            crate::postprocess::COMPOSITE_WGSL,
+            crate::postprocess::COMPOSITE_VEILED_WGSL,
+        ] {
+            let module = naga::front::wgsl::parse_str(source)
+                .expect("composite_shader.wgsl failed to parse");
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::default(),
+            )
+            .validate(&module)
+            .expect("composite_shader.wgsl failed validation");
+        }
     }
 
     #[test]

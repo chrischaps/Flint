@@ -5,6 +5,7 @@ mod binding;
 mod draw_list;
 mod draws;
 mod extract;
+mod fog_veil;
 mod frame;
 mod grass;
 mod grass_ground;
@@ -27,6 +28,7 @@ mod water;
 
 pub use binding::{BoundGrass, BoundScene, LoadedTerrain, SceneBinding};
 use draw_list::{Blend, Draw, DrawItem, DrawList, Layer, VertexStage};
+pub(crate) use fog_veil::FOG_VEIL_FORMAT;
 pub use frame::{FrameInputs, View2d};
 pub use grass_ground::{load_grass_ground_in, load_scene_grass_ground, LoadedGrassGround};
 pub use particles::load_scene_particle_textures;
@@ -568,6 +570,9 @@ pub struct SceneRenderer {
     /// Per-entity styles (#263): who is styled, how far, the mask and
     /// albedo passes (ADR 0118, #736).
     style_mask: style_mask::StyleMaskState,
+    /// What the composite fogs translucent draws at their own depth with
+    /// (#513): the veil's pipelines and whether this frame drew it.
+    fog_veil: fog_veil::FogVeilState,
     /// The `style` debug view switched `mask_view` on, so it switches it off.
     mask_view_forced: bool,
     /// Whether the `edges` view switched ASCII on itself (#349).
@@ -797,6 +802,7 @@ impl SceneRenderer {
             gpu_timer: None,
             panel_state: Default::default(),
             style_mask: style_mask::StyleMaskState::new(),
+            fog_veil: fog_veil::FogVeilState::default(),
             mask_view_forced: false,
             ascii_forced: false,
             water,
@@ -1434,6 +1440,11 @@ impl SceneRenderer {
         self.draw_bind_cache.retain_frame(frame);
         self.skinning.bone_binds.retain(|_, b| b.touched == frame);
         self.ray_scene = Arc::new(ray_scene);
+
+        // Who each draw is, for a GPU debugger's draw markers (#1083)
+        if crate::gpu_labels::draws() {
+            self.draws.name_entities(|id| world.get_name(id));
+        }
 
         // Put texture cache back
         self.texture_cache = tex_cache;

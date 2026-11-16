@@ -387,6 +387,20 @@ pub fn fullscreen_pass_targets(
     pipeline: &wgpu::RenderPipeline,
     groups: &[&wgpu::BindGroup],
 ) {
+    fullscreen_pass_targets_in(encoder, label, targets, pipeline, groups, None);
+}
+
+/// [`fullscreen_pass_targets`] drawn only inside `rects` (each already
+/// inside the targets; empty ones skipped), the rest left cleared; `None`
+/// draws everything.
+pub fn fullscreen_pass_targets_in(
+    encoder: &mut wgpu::CommandEncoder,
+    label: &str,
+    targets: &[&wgpu::TextureView],
+    pipeline: &wgpu::RenderPipeline,
+    groups: &[&wgpu::BindGroup],
+    rects: Option<&[PixelRect]>,
+) {
     let attachments: Vec<Option<wgpu::RenderPassColorAttachment>> = targets
         .iter()
         .map(|view| {
@@ -409,11 +423,22 @@ pub fn fullscreen_pass_targets(
         occlusion_query_set: None,
         multiview_mask: None,
     });
+    if rects.is_some_and(|r| r.iter().all(PixelRect::is_empty)) {
+        return;
+    }
     pass.set_pipeline(pipeline);
     for (i, group) in groups.iter().enumerate() {
         pass.set_bind_group(i as u32, *group, &[]);
     }
-    pass.draw(0..3, 0..1);
+    match rects {
+        None => pass.draw(0..3, 0..1),
+        Some(rects) => {
+            for r in rects.iter().filter(|r| !r.is_empty()) {
+                pass.set_scissor_rect(r.x, r.y, r.width, r.height);
+                pass.draw(0..3, 0..1);
+            }
+        }
+    }
 }
 
 /// A rectangle of a target in whole pixels, from the top left: where a

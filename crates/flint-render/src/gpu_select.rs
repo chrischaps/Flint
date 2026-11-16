@@ -95,11 +95,19 @@ pub fn backends() -> wgpu::Backends {
 
 /// Create a wgpu instance over [`backends`], with DX12 compiling shaders
 /// through [`dx12_shaders`]' choice: wgpu's `Auto` unless
-/// `WGPU_DX12_COMPILER` says otherwise.
+/// `WGPU_DX12_COMPILER` says otherwise. When draws are named for a GPU
+/// debugger ([`crate::gpu_labels::draws`]) it is made with
+/// `InstanceFlags::DEBUG`, without which Vulkan hands the driver no label
+/// in a release build (#1083).
 pub fn instance() -> wgpu::Instance {
     let backends = backends();
+    let mut flags = wgpu::InstanceFlags::default();
+    if crate::gpu_labels::draws() {
+        flags |= wgpu::InstanceFlags::DEBUG;
+    }
     wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends,
+        flags,
         backend_options: wgpu::BackendOptions {
             dx12: wgpu::Dx12BackendOptions {
                 shader_compiler: dx12_compiler(backends),

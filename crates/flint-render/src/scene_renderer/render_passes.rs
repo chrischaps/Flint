@@ -7,27 +7,53 @@ use super::{Blend, Draw, DrawItem, DrawList, Layer, SceneRenderer};
 use crate::billboard_pipeline::BillboardUniforms;
 use crate::camera::Camera;
 use crate::debug::DebugMode;
+use crate::gpu_labels::{DrawLabel, PassGroup};
 use crate::particle_pipeline::ParticleUniforms;
 use crate::pipeline::TransformUniforms;
 use crate::shadow::{ShadowDrawUniforms, SHADOW_DRAW_STRIDE};
 use crate::sprite2d_pipeline::Sprite2dUniforms;
 
-/// Which slice of the main pass to render. `All` is the classic single-pass
-/// path; Pre/PostOcean split around the refraction grab (opaque scene is
-/// snapshotted between them so the ocean can sample it).
+/// Which slice of the main pass to render: the opaque scene (sky, terrain,
+/// grass, meshes, billboards, the grid), the ocean, and the rest (2D
+/// sprites, the blended draws, echoes, particles, the overlays). `ALL` is
+/// the single pass. The ocean's refraction grab ends the pass after the
+/// opaque scene (ADR 0094), and the fog veil (#513) after the ocean, to keep
+/// a copy of the picture behind the translucent draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RenderPhase {
-    All,
-    PreOcean,
-    PostOcean,
+pub(super) struct RenderPhase {
+    opaque: bool,
+    ocean: bool,
+    rest: bool,
 }
 
 impl RenderPhase {
-    fn draws_opaque(self) -> bool {
-        self != RenderPhase::PostOcean
+    pub const ALL: Self = Self::of(true, true, true);
+    /// Before the ocean's grab
+    pub const PRE_OCEAN: Self = Self::of(true, false, false);
+    /// After the ocean's grab
+    pub const POST_OCEAN: Self = Self::of(false, true, true);
+    /// After the grab, before the fog veil's copy
+    pub const OCEAN: Self = Self::of(false, true, false);
+    /// No grab, before the fog veil's copy
+    pub const OPAQUE_AND_OCEAN: Self = Self::of(true, true, false);
+    /// After the fog veil's copy
+    pub const REST: Self = Self::of(false, false, true);
+
+    const fn of(opaque: bool, ocean: bool, rest: bool) -> Self {
+        Self {
+            opaque,
+            ocean,
+            rest,
+        }
     }
-    fn draws_ocean_and_after(self) -> bool {
-        self != RenderPhase::PreOcean
+    fn draws_opaque(self) -> bool {
+        self.opaque
+    }
+    fn draws_ocean(self) -> bool {
+        self.ocean
+    }
+    fn draws_rest(self) -> bool {
+        self.rest
     }
 }
 
@@ -106,6 +132,38 @@ fn shadow_casters<'a>(
     draws
         .iter()
         .filter_map(move |item| Some((item, shadow_caster(item, terrain)?)))
+}
+
+/// Each shadow map layer's pass, by layer: a GPU debugger lists them by
+/// these names (#1083).
+const SHADOW_PASS_LABELS: [&str; crate::shadow::SHADOW_LAYERS] = {
+    let mut labels = ["Shadow cascade"; crate::shadow::SHADOW_LAYERS];
+    labels[0] = "Shadow cascade 0";
+    labels[1] = "Shadow cascade 1";
+    labels[2] = "Shadow cascade 2";
+    labels[crate::shadow::SPOT_SHADOW_LAYER] = "Spot shadow";
+    labels
+};
+
+/// The draw-list layer a pass is drawing, held open as a debug group
+/// (#1083) until a draw of another layer or [`leave`](Self::leave).
+#[derive(Default)]
+struct LayerGroup(Option<(Layer, PassGroup)>);
+
+impl LayerGroup {
+    fn enter(&mut self, pass: &mut wgpu::RenderPass<'_>, layer: Layer) {
+        if self.0.as_ref().is_some_and(|(open, _)| *open == layer) {
+            return;
+        }
+        self.leave(pass);
+        self.0 = Some((layer, PassGroup::open(pass, layer.label())));
+    }
+
+    fn leave(&mut self, pass: &mut wgpu::RenderPass<'_>) {
+        if let Some((_, group)) = self.0.take() {
+            group.close(pass);
+        }
+    }
 }
 
 /// The pipeline a pass has bound, so it sets one only when it changes.
@@ -325,15 +383,14 @@ impl SceneRenderer {
         // draws plain.
         let shadow_wooze = shadow_pass.wooze.as_ref();
 
-        // Render each layer: the cascades, then the spot's
+        // Render each layer: the cascades, then the spot's. A GPU debugger
+        // sees each as a pass of its own name, its casters grouped by the
+        // draw list's layer and, with draw markers on, named (#1083).
+        let marks = crate::gpu_labels::draws();
+        let mut draw_label = DrawLabel::default();
         for &(cascade, cascade_vp) in &layers {
-            let label = if cascade == crate::shadow::SPOT_SHADOW_LAYER {
-                "Spot Shadow Pass"
-            } else {
-                "Shadow Cascade Pass"
-            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some(label),
+                label: Some(SHADOW_PASS_LABELS[cascade]),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &shadow_pass.layer_views[cascade],
@@ -352,13 +409,18 @@ impl SceneRenderer {
             let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
             let mut bound = BoundPipeline::default();
             let mut casters = shadow_casters(&self.draws, &self.terrain.draws).peekable();
+            let mut group = LayerGroup::default();
             // The terrain's chunks come first in the list; grass casts after them
             while casters
                 .peek()
                 .is_some_and(|(item, _)| item.layer() == super::Layer::Terrain)
             {
-                let (_, caster) = casters.next().expect("peeked");
+                let (item, caster) = casters.next().expect("peeked");
                 if caster.visible(&cascade_frustum) {
+                    group.enter(&mut pass, Layer::Terrain);
+                    if marks {
+                        self.draws.mark(&mut pass, &mut draw_label, item);
+                    }
                     draw_caster(
                         &mut pass,
                         &mut bound,
@@ -378,6 +440,8 @@ impl SceneRenderer {
                     &self.grass.render_instance_bind_group,
                     &self.grass.draw_args_buffer,
                 ) {
+                    group.leave(&mut pass);
+                    let grass_group = PassGroup::open(&mut pass, "Grass");
                     let grass_shadow_bind = &self.grass.shadow_binds[cascade].1;
                     bound.set(&mut pass, &gp.shadow_pipeline);
                     pass.set_bind_group(0, grass_shadow_bind, &[]);
@@ -391,11 +455,16 @@ impl SceneRenderer {
                     );
                     // The count is the compute pass's (ADR 0092)
                     pass.draw_indexed_indirect(args, 0);
+                    grass_group.close(&mut pass);
                 }
             }
 
             for (item, caster) in casters {
                 if caster.visible(&cascade_frustum) {
+                    group.enter(&mut pass, item.layer());
+                    if marks {
+                        self.draws.mark(&mut pass, &mut draw_label, item);
+                    }
                     let woozy = item.wooze().and(shadow_wooze);
                     draw_caster(
                         &mut pass,
@@ -407,6 +476,7 @@ impl SceneRenderer {
                     );
                 }
             }
+            group.leave(&mut pass);
         }
     }
 
@@ -636,6 +706,7 @@ impl SceneRenderer {
         // Render sky at the far plane: the procedural sky (driven by the
         // `sky` component) replaces the texture skybox when present.
         if phase.draws_opaque() {
+            let group = PassGroup::open(render_pass, "Sky");
             self.sky.draw(
                 render_pass,
                 queue,
@@ -645,10 +716,13 @@ impl SceneRenderer {
                 &self.lights.uniforms.directional_lights[0],
                 self.ocean_time,
             );
+            group.close(render_pass);
         }
 
         if wireframe_only {
+            let group = PassGroup::open(render_pass, "Wireframe");
             self.render_wireframe_only_pass(render_pass);
+            group.close(render_pass);
             if phase.draws_opaque() {
                 self.draw_editor_grid(render_pass);
             }
@@ -658,7 +732,8 @@ impl SceneRenderer {
         }
 
         // Normal arrows pass (always uses line pipeline)
-        if self.debug_state.show_normals && phase.draws_ocean_and_after() {
+        if self.debug_state.show_normals && phase.draws_rest() {
+            let group = PassGroup::open(render_pass, "Normal arrows");
             render_pass.set_pipeline(&self.pipelines.main.line_pipeline);
             for draw in &self.normal_arrow_draws {
                 render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
@@ -668,10 +743,12 @@ impl SceneRenderer {
                     .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
+            group.close(render_pass);
         }
 
         // Skeleton overlay pass (bone lines, drawn on top of everything — no depth test)
-        if self.debug_state.show_skeleton && phase.draws_ocean_and_after() {
+        if self.debug_state.show_skeleton && phase.draws_rest() {
+            let group = PassGroup::open(render_pass, "Skeletons");
             render_pass.set_pipeline(&self.pipelines.main.skeleton_line_pipeline);
             render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
             for draw in &self.skeleton_overlay_draws {
@@ -682,11 +759,13 @@ impl SceneRenderer {
                     .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
+            group.close(render_pass);
         }
 
         // Editor/gizmo overlay (ADR 0068): same line pipeline, never gated
         // behind the skeleton toggle.
-        if !self.debug_overlay_draws.is_empty() && phase.draws_ocean_and_after() {
+        if !self.debug_overlay_draws.is_empty() && phase.draws_rest() {
+            let group = PassGroup::open(render_pass, "Gizmos");
             render_pass.set_pipeline(&self.pipelines.main.skeleton_line_pipeline);
             // The particle pass may have left its texture bind group at slot 2.
             render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
@@ -698,6 +777,7 @@ impl SceneRenderer {
                     .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
+            group.close(render_pass);
         }
     }
 
@@ -711,6 +791,7 @@ impl SceneRenderer {
         let Some(grid) = &self.grid_draw else {
             return;
         };
+        let group = PassGroup::open(render_pass, "Editor grid");
         render_pass.set_pipeline(&self.pipelines.main.overlay_line_pipeline);
         // Billboards may have left their texture group at slot 2.
         render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
@@ -719,6 +800,7 @@ impl SceneRenderer {
         render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
         render_pass.set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
+        group.close(render_pass);
     }
 
     /// Draw the wireframe edges of every skinned draw call (opaque and
@@ -805,6 +887,7 @@ impl SceneRenderer {
                 &self.grass.draw_args_buffer,
             ) {
                 if self.grass.drawing {
+                    let group = PassGroup::open(render_pass, "Grass");
                     // Bind group 0 (transform): the grass's own view uniforms,
                     // so grass on a game's ground draws with no terrain loaded
                     if let Some(transform_bg) = &self.grass.transform_bind_group {
@@ -821,18 +904,21 @@ impl SceneRenderer {
                     );
                     // The count is the compute pass's, culled to the view (ADR 0092)
                     render_pass.draw_indexed_indirect(args, 0);
+                    group.close(render_pass);
                 }
             }
         } // end opaque phase (terrain + grass)
 
         // Ocean rendering (after all opaque — writes depth so fog applies;
         // group 3 holds the grab-pass snapshots, or dummies when disabled)
-        if self.water_active() && phase.draws_ocean_and_after() {
+        if self.water_active() && phase.draws_ocean() {
+            let group = PassGroup::open(render_pass, "Water");
             self.water.draw(
                 render_pass,
                 self.pipelines.ocean.as_deref(),
                 &self.lights.bind_group,
             );
+            group.close(render_pass);
         }
 
         if phase.draws_opaque() {
@@ -845,13 +931,14 @@ impl SceneRenderer {
             self.draw_editor_grid(render_pass);
         } // end opaque phase (entities + skinned + billboards + grid)
 
-        if !phase.draws_ocean_and_after() {
+        if !phase.draws_rest() {
             return;
         }
 
         // 2D sprites (after billboards, instanced batched rendering)
         if let Some(sp) = &self.pipelines.sprite2d {
             if !self.sprite2d_batches.is_empty() {
+                let group = PassGroup::open(render_pass, "2D sprites");
                 render_pass.set_pipeline(&sp.pipeline);
                 render_pass
                     .set_index_buffer(sp.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -861,6 +948,7 @@ impl SceneRenderer {
                     render_pass.set_bind_group(2, &batch.texture_bind_group, &[]);
                     render_pass.draw_indexed(0..6, 0, 0..batch.instance_count);
                 }
+                group.close(render_pass);
             }
         }
 
@@ -876,6 +964,7 @@ impl SceneRenderer {
 
         // Wireframe overlay pass (on top of solid geometry)
         if self.debug_state.mode == DebugMode::WireframeOverlay {
+            let group = PassGroup::open(render_pass, "Wireframe overlay");
             render_pass.set_pipeline(&self.pipelines.main.overlay_line_pipeline);
             for draw in &self.wireframe_overlay_draws {
                 render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
@@ -886,6 +975,7 @@ impl SceneRenderer {
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
             self.draw_skinned_wireframes(render_pass);
+            group.close(render_pass);
         }
     }
 
@@ -931,10 +1021,19 @@ impl SceneRenderer {
             }
             Layer::OpaqueStatic | Layer::OpaqueSkinned | Layer::BlendedSkinned => {}
         }
+        // A GPU debugger sees the layer as a group, and with draw markers
+        // on each draw named by its entity (#1083)
+        let group = PassGroup::open(render_pass, layer.label());
+        let marks = crate::gpu_labels::draws();
+        let mut label = DrawLabel::default();
         let mut state = MainPassState::default();
         for item in items.iter().filter(|i| i.drawn()) {
+            if marks && self.main_pass_draws(item) {
+                self.draws.mark(render_pass, &mut label, item);
+            }
             self.draw_main(render_pass, item, &mut state);
         }
+        group.close(render_pass);
         match layer {
             // Restore the light bind group at slot 2: every line/overlay
             // pipeline that follows (wireframe overlay, normal arrows,
@@ -951,6 +1050,27 @@ impl SceneRenderer {
         }
     }
 
+    /// Terrain chunk `n`, unless the camera can't see it.
+    fn terrain_chunk_in_view(&self, n: u32) -> Option<&crate::terrain_pipeline::TerrainDrawCall> {
+        let draw = self.terrain.draws.get(n as usize)?;
+        let hidden = self
+            .camera_frustum
+            .as_ref()
+            .is_some_and(|f| !f.aabb_visible(draw.aabb_min, draw.aabb_max));
+        (!hidden).then_some(draw)
+    }
+
+    /// Whether [`draw_main`](Self::draw_main) draws `item` (it passes over
+    /// a terrain chunk out of view and a blended wireframe box), so a draw
+    /// marker names only a draw.
+    fn main_pass_draws(&self, item: &DrawItem) -> bool {
+        match &item.draw {
+            Draw::Terrain(n) => self.terrain_chunk_in_view(*n).is_some(),
+            Draw::Static(d) => item.blend == Blend::Opaque || !d.is_wireframe,
+            Draw::Skinned(_) | Draw::Echo(_) | Draw::Billboard(_) | Draw::Particles(_) => true,
+        }
+    }
+
     /// The main pass's selector: one item, through the pipeline its kind,
     /// blend and vertex stage ask for.
     fn draw_main<'a>(
@@ -962,14 +1082,9 @@ impl SceneRenderer {
         let main = &self.pipelines.main;
         match &item.draw {
             Draw::Terrain(n) => {
-                let Some(draw) = self.terrain.draws.get(*n as usize) else {
+                let Some(draw) = self.terrain_chunk_in_view(*n) else {
                     return;
                 };
-                if let Some(ref frustum) = self.camera_frustum {
-                    if !frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
-                        return;
-                    }
-                }
                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                 render_pass
@@ -1220,16 +1335,15 @@ impl SceneRenderer {
         };
 
         // GPU timing (ADR 0108): each effect is a scope of its own (#120),
-        // so a slow frame names its pass. All of them are in the frame's
-        // one encoder (#139).
+        // so a slow frame names its pass, and a debug group of the same name
+        // for GPU debuggers (#1083). All of them are in the frame's one
+        // encoder (#139).
         let mut scoped = |label: &'static str,
                           encoder: &mut wgpu::CommandEncoder,
                           run: &mut dyn FnMut(&mut wgpu::CommandEncoder)| {
-            let scope = timer.as_deref_mut().map(|t| t.begin(encoder, label));
+            let scope = crate::gpu_labels::begin(timer.as_deref_mut(), encoder, label);
             run(encoder);
-            if let (Some(t), Some(scope)) = (timer.as_deref_mut(), scope) {
-                t.end(encoder, scope);
-            }
+            crate::gpu_labels::end(timer.as_deref_mut(), encoder, scope);
         };
         let config = &self.postprocess_config;
 
@@ -1474,6 +1588,13 @@ impl SceneRenderer {
             self.post_time(),
             self.ground_fog.as_ref(),
             &scene,
+            // The fog veil (#513), while this frame drew it and the
+            // composite reads the HDR buffer it was drawn over (an HDR
+            // style's result isn't that picture)
+            resources
+                .fog_veil
+                .as_ref()
+                .filter(|_| self.fog_veil.drawn && hdr_scene.is_none()),
             if fxaa_active {
                 None
             } else {
@@ -1504,11 +1625,9 @@ impl SceneRenderer {
                 pp.styles.ownership(),
                 pp.styles.fade(),
                 &mut |label, encoder, run| {
-                    let scope = timer.as_deref_mut().map(|t| t.begin(encoder, label));
+                    let scope = crate::gpu_labels::begin(timer.as_deref_mut(), encoder, label);
                     run(encoder);
-                    if let (Some(t), Some(scope)) = (timer.as_deref_mut(), scope) {
-                        t.end(encoder, scope);
-                    }
+                    crate::gpu_labels::end(timer.as_deref_mut(), encoder, scope);
                 },
             );
         }

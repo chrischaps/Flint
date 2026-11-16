@@ -62,6 +62,9 @@ struct Variant {
     // Scalars, not a vec2 (which would align to 8)
     _pad_dissolve_b: u32,
     _pad_dissolve_c: u32,
+    // #507: where the mask can hold the variant's id, output pixels
+    // (x0, y0, x1, y1), the whole frame when its draws have no bounds
+    bounds: vec4<f32>,
 };
 
 // A variant whose edge glyphs are the whole frame's (`edge_glyphs`)
@@ -159,7 +162,18 @@ struct AsciiUniforms {
     // calibrated ramp's bands, which follow its glyphs' measured ink, or
     // EQUAL_BANDS at a ramp's first step for equal bands
     ramp_tone: array<vec4<f32>, 32>,
+    // Where the style mask can hold a variant's id (#507), output pixels
+    // (x0, y0, x1, y1): the variants' screen bounds grown by two of the
+    // largest cell, the whole frame when they have none
+    mask_rect: vec4<f32>,
 };
+
+// Whether the mask under output point `p` can hold a variant's id (#507).
+// Outside `mask_rect` it is 0, and so is every texel a cell or a silhouette
+// test away, so a reader there skips the load and takes slot 0.
+fn in_mask_rect(p: vec2<f32>) -> bool {
+    return all(p >= u.mask_rect.xy) && all(p < u.mask_rect.zw);
+}
 
 // A `ramp_tone` first step saying its ramp takes equal bands; `EQUAL_BANDS`
 // in ascii.rs.
