@@ -1,9 +1,8 @@
 //! FlintWorld - ECS world with stable IDs and dynamic components
 
-use crate::component::DynamicComponents;
+use crate::component::{index_remove, ComponentIndex, ComponentsMut, DynamicComponents};
 use crate::entity::EntityInfo;
 use crate::view::ReadReports;
-use bimap::BiMap;
 use flint_core::toml_util::{toml_to_vec3, toml_vec4};
 use flint_core::{mat4_mul, EntityId, FlintError, Result, Transform, Vec3};
 use flint_schema::SchemaRegistry;
@@ -12,12 +11,31 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 /// Static empty set returned by `entities_with_component` for missing components.
 static EMPTY_ENTITY_SET: BTreeSet<EntityId> = BTreeSet::new();
 
+/// One entity: its name and what it holds.
+#[derive(Debug, Clone)]
+struct EntityRecord {
+    name: String,
+    components: DynamicComponents,
+}
+
 /// The main ECS world for Flint
 ///
-/// Wraps hecs::World with:
-/// - Stable EntityId mapping
-/// - Dynamic component storage
-/// - Named entity lookup
+/// Its own storage, keyed by stable [`EntityId`] (#691; it once wrapped a
+/// `hecs::World` that stored nothing): one record per entity (its name and
+/// its dynamic components), a name -> id map, the parent links both ways,
+/// and an index from each component name to the entities that hold it.
+/// Every lookup is a map access: [`get_name`](Self::get_name) and
+/// [`get_id`](Self::get_id) are O(1) and O(log n),
+/// [`children`](Self::children) is O(1) and hands out the list it keeps.
+///
+/// **The index can't be bypassed** (#691): every write goes through the
+/// world or the [`ComponentsMut`] guard [`get_components_mut`](Self::get_components_mut)
+/// returns, each of which keeps it.
+///
+/// **Despawn takes the subtree** (#691): [`despawn`](Self::despawn) removes
+/// the entity and every descendant. A child's transform is in its parent's
+/// frame, so a child left behind as a root would jump to wherever its local
+/// numbers put it in the world; to keep one, reparent it first.
 ///
 /// **Order** (#688): a world hands out its own ids, counting up from 1 (or
 /// from past the world it follows, [`FlintWorld::after`]), and every walk it
@@ -30,23 +48,17 @@ static EMPTY_ENTITY_SET: BTreeSet<EntityId> = BTreeSet::new();
 /// creating bodies, scripts, the renderer) meets entities in the same order
 /// every run.
 pub struct FlintWorld {
-    /// The underlying hecs world
-    world: hecs::World,
-    /// Bidirectional mapping: EntityId <-> hecs::Entity
-    id_map: BiMap<EntityId, hecs::Entity>,
+    /// Every entity: its name and components, by id. An id is live while
+    /// it is a key here
+    entities: HashMap<EntityId, EntityRecord>,
     /// Entity name -> EntityId mapping, by name (#688)
     name_map: BTreeMap<String, EntityId>,
-    /// EntityId -> entity name: the other way, so `get_name` and sorting by
-    /// name are lookups, not scans of `name_map`
-    names: HashMap<EntityId, String>,
-    /// Dynamic components for each entity
-    components: HashMap<EntityId, DynamicComponents>,
     /// Parent relationships: child -> parent
     parents: HashMap<EntityId, EntityId>,
     /// The other way: parent -> its children, in name order (#689)
     children: HashMap<EntityId, Vec<EntityId>>,
     /// Reverse index: component name -> the entities that have it, by id (#688)
-    component_index: HashMap<String, BTreeSet<EntityId>>,
+    component_index: ComponentIndex,
     /// The id the next spawn gets. It only rises: [`FlintWorld::clear`]
     /// keeps it, so a scene reloaded into the same world never reuses an id
     next_id: u64,
@@ -64,11 +76,8 @@ impl FlintWorld {
     /// Create a new empty world. Its first entity is id 1.
     pub fn new() -> Self {
         Self {
-            world: hecs::World::new(),
-            id_map: BiMap::new(),
+            entities: HashMap::new(),
             name_map: BTreeMap::new(),
-            names: HashMap::new(),
-            components: HashMap::new(),
             parents: HashMap::new(),
             children: HashMap::new(),
             component_index: HashMap::new(),
@@ -102,42 +111,37 @@ impl FlintWorld {
 
     /// Spawn a new entity with a name
     pub fn spawn(&mut self, name: impl Into<String>) -> Result<EntityId> {
-        let name = name.into();
-
-        if self.name_map.contains_key(&name) {
-            return Err(FlintError::DuplicateEntityName(name));
-        }
-
         let entity_id = EntityId::from_raw(self.next_id);
-        self.next_id += 1;
-        let hecs_entity = self.world.spawn(());
-
-        self.id_map.insert(entity_id, hecs_entity);
-        self.names.insert(entity_id, name.clone());
-        self.name_map.insert(name, entity_id);
-        self.components.insert(entity_id, DynamicComponents::new());
-
+        self.insert_entity(entity_id, name.into())?;
         Ok(entity_id)
     }
 
-    /// Spawn an entity with a specific ID (for loading scenes)
+    /// Spawn an entity with a specific ID (for loading scenes). Refused when
+    /// the name is taken or the id is live.
     pub fn spawn_with_id(&mut self, id: EntityId, name: impl Into<String>) -> Result<()> {
-        let name = name.into();
+        self.insert_entity(id, name.into())
+    }
 
+    /// Make the record for a new entity, keeping the counter past its id.
+    fn insert_entity(&mut self, id: EntityId, name: String) -> Result<()> {
         if self.name_map.contains_key(&name) {
             return Err(FlintError::DuplicateEntityName(name));
         }
-
-        // Ensure the ID counter stays ahead
+        if let Some(live) = self.entities.get(&id) {
+            return Err(FlintError::SceneError(format!(
+                "entity id {id} is already '{}'",
+                live.name
+            )));
+        }
         self.next_id = self.next_id.max(id.raw() + 1);
-
-        let hecs_entity = self.world.spawn(());
-
-        self.id_map.insert(id, hecs_entity);
-        self.names.insert(id, name.clone());
-        self.name_map.insert(name, id);
-        self.components.insert(id, DynamicComponents::new());
-
+        self.name_map.insert(name.clone(), id);
+        self.entities.insert(
+            id,
+            EntityRecord {
+                name,
+                components: DynamicComponents::new(),
+            },
+        );
         Ok(())
     }
 
@@ -157,60 +161,53 @@ impl FlintWorld {
             .ok_or_else(|| FlintError::ArchetypeNotFound(archetype.to_string()))?;
 
         // Set archetype and apply defaults
-        let components = self.components.get_mut(&id).unwrap();
-        components.archetype = Some(archetype.to_string());
-
-        // Apply archetype defaults
+        let mut components = self.get_components_mut(id).expect("just spawned");
+        components.set_archetype(Some(archetype.to_string()));
         for (comp_name, defaults) in &arch_schema.defaults {
-            components.set(comp_name.clone(), defaults.clone());
-            self.component_index
-                .entry(comp_name.clone())
-                .or_default()
-                .insert(id);
+            components.set(comp_name.as_str(), defaults.clone());
         }
 
         Ok(id)
     }
 
-    /// Despawn an entity
-    pub fn despawn(&mut self, id: EntityId) -> Result<()> {
-        let hecs_entity = self
-            .id_map
-            .get_by_left(&id)
-            .ok_or_else(|| FlintError::EntityNotFound(id.to_string()))?;
-
-        // Remove from name map
-        if let Some(name) = self.names.remove(&id) {
-            self.name_map.remove(&name);
+    /// Despawn an entity and its whole subtree (#691).
+    ///
+    /// Returns every id removed: the entity's first, then its descendants a
+    /// generation at a time (a parent before its children, siblings in name
+    /// order): what a host that keeps
+    /// its own state per entity (physics bodies, script instances) has to
+    /// let go of. A child's transform is in its parent's frame, so leaving
+    /// it behind as a root would move it; to keep a child, give it another
+    /// parent before despawning this one.
+    pub fn despawn(&mut self, id: EntityId) -> Result<Vec<EntityId>> {
+        if !self.entities.contains_key(&id) {
+            return Err(FlintError::EntityNotFound(id.to_string()));
         }
-
-        // Remove from world
-        self.world
-            .despawn(*hecs_entity)
-            .map_err(|_| FlintError::EntityNotFound(id.to_string()))?;
-
-        self.id_map.remove_by_left(&id);
-        // Remove entity from component index before dropping components
-        if let Some(comps) = self.components.get(&id) {
-            for comp_name in comps.component_names() {
-                if let Some(set) = self.component_index.get_mut(comp_name) {
-                    set.remove(&id);
+        // The subtree, parent before child. Out of the parent's list first,
+        // so the walk below meets only the subtree
+        self.unlink_from_parent(id);
+        let mut gone = vec![id];
+        let mut at = 0;
+        while at < gone.len() {
+            if let Some(kids) = self.children.remove(&gone[at]) {
+                gone.extend(kids);
+            }
+            at += 1;
+        }
+        for &entity in &gone {
+            self.parents.remove(&entity);
+            if let Some(record) = self.entities.remove(&entity) {
+                self.name_map.remove(&record.name);
+                for comp_name in record.components.data.keys() {
+                    index_remove(&mut self.component_index, comp_name, entity);
                 }
             }
         }
-        self.components.remove(&id);
-        self.unlink_from_parent(id);
-
-        // Its children lose their parent and become roots
-        for child in self.children.remove(&id).unwrap_or_default() {
-            self.parents.remove(&child);
-        }
-
-        Ok(())
+        Ok(gone)
     }
 
-    /// Despawn an entity by name
-    pub fn despawn_by_name(&mut self, name: &str) -> Result<()> {
+    /// Despawn an entity and its subtree by name: see [`Self::despawn`].
+    pub fn despawn_by_name(&mut self, name: &str) -> Result<Vec<EntityId>> {
         let id = self
             .name_map
             .get(name)
@@ -227,7 +224,7 @@ impl FlintWorld {
 
     /// Get entity name by ID
     pub fn get_name(&self, id: EntityId) -> Option<&str> {
-        self.names.get(&id).map(String::as_str)
+        self.entities.get(&id).map(|e| e.name.as_str())
     }
 
     /// These entities in name order (#689): the order every list a script
@@ -243,7 +240,8 @@ impl FlintWorld {
     /// Name order between two entities: by name, then by id, an entity with
     /// no name after every named one.
     fn name_order(&self, a: EntityId, b: EntityId) -> std::cmp::Ordering {
-        match (self.names.get(&a), self.names.get(&b)) {
+        let name = |id| self.entities.get(&id).map(|e: &EntityRecord| &e.name);
+        match (name(a), name(b)) {
             (Some(x), Some(y)) => x.cmp(y).then(a.cmp(&b)),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
@@ -253,16 +251,33 @@ impl FlintWorld {
 
     /// Get components for an entity
     pub fn get_components(&self, id: EntityId) -> Option<&DynamicComponents> {
-        self.components.get(&id)
+        self.entities.get(&id).map(|e| &e.components)
     }
 
-    /// Get mutable components for an entity.
-    ///
-    /// **Note:** Callers must not add or remove component *keys* through this
-    /// handle — doing so bypasses the component index. Use `set_component()`,
-    /// `set_field()`, or `remove_component()` instead.
-    pub fn get_components_mut(&mut self, id: EntityId) -> Option<&mut DynamicComponents> {
-        self.components.get_mut(&id)
+    /// An entity's components, to change: a [`ComponentsMut`], whose every
+    /// way of adding or removing a component keeps the component index
+    /// (#691). `None` for an id that names no live entity.
+    pub fn get_components_mut(&mut self, id: EntityId) -> Option<ComponentsMut<'_>> {
+        let record = self.entities.get_mut(&id)?;
+        Some(ComponentsMut::new(
+            id,
+            &mut record.components,
+            &mut self.component_index,
+        ))
+    }
+
+    /// One component's value, to change in place: `None` when the entity
+    /// doesn't have it. Like [`ComponentsMut::get_mut`], it can't add or
+    /// take away a component.
+    pub fn get_component_mut(&mut self, id: EntityId, component: &str) -> Option<&mut toml::Value> {
+        self.entities.get_mut(&id)?.components.get_mut(component)
+    }
+
+    /// [`Self::get_components_mut`], or the error a setter returns for an
+    /// id that names nothing.
+    fn components_mut(&mut self, id: EntityId) -> Result<ComponentsMut<'_>> {
+        self.get_components_mut(id)
+            .ok_or_else(|| FlintError::EntityNotFound(id.to_string()))
     }
 
     /// Set a component on an entity
@@ -272,16 +287,7 @@ impl FlintWorld {
         component: &str,
         data: toml::Value,
     ) -> Result<()> {
-        let components = self
-            .components
-            .get_mut(&id)
-            .ok_or_else(|| FlintError::EntityNotFound(id.to_string()))?;
-
-        components.set(component, data);
-        self.component_index
-            .entry(component.to_string())
-            .or_default()
-            .insert(id);
+        self.components_mut(id)?.set(component, data);
         Ok(())
     }
 
@@ -296,22 +302,13 @@ impl FlintWorld {
         component: &str,
         data: toml::Value,
     ) -> Result<()> {
-        let components = self
-            .components
-            .get_mut(&id)
-            .ok_or_else(|| FlintError::EntityNotFound(id.to_string()))?;
-
-        components.merge_component(component, data);
-        self.component_index
-            .entry(component.to_string())
-            .or_default()
-            .insert(id);
+        self.components_mut(id)?.merge_component(component, data);
         Ok(())
     }
 
     /// Get a component from an entity
     pub fn get_component(&self, id: EntityId, component: &str) -> Option<&toml::Value> {
-        self.components.get(&id).and_then(|c| c.get(component))
+        self.get_components(id).and_then(|c| c.get(component))
     }
 
     /// Set parent relationship.
@@ -322,10 +319,10 @@ impl FlintWorld {
     /// every walk up a chain (the matrices, visibility, the renderer's and
     /// physics' own) counts on: this is the only place a parent is written.
     pub fn set_parent(&mut self, child: EntityId, parent: EntityId) -> Result<()> {
-        if !self.id_map.contains_left(&child) {
+        if !self.contains(child) {
             return Err(FlintError::EntityNotFound(child.to_string()));
         }
-        if !self.id_map.contains_left(&parent) {
+        if !self.contains(parent) {
             return Err(FlintError::EntityNotFound(parent.to_string()));
         }
 
@@ -409,9 +406,16 @@ impl FlintWorld {
     }
 
     /// The entity's children, in name order (#689). A lookup in the
-    /// children index, not a scan of every entity.
+    /// children index, not a scan of every entity; [`Self::children`] is
+    /// the same list without the copy.
     pub fn get_children(&self, parent: EntityId) -> Vec<EntityId> {
-        self.children.get(&parent).cloned().unwrap_or_default()
+        self.children(parent).to_vec()
+    }
+
+    /// The entity's children, in name order: the list the world keeps,
+    /// borrowed (#691). Empty for a leaf or an id that names nothing.
+    pub fn children(&self, parent: EntityId) -> &[EntityId] {
+        self.children.get(&parent).map_or(&[], Vec::as_slice)
     }
 
     /// Get info about all entities, by name.
@@ -424,7 +428,7 @@ impl FlintWorld {
         self.name_map
             .iter()
             .map(|(name, id)| {
-                let components = self.components.get(id);
+                let components = self.get_components(*id);
                 let archetype = components.and_then(|c| c.archetype.clone());
                 let comp_names = components
                     .map(|c| c.component_names().into_iter().map(String::from).collect())
@@ -453,7 +457,7 @@ impl FlintWorld {
 
     /// Check if an entity exists
     pub fn contains(&self, id: EntityId) -> bool {
-        self.id_map.contains_left(&id)
+        self.entities.contains_key(&id)
     }
 
     /// Check if an entity with name exists
@@ -464,11 +468,8 @@ impl FlintWorld {
     /// Clear the world. The id counter is kept: what spawns next gets an
     /// id this world never gave out.
     pub fn clear(&mut self) {
-        self.world.clear();
-        self.id_map.clear();
+        self.entities.clear();
         self.name_map.clear();
-        self.names.clear();
-        self.components.clear();
         self.parents.clear();
         self.children.clear();
         self.component_index.clear();
@@ -477,7 +478,7 @@ impl FlintWorld {
 
     /// Get transform from an entity's components
     pub fn get_transform(&self, id: EntityId) -> Option<Transform> {
-        let components = self.components.get(&id)?;
+        let components = self.get_components(id)?;
         let transform_data = components.get("transform")?;
 
         // Parse transform from TOML value
@@ -581,8 +582,7 @@ impl FlintWorld {
     /// true with no `visibility` component (#628). An ancestor's switch isn't
     /// counted here; [`Self::hidden_entities`] is what the renderer skips.
     pub fn is_visible(&self, id: EntityId) -> bool {
-        self.components
-            .get(&id)
+        self.get_components(id)
             .and_then(|c| c.get(flint_core::components::VISIBILITY))
             .and_then(|v| v.get("visible"))
             .and_then(|v| v.as_bool())
@@ -654,20 +654,6 @@ impl FlintWorld {
             .collect()
     }
 
-    /// Rebuild the component index from scratch. Safety net after bulk
-    /// operations that may have bypassed the index (e.g. scene loading).
-    pub fn rebuild_component_index(&mut self) {
-        self.component_index.clear();
-        for (&id, comps) in &self.components {
-            for comp_name in comps.component_names() {
-                self.component_index
-                    .entry(comp_name.to_string())
-                    .or_default()
-                    .insert(id);
-            }
-        }
-    }
-
     /// Set a single field within a component, creating the component if needed.
     /// Maintains the component index.
     pub fn set_field(
@@ -677,16 +663,7 @@ impl FlintWorld {
         field: &str,
         value: toml::Value,
     ) -> Result<()> {
-        let components = self
-            .components
-            .get_mut(&id)
-            .ok_or_else(|| FlintError::EntityNotFound(id.to_string()))?;
-
-        components.set_field(component, field, value);
-        self.component_index
-            .entry(component.to_string())
-            .or_default()
-            .insert(id);
+        self.components_mut(id)?.set_field(component, field, value);
         Ok(())
     }
 
@@ -697,18 +674,7 @@ impl FlintWorld {
         id: EntityId,
         component: &str,
     ) -> Result<Option<toml::Value>> {
-        let components = self
-            .components
-            .get_mut(&id)
-            .ok_or_else(|| FlintError::EntityNotFound(id.to_string()))?;
-
-        let removed = components.remove(component);
-        if removed.is_some() {
-            if let Some(set) = self.component_index.get_mut(component) {
-                set.remove(&id);
-            }
-        }
-        Ok(removed)
+        Ok(self.components_mut(id)?.remove(component))
     }
 
     /// Iterate over entity names, in name order
@@ -807,7 +773,7 @@ mod tests {
 
     /// The children index (#689) is in name order and follows every change
     /// to the hierarchy: a reparent moves the child, despawning a child
-    /// takes it out, despawning a parent leaves its children as roots.
+    /// takes it out, despawning a parent takes its subtree (#691).
     #[test]
     fn children_are_in_name_order_and_follow_the_hierarchy() {
         let mut world = FlintWorld::new();
@@ -842,10 +808,10 @@ mod tests {
         assert_eq!(names_of(&world, &world.get_children(a)), ["alpha", "mid"]);
         assert_eq!(world.get_name(kids[3]), None);
 
-        // Despawn the parent: its children are roots.
-        world.despawn(a).unwrap();
-        assert_eq!(world.get_parent(kids[0]), None);
-        assert_eq!(world.get_parent(kids[2]), None);
+        // Despawn the parent: its children go with it, the reparented one
+        // stays.
+        assert_eq!(world.despawn(a).unwrap(), [a, kids[2], kids[0]]);
+        assert!(!world.contains(kids[0]) && !world.contains(kids[2]));
         assert_eq!(world.get_parent(kids[1]), Some(b));
         assert!(world.get_children(a).is_empty());
 
@@ -955,22 +921,6 @@ mod tests {
         assert_eq!(both.len(), 1);
         assert!(both.contains(&a));
         assert!(!both.contains(&b));
-    }
-
-    #[test]
-    fn test_rebuild_component_index() {
-        let mut world = FlintWorld::new();
-        let id = world.spawn("e").unwrap();
-        world
-            .set_component(id, "rigidbody", toml::Value::Table(Default::default()))
-            .unwrap();
-
-        // Corrupt the index
-        world.component_index.clear();
-        assert!(world.entities_with_component("rigidbody").is_empty());
-
-        world.rebuild_component_index();
-        assert!(world.entities_with_component("rigidbody").contains(&id));
     }
 
     #[test]
@@ -1623,5 +1573,179 @@ intensity = 1.0
         }
         let pos = world.get_world_position(*links.last().unwrap()).unwrap();
         assert_eq!(pos.x, 20_000.0);
+    }
+
+    // ── #691: storage of its own, a guarded index, despawn takes the subtree
+
+    /// The index as it would be rebuilt from what each entity holds: what
+    /// `component_index` must always equal (empty sets don't count).
+    fn index_from_records(world: &FlintWorld) -> BTreeMap<String, BTreeSet<EntityId>> {
+        let mut index: BTreeMap<String, BTreeSet<EntityId>> = BTreeMap::new();
+        for (&id, record) in &world.entities {
+            for name in record.components.data.keys() {
+                index.entry(name.clone()).or_default().insert(id);
+            }
+        }
+        index
+    }
+
+    fn assert_index_in_step(world: &FlintWorld) {
+        let kept: BTreeMap<String, BTreeSet<EntityId>> = world
+            .component_index
+            .iter()
+            .filter(|(_, set)| !set.is_empty())
+            .map(|(name, set)| (name.clone(), set.clone()))
+            .collect();
+        assert_eq!(kept, index_from_records(world));
+    }
+
+    fn table() -> toml::Value {
+        toml::Value::Table(Default::default())
+    }
+
+    /// Every way there is to write a component, through the world and
+    /// through the guard, leaves the index equal to what the entities hold:
+    /// the reason `rebuild_component_index` could go.
+    #[test]
+    fn no_write_puts_the_index_out_of_step() {
+        let mut world = FlintWorld::new();
+        let a = world.spawn("a").unwrap();
+        let b = world.spawn("b").unwrap();
+
+        world.set_component(a, "door", table()).unwrap();
+        world.merge_component(a, "material", table()).unwrap();
+        world
+            .set_field(b, "health", "hp", toml::Value::Integer(3))
+            .unwrap();
+        assert_index_in_step(&world);
+
+        {
+            let mut comps = world.get_components_mut(b).unwrap();
+            assert_eq!(comps.id(), b);
+            comps.set("light", table());
+            comps.set_field("rigidbody", "mass", toml::Value::Float(2.0));
+            comps.merge_component("collider", table());
+            assert!(comps.remove("health").is_some());
+            assert!(comps.remove("never_there").is_none());
+            // Changing a component's value in place adds no component
+            comps
+                .get_mut("light")
+                .unwrap()
+                .as_table_mut()
+                .unwrap()
+                .insert("intensity".into(), toml::Value::Float(4.0));
+            comps.set_archetype(Some("lamp".into()));
+            // Reading goes through Deref
+            assert!(comps.has("light") && !comps.has("health"));
+        }
+        assert_index_in_step(&world);
+        assert!(world.entities_with_component("health").is_empty());
+        assert!(world.entities_with_component("rigidbody").contains(&b));
+        assert_eq!(
+            world.get_components(b).unwrap().archetype.as_deref(),
+            Some("lamp")
+        );
+
+        let mut extra = DynamicComponents::new();
+        extra.set("script", table());
+        extra.set("door", table());
+        world.get_components_mut(b).unwrap().merge(&extra);
+        assert_index_in_step(&world);
+        assert_eq!(
+            world.entities_with_components(&["door", "script"]),
+            [b],
+            "merge indexes what it brings"
+        );
+
+        world.remove_component(a, "door").unwrap();
+        world
+            .get_component_mut(a, "material")
+            .unwrap()
+            .as_table_mut()
+            .unwrap()
+            .insert("color".into(), toml::Value::String("red".into()));
+        assert!(world.get_component_mut(a, "door").is_none());
+        assert_index_in_step(&world);
+
+        world.despawn(b).unwrap();
+        assert_index_in_step(&world);
+        assert!(world.get_components_mut(b).is_none());
+    }
+
+    /// Despawn takes the subtree, whole and only it (#691): every
+    /// descendant's name, components, parent links and index entries go,
+    /// the ids come back parent before child, and a child reparented
+    /// first stays where it was put.
+    #[test]
+    fn despawn_takes_the_subtree() {
+        let mut world = FlintWorld::new();
+        let names = ["car", "body", "wheel_l", "wheel_r", "hub", "garage"];
+        let id: HashMap<&str, EntityId> = names
+            .iter()
+            .map(|n| (*n, world.spawn(*n).unwrap()))
+            .collect();
+        world.set_parent(id["car"], id["garage"]).unwrap();
+        world.set_parent(id["body"], id["car"]).unwrap();
+        world.set_parent(id["wheel_r"], id["car"]).unwrap();
+        world.set_parent(id["wheel_l"], id["car"]).unwrap();
+        world.set_parent(id["hub"], id["wheel_l"]).unwrap();
+        for n in names {
+            world.set_component(id[n], "transform", table()).unwrap();
+        }
+
+        let gone = world.despawn_by_name("car").unwrap();
+        assert_eq!(
+            names_of_gone(&gone, &id),
+            ["car", "body", "wheel_l", "wheel_r", "hub"],
+            "the entity, then a generation at a time, siblings by name"
+        );
+        assert_eq!(world.entity_count(), 1);
+        for n in ["car", "body", "wheel_l", "wheel_r", "hub"] {
+            assert!(!world.contains(id[n]) && !world.contains_name(n), "{n}");
+            assert!(world.get_parent(id[n]).is_none());
+            assert!(world.children(id[n]).is_empty());
+        }
+        assert!(world.children(id["garage"]).is_empty());
+        assert_eq!(
+            world.entities_with_component("transform").len(),
+            1,
+            "only the garage is left in the index"
+        );
+        assert!(world.parents.is_empty() && world.children.is_empty());
+        assert_index_in_step(&world);
+
+        // A name is free again, with a new id
+        let car = world.spawn("car").unwrap();
+        assert!(!gone.contains(&car));
+
+        // Keep a child: reparent it before the despawn
+        let rack = world.spawn("rack").unwrap();
+        let bike = world.spawn("bike").unwrap();
+        world.set_parent(rack, car).unwrap();
+        world.set_parent(bike, rack).unwrap();
+        world.set_parent(bike, id["garage"]).unwrap();
+        assert_eq!(world.despawn(car).unwrap(), [car, rack]);
+        assert_eq!(world.get_parent(bike), Some(id["garage"]));
+        assert_eq!(world.children(id["garage"]), [bike]);
+
+        // Despawning what's gone is an error, and changes nothing
+        assert!(world.despawn(car).is_err());
+        assert_eq!(world.entity_count(), 2);
+    }
+
+    fn names_of_gone<'a>(gone: &[EntityId], id: &HashMap<&'a str, EntityId>) -> Vec<&'a str> {
+        gone.iter()
+            .map(|g| *id.iter().find(|(_, v)| *v == g).unwrap().0)
+            .collect()
+    }
+
+    #[test]
+    fn an_id_that_is_live_is_not_spawned_twice() {
+        let mut world = FlintWorld::new();
+        let a = world.spawn("a").unwrap();
+        let err = world.spawn_with_id(a, "b").unwrap_err();
+        assert!(err.to_string().contains("'a'"), "{err}");
+        assert_eq!(world.get_name(a), Some("a"));
+        assert!(!world.contains_name("b"));
     }
 }

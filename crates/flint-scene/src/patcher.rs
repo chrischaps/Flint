@@ -1324,7 +1324,7 @@ intensity = 2.0
         let before = every_table_world();
         let mut after = every_table_world();
         let door = after.get_id("door").unwrap();
-        let comps = after.get_components_mut(door).unwrap();
+        let mut comps = after.get_components_mut(door).unwrap();
         comps.set_field("door", "open_angle", toml::Value::Float(90.0));
         let mut fixer = SceneDocument::from_str(EVERY_TABLE).unwrap();
         assert!(fixer.apply_world_diff(&before, &after).is_empty());
@@ -1363,7 +1363,7 @@ intensity = 2.0
         let before = every_table_world();
         let mut after = every_table_world();
         let door = after.get_id("door").unwrap();
-        let comps = after.get_components_mut(door).unwrap();
+        let mut comps = after.get_components_mut(door).unwrap();
         // remove_invalid: the field goes
         comps
             .get_mut("door")
@@ -1372,8 +1372,8 @@ intensity = 2.0
             .remove("open_angle");
         // add_child: a new entity, parented
         let handle = after.spawn("door_handle").unwrap();
-        let comps = after.get_components_mut(handle).unwrap();
-        comps.archetype = Some("handle".into());
+        let mut comps = after.get_components_mut(handle).unwrap();
+        comps.set_archetype(Some("handle".into()));
         comps.set_field("transform", "position", toml::Value::Array(vec![]));
         after.set_parent(handle, door).unwrap();
         // a lamp despawned

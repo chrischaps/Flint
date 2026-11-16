@@ -84,7 +84,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
 
     m.func(
         "despawn_entity",
-        "Remove the entity (and its children's link to it).",
+        "Remove the entity and all its descendants (set_parent a child elsewhere first to keep it).",
     )
     .arg("id", Entity)
     .run(|call, (id,)| {
@@ -203,7 +203,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("y", Num)
     .arg("z", Num)
     .run(|call, (id, x, y, z)| {
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
             comps.set_field(comp::TRANSFORM, "position", float3(x, y, z));
         }
         Ok(())
@@ -229,7 +229,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("y", Num)
     .arg("z", Num)
     .run(|call, (id, x, y, z)| {
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
             comps.set_field(comp::TRANSFORM, "rotation", float3(x, y, z));
             // Clear the quaternion so the Euler angles take effect
             if let Some(table) = comps
@@ -262,7 +262,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
         .arg("y", Num)
         .arg("z", Num)
         .run(|call, (id, x, y, z)| {
-            if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+            if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
                 comps.set_field(comp::TRANSFORM, "scale", float3(x, y, z));
             }
             Ok(())
@@ -299,9 +299,9 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("z", Num)
     .arg("w", Num)
     .run(|call, (id, x, y, z, w)| {
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
             let q = quat_normalize(&[x as f32, y as f32, z as f32, w as f32]);
-            write_rotation_quat(comps, q);
+            write_rotation_quat(&mut comps, q);
         }
         Ok(())
     });
@@ -321,8 +321,8 @@ pub(crate) fn register(api: &mut ScriptApi) {
         };
         let delta = euler_deg_to_quat(x as f32, y as f32, z as f32);
         let q = quat_normalize(&quat_mul(&current, &delta));
-        if let Some(comps) = world.get_components_mut(id) {
-            write_rotation_quat(comps, q);
+        if let Some(mut comps) = world.get_components_mut(id) {
+            write_rotation_quat(&mut comps, q);
         }
         Ok(())
     });
@@ -335,8 +335,8 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("shear", Map)
     .run(|call, (id, shear)| {
         let terms = shear_terms(&shear);
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) {
-            write_shear(comps, terms);
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
+            write_shear(&mut comps, terms);
         }
         Ok(())
     });
@@ -360,8 +360,8 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .arg("id", Entity)
     .run(|call, (id,)| {
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) {
-            write_shear(comps, [0.0; 6]);
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
+            write_shear(&mut comps, [0.0; 6]);
         }
         Ok(())
     });
@@ -477,7 +477,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("b", Num)
     .arg("a", Num)
     .run(|call, (id, r, g, b, a)| {
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
             for (field, v) in [
                 ("base_color_r", r),
                 ("base_color_g", g),
@@ -564,8 +564,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .run(|call, (id, material)| {
         if let Some(t) = call
             .world_mut()?
-            .get_components_mut(id)
-            .and_then(|comps| comps.get_mut(comp::MATERIAL_OVERRIDES))
+            .get_component_mut(id, comp::MATERIAL_OVERRIDES)
             .and_then(|v| v.as_table_mut())
         {
             t.remove(material.as_str());
@@ -581,7 +580,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("id", Entity)
     .arg("value", Num)
     .run(|call, (id, value)| {
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
             if comps.has(comp::JOINT) {
                 comps.set_field(comp::JOINT, "motor_target", toml::Value::Float(value));
             }
@@ -738,7 +737,7 @@ fn shear_terms(shear: &rhai::Map) -> [f32; 6] {
 
 /// Store a shear (#625) as the table a scene would write, only the terms
 /// that aren't zero; an all-zero shear removes the key.
-fn write_shear(comps: &mut flint_ecs::DynamicComponents, terms: [f32; 6]) {
+fn write_shear(comps: &mut flint_ecs::ComponentsMut<'_>, terms: [f32; 6]) {
     if terms.iter().any(|v| *v != 0.0) {
         comps.set_field(comp::TRANSFORM, "shear", flint_core::Shear::to_toml(&terms));
     } else if let Some(table) = comps
@@ -752,7 +751,7 @@ fn write_shear(comps: &mut flint_ecs::DynamicComponents, terms: [f32; 6]) {
 /// Store a quaternion as the entity's rotation. The Euler `rotation` is
 /// zeroed so readers that only know Euler see a neutral value rather than a
 /// stale one; `to_matrix()` uses the quaternion whenever it is present.
-fn write_rotation_quat(comps: &mut flint_ecs::DynamicComponents, q: [f32; 4]) {
+fn write_rotation_quat(comps: &mut flint_ecs::ComponentsMut<'_>, q: [f32; 4]) {
     comps.set_field(
         comp::TRANSFORM,
         "rotation_quat",

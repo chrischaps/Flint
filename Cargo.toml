@@ -101,7 +101,6 @@ thiserror = "2.0"
 anyhow = "1.0"
 
 # ECS
-hecs = "0.10"
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }
@@ -174,7 +173,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ureq = { version = "3", features = ["json"] }
 
 # Utilities
-bimap = "0.6"
 sha2 = "0.10"
 uuid = { version = "1.11", features = ["v4"] }
 dirs = "6"

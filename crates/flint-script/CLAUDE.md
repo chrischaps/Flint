@@ -22,7 +22,7 @@ let mut m = api.module("entity");
 m.func("set_position", "Move the entity to a position in its parent's space.")
     .arg("id", Entity).arg("x", Num).arg("y", Num).arg("z", Num)
     .run(|call, (id, x, y, z)| {
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) { /* ... */ }
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) { /* a ComponentsMut: its writes keep the index (#691) */ }
         Ok(())
     });
 ```

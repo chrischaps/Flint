@@ -4,7 +4,7 @@
 
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f64;
-use flint_ecs::DynamicComponents;
+use flint_ecs::ComponentsMut;
 
 /// Edit one entry of `animator.layers` in place.
 ///
@@ -12,7 +12,7 @@ use flint_ecs::DynamicComponents;
 /// pads slots below `index` with inactive (empty-clip) entries so indices
 /// stay stable, applies `edit`, then clears the legacy field.
 pub fn edit_layer_table(
-    comps: &mut DynamicComponents,
+    comps: &mut ComponentsMut<'_>,
     index: usize,
     edit: impl FnOnce(&mut toml::map::Map<String, toml::Value>),
 ) {

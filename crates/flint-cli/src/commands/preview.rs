@@ -296,7 +296,7 @@ fn parse_layer_spec(spec: &str) -> AnimLayer {
 
 /// Write a layer list to the preview entity's animator component.
 fn write_layers_to_world(world: &mut FlintWorld, entity_id: EntityId, layers: &[AnimLayer]) {
-    if let Some(components) = world.get_components_mut(entity_id) {
+    if let Some(mut components) = world.get_components_mut(entity_id) {
         components.set_field(
             comp::ANIMATOR,
             "layers",
@@ -710,7 +710,7 @@ fn register_animation_data(
     let clip_name = &all_clip_names[current_clip_index];
 
     // Set the clip on the animator component so sync_from_world picks it up
-    if let Some(components) = world.get_components_mut(entity_id) {
+    if let Some(mut components) = world.get_components_mut(entity_id) {
         components.set_field(
             comp::ANIMATOR,
             "clip",
@@ -1566,7 +1566,7 @@ impl PreviewApp {
         // Update animator component in ECS so sync_from_world picks up the change
         if let Ok(mut state) = self.state.lock() {
             if let Some(eid) = state.entity_id {
-                if let Some(components) = state.world.get_components_mut(eid) {
+                if let Some(mut components) = state.world.get_components_mut(eid) {
                     components.set_field(
                         comp::ANIMATOR,
                         "clip",
@@ -2925,7 +2925,7 @@ impl PreviewApp {
             self.anim_paused = paused;
             if let Ok(mut state) = self.state.lock() {
                 if let Some(eid) = state.entity_id {
-                    if let Some(components) = state.world.get_components_mut(eid) {
+                    if let Some(mut components) = state.world.get_components_mut(eid) {
                         components.set_field(
                             comp::ANIMATOR,
                             "playing",
@@ -2947,7 +2947,7 @@ impl PreviewApp {
         if let Some(spd) = new_speed {
             if let Ok(mut state) = self.state.lock() {
                 if let Some(eid) = state.entity_id {
-                    if let Some(components) = state.world.get_components_mut(eid) {
+                    if let Some(mut components) = state.world.get_components_mut(eid) {
                         components.set_field(comp::ANIMATOR, "speed", toml::Value::Float(spd));
                     }
                 }
@@ -3033,7 +3033,7 @@ impl PreviewApp {
                     if self.anim_paused {
                         self.anim_paused = false;
                         if let Ok(mut state) = self.state.lock() {
-                            if let Some(c) = state.world.get_components_mut(eid) {
+                            if let Some(mut c) = state.world.get_components_mut(eid) {
                                 c.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(true));
                             }
                         }
@@ -3263,7 +3263,7 @@ impl ApplicationHandler for PreviewApp {
                                 // Update playing state in ECS
                                 if let Ok(mut state) = self.state.lock() {
                                     if let Some(eid) = state.entity_id {
-                                        if let Some(components) =
+                                        if let Some(mut components) =
                                             state.world.get_components_mut(eid)
                                         {
                                             components.set_field(
@@ -3325,7 +3325,7 @@ impl ApplicationHandler for PreviewApp {
                             if self.anim_info.is_some() {
                                 if let Ok(mut state) = self.state.lock() {
                                     if let Some(eid) = state.entity_id {
-                                        if let Some(components) =
+                                        if let Some(mut components) =
                                             state.world.get_components_mut(eid)
                                         {
                                             let current = components
@@ -3354,7 +3354,7 @@ impl ApplicationHandler for PreviewApp {
                             if self.anim_info.is_some() {
                                 if let Ok(mut state) = self.state.lock() {
                                     if let Some(eid) = state.entity_id {
-                                        if let Some(components) =
+                                        if let Some(mut components) =
                                             state.world.get_components_mut(eid)
                                         {
                                             let current = components
@@ -3383,7 +3383,7 @@ impl ApplicationHandler for PreviewApp {
                             if self.anim_info.is_some() {
                                 if let Ok(mut state) = self.state.lock() {
                                     if let Some(eid) = state.entity_id {
-                                        if let Some(components) =
+                                        if let Some(mut components) =
                                             state.world.get_components_mut(eid)
                                         {
                                             components.set_field(

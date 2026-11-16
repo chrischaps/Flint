@@ -168,8 +168,8 @@ impl PlayerApp {
 
             // Set archetype + defaults
             if let Some(archetype) = &entity_def.archetype {
-                if let Some(comps) = self.core.world.get_components_mut(id) {
-                    comps.archetype = Some(archetype.clone());
+                if let Some(mut comps) = self.core.world.get_components_mut(id) {
+                    comps.set_archetype(Some(archetype.clone()));
                     if let Some(arch_schema) = registry.get_archetype(archetype) {
                         for (comp_name, defaults) in &arch_schema.defaults {
                             if !comps.has(comp_name) {
@@ -193,7 +193,7 @@ impl PlayerApp {
                 let new_x = transform.position.x + offset_x;
                 let new_y = transform.position.y + offset_y;
                 let new_z = transform.position.z;
-                if let Some(comps) = self.core.world.get_components_mut(id) {
+                if let Some(mut comps) = self.core.world.get_components_mut(id) {
                     comps.set_field(
                         comp::TRANSFORM,
                         "position",
@@ -206,7 +206,7 @@ impl PlayerApp {
                 }
             } else {
                 // Entity has no transform yet — create one with the offset
-                if let Some(comps) = self.core.world.get_components_mut(id) {
+                if let Some(mut comps) = self.core.world.get_components_mut(id) {
                     comps.set_field(
                         comp::TRANSFORM,
                         "position",

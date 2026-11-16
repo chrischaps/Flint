@@ -51,7 +51,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `entity_exists(id: entity?)` | `bool`: false for -1 or a despawned id | Whether the id names a live entity; never warns. |
 | `entity_name(id: entity)` | `str`: its name, or "" when it has none | The entity's name. |
 | `spawn_entity(name: str)` | `entity`: its id, or -1 when the name is taken | Make an entity with this name, with no components. |
-| `despawn_entity(id: entity)` | — | Remove the entity (and its children's link to it). |
+| `despawn_entity(id: entity)` | — | Remove the entity and all its descendants (`set_parent` a child elsewhere first to keep it). |
 | `has_component(id: entity, component: str)` | `bool` | Whether the entity has a component of this name. |
 | `get_component(id: entity, component: str)` | `map`: its fields, or () when the entity hasn't it | The whole component as a map. |
 | `get_field(id: entity, component: str, field: str)` | `any`: its value, or () when it isn't there | One field of a component. |

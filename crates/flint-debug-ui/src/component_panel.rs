@@ -93,7 +93,7 @@ impl ComponentPanel {
             return;
         };
         if !self.writes.is_empty() {
-            if let Some(comps) = world.get_components_mut(id) {
+            if let Some(mut comps) = world.get_components_mut(id) {
                 for (field, value) in self.writes.drain(..) {
                     comps.set_field(&self.component, &field, value);
                 }

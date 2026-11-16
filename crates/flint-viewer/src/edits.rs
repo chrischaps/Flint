@@ -66,7 +66,7 @@ impl FieldEdits {
             return;
         };
         let key = (name.to_string(), component.to_string(), field.to_string());
-        let Some(components) = world.get_components_mut(id) else {
+        let Some(mut components) = world.get_components_mut(id) else {
             return;
         };
         let current = components.get_field(component, field).cloned();
@@ -381,7 +381,7 @@ position = [0.0, 0.0, 0.0] # by the door
         assert_eq!(doc.to_string(), SCENE);
 
         // Taken away again (an undo): no longer a change, so no longer a problem
-        world.get_components_mut(lamp).unwrap().data.remove("light");
+        world.remove_component(lamp, "light").unwrap();
         assert!(!edits.is_dirty(&world));
         assert!(edits.problems(&world).is_empty());
     }

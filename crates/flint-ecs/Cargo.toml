@@ -8,8 +8,6 @@ description = "ECS world management for Flint"
 [dependencies]
 flint-core = { workspace = true }
 flint-schema = { workspace = true }
-hecs = { workspace = true }
-bimap = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
 thiserror = { workspace = true }

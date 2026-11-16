@@ -139,7 +139,7 @@ pub fn declare_draw(api: &mut ScriptApi, path: Path, names: Names) {
 /// the `entity` module's `set_position`.
 pub fn declare_set_position(api: &mut ScriptApi, path: Path) {
     fn write(world: &mut flint_ecs::FlintWorld, id: flint_core::EntityId, p: [f64; 3]) {
-        if let Some(comps) = world.get_components_mut(id) {
+        if let Some(mut comps) = world.get_components_mut(id) {
             comps.set_field(
                 comp::TRANSFORM,
                 "position",
