@@ -418,13 +418,21 @@ pub(crate) fn register(api: &mut ScriptApi) {
         });
 
     // ── Hierarchy ──
-    m.func("set_parent", "Make one entity the child of another.")
-        .arg("child", Entity)
-        .arg("parent", Entity)
-        .run(|call, (child, parent)| {
-            let _ = call.world_mut()?.set_parent(child, parent);
-            Ok(())
-        });
+    m.func(
+        "set_parent",
+        "Make one entity the child of another; a script error if the parent is the child or below it.",
+    )
+    .arg("child", Entity)
+    .arg("parent", Entity)
+    .run(|call, (child, parent)| {
+        // A cycle used to be stored and overflow the stack at the next
+        // matrix walk (#680); now it is refused, and said at the call's line
+        let refused = call.world_mut()?.set_parent(child, parent).err();
+        match refused {
+            Some(e) => Err(call.error(e)),
+            None => Ok(()),
+        }
+    });
 
     m.func("get_parent", "The entity's parent.")
         .arg("id", Entity)

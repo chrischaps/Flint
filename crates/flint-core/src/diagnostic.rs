@@ -84,6 +84,9 @@ pub mod codes {
     /// An `entity` field (or an entity's `parent`) that names no entity of
     /// the scene. An empty string is "not set" and passes.
     pub const UNKNOWN_ENTITY: &str = "unknown-entity";
+    /// Entities whose `parent`s close into a loop: one parented to itself,
+    /// or `a` to `b` to `a` (#680). The scene does not load.
+    pub const PARENT_CYCLE: &str = "parent-cycle";
     /// An `asset` field (or, in `flint check`, an asset of a known kind) that
     /// names no file the project's asset search finds; the hint, or `tried`,
     /// lists the paths.
@@ -261,6 +264,11 @@ pub mod codes {
             UNKNOWN_ENTITY,
             Severity::Error,
             "an entity reference that names no entity in the scene",
+        ),
+        (
+            PARENT_CYCLE,
+            Severity::Error,
+            "entities whose parents close into a loop, so the scene does not load",
         ),
         (
             MISSING_ASSET,
@@ -813,7 +821,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 48);
+        assert_eq!(seen.len(), 49);
     }
 
     /// A problem in a scene-level table names the table as its header is
