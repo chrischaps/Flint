@@ -108,7 +108,7 @@ pub fn run(args: RenderSuiteArgs) -> Result<()> {
         Some(other) => bail!("--status-every must be 'bar' or 'beat', got '{other}'"),
     };
 
-    println!(
+    crate::output::say!(
         "rendering suite '{}': {} samples ({:.1} s) at {} Hz, {} scripted events, chunk {} frames",
         manifest.id,
         duration_samples,
@@ -139,13 +139,13 @@ pub fn run(args: RenderSuiteArgs) -> Result<()> {
         if key != last_line {
             last_line = key;
             let section = conductor.section_at_sample(pos.sample);
-            println!("{}", status_line(pos, section, mixer));
+            crate::output::say!("{}", status_line(pos, section, mixer));
         }
     })
     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     for f in &result.fired {
-        println!(
+        crate::output::say!(
             "fired @ sample {:>9}{}: {:?} {:?}",
             f.sample,
             if f.late { " (LATE)" } else { "" },
@@ -156,12 +156,27 @@ pub fn run(args: RenderSuiteArgs) -> Result<()> {
     let out_path = Path::new(&output);
     write_wav(out_path, &result.samples, manifest.sample_rate)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    println!(
+    crate::output::say!(
         "wrote {} ({} frames, {:.1} s)",
         out_path.display(),
         result.samples.len() / 2,
         (result.samples.len() / 2) as f64 / manifest.sample_rate as f64
     );
+    crate::output::when_json(|| {
+        serde_json::json!({
+            "suite": manifest.id,
+            "written": [out_path.display().to_string().replace('\\', "/")],
+            "sample_rate": manifest.sample_rate,
+            "frames": result.samples.len() / 2,
+            "seconds": (result.samples.len() / 2) as f64 / manifest.sample_rate as f64,
+            "fired": result.fired.iter().map(|f| serde_json::json!({
+                "sample": f.sample,
+                "late": f.late,
+                "bus": f.bus,
+                "action": format!("{:?}", f.action),
+            })).collect::<Vec<_>>(),
+        })
+    });
     Ok(())
 }
 

@@ -401,7 +401,8 @@ impl PlayerArgs {
             eprintln!("{warning}");
         }
         if schema_dirs.dirs.is_empty() {
-            println!("Warning: No schemas directories found");
+            // stderr: stdout is what a command answers with (#710)
+            eprintln!("Warning: No schemas directories found");
         }
 
         // --style words and --look, checked once the scene's own styles

@@ -105,7 +105,7 @@ pub fn load_schemas(
 ) -> Result<(SchemaRegistry, ConstraintRegistry, SchemaDirs)> {
     let (registry, dirs) = SchemaRegistry::resolve(Some(Path::new(scene_path)), schemas)?;
     if dirs.dirs.is_empty() {
-        println!("Warning: No schemas directories found");
+        eprintln!("Warning: No schemas directories found");
     }
     let mut constraints = ConstraintRegistry::new();
     for dir in &dirs.dirs {

@@ -645,7 +645,7 @@ pub fn run(args: &RenderArgs, host: &mut RenderHost) -> Result<()> {
     sheet
         .save(&args.output)
         .with_context(|| format!("writing {}", args.output))?;
-    println!(
+    crate::output::say!(
         "Wrote {} variants as one {}x{} sheet to {} (each variant's frame beside it as {})",
         variants.len(),
         sheet.width(),
@@ -654,6 +654,10 @@ pub fn run(args: &RenderArgs, host: &mut RenderHost) -> Result<()> {
         outputs.file("<label>").display()
     );
 
+    let mut written = vec![args.output.replace('\\', "/")];
+    for slug in &slugs {
+        written.push(path_text(&outputs.file(slug)));
+    }
     for (k, zoom) in zooms.iter().enumerate() {
         let suffix = Outputs::zoom_suffix(k);
         let crops: Vec<RgbaImage> = frames.iter().map(|f| zoom.crop(f)).collect();
@@ -680,15 +684,29 @@ pub fn run(args: &RenderArgs, host: &mut RenderHost) -> Result<()> {
         sheet
             .save(&path)
             .with_context(|| format!("writing {}", path.display()))?;
-        println!(
+        crate::output::say!(
             "Wrote zoom {} as a {}x{} sheet to {}",
             zoom.describe(),
             sheet.width(),
             sheet.height(),
             path.display()
         );
+        written.push(path_text(&path));
     }
+    crate::output::when_json(|| {
+        serde_json::json!({
+            "scene": scene_name,
+            "output": args.output,
+            "variants": variants.iter().map(|v| v.label.clone()).collect::<Vec<_>>(),
+            "written": written,
+        })
+    });
     Ok(())
+}
+
+/// A path as the JSON spells it: `/` on every platform.
+fn path_text(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
 }
 
 /// Render each variant on `host`'s GPU and read its frame back.
@@ -700,7 +718,7 @@ fn draw_all(
     let n = variants.len();
     let mut frames = Vec::with_capacity(n);
     for (i, ((render, path), variant)) in parsed.into_iter().zip(variants).enumerate() {
-        println!(
+        crate::output::say!(
             "[{}/{n}] {}: {}",
             i + 1,
             variant.label,

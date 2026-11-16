@@ -192,8 +192,8 @@ fn web(args: WebArgs) -> Result<()> {
     std::fs::write(&listing, serde_json::to_string_pretty(&merged)? + "\n")?;
 
     let size: u64 = packed.files.iter().map(|(_, s)| s).sum();
-    println!();
-    println!(
+    crate::output::say!();
+    crate::output::say!(
         "exported {id} to {} ({} in {} bundle{}; {count} game{} listed)",
         out.display(),
         mb(size),
@@ -201,12 +201,26 @@ fn web(args: WebArgs) -> Result<()> {
         if packed.files.len() == 1 { "" } else { "s" },
         if count == 1 { "" } else { "s" },
     );
-    println!("  serve it:  python -m http.server -d {}", out.display());
-    if count == 1 {
-        println!("  then open: http://localhost:8000/");
+    crate::output::say!("  serve it:  python -m http.server -d {}", out.display());
+    let open = if count == 1 {
+        "http://localhost:8000/".to_string()
     } else {
-        println!("  then open: http://localhost:8000/?game={id}");
-    }
+        format!("http://localhost:8000/?game={id}")
+    };
+    crate::output::say!("  then open: {open}");
+    crate::output::when_json(|| {
+        serde_json::json!({
+            "game": id,
+            "out_dir": out.display().to_string().replace('\\', "/"),
+            "scene": packed.scene,
+            "bundles": packed.files.iter().map(|(file, bytes)| {
+                serde_json::json!({ "file": format!("games/{id}/{file}"), "bytes": bytes })
+            }).collect::<Vec<_>>(),
+            "games_listed": count,
+            "serve": format!("python -m http.server -d {}", out.display()),
+            "open": open,
+        })
+    });
     Ok(())
 }
 
@@ -325,7 +339,7 @@ fn build_player(engine: Option<&Path>) -> Result<PathBuf> {
     }
     let engine = std::fs::canonicalize(&engine)?;
     let dist = engine.join("target").join("web-player");
-    println!(
+    crate::output::say!(
         "building the web player with trunk (release, web-release) into {}",
         dist.display()
     );
@@ -341,6 +355,12 @@ fn build_player(engine: Option<&Path>) -> Result<PathBuf> {
         .current_dir(engine.join("crates/flint-player"))
         // trunk reads NO_COLOR=1 as its own --no-color flag and refuses "1"
         .env_remove("NO_COLOR")
+        // Under --json stdout is the document: trunk's lines go to stderr
+        .stdout(if crate::output::json() {
+            std::process::Stdio::from(std::io::stderr())
+        } else {
+            std::process::Stdio::inherit()
+        })
         .status();
     match status {
         Ok(s) if s.success() => Ok(dist),
