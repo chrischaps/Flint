@@ -348,7 +348,7 @@ A capture carries out what scripts ask through the same dispatcher as the player
 
 - everything scripts write to the world (`set_field`, `set_position`, a light's colour, a material);
 - entity styles: `set_entity_style`, `set_style_param`, `clear_entity_style`, and `tween_style_param`, whose tweens step on the scripts' clock as the player's do; `get_entity_style` and `get_style_param` read the config the capture draws with;
-- whole-frame styles (`set_post_style`, `set_post_style_param`, `reset_post_style`), `set_look` and `clear_look`, and `reset_style_history`;
+- whole-frame styles (`set_post_style`, `set_post_style_param`, `reset_post_style`), `set_look` and `clear_look` (and `get_look()` reads the look the capture draws with: the scene's, `--look`, or a `look=` sweep's column, from `on_init` on), and `reset_style_history`;
 - the `set_camera_*` overrides, `set_camera_roll` included, the post-processing ones (`set_exposure`, `set_vignette`, `set_fog_color`, ...), the tear (`set_tear`) and the deprecated render modes (`set_render_mode`, for the steps that ask), `set_lod_scale`, `set_draw_distance_scale` and `set_quality`;
 - `tune_living` (its `boil` too: `kuwahara`, `contour`, `on`, `enabled`), `clear_living`, `freeze_living`, `step_living` (a whole beat for every prop, the boil and shallow wooze, frozen or not), `load_living_preset`, `set_wooze`, `set_wooze_zone`, `remove_wooze_zone`, in a scene with living props or a wooze field, where their modules are enabled as in the player (#698);
 - `push_state`, `pop_state` and `replace_state` (a state that pauses scripts pauses their `on_update`, as in the player), and `fire_event` between scripts;

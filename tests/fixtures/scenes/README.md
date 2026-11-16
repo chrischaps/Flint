@@ -28,7 +28,8 @@ two frames on main too, and this copy draws one of them).
   copy and drop the pin, then change the example. A binary only the fixtures
   use lives here, as `../models/DoubleSidedCard.glb` does.
 - **They are written in the examples' archetypes** (`furniture`), which are the layer `schemas/examples`, not the engine's set (#681). The repository's `flint.toml` lists it, so a fixture run with no `--schemas` resolves them; a flag is the whole list, so the suite and the tests pass `--schemas schemas --schemas schemas/examples`.
-- **Their lights are tables nothing reads, on purpose.** Eight of them (and the golden suite's `broken_style` fixture) spell a sun as `[entities.sun.directional_light]`, so they are lit by the engine's built-in key and fill, and the goldens pin that. The examples they were copied from now carry real `light` tables (#681); making these real would move every golden that loads them, so they stay until someone re-blesses on purpose. #683's unknown-component diagnostic will name them.
+- **Most have no light, on purpose.** They are lit by the engine's built-in key and fill (`default_scene_lights`), and the goldens pin that. They used to spell a sun as `[entities.sun.directional_light]`, a table nothing reads; #796 deleted those, which moved no golden. The examples they were copied from carry real `light` tables (#681); giving these one would move every golden that loads them, so do it only to re-bless on purpose. A light is `[entities.<name>.light]` with a `type` (`pencil_meadow` has some).
+- **They pass `flint check`** (#796, `crates/flint-cli/tests/fixture_scenes_cli.rs`): a fixture with an error diagnostic fails that test, unless its `KEPT` names it with the reason (now `styles/darkroom.shader.toml`, #1056).
 - **Assets are found by the one asset search** (ADR 0114): a scene here
   looks in `tests/fixtures/scenes/<folder>/`, then up to the repo root,
   never in `examples/`. A fixture that renders with something missing
