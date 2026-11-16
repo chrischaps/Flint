@@ -10,7 +10,7 @@
 //! this frame reads back from the next; without a reader every entity is
 //! unstyled.
 
-use super::builder::kind::{Any, Bool, Entity, Num, Str};
+use super::builder::kind::{Any, Array, Bool, Entity, Num, Str};
 use super::builder::{Call, CallResult, ScriptApi};
 use super::convert::{dynamic_to_toml, toml_to_dynamic};
 use crate::context::{LogLevel, ScriptCommand};
@@ -334,6 +334,26 @@ pub(crate) fn register(api: &mut ScriptApi) {
             name: None,
             seconds: fade_seconds(seconds),
         });
+    });
+
+    m.func(
+        "get_look",
+        "The look the scene draws with now: its own, or the last a script or F4 chose (a fade's target from its start).",
+    )
+    .returns(Str, "the look's name as it was asked for; \"\" for none")
+    .run(|call, ()| -> String { call.ctx_ref().look.clone() });
+
+    m.func(
+        "list_looks",
+        "Every look the scene can see: its project's styles/*.look.toml files and the built-ins, by name.",
+    )
+    .returns(Array, "names, sorted")
+    .run(|call, ()| -> rhai::Array {
+        call.ctx_ref()
+            .looks
+            .iter()
+            .map(|name| Dynamic::from(ImmutableString::from(name.as_str())))
+            .collect()
     });
 }
 

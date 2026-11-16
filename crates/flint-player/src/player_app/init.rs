@@ -269,12 +269,37 @@ impl PlayerApp {
             &scope,
             def,
         );
+        self.publish_look();
     }
 
     /// The look the scene draws with now: the one it names, or the one a
     /// script or F4 chose since (#356). `None` for the scene's keys alone.
     pub fn current_look(&self) -> Option<&str> {
         self.scene.post_process.as_ref()?.look.as_deref()
+    }
+
+    /// Tell scripts' `get_look()` the [current look](Self::current_look)
+    /// (#497). Called where it changes and once a frame, before scripts, so
+    /// a game that sets `scene.post_process` itself is heard too.
+    pub(super) fn publish_look(&mut self) {
+        let look = self
+            .scene
+            .post_process
+            .as_ref()
+            .and_then(|d| d.look.as_deref());
+        self.core.script.set_current_look(look);
+    }
+
+    /// Tell scripts' `list_looks()` every look the scene can see (#497):
+    /// its project's look files and the built-ins, as F4's picker lists
+    /// them. At each scene's entry, before its scripts' `on_init`.
+    pub(super) fn publish_looks(&mut self) {
+        let names = flint_render::look::list_in(&self.kept_asset_scope())
+            .into_iter()
+            .map(|look| look.name)
+            .collect();
+        self.core.script.set_looks(names);
+        self.publish_look();
     }
 
     /// Lay `look` under the scene's `[post_process]` keys in place of the
@@ -303,6 +328,8 @@ impl PlayerApp {
         };
         let def = flint_render::look::resolve_in(&base, look, &self.asset_scope())?;
         self.scene.post_process = Some(def);
+        // A fade's target is the look from its start, for get_look()
+        self.publish_look();
         let config = self.scene_post_config();
         self.style.look_fade = None;
         let device = self.render_context.as_ref().map(|c| &c.device);

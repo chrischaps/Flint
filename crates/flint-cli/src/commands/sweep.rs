@@ -330,6 +330,14 @@ impl SweepGrid {
         cell_def(&self.axes(column, row), scene, base, scene_path)
     }
 
+    /// The look the cell's `look=` axis names, if either axis is one.
+    pub fn cell_look(&self, column: usize, row: usize) -> Option<&str> {
+        self.axes(column, row)
+            .into_iter()
+            .find(|(s, _)| s.key == SweepKey::Look)
+            .map(|(s, i)| s.values[i].as_str())
+    }
+
     /// The cell's `--style` words, one per style axis.
     pub fn cell_styles(&self, column: usize, row: usize) -> Vec<String> {
         self.axes(column, row)

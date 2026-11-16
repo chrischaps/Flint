@@ -396,6 +396,9 @@ impl PlayerApp {
         self.core
             .script
             .set_current_scene(&self.core.scene_path, &self.core.project);
+        // The looks the scene can see and the one it draws with, for
+        // on_init's list_looks() and get_look() (#497)
+        self.publish_looks();
         {
             let _state_scope = self.core.script.state_scope(
                 &mut self.core.state_machine,
