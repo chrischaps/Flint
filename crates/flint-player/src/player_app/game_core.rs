@@ -774,6 +774,13 @@ fn style_applied(core: &mut GameCore, applied: StyleApplied) {
         StyleApplied::Done(Some(event)) => core.events.push(event),
         StyleApplied::Done(None) => {}
         StyleApplied::Failed(message) => tracing::warn!(target: "script", "{message}"),
+        // Applied, past its range (#492)
+        StyleApplied::Clamped(event, message) => {
+            tracing::warn!(target: "script", "{message}");
+            if let Some(event) = event {
+                core.events.push(event);
+            }
+        }
     }
 }
 
@@ -790,7 +797,7 @@ fn edit_post_styles(
     };
     let mut config = renderer.post_process_config().clone();
     let applied = edit(&mut config);
-    if let StyleApplied::Done(_) = applied {
+    if applied.applied() {
         renderer.set_post_process_config(config);
     }
     style_applied(core, applied);
@@ -1014,7 +1021,7 @@ impl ScriptHost for CoreCommands<'_> {
         };
         let mut config = renderer.post_process_config().clone();
         let applied = tweens.tween_post(&mut config, &style, &param, target, seconds, &easing);
-        if let StyleApplied::Done(_) = applied {
+        if applied.applied() {
             renderer.set_post_process_config(config);
         }
         style_applied(core, applied);

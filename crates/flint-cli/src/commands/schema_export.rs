@@ -313,13 +313,55 @@ fn field_schema(field: &FieldSchema) -> Value {
     if let Some(default) = &field.default {
         out.insert("default".into(), to_json(default));
     }
-    if let Some(min) = field.min {
-        out.insert("minimum".into(), json!(min));
+    let mut out = Value::Object(out);
+    match field.field_type {
+        // A table's range (none says one) stays on the table
+        FieldType::Fields { .. } | FieldType::Table => {
+            if let Value::Object(map) = &mut out {
+                if let Some(min) = field.min {
+                    map.insert("minimum".into(), json!(min));
+                }
+                if let Some(max) = field.max {
+                    map.insert("maximum".into(), json!(max));
+                }
+            }
+        }
+        _ => put_range(&mut out, field.min, field.max),
     }
-    if let Some(max) = field.max {
-        out.insert("maximum".into(), json!(max));
+    out
+}
+
+/// A field's range on every number its schema takes (#492): a scalar's
+/// own, and each member of a vector or colour (`tint = [r, g, b]`), as
+/// `flint validate` checks them; JSON Schema's `minimum` on an array would
+/// say nothing. A number that has a range of its own (a hex colour's) keeps
+/// it.
+fn put_range(value: &mut Value, min: Option<f64>, max: Option<f64>) {
+    match value {
+        Value::Object(map) => {
+            let number = matches!(
+                map.get("type").and_then(Value::as_str),
+                Some("number" | "integer")
+            );
+            if number && !map.contains_key("minimum") && !map.contains_key("maximum") {
+                if let Some(min) = min {
+                    map.insert("minimum".into(), json!(min));
+                }
+                if let Some(max) = max {
+                    map.insert("maximum".into(), json!(max));
+                }
+            }
+            for v in map.values_mut() {
+                put_range(v, min, max);
+            }
+        }
+        Value::Array(items) => {
+            for v in items {
+                put_range(v, min, max);
+            }
+        }
+        _ => {}
     }
-    Value::Object(out)
 }
 
 /// A table of `fields`. A key no field declares is allowed, as the engine

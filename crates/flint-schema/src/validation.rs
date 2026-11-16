@@ -348,14 +348,14 @@ fn check_value(
             toml::Value::String(_),
         ) => {}
         (FieldType::Vec2, toml::Value::Array(arr)) => {
-            check_numbers(field_name, "vec2", 2..=2, arr, found)
+            check_numbers(field_name, "vec2", 2..=2, arr, (min, max), found)
         }
         (FieldType::Vec4, toml::Value::Array(arr)) => {
-            check_numbers(field_name, "vec4", 4..=4, arr, found)
+            check_numbers(field_name, "vec4", 4..=4, arr, (min, max), found)
         }
         // A colour is [r, g, b] or [r, g, b, a]: what `toml_color` reads
         (FieldType::Color, toml::Value::Array(arr)) => {
-            check_numbers(field_name, "color", 3..=4, arr, found)
+            check_numbers(field_name, "color", 3..=4, arr, (min, max), found)
         }
         (FieldType::Fields { fields }, toml::Value::Table(t)) => {
             table_problems(fields, t, Some(field_name), found)
@@ -364,7 +364,7 @@ fn check_value(
         (FieldType::Vec3, toml::Value::Table(t)) => {
             if ["x", "y", "z"].iter().all(|k| t.contains_key(*k)) {
                 for key in ["x", "y", "z"] {
-                    check_number(&format!("{field_name}.{key}"), &t[key], found);
+                    check_number(&format!("{field_name}.{key}"), &t[key], (min, max), found);
                 }
             } else {
                 found.push(shape("a vec3 table needs x, y and z"));
@@ -373,7 +373,7 @@ fn check_value(
         (FieldType::Vec3, toml::Value::Array(arr)) => {
             if arr.len() == 3 {
                 for (i, item) in arr.iter().enumerate() {
-                    check_number(&format!("{field_name}[{i}]"), item, found);
+                    check_number(&format!("{field_name}[{i}]"), item, (min, max), found);
                 }
             } else {
                 found.push(shape(&format!("a vec3 is 3 numbers, got {}", arr.len())));
@@ -437,12 +437,14 @@ fn check_value(
 }
 
 /// `arr` as a `type_name` of `len` numbers: the wrong count is one problem
-/// about the field, a member that is no number one about `field[i]`.
+/// about the field, a member that is no number, or outside the field's
+/// `range` (each member's: a colour's channels, #492), one about `field[i]`.
 fn check_numbers(
     field_name: &str,
     type_name: &str,
     len: std::ops::RangeInclusive<usize>,
     arr: &[toml::Value],
+    range: (Option<f64>, Option<f64>),
     found: &mut Vec<Problem>,
 ) {
     if !len.contains(&arr.len()) {
@@ -458,7 +460,7 @@ fn check_numbers(
         return;
     }
     for (i, item) in arr.iter().enumerate() {
-        check_number(&format!("{field_name}[{i}]"), item, found);
+        check_number(&format!("{field_name}[{i}]"), item, range, found);
     }
 }
 
@@ -556,13 +558,21 @@ fn value_references(
     }
 }
 
-fn check_number(field_name: &str, value: &toml::Value, found: &mut Vec<Problem>) {
-    if !matches!(value, toml::Value::Integer(_) | toml::Value::Float(_)) {
-        found.push(Problem::BadType {
+/// One member of a vector: a number, inside the field's `(min, max)`.
+fn check_number(
+    field_name: &str,
+    value: &toml::Value,
+    (min, max): (Option<f64>, Option<f64>),
+    found: &mut Vec<Problem>,
+) {
+    match value {
+        toml::Value::Integer(n) => check_range(field_name, *n as f64, min, max, found),
+        toml::Value::Float(n) => check_range(field_name, *n, min, max, found),
+        _ => found.push(Problem::BadType {
             field: field_name.to_string(),
             expected: "a number".to_string(),
             got: value_type_name(value),
-        });
+        }),
     }
 }
 

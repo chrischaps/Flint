@@ -38,6 +38,34 @@ pub enum StyleApplied {
     Done(Option<GameEvent>),
     /// Refused, with what to tell the script's author.
     Failed(String),
+    /// Applied as [`Done`](Self::Done), with a value outside its setting's
+    /// range clamped into it (#492): what to tell the script's author, a
+    /// warning the host logs.
+    Clamped(Option<GameEvent>, String),
+}
+
+impl StyleApplied {
+    /// Whether the command was applied (with or without a clamp).
+    pub fn applied(&self) -> bool {
+        !matches!(self, StyleApplied::Failed(_))
+    }
+}
+
+/// `set_style_param`'s words for a clamp of `entity`'s `style` setting:
+/// "set_style_param: ascii on 'barrel': cell=400 is outside its range
+/// 4..32; clamped to 32".
+fn entity_note(
+    function: &str,
+    world: &FlintWorld,
+    entity: EntityId,
+    style: &str,
+    note: &str,
+) -> String {
+    let on = match world.get_name(entity) {
+        Some(name) => format!("'{name}'"),
+        None => format!("entity {}", entity.raw()),
+    };
+    format!("{function}: {style} on {on}: {note}")
 }
 
 /// An entity as an event's data gives it to scripts: its id, an int.
@@ -304,6 +332,21 @@ impl StyleTweens {
             Ok(n) => f64::from(n),
             Err(e) => return StyleApplied::Failed(format!("tween_post_style_param: {e}")),
         };
+        // A target past the range is clamped at each step; say so once,
+        // here, from what setting it would do (on a copy)
+        let note = match post_style::set_post_style_param(
+            &mut config.clone(),
+            style,
+            param,
+            target.into(),
+        ) {
+            Ok(note) => note.map(|n| format!("tween_post_style_param: {style}.{n}")),
+            Err(e) => return StyleApplied::Failed(format!("tween_post_style_param: {e}")),
+        };
+        let applied = |event: Option<GameEvent>| match note {
+            Some(note) => StyleApplied::Clamped(event, note),
+            None => StyleApplied::Done(event),
+        };
         self.stop_post(style, Some(param));
         let tween = PostStyleTween {
             style: style.to_string(),
@@ -321,10 +364,10 @@ impl StyleTweens {
             return StyleApplied::Failed(format!("tween_post_style_param: {e}"));
         }
         if seconds.is_nan() || seconds <= 0.0 {
-            return StyleApplied::Done(Some(post_tween_done(style, param)));
+            return applied(Some(post_tween_done(style, param)));
         }
         self.post.push(tween);
-        StyleApplied::Done(None)
+        applied(None)
     }
 
     /// Stop whole-frame style `style`'s tweens: of `param`, or all of them.
@@ -387,7 +430,13 @@ impl StyleTweens {
     ) -> StyleApplied {
         self.stop(entity, Some(param));
         match entity_style::set_style_param(world, entity, param, value) {
-            Ok(_) => StyleApplied::Done(None),
+            Ok(set) => match set.clamped {
+                None => StyleApplied::Done(None),
+                Some(note) => StyleApplied::Clamped(
+                    None,
+                    entity_note("set_style_param", world, entity, set.style, &note),
+                ),
+            },
             Err(e) => StyleApplied::Failed(format!("set_style_param: {e}")),
         }
     }
@@ -423,18 +472,26 @@ impl StyleTweens {
             ));
         };
         let id = entity;
-        let (style, from, to) =
-            match entity_style::tween_endpoints(world, id, param, target, config) {
-                Ok(ends) => ends,
-                Err(e) => return StyleApplied::Failed(format!("tween_style_param: {e}")),
-            };
+        let ends = match entity_style::tween_endpoints(world, id, param, target, config) {
+            Ok(ends) => ends,
+            Err(e) => return StyleApplied::Failed(format!("tween_style_param: {e}")),
+        };
+        // A target past the range eases to the range's end, and says so
+        let note = ends
+            .clamped
+            .as_deref()
+            .map(|n| entity_note("tween_style_param", world, id, ends.style, n));
+        let applied = |event: Option<GameEvent>| match note {
+            Some(note) => StyleApplied::Clamped(event, note),
+            None => StyleApplied::Done(event),
+        };
         self.stop(id, Some(param));
         let tween = StyleTween {
             entity: id,
-            style,
+            style: ends.style,
             param: param.to_string(),
-            from,
-            to,
+            from: ends.from,
+            to: ends.to,
             seconds,
             elapsed: 0.0,
             easing,
@@ -442,12 +499,12 @@ impl StyleTweens {
         if seconds.is_nan() || seconds <= 0.0 {
             // No time to ease over: there now, done now
             return match entity_style::set_style_param(world, id, param, tween.value(1.0)) {
-                Ok(_) => StyleApplied::Done(Some(tween_done(id, param))),
+                Ok(_) => applied(Some(tween_done(id, param))),
                 Err(e) => StyleApplied::Failed(format!("tween_style_param: {e}")),
             };
         }
         self.tweens.push(tween);
-        StyleApplied::Done(None)
+        applied(None)
     }
 
     fn stop(&mut self, entity: EntityId, param: Option<&str>) {
@@ -516,7 +573,10 @@ pub fn set_post_style_param(
     value: toml::Value,
 ) -> StyleApplied {
     match post_style::set_post_style_param(config, style, param, value) {
-        Ok(()) => StyleApplied::Done(None),
+        Ok(None) => StyleApplied::Done(None),
+        Ok(Some(note)) => {
+            StyleApplied::Clamped(None, format!("set_post_style_param: {style}.{note}"))
+        }
         Err(e) => StyleApplied::Failed(format!("set_post_style_param: {e}")),
     }
 }

@@ -598,3 +598,62 @@ fn on_update() {
         Some(String::new())
     );
 }
+
+/// A script asking for a value past its range gets it clamped, as before,
+/// and now hears it (#492): the command is applied, with a warning naming
+/// the entity, the setting and the range. A tween's target says it once,
+/// when the tween starts.
+#[test]
+fn a_value_past_its_range_is_clamped_and_says_so() {
+    let mut world = FlintWorld::new();
+    let barrel = world.spawn("barrel").unwrap();
+    let mut tweens = StyleTweens::default();
+    let config = PostProcessConfig::default();
+    let mut send = |world: &mut FlintWorld, command| one(&mut tweens, world, &config, command);
+    send(
+        &mut world,
+        ScriptCommand::SetEntityStyle {
+            entity: barrel,
+            style: "ascii".into(),
+        },
+    );
+    let set = |param: &str, value: toml::Value| ScriptCommand::SetStyleParam {
+        entity: barrel,
+        param: param.into(),
+        value,
+    };
+    match send(&mut world, set("cell", 400_i64.into())) {
+        StyleApplied::Clamped(None, note) => assert_eq!(
+            note,
+            "set_style_param: ascii on 'barrel': cell=400 is outside its range 4..32; \
+             clamped to 32"
+        ),
+        other => panic!("a clamp expected, got {other:?}"),
+    }
+    assert_eq!(number(&world, barrel, "cell"), 32.0);
+    assert!(matches!(
+        send(&mut world, set("cell", 12_i64.into())),
+        StyleApplied::Done(None)
+    ));
+
+    let tween = ScriptCommand::TweenStyleParam {
+        entity: barrel,
+        param: "glow".into(),
+        target: 9.0.into(),
+        seconds: 1.0,
+        easing: "linear".into(),
+    };
+    match send(&mut world, tween) {
+        StyleApplied::Clamped(None, note) => {
+            assert!(
+                note.starts_with("tween_style_param: ascii on 'barrel': glow=9"),
+                "{note}"
+            )
+        }
+        other => panic!("a clamp expected, got {other:?}"),
+    }
+    // Its steps stay inside the range: no warning a frame
+    let step = tweens.step(&mut world, 1.0);
+    assert!(step.failures.is_empty(), "{:?}", step.failures);
+    assert_eq!(number(&world, barrel, "glow"), 2.0);
+}

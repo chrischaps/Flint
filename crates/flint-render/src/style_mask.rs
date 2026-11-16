@@ -109,7 +109,7 @@
 //! [`StyleDescriptor::component`]: crate::stylize::StyleDescriptor::component
 
 use crate::postprocess::PostProcessConfig;
-use crate::stylize::StyleDescriptor;
+use crate::stylize::{StyleDescriptor, StyleParam};
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 use flint_core::EntityId;
@@ -601,6 +601,93 @@ pub fn read_overrides(d: &StyleDescriptor, table: &toml::Table, variant: &mut St
             }
         }
     }
+}
+
+/// `blend`'s range, a setting every per-entity style takes (#278).
+pub const BLEND_RANGE: StyleParam = StyleParam::new(BLEND_FIELD, 1.0, 0.0..=1.0);
+
+/// The fields of a style component `table` whose values lie outside the
+/// style's ranges (#492): a parameter, a colour's channel or `blend`, each
+/// with what [`StyleParam::range_error`] says of it (`cell=400 is outside
+/// its range 4..32`; a colour's channel by its own name, `tint_r=2`), in
+/// key order. [`read_overrides`] still reads them as written; this is for
+/// the author. A key the style doesn't take, or a value of the wrong type,
+/// isn't a range's to judge and is left out.
+pub fn out_of_range(d: &StyleDescriptor, table: &toml::Table) -> Vec<(String, String)> {
+    let number = |v: &toml::Value| flint_core::toml_util::toml_f64(v).map(|n| n as f32);
+    let mut keys: Vec<&String> = table.keys().collect();
+    keys.sort_unstable();
+    let mut found = Vec::new();
+    for key in keys {
+        let value = &table[key.as_str()];
+        let mut check = |p: &StyleParam, n: f32| {
+            if let Some(e) = p.range_error(n) {
+                found.push((key.clone(), e));
+            }
+        };
+        if let Some(p) = d.params.iter().find(|p| p.name == key) {
+            if let Some(n) = number(value) {
+                check(p, n);
+            }
+        } else if let Some(color) = d.color_setting(key) {
+            if let Some(rgb) = crate::stylize::color_from_toml(value) {
+                for (p, n) in color.channels.iter().zip(rgb) {
+                    check(p, n);
+                }
+            }
+        } else if key == BLEND_FIELD {
+            if let Some(n) = number(value) {
+                check(&BLEND_RANGE, n);
+            }
+        }
+    }
+    found
+}
+
+/// What [`out_of_range`] finds on each entity's user-style component
+/// (`hologram_style`, #414), one line a field naming the entity, by entity
+/// name: `entity 'barrel' hologram_style.glow=9 is outside its range 0..4;
+/// drawn clamped into it`: the settings row clamps each param. A built-in
+/// style's component has a schema whose fields carry these ranges, so the
+/// scene loader already says it of `ascii_style`; a user style's
+/// component is declared open (it loads at run time), so this is where its
+/// ranges are said. [`SceneRenderer::bind_scene`](crate::SceneRenderer::bind_scene)
+/// logs them.
+pub fn user_style_range_warnings(world: &FlintWorld) -> Vec<String> {
+    let mut found = Vec::new();
+    for d in crate::stylize::registry() {
+        let Some(component) = d.component else {
+            continue;
+        };
+        if !crate::stylize::custom::is_user_style(d.name) {
+            continue;
+        }
+        let mut lines: Vec<(String, String)> = Vec::new();
+        for &id in world.entities_with_component(component) {
+            let Some(table) = world
+                .get_component(id, component)
+                .and_then(|c| c.as_table())
+            else {
+                continue;
+            };
+            let name = world.get_name(id).unwrap_or("?").to_string();
+            for (field, error) in out_of_range(d, table) {
+                // The message leads with the setting's own name, which
+                // starts with the field's: `glow=9 ..`, a colour's `tint_r=2 ..`
+                let error = error
+                    .strip_prefix(field.as_str())
+                    .unwrap_or(&error)
+                    .to_string();
+                lines.push((
+                    name.clone(),
+                    format!("entity '{name}' {component}.{field}{error}; drawn clamped into it"),
+                ));
+            }
+        }
+        lines.sort();
+        found.extend(lines.into_iter().map(|(_, line)| line));
+    }
+    found
 }
 
 /// The name a variant goes by: its style, `@root` when it is anchored to
@@ -1764,6 +1851,94 @@ fn record_draws(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_style_components_fields_past_their_ranges_are_named() {
+        let ascii = crate::stylize::find("ascii").unwrap();
+        let table: toml::Table = toml::from_str(
+            r#"
+            cell = 400
+            glow = 1.0
+            tint = [2.0, 0.5, -1.0]
+            blend = 3
+            ramp = "blocks"
+            bogus = 9
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            out_of_range(ascii, &table),
+            [
+                ("blend", "blend=3 is outside its range 0..1"),
+                ("cell", "cell=400 is outside its range 4..32"),
+                ("tint", "tint_r=2 is outside its range 0..1"),
+                ("tint", "tint_b=-1 is outside its range 0..1"),
+            ]
+            .map(|(k, e)| (k.to_string(), e.to_string()))
+        );
+        // In range, and the "#rrggbb" form of a colour, say nothing
+        let fine: toml::Table = toml::from_str("cell = 32\ntint = \"#ff8000\"").unwrap();
+        assert!(out_of_range(ascii, &fine).is_empty());
+    }
+
+    /// A built-in style's component schema gives every number the range
+    /// its `StyleParam` has (#492): the schema is how the scene loader and
+    /// `flint validate` say `ascii_style { cell = 400 }` is out of range,
+    /// and `--style` and the scene's table use the param's.
+    #[test]
+    #[allow(clippy::disallowed_methods)] // reads the engine's schema files from the checkout
+    fn built_in_style_schemas_carry_their_params_ranges() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+        let registry = flint_schema::SchemaRegistry::load_from_directory(&dir).unwrap();
+        let mut checked = Vec::new();
+        for d in crate::stylize::registry() {
+            let Some(component) = d.component else {
+                continue;
+            };
+            let Some(schema) = registry.get_component(component) else {
+                // A user or game style a test registered: no schema file
+                continue;
+            };
+            // A param with no field is the whole frame's alone (ASCII's
+            // `smoothing`); which fields there are, each style's own test
+            // holds
+            let range = |field: &str| {
+                let f = schema.fields.get(field)?;
+                Some((f.min.map(|m| m as f32), f.max.map(|m| m as f32)))
+            };
+            let mut fields = 0;
+            for p in d.params.iter().filter(|p| d.color_of(p.name).is_none()) {
+                if let Some(range) = range(p.name) {
+                    assert_eq!(range, (Some(p.min), Some(p.max)), "{component}.{}", p.name);
+                    fields += 1;
+                }
+            }
+            assert!(fields > 0, "{component} has a field for a parameter");
+            for color in d.colors() {
+                let [r, g, b] = color.channels;
+                assert!(
+                    (r.min, r.max) == (g.min, g.max) && (g.min, g.max) == (b.min, b.max),
+                    "{}.{}'s channels share one range",
+                    d.name,
+                    color.base
+                );
+                if let Some(range) = range(color.base) {
+                    assert_eq!(
+                        range,
+                        (Some(r.min), Some(r.max)),
+                        "{component}.{}",
+                        color.base
+                    );
+                }
+            }
+            let blend = (Some(BLEND_RANGE.min), Some(BLEND_RANGE.max));
+            assert_eq!(range(BLEND_FIELD), Some(blend), "{component}.blend");
+            checked.push(component);
+        }
+        for c in ["ascii_style", "pencil_style", "watercolor_style"] {
+            assert!(checked.contains(&c), "{c} checked: {checked:?}");
+        }
+    }
 
     #[test]
     fn a_box_projects_to_its_screen_rect_and_behind_the_camera_to_nothing() {

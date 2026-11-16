@@ -155,6 +155,11 @@ impl SceneRenderer {
         binding: &SceneBinding,
     ) -> BoundScene {
         self.set_asset_scope(binding.assets.clone());
+        // A user style's component has no schema ranges for the loader to
+        // check, so its out-of-range fields are said here (#492)
+        for warning in crate::style_mask::user_style_range_warnings(world) {
+            tracing::warn!("{warning}");
+        }
         self.reset_style_history();
         self.clear_entity_bone_buffers();
         self.reset_ambient();

@@ -17,6 +17,7 @@
 //! tears the frame open into the style.
 
 use crate::postprocess::PostProcessConfig;
+use crate::style_mask::BLEND_RANGE;
 use crate::stylize::{self, StyleDescriptor, StyleStage};
 
 fn style(name: &str) -> Result<&'static StyleDescriptor, String> {
@@ -46,14 +47,24 @@ pub fn set_post_style(
 /// keys (#406: `reveal` 0 to 1, `reveal_shape`, `reveal_ink`,
 /// `reveal_rim_color`, the `reveal_*` numbers) or, for an HDR style, `feeds_bloom` (true or
 /// false). Setting a parameter doesn't switch the style on.
+///
+/// `Ok(Some(note))` when a number of a parameter, a colour or `blend` lay
+/// outside its range and was clamped into it: what to tell the script's
+/// author (#492), as [`ParamSet::clamped`](crate::entity_style::ParamSet).
 pub fn set_post_style_param(
     config: &mut PostProcessConfig,
     name: &str,
     param: &str,
     value: toml::Value,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let d = style(name)?;
     let number = flint_core::toml_util::toml_f64(&value).filter(|n| n.is_finite());
+    let mut notes: Vec<String> = Vec::new();
+    let mut clamp = |p: &stylize::StyleParam, n: f64| {
+        let (kept, note) = p.clamp(n);
+        notes.extend(note);
+        kept as f32
+    };
     let wrong = |want: &str| {
         Err(format!(
             "`{name}` setting `{param}` takes {want}, not {}",
@@ -67,7 +78,7 @@ pub fn set_post_style_param(
             None => return wrong("true or false"),
         },
         "blend" => match number {
-            Some(n) => styles.set_blend(d.name, Some(n as f32)),
+            Some(n) => styles.set_blend(d.name, Some(clamp(&BLEND_RANGE, n))),
             None => return wrong("a number from 0 to 1"),
         },
         "order" => match number {
@@ -92,7 +103,7 @@ pub fn set_post_style_param(
         _ => {
             if let Some(p) = d.params.iter().find(|p| p.name == param) {
                 match number {
-                    Some(n) => styles.set_param(d.name, p.name, (n as f32).clamp(p.min, p.max)),
+                    Some(n) => styles.set_param(d.name, p.name, clamp(p, n as f32 as f64)),
                     None => return wrong("a number"),
                 }
             } else if let Some(o) = d.options.iter().find(|o| o.name == param) {
@@ -111,7 +122,7 @@ pub fn set_post_style_param(
                     Some(rgb) => {
                         let mut clamped = rgb;
                         for (v, p) in clamped.iter_mut().zip(color.channels) {
-                            *v = v.clamp(p.min, p.max);
+                            *v = clamp(p, *v as f64);
                         }
                         styles.set_color(d.name, color.base, clamped);
                     }
@@ -130,7 +141,7 @@ pub fn set_post_style_param(
             }
         }
     }
-    Ok(())
+    Ok((!notes.is_empty()).then(|| notes.join("; ")))
 }
 
 /// The number style `name`'s setting `param` has in `config` now, where a
@@ -199,13 +210,22 @@ mod tests {
         assert!(kuwahara.is_enabled(&config));
         set_post_style_param(&mut config, "kuwahara", "radius", 6_i64.into()).unwrap();
         assert_eq!(kuwahara.param(&config, "radius"), 6.0);
-        // Clamped to the descriptor's range, as the F4 slider is
-        set_post_style_param(&mut config, "kuwahara", "radius", 99.0.into()).unwrap();
+        // Clamped to the descriptor's range, as the F4 slider is, and said
+        // (#492); in range says nothing
+        let note = set_post_style_param(&mut config, "kuwahara", "radius", 99.0.into()).unwrap();
         assert_eq!(kuwahara.param(&config, "radius"), 8.0);
-        set_post_style_param(&mut config, "kuwahara", "blend", 0.25.into()).unwrap();
+        assert_eq!(
+            note.as_deref(),
+            Some("radius=99 is outside its range 1..8; clamped to 8")
+        );
+        let note = set_post_style_param(&mut config, "kuwahara", "blend", 0.25.into()).unwrap();
         assert_eq!(config.styles.blend("kuwahara"), 0.25);
-        set_post_style_param(&mut config, "kuwahara", "blend", (-3.0).into()).unwrap();
+        assert_eq!(note, None);
+        let note = set_post_style_param(&mut config, "kuwahara", "blend", (-3.0).into()).unwrap();
         assert_eq!(config.styles.blend("kuwahara"), 0.0);
+        assert!(note
+            .unwrap()
+            .starts_with("blend=-3 is outside its range 0..1"));
         set_post_style_param(&mut config, "kuwahara", "blend", 1.0.into()).unwrap();
         assert_eq!(config.styles.blend("kuwahara"), 1.0);
         assert_eq!(config.styles.get("kuwahara").unwrap().blend, None);

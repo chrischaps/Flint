@@ -21,9 +21,10 @@
 
 use crate::postprocess::PostProcessConfig;
 use crate::style_mask::{
-    self, StyleVariant, BLEND_FIELD, BLEND_SOURCES, BLEND_SOURCE_FIELD, STYLE_MASK_COMPONENT,
+    self, StyleVariant, BLEND_FIELD, BLEND_RANGE, BLEND_SOURCES, BLEND_SOURCE_FIELD,
+    STYLE_MASK_COMPONENT,
 };
-use crate::stylize::{self, StyleDescriptor, StyleStage};
+use crate::stylize::{self, StyleDescriptor, StyleParam, StyleStage};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 
@@ -87,17 +88,33 @@ pub fn set_entity_style(world: &mut FlintWorld, id: EntityId, style: &str) -> Re
     }
 }
 
+/// What [`set_style_param`] set: the entity's style, and, when the value
+/// lay outside the setting's range and was clamped into it, what to tell
+/// the script's author (#492): `cell=400 is outside its range 4..32;
+/// clamped to 32`, a colour's channels joined by `; `.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParamSet {
+    pub style: &'static str,
+    pub clamped: Option<String>,
+}
+
+/// Each note of a clamped value, joined.
+fn joined(notes: Vec<String>) -> Option<String> {
+    (!notes.is_empty()).then(|| notes.join("; "))
+}
+
 /// Set one setting of `id`'s style: a parameter (a number, clamped to the
 /// style's range), an option (a string), `enabled` (a bool), `blend` (a
 /// number, clamped to 0..1; #278), `blend_source` (`"own"` or `"tear"`,
 /// #397), or a colour (`tint`: a 3-array or a `"#rrggbb"` string, stored
-/// as the array; #315). Returns the style.
+/// as the array, each channel clamped; #315). Returns the style, and what
+/// a clamp changed ([`ParamSet::clamped`]) for the host to warn about.
 pub fn set_style_param(
     world: &mut FlintWorld,
     id: EntityId,
     param: &str,
     value: toml::Value,
-) -> Result<&'static str, String> {
+) -> Result<ParamSet, String> {
     let style = entity_style(world, id).ok_or_else(|| {
         format!(
             "entity {} has no style of its own; call set_entity_style first",
@@ -113,6 +130,12 @@ pub fn set_style_param(
             value.type_str()
         ))
     };
+    let mut notes: Vec<String> = Vec::new();
+    let mut clamp = |p: &StyleParam, n: f64| {
+        let (kept, note) = p.clamp(n);
+        notes.extend(note);
+        kept
+    };
     let stored = if param == "enabled" {
         match value.as_bool() {
             Some(b) => b.into(),
@@ -120,7 +143,7 @@ pub fn set_style_param(
         }
     } else if param == BLEND_FIELD {
         match number(&value) {
-            Some(n) => toml::Value::Float(n.clamp(0.0, 1.0)),
+            Some(n) => toml::Value::Float(clamp(&BLEND_RANGE, n)),
             None => return wrong("a number from 0 to 1"),
         }
     } else if param == BLEND_SOURCE_FIELD {
@@ -136,7 +159,7 @@ pub fn set_style_param(
         }
     } else if let Some(p) = d.params.iter().find(|p| p.name == param) {
         match number(&value) {
-            Some(n) => toml::Value::Float(n.clamp(p.min as f64, p.max as f64)),
+            Some(n) => toml::Value::Float(clamp(p, n)),
             None => return wrong("a number"),
         }
     } else if d.options.iter().any(|o| o.name == param) {
@@ -151,7 +174,7 @@ pub fn set_style_param(
             Some(rgb) => toml::Value::Array(
                 rgb.iter()
                     .zip(color.channels)
-                    .map(|(v, p)| toml::Value::Float(v.clamp(p.min, p.max) as f64))
+                    .map(|(v, p)| toml::Value::Float(clamp(p, *v as f64)))
                     .collect(),
             ),
             None => return wrong("a colour: [r, g, b] or \"#rrggbb\""),
@@ -166,7 +189,22 @@ pub fn set_style_param(
     world
         .set_field(id, component, param, stored)
         .map_err(|e| e.to_string())?;
-    Ok(style)
+    Ok(ParamSet {
+        style,
+        clamped: joined(notes),
+    })
+}
+
+/// Where a tween of a style setting starts and ends, as
+/// [`tween_endpoints`] finds them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TweenEnds {
+    pub style: &'static str,
+    /// One number, or a colour's three channels.
+    pub from: Vec<f64>,
+    pub to: Vec<f64>,
+    /// What a clamp of the target changed, as [`ParamSet::clamped`].
+    pub clamped: Option<String>,
 }
 
 /// Where a tween of one of `id`'s style settings starts and ends (#370):
@@ -174,15 +212,16 @@ pub fn set_style_param(
 /// a colour's three channels (`tint`). The current value is the entity's
 /// own field, else the scene's `[post_process.styles.<name>]` table in
 /// `config`, else the style's default (`blend`: 1). The target is checked
-/// and clamped as [`set_style_param`] would. Only numbers, `blend` and
-/// colours ease; options and `enabled` refuse with a message.
+/// and clamped as [`set_style_param`] would, and a clamp of it is noted
+/// ([`TweenEnds::clamped`], #492). Only numbers, `blend` and colours ease;
+/// options and `enabled` refuse with a message.
 pub fn tween_endpoints(
     world: &FlintWorld,
     id: EntityId,
     param: &str,
     target: &toml::Value,
     config: &crate::postprocess::PostProcessConfig,
-) -> Result<(&'static str, Vec<f64>, Vec<f64>), String> {
+) -> Result<TweenEnds, String> {
     let style = entity_style(world, id).ok_or_else(|| {
         format!(
             "entity {} has no style of its own; call set_entity_style first",
@@ -201,23 +240,34 @@ pub fn tween_endpoints(
             target.type_str()
         ))
     };
+    // The start is clamped quietly: it is what the entity draws with now,
+    // and a scene's out-of-range field was said at load
+    let ends = |p: &StyleParam, from: f64, to: f64| {
+        let (to, note) = p.clamp(to);
+        (p.clamp(from).0, to, note)
+    };
+    let one = |(from, to, clamped): (f64, f64, Option<String>)| TweenEnds {
+        style,
+        from: vec![from],
+        to: vec![to],
+        clamped,
+    };
     if param == BLEND_FIELD {
         let Some(to) = number(target) else {
             return wrong("a number from 0 to 1");
         };
         let from = own.as_ref().and_then(number).unwrap_or(1.0);
-        return Ok((style, vec![from.clamp(0.0, 1.0)], vec![to.clamp(0.0, 1.0)]));
+        return Ok(one(ends(&BLEND_RANGE, from, to)));
     }
     if let Some(p) = d.params.iter().find(|p| p.name == param) {
         let Some(to) = number(target) else {
             return wrong("a number");
         };
-        let (lo, hi) = (p.min as f64, p.max as f64);
         let from = own
             .as_ref()
             .and_then(number)
             .unwrap_or_else(|| d.param(config, param) as f64);
-        return Ok((style, vec![from.clamp(lo, hi)], vec![to.clamp(lo, hi)]));
+        return Ok(one(ends(p, from, to)));
     }
     if let Some(color) = d.color_setting(param) {
         let Some(to) = stylize::color_from_toml(target) else {
@@ -227,13 +277,21 @@ pub fn tween_endpoints(
             .as_ref()
             .and_then(stylize::color_from_toml)
             .unwrap_or_else(|| d.color(config, param));
-        let clamp = |rgb: [f32; 3]| -> Vec<f64> {
-            rgb.iter()
-                .zip(color.channels)
-                .map(|(v, p)| v.clamp(p.min, p.max) as f64)
-                .collect()
+        let mut tween = TweenEnds {
+            style,
+            from: Vec::new(),
+            to: Vec::new(),
+            clamped: None,
         };
-        return Ok((style, clamp(from), clamp(to)));
+        let mut notes = Vec::new();
+        for ((p, from), to) in color.channels.iter().zip(from).zip(to) {
+            let (from, to, note) = ends(p, from as f64, to as f64);
+            tween.from.push(from);
+            tween.to.push(to);
+            notes.extend(note);
+        }
+        tween.clamped = joined(notes);
+        return Ok(tween);
     }
     if param == "enabled"
         || param == BLEND_SOURCE_FIELD
@@ -430,8 +488,33 @@ mod tests {
             toml::Value::Array(vec![1.0.into(), 0_i64.into(), 0.5.into()]),
         )
         .unwrap();
-        // Out of range is clamped to the style's own range
-        set_style_param(&mut world, barrel, "glow", 9.0.into()).unwrap();
+        // Out of range is clamped to the style's own range, and says so
+        // (#492); in range says nothing
+        let set = set_style_param(&mut world, barrel, "glow", 9.0.into()).unwrap();
+        assert_eq!(set.style, "ascii");
+        assert_eq!(
+            set.clamped.as_deref(),
+            Some("glow=9 is outside its range 0..2; clamped to 2")
+        );
+        let tint = toml::Value::Array(vec![2.0.into(), 0.5.into(), (-1.0).into()]);
+        let set = set_style_param(&mut world, barrel, "ink", 1.5.into()).unwrap();
+        assert_eq!(set.clamped, None);
+        let mut other = FlintWorld::new();
+        let crate_ = other.spawn("crate").unwrap();
+        set_entity_style(&mut other, crate_, "ascii").unwrap();
+        let set = set_style_param(&mut other, crate_, "tint", tint).unwrap();
+        assert_eq!(
+            set.clamped.as_deref(),
+            Some(
+                "tint_r=2 is outside its range 0..1; clamped to 1; \
+                 tint_b=-1 is outside its range 0..1; clamped to 0"
+            )
+        );
+        let set = set_style_param(&mut other, crate_, "blend", 3_i64.into()).unwrap();
+        assert!(set
+            .clamped
+            .unwrap()
+            .starts_with("blend=3 is outside its range 0..1"));
         let (table, out) = ids(&world);
         let v = table.variant(out[&barrel]).unwrap();
         assert_eq!(v.params["cell"], 12.0);
