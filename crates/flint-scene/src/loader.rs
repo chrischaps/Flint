@@ -28,6 +28,25 @@ pub fn load_scene<P: AsRef<Path>>(
     Ok((world, scene_file))
 }
 
+/// [`load_scene`] into a world whose ids start past every id `previous`
+/// gave out ([`FlintWorld::after`]): what a host that goes on loads its
+/// next scene with (a transition, an editor's reload), so no id held across
+/// the change names an entity of the new scene (#688). A plain
+/// [`load_scene`] counts from 1, which is what makes a scene's ids the same
+/// every load.
+pub fn load_scene_after<P: AsRef<Path>>(
+    path: P,
+    registry: &SchemaRegistry,
+    previous: &FlintWorld,
+) -> Result<(FlintWorld, SceneFile)> {
+    let path = path.as_ref();
+    let content = vfs::read_to_string(path)?;
+    let (world, scene_file, found) =
+        load_text_into(&content, path, registry, FlintWorld::after(previous))?;
+    diagnostic::log_summary(&flint_core::project::shown(path), &found);
+    Ok((world, scene_file))
+}
+
 /// [`load_scene`] that hands back what [`diagnose_scene_in`] found and logs
 /// nothing about it, for a host that reports diagnostics its own way
 /// (`flint validate`).
@@ -67,13 +86,24 @@ fn load_text_diagnosed(
     path: &Path,
     registry: &SchemaRegistry,
 ) -> Result<(FlintWorld, SceneFile, Vec<Diagnostic>)> {
+    load_text_into(content, path, registry, FlintWorld::new())
+}
+
+/// [`load_text_diagnosed`] into `world`, an empty world that decides where
+/// the ids start.
+fn load_text_into(
+    content: &str,
+    path: &Path,
+    registry: &SchemaRegistry,
+    mut world: FlintWorld,
+) -> Result<(FlintWorld, SceneFile, Vec<Diagnostic>)> {
     let mut scene_file = parse_scene(content, Some(path))?;
     note_post_process(content, Some(path), registry);
 
     // Expand prefab instances into entities before building world
     prefab::expand_prefabs(&mut scene_file, path)?;
     let found = diagnose_scene_in(&scene_file, path, registry, &Project::for_scene(path));
-    let world = build_world(&scene_file, registry)?;
+    populate_world(&mut world, &scene_file, registry)?;
     Ok((world, scene_file, found))
 }
 
@@ -211,7 +241,10 @@ fn build_world(scene_file: &SceneFile, registry: &SchemaRegistry) -> Result<Flin
     Ok(world)
 }
 
-/// Two-pass entity creation: spawn all entities, then set components and relationships
+/// Two-pass entity creation: spawn all entities, then set components and
+/// relationships. Both passes go in name order (`SceneFile::entities` is a
+/// `BTreeMap`), so the same scene gives the same names the same ids, and
+/// its components land the same way, every load (#688).
 fn populate_world(
     world: &mut FlintWorld,
     scene_file: &SceneFile,
@@ -280,6 +313,7 @@ fn populate_world(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flint_core::EntityId;
 
     #[test]
     fn test_load_scene_string() {
@@ -313,6 +347,103 @@ position = [5, 0, 0]
         let door_id = world.get_id("door1").unwrap();
         let room_id = world.get_id("room1").unwrap();
         assert_eq!(world.get_parent(door_id), Some(room_id));
+    }
+
+    /// Entities written out of name order, as a scene file often is
+    const SHUFFLED: &str = r#"
+[scene]
+name = "Order"
+
+[entities.zeta]
+parent = "alpha"
+[entities.zeta.rigidbody]
+body_type = "dynamic"
+
+[entities.alpha]
+[entities.alpha.rigidbody]
+body_type = "dynamic"
+
+[entities.mid]
+[entities.mid.transform]
+position = [0, 1, 0]
+
+[entities.beta]
+[entities.beta.rigidbody]
+body_type = "static"
+"#;
+
+    fn name_to_id(world: &FlintWorld) -> Vec<(String, u64)> {
+        world
+            .all_entities()
+            .into_iter()
+            .map(|e| (e.name, e.id.raw()))
+            .collect()
+    }
+
+    #[test]
+    fn a_scene_gives_the_same_ids_every_load() {
+        // #688: ids came from a process-wide counter in HashMap order, so
+        // two loads (or two runs) named the same entity differently
+        let registry = SchemaRegistry::new();
+        let (first, _) = load_scene_string(SHUFFLED, &registry).unwrap();
+        let (second, _) = load_scene_string(SHUFFLED, &registry).unwrap();
+        assert_eq!(name_to_id(&first), name_to_id(&second));
+        // And which ids is fixed by the names alone, so another process
+        // gets these too
+        assert_eq!(
+            name_to_id(&first),
+            [
+                ("alpha".to_string(), 1),
+                ("beta".to_string(), 2),
+                ("mid".to_string(), 3),
+                ("zeta".to_string(), 4)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_component_is_walked_in_name_order_after_a_load() {
+        let registry = SchemaRegistry::new();
+        let (world, _) = load_scene_string(SHUFFLED, &registry).unwrap();
+        let bodies: Vec<&str> = world
+            .entities_with_component("rigidbody")
+            .iter()
+            .map(|id| world.get_name(*id).unwrap())
+            .collect();
+        assert_eq!(bodies, ["alpha", "beta", "zeta"]);
+    }
+
+    #[test]
+    fn a_reload_into_the_same_world_takes_new_ids() {
+        // An editor's caches keyed by entity must never take a reloaded
+        // entity for an old one
+        let registry = SchemaRegistry::new();
+        let (mut world, _) = load_scene_string(SHUFFLED, &registry).unwrap();
+        reload_scene_string(SHUFFLED, &mut world, &registry).unwrap();
+        assert_eq!(world.get_id("alpha"), Some(EntityId::from_raw(5)));
+        assert_eq!(world.get_id("zeta"), Some(EntityId::from_raw(8)));
+    }
+
+    #[test]
+    fn a_scene_loaded_after_another_starts_past_its_ids() {
+        // A transition: what a script kept of the old scene names nothing new
+        let dir = std::env::temp_dir().join(format!("flint-688-after-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("next.scene.toml");
+        std::fs::write(&path, SHUFFLED).unwrap();
+        let registry = SchemaRegistry::new();
+
+        let (old, _) = load_scene_string(SHUFFLED, &registry).unwrap();
+        let (next, _) = load_scene_after(&path, &registry, &old).unwrap();
+        let (fresh, _) = load_scene(&path, &registry).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(next.get_id("alpha"), Some(EntityId::from_raw(5)));
+        assert!(name_to_id(&old)
+            .iter()
+            .all(|(_, id)| next.get_name(EntityId::from_raw(*id)).is_none()));
+        // A plain load still counts from 1
+        assert_eq!(name_to_id(&fresh), name_to_id(&old));
     }
 
     #[test]

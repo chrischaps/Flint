@@ -380,6 +380,11 @@ topic = "runtime"
 purpose = "Physics joints: a hinge pendulum, a sprung slider, a gimballed pod and a wheel"
 
 [[example]]
+scene = "physics_pile.scene.toml"
+topic = "runtime"
+purpose = "Forty-eight crates tumbling into a tray: a pile that settles the same way to the bit every run (#688)"
+
+[[example]]
 scene = "skeletal_test.scene.toml"
 topic = "runtime"
 purpose = "The YBot on a looping idle: skeletal animation"

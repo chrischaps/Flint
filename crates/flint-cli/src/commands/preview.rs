@@ -476,14 +476,20 @@ impl ModelStats {
 
 /// Create an ECS world with one entity at origin containing transform + model + animator components.
 /// Returns (world, asset_name, entity_id).
-fn create_model_world(model_path: &Path, anim_speed: f32) -> (FlintWorld, String, EntityId) {
+/// The model's entity in `world`, an empty world: `FlintWorld::new()` at
+/// start, `FlintWorld::after(&old)` for a reload, so the new entity's id is
+/// one the renderer's caches have never seen (#688).
+fn create_model_world(
+    model_path: &Path,
+    anim_speed: f32,
+    mut world: FlintWorld,
+) -> (FlintWorld, String, EntityId) {
     let asset_name = model_path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("model")
         .to_string();
 
-    let mut world = FlintWorld::new();
     let entity_id = world.spawn("preview_model").expect("spawn entity");
 
     // Transform at origin
@@ -874,7 +880,8 @@ fn render_image(args: &PreviewArgs) -> Result<image::RgbaImage> {
     );
 
     // Build world and load model
-    let (mut world, asset_name, entity_id) = create_model_world(&model_path, args.anim_speed);
+    let (mut world, asset_name, entity_id) =
+        create_model_world(&model_path, args.anim_speed, FlintWorld::new());
     let config = model_load_config(&model_path, &asset_name);
     let load_result = model_loader::load_models_from_world(
         &mut world,
@@ -1024,7 +1031,8 @@ fn run_interactive(args: PreviewArgs) -> Result<()> {
         if !model_path.exists() {
             anyhow::bail!("Model file not found: {}", model_path.display());
         }
-        let (world, asset_name, entity_id) = create_model_world(&model_path, args.anim_speed);
+        let (world, asset_name, entity_id) =
+            create_model_world(&model_path, args.anim_speed, FlintWorld::new());
         // Import to get bounds and cache the result for UI display
         let import = import_gltf(&model_path).ok();
         initial_bounds = import.as_ref().and_then(|r| r.bounds());
@@ -1402,7 +1410,11 @@ impl PreviewApp {
         let bounds = import.bounds();
         let stats = ModelStats::from_import(&import);
 
-        let (world, asset_name, entity_id) = create_model_world(&path, self.args.anim_speed);
+        let after = match self.state.lock() {
+            Ok(state) => FlintWorld::after(&state.world),
+            Err(_) => FlintWorld::new(),
+        };
+        let (world, asset_name, entity_id) = create_model_world(&path, self.args.anim_speed, after);
 
         // Clear and reload
         let load_result;
@@ -1492,8 +1504,11 @@ impl PreviewApp {
             state.model_stats = Some(ModelStats::from_import(&import));
             state.import_result = Some(import);
 
-            let (world, asset_name, entity_id) =
-                create_model_world(&model_path, self.args.anim_speed);
+            let (world, asset_name, entity_id) = create_model_world(
+                &model_path,
+                self.args.anim_speed,
+                FlintWorld::after(&state.world),
+            );
             state.world = world;
             state.asset_name = asset_name.clone();
             state.entity_id = Some(entity_id);

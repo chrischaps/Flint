@@ -1,0 +1,938 @@
+# ================================================================
+#  PHYSICS PILE BENCH (#688)
+# ================================================================
+#
+#  Forty-eight crates dropped from a jittered column into a low
+#  walled tray, where they tumble over each other: a dynamic-body
+#  pile whose result depends on the order Rapier is given its
+#  bodies. That order comes from the world's component index,
+#  which is walked in id order, and a scene's ids come from its
+#  names, so two runs settle the same way to the bit.
+#
+#  The crates are written below in a scrambled order on purpose:
+#  the file's order is not what decides anything.
+#
+#  Check:  flint-player examples/physics_pile.scene.toml \
+#            --frame-step 0.0166667 --screenshot a.png --screenshot-at 6
+#          twice; the two PNGs are byte-identical.
+# ================================================================
+
+[scene]
+name = "Physics Pile"
+version = "1.0"
+description = "Forty-eight crates tumbling into a tray, settling the same way every run"
+
+[camera]
+position = [6.5, 6.0, 8.5]
+target = [0, 0.6, 0]
+fov = 45.0
+
+[entities.floor]
+[entities.floor.transform]
+position = [0, -0.1, 0]
+[entities.floor.bounds]
+min = [-8, -0.1, -8]
+max = [8, 0.1, 8]
+[entities.floor.material]
+color = [0.20, 0.21, 0.24, 1.0]
+roughness = 0.9
+[entities.floor.rigidbody]
+body_type = "static"
+[entities.floor.collider]
+shape = "box"
+size = [16, 0.2, 16]
+friction = 0.7
+
+[entities.wall_north]
+[entities.wall_north.transform]
+position = [0, 0.4, -3.2]
+[entities.wall_north.bounds]
+min = [-3.4, -0.4, -0.15]
+max = [3.4, 0.4, 0.15]
+[entities.wall_north.material]
+color = [0.55, 0.52, 0.47, 1.0]
+roughness = 0.8
+[entities.wall_north.rigidbody]
+body_type = "static"
+[entities.wall_north.collider]
+shape = "box"
+size = [6.8, 0.8, 0.3]
+
+[entities.wall_south]
+[entities.wall_south.transform]
+position = [0, 0.4, 3.2]
+[entities.wall_south.bounds]
+min = [-3.4, -0.4, -0.15]
+max = [3.4, 0.4, 0.15]
+[entities.wall_south.material]
+color = [0.55, 0.52, 0.47, 1.0]
+roughness = 0.8
+[entities.wall_south.rigidbody]
+body_type = "static"
+[entities.wall_south.collider]
+shape = "box"
+size = [6.8, 0.8, 0.3]
+
+[entities.wall_east]
+[entities.wall_east.transform]
+position = [3.2, 0.4, 0]
+[entities.wall_east.bounds]
+min = [-0.15, -0.4, -3.4]
+max = [0.15, 0.4, 3.4]
+[entities.wall_east.material]
+color = [0.55, 0.52, 0.47, 1.0]
+roughness = 0.8
+[entities.wall_east.rigidbody]
+body_type = "static"
+[entities.wall_east.collider]
+shape = "box"
+size = [0.3, 0.8, 6.8]
+
+[entities.wall_west]
+[entities.wall_west.transform]
+position = [-3.2, 0.4, 0]
+[entities.wall_west.bounds]
+min = [-0.15, -0.4, -3.4]
+max = [0.15, 0.4, 3.4]
+[entities.wall_west.material]
+color = [0.55, 0.52, 0.47, 1.0]
+roughness = 0.8
+[entities.wall_west.rigidbody]
+body_type = "static"
+[entities.wall_west.collider]
+shape = "box"
+size = [0.3, 0.8, 6.8]
+
+[entities.crate_01]
+[entities.crate_01.transform]
+position = [0.000, 1.250, 0.250]
+rotation = [13, 29, 0]
+[entities.crate_01.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_01.material]
+color = [0.811, 0.289, 0.345, 1.0]
+roughness = 0.55
+[entities.crate_01.rigidbody]
+body_type = "dynamic"
+[entities.crate_01.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_14]
+[entities.crate_14.transform]
+position = [0.210, 7.100, 0.080]
+rotation = [2, 46, 0]
+[entities.crate_14.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_14.material]
+color = [0.811, 0.725, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_14.rigidbody]
+body_type = "dynamic"
+[entities.crate_14.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_27]
+[entities.crate_27.transform]
+position = [0.420, 12.950, -0.090]
+rotation = [81, 63, 0]
+[entities.crate_27.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_27.material]
+color = [0.405, 0.811, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_27.rigidbody]
+body_type = "dynamic"
+[entities.crate_27.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_40]
+[entities.crate_40.transform]
+position = [-0.420, 18.800, -0.260]
+rotation = [70, 80, 0]
+[entities.crate_40.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_40.material]
+color = [0.289, 0.811, 0.665, 1.0]
+roughness = 0.55
+[entities.crate_40.rigidbody]
+body_type = "dynamic"
+[entities.crate_40.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_05]
+[entities.crate_05.transform]
+position = [-0.420, 3.050, 0.250]
+rotation = [65, 55, 0]
+[entities.crate_05.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_05.material]
+color = [0.811, 0.384, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_05.rigidbody]
+body_type = "dynamic"
+[entities.crate_05.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_18]
+[entities.crate_18.transform]
+position = [-0.210, 8.900, 0.080]
+rotation = [54, 72, 0]
+[entities.crate_18.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_18.material]
+color = [0.746, 0.811, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_18.rigidbody]
+body_type = "dynamic"
+[entities.crate_18.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_31]
+[entities.crate_31.transform]
+position = [0.000, 14.750, -0.090]
+rotation = [43, 89, 0]
+[entities.crate_31.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_31.material]
+color = [0.289, 0.811, 0.324, 1.0]
+roughness = 0.55
+[entities.crate_31.rigidbody]
+body_type = "dynamic"
+[entities.crate_31.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_44]
+[entities.crate_44.transform]
+position = [0.210, 20.600, -0.260]
+rotation = [32, 16, 0]
+[entities.crate_44.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_44.material]
+color = [0.289, 0.806, 0.811, 1.0]
+roughness = 0.55
+[entities.crate_44.rigidbody]
+body_type = "dynamic"
+[entities.crate_44.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_09]
+[entities.crate_09.transform]
+position = [0.210, 4.850, 0.250]
+rotation = [27, 81, 0]
+[entities.crate_09.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_09.material]
+color = [0.811, 0.536, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_09.rigidbody]
+body_type = "dynamic"
+[entities.crate_09.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_22]
+[entities.crate_22.transform]
+position = [0.420, 10.700, 0.080]
+rotation = [16, 8, 0]
+[entities.crate_22.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_22.material]
+color = [0.594, 0.811, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_22.rigidbody]
+body_type = "dynamic"
+[entities.crate_22.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_35]
+[entities.crate_35.transform]
+position = [-0.420, 16.550, -0.090]
+rotation = [5, 25, 0]
+[entities.crate_35.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_35.material]
+color = [0.289, 0.811, 0.476, 1.0]
+roughness = 0.55
+[entities.crate_35.rigidbody]
+body_type = "dynamic"
+[entities.crate_35.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_00]
+[entities.crate_00.transform]
+position = [-0.420, 0.800, -0.260]
+rotation = [0, 0, 0]
+[entities.crate_00.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_00.material]
+color = [0.811, 0.289, 0.383, 1.0]
+roughness = 0.55
+[entities.crate_00.rigidbody]
+body_type = "dynamic"
+[entities.crate_00.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_13]
+[entities.crate_13.transform]
+position = [-0.210, 6.650, 0.250]
+rotation = [79, 17, 0]
+[entities.crate_13.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_13.material]
+color = [0.811, 0.687, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_13.rigidbody]
+body_type = "dynamic"
+[entities.crate_13.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_26]
+[entities.crate_26.transform]
+position = [0.000, 12.500, 0.080]
+rotation = [68, 34, 0]
+[entities.crate_26.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_26.material]
+color = [0.443, 0.811, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_26.rigidbody]
+body_type = "dynamic"
+[entities.crate_26.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_39]
+[entities.crate_39.transform]
+position = [0.210, 18.350, -0.090]
+rotation = [57, 51, 0]
+[entities.crate_39.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_39.material]
+color = [0.289, 0.811, 0.627, 1.0]
+roughness = 0.55
+[entities.crate_39.rigidbody]
+body_type = "dynamic"
+[entities.crate_39.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_04]
+[entities.crate_04.transform]
+position = [0.210, 2.600, -0.260]
+rotation = [52, 26, 0]
+[entities.crate_04.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_04.material]
+color = [0.811, 0.346, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_04.rigidbody]
+body_type = "dynamic"
+[entities.crate_04.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_17]
+[entities.crate_17.transform]
+position = [0.420, 8.450, 0.250]
+rotation = [41, 43, 0]
+[entities.crate_17.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_17.material]
+color = [0.784, 0.811, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_17.rigidbody]
+body_type = "dynamic"
+[entities.crate_17.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_30]
+[entities.crate_30.transform]
+position = [-0.420, 14.300, 0.080]
+rotation = [30, 60, 0]
+[entities.crate_30.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_30.material]
+color = [0.292, 0.811, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_30.rigidbody]
+body_type = "dynamic"
+[entities.crate_30.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_43]
+[entities.crate_43.transform]
+position = [-0.210, 20.150, -0.090]
+rotation = [19, 77, 0]
+[entities.crate_43.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_43.material]
+color = [0.289, 0.811, 0.778, 1.0]
+roughness = 0.55
+[entities.crate_43.rigidbody]
+body_type = "dynamic"
+[entities.crate_43.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_08]
+[entities.crate_08.transform]
+position = [-0.210, 4.400, -0.260]
+rotation = [14, 52, 0]
+[entities.crate_08.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_08.material]
+color = [0.811, 0.498, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_08.rigidbody]
+body_type = "dynamic"
+[entities.crate_08.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_21]
+[entities.crate_21.transform]
+position = [0.000, 10.250, 0.250]
+rotation = [3, 69, 0]
+[entities.crate_21.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_21.material]
+color = [0.632, 0.811, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_21.rigidbody]
+body_type = "dynamic"
+[entities.crate_21.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_34]
+[entities.crate_34.transform]
+position = [0.210, 16.100, 0.080]
+rotation = [82, 86, 0]
+[entities.crate_34.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_34.material]
+color = [0.289, 0.811, 0.438, 1.0]
+roughness = 0.55
+[entities.crate_34.rigidbody]
+body_type = "dynamic"
+[entities.crate_34.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_47]
+[entities.crate_47.transform]
+position = [0.420, 21.950, -0.090]
+rotation = [71, 13, 0]
+[entities.crate_47.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_47.material]
+color = [0.289, 0.692, 0.811, 1.0]
+roughness = 0.55
+[entities.crate_47.rigidbody]
+body_type = "dynamic"
+[entities.crate_47.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_12]
+[entities.crate_12.transform]
+position = [0.420, 6.200, -0.260]
+rotation = [66, 78, 0]
+[entities.crate_12.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_12.material]
+color = [0.811, 0.649, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_12.rigidbody]
+body_type = "dynamic"
+[entities.crate_12.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_25]
+[entities.crate_25.transform]
+position = [-0.420, 12.050, 0.250]
+rotation = [55, 5, 0]
+[entities.crate_25.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_25.material]
+color = [0.481, 0.811, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_25.rigidbody]
+body_type = "dynamic"
+[entities.crate_25.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_38]
+[entities.crate_38.transform]
+position = [-0.210, 17.900, 0.080]
+rotation = [44, 22, 0]
+[entities.crate_38.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_38.material]
+color = [0.289, 0.811, 0.589, 1.0]
+roughness = 0.55
+[entities.crate_38.rigidbody]
+body_type = "dynamic"
+[entities.crate_38.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_03]
+[entities.crate_03.transform]
+position = [-0.210, 2.150, -0.090]
+rotation = [39, 87, 0]
+[entities.crate_03.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_03.material]
+color = [0.811, 0.309, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_03.rigidbody]
+body_type = "dynamic"
+[entities.crate_03.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_16]
+[entities.crate_16.transform]
+position = [0.000, 8.000, -0.260]
+rotation = [28, 14, 0]
+[entities.crate_16.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_16.material]
+color = [0.811, 0.801, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_16.rigidbody]
+body_type = "dynamic"
+[entities.crate_16.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_29]
+[entities.crate_29.transform]
+position = [0.210, 13.850, 0.250]
+rotation = [17, 31, 0]
+[entities.crate_29.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_29.material]
+color = [0.329, 0.811, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_29.rigidbody]
+body_type = "dynamic"
+[entities.crate_29.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_42]
+[entities.crate_42.transform]
+position = [0.420, 19.700, 0.080]
+rotation = [6, 48, 0]
+[entities.crate_42.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_42.material]
+color = [0.289, 0.811, 0.741, 1.0]
+roughness = 0.55
+[entities.crate_42.rigidbody]
+body_type = "dynamic"
+[entities.crate_42.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_07]
+[entities.crate_07.transform]
+position = [0.420, 3.950, -0.090]
+rotation = [1, 23, 0]
+[entities.crate_07.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_07.material]
+color = [0.811, 0.460, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_07.rigidbody]
+body_type = "dynamic"
+[entities.crate_07.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_20]
+[entities.crate_20.transform]
+position = [-0.420, 9.800, -0.260]
+rotation = [80, 40, 0]
+[entities.crate_20.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_20.material]
+color = [0.670, 0.811, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_20.rigidbody]
+body_type = "dynamic"
+[entities.crate_20.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_33]
+[entities.crate_33.transform]
+position = [-0.210, 15.650, 0.250]
+rotation = [69, 57, 0]
+[entities.crate_33.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_33.material]
+color = [0.289, 0.811, 0.400, 1.0]
+roughness = 0.55
+[entities.crate_33.rigidbody]
+body_type = "dynamic"
+[entities.crate_33.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_46]
+[entities.crate_46.transform]
+position = [0.000, 21.500, 0.080]
+rotation = [58, 74, 0]
+[entities.crate_46.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_46.material]
+color = [0.289, 0.730, 0.811, 1.0]
+roughness = 0.55
+[entities.crate_46.rigidbody]
+body_type = "dynamic"
+[entities.crate_46.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_11]
+[entities.crate_11.transform]
+position = [0.000, 5.750, -0.090]
+rotation = [53, 49, 0]
+[entities.crate_11.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_11.material]
+color = [0.811, 0.611, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_11.rigidbody]
+body_type = "dynamic"
+[entities.crate_11.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_24]
+[entities.crate_24.transform]
+position = [0.210, 11.600, -0.260]
+rotation = [42, 66, 0]
+[entities.crate_24.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_24.material]
+color = [0.519, 0.811, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_24.rigidbody]
+body_type = "dynamic"
+[entities.crate_24.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_37]
+[entities.crate_37.transform]
+position = [0.420, 17.450, 0.250]
+rotation = [31, 83, 0]
+[entities.crate_37.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_37.material]
+color = [0.289, 0.811, 0.551, 1.0]
+roughness = 0.55
+[entities.crate_37.rigidbody]
+body_type = "dynamic"
+[entities.crate_37.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_02]
+[entities.crate_02.transform]
+position = [0.420, 1.700, 0.080]
+rotation = [26, 58, 0]
+[entities.crate_02.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_02.material]
+color = [0.811, 0.289, 0.307, 1.0]
+roughness = 0.55
+[entities.crate_02.rigidbody]
+body_type = "dynamic"
+[entities.crate_02.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_15]
+[entities.crate_15.transform]
+position = [-0.420, 7.550, -0.090]
+rotation = [15, 75, 0]
+[entities.crate_15.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_15.material]
+color = [0.811, 0.763, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_15.rigidbody]
+body_type = "dynamic"
+[entities.crate_15.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_28]
+[entities.crate_28.transform]
+position = [-0.210, 13.400, -0.260]
+rotation = [4, 2, 0]
+[entities.crate_28.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_28.material]
+color = [0.367, 0.811, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_28.rigidbody]
+body_type = "dynamic"
+[entities.crate_28.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_41]
+[entities.crate_41.transform]
+position = [0.000, 19.250, 0.250]
+rotation = [83, 19, 0]
+[entities.crate_41.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_41.material]
+color = [0.289, 0.811, 0.703, 1.0]
+roughness = 0.55
+[entities.crate_41.rigidbody]
+body_type = "dynamic"
+[entities.crate_41.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_06]
+[entities.crate_06.transform]
+position = [0.000, 3.500, 0.080]
+rotation = [78, 84, 0]
+[entities.crate_06.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_06.material]
+color = [0.811, 0.422, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_06.rigidbody]
+body_type = "dynamic"
+[entities.crate_06.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_19]
+[entities.crate_19.transform]
+position = [0.210, 9.350, -0.090]
+rotation = [67, 11, 0]
+[entities.crate_19.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_19.material]
+color = [0.708, 0.811, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_19.rigidbody]
+body_type = "dynamic"
+[entities.crate_19.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_32]
+[entities.crate_32.transform]
+position = [0.420, 15.200, -0.260]
+rotation = [56, 28, 0]
+[entities.crate_32.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_32.material]
+color = [0.289, 0.811, 0.362, 1.0]
+roughness = 0.55
+[entities.crate_32.rigidbody]
+body_type = "dynamic"
+[entities.crate_32.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_45]
+[entities.crate_45.transform]
+position = [-0.420, 21.050, 0.250]
+rotation = [45, 45, 0]
+[entities.crate_45.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_45.material]
+color = [0.289, 0.768, 0.811, 1.0]
+roughness = 0.55
+[entities.crate_45.rigidbody]
+body_type = "dynamic"
+[entities.crate_45.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.crate_10]
+[entities.crate_10.transform]
+position = [-0.420, 5.300, 0.080]
+rotation = [40, 20, 0]
+[entities.crate_10.bounds]
+min = [-0.32, -0.32, -0.32]
+max = [0.32, 0.32, 0.32]
+[entities.crate_10.material]
+color = [0.811, 0.573, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_10.rigidbody]
+body_type = "dynamic"
+[entities.crate_10.collider]
+shape = "box"
+size = [0.64, 0.64, 0.64]
+friction = 0.6
+
+[entities.crate_23]
+[entities.crate_23.transform]
+position = [-0.210, 11.150, -0.090]
+rotation = [29, 37, 0]
+[entities.crate_23.bounds]
+min = [-0.27, -0.27, -0.27]
+max = [0.27, 0.27, 0.27]
+[entities.crate_23.material]
+color = [0.557, 0.811, 0.289, 1.0]
+roughness = 0.55
+[entities.crate_23.rigidbody]
+body_type = "dynamic"
+[entities.crate_23.collider]
+shape = "box"
+size = [0.54, 0.54, 0.54]
+friction = 0.6
+
+[entities.crate_36]
+[entities.crate_36.transform]
+position = [0.000, 17.000, -0.260]
+rotation = [18, 54, 0]
+[entities.crate_36.bounds]
+min = [-0.22, -0.22, -0.22]
+max = [0.22, 0.22, 0.22]
+[entities.crate_36.material]
+color = [0.289, 0.811, 0.513, 1.0]
+roughness = 0.55
+[entities.crate_36.rigidbody]
+body_type = "dynamic"
+[entities.crate_36.collider]
+shape = "box"
+size = [0.44, 0.44, 0.44]
+friction = 0.6
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [-0.35, 0.71, 0.61]
+color = [1.0, 0.97, 0.92]
+intensity = 1.2
+
+[entities.fill]
+[entities.fill.transform]
+position = [-6, 6, 8]
+[entities.fill.light]
+type = "point"
+color = [0.6, 0.7, 1.0]
+intensity = 8.0
+range = 25.0

@@ -22,7 +22,7 @@ use flint_render::{
     post_process_config_from_def, Camera, FrameInputs, PostProcessConfig, RenderContext,
     RendererConfig, SceneBinding, SceneRenderer,
 };
-use flint_scene::{load_scene, CameraDef, PostProcessDef, SceneDocument};
+use flint_scene::{load_scene, load_scene_after, CameraDef, PostProcessDef, SceneDocument};
 use flint_schema::{SchemaDirs, SchemaRegistry};
 use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, Debouncer};
@@ -2361,11 +2361,15 @@ impl ViewerApp {
 
             let reload_result = {
                 let state = self.state.lock().unwrap();
-                load_scene(&scene_path, &state.registry).and_then(|(world, mut scene_file)| {
-                    let path = std::path::Path::new(&scene_path);
-                    flint_procgen::settle_scene(&mut scene_file, path)?;
-                    Ok((world, scene_file))
-                })
+                // New ids, past the old world's (#688): the renderer's caches
+                // keyed by entity must not take a reloaded entity for an old one
+                load_scene_after(&scene_path, &state.registry, &state.world).and_then(
+                    |(world, mut scene_file)| {
+                        let path = std::path::Path::new(&scene_path);
+                        flint_procgen::settle_scene(&mut scene_file, path)?;
+                        Ok((world, scene_file))
+                    },
+                )
             };
 
             match reload_result {

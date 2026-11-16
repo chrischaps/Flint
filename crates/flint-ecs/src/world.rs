@@ -7,11 +7,10 @@ use bimap::BiMap;
 use flint_core::toml_util::{toml_to_vec3, toml_vec4};
 use flint_core::{mat4_mul, EntityId, FlintError, Result, Transform, Vec3};
 use flint_schema::SchemaRegistry;
-use std::collections::{HashMap, HashSet};
-use std::sync::LazyLock;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Static empty set returned by `entities_with_component` for missing components.
-static EMPTY_ENTITY_SET: LazyLock<HashSet<EntityId>> = LazyLock::new(HashSet::new);
+static EMPTY_ENTITY_SET: BTreeSet<EntityId> = BTreeSet::new();
 
 /// The main ECS world for Flint
 ///
@@ -19,14 +18,24 @@ static EMPTY_ENTITY_SET: LazyLock<HashSet<EntityId>> = LazyLock::new(HashSet::ne
 /// - Stable EntityId mapping
 /// - Dynamic component storage
 /// - Named entity lookup
-#[derive(Default)]
+///
+/// **Order** (#688): a world hands out its own ids, counting up from 1 (or
+/// from past the world it follows, [`FlintWorld::after`]), and every walk it
+/// offers is ordered: [`all_entities`](Self::all_entities),
+/// [`entity_names`](Self::entity_names) and
+/// [`get_children`](Self::get_children) (#689) by name,
+/// [`entities_with_component`](Self::entities_with_component) by id. A scene spawns its entities
+/// in name order, so loading the same scene gives the same ids every time,
+/// in this process or the next, and what iterates a component (physics
+/// creating bodies, scripts, the renderer) meets entities in the same order
+/// every run.
 pub struct FlintWorld {
     /// The underlying hecs world
     world: hecs::World,
     /// Bidirectional mapping: EntityId <-> hecs::Entity
     id_map: BiMap<EntityId, hecs::Entity>,
-    /// Entity name -> EntityId mapping
-    name_map: HashMap<String, EntityId>,
+    /// Entity name -> EntityId mapping, by name (#688)
+    name_map: BTreeMap<String, EntityId>,
     /// EntityId -> entity name: the other way, so `get_name` and sorting by
     /// name are lookups, not scans of `name_map`
     names: HashMap<EntityId, String>,
@@ -36,26 +45,53 @@ pub struct FlintWorld {
     parents: HashMap<EntityId, EntityId>,
     /// The other way: parent -> its children, in name order (#689)
     children: HashMap<EntityId, Vec<EntityId>>,
-    /// Reverse index: component name -> set of entities that have it
-    component_index: HashMap<String, HashSet<EntityId>>,
+    /// Reverse index: component name -> the entities that have it, by id (#688)
+    component_index: HashMap<String, BTreeSet<EntityId>>,
+    /// The id the next spawn gets. It only rises: [`FlintWorld::clear`]
+    /// keeps it, so a scene reloaded into the same world never reuses an id
+    next_id: u64,
     /// What the typed readers ([`FlintWorld::view`]) have reported, once each
     read_reports: ReadReports,
 }
 
+impl Default for FlintWorld {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FlintWorld {
-    /// Create a new empty world
+    /// Create a new empty world. Its first entity is id 1.
     pub fn new() -> Self {
         Self {
             world: hecs::World::new(),
             id_map: BiMap::new(),
-            name_map: HashMap::new(),
+            name_map: BTreeMap::new(),
             names: HashMap::new(),
             components: HashMap::new(),
             parents: HashMap::new(),
             children: HashMap::new(),
             component_index: HashMap::new(),
+            next_id: 1,
             read_reports: ReadReports::new(),
         }
+    }
+
+    /// An empty world whose ids start past every id `previous` gave out:
+    /// what replaces a world in a host that goes on (a scene transition, an
+    /// editor's reload), so an id held across the change (a script's
+    /// persistent value, an event, a renderer's cache keyed by entity)
+    /// can never name an entity of the new world.
+    pub fn after(previous: &FlintWorld) -> Self {
+        Self {
+            next_id: previous.next_id,
+            ..Self::new()
+        }
+    }
+
+    /// The id the next [`spawn`](Self::spawn) will give.
+    pub fn next_id(&self) -> EntityId {
+        EntityId::from_raw(self.next_id)
     }
 
     /// What the typed readers have found wrong so far: a wrong type or an
@@ -72,7 +108,8 @@ impl FlintWorld {
             return Err(FlintError::DuplicateEntityName(name));
         }
 
-        let entity_id = EntityId::new();
+        let entity_id = EntityId::from_raw(self.next_id);
+        self.next_id += 1;
         let hecs_entity = self.world.spawn(());
 
         self.id_map.insert(entity_id, hecs_entity);
@@ -92,7 +129,7 @@ impl FlintWorld {
         }
 
         // Ensure the ID counter stays ahead
-        EntityId::ensure_counter_above(id.raw());
+        self.next_id = self.next_id.max(id.raw() + 1);
 
         let hecs_entity = self.world.spawn(());
 
@@ -379,17 +416,13 @@ impl FlintWorld {
 
     /// Get info about all entities, by name.
     ///
-    /// The name map is a `HashMap`, whose order changes per process, and
-    /// the renderer draws in this order: where two surfaces tie in depth,
-    /// the pixels on their edges flipped between runs of the same capture.
-    /// Names, unlike ids, don't depend on what was spawned first (a scene
-    /// file's own map, a build that lands on another frame), so sorting by
-    /// name makes the order the same run to run.
+    /// The renderer draws in this order: where two surfaces tie in depth,
+    /// the pixels on their edges flipped between runs of the same capture
+    /// while the name map was a `HashMap`. It is ordered by name now
+    /// (#688), as every walk of the world is.
     pub fn all_entities(&self) -> Vec<EntityInfo> {
-        let mut named: Vec<(&String, &EntityId)> = self.name_map.iter().collect();
-        named.sort_unstable_by(|a, b| a.0.cmp(b.0));
-        named
-            .into_iter()
+        self.name_map
+            .iter()
             .map(|(name, id)| {
                 let components = self.components.get(id);
                 let archetype = components.and_then(|c| c.archetype.clone());
@@ -428,7 +461,8 @@ impl FlintWorld {
         self.name_map.contains_key(name)
     }
 
-    /// Clear the world
+    /// Clear the world. The id counter is kept: what spawns next gets an
+    /// id this world never gave out.
     pub fn clear(&mut self) {
         self.world.clear();
         self.id_map.clear();
@@ -590,23 +624,25 @@ impl FlintWorld {
 
     /// Get all entity IDs that have a given component. O(1) lookup.
     ///
-    /// Returns a reference to the internal `HashSet`, in hash order, which
-    /// differs run to run; returns an empty set for components that no
-    /// entity currently has. What a script or a capture sees goes through
-    /// [`Self::in_name_order`].
-    pub fn entities_with_component(&self, component: &str) -> &HashSet<EntityId> {
+    /// Returns a reference to the internal set, **in ascending id order**
+    /// (#688): for a loaded scene that is name order, then the order later
+    /// entities were spawned in, the same every run. An empty set for a
+    /// component no entity has. A list that must be in name order whatever
+    /// spawned what goes through [`Self::in_name_order`] (#689).
+    pub fn entities_with_component(&self, component: &str) -> &BTreeSet<EntityId> {
         self.component_index
             .get(component)
             .unwrap_or(&EMPTY_ENTITY_SET)
     }
 
-    /// Get entity IDs that have *all* of the given components (intersection).
+    /// Get entity IDs that have *all* of the given components (intersection),
+    /// in ascending id order.
     pub fn entities_with_components(&self, names: &[&str]) -> Vec<EntityId> {
         if names.is_empty() {
             return Vec::new();
         }
         // Start from the smallest set for efficiency
-        let sets: Vec<&HashSet<EntityId>> = names
+        let sets: Vec<&BTreeSet<EntityId>> = names
             .iter()
             .map(|n| self.entities_with_component(n))
             .collect();
@@ -675,7 +711,7 @@ impl FlintWorld {
         Ok(removed)
     }
 
-    /// Iterate over entity names
+    /// Iterate over entity names, in name order
     pub fn entity_names(&self) -> impl Iterator<Item = &str> {
         self.name_map.keys().map(|s| s.as_str())
     }
@@ -1079,6 +1115,81 @@ mod tests {
             "new id {} should be > 10000",
             next.raw()
         );
+    }
+
+    // ── the world's own ids (#688) ─────────────────────────────────
+
+    #[test]
+    fn a_world_counts_its_own_ids_from_one() {
+        // Whatever other worlds in the process (other tests) have spawned
+        let mut a = FlintWorld::new();
+        let mut b = FlintWorld::new();
+        for world in [&mut a, &mut b] {
+            assert_eq!(world.spawn("first").unwrap(), EntityId::from_raw(1));
+            assert_eq!(world.spawn("second").unwrap(), EntityId::from_raw(2));
+        }
+    }
+
+    #[test]
+    fn a_world_after_another_never_reuses_its_ids() {
+        let mut old = FlintWorld::new();
+        old.spawn("a").unwrap();
+        old.spawn_with_id(EntityId::from_raw(40), "b").unwrap();
+        let mut next = FlintWorld::after(&old);
+        assert_eq!(next.next_id(), EntityId::from_raw(41));
+        assert_eq!(next.spawn("a").unwrap(), EntityId::from_raw(41));
+    }
+
+    #[test]
+    fn clearing_a_world_keeps_its_counter() {
+        let mut world = FlintWorld::new();
+        world.spawn("a").unwrap();
+        world.spawn("b").unwrap();
+        world.clear();
+        assert_eq!(world.spawn("a").unwrap(), EntityId::from_raw(3));
+    }
+
+    #[test]
+    fn entities_with_component_come_in_id_order() {
+        let mut world = FlintWorld::new();
+        let mut ids = Vec::new();
+        for i in 0..50 {
+            let id = world.spawn(format!("e{i:02}")).unwrap();
+            ids.push(id);
+        }
+        // Tagged in a scrambled order: the set's order is the ids', not this
+        for i in [37, 3, 49, 0, 22, 11, 48, 5] {
+            world
+                .set_component(ids[i], "tag", toml::Value::Boolean(true))
+                .unwrap();
+        }
+        let got: Vec<EntityId> = world
+            .entities_with_component("tag")
+            .iter()
+            .copied()
+            .collect();
+        let mut want = got.clone();
+        want.sort();
+        assert_eq!(got, want);
+        assert_eq!(got.len(), 8);
+        assert_eq!(got[0], ids[0]);
+    }
+
+    #[test]
+    fn children_and_names_come_in_order() {
+        let mut world = FlintWorld::new();
+        let root = world.spawn("root").unwrap();
+        let kids: Vec<EntityId> = ["z", "m", "a"]
+            .iter()
+            .map(|n| world.spawn(*n).unwrap())
+            .collect();
+        for kid in &kids {
+            world.set_parent(*kid, root).unwrap();
+        }
+        // Children by name (#689), whatever order they were spawned or linked
+        assert_eq!(world.get_children(root), [kids[2], kids[1], kids[0]]);
+        let names: Vec<&str> = world.entity_names().collect();
+        assert_eq!(names, ["a", "m", "root", "z"]);
     }
 
     #[test]
