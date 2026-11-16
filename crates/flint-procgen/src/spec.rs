@@ -160,6 +160,98 @@ pub struct LivingConfig {
     /// time; nothing baked reads it.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub softness: f32,
+    /// Where a pose comes from (#506): regrown from its shape seed, the
+    /// default, or the lineage's own structure bent by noise, which is how a
+    /// tree that can't regrow (space colonization, a text grammar) lives. Left
+    /// out of a spec's text unless changed, so a spec without it hashes as
+    /// before.
+    #[serde(default, skip_serializing_if = "PoseSource::is_default")]
+    pub pose: PoseSource,
+    /// `[living.noise]`: how far a noise pose bends. Read only with
+    /// `pose = "noise"`.
+    #[serde(default, skip_serializing_if = "NoiseConfig::is_default")]
+    pub noise: NoiseConfig,
+}
+
+/// `[living] pose`: what a tree's poses are made from.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PoseSource {
+    /// Each pose regrows the branches from its own shape seed, on the
+    /// lineage's trunk. Only the built-in L-system can: it grows the same
+    /// segments for every seed. The limbs move around, as if redrawn.
+    #[default]
+    Regrow,
+    /// Each pose keeps the lineage's segments and turns each one by smooth
+    /// noise sampled at its middle, seeded by the shape seed: a bend with no
+    /// twist and a small change of length. Any branch method can, since a
+    /// pose never grows anything. The crown keeps its outline.
+    Noise,
+}
+
+impl PoseSource {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// `[living.noise]`: the knobs of a noise pose ([`PoseSource::Noise`]).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct NoiseConfig {
+    /// Degrees a segment turns at one standard deviation of the noise, 0 to
+    /// 90. At 12 a frame moves about half as much as regrowth does; near 30
+    /// it moves as far, and the crown leans like a gust has caught it.
+    pub turn: f32,
+    /// Metres between swells, at least 0.05. Well above a limb's length a
+    /// limb turns whole; near it, the limb bends along its length.
+    pub wavelength: f32,
+    /// How much a segment's length can change at one standard deviation, 0
+    /// to 0.5. A length is kept within half and one and a half of its rest.
+    pub stretch: f32,
+}
+
+impl Default for NoiseConfig {
+    fn default() -> Self {
+        Self {
+            turn: 12.0,
+            wavelength: 3.0,
+            stretch: 0.08,
+        }
+    }
+}
+
+impl NoiseConfig {
+    /// The shortest wavelength: shorter swells only shake a tree.
+    pub const MIN_WAVELENGTH: f32 = 0.05;
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Check what the types can't: the key at fault and why.
+    pub fn check(&self) -> std::result::Result<(), (&'static str, String)> {
+        if !(self.turn.is_finite() && (0.0..=90.0).contains(&self.turn)) {
+            return Err(("turn", format!("{}: must be in [0, 90] degrees", self.turn)));
+        }
+        if !(self.wavelength.is_finite() && self.wavelength >= Self::MIN_WAVELENGTH) {
+            return Err((
+                "wavelength",
+                format!(
+                    "{}: must be at least {} metres",
+                    self.wavelength,
+                    Self::MIN_WAVELENGTH
+                ),
+            ));
+        }
+        if !(self.stretch.is_finite() && (0.0..=0.5).contains(&self.stretch)) {
+            return Err((
+                "stretch",
+                format!("{}: must be in [0.0, 0.5]", self.stretch),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// One of [`EchoPlaces::at`]: `[along, up, steps]`. The first two are metres
@@ -416,6 +508,9 @@ impl LivingConfig {
         }
         if let Err((key, reason)) = self.echoes.check() {
             return bad(&format!("echoes.{key}"), reason);
+        }
+        if let Err((key, reason)) = self.noise.check() {
+            return bad(&format!("noise.{key}"), reason);
         }
         Ok(())
     }
@@ -944,6 +1039,50 @@ variance = { amount = 1, steady = 0, keep_size = false }
         // It survives the round trip every save and content hash takes.
         let again = ProcGenSpec::parse(&toml::to_string(&spec).unwrap()).unwrap();
         assert_eq!(spec, again);
+    }
+
+    #[test]
+    fn the_pose_source_defaults_to_regrowth_and_stays_out_of_a_specs_text() {
+        let spec = ProcGenSpec::parse(&with_living("lineage_seed = 3")).unwrap();
+        let living = spec.living.as_ref().unwrap();
+        assert_eq!(living.pose, PoseSource::Regrow);
+        assert_eq!(living.noise, NoiseConfig::default());
+        let text = toml::to_string(&spec).unwrap();
+        assert!(
+            !text.contains("pose =") && !text.contains("noise"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_noise_pose_parses_and_round_trips() {
+        let spec = ProcGenSpec::parse(&with_living(
+            "lineage_seed = 3\npose = \"noise\"\nnoise = { turn = 20, wavelength = 1.5 }",
+        ))
+        .unwrap();
+        let living = spec.living.as_ref().unwrap();
+        assert_eq!(living.pose, PoseSource::Noise);
+        assert_eq!(living.noise.turn, 20.0);
+        assert_eq!(living.noise.wavelength, 1.5);
+        assert_eq!(living.noise.stretch, NoiseConfig::default().stretch);
+        let again = ProcGenSpec::parse(&toml::to_string(&spec).unwrap()).unwrap();
+        assert_eq!(spec, again);
+    }
+
+    #[test]
+    fn a_bad_noise_pose_names_its_key() {
+        for (table, key) in [
+            ("pose = \"wind\"", "pose"),
+            ("noise = { turn = 120 }", "living.noise.turn"),
+            ("noise = { wavelength = 0 }", "living.noise.wavelength"),
+            ("noise = { stretch = -0.1 }", "living.noise.stretch"),
+            ("noise = { swell = 2 }", "swell"),
+        ] {
+            let err = ProcGenSpec::parse(&with_living(&format!("lineage_seed = 3\n{table}")))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(key), "{table}: {err}");
+        }
     }
 
     #[test]

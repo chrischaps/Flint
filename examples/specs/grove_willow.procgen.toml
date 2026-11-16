@@ -1,0 +1,72 @@
+# Woozy Grove's willow: a weeping willow that lives by noise (#506).
+#
+# Its crown is written as a text grammar, which can't drift by regrowing: a
+# stochastic grammar grows a new tree for every seed. With
+# `[living] pose = "noise"` its arching limbs and hanging whips bend on smooth
+# noise instead, the tree they grew. The params are specs/weeping_willow's.
+#
+#   flint gen examples/specs/grove_willow.procgen.toml --strip -o willow.png
+
+generator = "tree_v1"
+
+[meta]
+name = "grove_willow"
+description = "A weeping willow whose whips drift on noise, since its grammar can't regrow"
+version = "1.0.0"
+tags = ["tree", "vegetation", "willow", "lsystem", "living", "woozy-grove"]
+
+[seed]
+mode = "fixed"
+value = 7
+
+[params]
+trunk_height = 2.6
+trunk_radius_base = 0.32
+trunk_radius_top = 0.16
+trunk_segments = 10
+radial_segments = 8
+trunk_curve_noise = 0.1
+bark_color_base = "#4A3B2A"
+bark_roughness = 0.9
+
+branch_method = "lsystem"
+branch_length_falloff = 0.75
+branch_radius_falloff = 0.4
+branch_max_segments = 12000
+
+lsystem_axiom = "A"
+lsystem_rules = [
+    "A (0.5) -> F[&(30)B]/(137.5)[&(40)B]/(137.5)[&(25)B]/(137.5)[&(45)B]",
+    "A (0.5) -> F[&(30)B]/(137.5)[&(45)B]/(137.5)[&(25)B]/(137.5)[&(40)B]/(137.5)[&(35)B]",
+    "B -> F[+(55)W][-(55)W]/(90)F[&(60)W]B",
+    "W (0.7) -> FW",
+    "W (0.3) -> F[+(10)W]W",
+]
+lsystem_iterations = 10
+lsystem_angle = 24.0
+lsystem_size = 4.5
+lsystem_tropism = 0.3
+
+leaf_style = "billboard"
+leaf_density = 1.0
+leaf_color_base = "#7FA33A"
+leaf_color_variation = 0.1
+leaf_size = 0.09
+leaf_size_variation = 0.3
+leaves_per_tip = 6
+leaf_spread_radius = 0.25
+leaf_along_branch_density = 1.0
+leaf_along_branch_min_depth = 2
+
+[living]
+lineage_seed = 7
+pose_ring = 8
+pose = "noise"
+noise = { turn = 12.0, wavelength = 3.0, stretch = 0.08 }
+# A grammar's depth is its bracket nesting, a branch order already; this
+# willow's whips nest eight deep, so per-level stagger keeps some part of it
+# moving through every beat, as it does on the grove's oak.
+stagger = "per_level"
+jitter = { amplitude = 0.05, targets = ["leaf_cards"], step = 0.125, glide = 0.0 }
+variance = { amount = 0.35, steady = 0.8, keep_size = true }
+echoes = { count = 4, spread = 0.9, alpha = 0.2 }
