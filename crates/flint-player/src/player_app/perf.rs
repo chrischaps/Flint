@@ -110,11 +110,17 @@ pub(crate) struct PerfSummary {
     pub scripts: Vec<ScriptTime>,
 }
 
-/// The player's frame recorder: the always-on frame history (#1076, which
-/// it derefs to for recording) and the readout's own state. Every player
-/// has one; `--perf` / `?perf=1` turn the readout on ([`Self::readout`]).
+/// The player's frame recorder: the frame history (#1076, which it derefs
+/// to) and the readout's own state. Every player has one. It records while
+/// [`recording`](Self::recording): always, in a build with the
+/// `frame-history` feature (the default) unless `FLINT_FRAME_HISTORY=0`;
+/// otherwise only while `--perf` / `?perf=1` has the readout on, as before
+/// #1076. Off, each of the frame's calls is one branch.
 pub(crate) struct PerfRecorder {
     history: FrameHistory,
+    /// Record every frame, readout or not (`frame-history`, and
+    /// `FLINT_FRAME_HISTORY` over it).
+    pub always_on: bool,
     /// The readout is shown (`--perf`, `?perf=1`): it is due twice a
     /// second, scripts are timed, and the history keeps its ten seconds.
     pub readout: bool,
@@ -125,10 +131,11 @@ pub(crate) struct PerfRecorder {
 }
 
 impl Default for PerfRecorder {
-    /// The always-on recorder, readout off: the history's last frames only.
+    /// The recorder, readout off, recording as the build says.
     fn default() -> Self {
         Self {
             history: FrameHistory::default(),
+            always_on: super::frame_history::BUILT_IN,
             readout: false,
             gpu_wanted: false,
             shown_at: None,
@@ -157,6 +164,64 @@ impl PerfRecorder {
         let mut rec = Self::default();
         rec.show_readout(gpu_wanted);
         rec
+    }
+
+    /// A recorder, readout off, recording every frame or not.
+    pub(crate) fn recording_always(always_on: bool) -> Self {
+        Self {
+            always_on,
+            ..Self::default()
+        }
+    }
+
+    /// Whether frames are being recorded: always on, or the readout is.
+    pub(crate) fn recording(&self) -> bool {
+        self.always_on || self.readout
+    }
+
+    // The frame's calls, each nothing while not recording. They shadow the
+    // history's own (which tests call through the deref with times given).
+
+    /// A new frame begins now: the one before it ends.
+    pub(crate) fn begin_frame(&mut self) {
+        if self.recording() {
+            self.history.begin_frame();
+        }
+    }
+
+    /// The end of `phase`, now.
+    pub(crate) fn mark(&mut self, phase: Phase) {
+        if self.recording() {
+            self.history.mark(phase);
+        }
+    }
+
+    /// This frame's time in each script callback.
+    pub(crate) fn record_scripts(&mut self, times: &[(String, f32)]) {
+        if self.recording() {
+            self.history.record_scripts(times);
+        }
+    }
+
+    /// `present()` returned at `now`.
+    pub(crate) fn presented_at(&mut self, now: Instant) {
+        if self.recording() {
+            self.history.presented_at(now);
+        }
+    }
+
+    /// The fixed physics steps that ran this frame.
+    pub(crate) fn fixed_steps(&mut self, steps: u32) {
+        if self.recording() {
+            self.history.fixed_steps(steps);
+        }
+    }
+
+    /// The GPU time read back this frame, if any.
+    pub(crate) fn gpu_ms(&mut self, ms: Option<f32>) {
+        if self.recording() {
+            self.history.gpu_ms(ms);
+        }
     }
 
     /// Turn the readout on, from this frame: the frames already kept stay.

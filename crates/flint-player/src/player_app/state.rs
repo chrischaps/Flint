@@ -419,9 +419,10 @@ pub(super) struct Stats {
     /// The player turned the renderer's GPU timing on for the overlay
     /// (ADR 0108), so it turns it off again when the overlay closes
     pub(super) gpu_timing: bool,
-    /// The frame recorder: the always-on frame history (#1076, the last
-    /// `HISTORY_FRAMES` frames), which the perf readout (`--perf`,
-    /// `?perf=1`, #120) sums up when it is on (`perf.readout`).
+    /// The frame recorder: the frame history (#1076, the last
+    /// `HISTORY_FRAMES` frames, recorded always where the build has
+    /// `frame-history`), which the perf readout (`--perf`, `?perf=1`,
+    /// #120) sums up when it is on (`perf.readout`).
     pub(super) perf: perf::PerfRecorder,
     /// What counts as a hitch, and the hitches so far (#1076), judged as
     /// each frame's clock comes in.
@@ -434,7 +435,8 @@ impl Default for Stats {
             show: false,
             frame_times: Default::default(),
             gpu_timing: false,
-            perf: Default::default(),
+            // `frame-history`, and `FLINT_FRAME_HISTORY` over it
+            perf: perf::PerfRecorder::recording_always(super::frame_history::always_on_from_env()),
             // `FLINT_HITCH_FACTOR` / `FLINT_HITCH_FLOOR_MS`, read once.
             hitches: hitch::HitchDetector::new(hitch::HitchThresholds::from_env()),
         }

@@ -733,15 +733,38 @@ mod tests {
             frame(&mut history, &mut detector);
         }
         let us = began.elapsed().as_secs_f64() * 1e6 / frames as f64;
+        // Off (a build without `frame-history`, or FLINT_FRAME_HISTORY=0):
+        // the same calls through the recorder, each a branch.
+        let mut off = super::super::perf::PerfRecorder::recording_always(false);
+        let began = Instant::now();
+        for _ in 0..frames {
+            off.begin_frame();
+            if off.recording() {
+                off.clock_ticked(sample);
+                detector.observe(&off);
+            }
+            for phase in Phase::ALL {
+                if phase == Phase::Present {
+                    off.presented_at(Instant::now());
+                }
+                off.mark(phase);
+            }
+            off.fixed_steps(1);
+            off.gpu_ms(None);
+            std::hint::black_box(&mut off);
+        }
+        let off_us = began.elapsed().as_secs_f64() * 1e6 / frames as f64;
+        assert!(off.frames().is_empty());
         let marks = Instant::now();
         for _ in 0..frames {
             std::hint::black_box(Instant::now());
         }
         let now_us = marks.elapsed().as_secs_f64() * 1e6 / frames as f64;
         println!(
-            "always-on recording: {us:.2} us a frame ({:.4} ms); one Instant::now {:.0} ns",
+            "always-on recording: {us:.2} us a frame ({:.4} ms); one Instant::now {:.0} ns; off: {:.0} ns a frame (the present's own Instant::now included)",
             us / 1000.0,
-            now_us * 1000.0
+            now_us * 1000.0,
+            off_us * 1000.0
         );
         assert!(history.frames().len() == HISTORY_FRAMES);
     }

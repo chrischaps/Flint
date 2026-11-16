@@ -24,6 +24,36 @@ use web_time::Instant;
 /// How many frames the history keeps at least: ten seconds at 60 fps.
 pub(crate) const HISTORY_FRAMES: usize = 600;
 
+/// Whether this build records every frame: the `frame-history` feature
+/// (default on; a shipped game can leave it out).
+pub(crate) const BUILT_IN: bool = cfg!(feature = "frame-history");
+
+/// Whether to record every frame: `FLINT_FRAME_HISTORY=0|1` (also
+/// `off`/`on`, `false`/`true`) over the build's default. Anything else is
+/// said once and the default kept.
+pub(crate) fn always_on_from_env() -> bool {
+    let (on, warning) = parse_switch(std::env::var("FLINT_FRAME_HISTORY").ok(), BUILT_IN);
+    if let Some(warning) = warning {
+        tracing::warn!("{warning}");
+    }
+    on
+}
+
+fn parse_switch(value: Option<String>, default: bool) -> (bool, Option<String>) {
+    match value.as_deref().map(str::trim) {
+        None | Some("") => (default, None),
+        Some("0" | "off" | "false") => (false, None),
+        Some("1" | "on" | "true") => (true, None),
+        Some(other) => (
+            default,
+            Some(format!(
+                "FLINT_FRAME_HISTORY={other:?} is not 0 or 1: keeping the build's {}",
+                if default { "on" } else { "off" }
+            )),
+        ),
+    }
+}
+
 /// The clock's view of a frame's interval, from the tick that ended it.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub(crate) struct ClockSample {
@@ -380,6 +410,17 @@ mod tests {
             .filter(|f| buffers.contains(&f.scripts.as_ptr()))
             .count();
         assert!(reused >= 7, "{reused} of 8 buffers reused");
+    }
+
+    #[test]
+    fn the_switch_reads_on_and_off_over_the_builds_default() {
+        assert_eq!(parse_switch(None, true), (true, None));
+        assert_eq!(parse_switch(None, false), (false, None));
+        assert_eq!(parse_switch(Some("0".into()), true), (false, None));
+        assert_eq!(parse_switch(Some(" on ".into()), false), (true, None));
+        let (on, warning) = parse_switch(Some("maybe".into()), true);
+        assert!(on);
+        assert!(warning.unwrap().contains("FLINT_FRAME_HISTORY"));
     }
 
     #[test]

@@ -434,10 +434,12 @@ impl PlayerApp {
         // Advance game clock. Its tick measured the frame just closed: that
         // is the history's newest frame, which is judged now (#1076).
         self.core.clock.tick();
-        self.stats
-            .perf
-            .clock_ticked(super::frame_history::ClockSample::of(&self.core.clock));
-        self.stats.hitches.observe(&self.stats.perf);
+        if self.stats.perf.recording() {
+            self.stats
+                .perf
+                .clock_ticked(super::frame_history::ClockSample::of(&self.core.clock));
+            self.stats.hitches.observe(&self.stats.perf);
+        }
         if self
             .launch
             .hold_at
