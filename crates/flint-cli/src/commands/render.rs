@@ -2760,6 +2760,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                 cell: (column, row),
                 grid,
                 config,
+                look: stage_look(args, grid, (column, row), scene_pp),
                 timeline: timeline.clone(),
             },
         )?);
@@ -3554,7 +3555,25 @@ struct StageScene<'a> {
     /// The cell's post-processing: the scene's, under any look and the
     /// cell's values, with the CLI's flags over it.
     config: flint_render::PostProcessConfig,
+    /// The look the cell draws with before a script asks for another, for
+    /// `get_look()` (#497).
+    look: Option<String>,
     timeline: Option<ExpressionTimeline>,
+}
+
+/// The look a stage's cell draws with before a script asks for another
+/// (#497), as the player names it: a `look=` sweep's value, else `--look`
+/// as given, else the scene's own (none when it couldn't be found).
+fn stage_look(
+    args: &RenderArgs,
+    grid: Option<&super::sweep::SweepGrid>,
+    (column, row): (usize, usize),
+    scene_pp: Option<&flint_scene::PostProcessDef>,
+) -> Option<String> {
+    grid.and_then(|g| g.cell_look(column, row))
+        .or(args.look.as_deref())
+        .or_else(|| scene_pp.and_then(|d| d.look.as_deref()))
+        .map(str::to_string)
 }
 
 /// One scene in one renderer, with its own clocks.
@@ -3619,6 +3638,7 @@ impl Stage {
             cell,
             grid,
             config: mut pp_config,
+            look: cell_look,
             timeline,
         } = scene;
         let moment = is_moment(args, grid);
@@ -3840,6 +3860,7 @@ impl Stage {
 
         // Scripts (#8), as the player starts them once its models are loaded.
         let scripted = args.scripts || timeline.is_some();
+        game.set_scene_look(cell_look.as_deref());
         game.start_scripts(
             scripted,
             timeline,
