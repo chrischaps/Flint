@@ -63,7 +63,7 @@
 use super::images::{ImageSlot, ImageUse, StyleImage};
 use super::kit;
 use super::{
-    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleOption, StyleParam,
     StylePass, StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
@@ -85,54 +85,63 @@ pub const SCOPES: &[&str] = &["screen", "entities"];
 const MAX_WASH_PX: f32 = 48.0;
 
 const PARAMS: &[StyleParam] = &[
-    StyleParam::new("wash", 4.0, 0.0..=16.0),
-    StyleParam::new("bleed", 0.55, 0.0..=1.0),
-    StyleParam::new("wobble", 2.0, 0.0..=8.0),
-    StyleParam::new("wobble_scale", 40.0, 8.0..=200.0),
-    StyleParam::new("edge", 1.0, 0.0..=4.0),
-    StyleParam::new("edge_depth", 0.8, 0.0..=2.0),
-    StyleParam::new("edge_width", 1.5, 0.5..=6.0),
-    StyleParam::new("turbulence", 0.35, 0.0..=1.0),
-    StyleParam::new("granulation", 0.5, 0.0..=2.0),
-    StyleParam::new("grain", 0.35, 0.0..=1.0),
-    StyleParam::new("grain_scale", 1.0, 0.25..=4.0),
-    StyleParam::new("pigment", 1.0, 0.2..=2.0),
-    StyleParam::new("layers", 4.0, 0.0..=12.0),
-    StyleParam::new("paper_r", 0.97, 0.0..=1.0),
+    StyleParam::new("wash", 4.0, 0.0..=16.0)
+        .label("Wash (pt)")
+        .help("How far pigment diffuses, in points; one radius serves the frame, the largest any entity asks for"),
+    StyleParam::new("bleed", 0.55, 0.0..=1.0)
+        .label("Bleed")
+        .help("How much of the colour is the diffused wash (0 crisp, 1 all wash)"),
+    StyleParam::new("wobble", 2.0, 0.0..=8.0)
+        .label("Wobble (pt)")
+        .help("How far borders and silhouettes wander"),
+    StyleParam::new("wobble_scale", 40.0, 8.0..=200.0)
+        .label("Wobble wavelength (pt)")
+        .help("The wander's wavelength"),
+    StyleParam::new("edge", 1.0, 0.0..=4.0)
+        .label("Edge pooling")
+        .help("Pigment pooled darker at colour edges and glaze borders"),
+    StyleParam::new("edge_depth", 0.8, 0.0..=2.0)
+        .label("Silhouette pooling")
+        .help("Pigment pooled on the near side of silhouettes, from depth"),
+    StyleParam::new("edge_width", 1.5, 0.5..=6.0)
+        .label("Silhouette rim (pt)")
+        .help("How wide that rim is"),
+    StyleParam::new("turbulence", 0.35, 0.0..=1.0)
+        .label("Turbulence")
+        .help("Low-frequency blotches of thicker and thinner pigment"),
+    StyleParam::new("granulation", 0.5, 0.0..=2.0)
+        .label("Granulation")
+        .help("Pigment settling into the paper's valleys, strongest in dark washes"),
+    StyleParam::new("grain", 0.35, 0.0..=1.0)
+        .label("Paper relief")
+        .help("The paper's relief, shading even bare paper"),
+    StyleParam::new("grain_scale", 1.0, 0.25..=4.0).label("Paper tooth").help("Bigger is coarser"),
+    StyleParam::new("pigment", 1.0, 0.2..=2.0)
+        .label("Pigment")
+        .help("Overall density: below 1 dilutes, above 1 deepens"),
+    StyleParam::new("layers", 4.0, 0.0..=12.0)
+        .label("Glazes")
+        .help("The tone in this many steps, each edged darker where it dried; 0 is one smooth wash")
+        .integer(),
+    StyleParam::new("paper_r", 0.97, 0.0..=1.0).label("Paper").help("The paper's colour"),
     StyleParam::new("paper_g", 0.94, 0.0..=1.0),
     StyleParam::new("paper_b", 0.87, 0.0..=1.0),
 ];
 
 const OPTIONS: &[StyleOption] = &[
-    StyleOption::new("scope", "screen", SCOPES),
+    StyleOption::new("scope", "screen", SCOPES)
+        .label("Scope")
+        .help("screen: the table paints the whole frame; entities: it is only the preset for watercolor_style entities"),
     StyleOption::new("paper_image", super::pencil::NO_IMAGE, &[])
-        .discovered(super::pencil::paper_choices),
-];
-
-const HINTS: &[StyleHint] = &[
-    StyleHint::new("scope", "Scope", "screen: the table paints the whole frame; entities: it is only the preset for watercolor_style entities"),
-    StyleHint::new("wash", "Wash (pt)", "How far pigment diffuses, in points; one radius serves the frame, the largest any entity asks for"),
-    StyleHint::new("bleed", "Bleed", "How much of the colour is the diffused wash (0 crisp, 1 all wash)"),
-    StyleHint::new("layers", "Glazes", "The tone in this many steps, each edged darker where it dried; 0 is one smooth wash").integer(),
-    StyleHint::new("wobble", "Wobble (pt)", "How far borders and silhouettes wander"),
-    StyleHint::new("wobble_scale", "Wobble wavelength (pt)", "The wander's wavelength"),
-    StyleHint::new("edge", "Edge pooling", "Pigment pooled darker at colour edges and glaze borders"),
-    StyleHint::new("edge_depth", "Silhouette pooling", "Pigment pooled on the near side of silhouettes, from depth"),
-    StyleHint::new("edge_width", "Silhouette rim (pt)", "How wide that rim is"),
-    StyleHint::new("turbulence", "Turbulence", "Low-frequency blotches of thicker and thinner pigment"),
-    StyleHint::new("granulation", "Granulation", "Pigment settling into the paper's valleys, strongest in dark washes"),
-    StyleHint::new("grain", "Paper relief", "The paper's relief, shading even bare paper"),
-    StyleHint::new("grain_scale", "Paper tooth", "Bigger is coarser"),
-    StyleHint::new("pigment", "Pigment", "Overall density: below 1 dilutes, above 1 deepens"),
-    StyleHint::new("paper", "Paper", "The paper's colour"),
-    StyleHint::new("paper_image", "Paper image", "A scanned paper (papers/<name>.png), a texel every grain_scale points: its relief is the grain, its hue tints the paper; none = procedural"),
+        .discovered(super::pencil::paper_choices)
+        .label("Paper image")
+        .help("A scanned paper (papers/<name>.png), a texel every grain_scale points: its relief is the grain, its hue tints the paper; none = procedural"),
 ];
 
 pub(super) static STYLE: StyleDescriptor =
     StyleDescriptor::new("watercolor", "Watercolor", StyleStage::Display, create)
         .params(PARAMS)
         .options(OPTIONS)
-        .hints(HINTS)
         .component("watercolor_style");
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {

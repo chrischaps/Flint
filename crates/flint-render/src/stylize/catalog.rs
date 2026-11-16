@@ -114,7 +114,7 @@ pub fn listing(d: &StyleDescriptor) -> StyleListing {
 /// One style's listing, its found choices searched for from `assets`.
 pub fn listing_in(d: &StyleDescriptor, assets: Option<&AssetScope>) -> StyleListing {
     let scope = ChoiceScope::defaults(assets);
-    let help = |name: &str| d.hint(name).map(|h| h.help.to_string()).unwrap_or_default();
+    let help = |name: &str| d.help_for(name).to_string();
     StyleListing {
         name: d.name.to_string(),
         label: d.label.to_string(),
@@ -142,7 +142,7 @@ pub fn listing_in(d: &StyleDescriptor, assets: Option<&AssetScope>) -> StyleList
                 default: p.default,
                 min: p.min,
                 max: p.max,
-                integer: d.hint(p.name).is_some_and(|h| h.integer),
+                integer: d.is_integer(p.name),
                 color: d.color_of(p.name).map(|c| c.base.to_string()),
                 label: d.label_for(p.name),
                 help: help(p.name),

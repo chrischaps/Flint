@@ -16,60 +16,43 @@
 
 use bytemuck::{Pod, Zeroable};
 use flint_render::stylize::{
-    kit, StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam,
-    StylePass, StyleStage,
+    kit, StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleOption, StyleParam, StylePass,
+    StyleStage,
 };
 
 /// The descriptor the game's extension hands the player.
 pub static STYLE: StyleDescriptor =
     StyleDescriptor::new("cyanotype", "Cyanotype", StyleStage::Display, create)
         .params(PARAMS)
-        .options(OPTIONS)
-        .hints(HINTS);
+        .options(OPTIONS);
 
 const PARAMS: &[StyleParam] = &[
-    StyleParam::new("exposure", 1.2, 0.25..=3.0),
-    StyleParam::new("bleed", 0.4, 0.0..=1.0),
-    StyleParam::new("coating", 0.07, 0.0..=0.2),
-    StyleParam::new("grain", 0.5, 0.0..=1.0),
-    StyleParam::new("strength", 1.0, 0.0..=1.0),
+    StyleParam::new("exposure", 1.2, 0.25..=3.0)
+        .label("Exposure")
+        .help("Time in the sun: longer turns the same light a deeper blue"),
+    StyleParam::new("bleed", 0.4, 0.0..=1.0)
+        .label("Bleed")
+        .help("Light creeping under the edges, up to 9 points across"),
+    StyleParam::new("coating", 0.07, 0.0..=0.2)
+        .label("Coating margin")
+        .help("Where the brush stopped: bare paper at each edge, as a share of the height"),
+    StyleParam::new("grain", 0.5, 0.0..=1.0)
+        .label("Paper grain")
+        .help("Fibres and tooth showing through the blue"),
+    StyleParam::new("strength", 1.0, 0.0..=1.0)
+        .label("Strength")
+        .help("0 = the picture, 1 = the print"),
 ];
 
-const OPTIONS: &[StyleOption] = &[StyleOption::new(
-    "process",
-    "photogram",
-    &["photogram", "print"],
-)];
-
-const HINTS: &[StyleHint] = &[
-    StyleHint::new(
-        "process",
-        "Process",
-        "photogram: light turns the paper blue and what stands in it stays white; \
+const OPTIONS: &[StyleOption] =
+    &[
+        StyleOption::new("process", "photogram", &["photogram", "print"])
+            .label("Process")
+            .help(
+                "photogram: light turns the paper blue and what stands in it stays white; \
          print: from a negative, light stays white and shadow turns blue",
-    ),
-    StyleHint::new(
-        "exposure",
-        "Exposure",
-        "Time in the sun: longer turns the same light a deeper blue",
-    ),
-    StyleHint::new(
-        "bleed",
-        "Bleed",
-        "Light creeping under the edges, up to 9 points across",
-    ),
-    StyleHint::new(
-        "coating",
-        "Coating margin",
-        "Where the brush stopped: bare paper at each edge, as a share of the height",
-    ),
-    StyleHint::new(
-        "grain",
-        "Paper grain",
-        "Fibres and tooth showing through the blue",
-    ),
-    StyleHint::new("strength", "Strength", "0 = the picture, 1 = the print"),
-];
+            ),
+    ];
 
 /// The dose: sharp luminance in r, the spread under edges in g. Half floats
 /// so a soft gradient survives to the print.

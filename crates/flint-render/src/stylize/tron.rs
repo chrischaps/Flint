@@ -10,35 +10,37 @@
 //! ```
 
 use super::reality::{self, row};
-use super::{StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleParam, StylePass, StyleStage};
+use super::{StyleDescriptor, StyleDevice, StyleFrame, StyleParam, StylePass, StyleStage};
 
 pub(super) static STYLE: StyleDescriptor =
     StyleDescriptor::new("tron", "Tron", StyleStage::Display, create)
         .params(&[
-            StyleParam::new("glow_r", 0.1, 0.0..=1.0),
+            StyleParam::new("glow_r", 0.1, 0.0..=1.0)
+                .label("Glow")
+                .help("The colour the edges and grid glow in"),
             StyleParam::new("glow_g", 0.9, 0.0..=1.0),
             StyleParam::new("glow_b", 1.0, 0.0..=1.0),
-            StyleParam::new("edges", 0.9, 0.0..=2.0),
-            StyleParam::new("dim", 0.08, 0.0..=1.0),
-            StyleParam::new("sky_dim", 0.05, 0.0..=1.0),
-            StyleParam::new("grid", 0.5, 0.0..=2.0),
-            StyleParam::new("spacing", 2.0, 0.1..=20.0),
-            StyleParam::new("pulse", 2.0, 0.0..=10.0),
-            StyleParam::new("reach", 50.0, 1.0..=500.0),
-        ])
-        .hints(&[
-            StyleHint::new("glow", "Glow", "The colour the edges and grid glow in"),
-            StyleHint::new("edges", "Edges", "How bright silhouettes and luminance edges glow"),
-            StyleHint::new("dim", "Dim", "How much of the scene shows under the glow"),
-            StyleHint::new("sky_dim", "Sky dim", "How much of the sky shows"),
-            StyleHint::new("grid", "Grid", "How bright the world-space grid glows"),
-            StyleHint::new(
-                "spacing",
-                "Spacing",
-                "Metres between grid lines; every fifth is stronger",
-            ),
-            StyleHint::new("pulse", "Pulse", "How fast the grid's glow pulses outward"),
-            StyleHint::new("reach", "Reach", "Metres over which the grid fades out"),
+            StyleParam::new("edges", 0.9, 0.0..=2.0)
+                .label("Edges")
+                .help("How bright silhouettes and luminance edges glow"),
+            StyleParam::new("dim", 0.08, 0.0..=1.0)
+                .label("Dim")
+                .help("How much of the scene shows under the glow"),
+            StyleParam::new("sky_dim", 0.05, 0.0..=1.0)
+                .label("Sky dim")
+                .help("How much of the sky shows"),
+            StyleParam::new("grid", 0.5, 0.0..=2.0)
+                .label("Grid")
+                .help("How bright the world-space grid glows"),
+            StyleParam::new("spacing", 2.0, 0.1..=20.0)
+                .label("Spacing")
+                .help("Metres between grid lines; every fifth is stronger"),
+            StyleParam::new("pulse", 2.0, 0.0..=10.0)
+                .label("Pulse")
+                .help("How fast the grid's glow pulses outward"),
+            StyleParam::new("reach", 50.0, 1.0..=500.0)
+                .label("Reach")
+                .help("Metres over which the grid fades out"),
         ])
         .draws_over_entities()
         .default_order(reality::ORDER);

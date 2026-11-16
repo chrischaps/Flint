@@ -12,7 +12,7 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleParam, StylePass,
     StyleStage,
 };
 use crate::postprocess::HDR_FORMAT;
@@ -25,39 +25,22 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
     create,
 )
 .params(&[
-    StyleParam::new("radius", 4.0, 1.0..=8.0),
-    StyleParam::new("sharpness", 8.0, 1.0..=16.0),
-    StyleParam::new("hardness", 8.0, 1.0..=16.0),
-    StyleParam::new("anisotropy", 1.0, 0.0..=2.0),
-    StyleParam::new("boil", 0.0, 0.0..=1.0),
-])
-.hints(&[
-    StyleHint::new(
-        "radius",
-        "Radius (px)",
-        "The brush: each sector's reach in scene pixels; bigger is more painterly and costs more",
-    )
-    .integer(),
-    StyleHint::new(
-        "sharpness",
-        "Sharpness",
-        "How strongly the least varied sector wins; lower blends sectors more softly",
-    ),
-    StyleHint::new(
-        "hardness",
-        "Hardness",
-        "How sharply sectors fall off; lower gives broader, smoother strokes",
-    ),
-    StyleHint::new(
-        "anisotropy",
-        "Anisotropy",
-        "How far strokes stretch along the image's edges; 0 is round",
-    ),
-    StyleHint::new(
-        "boil",
-        "Boil",
-        "How far each drawing of the wooze field moves the paint, as a share of the radius; needs a [wooze] table",
-    ),
+    StyleParam::new("radius", 4.0, 1.0..=8.0)
+        .label("Radius (px)")
+        .help("The brush: each sector's reach in scene pixels; bigger is more painterly and costs more")
+        .integer(),
+    StyleParam::new("sharpness", 8.0, 1.0..=16.0)
+        .label("Sharpness")
+        .help("How strongly the least varied sector wins; lower blends sectors more softly"),
+    StyleParam::new("hardness", 8.0, 1.0..=16.0)
+        .label("Hardness")
+        .help("How sharply sectors fall off; lower gives broader, smoother strokes"),
+    StyleParam::new("anisotropy", 1.0, 0.0..=2.0)
+        .label("Anisotropy")
+        .help("How far strokes stretch along the image's edges; 0 is round"),
+    StyleParam::new("boil", 0.0, 0.0..=1.0)
+        .label("Boil")
+        .help("How far each drawing of the wooze field moves the paint, as a share of the radius; needs a [wooze] table"),
 ]);
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {
