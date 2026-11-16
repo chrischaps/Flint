@@ -122,6 +122,11 @@ pub mod codes {
     /// A value written in two forms of which one is read (#682: a spot's
     /// `inner_angle` and `inner_angle_deg`): the other does nothing.
     pub const TWO_FORMS: &str = "two-forms";
+    /// A light's `cast_shadows` the renderer can't honour (#504): a second
+    /// spot asking (one spot casts, the first by name), a point light asking
+    /// (none casts yet), or the strongest directional light refusing. The
+    /// light still lights.
+    pub const SHADOW_CAP: &str = "shadow-cap";
 
     // What `flint check` adds (#687): the project around the scene.
 
@@ -445,6 +450,11 @@ pub mod codes {
             TWO_FORMS,
             Severity::Warning,
             "a value written in two forms, of which one is read",
+        ),
+        (
+            SHADOW_CAP,
+            Severity::Warning,
+            "a light's cast_shadows the renderer can't honour; it lights without",
         ),
     ];
 }
@@ -952,7 +962,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 50);
+        assert_eq!(seen.len(), 51);
     }
 
     /// A problem in a scene-level table names the table as its header is

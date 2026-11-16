@@ -72,8 +72,8 @@ pub use seed::Seed;
 pub use skinning::{BoneDef, SkeletonDef, SkinnedMeshData, SkinnedVertex, MAX_SKINNED_BONES};
 pub use spec::{
     discover_specs, DriftConfig, EchoBlend, EchoConfig, EchoCopy, EchoPlace, EchoPlaces,
-    JitterConfig, LivingConfig, LodLevel, ProcGenSpec, SeedConfig, SeedMode, SpecMeta, Stagger,
-    VarianceConfig,
+    JitterConfig, LivingConfig, LodLevel, NoiseConfig, PoseSource, ProcGenSpec, SeedConfig,
+    SeedMode, SpecMeta, Stagger, VarianceConfig,
 };
 pub use types::{
     BoundingBox, BranchSegment, ChannelSemantics, ImageData, MaterialData, MeshData, SubMesh,

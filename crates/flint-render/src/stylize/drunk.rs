@@ -10,23 +10,18 @@
 //! ```
 
 use super::reality::{self, own_blend};
-use super::{StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleParam, StylePass, StyleStage};
+use super::{StyleDescriptor, StyleDevice, StyleFrame, StyleParam, StylePass, StyleStage};
 
 pub(super) static STYLE: StyleDescriptor =
     StyleDescriptor::new("drunk", "Drunk", StyleStage::Display, create)
         .params(&[
-            StyleParam::new("sway", 1.0, 0.0..=4.0),
-            StyleParam::new("ghost", 1.0, 0.0..=2.5),
-            StyleParam::new("speed", 1.0, 0.0..=4.0),
-        ])
-        .hints(&[
-            StyleHint::new("sway", "Sway", "How far the frame wanders"),
-            StyleHint::new(
-                "ghost",
-                "Ghost",
-                "How far the double drifts and how strongly it shows",
-            ),
-            StyleHint::new("speed", "Speed", "How fast it all moves; 0 holds it still"),
+            StyleParam::new("sway", 1.0, 0.0..=4.0).label("Sway").help("How far the frame wanders"),
+            StyleParam::new("ghost", 1.0, 0.0..=2.5)
+                .label("Ghost")
+                .help("How far the double drifts and how strongly it shows"),
+            StyleParam::new("speed", 1.0, 0.0..=4.0)
+                .label("Speed")
+                .help("How fast it all moves; 0 holds it still"),
         ])
         .draws_over_entities()
         .default_order(reality::ORDER)

@@ -143,7 +143,8 @@ Why this shape:
 ### 3. Params
 
 Each `[params.<name>]` becomes a `StyleParam` (and a `StyleHint` when it
-has a label, help or `integer`). The descriptor's strings and slices are
+has a label, help or `integer`; since #510 those ride on the `StyleParam`
+itself, and `StyleHint` is gone). The descriptor's strings and slices are
 leaked once at load, so a user style is a `&'static StyleDescriptor` like
 a built-in. The registry becomes an append-only snapshot, the built-ins
 followed by user styles in load order. `StyleSet` keys built passes by

@@ -12,22 +12,47 @@ use crate::pipeline::TransformUniforms;
 use crate::shadow::{ShadowDrawUniforms, SHADOW_DRAW_STRIDE};
 use crate::sprite2d_pipeline::Sprite2dUniforms;
 
-/// Which slice of the main pass to render. `All` is the classic single-pass
-/// path; Pre/PostOcean split around the refraction grab (opaque scene is
-/// snapshotted between them so the ocean can sample it).
+/// Which slice of the main pass to render: the opaque scene (sky, terrain,
+/// grass, meshes, billboards, the grid), the ocean, and the rest (2D
+/// sprites, the blended draws, echoes, particles, the overlays). `ALL` is
+/// the single pass. The ocean's refraction grab ends the pass after the
+/// opaque scene (ADR 0094), and the fog veil (#513) after the ocean, to keep
+/// a copy of the picture behind the translucent draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RenderPhase {
-    All,
-    PreOcean,
-    PostOcean,
+pub(super) struct RenderPhase {
+    opaque: bool,
+    ocean: bool,
+    rest: bool,
 }
 
 impl RenderPhase {
-    fn draws_opaque(self) -> bool {
-        self != RenderPhase::PostOcean
+    pub const ALL: Self = Self::of(true, true, true);
+    /// Before the ocean's grab
+    pub const PRE_OCEAN: Self = Self::of(true, false, false);
+    /// After the ocean's grab
+    pub const POST_OCEAN: Self = Self::of(false, true, true);
+    /// After the grab, before the fog veil's copy
+    pub const OCEAN: Self = Self::of(false, true, false);
+    /// No grab, before the fog veil's copy
+    pub const OPAQUE_AND_OCEAN: Self = Self::of(true, true, false);
+    /// After the fog veil's copy
+    pub const REST: Self = Self::of(false, false, true);
+
+    const fn of(opaque: bool, ocean: bool, rest: bool) -> Self {
+        Self {
+            opaque,
+            ocean,
+            rest,
+        }
     }
-    fn draws_ocean_and_after(self) -> bool {
-        self != RenderPhase::PreOcean
+    fn draws_opaque(self) -> bool {
+        self.opaque
+    }
+    fn draws_ocean(self) -> bool {
+        self.ocean
+    }
+    fn draws_rest(self) -> bool {
+        self.rest
     }
 }
 
@@ -168,7 +193,8 @@ fn draw_caster<'p>(
 }
 
 impl SceneRenderer {
-    /// Render depth from light perspective for cascaded shadow mapping.
+    /// Render depth from light perspective for cascaded shadow mapping, and
+    /// from the casting spot's for its layer (#504).
     #[profiling::function]
     pub(super) fn render_shadow_pass(
         &mut self,
@@ -178,15 +204,19 @@ impl SceneRenderer {
         camera: &Camera,
         camera_pos: [f32; 3],
     ) {
-        // Off, forbidden by the scene, or no sun that gives any light (#627):
-        // nothing to draw
-        let drawn = self.shadows_drawn();
+        // Off, forbidden by the scene, or no sun that gives any light (#627)
+        // and no spot that casts (#504): nothing to draw
+        let sun_drawn = self.shadows_drawn();
+        let spot = self
+            .spot_shadow_drawn()
+            .then(|| self.lights.shadow_spot().copied())
+            .flatten();
         let shadow_pass = match &mut self.shadow_pass {
             Some(sp) => sp,
             None => return,
         };
 
-        if !drawn {
+        if !sun_drawn && spot.is_none() {
             // The shaders sample the maps whatever this pass does, so a pass
             // turned off at runtime would leave the last frame's shadows
             // standing (FlintKart#55). Zero splits read as "no shadows".
@@ -195,26 +225,50 @@ impl SceneRenderer {
         }
         shadow_pass.shadows_written_off = false;
 
-        // Use the first directional light for shadows
-        let light = &self.lights.uniforms.directional_lights[0];
+        let cascades = if sun_drawn {
+            // Use the first directional light for shadows
+            let light = &self.lights.uniforms.directional_lights[0];
 
-        // Update cascade matrices. The sun's angular size (radians, 0 =
-        // punctual) rides along as tan() for PCSS penumbra math (ADR 0057).
-        let camera_inv = camera.inverse_view_projection_matrix();
-        let sun_tan_angular = light.angular_size.tan().max(0.0);
-        // Quality settings (FlintKart#55): how far shadows reach and how many
-        // cascades cover it, 200 m and 3 unless a tier says otherwise. The
-        // camera's own planes map the split depths to its frustum.
-        let cascades = shadow_pass.cascades();
-        shadow_pass.update_cascades(
-            light.direction,
-            camera_pos,
-            camera_inv,
-            camera.near,
-            camera.far,
-            100.0,
-            sun_tan_angular,
-        );
+            // Update cascade matrices. The sun's angular size (radians, 0 =
+            // punctual) rides along as tan() for PCSS penumbra math (ADR 0057).
+            let camera_inv = camera.inverse_view_projection_matrix();
+            let sun_tan_angular = light.angular_size.tan().max(0.0);
+            // Quality settings (FlintKart#55): how far shadows reach and how many
+            // cascades cover it, 200 m and 3 unless a tier says otherwise. The
+            // camera's own planes map the split depths to its frustum.
+            shadow_pass.update_cascades(
+                light.direction,
+                camera_pos,
+                camera_inv,
+                camera.near,
+                camera.far,
+                100.0,
+                sun_tan_angular,
+            );
+            shadow_pass.cascades()
+        } else {
+            shadow_pass.clear_cascades();
+            0
+        };
+        shadow_pass.update_spot(spot.as_ref());
+
+        // The layers drawn, each with the matrix it is drawn through: the
+        // cascades, then the spot's (#504). Grass casts into the nearest
+        // cascades only: it takes no spot light.
+        let mut layers: Vec<(usize, [[f32; 4]; 4])> = (0..cascades)
+            .map(|cascade| {
+                (
+                    cascade,
+                    shadow_pass.shadow_uniforms().cascade_view_proj[cascade],
+                )
+            })
+            .collect();
+        if spot.is_some() {
+            layers.push((
+                crate::shadow::SPOT_SHADOW_LAYER,
+                shadow_pass.shadow_uniforms().spot_view_proj,
+            ));
+        }
 
         // Write shadow uniforms
         queue.write_buffer(
@@ -232,8 +286,7 @@ impl SceneRenderer {
         let mut draw_uniforms: Vec<ShadowDrawUniforms> = Vec::new();
         // Shallow wooze's drift, for the slots whose casters have any (#215).
         let mut draw_wooze = Vec::new();
-        for cascade in 0..cascades {
-            let cascade_vp = shadow_pass.shadow_uniforms().cascade_view_proj[cascade];
+        for &(_, cascade_vp) in &layers {
             let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
             for (item, caster) in shadow_casters(&self.draws, &self.terrain.draws) {
                 if !caster.visible(&cascade_frustum) {
@@ -297,14 +350,18 @@ impl SceneRenderer {
         // draws plain.
         let shadow_wooze = shadow_pass.wooze.as_ref();
 
-        // Render each cascade
-        for cascade in 0..cascades {
-            let cascade_vp = shadow_pass.shadow_uniforms().cascade_view_proj[cascade];
+        // Render each layer: the cascades, then the spot's
+        for &(cascade, cascade_vp) in &layers {
+            let label = if cascade == crate::shadow::SPOT_SHADOW_LAYER {
+                "Spot Shadow Pass"
+            } else {
+                "Shadow Cascade Pass"
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Shadow Cascade Pass"),
+                label: Some(label),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &shadow_pass.cascade_views[cascade],
+                    view: &shadow_pass.layer_views[cascade],
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -626,7 +683,7 @@ impl SceneRenderer {
         }
 
         // Normal arrows pass (always uses line pipeline)
-        if self.debug_state.show_normals && phase.draws_ocean_and_after() {
+        if self.debug_state.show_normals && phase.draws_rest() {
             render_pass.set_pipeline(&self.pipelines.main.line_pipeline);
             for draw in &self.normal_arrow_draws {
                 render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
@@ -639,7 +696,7 @@ impl SceneRenderer {
         }
 
         // Skeleton overlay pass (bone lines, drawn on top of everything — no depth test)
-        if self.debug_state.show_skeleton && phase.draws_ocean_and_after() {
+        if self.debug_state.show_skeleton && phase.draws_rest() {
             render_pass.set_pipeline(&self.pipelines.main.skeleton_line_pipeline);
             render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
             for draw in &self.skeleton_overlay_draws {
@@ -654,7 +711,7 @@ impl SceneRenderer {
 
         // Editor/gizmo overlay (ADR 0068): same line pipeline, never gated
         // behind the skeleton toggle.
-        if !self.debug_overlay_draws.is_empty() && phase.draws_ocean_and_after() {
+        if !self.debug_overlay_draws.is_empty() && phase.draws_rest() {
             render_pass.set_pipeline(&self.pipelines.main.skeleton_line_pipeline);
             // The particle pass may have left its texture bind group at slot 2.
             render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
@@ -795,7 +852,7 @@ impl SceneRenderer {
 
         // Ocean rendering (after all opaque — writes depth so fog applies;
         // group 3 holds the grab-pass snapshots, or dummies when disabled)
-        if self.water_active() && phase.draws_ocean_and_after() {
+        if self.water_active() && phase.draws_ocean() {
             self.water.draw(
                 render_pass,
                 self.pipelines.ocean.as_deref(),
@@ -813,7 +870,7 @@ impl SceneRenderer {
             self.draw_editor_grid(render_pass);
         } // end opaque phase (entities + skinned + billboards + grid)
 
-        if !phase.draws_ocean_and_after() {
+        if !phase.draws_rest() {
             return;
         }
 
@@ -1442,6 +1499,13 @@ impl SceneRenderer {
             self.post_time(),
             self.ground_fog.as_ref(),
             &scene,
+            // The fog veil (#513), while this frame drew it and the
+            // composite reads the HDR buffer it was drawn over (an HDR
+            // style's result isn't that picture)
+            resources
+                .fog_veil
+                .as_ref()
+                .filter(|_| self.fog_veil.drawn && hdr_scene.is_none()),
             if fxaa_active {
                 None
             } else {

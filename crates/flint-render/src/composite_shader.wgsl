@@ -114,6 +114,15 @@ var volumetric_sampler: sampler;
 @group(3) @binding(6)
 var ground_fog_map: texture_2d<f32>;
 
+// The fog veil (#513, `scene_renderer/fog_veil.rs`), read only where
+// FOG_VEILED, which Rust prepends: the picture as it stood before the
+// first translucent draw, and the veil (r = weight x (1 - depth),
+// g = weight, a = the share of what's behind that still shows).
+@group(3) @binding(7)
+var fog_behind_texture: texture_2d<f32>;
+@group(3) @binding(8)
+var fog_veil_texture: texture_2d<f32>;
+
 struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
@@ -326,6 +335,11 @@ fn ground_fog_depth(uv: vec2<f32>, depth: f32, pixel: vec2<f32>) -> f32 {
 // aerial tint's share (0..fog_tint_strength), both 0 for the sky.
 fn compute_fog(uv: vec2<f32>) -> vec2<f32> {
     let depth = textureSample(depth_texture, depth_sampler_nn, uv).r;
+    return fog_at(uv, depth);
+}
+
+// The same at a depth of the caller's: the fog veil's (#513).
+fn fog_at(uv: vec2<f32>, depth: f32) -> vec2<f32> {
     // Skip the sky; everything drawn is fogged, however far
     if (is_sky_depth(depth)) {
         return vec2<f32>(0.0, 0.0);
@@ -352,6 +366,27 @@ fn compute_fog(uv: vec2<f32>) -> vec2<f32> {
     }
 
     return vec2<f32>(clamp(fog, 0.0, 1.0), tint);
+}
+
+// The ground fog, aerial tint and fog over one layer of a pixel (#513):
+// `c` is the layer's light, already weighted by `share`, the part of the
+// pixel it holds, at `depth`; each fog takes its colour by that share. A
+// pixel's two layers (the picture behind a translucent draw and the draw's
+// own light) are fogged apart and added.
+fn fog_layer(c_in: vec3<f32>, share: f32, uv: vec2<f32>, depth: f32, pixel: vec2<f32>) -> vec3<f32> {
+    var c = c_in;
+    if (params.ground_fog_enabled > 0.5) {
+        let optical = ground_fog_depth(uv, depth, pixel);
+        c = mix(c, params.ground_fog_color * share, 1.0 - exp(-optical));
+    }
+    if (params.fog_enabled > 0.5) {
+        let fog = fog_at(uv, depth);
+        if (fog.y > 0.0) {
+            c = mix(c, params.fog_tint_color * share, fog.y);
+        }
+        c = mix(c, params.fog_color * share, fog.x);
+    }
+    return c;
 }
 
 // 8x8 Bayer ordered dither matrix — returns value in [0, 1)
@@ -480,6 +515,30 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     let bloom = textureSample(bloom_texture, bloom_sampler, uv).rgb;
     color = color + bloom * params.bloom_intensity;
 
+    // ── The fog veil (#513): where a translucent draw lies, the pixel is
+    // two layers, fogged apart. What still shows of the picture behind it
+    // (`shows` x that picture) at the scene's depth, as any pixel is; the
+    // draw's own light (the rest) at the veil's depth, so an echo in front
+    // of a horizon is one colour across it. Everywhere else, the fog below,
+    // which runs everywhere so its texture reads stay in uniform control
+    // flow; the veiled pixels take this instead after it.
+    var veiled = false;
+    var veiled_color = vec3<f32>(0.0);
+    if (FOG_VEILED) {
+        let veil = textureSampleLevel(fog_veil_texture, depth_sampler_nn, uv, 0.0);
+        let behind = textureSampleLevel(fog_behind_texture, hdr_sampler, uv, 0.0).rgb;
+        let drawn = textureSampleLevel(hdr_texture, hdr_sampler, uv, 0.0).rgb;
+        let depth = textureSampleLevel(depth_texture, depth_sampler_nn, uv, 0.0).r;
+        if (veil.g > 1e-4 && (params.fog_enabled > 0.5 || params.ground_fog_enabled > 0.5)) {
+            veiled = true;
+            let shows = clamp(veil.a, 0.0, 1.0);
+            let own = drawn - shows * behind;
+            let veil_depth = clamp(1.0 - veil.r / veil.g, 0.0, 1.0);
+            veiled_color = fog_layer(color - own, shows, uv, depth, in.position.xy)
+                + fog_layer(own, 1.0 - shows, uv, veil_depth, in.position.xy);
+        }
+    }
+
     // ── Ground fog (ADR 0106): a mist on floors of its own, under the
     // aerial tint and the fog, which take it with what lies behind it ──
     if (params.ground_fog_enabled > 0.5) {
@@ -497,6 +556,9 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
             color = mix(color, params.fog_tint_color, fog.y);
         }
         color = mix(color, params.fog_color, fog.x);
+    }
+    if (veiled) {
+        color = veiled_color;
     }
 
     // ── Exposure → Tonemapping ──

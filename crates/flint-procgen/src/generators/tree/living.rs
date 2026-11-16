@@ -8,6 +8,10 @@
 //! This works because the built-in L-system rule rewrites every `F` the same
 //! way and draws only angles from the RNG: every seed grows the same segments
 //! in the same order (#207). `generate` itself is untouched.
+//!
+//! A tree that can't regrow (space colonization, a text grammar) lives by
+//! noise instead, with `[living] pose = "noise"` (#506): its poses keep the
+//! lineage's segments and bend them, so any structure will do.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -20,12 +24,13 @@ use crate::generator::LivingGenerator;
 use crate::living::BOIL_BONES;
 use crate::living::{LeafBinding, LivingPose, LivingRig, LivingSkeleton, SegmentPose};
 use crate::skinning::{BoneDef, SkeletonDef, SkinnedMeshData, SkinnedVertex, MAX_SKINNED_BONES};
-use crate::spec::ProcGenSpec;
+use crate::spec::{PoseSource, ProcGenSpec};
 use crate::types::{BranchSegment, MeshData};
 use crate::{ProcGenError, Result, SeededRng};
 
 use super::branches::{extract_tips, grow_branch_segments, segments_to_mesh, tube_influences};
 use super::leaves::{card_index_count, generate_leaves};
+use super::noise_pose::{noise_pose, set_branch_orders};
 use super::trunk::trunk_spine;
 use super::{
     generate_tree, generate_trunk, join_bark_and_leaves, BranchMethod, BranchParams, LeafParams,
@@ -35,6 +40,9 @@ use super::{
 impl LivingGenerator for TreeGenerator {
     fn check_living(&self, spec: &ProcGenSpec) -> Result<()> {
         let branch = BranchParams::from_toml(&spec.params)?;
+        if pose_source(spec) == PoseSource::Noise {
+            return Ok(());
+        }
         let reason = match branch.method {
             BranchMethod::SpaceColonization => {
                 "space colonization grows a different structure for every seed, and pinning \
@@ -47,7 +55,7 @@ impl LivingGenerator for TreeGenerator {
             BranchMethod::LSystem => return Ok(()),
         };
         Err(ProcGenError::LivingUnsupported(format!(
-            "{reason}; it gets shallow wooze only"
+            "{reason}; it gets shallow wooze only, unless `[living] pose = \"noise\"` lets it              live by bending its own branches"
         )))
     }
 
@@ -71,6 +79,13 @@ impl LivingGenerator for TreeGenerator {
         )?;
         let card_indices = card_index_count(leaf.style);
         let leaf_bindings = bind_cards(&leaf_mesh, card_indices, &segments);
+
+        // Leaves were placed by the grown depth, as `generate` places them;
+        // the clock and the variance read branch order from here on.
+        let mut segments = segments;
+        if branch.method == BranchMethod::SpaceColonization {
+            set_branch_orders(&mut segments);
+        }
 
         Ok(LivingSkeleton {
             lineage_seed,
@@ -153,6 +168,9 @@ impl LivingGenerator for TreeGenerator {
         shape_seed: u64,
     ) -> Result<LivingPose> {
         self.check_living(spec)?;
+        if let Some(living) = spec.living.as_ref().filter(|l| l.pose == PoseSource::Noise) {
+            return Ok(noise_pose(skeleton, &living.noise, shape_seed));
+        }
         let regrown = regrow(spec, skeleton.lineage_seed, shape_seed)?;
         let same_structure = regrown.len() == skeleton.segments.len()
             && regrown
@@ -203,6 +221,11 @@ impl LivingGenerator for TreeGenerator {
             &skeleton.posed_leaf_mesh(pose)?,
         ))
     }
+}
+
+/// Where `spec`'s poses come from: regrowth unless its `[living]` says noise.
+fn pose_source(spec: &ProcGenSpec) -> PoseSource {
+    spec.living.as_ref().map_or(PoseSource::Regrow, |l| l.pose)
 }
 
 /// The trunk every pose of a lineage grows from.
@@ -260,9 +283,17 @@ fn rotation_between(a: Vec3, b: Vec3) -> [f32; 4] {
 /// Which bone each segment rides, and which segment each bone follows, with
 /// at most `budget` bones for segments and bone 0 left for the trunk.
 ///
-/// While there are too many, the shortest segment with nothing left hanging
-/// from it folds into its parent: the tree loses the bones that show least,
-/// from the tips in, and a bone's parent always survives it.
+/// While there are too many, a segment with nothing left hanging from it
+/// folds into its parent: the tree loses the bones that show least, from the
+/// tips in, and a bone's parent always survives it.
+///
+/// The one to fold is the one that would leave the shortest run riding its
+/// parent's bone rigidly: its own length and the longest run already folded
+/// into it. A tip goes before what it hangs from, so a tree that folds a few
+/// tips folds the shortest. On a space-colonization tree, whose limbs are
+/// long chains of equal steps, this takes a step off every twig in turn
+/// rather than a whole twig at once, so no folded twig strays far from its
+/// pose (#506).
 fn assign_bones(segments: &[BranchSegment], budget: usize) -> (Vec<u16>, Vec<Option<u32>>) {
     let mut folded = vec![false; segments.len()];
     let excess = segments.len().saturating_sub(budget);
@@ -271,22 +302,27 @@ fn assign_bones(segments: &[BranchSegment], budget: usize) -> (Vec<u16>, Vec<Opt
         for parent in segments.iter().filter_map(|s| s.parent) {
             children[parent as usize] += 1;
         }
+        // The longest run folded into each segment so far.
+        let mut hanging = vec![0.0f32; segments.len()];
         // Lengths are never negative, so their bits order as they do.
-        let terminal = |s: &BranchSegment| Reverse((s.length().to_bits(), s.id));
+        let terminal =
+            |s: &BranchSegment, hanging: f32| Reverse(((s.length() + hanging).to_bits(), s.id));
         let mut ready: BinaryHeap<_> = segments
             .iter()
             .filter(|s| children[s.id as usize] == 0)
-            .map(terminal)
+            .map(|s| terminal(s, 0.0))
             .collect();
         for _ in 0..excess {
-            let Some(Reverse((_, id))) = ready.pop() else {
+            let Some(Reverse((run, id))) = ready.pop() else {
                 break;
             };
             folded[id as usize] = true;
             if let Some(parent) = segments[id as usize].parent {
-                children[parent as usize] -= 1;
-                if children[parent as usize] == 0 {
-                    ready.push(terminal(&segments[parent as usize]));
+                let p = parent as usize;
+                hanging[p] = hanging[p].max(f32::from_bits(run));
+                children[p] -= 1;
+                if children[p] == 0 {
+                    ready.push(terminal(&segments[p], hanging[p]));
                 }
             }
         }
@@ -745,6 +781,7 @@ mod tests {
             let message = result.expect("expected a refusal").to_string();
             assert!(message.contains(says), "{message}");
             assert!(message.contains("shallow wooze"), "{message}");
+            assert!(message.contains("pose = \"noise\""), "{message}");
         }
     }
 
@@ -764,6 +801,240 @@ mod tests {
             .unwrap()
             .insert("lsystem_preset".into(), "stochastic_plant".into());
         assert_unsupported(&spec, "text grammar");
+    }
+
+    // ── Noise poses (#506) ──────────────────────────────────────────────
+
+    const PINE: &str = "specs/examples/pine_tree.procgen.toml";
+    const WILLOW: &str = "specs/weeping_willow.procgen.toml";
+    const GROVE_OAK: &str = "examples/specs/grove_oak.procgen.toml";
+
+    /// `relative` with `[living] pose = "noise"`, at the default variance.
+    fn noisy(relative: &str) -> ProcGenSpec {
+        let mut spec = at_variance(relative, VarianceConfig::default());
+        spec.living.as_mut().unwrap().pose = PoseSource::Noise;
+        spec
+    }
+
+    #[test]
+    fn noise_poses_let_colonization_and_grammars_live() {
+        for relative in [PINE, WILLOW, GROVE_OAK] {
+            let spec = noisy(relative);
+            TreeGenerator.check_living(&spec).unwrap();
+            let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+            assert_eq!(
+                skeleton,
+                TreeGenerator.structure(&spec, LINEAGE).unwrap(),
+                "{relative}: structure isn't a function of the lineage"
+            );
+            // The segments are the ones `generate` bakes, depth aside.
+            let tree = generate_tree(
+                &TrunkParams::from_toml(&spec.params).unwrap(),
+                &BranchParams::from_toml(&spec.params).unwrap(),
+                &mut SeededRng::new(LINEAGE),
+            )
+            .unwrap();
+            assert_eq!(skeleton.segments.len(), tree.branch_segments.len());
+            for (a, b) in skeleton.segments.iter().zip(&tree.branch_segments) {
+                assert_eq!(
+                    (a.id, a.parent, a.start, a.end),
+                    (b.id, b.parent, b.start, b.end)
+                );
+            }
+
+            // The same bits for the same seeds, and another seed moves it.
+            let pose = |k| TreeGenerator.pose(&spec, &skeleton, k).unwrap();
+            for k in [0, 1, 17] {
+                assert_eq!(pose(k), pose(k), "{relative} seed {k}");
+            }
+            assert_ne!(pose(1).segments, pose(2).segments, "{relative}");
+        }
+    }
+
+    #[test]
+    fn a_noise_pose_bends_without_twisting() {
+        for relative in [PINE, WILLOW] {
+            let spec = noisy(relative);
+            let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+            for shape_seed in 0..8 {
+                let pose = TreeGenerator
+                    .full_pose(&spec, &skeleton, shape_seed)
+                    .unwrap();
+                let mut bent = 0;
+                for (rest, p) in skeleton.segments.iter().zip(&pose.segments) {
+                    // A twist about the segment is a rotation axis along it.
+                    let axis = Vec3::new(p.rotation[0], p.rotation[1], p.rotation[2]);
+                    let along = axis.dot(&rest.direction()).abs();
+                    assert!(along < 1e-4, "{relative} segment {}: {along}", rest.id);
+                    assert!((0.5..=1.5).contains(&p.length_scale));
+                    assert_eq!(p.radius_scale, 1.0);
+                    assert_eq!(p.slide, [0.0; 3]);
+                    bent += usize::from(axis.length() > 1e-3);
+                }
+                assert!(
+                    bent * 10 > skeleton.segments.len() * 9,
+                    "{relative}: {bent}"
+                );
+            }
+        }
+    }
+
+    /// Bones under the trunk, the most a tree may have once the jitter layer
+    /// has its share.
+    const SEGMENT_BONE_BUDGET: usize = MAX_SKINNED_BONES - 1 - BOIL_BONES;
+
+    #[test]
+    fn a_colonization_or_grammar_tree_folds_into_the_bone_budget_and_keeps_its_joints() {
+        for relative in [PINE, WILLOW] {
+            let spec = noisy(relative);
+            let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+            assert!(skeleton.segments.len() > SEGMENT_BONE_BUDGET, "{relative}");
+            let rig = rig_of(&spec);
+            assert_eq!(
+                rig.bone_segments.len(),
+                SEGMENT_BONE_BUDGET + 1,
+                "{relative}"
+            );
+            weights_sum_to_one(&rig.mesh, relative);
+
+            // A tree that bakes living bakes its rest, whatever the RNG.
+            match TreeGenerator
+                .generate(&spec, &mut SeededRng::new(99))
+                .unwrap()
+            {
+                GeneratorOutput::SkinnedMesh(mesh) => assert_eq!(mesh, rig.mesh),
+                other => panic!("expected a skinned mesh, got {:?}", other.kind()),
+            }
+
+            let kept =
+                |id: u32| rig.bone_segments[rig.segment_bones[id as usize] as usize] == Some(id);
+            for shape_seed in [1, 2, 3] {
+                let pose = TreeGenerator.pose(&spec, &skeleton, shape_seed).unwrap();
+                let posed = skeleton.posed_segments(&pose).unwrap();
+                let palette = palette_of(&rig, &skeleton, &pose);
+                for (rest, now) in skeleton.segments.iter().zip(&posed) {
+                    let bone = &palette[rig.segment_bones[rest.id as usize] as usize];
+                    // Both sides of a joint put it in one place.
+                    if let Some(parent) = rest.parent {
+                        let parent_bone = &palette[rig.segment_bones[parent as usize] as usize];
+                        let (a, b) = (
+                            transform(parent_bone, rest.start),
+                            transform(bone, rest.start),
+                        );
+                        assert!(close(a, b, 2e-3), "{relative} joint {}", rest.id);
+                    }
+                    // A segment that kept its bone is where the pose puts it.
+                    if kept(rest.id) {
+                        assert!(
+                            close(transform(bone, rest.end), now.end, 2e-3),
+                            "{relative} seed {shape_seed} segment {}",
+                            rest.id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// How far, at most and on average, a folded segment's end sits from
+    /// where its own pose would put it, over a few held noise poses: what a
+    /// tree with more segments than bones gives up.
+    fn fold_error(relative: &str) -> (f32, f32) {
+        let spec = noisy(relative);
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        let rig = rig_of(&spec);
+        let (mut worst, mut sum, mut n) = (0.0f32, 0.0f32, 0usize);
+        for shape_seed in [1, 2, 3, 4] {
+            let pose = TreeGenerator.pose(&spec, &skeleton, shape_seed).unwrap();
+            let posed = skeleton.posed_segments(&pose).unwrap();
+            let palette = palette_of(&rig, &skeleton, &pose);
+            for (rest, now) in skeleton.segments.iter().zip(&posed) {
+                let bone = rig.segment_bones[rest.id as usize] as usize;
+                if rig.bone_segments[bone] == Some(rest.id) {
+                    continue;
+                }
+                let error = (transform(&palette[bone], rest.end) - now.end).length();
+                worst = worst.max(error);
+                sum += error;
+                n += 1;
+            }
+        }
+        (worst, sum / n.max(1) as f32)
+    }
+
+    /// The pine folds 397 of its 640 segments. Folding whole twigs from the
+    /// tip left them 3.2 cm off on average and 19.7 cm at worst; a step off
+    /// every twig in turn leaves 1.5 and 9.4, on a tree 9 m tall.
+    #[test]
+    fn the_fold_keeps_a_folded_twig_within_a_few_centimetres() {
+        for relative in [PINE, WILLOW] {
+            let (worst, mean) = fold_error(relative);
+            eprintln!(
+                "{relative}: folded twigs off by {mean:.4} m on average, {worst:.4} m at worst"
+            );
+            assert!(mean < 0.02 && worst < 0.12, "{relative}: {mean} / {worst}");
+        }
+    }
+
+    #[test]
+    fn colonization_reads_branch_order_and_the_l_systems_keep_their_depth() {
+        let pine = noisy(PINE);
+        let skeleton = TreeGenerator.structure(&pine, LINEAGE).unwrap();
+        let grown = generate_tree(
+            &TrunkParams::from_toml(&pine.params).unwrap(),
+            &BranchParams::from_toml(&pine.params).unwrap(),
+            &mut SeededRng::new(LINEAGE),
+        )
+        .unwrap()
+        .branch_segments;
+        let grown_depth = grown.iter().map(|s| s.depth).max().unwrap();
+        assert!(grown_depth > 20, "the pine grew {grown_depth} steps deep");
+        assert!(
+            (2..=4).contains(&skeleton.max_depth()),
+            "{} branch orders",
+            skeleton.max_depth()
+        );
+        // Every segment off the trunk is order 1, and a fork adds at most one.
+        for s in &skeleton.segments {
+            match s.parent {
+                None => assert_eq!(s.depth, 1),
+                Some(p) => {
+                    let up = s.depth - skeleton.segments[p as usize].depth;
+                    assert!(up <= 1, "segment {}", s.id);
+                }
+            }
+        }
+
+        // An L-system's depth is a branch order already, and noise keeps it:
+        // the oak's skeleton is the one regrowth has.
+        let regrown = TreeGenerator
+            .structure(&at_variance(GROVE_OAK, VarianceConfig::default()), LINEAGE)
+            .unwrap();
+        assert_eq!(
+            TreeGenerator.structure(&noisy(GROVE_OAK), LINEAGE).unwrap(),
+            regrown
+        );
+    }
+
+    #[test]
+    fn a_noise_pine_holds_on_every_beat_under_per_level_stagger() {
+        let spec = noisy(PINE);
+        let skeleton = TreeGenerator.structure(&spec, LINEAGE).unwrap();
+        let mut stream = crate::PoseStream::new(
+            &TreeGenerator,
+            &spec,
+            &skeleton,
+            clock(0.3, crate::Stagger::PerLevel),
+        );
+        // 12 fps on a 0.5 s step: a beat is six frames, four seconds is eight.
+        let frames: Vec<_> = (0..48)
+            .map(|f| stream.at(f64::from(f) / 12.0).unwrap().segments)
+            .collect();
+        let held: Vec<bool> = frames.windows(2).map(|w| w[0] == w[1]).collect();
+        for beat in held.chunks(6) {
+            assert!(beat.contains(&true), "a beat with no hold: {held:?}");
+        }
+        assert!(held.contains(&false), "it never moved");
     }
 
     #[test]
@@ -930,6 +1201,8 @@ mod tests {
             echo_slide: 0.0,
             echo_places: Default::default(),
             softness: 0.0,
+            pose: Default::default(),
+            noise: Default::default(),
         });
         living.variance = variance;
         spec.living = Some(living);

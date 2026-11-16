@@ -142,6 +142,16 @@ impl Gpu {
 
     /// The RGBA8 pixel at the centre of the last frame.
     fn centre_pixel(&self) -> [u8; 4] {
+        self.pixel(SIZE / 2, SIZE / 2)
+    }
+
+    /// The RGBA8 pixel at (`x`, `y`) of the last frame, from the top left.
+    fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
+        self.column(x)[y as usize]
+    }
+
+    /// Column `x` of the last frame, top to bottom.
+    fn column(&self, x: u32) -> Vec<[u8; 4]> {
         let row = (SIZE * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -176,8 +186,12 @@ impl Gpu {
             .slice(..)
             .get_mapped_range()
             .expect("mapped buffer range");
-        let at = (row * (SIZE / 2) + (SIZE / 2) * 4) as usize;
-        [data[at], data[at + 1], data[at + 2], data[at + 3]]
+        (0..SIZE)
+            .map(|y| {
+                let at = (row * y + x * 4) as usize;
+                [data[at], data[at + 1], data[at + 2], data[at + 3]]
+            })
+            .collect()
     }
 }
 
@@ -1705,6 +1719,108 @@ fn a_ground_fog_lies_on_its_floors() {
     assert!(!renderer.has_ground_fog());
     gpu.frame(&mut renderer, &world, &camera);
     assert!(close(clear, gpu.centre_pixel()), "a clear map clears it");
+}
+
+/// A translucent pane in front of a horizon, in fog (#513). The composite
+/// fogs by the depth buffer and the pane writes no depth, so it used to be
+/// fogged as whatever lay behind it: as far ground (gone into the fog)
+/// below the ground's far edge, as sky (which isn't fogged) above it, with
+/// a hard line across the pane between. Here the sky is the fog's own
+/// colour, so what's behind looks nearly alike on both sides of the edge,
+/// and the pane, nearer than the fog starts, must look alike too.
+#[test]
+fn a_translucent_draw_is_fogged_at_its_own_depth() {
+    let gpu = gpu_or_skip!();
+    const FOG: [f32; 3] = [0.30, 0.34, 0.42];
+    let level = |a: [u8; 4], b: [u8; 4]| (0..3).map(|i| a[i].abs_diff(b[i])).max().unwrap();
+    // 4 m over the ground, looking straight ahead at its far edge 46 m off
+    let camera = Camera {
+        position: flint_core::Vec3::new(0.0, 4.0, 6.0),
+        target: flint_core::Vec3::new(0.0, 4.0, 0.0),
+        aspect: 1.0,
+        ..Camera::default()
+    };
+    // A pane 3 m off, standing across the whole column, two metres wide
+    let pane = |color: [f32; 4]| {
+        let v = |x: f32, y: f32| Vertex {
+            position: [x, y, 0.0],
+            normal: [0.0, 0.0, 1.0],
+            color,
+            uv: [0.0, 0.0],
+        };
+        let vertices = vec![v(-1.0, 0.5), v(1.0, 0.5), v(1.0, 8.0), v(-1.0, 8.0)];
+        (vertices, vec![0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2])
+    };
+    let (inside, outside) = (SIZE / 2, 2);
+    for samples in [1, 4] {
+        let mut renderer = SceneRenderer::new_headless(
+            gpu.device,
+            gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig {
+                sample_count: samples,
+                ..Default::default()
+            },
+        );
+        renderer.set_clear_color([FOG[0], FOG[1], FOG[2], 1.0]);
+        let mut world = FlintWorld::new();
+        let (ground, indices) = square(40.0, [0.05, 0.05, 0.05, 1.0]);
+        let material = ImportedMaterial::vertex_colored("ground");
+        renderer.load_procedural_mesh(gpu.device, "ground", &ground, &indices, material);
+        spawn(&mut world, "ground", "ground", [0.0; 3]);
+
+        // With no fog: the first row of ground under the sky
+        gpu.frame(&mut renderer, &world, &camera);
+        let column = gpu.column(inside);
+        let horizon = column
+            .iter()
+            .position(|p| level(*p, column[0]) > 8)
+            .expect("ground under the sky");
+        assert!(
+            (8..SIZE as usize - 8).contains(&horizon),
+            "{samples}x: the horizon at row {horizon}"
+        );
+        let (above, below) = (horizon as u32 - 2, horizon as u32 + 1);
+
+        let (vertices, indices) = pane([1.0, 0.45, 0.1, 1.0]);
+        let material = ImportedMaterial::vertex_colored("pane");
+        renderer.load_procedural_mesh(gpu.device, "pane", &vertices, &indices, material);
+        spawn(&mut world, "pane", "pane", [0.0, 0.0, 3.0]);
+        let id = world.get_id("pane").unwrap();
+        let mut glass = toml::Table::new();
+        glass.insert("opacity".into(), 0.4.into());
+        world.set_component(id, "material", glass.into()).unwrap();
+
+        let mut config = renderer.post_process_config().clone();
+        config.fog_enabled = true;
+        config.fog_color = FOG;
+        config.fog_density = 0.09;
+        config.fog_start = 4.0;
+        renderer.set_post_process_config(config);
+        gpu.frame(&mut renderer, &world, &camera);
+        let (pane_above, pane_below) = (gpu.pixel(inside, above), gpu.pixel(inside, below));
+        let (sky, ground) = (gpu.pixel(outside, above), gpu.pixel(outside, below));
+
+        // The fog took the far ground: behind the pane is near enough alike
+        assert!(
+            level(sky, ground) <= 6,
+            "{samples}x: sky {sky:?}, fogged ground {ground:?}"
+        );
+        // The pane shows, on both sides of the edge
+        assert!(
+            level(pane_above, sky) > 20 && level(pane_below, ground) > 20,
+            "{samples}x: the pane {pane_above:?} / {pane_below:?} over {sky:?} / {ground:?}"
+        );
+        // And reads as one pane across it, no seam: it was the sky's colour
+        // under the edge, unfogged over it
+        assert!(
+            level(pane_above, pane_below) <= level(sky, ground) + 3,
+            "{samples}x: a seam across the pane at row {horizon}: \
+             {pane_above:?} over it, {pane_below:?} under it"
+        );
+    }
 }
 
 /// Thousands of distinct material looks draw on every backend. wgpu 23's

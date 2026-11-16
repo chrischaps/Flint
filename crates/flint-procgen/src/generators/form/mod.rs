@@ -456,8 +456,19 @@ impl FormGenerator {
 }
 
 impl LivingGenerator for FormGenerator {
-    /// Every `form_v1` spec is living. Only its params can be wrong.
+    /// Every `form_v1` spec is living. Only its params can be wrong, or a
+    /// `[living] pose` it has no use for: its poses come from its own curve.
     fn check_living(&self, spec: &ProcGenSpec) -> Result<()> {
+        if spec
+            .living
+            .as_ref()
+            .is_some_and(|l| l.pose == crate::spec::PoseSource::Noise)
+        {
+            return Err(ProcGenError::LivingUnsupported(
+                "form_v1 draws its poses from its own curve (`bend_deg`, `ripple`, ...);                  `[living] pose = \"noise\"` is for trees"
+                    .into(),
+            ));
+        }
         FormParams::from_toml(&spec.params).map(|_| ())
     }
 

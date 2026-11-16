@@ -141,6 +141,12 @@ impl StyleStage {
 /// One numeric parameter a style takes, with the range the F4 menu offers.
 /// A value outside it is refused by `--style` and warned about in a scene
 /// table (#355): a style clamps it or draws it badly.
+///
+/// How the menu presents it rides on it too (#510): `.label(..)`,
+/// `.help(..)`, `.integer()`, `.when(..)` / `.unless(..)` ([`StyleUi`]).
+/// A colour's (`tint`, three parameters `tint_r/_g/_b`) are set on its red
+/// channel, where the menu's picker stands; on the other two they mean
+/// nothing.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct StyleParam {
@@ -148,6 +154,8 @@ pub struct StyleParam {
     pub default: f32,
     pub min: f32,
     pub max: f32,
+    /// Its label, help, whole-number stepping and conditions.
+    pub ui: StyleUi,
 }
 
 impl StyleParam {
@@ -165,7 +173,42 @@ impl StyleParam {
             default,
             min: *range.start(),
             max: *range.end(),
+            ui: StyleUi::NONE,
         }
+    }
+
+    /// What the F4 menu calls it ("Cell size (pt)"); unset, its name made
+    /// readable ("Cell").
+    pub const fn label(mut self, label: &'static str) -> Self {
+        self.ui.label = label;
+        self
+    }
+
+    /// One line for the hover text.
+    pub const fn help(mut self, help: &'static str) -> Self {
+        self.ui.help = help;
+        self
+    }
+
+    /// Whole numbers only (a cell size, a count): the slider steps by 1
+    /// and Copy TOML writes `cell = 8`.
+    pub const fn integer(mut self) -> Self {
+        self.ui.integer = true;
+        self
+    }
+
+    /// Read only while option `option` is one of `values` (#365):
+    /// `.when("color", &["tint"])`.
+    pub const fn when(mut self, option: &'static str, values: &'static [&'static str]) -> Self {
+        self.ui = self.ui.condition(option, values, false);
+        self
+    }
+
+    /// Does nothing while option `option` is one of `values` (#365):
+    /// `.unless("color", &["palette"])`.
+    pub const fn unless(mut self, option: &'static str, values: &'static [&'static str]) -> Self {
+        self.ui = self.ui.condition(option, values, true);
+        self
     }
 
     /// Why `value` won't draw as written, when it lies outside
@@ -209,6 +252,8 @@ pub struct StyleOption {
     /// option is open: a value outside either list (a file path) is the
     /// style's to resolve, so `--style` doesn't refuse it.
     pub discover: Option<fn(&ChoiceScope<'_>) -> Vec<String>>,
+    /// Its label, help and conditions ([`StyleUi`], #510).
+    pub ui: StyleUi,
 }
 
 impl StyleOption {
@@ -223,12 +268,38 @@ impl StyleOption {
             default,
             choices,
             discover: None,
+            ui: StyleUi::NONE,
         }
     }
 
     /// The same option, with its choices found at run time.
     pub const fn discovered(mut self, discover: fn(&ChoiceScope<'_>) -> Vec<String>) -> Self {
         self.discover = Some(discover);
+        self
+    }
+
+    /// What the F4 menu calls it ("Colour mode"); unset, its name made
+    /// readable.
+    pub const fn label(mut self, label: &'static str) -> Self {
+        self.ui.label = label;
+        self
+    }
+
+    /// One line for the hover text.
+    pub const fn help(mut self, help: &'static str) -> Self {
+        self.ui.help = help;
+        self
+    }
+
+    /// Read only while option `option` is one of `values` (#365).
+    pub const fn when(mut self, option: &'static str, values: &'static [&'static str]) -> Self {
+        self.ui = self.ui.condition(option, values, false);
+        self
+    }
+
+    /// Does nothing while option `option` is one of `values` (#365).
+    pub const fn unless(mut self, option: &'static str, values: &'static [&'static str]) -> Self {
+        self.ui = self.ui.condition(option, values, true);
         self
     }
 
@@ -305,33 +376,34 @@ pub fn choices_with(fixed: &[&str], found: Vec<String>) -> Vec<String> {
     out
 }
 
-/// How the F4 menu presents one parameter or option (#268): a readable
-/// label, a hover line, and whether only whole numbers make sense. Hints
-/// are optional; a setting without one shows its name ("tint_r" ->
-/// "Tint r") on a plain slider, so a new style needs none to be tunable.
+/// How the F4 menu, `--list-styles` and Copy TOML present one parameter,
+/// option or colour (#268): a readable label, a hover line, whether only
+/// whole numbers make sense, and when the setting is read. Set on the
+/// setting itself (#510: `StyleParam::new(..).label(..).help(..)`), a
+/// colour's on its red channel. All of it is optional: a setting with none
+/// shows its name ("edge_max" -> "Edge max") on a plain slider, so a new
+/// style needs none to be tunable.
 ///
 /// A colour is three parameters named `<base>_r`, `<base>_g`, `<base>_b`
 /// (each 0..1, display values: what the eye sees, sRGB-encoded): the
-/// menu folds them into one colour picker, and its hint is the base's
-/// (`tint`). See [`StyleColor`].
+/// menu folds them into one colour picker. See [`StyleColor`].
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
-pub struct StyleHint {
-    /// The parameter, option or colour base the hint is for.
-    pub name: &'static str,
+pub struct StyleUi {
+    /// Empty: the name made readable ([`StyleDescriptor::label_for`]).
     pub label: &'static str,
     /// One line for the hover text; empty for none.
     pub help: &'static str,
     /// Whole numbers only (a cell size, a count): the slider steps by 1.
     pub integer: bool,
     /// When the setting matters (#365): up to two conditions on options,
-    /// from [`when`](Self::when) and [`unless`](Self::unless), all of
-    /// which must hold for the style to read it. While one fails the F4
-    /// menu greys the row out and says why. None: always read.
+    /// from `when` and `unless`, all of which must hold for the style to
+    /// read it. While one fails the F4 menu greys the row out and says
+    /// why. None: always read.
     pub conditions: [Option<StyleWhen>; 2],
 }
 
-/// One condition of a [`StyleHint`]: the setting is read only while option
+/// One condition of a [`StyleUi`]: the setting is read only while option
 /// `option` is one of `values` (or, with `unless`, none of them).
 #[derive(Clone, Copy, Debug)]
 pub struct StyleWhen {
@@ -347,52 +419,40 @@ impl StyleWhen {
     }
 }
 
-impl StyleHint {
-    pub const fn new(name: &'static str, label: &'static str, help: &'static str) -> Self {
-        Self {
-            name,
-            label,
-            help,
-            integer: false,
-            conditions: [None, None],
-        }
+impl StyleUi {
+    /// No label, help or conditions: what every setting starts with.
+    pub const NONE: StyleUi = StyleUi {
+        label: "",
+        help: "",
+        integer: false,
+        conditions: [None, None],
+    };
+
+    /// Whether it says nothing at all.
+    pub fn is_none(&self) -> bool {
+        self.label.is_empty()
+            && self.help.is_empty()
+            && !self.integer
+            && self.conditions.iter().all(Option::is_none)
     }
 
-    /// The same hint, for a setting that only matters while option
-    /// `option` is one of `values` (#365): `.when("color", &["tint"])`.
-    pub const fn when(self, option: &'static str, values: &'static [&'static str]) -> Self {
-        self.condition(StyleWhen {
+    const fn condition(
+        self,
+        option: &'static str,
+        values: &'static [&'static str],
+        unless: bool,
+    ) -> Self {
+        let c = StyleWhen {
             option,
             values,
-            unless: false,
-        })
-    }
-
-    /// The same hint, for a setting that does nothing while option
-    /// `option` is one of `values` (#365): `.unless("color", &["palette"])`.
-    pub const fn unless(self, option: &'static str, values: &'static [&'static str]) -> Self {
-        self.condition(StyleWhen {
-            option,
-            values,
-            unless: true,
-        })
-    }
-
-    const fn condition(self, c: StyleWhen) -> Self {
+            unless,
+        };
         let conditions = match self.conditions {
             [None, b] => [Some(c), b],
             [a @ Some(_), None] => [a, Some(c)],
-            [Some(_), Some(_)] => panic!("a StyleHint holds at most two conditions"),
+            [Some(_), Some(_)] => panic!("a setting holds at most two conditions"),
         };
         Self { conditions, ..self }
-    }
-
-    /// The same hint, stepping by whole numbers.
-    pub const fn integer(self) -> Self {
-        Self {
-            integer: true,
-            ..self
-        }
     }
 }
 
@@ -405,7 +465,7 @@ pub enum StyleControl {
     Option(&'static StyleOption),
     Param(&'static StyleParam),
     Color {
-        /// The name before `_r` (`tint`), which hints are keyed by.
+        /// The name before `_r` (`tint`), the key a scene writes.
         base: &'static str,
         channels: [&'static StyleParam; 3],
     },
@@ -578,8 +638,6 @@ pub struct StyleDescriptor {
     /// asks for one is on, the framework makes it once a frame for all of
     /// them: [`StyleNeed::Edges`] is [`StyleFrame::edges`].
     pub needs: &'static [StyleNeed],
-    /// How the F4 menu labels its settings ([`StyleHint`]); `&[]` is fine.
-    pub hints: &'static [StyleHint],
     /// The component an entity takes this style with, its fields being the
     /// style's parameters and options (`ascii_style`, #266). A style with
     /// one is per-entity: an entity carrying it (or a `style_mask` naming
@@ -645,7 +703,7 @@ pub struct StyleDescriptor {
 /// A field added to the descriptor gets its default in `new`, so no style
 /// module has to change; build descriptors only this way.
 impl StyleDescriptor {
-    /// A style with no parameters, options, mask, needs or hints, not
+    /// A style with no parameters, options, mask or needs, not
     /// per-entity, not feeding bloom.
     pub const fn new(
         name: &'static str,
@@ -662,7 +720,6 @@ impl StyleDescriptor {
             uses_mask: MaskUse::Never,
             uses_albedo: MaskUse::Never,
             needs: &[],
-            hints: &[],
             component: None,
             feeds_bloom: false,
             yields: true,
@@ -700,12 +757,6 @@ impl StyleDescriptor {
     /// The framework-made inputs it reads.
     pub const fn needs(mut self, needs: &'static [StyleNeed]) -> Self {
         self.needs = needs;
-        self
-    }
-
-    /// How the F4 menu labels its settings.
-    pub const fn hints(mut self, hints: &'static [StyleHint]) -> Self {
-        self.hints = hints;
         self
     }
 
@@ -858,19 +909,29 @@ impl StyleDescriptor {
         config.styles.option(self.name, name).unwrap_or(default)
     }
 
-    /// The hint for a parameter, option or colour base, if the style gives
-    /// one.
-    pub fn hint(&self, name: &str) -> Option<&'static StyleHint> {
-        self.hints.iter().find(|h| h.name == name)
+    /// How setting `name` is presented: an option's or a parameter's own
+    /// [`StyleUi`], and a colour base's (`tint`) its red channel's. A
+    /// colour's channels have none of their own (`tint_r` reads as
+    /// "Tint r"), and a name that is no setting has none.
+    pub fn ui(&self, name: &str) -> Option<&'static StyleUi> {
+        let options: &'static [StyleOption] = self.options;
+        let params: &'static [StyleParam] = self.params;
+        if let Some(o) = options.iter().find(|o| o.name == name) {
+            return Some(&o.ui);
+        }
+        if let Some(p) = params.iter().find(|p| p.name == name) {
+            return self.color_of(name).is_none().then_some(&p.ui);
+        }
+        self.color_setting(name).map(|c| &c.channels[0].ui)
     }
 
     /// Why setting `name` does nothing under `config`, or `None` while it
-    /// is read (#365): its hint's [`when`](StyleHint::when) names an
-    /// option whose current value isn't one of those that read it. The
-    /// line is what the F4 menu shows on the greyed-out row.
+    /// is read (#365): its [`when`](StyleParam::when) names an option whose
+    /// current value isn't one of those that read it. The line is what the
+    /// F4 menu shows on the greyed-out row.
     pub fn unused_reason(&self, config: &PostProcessConfig, name: &str) -> Option<String> {
-        let hint = self.hint(name)?;
-        hint.conditions.iter().flatten().find_map(|c| {
+        let ui = self.ui(name)?;
+        ui.conditions.iter().flatten().find_map(|c| {
             let current = self.option(config, c.option);
             if c.holds(current) {
                 return None;
@@ -892,13 +953,23 @@ impl StyleDescriptor {
         })
     }
 
-    /// What the F4 menu calls setting `name`: its hint's label, or the
-    /// name made readable (`tint_r` -> `Tint r`).
+    /// What the F4 menu calls setting `name`: its label, or the name made
+    /// readable (`tint_r` -> `Tint r`).
     pub fn label_for(&self, name: &str) -> String {
-        match self.hint(name) {
-            Some(h) => h.label.to_string(),
-            None => humanize(name),
+        match self.ui(name) {
+            Some(ui) if !ui.label.is_empty() => ui.label.to_string(),
+            _ => humanize(name),
         }
+    }
+
+    /// Setting `name`'s hover line; empty for none.
+    pub fn help_for(&self, name: &str) -> &'static str {
+        self.ui(name).map_or("", |ui| ui.help)
+    }
+
+    /// Whether setting `name` takes whole numbers only.
+    pub fn is_integer(&self, name: &str) -> bool {
+        self.ui(name).is_some_and(|ui| ui.integer)
     }
 
     /// The colour whose key is `base` (`tint`), if the style has its three
@@ -1048,8 +1119,7 @@ pub fn style_toml(descriptor: &StyleDescriptor, config: &PostProcessConfig) -> S
         }
         let value = descriptor.param(config, p.name);
         if value != p.default {
-            let integer =
-                descriptor.hint(p.name).is_some_and(|h| h.integer) && value.fract() == 0.0;
+            let integer = descriptor.is_integer(p.name) && value.fract() == 0.0;
             if integer {
                 out.push_str(&format!("{} = {}\n", p.name, value as i64));
             } else {
@@ -3118,19 +3188,20 @@ mod tests {
     }
 
     #[test]
-    fn a_hint_holds_its_conditions_in_order() {
-        const H: StyleHint = StyleHint::new("x", "X", "")
+    fn a_setting_holds_its_conditions_in_order() {
+        const P: StyleParam = StyleParam::new("x", 0.0, 0.0..=1.0)
+            .label("X")
             .when("a", &["1"])
             .unless("b", &["2"]);
-        let [Some(first), Some(second)] = H.conditions else {
+        let [Some(first), Some(second)] = P.ui.conditions else {
             panic!("two conditions");
         };
         assert!(first.holds("1") && !first.holds("3"));
         assert!(!second.holds("2") && second.holds("3"));
-        assert!(StyleHint::new("y", "Y", "")
-            .conditions
-            .iter()
-            .all(Option::is_none));
+        const O: StyleOption = StyleOption::new("o", "", &[]).unless("a", &["1"]);
+        assert!(O.ui.conditions[0].is_some_and(|c| c.unless) && O.ui.conditions[1].is_none());
+        assert!(StyleParam::new("y", 0.0, 0.0..=1.0).ui.is_none());
+        assert!(StyleOption::new("y", "", &[]).ui.is_none());
     }
 
     /// #342: two 120 Hz frames keep what one 60 Hz frame does, one 30 Hz
@@ -3172,16 +3243,39 @@ mod tests {
     }
 
     #[test]
-    fn hints_name_real_settings() {
+    fn settings_ui_is_where_the_menu_reads_it() {
         for d in registry() {
-            let rows = d.controls();
-            for h in d.hints {
-                assert!(
-                    rows.iter().any(|r| r.name() == h.name),
-                    "{}: hint '{}' names no option, parameter or colour",
-                    d.name,
-                    h.name
-                );
+            // A colour's label lives on its red channel (#510): one on green
+            // or blue would never be shown
+            for c in d.colors() {
+                for p in &c.channels[1..] {
+                    assert!(
+                        p.ui.is_none(),
+                        "{}: {}'s label, help or conditions go on {}",
+                        d.name,
+                        p.name,
+                        c.channels[0].name
+                    );
+                }
+            }
+            // Every condition names one of the style's options, and a value
+            // that option can take
+            let uis = d.options.iter().map(|o| (o.name, &o.ui));
+            for (name, ui) in uis.chain(d.params.iter().map(|p| (p.name, &p.ui))) {
+                for c in ui.conditions.iter().flatten() {
+                    let option = d.options.iter().find(|o| o.name == c.option);
+                    let option = option.unwrap_or_else(|| {
+                        panic!("{}.{name}: condition on no option {}", d.name, c.option)
+                    });
+                    for v in c.values {
+                        assert!(
+                            !option.closed() || option.choices.contains(v),
+                            "{}.{name}: {} is never {v}",
+                            d.name,
+                            c.option
+                        );
+                    }
+                }
             }
         }
     }
@@ -3294,10 +3388,19 @@ mod tests {
     }
 
     #[test]
-    fn labels_come_from_hints_or_the_name() {
+    fn labels_come_from_the_setting_or_the_name() {
         let ascii = find("ascii").unwrap();
         assert_eq!(ascii.label_for("cell"), "Cell size (pt)");
-        assert!(ascii.hint("cell").unwrap().integer);
+        assert!(ascii.is_integer("cell"));
+        assert!(!ascii.is_integer("glow"));
+        assert_eq!(ascii.label_for("color"), "Colour mode");
+        // A colour's are its red channel's; the channels read as themselves
+        assert_eq!(ascii.label_for("tint"), "Tint");
+        assert_eq!(ascii.help_for("tint"), "The ink for colour mode tint");
+        assert_eq!(ascii.label_for("tint_r"), "Tint r");
+        assert_eq!(ascii.help_for("tint_r"), "");
+        assert!(ascii.ui("no_such_setting").is_none());
+        assert_eq!(ascii.label_for("no_such_setting"), "No such setting");
         assert_eq!(humanize("tint_r"), "Tint r");
         assert_eq!(humanize(""), "");
     }

@@ -9,6 +9,7 @@ pub mod branches;
 pub mod leaves;
 mod living;
 pub mod lod;
+mod noise_pose;
 mod trunk;
 
 pub use bark::generate_bark_normal_map;

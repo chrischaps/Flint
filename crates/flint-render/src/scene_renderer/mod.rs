@@ -5,6 +5,7 @@ mod binding;
 mod draw_list;
 mod draws;
 mod extract;
+mod fog_veil;
 mod frame;
 mod grass;
 mod grass_ground;
@@ -27,6 +28,7 @@ mod water;
 
 pub use binding::{BoundGrass, BoundScene, LoadedTerrain, SceneBinding};
 use draw_list::{Blend, Draw, DrawItem, DrawList, Layer, VertexStage};
+pub(crate) use fog_veil::FOG_VEIL_FORMAT;
 pub use frame::{FrameInputs, View2d};
 pub use grass_ground::{load_grass_ground_in, load_scene_grass_ground, LoadedGrassGround};
 pub use particles::load_scene_particle_textures;
@@ -568,6 +570,9 @@ pub struct SceneRenderer {
     /// Per-entity styles (#263): who is styled, how far, the mask and
     /// albedo passes (ADR 0118, #736).
     style_mask: style_mask::StyleMaskState,
+    /// What the composite fogs translucent draws at their own depth with
+    /// (#513): the veil's pipelines and whether this frame drew it.
+    fog_veil: fog_veil::FogVeilState,
     /// The `style` debug view switched `mask_view` on, so it switches it off.
     mask_view_forced: bool,
     /// Whether the `edges` view switched ASCII on itself (#349).
@@ -797,6 +802,7 @@ impl SceneRenderer {
             gpu_timer: None,
             panel_state: Default::default(),
             style_mask: style_mask::StyleMaskState::new(),
+            fog_veil: fog_veil::FogVeilState::default(),
             mask_view_forced: false,
             ascii_forced: false,
             water,
@@ -1195,6 +1201,26 @@ impl SceneRenderer {
     /// maps could darken, so its pass is skipped and every caster with it.
     pub fn shadows_drawn(&self) -> bool {
         self.shadows_enabled() && self.lights.scene_shadows() && self.lights.sun_casts()
+    }
+
+    /// Whether this frame draws a spot light's shadow map (#504): shadows
+    /// are on, the scene allows them, and a spot with `cast_shadows = true`
+    /// that gives light is among the spots the camera's frame uploaded.
+    /// Known once the frame's lights are uploaded (in `encode_to`); before
+    /// that, last frame's answer.
+    pub fn spot_shadow_drawn(&self) -> bool {
+        self.shadows_enabled() && self.lights.scene_shadows() && self.lights.shadow_spot().is_some()
+    }
+
+    /// The shadow map layers this frame draws: the cascades if a sun casts,
+    /// and the spot's if a spot does.
+    pub fn shadow_layers_drawn(&self) -> u32 {
+        let cascades = match &self.shadow_pass {
+            Some(sp) if self.shadows_drawn() => sp.cascades() as u32,
+            _ => 0,
+        };
+        let spot = (self.shadow_pass.is_some() && self.spot_shadow_drawn()) as u32;
+        cascades + spot
     }
 
     /// Current shadow map resolution per cascade

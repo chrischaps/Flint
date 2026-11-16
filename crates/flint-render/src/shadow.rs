@@ -1,8 +1,14 @@
-//! Cascaded Shadow Mapping
+//! Cascaded Shadow Mapping, and one spot light's shadow
 //!
 //! Renders the scene from the primary directional light's perspective into
 //! a depth texture array (one layer per cascade). The main shader samples
 //! this texture to compute shadow factors.
+//!
+//! The array's last layer, [`SPOT_SHADOW_LAYER`], is one spot light's
+//! perspective shadow map (#504, ADR 0124): the spot that `cast_shadows`
+//! chose, drawn when it is chosen, whether or not a sun casts. It is a layer
+//! of the same texture rather than a texture of its own so that every lit
+//! shader reads it through the binding it already has.
 
 use crate::primitives::{SkinnedVertex, Vertex};
 use crate::wooze_pipeline::ShallowWoozeUniforms;
@@ -12,6 +18,18 @@ use wgpu::util::DeviceExt;
 
 /// Number of shadow cascades
 pub const CASCADE_COUNT: usize = 3;
+
+/// The layer of the shadow map array a spot light's shadow is drawn into,
+/// after the cascades (#504). The WGSL says `3` where it reads it.
+pub const SPOT_SHADOW_LAYER: usize = CASCADE_COUNT;
+
+/// Layers of the shadow map array: the cascades, then the spot's.
+pub const SHADOW_LAYERS: usize = CASCADE_COUNT + 1;
+
+/// The widest cone a spot's shadow map covers, as a half-angle (80 degrees).
+/// A perspective map wider than that spends its texels on the rim; a spot
+/// whose `outer_angle` is wider is shadowed out to here and lit past it.
+pub const SPOT_SHADOW_MAX_HALF_ANGLE: f32 = 80.0 * std::f32::consts::PI / 180.0;
 
 /// Default shadow map resolution per cascade
 pub const DEFAULT_SHADOW_RESOLUTION: u32 = 2048;
@@ -50,6 +68,15 @@ pub struct ShadowUniforms {
     /// w = 0.0 means "PCSS off" and shaders take the legacy 3×3 PCF path
     /// verbatim, so stale/default uniforms keep pre-lever behavior.
     pub pcss: [f32; 4],
+    /// The spot's shadow (#504): world to the spot map's clip space
+    /// ([`SPOT_SHADOW_LAYER`]). Only the main, skinned and terrain shaders
+    /// declare these two; the other mirrors stop at `pcss`, which a larger
+    /// buffer allows.
+    pub spot_view_proj: [[f32; 4]; 4],
+    /// x = near plane, y = far plane (the light's `range`), z = tan of the
+    /// map's half-angle, w = 1.0 when the spot map was drawn this frame.
+    /// w = 0 lights every spot as before.
+    pub spot: [f32; 4],
 }
 
 impl Default for ShadowUniforms {
@@ -64,6 +91,8 @@ impl Default for ShadowUniforms {
             cascade_view_proj: [identity; CASCADE_COUNT],
             cascade_splits: [0.0; 4],
             pcss: [0.0; 4],
+            spot_view_proj: identity,
+            spot: [0.0; 4],
         }
     }
 }
@@ -82,7 +111,8 @@ pub struct ShadowPass {
     #[allow(dead_code)]
     pub shadow_texture: wgpu::Texture,
     pub shadow_view: wgpu::TextureView,
-    pub cascade_views: Vec<wgpu::TextureView>,
+    /// One view a layer, to draw into: the cascades, then the spot's.
+    pub layer_views: Vec<wgpu::TextureView>,
     pub shadow_sampler: wgpu::Sampler,
     pub shadow_uniforms_buffer: wgpu::Buffer,
     /// One uniform buffer for every shadow draw of the frame (all cascades),
@@ -268,13 +298,14 @@ impl ShadowPass {
         let skinned_shadow_pipeline_double_sided =
             make_skinned_shadow("Skinned Shadow Depth Pipeline (double-sided)", None);
 
-        // Create shadow depth texture array (one layer per cascade)
+        // Create shadow depth texture array (one layer per cascade, then the
+        // spot's)
         let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Shadow Map Array"),
             size: wgpu::Extent3d {
                 width: resolution,
                 height: resolution,
-                depth_or_array_layers: CASCADE_COUNT as u32,
+                depth_or_array_layers: SHADOW_LAYERS as u32,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -291,11 +322,11 @@ impl ShadowPass {
             ..Default::default()
         });
 
-        // Per-cascade views for rendering
-        let cascade_views: Vec<wgpu::TextureView> = (0..CASCADE_COUNT as u32)
+        // Per-layer views for rendering
+        let layer_views: Vec<wgpu::TextureView> = (0..SHADOW_LAYERS as u32)
             .map(|i| {
                 shadow_texture.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some(&format!("Shadow Cascade {} View", i)),
+                    label: Some(&format!("Shadow Layer {} View", i)),
                     dimension: Some(wgpu::TextureViewDimension::D2),
                     base_array_layer: i,
                     array_layer_count: Some(1),
@@ -336,7 +367,7 @@ impl ShadowPass {
             skinned_shadow_bone_layout,
             shadow_texture,
             shadow_view,
-            cascade_views,
+            layer_views,
             shadow_sampler,
             shadow_uniforms_buffer,
             draw_buffer,
@@ -666,9 +697,87 @@ impl ShadowPass {
         self.shadow_uniforms.pcss[3] = sun_tan_angular;
     }
 
+    /// Leave the cascades out of this frame's uniforms (no sun casts, but a
+    /// spot does): a far plane of 0 reads as "no sun shadow" in every shader.
+    pub fn clear_cascades(&mut self) {
+        let off = ShadowUniforms::default();
+        self.shadow_uniforms.cascade_view_proj = off.cascade_view_proj;
+        self.shadow_uniforms.cascade_splits = [0.0, 0.0, 0.0, 1.0 / self.resolution as f32];
+        self.shadow_uniforms.pcss = off.pcss;
+    }
+
+    /// Aim the spot layer at `spot`, or turn it off with `None` (#504). The
+    /// texel size the shaders read rides `cascade_splits.w` either way.
+    pub fn update_spot(&mut self, spot: Option<&crate::pipeline::SpotLight>) {
+        let u = &mut self.shadow_uniforms;
+        match spot.map(spot_shadow_frustum) {
+            Some(frustum) => {
+                u.cascade_splits[3] = 1.0 / self.resolution as f32;
+                u.spot_view_proj = frustum.view_proj;
+                u.spot = [frustum.near, frustum.far, frustum.tan_half, 1.0];
+            }
+            None => {
+                let off = ShadowUniforms::default();
+                u.spot_view_proj = off.spot_view_proj;
+                u.spot = off.spot;
+            }
+        }
+    }
+
     pub fn shadow_uniforms(&self) -> &ShadowUniforms {
         &self.shadow_uniforms
     }
+}
+
+/// The perspective a spot light's shadow map is drawn from (#504).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SpotShadowFrustum {
+    pub view_proj: [[f32; 4]; 4],
+    pub near: f32,
+    pub far: f32,
+    pub tan_half: f32,
+}
+
+/// From the light's position down its axis, out to its `range`, wide enough
+/// to hold its outer cone (and the soft edge's filter past it), up to
+/// [`SPOT_SHADOW_MAX_HALF_ANGLE`].
+pub(crate) fn spot_shadow_frustum(spot: &crate::pipeline::SpotLight) -> SpotShadowFrustum {
+    let far = spot.radius.max(0.1);
+    // Near enough to catch a caster just under the lamp, far enough from 0
+    // that depth keeps its precision over the range
+    let near = (far * 0.004).clamp(0.02, 0.25);
+    let half = (spot.outer_angle.max(0.0) * 1.05 + 0.03).min(SPOT_SHADOW_MAX_HALF_ANGLE);
+    let tan_half = half.tan();
+    let dir = normalize_3(spot.direction);
+    let eye = spot.position;
+    let target = [eye[0] + dir[0], eye[1] + dir[1], eye[2] + dir[2]];
+    // Straight up or down, the world's up is the axis itself: take z instead
+    let up = if dir[1].abs() > 0.99 {
+        [0.0, 0.0, 1.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    let view = look_at_up(&eye, &target, &up);
+    let proj = perspective(tan_half, near, far);
+    SpotShadowFrustum {
+        view_proj: mat4_mul(&proj, &view),
+        near,
+        far,
+        tan_half,
+    }
+}
+
+/// A square perspective projection, wgpu's depth: `near` to 0, `far` to 1
+/// (as `Camera`'s, ADR 0055).
+fn perspective(tan_half: f32, near: f32, far: f32) -> [[f32; 4]; 4] {
+    let f = 1.0 / tan_half.max(1e-4);
+    let depth = far - near;
+    [
+        [f, 0.0, 0.0, 0.0],
+        [0.0, f, 0.0, 0.0],
+        [0.0, 0.0, -far / depth, -1.0],
+        [0.0, 0.0, -(far * near) / depth, 0.0],
+    ]
 }
 
 /// Splits for all `CASCADE_COUNT` slots from `count` cascades' splits: the
@@ -830,9 +939,13 @@ fn dot(a: &[f32; 3], b: &[f32; 3]) -> f32 {
 
 /// Look-at view matrix (column-major for wgpu)
 fn look_at(eye: &[f32; 3], target: &[f32; 3]) -> [[f32; 4]; 4] {
+    look_at_up(eye, target, &[0.0, 1.0, 0.0])
+}
+
+/// [`look_at`] with an up of the caller's: one not along the view.
+fn look_at_up(eye: &[f32; 3], target: &[f32; 3], up: &[f32; 3]) -> [[f32; 4]; 4] {
     let f = normalize_3([target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]]);
-    let up = [0.0, 1.0, 0.0];
-    let s = normalize_3(cross(&f, &up));
+    let s = normalize_3(cross(&f, up));
     let u = cross(&s, &f);
 
     [
@@ -887,6 +1000,75 @@ fn mat4_mul_point(m: &[[f32; 4]; 4], p: &[f32; 3]) -> [f32; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::SpotLight;
+
+    /// A world point through the spot map: (u, v, depth).
+    fn spot_uv(frustum: &SpotShadowFrustum, p: [f32; 3]) -> (f32, f32, f32) {
+        let m = &frustum.view_proj;
+        let clip: Vec<f32> = (0..4)
+            .map(|row| m[0][row] * p[0] + m[1][row] * p[1] + m[2][row] * p[2] + m[3][row])
+            .collect();
+        let (x, y, z) = (clip[0] / clip[3], clip[1] / clip[3], clip[2] / clip[3]);
+        (x * 0.5 + 0.5, -y * 0.5 + 0.5, z)
+    }
+
+    fn spot(direction: [f32; 3]) -> SpotLight {
+        SpotLight {
+            position: [1.0, 4.0, -2.0],
+            radius: 9.0,
+            direction,
+            outer_angle: 30f32.to_radians(),
+            intensity: 10.0,
+            shadow: 1.0,
+            ..SpotLight::default()
+        }
+    }
+
+    #[test]
+    fn a_spot_map_looks_down_the_light_to_its_range() {
+        // Straight down is the common case, and the one where the world's up
+        // is the axis itself
+        for direction in [[0.0, -1.0, 0.0], [0.3, -1.0, 0.2], [1.0, 0.0, 0.0]] {
+            let light = spot(direction);
+            let frustum = spot_shadow_frustum(&light);
+            let axis = normalize_3(direction);
+            let at = |d: f32| {
+                [
+                    light.position[0] + axis[0] * d,
+                    light.position[1] + axis[1] * d,
+                    light.position[2] + axis[2] * d,
+                ]
+            };
+            let (u, v, near) = spot_uv(&frustum, at(frustum.near));
+            assert!(
+                (u - 0.5).abs() < 1e-4 && (v - 0.5).abs() < 1e-4,
+                "{direction:?}"
+            );
+            assert!(near.abs() < 1e-4, "{direction:?}: near plane at {near}");
+            let (_, _, far) = spot_uv(&frustum, at(light.radius));
+            assert!((far - 1.0).abs() < 1e-4, "{direction:?}: range at {far}");
+            let (_, _, mid) = spot_uv(&frustum, at(3.0));
+            assert!(mid > 0.0 && mid < 1.0, "{direction:?}");
+        }
+    }
+
+    #[test]
+    fn a_spot_map_holds_its_outer_cone() {
+        let light = spot([0.0, -1.0, 0.0]);
+        let frustum = spot_shadow_frustum(&light);
+        // A point on the cone's edge, 3 m down
+        let r = 3.0 * light.outer_angle.tan();
+        let (u, v, _) = spot_uv(&frustum, [light.position[0] + r, 1.0, light.position[2]]);
+        assert!(u > 0.0 && u < 1.0 && (v - 0.5).abs() < 1e-3, "{u} {v}");
+        assert!((u - 0.5).abs() > 0.4, "the cone fills the map: {u}");
+        // A cone past the cap is held to it
+        let wide = SpotLight {
+            outer_angle: 89f32.to_radians(),
+            ..light
+        };
+        let tan_cap = SPOT_SHADOW_MAX_HALF_ANGLE.tan();
+        assert!((spot_shadow_frustum(&wide).tan_half - tan_cap).abs() < 1e-4);
+    }
 
     #[test]
     fn fewer_cascades_cover_the_same_reach() {

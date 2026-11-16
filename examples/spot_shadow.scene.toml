@@ -1,0 +1,103 @@
+# One soft key over one figure on a dark floor (#504).
+#
+# The only light that shadows here is a spot: `cast_shadows = true` gives it
+# a perspective shadow map of its own, and its `source_radius` softens that
+# shadow the way a sun's `angular_size` softens the cascades (PCSS): sharp
+# where the figure's feet meet the floor, wider under the ball that floats
+# above it. There is no sun, so nothing floods the floor and the pool of
+# light keeps its edge.
+#
+#   flint render examples/spot_shadow.scene.toml -o spot_shadow.png
+#   flint play examples/spot_shadow.scene.toml
+
+[scene]
+name = "Spot Shadow"
+description = "A spot light with cast_shadows: one soft key, one contact shadow"
+
+[environment]
+ambient_sky = [0.012, 0.013, 0.018]
+ambient_ground = [0.006, 0.005, 0.005]
+
+[camera]
+position = [0.0, 2.6, 6.2]
+target = [0.0, 0.9, 0.0]
+fov = 42.0
+
+[post_process]
+bloom_intensity = 0.04
+vignette_intensity = 0.45
+
+# --- the stage --------------------------------------------------------------
+
+[entities.floor.transform]
+position = [0.0, -0.05, 0.0]
+
+[entities.floor.bounds]
+min = [-8.0, -0.05, -8.0]
+max = [8.0, 0.05, 8.0]
+
+[entities.floor.material]
+color = [0.32, 0.3, 0.28, 1.0]
+roughness = 0.85
+
+# A backdrop, so the stage ends in dark and not in the clear colour
+[entities.backdrop.transform]
+position = [0.0, 3.5, -3.6]
+
+[entities.backdrop.bounds]
+min = [-9.0, -3.5, -0.1]
+max = [9.0, 3.5, 0.1]
+
+[entities.backdrop.material]
+color = [0.16, 0.15, 0.15, 1.0]
+roughness = 0.95
+
+# The figure that stands in the light
+[entities.figure.transform]
+position = [-0.35, 0.0, 0.0]
+rotation = [0.0, 20.0, 0.0]
+
+[entities.figure.model]
+asset = "YBotWithIdle"
+
+[entities.figure.skeleton]
+skin = "Armature"
+
+# A ball held above the floor: its shadow is wider and softer than the
+# figure's feet, since it is further from what it falls on
+[entities.ball.transform]
+position = [0.95, 1.05, 0.45]
+scale = [0.55, 0.55, 0.55]
+
+[entities.ball.model]
+asset = "Sphere"
+
+# A low block the key rakes across
+[entities.block.transform]
+position = [0.75, 0.2, -0.9]
+rotation = [0.0, 30.0, 0.0]
+
+[entities.block.bounds]
+min = [-0.35, -0.2, -0.35]
+max = [0.35, 0.2, 0.35]
+
+[entities.block.material]
+color = [0.7, 0.66, 0.6, 1.0]
+roughness = 0.6
+
+# --- the key ----------------------------------------------------------------
+
+# Overhead and a little in front, aimed down at the figure's feet
+[entities.key.transform]
+position = [0.6, 4.2, 1.4]
+
+[entities.key.light]
+type = "spot"
+direction = [-0.14, -1.0, -0.33]
+color = [1.0, 0.93, 0.84]
+intensity = 34.0
+range = 9.0
+inner_angle_deg = 20.0
+outer_angle_deg = 34.0
+source_radius = 0.3
+cast_shadows = true
