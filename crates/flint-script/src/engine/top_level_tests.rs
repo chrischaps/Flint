@@ -177,3 +177,107 @@ fn a_reload_runs_its_new_top_level_with_the_world() {
     assert_eq!(probe_float(&world, id, "lx"), door.raw() as f64);
     assert_eq!(probe_float(&world, id, "ty"), id.raw() as f64);
 }
+
+/// `global::NAME` is Rhai's way for a function to reach a script's
+/// top-level `const` (#1012). Rhai fills it in as the top level runs, so it
+/// went missing from every callback once the top level ran only once (#692).
+#[test]
+fn a_global_constant_reaches_every_callback_and_the_functions_they_call() {
+    let mut engine = ScriptEngine::new();
+    let mut world = FlintWorld::new();
+    let id = probed(&mut world, "glow");
+    add(
+        &mut engine,
+        id,
+        r#"
+        const GLOW = 0.5;
+        const KEYS = [1.0, 2.0, 4.0];
+        log("top level");
+        fn last_key() { global::KEYS[global::KEYS.len() - 1] }
+        fn on_init() { set_field(self_entity(), "probe", "lx", global::GLOW); }
+        fn on_update() {
+            set_field(self_entity(), "probe", "ty", global::GLOW * 2.0 + last_key());
+        }
+        "#,
+    );
+    engine.call_inits(&mut world);
+    engine.call_updates(&mut world);
+    engine.call_updates(&mut world);
+    assert!(engine.errors().is_empty(), "{:?}", engine.errors().all());
+    assert_eq!(probe_float(&world, id, "lx"), 0.5);
+    assert_eq!(probe_float(&world, id, "ty"), 5.0);
+    assert_eq!(logged(&engine), vec!["top level".to_string()]);
+}
+
+/// A constant's initializer runs once, with the top level: `global::` reads
+/// the value it made then, never a new call of the initializer.
+#[test]
+fn a_global_constant_keeps_its_value_from_the_one_top_level_run() {
+    let mut engine = ScriptEngine::new();
+    let mut world = FlintWorld::new();
+    let door = world.spawn("door").unwrap();
+    let id = probed(&mut world, "keeper");
+    add(
+        &mut engine,
+        id,
+        r#"
+        let made = 0;
+        const DOOR = get_entity("door");
+        const FIRST = { made += 1; made };
+        fn on_update() {
+            set_field(self_entity(), "probe", "lx", global::DOOR.to_float());
+            set_field(self_entity(), "probe", "ty", global::FIRST.to_float());
+        }
+        "#,
+    );
+    engine.call_inits(&mut world);
+    for _ in 0..3 {
+        engine.call_updates(&mut world);
+    }
+    assert!(engine.errors().is_empty(), "{:?}", engine.errors().all());
+    assert_eq!(probe_float(&world, id, "lx"), door.raw() as f64);
+    assert_eq!(probe_float(&world, id, "ty"), 1.0);
+    let made = engine.scripts[&id].scope.get_value::<i64>("made");
+    assert_eq!(made, Some(1), "the initializer ran once");
+}
+
+/// A script that reads no `global::` constant is called on its imports
+/// alone, as before: nothing more runs per callback.
+#[test]
+fn a_script_with_no_global_reads_calls_on_its_imports_alone() {
+    let mut engine = ScriptEngine::new();
+    let mut world = FlintWorld::new();
+    let id = probed(&mut world, "plain");
+    add(
+        &mut engine,
+        id,
+        "const A = 1.0; fn on_update() { set_field(self_entity(), \"probe\", \"lx\", A); }",
+    );
+    engine.call_inits(&mut world);
+    engine.call_updates(&mut world);
+    assert_eq!(probe_float(&world, id, "lx"), 1.0);
+    assert!(engine.scripts[&id].calls.statements().is_empty());
+}
+
+/// A constant a reload adds is a `global::` constant too.
+#[test]
+fn a_reload_adds_its_new_global_constants() {
+    let mut engine = ScriptEngine::new();
+    let mut world = FlintWorld::new();
+    let id = probed(&mut world, "keeper");
+    add(&mut engine, id, "const A = 1.0; fn on_update() {}");
+    engine.call_inits(&mut world);
+    let v2 = engine
+        .compile(
+            r#"
+            const A = 1.0;
+            const B = 3.0;
+            fn on_update() { set_field(self_entity(), "probe", "lx", global::A + global::B); }
+            "#,
+        )
+        .unwrap();
+    engine.reload_script(&mut world, id, v2);
+    engine.call_updates(&mut world);
+    assert!(engine.errors().is_empty(), "{:?}", engine.errors().all());
+    assert_eq!(probe_float(&world, id, "lx"), 4.0);
+}

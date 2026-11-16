@@ -233,7 +233,16 @@ fn copy_add(arr, x) { arr.push(x); } // changes a copy; `tiles` is untouched
 fn peek() { frames }                 // error: no `frames` in here
 ```
 
-So there are three ways to share state with a helper: pass values in and return the result (`let speed = clamp_speed(speed, dt);`), which is fine for numbers but copies an array or map each call; call the helper as a method on the one array or map it changes, which hands it over by reference as `this`; or keep the work in the callback itself. Constants that never change can simply be repeated as `const`s. `crates/flint-script/src/engine.rs`'s `test_top_level_state_reaches_callbacks_not_helpers` holds all of this.
+So there are three ways to share state with a helper: pass values in and return the result (`let speed = clamp_speed(speed, dt);`), which is fine for numbers but copies an array or map each call; call the helper as a method on the one array or map it changes, which hands it over by reference as `this`; or keep the work in the callback itself. A top-level `const` is the exception a helper can reach: it reads `global::NAME`, Rhai's path to a script's constants, from any function, called by any callback, with the value the top level made once (#1012):
+
+```rhai
+const KEYS = [0.0, 0.25, 0.5, 1.0];
+
+fn last_key() { global::KEYS[global::KEYS.len() - 1] }   // a helper reads the constant
+fn on_update() { let k = last_key(); }
+```
+
+A `let` is not a constant, so `global::` doesn't reach it. Each constant a script reads as `global::` is handed to every callback again, about half a microsecond each for a small array, so a callback itself can read the bare name, which costs nothing extra; `global::` is for the helpers. `crates/flint-script/src/engine.rs`'s `test_top_level_state_reaches_callbacks_not_helpers` holds all of this.
 
 ### Input API
 

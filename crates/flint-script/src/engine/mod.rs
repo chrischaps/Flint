@@ -219,6 +219,7 @@ impl ScriptEngine {
                     &e,
                 ));
             }
+            script.top_level_ran();
         }
         scope
     }
@@ -297,6 +298,7 @@ impl ScriptEngine {
                 script.scope.push_dynamic(name.clone(), value.clone());
             }
         }
+        script.top_level_ran();
         new_vars.into_iter().map(|(name, ..)| name).collect()
     }
 

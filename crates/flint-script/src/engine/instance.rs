@@ -4,7 +4,7 @@
 
 use flint_core::callbacks::{Callback, CallbackSpec};
 use flint_core::diagnostic;
-use rhai::{ASTNode, Expr, Scope, Stmt, AST};
+use rhai::{ASTFlags, ASTNode, Expr, Ident, ImmutableString, Position, Scope, Stmt, AST};
 
 /// Per-entity script instance
 pub struct ScriptInstance {
@@ -12,11 +12,15 @@ pub struct ScriptInstance {
     /// the first lending of the world after it is added
     /// ([`ScriptEngine::lend`](super::ScriptEngine::lend)), and at a reload.
     pub ast: AST,
-    /// What a callback is called on (#692): the script's functions and its
-    /// top-level `import`s, nothing else ([`callable`]). Rhai runs an AST's
-    /// statements before every `call_fn`, so calling on `ast` ran a
-    /// top-level `log` or `get_entity` again before each callback.
+    /// What a callback is called on (#692): the script's functions, its
+    /// top-level `import`s and the constants it reads as `global::NAME`,
+    /// nothing else ([`callable`]). Rhai runs an AST's statements before
+    /// every `call_fn`, so calling on `ast` ran a top-level `log` or
+    /// `get_entity` again before each callback.
     pub(crate) calls: AST,
+    /// The names the script reads as `global::NAME` (#1012), in its
+    /// functions or at its top level ([`global_reads`]).
+    pub(crate) global_reads: Vec<ImmutableString>,
     pub scope: Scope<'static>,
     /// Whether the top-level statements are still to run. They run at the
     /// next lending of the world, before any callback, with `self_entity()`
@@ -72,11 +76,14 @@ impl ScriptInstance {
         let defines = scan(&ast, &source_path);
         let completes_transition = may_complete_transition(&ast);
         let file = source_path.clone();
+        let scope = Scope::new();
+        let global_reads = global_reads(&ast);
 
         Self {
-            calls: callable(&ast),
+            calls: callable(&ast, &global_reads, &scope),
+            global_reads,
             ast,
-            scope: Scope::new(),
+            scope,
             top_level_pending: true,
             source_path,
             defines,
@@ -92,33 +99,79 @@ impl ScriptInstance {
     pub fn hot_reload(&mut self, ast: AST) {
         self.defines = scan(&ast, &self.source_path);
         self.completes_transition = may_complete_transition(&ast);
-        self.calls = callable(&ast);
+        self.global_reads = global_reads(&ast);
         self.ast = ast;
+        self.top_level_ran();
         // Don't reset init_called — hot-reload preserves state
+    }
+
+    /// The scope now holds the constants the top level made (it ran at a
+    /// lending, or a reload copied new ones in): call on their values.
+    pub(crate) fn top_level_ran(&mut self) {
+        self.calls = callable(&self.ast, &self.global_reads, &self.scope);
     }
 }
 
-/// What a callback is called on (#692): `ast`'s functions and those of its
-/// top-level statements that are `import`s, which Rhai has to run before a
-/// call for `alias::f()` to resolve in the callback (an import is an entry
-/// in the call's global state, not a variable in the scope). The rest of
-/// the top level (`let`s, `log`, `get_entity`, `play_sound`) ran once, into
-/// the scope the callbacks are handed. An imported module is the
-/// resolver's cached one, so its own top level runs once too
-/// (`VfsModuleResolver`). An import inside a block was scoped to that block
-/// and never reached a callback.
-pub(crate) fn callable(ast: &AST) -> AST {
-    let imports: Vec<Stmt> = ast
+/// What a callback is called on (#692): `ast`'s functions and two kinds of
+/// top-level statement, which Rhai keeps in a call's global state rather
+/// than in the scope, so each has to run again before every call:
+///
+/// - its `import`s, for `alias::f()` to resolve in the callback. An
+///   imported module is the resolver's cached one, so its own top level
+///   runs once (`VfsModuleResolver`). An import inside a block was scoped
+///   to that block and never reached a callback.
+/// - a `const NAME = <value>` for each name in `reads` (the script's
+///   `global::NAME` reads) that `scope` holds as a constant (#1012), with
+///   the value the one top-level run made, so the initializer never runs
+///   again. Rhai records a top-level constant for `global::` only as the
+///   statement runs. A script with no `global::` read gets none.
+///
+/// The rest of the top level (`let`s, `log`, `get_entity`, `play_sound`)
+/// ran once, into the scope the callbacks are handed.
+pub(crate) fn callable(ast: &AST, reads: &[ImmutableString], scope: &Scope) -> AST {
+    let mut statements: Vec<Stmt> = ast
         .statements()
         .iter()
         .filter(|s| matches!(s, Stmt::Import(..)))
         .cloned()
         .collect();
-    let mut calls = AST::new(imports, ast.shared_lib().clone());
+    for name in reads {
+        // The last declaration of a name is the one the callbacks see
+        let constant = scope.iter_raw().filter(|(n, ..)| n == name).last();
+        if let Some((_, true, value)) = constant {
+            let ident = Ident {
+                name: name.clone(),
+                pos: Position::NONE,
+            };
+            let value = Expr::DynamicConstant(Box::new(value.clone()), Position::NONE);
+            statements.push(Stmt::Var(
+                Box::new((ident, value, None)),
+                ASTFlags::CONSTANT,
+                Position::NONE,
+            ));
+        }
+    }
+    let mut calls = AST::new(statements, ast.shared_lib().clone());
     if let Some(source) = ast.source() {
         calls.set_source(source);
     }
     calls
+}
+
+/// The names `ast` reads as `global::NAME`, anywhere: its functions, the
+/// closures in them, its top level. Each once, in the order first read.
+pub(crate) fn global_reads(ast: &AST) -> Vec<ImmutableString> {
+    let mut names: Vec<ImmutableString> = Vec::new();
+    ast.walk(&mut |path: &[ASTNode]| {
+        if let Some(ASTNode::Expr(Expr::Variable(v, ..))) = path.last() {
+            let (_, name, namespace, _) = &**v;
+            if namespace.path.len() == 1 && namespace.root() == "global" && !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        true
+    });
+    names
 }
 
 /// Whether `ast` may call `complete_transition()` (#362): a call to it, or
