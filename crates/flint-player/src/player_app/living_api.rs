@@ -32,8 +32,9 @@ pub(crate) enum LivingCommand {
     /// `remove_wooze_zone`: fade a zone out over `seconds` and drop it.
     RemoveWoozeZone { name: String, seconds: f64 },
     /// `tune_living`: a table shaped like a `.wooze.toml`, with any of
-    /// `wooze`, `living` and `boil`.
-    Tune { knobs: toml::Value },
+    /// `wooze`, `living` and `boil`, its continuous knobs eased over
+    /// `seconds` (#514; 0 is a step, as it always was).
+    Tune { knobs: toml::Value, seconds: f64 },
     /// `clear_living`: give a species' own values (the named keys, or all)
     /// back to the layers below.
     Clear { species: String, keys: Vec<String> },
@@ -98,19 +99,25 @@ impl ScriptModule for LivingModule {
     }
 
     fn declare(&self, m: &mut Module<'_>) {
+        fn tune(call: &mut Call<'_>, knobs: &rhai::Map, seconds: f64) {
+            let knobs = map_to_toml(knobs);
+            queue(call, LivingCommand::Tune { knobs, seconds });
+        }
+
         m.func(
             "tune_living",
             "Turn Living Props knobs: what a .wooze.toml holds as a map, or one species' own values with species: name.",
         )
         .arg("knobs", Map)
-        .run(|call, (knobs,)| {
-            queue(
-                call,
-                LivingCommand::Tune {
-                    knobs: map_to_toml(&knobs),
-                },
-            );
-        });
+        .run(|call, (knobs,)| tune(call, &knobs, 0.0));
+
+        m.func(
+            "tune_living",
+            "Turn Living Props knobs over some seconds: the continuous ones (step, glide, amplitude, jitter, echoes.spread, echoes.alpha, variance.amount, variance.steady, softness) ease there as set_wooze does; the rest switch at once.",
+        )
+        .arg("knobs", Map)
+        .arg("seconds", Num)
+        .run(|call, (knobs, seconds)| tune(call, &knobs, seconds));
 
         m.func(
             "clear_living",

@@ -316,6 +316,11 @@ topic = "living"
 purpose = "Forty living oaks with every knob moving, to check no frame goes without a pose"
 
 [[example]]
+scene = "living_ease.scene.toml"
+topic = "living"
+purpose = "A held flame whose echoes widen and gather back over two seconds each, through tune_living(map, seconds) (#514)"
+
+[[example]]
 scene = "living_compare.scene.toml"
 topic = "living"
 purpose = "One tree under two settings, twice: a spec beside a twin with species values of its own"

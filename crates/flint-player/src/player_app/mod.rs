@@ -50,6 +50,8 @@ mod living_api;
 #[cfg(feature = "living")]
 pub mod living_props;
 #[cfg(feature = "living")]
+mod living_ramps;
+#[cfg(feature = "living")]
 mod living_subsystem;
 #[cfg(feature = "living")]
 pub(crate) mod living_tuning;
