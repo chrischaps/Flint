@@ -238,7 +238,7 @@ impl SceneDocument {
         name: &str,
         archetype: Option<&str>,
         parent: Option<&str>,
-        components: &std::collections::HashMap<String, toml::Value>,
+        components: &std::collections::BTreeMap<String, toml::Value>,
     ) -> Result<(), String> {
         let mut sorted: Vec<(String, toml::Value)> = components
             .iter()
@@ -276,7 +276,7 @@ impl SceneDocument {
                 }
             }
         }
-        let empty = std::collections::HashMap::new();
+        let empty = std::collections::BTreeMap::new();
         for info in after.all_entities() {
             let now = after.get_components(info.id);
             let now_data = now.map(|c| &c.data).unwrap_or(&empty);
@@ -798,8 +798,8 @@ enum FieldChange<'a> {
 }
 
 fn diff_components<'a>(
-    then: &'a std::collections::HashMap<String, toml::Value>,
-    now: &'a std::collections::HashMap<String, toml::Value>,
+    then: &'a std::collections::BTreeMap<String, toml::Value>,
+    now: &'a std::collections::BTreeMap<String, toml::Value>,
     out: &mut Vec<FieldChange<'a>>,
 ) {
     let mut names: Vec<&String> = then.keys().chain(now.keys()).collect();
