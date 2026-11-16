@@ -15,7 +15,8 @@
 # The nearest `motion_hold` up the hierarchy wins, so `rate = 0` on a child lets
 # that branch move smoothly. `[post_process] motion_hold = 12` holds every entity
 # that names no rate of its own (and the post time styles read), and the
-# --motion-hold flag on flint render, flint play and flint-player sets it.
+# --motion-hold flag on flint play and flint-player sets it, and
+# --set post.motion_hold=<rate> on flint render.
 # Scripts: set_motion_hold(id, rate) / get_motion_hold(id).
 
 [component.motion_hold]

@@ -40,7 +40,7 @@ The ASCII numbers from #313 (RTX 4070 laptop, Vulkan, `flint render --gpu-time 2
 
 The last row is the noise. At footprint 1 neither binary runs the pre-pass, yet they read 8% apart, so only the two 4K footprint-2 close-ups (−16% and −20%, in separate runs) are a measured win. The rest are within noise. Other sessions shared the GPU: take the least of several processes, and check a pass the change doesn't touch.
 
-Whole-frame ASCII over styled props, from #507 (the same GPU, `examples/ascii_entities` at 1080p, `--ascii-scope screen --ascii-edges 0 --gpu-time 240`, the least of 3 processes per binary, main and the branch taking turns; runs agreed to 1 µs). The four scenes are the demo with no prop styled, every prop's `enabled = false` (only the mask is read), the barrel without `normalize`, and the demo as it is:
+Whole-frame ASCII over styled props, from #507 (the same GPU, `examples/ascii_entities` at 1080p, `--style ascii:scope=screen,edges=0 --gpu-time 240`, the least of 3 processes per binary, main and the branch taking turns; runs agreed to 1 µs). The four scenes are the demo with no prop styled, every prop's `enabled = false` (only the mask is read), the barrel without `normalize`, and the demo as it is:
 
 | Case | Before | After |
 |---|---|---|

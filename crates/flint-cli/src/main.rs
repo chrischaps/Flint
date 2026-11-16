@@ -31,15 +31,15 @@ struct Cli {
 enum Commands {
     /// Start a game project: a manifest, a lit scene, a HUD script, an
     /// input config and an agent guide, ready to render and play
-    Init(init::InitArgs),
+    Init(Box<init::InitArgs>),
 
     /// Entity operations
     #[command(subcommand)]
-    Entity(entity::EntityCommands),
+    Entity(Box<entity::EntityCommands>),
 
     /// Scene operations
     #[command(subcommand)]
-    Scene(scene::SceneCommands),
+    Scene(Box<scene::SceneCommands>),
 
     /// Query entities
     Query {
@@ -63,15 +63,15 @@ enum Commands {
 
     /// Show schema information: one component or archetype, --list for
     /// all of them, --format json / json-schema for the schemas as data
-    Schema(schema::SchemaArgs),
+    Schema(Box<schema::SchemaArgs>),
 
     /// The script API: `flint script api [--json] [--filter x]` lists every
     /// function a script can call, and the callbacks
     #[command(subcommand)]
-    Script(script::ScriptCommands),
+    Script(Box<script::ScriptCommands>),
 
     /// Open a file in the appropriate interactive editor
-    Edit(edit_router::EditArgs),
+    Edit(Box<edit_router::EditArgs>),
 
     /// Start the scene viewer with hot-reload
     #[command(hide = true)]
@@ -96,7 +96,7 @@ enum Commands {
 
     /// Open the interactive track editor for a scene with spline data
     #[command(hide = true)]
-    SplineEdit(spline_edit::EditArgs),
+    SplineEdit(Box<spline_edit::EditArgs>),
 
     /// Validate a scene against its schemas and constraints (and fix what
     /// a constraint can fix)
@@ -108,72 +108,72 @@ enum Commands {
 
     /// The curated example scenes, from examples/index.toml: list them by
     /// topic, or --check that every one is indexed and validates
-    Examples(examples::ExamplesArgs),
+    Examples(Box<examples::ExamplesArgs>),
 
     /// Pack a game folder into .flintpack bundles for the web player
-    Bundle(bundle::BundleArgs),
+    Bundle(Box<bundle::BundleArgs>),
 
     /// Export a game for elsewhere: `flint export web <game>` writes a
     /// folder any static server plays it from
     #[command(subcommand)]
-    Export(export::ExportCommands),
+    Export(Box<export::ExportCommands>),
 
     /// Music suites and rhythm charts: validate, play, render to WAV,
     /// calibrate, chart play / chart replay
     #[command(subcommand)]
-    Music(music::MusicCommands),
+    Music(Box<music::MusicCommands>),
 
     /// The rumble spike (ADR 0025), an example since #709:
     /// `cargo run -p flint-input-capture --example spike_rumble`
     #[command(hide = true)]
-    SpikeRumble(spike_rumble::SpikeRumbleArgs),
+    SpikeRumble(Box<spike_rumble::SpikeRumbleArgs>),
 
     /// Render a `.goldens.toml` of scenes and gate each against its golden
     /// PNG (`--bless` rewrites them)
-    Goldens(render_goldens::GoldensArgs),
+    Goldens(Box<render_goldens::GoldensArgs>),
 
     /// Prefab operations
     #[command(subcommand)]
-    Prefab(prefab::PrefabCommands),
+    Prefab(Box<prefab::PrefabCommands>),
 
     /// Asset management operations
     #[command(subcommand)]
-    Asset(asset::AssetCommands),
+    Asset(Box<asset::AssetCommands>),
 
     /// Play a scene with first-person controls and physics
-    Play(play::PlayArgs),
+    Play(Box<play::PlayArgs>),
 
     /// Preview a 3D model file (GLB/glTF) with orbit camera
     #[command(hide = true)]
-    Preview(preview::PreviewArgs),
+    Preview(Box<preview::PreviewArgs>),
 
     /// Run a procedural generation spec
-    Gen(gen::GenArgs),
+    Gen(Box<gen::GenArgs>),
 
     /// Interactive previewer for procedural generation specs
     #[command(hide = true)]
-    GenPreview(gen_preview::GenPreviewArgs),
+    GenPreview(Box<gen_preview::GenPreviewArgs>),
 
     /// Interactive terrain editor with procgen, sculpting, and painting
     #[command(hide = true)]
-    TerrainEdit(terrain_edit::TerrainEditArgs),
+    TerrainEdit(Box<terrain_edit::TerrainEditArgs>),
 
     /// Visual node editor for texture pipeline specs
     #[command(hide = true)]
-    TexEdit(tex_edit::TexEditArgs),
+    TexEdit(Box<tex_edit::TexEditArgs>),
 
     /// Render a scene to a PNG image (headless)
-    Render(render::RenderArgs),
+    Render(Box<render::RenderArgs>),
 
     /// DX12's shader compiler, linked in: what DX12 compiles with here, and
     /// DXC's notices for a Windows build that ships
     #[command(subcommand)]
-    Dxc(dxc::DxcCommands),
+    Dxc(Box<dxc::DxcCommands>),
 
     /// User-authored styles: new (from a template), check (no GPU),
     /// prelude (the generated code), list
     #[command(subcommand)]
-    Style(style::StyleCommands),
+    Style(Box<style::StyleCommands>),
 }
 
 fn main() -> Result<()> {
@@ -207,32 +207,32 @@ fn main() -> Result<()> {
     }
 
     match cli.command {
-        Commands::Init(args) => init::run(args),
-        Commands::Entity(cmd) => entity::run(cmd),
-        Commands::Scene(cmd) => scene::run(cmd),
+        Commands::Init(args) => init::run(*args),
+        Commands::Entity(cmd) => entity::run(*cmd),
+        Commands::Scene(cmd) => scene::run(*cmd),
         Commands::Query {
             query,
             scene,
             format,
             schemas,
         } => query::run(&query, scene.as_deref(), &format, &schemas),
-        Commands::Schema(args) => schema::run(args),
-        Commands::Script(cmd) => script::run(cmd),
+        Commands::Schema(args) => schema::run(*args),
+        Commands::Script(cmd) => script::run(*cmd),
         Commands::Validate(args) => validate::run(*args),
         Commands::Check(args) => check_cmd::run(*args),
-        Commands::Examples(args) => examples::run(args),
-        Commands::Bundle(args) => bundle::run(args),
-        Commands::Export(cmd) => export::run(cmd),
-        Commands::Dxc(cmd) => dxc::run(cmd),
-        Commands::Music(cmd) => music::run(cmd),
-        Commands::SpikeRumble(args) => spike_rumble::run(args),
-        Commands::Goldens(args) => render_goldens::run_command(args),
-        Commands::Play(args) => play::run(args),
-        Commands::Prefab(cmd) => prefab::run(cmd),
-        Commands::Asset(cmd) => asset::run(cmd),
-        Commands::Edit(args) => edit_router::run(args),
-        Commands::SplineEdit(args) => spline_edit::run(args),
-        Commands::Preview(args) => preview::run(args),
+        Commands::Examples(args) => examples::run(*args),
+        Commands::Bundle(args) => bundle::run(*args),
+        Commands::Export(cmd) => export::run(*cmd),
+        Commands::Dxc(cmd) => dxc::run(*cmd),
+        Commands::Music(cmd) => music::run(*cmd),
+        Commands::SpikeRumble(args) => spike_rumble::run(*args),
+        Commands::Goldens(args) => render_goldens::run_command(*args),
+        Commands::Play(args) => play::run(*args),
+        Commands::Prefab(cmd) => prefab::run(*cmd),
+        Commands::Asset(cmd) => asset::run(*cmd),
+        Commands::Edit(args) => edit_router::run(*args),
+        Commands::SplineEdit(args) => spline_edit::run(*args),
+        Commands::Preview(args) => preview::run(*args),
         Commands::Serve {
             scene,
             watch,
@@ -247,15 +247,106 @@ fn main() -> Result<()> {
             Default::default(),
             Default::default(),
         ),
-        Commands::Gen(args) => gen::run(args),
-        Commands::GenPreview(args) => gen_preview::run(args),
-        Commands::TerrainEdit(args) => terrain_edit::run(args),
-        Commands::TexEdit(args) => tex_edit::run(args),
+        Commands::Gen(args) => gen::run(*args),
+        Commands::GenPreview(args) => gen_preview::run(*args),
+        Commands::TerrainEdit(args) => terrain_edit::run(*args),
+        Commands::TexEdit(args) => tex_edit::run(*args),
         Commands::Render(mut args) => {
             // --variant builds each variant's command line on this one (#291)
             args.command_line = commands::variants::subcommand_words(std::env::args_os());
-            render::run(args)
+            render::run(*args)
         }
-        Commands::Style(cmd) => style::run(cmd),
+        Commands::Style(cmd) => style::run(*cmd),
+    }
+}
+
+#[cfg(test)]
+mod stack_tests {
+    use super::*;
+
+    /// Parse `words` (after `flint`) on a thread of `bytes` of stack, the
+    /// help or error text rendered as the binary would print it.
+    fn parse_on_stack(words: &[&str], bytes: usize) -> String {
+        let argv: Vec<String> = std::iter::once("flint")
+            .chain(words.iter().copied())
+            .map(String::from)
+            .collect();
+        std::thread::Builder::new()
+            .stack_size(bytes)
+            .spawn(move || match Cli::try_parse_from(argv) {
+                Ok(cli) => format!("parsed ({} bytes)", std::mem::size_of_val(&cli)),
+                Err(e) => e.render().to_string(),
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    /// Windows' default main-thread stack. `.cargo/config.toml` links an
+    /// 8 MB one, but the parser alone should never need it: a debug build's
+    /// derived `augment_args` is one frame of about 8 KB a flag, and #708
+    /// measured 1346 KB to parse any command line while `flint render` was
+    /// one struct of 130 flags (579 KB once each help heading was its own
+    /// struct). A stack overflow aborts the test binary, naming the thread.
+    const WINDOWS_DEFAULT_STACK: usize = 1 << 20;
+
+    #[test]
+    fn the_parser_fits_in_windows_default_stack() {
+        for line in [
+            "--help",
+            "render --help",
+            "render x.scene.toml --set post.exposure=2",
+        ] {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            let out = parse_on_stack(&words, WINDOWS_DEFAULT_STACK);
+            assert!(!out.is_empty(), "{line}");
+        }
+    }
+
+    /// The least stack each command line parses on, by bisection (#708):
+    /// `cargo test -p flint-cli --bin flint stack_use -- --ignored --nocapture`.
+    /// Each try is this test binary run again with `FLINT_STACK_PROBE_KB`,
+    /// since an overflow aborts the process.
+    #[test]
+    #[ignore = "a measurement, run by hand"]
+    fn stack_use() {
+        if let Ok(kb) = std::env::var("FLINT_STACK_PROBE_KB") {
+            let line = std::env::var("FLINT_STACK_PROBE_ARGS").unwrap();
+            let words: Vec<&str> = line.split_whitespace().collect();
+            parse_on_stack(&words, kb.parse::<usize>().unwrap() << 10);
+            return;
+        }
+        let exe = std::env::current_exe().unwrap();
+        let fits = |line: &str, kb: usize| {
+            std::process::Command::new(&exe)
+                .args(["--ignored", "--exact", "stack_tests::stack_use"])
+                .env("FLINT_STACK_PROBE_KB", kb.to_string())
+                .env("FLINT_STACK_PROBE_ARGS", line)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        println!(
+            "size_of::<Commands>() = {} bytes",
+            std::mem::size_of::<Commands>()
+        );
+        for line in [
+            "--help",
+            "render --help",
+            "render x.scene.toml --set post.exposure=2",
+        ] {
+            let (mut lo, mut hi) = (16, 16384);
+            assert!(fits(line, hi), "{line}: overflows {hi} KB");
+            while hi - lo > 4 {
+                let mid = (lo + hi) / 2;
+                if fits(line, mid) {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            println!("{line:<45} {hi} KB");
+        }
     }
 }

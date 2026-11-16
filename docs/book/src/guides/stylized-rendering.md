@@ -15,7 +15,7 @@ CAM="--no-grid --target 0.7,0.7,4.2 --distance 5.2 --yaw 29 --pitch 10 --width 1
 | | |
 |---|---|
 | ![The clearing, smooth](../images/stylized-smooth.png) | ![The whole frame as glyphs](../images/stylized-whole-frame.png) |
-| **Smooth.** `--no-postprocess` (see #376) | **The whole frame.** `--ascii-scope screen` |
+| **Smooth.** `--no-postprocess` (see #376) | **The whole frame.** `--style ascii:scope=screen` |
 | ![Only the props as glyphs](../images/stylized-per-entity.png) | |
 | **Per entity.** The scene as authored: each prop's `ascii_style`, scope `entities` | |
 
@@ -40,7 +40,7 @@ The worry about per-entity glyphs was that they would not line up on one grid. T
 
 | ![Screen grid: the crate's # columns continue the ground's + columns, and an edge outline frames it](../images/stylized-grid-screen-zoom.png) | ![Object grid: the crate's columns start at their own offset, with no outline](../images/stylized-grid-object-zoom.png) |
 |---|---|
-| `--ascii-scope screen`: one grid | `--ascii-scope screen --ascii-grid object`: each prop on its own |
+| `--style ascii:scope=screen`: one grid | `--style ascii:scope=screen,grid=object`: each prop on its own |
 
 On the left, the crate's `#` columns sit exactly under the ground's `+` columns. On the right, the crate's grid is pinned to its projected origin. Its rows and columns start a few pixels off the field's, and wherever the two meet, cells are cut in half. The crate also loses its outline: [edge glyphs](../concepts/stylize-passes.md#edges) lie on the screen grid, so a variant on its own grid keeps only its tone glyphs. That seam is what the spike (#261) found, and it is why `grid = "object"` is opt-in per entity rather than the default.
 

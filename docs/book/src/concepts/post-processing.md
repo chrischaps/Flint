@@ -249,7 +249,7 @@ fade = 26.0
 | `fade` | `30.0` | 0--200 | Metres at which a line has faded by half, so distant foliage doesn't go solid with ink. 0 never fades |
 | `boil` | `0.0` | 0--2 | With a `[wooze]` table, how far each drawing moves the lines, and how much it changes their width and pressure |
 
-Being a style, it also takes `blend` and `order` and turns up in F4's Styles editor, `--style contour:width=2` and `flint render --list-styles`. `flint render --contour` and the `--contour-*` flags still work, as shorthands for its keys.
+Being a style, it also takes `blend` and `order` and turns up in F4's Styles editor, `--style contour:width=2` and `flint render --list-styles`. `--set contour.<key>=<value>` sets a key without turning the ink on.
 
 Scenes written before #599 used `contour_enabled`, `contour_width`, `contour_threshold`, `contour_strength`, `contour_luma`, `contour_color`, `contour_fade` and `contour_boil` in `[post_process]`. They still load, each moving into the table as Kuwahara's old keys do, and without `contour_enabled = true` they leave the ink off, as they always did. `examples/shading_boil.scene.toml` renders the same bytes in either spelling.
 
@@ -411,7 +411,7 @@ WARN levels/demo.scene.toml: [post_process] has no field 'bloom_intensty', did y
 
 ### Listing the keys
 
-Every key above belongs to one built-in effect (bloom, SSAO, fog, the grade...), and each is declared once, in the effects' descriptors (`flint_schema::post_effects`, #741): its kind, default, the range the effect is tuned for, the F4 widget and its help. Everything else is made from that one line: the scene's parse, the renderer's config and the copy between them, the `[table.post_process]` schema (`flint schema post_process`), `--sweep post.<key>`, the F4 menu's sections and this list:
+Every key above belongs to one built-in effect (bloom, SSAO, fog, the grade...), and each is declared once, in the effects' descriptors (`flint_schema::post_effects`, #741): its kind, default, the range the effect is tuned for, the F4 widget and its help. Everything else is made from that one line: the scene's parse, the renderer's config and the copy between them, the `[table.post_process]` schema (`flint schema post_process`), `--set post.<key>` and `--sweep post.<key>`, the F4 menu's sections and this list:
 
 ```bash
 flint render --list-effects           # by effect: key, kind, default, range, help
@@ -440,89 +440,63 @@ The scene viewer applies the scene's `[post_process]` block on load ([ADR 0046](
 
 ## CLI Flags
 
-Override post-processing settings from the command line:
+`flint render` sets any `[post_process]` key with `--set post.<key>=<value>`, spelled as the scene would write it. It repeats, and the last word for a key wins. A vector is comma-separated (`--set post.fog_color=0.7,0.75,0.82`) and a bool is `true` or `false`. A style's keys are `--style <name>:<key>=<value>,...`, which also turns the style on, or `--set <style>.<key>=<value>`, which sets the key and leaves the style on or off as the scene had it.
 
 ```bash
 # Disable all post-processing
 flint render scene.toml --no-postprocess
 
-# Adjust bloom and exposure
-flint render scene.toml --bloom-intensity 0.08 --bloom-threshold 0.8 --exposure 1.5
+# Bloom and exposure (bloom_intensity alone leaves bloom off in a scene that turned it off)
+flint render scene.toml --set post.bloom_intensity=0.08 --set post.bloom_enabled=true \
+    --set post.bloom_threshold=0.8 --set post.exposure=1.5
 
 # SSAO, with the cheap sample count
-flint render scene.toml --ssao-radius 0.5 --ssao-intensity 1.0 --ssao-samples 16
+flint render scene.toml --set post.ssao_radius=0.5 --set post.ssao_intensity=1.0 --set post.ssao_samples=16
 
-# Fog
-flint render scene.toml --fog-density 0.02 --fog-color 0.7,0.75,0.82 --fog-height-falloff 0.1
+# Fog, and height fog
+flint render scene.toml --set post.fog_enabled=true --set post.fog_density=0.02 --set post.fog_color=0.7,0.75,0.82 \
+    --set post.fog_height_enabled=true --set post.fog_height_falloff=0.1
 
 # Volumetric lighting
-flint render scene.toml --volumetric-density 1.0 --volumetric-samples 32
+flint render scene.toml --set post.volumetric_enabled=true --set post.volumetric_density=1.0 \
+    --set post.volumetric_samples=32
 
 # Depth of field
-flint render scene.toml --dof 0.6 --dof-focus 10 --dof-range 5
+flint render scene.toml --set post.dof_strength=0.6 --set post.dof_focus_distance=10 --set post.dof_focus_range=5
 
 # Kuwahara
-flint render scene.toml --kuwahara-radius 4 --kuwahara-sharpness 8 --kuwahara-hardness 8 --kuwahara-anisotropy 1
+flint render scene.toml --style kuwahara:radius=4,sharpness=8,hardness=8,anisotropy=1
 
 # Ink, and a drawing of the shading boil in a scene with a [wooze] table
-flint render scene.toml --contour --contour-width 1.5 --contour-boil 1 --kuwahara-boil 0.5 --boil-on 2 --boil-time 0.5
+flint render scene.toml --style contour:width=1.5,boil=1 --set kuwahara.boil=0.5 --set post.boil_on=2 --boil-time 0.5
 
 # Grade, grain, FXAA, MSAA
-flint render scene.toml --grade-lift 0.03,0.02,0.015 --grade-gain 1.04,1,0.94 --film-grain 0.03 --fxaa --msaa 4
-
-# Combine flags
-flint render scene.toml --bloom-intensity 0.1 --exposure 1.2 --volumetric-density 5.0
+flint render scene.toml --set post.grade_lift=0.03,0.02,0.015 --set post.grade_gain=1.04,1,0.94 \
+    --set post.film_grain=0.03 --set post.fxaa=true --msaa 4
 ```
+
+The lists are in the binary, so they can't go stale:
+
+| Command | Lists |
+|---------|-------|
+| `flint render --list-effects` | Every `[post_process]` key by effect, with its kind, default and tuned range (`--json` for a document) |
+| `flint render --list-styles` | Every style and its keys |
+| `flint render --look help` | Every look and the sweeps that tune it |
+| `flint render --help` | Every flag, grouped by heading |
+
+A value past a key's tuned range still draws, with a warning. The scene's block comes first, then `--look`, then each `--set` in the order given, then `--style`, so the command line wins over the scene's TOML.
+
+A few flags stay flags, because they are not `[post_process]` keys:
 
 | Flag | Description |
 |------|-------------|
 | `--no-postprocess` | Disable the entire post-processing pipeline |
 | `--no-shadows` | Disable shadow mapping (also disables volumetric) |
 | `--msaa <1\|4>` | Scene-pass MSAA sample count (default 1) |
-| `--bloom-intensity <f32>` | Override bloom intensity |
-| `--bloom-threshold <f32>` | Override bloom brightness threshold |
-| `--exposure <f32>` | Override exposure multiplier |
-| `--ssao-radius <f32>` | Override SSAO sample radius |
-| `--ssao-intensity <f32>` | Override SSAO strength |
-| `--ssao-samples <u32>` | Override SSAO samples per pixel, 1--64 |
-| `--fog-density <f32>` | Override fog density (0 disables fog) |
-| `--fog-color <r,g,b>` | Override fog color |
-| `--fog-height-falloff <f32>` | Enable height fog with given falloff |
-| `--volumetric-density <f32>` | Override volumetric density (0 disables) |
-| `--volumetric-samples <u32>` | Override volumetric ray-march steps |
-| `--dither-intensity <f32>` | Override dither strength |
-| `--desaturate <f32>` | Desaturation toward ash grey, 0--1 |
-| `--dof <f32>` | Depth-of-field strength (0 = off) |
-| `--dof-focus <f32>` | Focus plane distance in world units |
-| `--dof-range <f32>` | Focus half-width in world units |
-| `--kuwahara-radius <u32>` | Enable Kuwahara with this radius |
-| `--kuwahara-sharpness <f32>` | Kuwahara sector sharpness |
-| `--kuwahara-hardness <f32>` | Kuwahara sector hardness |
-| `--kuwahara-anisotropy <f32>` | Kuwahara anisotropy, 0--1 |
-| `--kuwahara-boil <f32>` | How far each drawing moves the paint |
-| `--contour` | Enable the contour pass |
-| `--contour-width <f32>` | Half a line's width at 1080p (enables contour) |
-| `--contour-threshold <f32>` | How strong an edge must be before it inks (enables contour) |
-| `--contour-strength <f32>` | How dark the ink goes, 0--1 (enables contour) |
-| `--contour-luma <f32>` | How much luminance edges count (enables contour) |
-| `--contour-color <R,G,B>` | The ink's colour, linear (enables contour) |
-| `--contour-fade <f32>` | Metres at which a line has faded by half (enables contour) |
-| `--contour-boil <f32>` | How far each drawing moves the lines (enables contour) |
-| `--boil-on <u32>` | Film frames each drawing is held: 1, 2 or 3 |
 | `--boil-time <f64>` | Seconds of the wooze field to run, which picks the drawing |
-| `--film-grain <f32>` | Film grain intensity |
 | `--grain-time <f32>` | Post time for grain and mode animation (default 0) |
-| `--grade-lift <r,g,b>` | Color grade lift |
-| `--grade-gamma <r,g,b>` | Color grade gamma |
-| `--grade-gain <r,g,b>` | Color grade gain |
-| `--fxaa` | Enable the FXAA pass |
-| `--tear <f32>` | How much of the frame tears open, 0--1 (see [The tear](#the-tear)) |
-| `--tear-scale <f32>` | The tear's patches across the frame's height (default 3) |
-| `--tear-iris` | Tear open from the centre in a circle instead |
 | `--render-mode <1-6>`, `--mode-mix`, `--mode-params` | Deprecated (#746), for one release: [the old render modes](#the-old-render-modes) |
 | `--oren-nayar`, `--sheen-strength`, `--sheen-color` | Lighting levers, documented in [Lighting](lighting.md) |
-
-CLI flags take precedence over scene TOML settings.
 
 ## The Rendering & Effects Menu (F4)
 
@@ -620,8 +594,8 @@ rate = 6.0
 ```
 
 ```bash
-flint render scene.toml --style matrix:blend_source=tear --tear 0.55
-flint render scene.toml --style tron:blend_source=tear --tear 0.45 --tear-iris
+flint render scene.toml --style matrix:blend_source=tear --set post.tear=0.55
+flint render scene.toml --style tron:blend_source=tear --set post.tear=0.45 --set post.tear_iris=true
 ```
 
 ### The ocean's tint
