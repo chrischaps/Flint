@@ -75,8 +75,11 @@ fn stops_a_load(d: &Diagnostic) -> bool {
         || dangling_parent(d)
 }
 
+/// A `parent` the loader refuses: one naming no entity, or one closing a
+/// loop (#680). Either is named with its entity, so the load's own failure
+/// says nothing more.
 fn dangling_parent(d: &Diagnostic) -> bool {
-    d.code == codes::UNKNOWN_ENTITY && d.component.is_none()
+    (d.code == codes::UNKNOWN_ENTITY && d.component.is_none()) || d.code == codes::PARENT_CYCLE
 }
 
 /// Whether the scene can't be read at all, so there is nothing more to ask.
@@ -173,7 +176,7 @@ pub fn check(
 
     let world = match load_scene_diagnosed(scene, &schemas.registry) {
         Ok((world, _, _)) => Some(world),
-        // A parent that isn't there has been named, with its entity
+        // A parent that isn't there, or loops, has been named with its entity
         Err(_) if no_parent => None,
         Err(e) => {
             out.diagnostics.push(

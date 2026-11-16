@@ -191,6 +191,7 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `no-schemas` | warning | no schema is loaded at all, so nothing was checked (said once, not per entity) |
 | `needs-component` | warning | a component that does nothing without another the entity lacks: a `collider` with no `rigidbody`. Raised [while the game runs](#diagnostics-while-the-game-runs), by the system that reads it |
 | `unknown-entity` | error | an `entity` field, or an entity's `parent`, names no entity of the scene; the hint is the nearest name. An empty string is "not set" and passes |
+| `parent-cycle` | error | the entities' `parent`s close into a loop: one parented to itself, or `a` under `b` under `a`. Said once a loop, on its first entity by name, with the chain; the scene does not load |
 | `missing-asset` | error | an `asset` field names no file the project's asset search finds; the hint lists every path tried |
 | `old-type-name` | warning | a schema file of the game's spells a type the old way (`float` for `f32`); it still loads |
 | `unknown-type` | warning | a schema file of the game's names a type that is none, an `asset` with no `kind`, or a `kind` that is no asset kind; the field is checked as a string |
