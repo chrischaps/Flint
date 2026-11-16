@@ -78,6 +78,9 @@ pub struct GameCore {
     /// Script commands no part of this scene takes that have been warned
     /// about, once a run each (`set_wooze` in a scene with no field).
     pub(crate) commands_warned: std::collections::HashSet<&'static str>,
+    /// The fixed physics steps that ran last frame (the frame history,
+    /// #1076); a step a paused state skipped isn't one.
+    pub(crate) fixed_steps: u32,
     /// The script modules the game's extensions declared (#754): enabled
     /// for the whole run, beside the subsystems'.
     pub(crate) extension_modules: Vec<&'static str>,
@@ -105,6 +108,7 @@ impl GameCore {
             procgen_resolver: ProcGenResolver::new(),
             script_requests: Default::default(),
             commands_warned: Default::default(),
+            fixed_steps: 0,
             extension_modules: Vec::new(),
         }
     }
@@ -512,10 +516,12 @@ impl GameCore {
         camera: &mut Camera,
     ) -> Option<Listener> {
         self.physics.begin_frame(self.clock.pending_fixed_ratio());
+        self.fixed_steps = 0;
         while self.clock.should_fixed_update() {
             let dt = self.clock.fixed_timestep;
 
             if steps && config.runs(PHYSICS) {
+                self.fixed_steps += 1;
                 if has_fps_player {
                     self.physics.update_character(input, &mut self.world, dt);
                 }

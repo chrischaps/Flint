@@ -23,10 +23,12 @@ mod extension_hooks_tests;
 mod extension_tests;
 pub mod fonts;
 mod frame;
+mod frame_history;
 pub mod frame_rate;
 pub mod game_core;
 pub mod headless_animation;
 pub mod headless_game;
+mod hitch;
 #[cfg(test)]
 mod hold_tests;
 mod hud_render;

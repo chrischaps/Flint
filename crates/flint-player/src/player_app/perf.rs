@@ -7,9 +7,12 @@
 //! marks where each phase of its own work ends ([`Phase`]); whatever the
 //! frame took beyond the phases is time the main thread spent elsewhere
 //! (the browser, the compositor, a wait for the next vblank).
+//!
+//! The frames themselves are the always-on frame history's
+//! (`frame_history.rs`, #1076): the readout sums up its last ten seconds.
 
+use super::frame_history::{Frame, FrameHistory};
 use super::pacing::Spread;
-use std::collections::VecDeque;
 use web_time::Instant;
 
 /// How far back the readout looks.
@@ -51,7 +54,7 @@ impl Phase {
         Phase::Hud,
         Phase::Present,
     ];
-    const COUNT: usize = Self::ALL.len();
+    pub(crate) const COUNT: usize = Self::ALL.len();
 
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -66,17 +69,6 @@ impl Phase {
             Phase::Present => "present",
         }
     }
-}
-
-/// One frame: when it began (seconds since the recorder started), how long
-/// it lasted, and its phases' times, all ms.
-#[derive(Debug, Clone)]
-struct Frame {
-    at: f64,
-    ms: f32,
-    phases: [f32; Phase::COUNT],
-    /// Each script callback's time, indexed as `PerfRecorder::script_names`.
-    scripts: Vec<f32>,
 }
 
 /// A phase's time over the window: the mean frame's, and the worst.
@@ -118,116 +110,80 @@ pub(crate) struct PerfSummary {
     pub scripts: Vec<ScriptTime>,
 }
 
-/// Records frames and their phases; see the module docs.
+/// The player's frame recorder: the always-on frame history (#1076, which
+/// it derefs to for recording) and the readout's own state. Every player
+/// has one; `--perf` / `?perf=1` turn the readout on ([`Self::readout`]).
 pub(crate) struct PerfRecorder {
-    start: Instant,
-    frames: VecDeque<Frame>,
-    /// The frame under way: when it began and when its last mark fell.
-    frame_start: Option<Instant>,
-    last_mark: Option<Instant>,
-    phases: [f32; Phase::COUNT],
-    /// Script files seen so far, and the frame under way's time in each.
-    script_names: Vec<String>,
-    scripts: Vec<f32>,
+    history: FrameHistory,
+    /// The readout is shown (`--perf`, `?perf=1`): it is due twice a
+    /// second, scripts are timed, and the history keeps its ten seconds.
+    pub readout: bool,
     /// The renderer's GPU timing was asked for (the readout's GPU lines).
     pub gpu_wanted: bool,
     /// When the readout was last drawn, so it is drawn twice a second.
     pub shown_at: Option<Instant>,
-    /// Frames begun since recording started: the web readout divides the
-    /// page's WebGPU call counts by it (#139).
-    pub frames_begun: u64,
+}
+
+impl Default for PerfRecorder {
+    /// The always-on recorder, readout off: the history's last frames only.
+    fn default() -> Self {
+        Self {
+            history: FrameHistory::default(),
+            readout: false,
+            gpu_wanted: false,
+            shown_at: None,
+        }
+    }
+}
+
+impl std::ops::Deref for PerfRecorder {
+    type Target = FrameHistory;
+    fn deref(&self) -> &FrameHistory {
+        &self.history
+    }
+}
+
+impl std::ops::DerefMut for PerfRecorder {
+    fn deref_mut(&mut self) -> &mut FrameHistory {
+        &mut self.history
+    }
 }
 
 impl PerfRecorder {
+    /// A recorder with the readout on (the player turns it on in place,
+    /// [`show_readout`](Self::show_readout)).
+    #[cfg(test)]
     pub(crate) fn new(gpu_wanted: bool) -> Self {
-        Self {
-            start: Instant::now(),
-            frames: VecDeque::new(),
-            frame_start: None,
-            last_mark: None,
-            phases: [0.0; Phase::COUNT],
-            script_names: Vec::new(),
-            scripts: Vec::new(),
-            gpu_wanted,
-            shown_at: None,
-            frames_begun: 0,
-        }
+        let mut rec = Self::default();
+        rec.show_readout(gpu_wanted);
+        rec
     }
 
-    /// A new frame begins now: the one before it ends.
-    pub(crate) fn begin_frame(&mut self) {
-        self.begin_frame_at(Instant::now());
+    /// Turn the readout on, from this frame: the frames already kept stay.
+    pub(crate) fn show_readout(&mut self, gpu_wanted: bool) {
+        self.readout = true;
+        self.gpu_wanted = gpu_wanted;
+        self.history.keep_secs(Some(WINDOW_SECS));
     }
 
-    /// This frame's time in each script callback
-    /// (`ScriptSystem::take_times`), added to what the frame already has.
-    pub(crate) fn record_scripts(&mut self, times: &[(String, f32)]) {
-        for (path, ms) in times {
-            let i = match self.script_names.iter().position(|n| n == path) {
-                Some(i) => i,
-                None => {
-                    self.script_names.push(path.clone());
-                    self.script_names.len() - 1
-                }
-            };
-            if self.scripts.len() <= i {
-                self.scripts.resize(i + 1, 0.0);
-            }
-            self.scripts[i] += ms;
-        }
-    }
-
-    /// The end of `phase`, now.
-    pub(crate) fn mark(&mut self, phase: Phase) {
-        self.mark_at(phase, Instant::now());
-    }
-
-    fn begin_frame_at(&mut self, now: Instant) {
-        self.frames_begun += 1;
-        if let Some(began) = self.frame_start {
-            let ms = now.duration_since(began).as_secs_f32() * 1000.0;
-            let frame = Frame {
-                at: began.duration_since(self.start).as_secs_f64(),
-                ms,
-                phases: self.phases,
-                scripts: std::mem::take(&mut self.scripts),
-            };
-            self.push(frame);
-        }
-        self.frame_start = Some(now);
-        self.last_mark = Some(now);
-        self.phases = [0.0; Phase::COUNT];
-        self.scripts.clear();
-    }
-
-    fn mark_at(&mut self, phase: Phase, now: Instant) {
-        let Some(last) = self.last_mark else {
-            return;
-        };
-        // `+=`: a phase marked twice in a frame (a second render path)
-        // counts both.
-        self.phases[phase as usize] += now.duration_since(last).as_secs_f32() * 1000.0;
-        self.last_mark = Some(now);
-    }
-
-    fn push(&mut self, frame: Frame) {
-        let horizon = frame.at - WINDOW_SECS;
-        self.frames.push_back(frame);
-        while self.frames.front().is_some_and(|f| f.at < horizon) {
-            self.frames.pop_front();
-        }
+    /// The readout's frames: the last [`WINDOW_SECS`] of the history.
+    fn window(&self) -> impl Iterator<Item = &Frame> + Clone {
+        let frames = self.history.frames();
+        let horizon = frames.back().map_or(0.0, |f| f.at - WINDOW_SECS);
+        frames.iter().filter(move |f| f.at >= horizon)
     }
 
     /// The window so far, or `None` before the first whole frame.
     pub(crate) fn summary(&self) -> Option<PerfSummary> {
-        let ms: Vec<f32> = self.frames.iter().map(|f| f.ms).collect();
+        let window = self.window();
+        let ms: Vec<f32> = window.clone().map(|f| f.ms).collect();
         let frames = Spread::of(&ms)?;
-        let n = self.frames.len() as f32;
+        let n = ms.len() as f32;
         let phases: Vec<PhaseTime> = Phase::ALL
             .iter()
             .map(|&phase| {
                 let i = phase as usize;
-                let (sum, max) = self.frames.iter().fold((0.0f32, 0.0f32), |(s, m), f| {
+                let (sum, max) = window.clone().fold((0.0f32, 0.0f32), |(s, m), f| {
                     (s + f.phases[i], m.max(f.phases[i]))
                 });
                 PhaseTime {
@@ -237,13 +193,13 @@ impl PerfRecorder {
                 }
             })
             .collect();
-        let worst = self.frames.iter().max_by(|a, b| a.ms.total_cmp(&b.ms))?;
+        let worst = window.clone().max_by(|a, b| a.ms.total_cmp(&b.ms))?;
         let mut scripts: Vec<ScriptTime> = self
-            .script_names
+            .script_names()
             .iter()
             .enumerate()
             .map(|(i, path)| {
-                let (sum, max) = self.frames.iter().fold((0.0f32, 0.0f32), |(s, m), f| {
+                let (sum, max) = window.clone().fold((0.0f32, 0.0f32), |(s, m), f| {
                     let ms = f.scripts.get(i).copied().unwrap_or(0.0);
                     (s + ms, m.max(ms))
                 });
@@ -257,7 +213,7 @@ impl PerfRecorder {
             .collect();
         scripts.sort_by(|a, b| b.max.total_cmp(&a.max));
         scripts.truncate(SCRIPTS_SHOWN);
-        let secs = self.frames.iter().map(|f| f.ms as f64).sum::<f64>() / 1000.0;
+        let secs = window.map(|f| f.ms as f64).sum::<f64>() / 1000.0;
         Some(PerfSummary {
             frames,
             secs,
@@ -685,23 +641,22 @@ impl super::PlayerApp {
     /// (ADR 0108) where the adapter has timestamps; it adds a few small
     /// submissions a frame, so `?perf=cpu` leaves it off.
     pub fn enable_perf(&mut self, gpu: bool) {
-        self.stats.perf = Some(PerfRecorder::new(gpu));
+        self.stats.perf.show_readout(gpu);
         self.core.script.set_timing(true);
     }
 
-    /// The end of `phase` in this frame, when recording.
+    /// The end of `phase` in this frame (the frame history, #1076).
     pub(super) fn perf_mark(&mut self, phase: Phase) {
-        if let Some(perf) = &mut self.stats.perf {
-            perf.mark(phase);
-        }
+        self.stats.perf.mark(phase);
     }
 
     /// Whether the readout is due again: at most once every `every`
     /// seconds. Never while not recording.
     pub(super) fn perf_due(&mut self, every: f64) -> bool {
-        let Some(perf) = &mut self.stats.perf else {
+        let perf = &mut self.stats.perf;
+        if !perf.readout {
             return false;
-        };
+        }
         let now = Instant::now();
         if perf
             .shown_at
@@ -720,7 +675,10 @@ impl super::PlayerApp {
         browser: String,
         adapter: String,
     ) -> Option<(PerfSummary, PerfContext)> {
-        let perf = self.stats.perf.as_ref()?;
+        let perf = &self.stats.perf;
+        if !perf.readout {
+            return None;
+        }
         let summary = perf.summary()?;
         let renderer = self.scene_renderer.as_ref()?;
         let context = self.render_context.as_ref()?;
@@ -808,7 +766,7 @@ impl super::PlayerApp {
 
 /// `scripts/biolum.rhai:on_update` -> `biolum.rhai:on_update`: the file
 /// without its folder, and the callback (#703).
-fn script_name(label: &str) -> String {
+pub(super) fn script_name(label: &str) -> String {
     label
         .rsplit(['/', '\\'])
         .next()

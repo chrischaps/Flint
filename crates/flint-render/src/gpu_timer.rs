@@ -90,6 +90,9 @@ pub struct GpuTimer {
     /// Every frame read back, raw, while [`record`](Self::record) is on
     /// (#292); `None` keeps nothing, so a long-running player doesn't grow.
     recorded: Option<Vec<GpuTimings>>,
+    /// The busy time of the last frame read back, unsmoothed, until
+    /// [`take_latest_frame_ms`](Self::take_latest_frame_ms) takes it.
+    latest_ms: Option<f32>,
 }
 
 impl GpuTimer {
@@ -141,6 +144,7 @@ impl GpuTimer {
             timings: GpuTimings::default(),
             resolved: None,
             recorded: None,
+            latest_ms: None,
         })
     }
 
@@ -295,6 +299,14 @@ impl GpuTimer {
             });
     }
 
+    /// The busy time of the newest frame read back since the last take, ms
+    /// and unsmoothed: a frame's own figure for the player's frame history
+    /// (#1076). It is a frame or two old, as every read-back is, and `None`
+    /// on a frame no read-back came in.
+    pub fn take_latest_frame_ms(&mut self) -> Option<f32> {
+        self.latest_ms.take()
+    }
+
     /// The smoothed times of the frames read back so far.
     pub fn timings(&self) -> &GpuTimings {
         &self.timings
@@ -324,6 +336,7 @@ impl GpuTimer {
                     readback.buffer.unmap();
                     readback.in_flight = false;
                     let frame = frame_times(&readback.labels, &ticks, self.period_ns);
+                    self.latest_ms = Some(frame.frame_ms);
                     if let (Some(recorded), true) = (&mut self.recorded, readback.record) {
                         recorded.push(frame.clone());
                     }
