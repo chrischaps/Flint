@@ -127,6 +127,11 @@ the tickets' blocked-by links. The steps get no sub-issues.
   used to return early.
 - A game can still add fields to an engine component; it gets a warning it
   can silence by declaring the field in its own schema layer.
+- Since then (#794): declaring one field no longer means copying the
+  engine's whole file. A layer's `[component.x]` (or `[table.x]`) with
+  `extend = true` adds its fields to the earlier layer's definition; without
+  it a later layer still replaces the component whole, so no layer written
+  before changed meaning. Chosen over implicit merging for that reason.
 
 ## Decisions
 
