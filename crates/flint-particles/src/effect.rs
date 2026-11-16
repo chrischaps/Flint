@@ -376,6 +376,152 @@ impl ResolveContext {
     }
 }
 
+/// One thing wrong with an emitter as authored, at the key it is under
+/// (#690). Displays as `key: message (hint)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmitterProblem {
+    /// The key, `bursts[1]` for an entry of a list; `None` when serde
+    /// couldn't say.
+    pub key: Option<String>,
+    pub message: String,
+    /// The key is not one the emitter reads (a typo, mostly): the emitter
+    /// still plays, without it.
+    pub unknown: bool,
+    /// What to write instead: "did you mean `emission_rate`?", the forms a
+    /// value can take.
+    pub hint: Option<String>,
+}
+
+impl EmitterProblem {
+    /// A value at `key` that can't be used.
+    pub fn at(key: &str, message: String) -> Self {
+        Self {
+            key: Some(key.to_string()),
+            message,
+            unknown: false,
+            hint: None,
+        }
+    }
+
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
+    }
+
+    /// From what serde said of a table that didn't deserialise:
+    /// "data did not match any variant of untagged enum CurveDef\nin `color`".
+    /// The key comes from the `in` line, and an untagged enum's mismatch,
+    /// which names a Rust type, is said as the forms the key takes.
+    fn from_serde(said: &str) -> Self {
+        let mut lines = said.lines().map(str::trim).filter(|l| !l.is_empty());
+        let first = lines.next().unwrap_or(said).to_string();
+        let key = lines
+            .find_map(|l| l.strip_prefix("in `"))
+            .and_then(|rest| rest.strip_suffix('`'))
+            .map(str::to_string);
+        let forms = [
+            ("RangeDef", "a number or `[min, max]`"),
+            ("CountDef", "a whole number or `[min, max]`"),
+            (
+                "CurveDef",
+                "a value, `{ start = .., end = .. }` or `{ keys = [{ t = .., v = .. }, ..] }`",
+            ),
+            (
+                "ShapeField",
+                "\"point\", \"sphere\", \"cone\" or \"box\", or a table with `kind`",
+            ),
+        ];
+        let untagged = forms
+            .iter()
+            .find(|(ty, _)| first.ends_with(&format!("untagged enum {ty}")));
+        let (message, hint) = match untagged {
+            Some((_, forms)) => (
+                "is not a form this key takes".to_string(),
+                Some(format!("expected {forms}")),
+            ),
+            None => (first, None),
+        };
+        Self {
+            key,
+            message,
+            unknown: false,
+            hint,
+        }
+    }
+}
+
+impl std::fmt::Display for EmitterProblem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(key) = &self.key {
+            write!(f, "{key}: ")?;
+        }
+        write!(f, "{}", self.message)?;
+        if let Some(hint) = &self.hint {
+            write!(f, " ({hint})")?;
+        }
+        Ok(())
+    }
+}
+
+/// The field names serde's derive gives a struct, so a list of known keys
+/// is the struct's own and can't drift from it (#690). They are read by
+/// asking the type to deserialise from a deserializer that records the
+/// names `deserialize_struct` is handed and then stops.
+mod field_names {
+    use serde::de::{self, Deserialize, Deserializer, Visitor};
+    use std::fmt;
+
+    #[derive(Debug)]
+    struct Stop;
+
+    impl fmt::Display for Stop {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("field names read")
+        }
+    }
+
+    impl std::error::Error for Stop {}
+
+    impl de::Error for Stop {
+        fn custom<T: fmt::Display>(_: T) -> Self {
+            Stop
+        }
+    }
+
+    struct Names<'a>(&'a mut &'static [&'static str]);
+
+    impl<'de> Deserializer<'de> for Names<'_> {
+        type Error = Stop;
+
+        fn deserialize_any<V: Visitor<'de>>(self, _: V) -> Result<V::Value, Stop> {
+            Err(Stop)
+        }
+
+        fn deserialize_struct<V: Visitor<'de>>(
+            self,
+            _name: &'static str,
+            fields: &'static [&'static str],
+            _visitor: V,
+        ) -> Result<V::Value, Stop> {
+            *self.0 = fields;
+            Err(Stop)
+        }
+
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+            bytes byte_buf option unit unit_struct newtype_struct seq tuple
+            tuple_struct map enum identifier ignored_any
+        }
+    }
+
+    /// `T`'s field names; empty for a type that isn't a struct.
+    pub fn of<T: for<'de> Deserialize<'de>>() -> &'static [&'static str] {
+        let mut fields: &'static [&'static str] = &[];
+        let _ = T::deserialize(Names(&mut fields));
+        fields
+    }
+}
+
 /// An emitter as authored (asset or inline component).
 ///
 /// Every field has a default so partial tables load. Legacy inline keys
@@ -576,103 +722,84 @@ impl Default for EmitterDef {
 pub const MAX_PARTICLES_PER_EMITTER: u32 = 10_000;
 
 impl EmitterDef {
-    /// Every key `EmitterDef` understands. Asset loading rejects anything
-    /// else so typos fail loudly; inline components stay lenient.
-    pub const KNOWN_KEYS: &'static [&'static str] = &[
-        "name",
-        "emission_rate",
-        "emission_per_meter",
-        "max_particles",
-        "lifetime",
-        "duration",
-        "looping",
-        "start_delay",
-        "autoplay",
-        "playing",
-        "bursts",
-        "shape",
-        "shape_offset",
-        "shape_axis_u",
-        "shape_axis_v",
-        "local_axes",
-        "speed",
-        "direction",
-        "spread",
-        "gravity",
-        "damping",
-        "inherit_velocity",
-        "world_space",
-        "forces",
-        "speed_curve",
-        "size",
-        "size_scale",
-        "color",
-        "alpha",
-        "brightness",
-        "rotation",
-        "angular_velocity",
-        "texture",
-        "frames_x",
-        "frames_y",
-        "animate_frames",
-        "frame_rate",
-        "random_start_frame",
-        "blend_mode",
-        "sort",
-        "soft_distance",
-        "fade_near",
-        "fade_far",
-        "lighting",
-        "fog",
-        "stretch",
-        "on_death",
-        "on_birth",
-        "trail",
-        "burst_count",
-        "lifetime_min",
-        "lifetime_max",
-        "speed_min",
-        "speed_max",
-        "size_start",
-        "size_end",
-        "color_start",
-        "color_end",
-        "shape_radius",
-        "shape_angle",
-        "shape_extents",
-        "rotation_min",
-        "rotation_max",
-        "angular_velocity_min",
-        "angular_velocity_max",
-    ];
+    /// Every key `EmitterDef` understands: the field names serde's derive
+    /// gives the struct, so a new field is a known key the moment it exists
+    /// (#690). Asset loading rejects anything else; `flint validate` and
+    /// `flint check` report it on an inline component, and the runtime warns.
+    pub fn known_keys() -> &'static [&'static str] {
+        field_names::of::<EmitterDef>()
+    }
 
-    /// Parse an inline `particle_emitter` component table (lenient).
-    pub fn from_component(table: &toml::value::Table) -> Result<Self, String> {
+    /// Parse an inline `particle_emitter` component table. Unknown keys are
+    /// ignored here (see [`problems`](Self::problems)); a value of the wrong
+    /// form is an error naming its key.
+    pub fn from_component(table: &toml::value::Table) -> Result<Self, EmitterProblem> {
         toml::Value::Table(table.clone())
             .try_into::<EmitterDef>()
-            .map_err(|e| e.to_string())
+            .map_err(|e| EmitterProblem::from_serde(&e.to_string()))
     }
 
     /// Keys in `table` that `EmitterDef` does not understand.
     pub fn unknown_keys(table: &toml::value::Table) -> Vec<String> {
+        let known = Self::known_keys();
         table
             .keys()
-            .filter(|k| !Self::KNOWN_KEYS.contains(&k.as_str()))
+            .filter(|k| !known.contains(&k.as_str()))
             .cloned()
             .collect()
     }
 
-    /// Build the runtime configuration. Validates ranges and curves; the
-    /// error names the emitter so asset load failures are actionable.
-    pub fn resolve(&self, ctx: ResolveContext) -> Result<EmitterConfig, String> {
-        let who = || {
-            if self.name.is_empty() {
-                "emitter".to_string()
-            } else {
-                format!("emitter '{}'", self.name)
+    /// [`unknown_keys`](Self::unknown_keys), each as a problem with the
+    /// nearest known key as its hint.
+    pub fn unknown_key_problems(table: &toml::value::Table) -> Vec<EmitterProblem> {
+        let known = Self::known_keys();
+        Self::unknown_keys(table)
+            .into_iter()
+            .map(|key| EmitterProblem {
+                message: "not a key particle_emitter reads".to_string(),
+                hint: flint_core::diagnostic::did_you_mean(&key, known.iter().copied()),
+                key: Some(key),
+                unknown: true,
+            })
+            .collect()
+    }
+
+    /// Everything wrong with an inline `particle_emitter` table, each at
+    /// its key: every key the emitter doesn't read, then the first value
+    /// that doesn't parse or resolve. Empty when the table plays as written.
+    pub fn problems(table: &toml::value::Table) -> Vec<EmitterProblem> {
+        let mut found = Self::unknown_key_problems(table);
+        match Self::from_component(table) {
+            Err(problem) => found.push(problem),
+            Ok(def) => {
+                if let Err(problem) = def.resolve_keyed(ResolveContext::inline()) {
+                    found.push(problem);
+                }
             }
-        };
-        let err = |m: String| format!("{}: {m}", who());
+        }
+        found
+    }
+
+    /// "emitter 'flames'", or "emitter" for one with no name.
+    fn who(&self) -> String {
+        if self.name.is_empty() {
+            "emitter".to_string()
+        } else {
+            format!("emitter '{}'", self.name)
+        }
+    }
+
+    /// Build the runtime configuration. Validates ranges and curves; the
+    /// error names the emitter and the key so asset load failures are
+    /// actionable.
+    pub fn resolve(&self, ctx: ResolveContext) -> Result<EmitterConfig, String> {
+        self.resolve_keyed(ctx)
+            .map_err(|problem| format!("{}: {problem}", self.who()))
+    }
+
+    /// [`resolve`](Self::resolve), with the problem at its key.
+    pub fn resolve_keyed(&self, ctx: ResolveContext) -> Result<EmitterConfig, EmitterProblem> {
+        let err = EmitterProblem::at;
 
         let (lifetime_min, lifetime_max) = match self.lifetime {
             Some(r) => r.pair(),
@@ -686,7 +813,12 @@ impl EmitterDef {
         };
         let (lifetime_min, lifetime_max) = order(lifetime_min, lifetime_max);
         if lifetime_max <= 0.0 {
-            return Err(err("lifetime must be positive".into()));
+            let key = if self.lifetime.is_some() {
+                "lifetime"
+            } else {
+                "lifetime_max"
+            };
+            return Err(err(key, "must be positive".into()));
         }
 
         let (speed_min, speed_max) = match self.speed {
@@ -702,7 +834,7 @@ impl EmitterDef {
         let (speed_min, speed_max) = order(speed_min, speed_max);
 
         let size = match &self.size {
-            Some(c) => c.to_curve().map_err(|m| err(format!("size: {m}")))?,
+            Some(c) => c.to_curve().map_err(|m| err("size", m))?,
             None => {
                 let s = self.size_start.unwrap_or(0.1);
                 let e = self.size_end.unwrap_or(0.0);
@@ -710,18 +842,18 @@ impl EmitterDef {
             }
         };
         let color = match &self.color {
-            Some(c) => c.to_curve().map_err(|m| err(format!("color: {m}")))?,
+            Some(c) => c.to_curve().map_err(|m| err("color", m))?,
             None => Curve::start_end(
                 self.color_start.unwrap_or([1.0, 1.0, 1.0, 1.0]),
                 self.color_end.unwrap_or([1.0, 1.0, 1.0, 0.0]),
             ),
         };
         let alpha = match &self.alpha {
-            Some(c) => Some(c.to_curve().map_err(|m| err(format!("alpha: {m}")))?),
+            Some(c) => Some(c.to_curve().map_err(|m| err("alpha", m))?),
             None => None,
         };
         let speed_curve = match &self.speed_curve {
-            Some(c) => Some(c.to_curve().map_err(|m| err(format!("speed_curve: {m}")))?),
+            Some(c) => Some(c.to_curve().map_err(|m| err("speed_curve", m))?),
             None => None,
         };
 
@@ -741,12 +873,27 @@ impl EmitterDef {
                         angle,
                     },
                     "box" => EmissionShape::Box { extents },
-                    other => return Err(err(format!("unknown shape '{other}'"))),
+                    other => {
+                        return Err(err("shape", format!("unknown shape '{other}'"))
+                            .with_hint("\"point\", \"sphere\", \"cone\" or \"box\""))
+                    }
                 }
             }
         };
 
         let mut bursts: Vec<Burst> = self.bursts.iter().map(BurstDef::resolve).collect();
+        for (i, b) in bursts.iter().enumerate() {
+            let key = format!("bursts[{i}]");
+            if b.cycles != 1 && b.interval <= 0.0 && b.cycles != 0 {
+                return Err(err(&key, "cycles > 1 needs a positive interval".into()));
+            }
+            if b.cycles == 0 && b.interval <= 0.0 {
+                return Err(err(
+                    &key,
+                    "a repeating burst (cycles = 0) needs a positive interval".into(),
+                ));
+            }
+        }
         if let Some(n) = self.burst_count {
             if n > 0 {
                 bursts.insert(
@@ -762,16 +909,6 @@ impl EmitterDef {
                 );
             }
         }
-        for b in &bursts {
-            if b.cycles != 1 && b.interval <= 0.0 && b.cycles != 0 {
-                return Err(err("burst with cycles > 1 needs a positive interval".into()));
-            }
-            if b.cycles == 0 && b.interval <= 0.0 {
-                return Err(err(
-                    "repeating burst (cycles = 0) needs a positive interval".into(),
-                ));
-            }
-        }
 
         let (rotation_min, rotation_max) = match (self.rotation_min, self.rotation_max) {
             (None, None) => self.rotation.pair(),
@@ -785,16 +922,19 @@ impl EmitterDef {
 
         if let Some(sub) = &self.on_death {
             if sub.emitter == self.name {
-                return Err(err("on_death cannot target itself".into()));
+                return Err(err("on_death", "cannot target itself".into()));
             }
         }
         if let Some(sub) = &self.on_birth {
             if sub.emitter == self.name {
-                return Err(err("on_birth cannot target itself".into()));
+                return Err(err("on_birth", "cannot target itself".into()));
             }
         }
         if self.trail.is_some() {
-            tracing::warn!("{}: `trail` is reserved and not implemented yet", who());
+            tracing::warn!(
+                "{}: `trail` is reserved and not implemented yet",
+                self.who()
+            );
         }
 
         Ok(EmitterConfig {
@@ -1055,7 +1195,7 @@ impl ParticleEffect {
         }
         if let Some(t) = value.as_table() {
             for k in t.keys() {
-                if !["name", "seed", "budget", "emitters"].contains(&k.as_str()) {
+                if !field_names::of::<ParticleEffect>().contains(&k.as_str()) {
                     return Err(format!("{origin}: unknown top-level key '{k}'"));
                 }
             }
@@ -1287,6 +1427,122 @@ count = 4
         let t: toml::value::Table = toml::from_str("emission_rate = 1.0\nfoo = 2\n").unwrap();
         assert!(EmitterDef::from_component(&t).is_ok());
         assert_eq!(EmitterDef::unknown_keys(&t), vec!["foo".to_string()]);
+    }
+
+    /// #690: each problem with an inline table is at its key, a typo with
+    /// the key it was meant to be.
+    #[test]
+    fn inline_problems_name_the_key() {
+        let problems = |src: &str| {
+            let t: toml::value::Table = toml::from_str(src).unwrap();
+            EmitterDef::problems(&t)
+        };
+        let only = |src: &str| {
+            let found = problems(src);
+            assert_eq!(found.len(), 1, "{src}: {found:?}");
+            found.into_iter().next().unwrap()
+        };
+
+        assert!(problems("emission_rate = 5.0\nlifetime = [1, 2]\n").is_empty());
+
+        let typo = only("emision_rate = 5.0\n");
+        assert!(typo.unknown);
+        assert_eq!(typo.key.as_deref(), Some("emision_rate"));
+        assert_eq!(typo.hint.as_deref(), Some("did you mean `emission_rate`?"));
+
+        let curve = only("color = \"red\"\n");
+        assert!(!curve.unknown);
+        assert_eq!(curve.key.as_deref(), Some("color"));
+        assert!(curve.hint.as_deref().unwrap().contains("start"), "{curve}");
+
+        assert_eq!(
+            only("lifetime = [0.0, 0.0]\n").key.as_deref(),
+            Some("lifetime")
+        );
+        assert_eq!(
+            only("lifetime_max = 0.0\nlifetime_min = 0.0\n")
+                .key
+                .as_deref(),
+            Some("lifetime_max")
+        );
+        assert_eq!(only("shape = \"donut\"\n").key.as_deref(), Some("shape"));
+        assert_eq!(
+            only("bursts = [{ count = 3 }, { count = 2, cycles = 3 }]\n")
+                .key
+                .as_deref(),
+            Some("bursts[1]")
+        );
+        let missing = only("bursts = [{ time = 0.0 }]\n");
+        assert_eq!(missing.key.as_deref(), Some("bursts"));
+        assert!(missing.message.contains("count"), "{missing}");
+
+        // A typo and a bad value: both, the typo first
+        let both = problems("emision_rate = 5.0\nspeed = \"fast\"\n");
+        let keys: Vec<_> = both.iter().filter_map(|p| p.key.as_deref()).collect();
+        assert_eq!(keys, ["emision_rate", "speed"]);
+        assert_eq!(
+            both[1].to_string(),
+            "speed: is not a form this key takes (expected a number or `[min, max]`)"
+        );
+    }
+
+    /// #690: the known keys are the struct's fields, so they can't drift
+    /// from it, and every field the component schema declares is one the
+    /// emitter reads.
+    #[test]
+    fn known_keys_are_the_structs_fields() {
+        let known = EmitterDef::known_keys();
+        for key in [
+            "name",
+            "emission_rate",
+            "lifetime",
+            "trail",
+            "angular_velocity_max",
+        ] {
+            assert!(known.contains(&key), "{key}");
+        }
+        // Everything a def serialises to, every option filled, is known
+        let full = EmitterDef {
+            lifetime: Some(RangeDef::Const(1.0)),
+            speed: Some(RangeDef::Const(1.0)),
+            bursts: vec![BurstDef {
+                time: 0.0,
+                count: CountDef::Const(1),
+                cycles: 1,
+                interval: 0.0,
+                probability: 1.0,
+            }],
+            local_axes: Some(true),
+            burst_count: Some(1),
+            ..EmitterDef::from_config(&EmitterConfig::default())
+        };
+        let table = toml::Value::try_from(&full).unwrap();
+        let table = table.as_table().unwrap();
+        assert!(!table.is_empty());
+        assert_eq!(EmitterDef::unknown_keys(table), Vec::<String>::new());
+        assert_eq!(
+            field_names::of::<ParticleEffect>(),
+            ["name", "seed", "budget", "emitters"]
+        );
+
+        let schema = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../schemas/components/particle_emitter.toml"
+        );
+        #[allow(clippy::disallowed_methods)] // a test reads the engine's schema file
+        let text = std::fs::read_to_string(schema).unwrap();
+        let schema: toml::Value = toml::from_str(&text).unwrap();
+        let fields = schema["component"]["particle_emitter"]["fields"]
+            .as_table()
+            .unwrap();
+        let unread: Vec<_> = fields
+            .keys()
+            .filter(|k| !known.contains(&k.as_str()))
+            .collect();
+        assert!(
+            unread.is_empty(),
+            "the schema declares keys the emitter doesn't read: {unread:?}"
+        );
     }
 
     #[test]
