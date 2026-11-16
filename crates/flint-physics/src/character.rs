@@ -219,7 +219,7 @@ impl CharacterController {
         // Write back to Flint transform
         if let Some(body) = physics.get_rigid_body(body_handle) {
             let pos = body.translation();
-            if let Some(components) = world.get_components_mut(entity_id) {
+            if let Some(mut components) = world.get_components_mut(entity_id) {
                 let position_value = toml::Value::Array(vec![
                     toml::Value::Float(pos.x as f64),
                     toml::Value::Float(pos.y as f64),

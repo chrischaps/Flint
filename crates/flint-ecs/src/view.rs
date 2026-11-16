@@ -645,7 +645,7 @@ mod tests {
         assert_eq!(none.f32("mass", 1.0), 1.0);
         assert!(!none.bool("mode_2d", false));
 
-        let nobody = world.view(EntityId::new(), comp::RIGIDBODY);
+        let nobody = world.view(EntityId::from_raw(u64::MAX), comp::RIGIDBODY);
         assert_eq!(nobody.f32("mass", 1.0), 1.0);
         assert!(world.read_reports().is_empty());
     }

@@ -168,8 +168,8 @@ impl PlayerApp {
 
             // Set archetype + defaults
             if let Some(archetype) = &entity_def.archetype {
-                if let Some(comps) = self.core.world.get_components_mut(id) {
-                    comps.archetype = Some(archetype.clone());
+                if let Some(mut comps) = self.core.world.get_components_mut(id) {
+                    comps.set_archetype(Some(archetype.clone()));
                     if let Some(arch_schema) = registry.get_archetype(archetype) {
                         for (comp_name, defaults) in &arch_schema.defaults {
                             if !comps.has(comp_name) {
@@ -193,7 +193,7 @@ impl PlayerApp {
                 let new_x = transform.position.x + offset_x;
                 let new_y = transform.position.y + offset_y;
                 let new_z = transform.position.z;
-                if let Some(comps) = self.core.world.get_components_mut(id) {
+                if let Some(mut comps) = self.core.world.get_components_mut(id) {
                     comps.set_field(
                         comp::TRANSFORM,
                         "position",
@@ -206,7 +206,7 @@ impl PlayerApp {
                 }
             } else {
                 // Entity has no transform yet — create one with the offset
-                if let Some(comps) = self.core.world.get_components_mut(id) {
+                if let Some(mut comps) = self.core.world.get_components_mut(id) {
                     comps.set_field(
                         comp::TRANSFORM,
                         "position",
@@ -375,8 +375,9 @@ impl PlayerApp {
         #[cfg(feature = "procgen")]
         self.core.procgen_resolver.clear_queue();
 
-        // Clear world
-        self.core.world = FlintWorld::new();
+        // Clear world, keeping its ids: nothing spawned before the next
+        // scene's world is installed reuses one
+        self.core.world = FlintWorld::after(&self.core.world);
 
         // Clear terrain
         self.terrain = None;
@@ -430,14 +431,19 @@ impl PlayerApp {
         let registry = self.schemas_for_scene(&path);
 
         // Living props' tables are checked and their preset filled in, as at
-        // the first load (#686): a scene that won't settle doesn't load
-        let loaded = flint_scene::load_scene(&path, &registry).and_then(|(world, mut file)| {
-            #[cfg(feature = "living")]
-            flint_procgen::settle_scene(&mut file, Path::new(&path))?;
-            #[cfg(not(feature = "living"))]
-            let _ = &mut file;
-            Ok((world, file))
-        });
+        // the first load (#686): a scene that won't settle doesn't load.
+        // Its ids start past the scene playing's (#688), so an id a script
+        // kept (a persistent value, an event that outlives the scene) names
+        // nothing in the next one, as it did under the old global counter
+        let loaded = flint_scene::load_scene_after(&path, &registry, &self.core.world).and_then(
+            |(world, mut file)| {
+                #[cfg(feature = "living")]
+                flint_procgen::settle_scene(&mut file, Path::new(&path))?;
+                #[cfg(not(feature = "living"))]
+                let _ = &mut file;
+                Ok((world, file))
+            },
+        );
         match loaded {
             Ok((world, file)) => Ok(NextScene { path, world, file }),
             Err(e) => {

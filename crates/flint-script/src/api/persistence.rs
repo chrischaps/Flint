@@ -68,7 +68,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     });
 
     m.func("persist_keys", "Every key with a saved value.")
-        .returns(Array, "the keys, as strings")
+        .returns(Array, "the keys, as strings, sorted")
         .run(|call, ()| -> rhai::Array {
             call.ctx_ref()
                 .try_persistent_store()

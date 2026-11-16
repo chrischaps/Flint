@@ -4,6 +4,7 @@
 /screenshots/
 .flint/procgen-cache/
 .flint/input.user.toml
+.flint/viewer-edits.jsonl
 
 # Rust build output (the engine's, when it is carried at engine/)
 target/

@@ -1,7 +1,8 @@
 //! Dynamic component storage
 
+use flint_core::EntityId;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 /// Dynamic components stored as TOML values
 ///
@@ -56,9 +57,11 @@ impl DynamicComponents {
         self.data.contains_key(component)
     }
 
-    /// Get all component names
+    /// The names of the components held, in name order (#688)
     pub fn component_names(&self) -> Vec<&str> {
-        self.data.keys().map(|s| s.as_str()).collect()
+        let mut names: Vec<&str> = self.data.keys().map(|s| s.as_str()).collect();
+        names.sort_unstable();
+        names
     }
 
     /// Get a field value from a component
@@ -116,6 +119,125 @@ impl DynamicComponents {
                 self.data.insert(name.clone(), value.clone());
             }
         }
+    }
+}
+
+/// The component index a world keeps: component name -> the entities that
+/// have it, in id order.
+pub(crate) type ComponentIndex = HashMap<String, BTreeSet<EntityId>>;
+
+/// Record that `id` has `component` (no allocation when the component is
+/// already indexed, which is every per-frame write).
+pub(crate) fn index_add(index: &mut ComponentIndex, component: &str, id: EntityId) {
+    match index.get_mut(component) {
+        Some(set) => {
+            set.insert(id);
+        }
+        None => {
+            index.insert(component.to_string(), BTreeSet::from([id]));
+        }
+    }
+}
+
+/// Record that `id` no longer has `component`.
+pub(crate) fn index_remove(index: &mut ComponentIndex, component: &str, id: EntityId) {
+    if let Some(set) = index.get_mut(component) {
+        set.remove(&id);
+    }
+}
+
+/// One entity's components, borrowed for writing from
+/// [`FlintWorld::get_components_mut`](crate::FlintWorld::get_components_mut)
+/// (#691).
+///
+/// Every way it has of adding or removing a component ([`set`](Self::set),
+/// [`set_field`](Self::set_field), [`merge_component`](Self::merge_component),
+/// [`merge`](Self::merge), [`remove`](Self::remove)) keeps the world's
+/// component index, and [`get_mut`](Self::get_mut) hands out one component's
+/// value, which can change but can't add or take away a component. Reading
+/// goes through `Deref` to [`DynamicComponents`]; there is no `DerefMut`, so
+/// its map can't be reached for writing, and the index can't fall out of
+/// step with what an entity holds.
+pub struct ComponentsMut<'a> {
+    id: EntityId,
+    components: &'a mut DynamicComponents,
+    index: &'a mut ComponentIndex,
+}
+
+impl<'a> ComponentsMut<'a> {
+    pub(crate) fn new(
+        id: EntityId,
+        components: &'a mut DynamicComponents,
+        index: &'a mut ComponentIndex,
+    ) -> Self {
+        Self {
+            id,
+            components,
+            index,
+        }
+    }
+
+    /// The entity these components belong to.
+    pub fn id(&self) -> EntityId {
+        self.id
+    }
+
+    /// One component's value, to change in place. A component the entity
+    /// doesn't have is `None`: adding one is [`set`](Self::set) or
+    /// [`set_field`](Self::set_field).
+    pub fn get_mut(&mut self, component: &str) -> Option<&mut toml::Value> {
+        self.components.get_mut(component)
+    }
+
+    /// Set (or replace) a whole component.
+    pub fn set(&mut self, component: impl Into<String>, data: toml::Value) {
+        let component = component.into();
+        index_add(self.index, &component, self.id);
+        self.components.set(component, data);
+    }
+
+    /// Set one field of a component, making the component if it isn't there.
+    pub fn set_field(&mut self, component: &str, field: &str, value: toml::Value) {
+        self.components.set_field(component, field, value);
+        index_add(self.index, component, self.id);
+    }
+
+    /// Merge fields into a component: see [`DynamicComponents::merge_component`].
+    pub fn merge_component(&mut self, component: impl Into<String>, data: toml::Value) {
+        let component = component.into();
+        index_add(self.index, &component, self.id);
+        self.components.merge_component(component, data);
+    }
+
+    /// Merge every component of `other` in: see [`DynamicComponents::merge`].
+    pub fn merge(&mut self, other: &DynamicComponents) {
+        for name in other.data.keys() {
+            index_add(self.index, name, self.id);
+        }
+        self.components.merge(other);
+    }
+
+    /// Remove a component, returning what it held.
+    pub fn remove(&mut self, component: &str) -> Option<toml::Value> {
+        let removed = self.components.remove(component);
+        if removed.is_some() {
+            index_remove(self.index, component, self.id);
+        }
+        removed
+    }
+
+    /// Set or clear the entity's archetype name. It names where the
+    /// defaults came from; it adds no component.
+    pub fn set_archetype(&mut self, archetype: Option<String>) {
+        self.components.archetype = archetype;
+    }
+}
+
+impl std::ops::Deref for ComponentsMut<'_> {
+    type Target = DynamicComponents;
+
+    fn deref(&self) -> &DynamicComponents {
+        self.components
     }
 }
 

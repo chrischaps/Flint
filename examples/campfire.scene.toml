@@ -81,15 +81,22 @@ stretch = 0.02
 duration = 1.5
 looping = true
 
-[lights.sun]
+# ------------------------------------------------------------
+#  Lights: a dim blue moon overhead and the fire's own glow
+# ------------------------------------------------------------
+[entities.moon]
+[entities.moon.light]
 type = "directional"
-direction = [-0.4, -1.0, -0.3]
+# toward the light: high, and behind the fire's left shoulder
+direction = [0.4, 1.0, 0.3]
 color = [0.55, 0.6, 0.75]
 intensity = 0.6
 
-[lights.fire_glow]
-type = "point"
+[entities.fire_glow]
+[entities.fire_glow.transform]
 position = [0, 0.6, 0]
+[entities.fire_glow.light]
+type = "point"
 color = [1.0, 0.55, 0.2]
 intensity = 6.0
 range = 6.0

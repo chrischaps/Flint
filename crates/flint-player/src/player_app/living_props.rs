@@ -470,8 +470,7 @@ pub fn resolve(
 
     for (id, asset) in &assets {
         let model = world
-            .get_components_mut(*id)
-            .and_then(|comps| comps.get_mut(comp::MODEL))
+            .get_component_mut(*id, comp::MODEL)
             .and_then(|model| model.as_table_mut());
         if let Some(model) = model {
             model.insert("asset".into(), toml::Value::String(asset.clone()));

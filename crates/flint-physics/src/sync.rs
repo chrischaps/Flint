@@ -370,7 +370,7 @@ impl PhysicsSync {
         }
 
         for (entity_id, pos, quat) in writes {
-            let Some(components) = world.get_components_mut(entity_id) else {
+            let Some(mut components) = world.get_components_mut(entity_id) else {
                 continue;
             };
             components.set_field(

@@ -5,11 +5,13 @@
 name = "Rolling Meadow"
 description = "Grass rendering showcase — rolling hills with stylized grass, warm golden-hour lighting"
 
+# 20 m out from the rock cluster, 35 degrees up and 30 to the left (`flint
+# render --distance 20 --pitch 35 --yaw -30`): looking down onto the meadow, so
+# the grass fills the frame. A flatter view reaches the horizon, where the
+# terrain ends in bare cliffs past the grass
 [camera]
-distance = 25.0
-pitch = 22.0
-yaw = -30.0
-target = [0.0, 3.0, 0.0]
+position = [-15.19, 14.47, 20.19]
+target = [-7.0, 3.0, 6.0]
 
 # -- Player --
 

@@ -123,6 +123,22 @@ impl SceneRenderer {
         }
     }
 
+    /// A bounds box's own light (#797): its `material.emissive`, linear RGB
+    /// added after lighting (above 1 is what bloom takes up), times
+    /// `material.emissive_scale`. Unset leaves the uniforms as they were, so
+    /// a box without it draws the same bytes as before.
+    fn apply_box_emission(
+        world: &FlintWorld,
+        entity_id: EntityId,
+        material: &mut MaterialUniforms,
+    ) {
+        let Some([r, g, b, _]) = world.view(entity_id, comp::MATERIAL).opt_color("emissive") else {
+            return;
+        };
+        material.emissive = [r.max(0.0), g.max(0.0), b.max(0.0), 0.0];
+        material.scale_emission(Self::ecs_emissive_scale(world, entity_id));
+    }
+
     /// ECS `material.cast_shadows` for an entity (ADR 0100): false keeps
     /// its draws out of the shadow cascades, opaque, transparent and
     /// skinned alike. True when neither it nor its parent sets one, so a GLB
@@ -1316,6 +1332,7 @@ impl SceneRenderer {
                     material_uniforms.has_metallic_roughness_tex = if has_mr { 1 } else { 0 };
                     material_uniforms.opacity = proc_opacity;
                     material_uniforms.texture_scale = proc_texture_scale;
+                    Self::apply_box_emission(world, entity_id, &mut material_uniforms);
                     Self::apply_unlit(world, entity_id, &mut material_uniforms);
 
                     let material_key = hash_parts(&[
@@ -1355,6 +1372,7 @@ impl SceneRenderer {
                     ));
                 } else {
                     let mut material_uniforms = MaterialUniforms::procedural();
+                    Self::apply_box_emission(world, entity_id, &mut material_uniforms);
                     Self::apply_unlit(world, entity_id, &mut material_uniforms);
                     let material_key =
                         hash_parts(&[b"procedural", bytemuck::bytes_of(&material_uniforms)]);
@@ -1402,6 +1420,7 @@ impl SceneRenderer {
                 };
                 mat_uniforms.opacity = proc_opacity;
                 mat_uniforms.texture_scale = proc_texture_scale;
+                Self::apply_box_emission(world, entity_id, &mut mat_uniforms);
                 Self::apply_unlit(world, entity_id, &mut mat_uniforms);
 
                 let material_key = hash_parts(&[b"colour", bytemuck::bytes_of(&mat_uniforms)]);
@@ -1635,6 +1654,47 @@ mod tests {
         let data: toml::Value = toml::from_str(text).unwrap();
         world.set_component(id, comp::MATERIAL, data).unwrap();
         (world, id)
+    }
+
+    /// #797: a bounds box's `material.emissive` is its light, times
+    /// `emissive_scale`; unset leaves the uniforms' bytes as they were, so a
+    /// box without it keeps its cached material and draws as before.
+    #[test]
+    fn a_box_gives_off_its_emissive_and_none_when_unset() {
+        let emission = |text: &str| {
+            let (world, id) = world_with_material(text);
+            let mut uniforms = MaterialUniforms::procedural();
+            SceneRenderer::apply_box_emission(&world, id, &mut uniforms);
+            assert!(world.read_reports().is_empty(), "{text}");
+            uniforms
+        };
+        assert_eq!(
+            emission("emissive = [9, 6, 2.5]").emissive,
+            [9.0, 6.0, 2.5, 0.0]
+        );
+        assert_eq!(
+            emission("emissive = [2.0, 1.0, 0.5]\nemissive_scale = 0.5").emissive,
+            [1.0, 0.5, 0.25, 0.0]
+        );
+        assert_eq!(
+            emission("emissive = [1.0, -1.0, 0.0, 1.0]").emissive,
+            [1.0, 0.0, 0.0, 0.0],
+            "a fourth number is ignored, a negative one is no light"
+        );
+        let plain = MaterialUniforms::procedural();
+        for text in ["roughness = 0.8", "emissive_scale = 3.0"] {
+            assert_eq!(
+                bytemuck::bytes_of(&emission(text)),
+                bytemuck::bytes_of(&plain),
+                "{text}"
+            );
+        }
+        // A wrong type is no light, reported once
+        let (world, id) = world_with_material("emissive = \"bright\"");
+        let mut uniforms = MaterialUniforms::procedural();
+        SceneRenderer::apply_box_emission(&world, id, &mut uniforms);
+        assert_eq!(uniforms.emissive, [0.0; 4]);
+        assert_eq!(world.read_reports().len(), 1);
     }
 
     /// #685: each channel was read with `as_float`, so one integer channel

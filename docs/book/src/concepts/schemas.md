@@ -28,7 +28,7 @@ open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
 | `entity` | the name of another entity in the scene, **checked to exist**; `""` means "not set" | `"left_hand"` |
 | `asset` | the name of a file of a `kind`, **checked through the project's asset search**; `""` means "not set" | `"barrel"` |
 | `vec2`, `vec3`, `vec4` | exactly that many numbers (`vec3` also takes `{ x, y, z }`) | `[1.0, 2.0, 3.0]` |
-| `color` | `[r, g, b]` or `[r, g, b, a]` | `[1.0, 0.8, 0.6]` |
+| `color` | `[r, g, b]` or `[r, g, b, a]`, and nothing else: a `{ r, g, b }` table or a `0xRRGGBB` integer is `bad-type`, as no reader takes either, and the error writes the array for you | `[1.0, 0.8, 0.6]` |
 | `transform` | a table of `position`, `rotation` and `scale` | see [Transform](#transform) |
 | `enum` | one of `values` | `"hinged"` |
 | `array` | a list of `element`, of any length (`string` if none is given) | `["a", "b"]` |
@@ -46,7 +46,7 @@ shot   = { type = "asset", kind = "audio" }
 ```
 
 - `entity`: the name must be an entity of the scene, after prefabs are expanded (a prefab writes `"${PREFIX}_hand"`). An empty string is "not set", for a reference a script fills while the game runs. An entity's own `parent = "..."` is checked the same way.
-- `asset`: `kind` is one of the kinds `flint asset where` takes (`models`, `textures`, `audio`, `scripts`, `files`, ...; [Assets](assets.md) has the table), or a list of them when a name may be either: a model may be a file or a procgen spec of that name. The name goes through the same search the engine loads with, so the error lists every path tried. `unless` names a sibling `bool` field that turns the search off when it is `true` (`model.runtime`: a mesh code uploads has no file). An empty string is "not set". An asset the scene declares with an `asset_def` of the same `name` passes: `flint asset resolve` makes it.
+- `asset`: `kind` is one of the kinds `flint asset where` takes (`models`, `textures`, `audio`, `scripts`, `files`, ...; [Assets](assets.md) has the table), or a list of them when a name may be either: a model may be a file or a procgen spec of that name. The name goes through the same search the engine loads with, so the error lists every path tried. `unless` names a sibling `bool` field that turns the search off when it is `true` (`model.runtime`: a mesh code uploads has no file). An empty string is "not set". An asset the scene declares with an `asset_def` of the same `name` passes: `flint asset resolve` makes it. So does a model or texture the project's [asset catalog](assets.md#asset-catalog) registers in `assets/*.asset.toml` with its content in the store, as the player loads it from there first. A particle effect (`kind = "particles"`) or a sequence (`kind = "sequences"`) is found by the `name` its file states, as the engine registers it, not by the file's stem: `effect = "campfire"` is any visible `particles/*.particles.toml` with `name = "campfire"` (or, stating none, the one called `campfire.particles.toml`).
 
 Both are errors ([`unknown-entity`, `missing-asset`](#diagnostic-codes)), and the player says them at load as it says the rest.
 
@@ -138,7 +138,7 @@ wind = [3.0, 0.0, -1.0]
 kind = "storm"
 ```
 
-and read it from the game's Rust: [Player Extensions: Reading the scene's tables](../guides/player-extensions.md#reading-the-scenes-tables). The loader keeps every top-level table it has no field for, as written, so the table reaches the extension whether or not a schema declares it; the schema is what gets it checked, and gets `[wether]` and `rian = 0.7` named. Like a component, a table declared with no fields is open: known, and nothing in it checked. A later schema directory replaces a table of the same name whole.
+and read it from the game's Rust: [Player Extensions: Reading the scene's tables](../guides/player-extensions.md#reading-the-scenes-tables). The loader keeps every top-level table it has no field for, as written, so the table reaches the extension whether or not a schema declares it; the schema is what gets it checked, and gets `[wether]` and `rian = 0.7` named. Like a component, a table declared with no fields is open: known, and nothing in it checked. A later schema directory replaces a table of the same name whole, unless it says `extend = true`, which adds its fields to it, as for a component ([Adding a field to an engine component](#adding-a-field-to-an-engine-component)): `[table.post_process]` with `extend = true` gives the engine's `[post_process]` a key of the game's own.
 
 `schemas/components/` holds only components: a `[table.*]` written there (or a `[component.*]` under `scene/`) is ignored, and `flint validate` says so (`ignored-schema-key`) with the directory it belongs in.
 
@@ -161,10 +161,11 @@ scenes/hall.scene.toml: 4 errors, 1 warning
       hint: did you mean `position`?
 ```
 
-The same pass runs in three places:
+The same pass runs in four places:
 
 - **`flint check [dir|scene]`** runs it over every scene of a project, with the checks of the project around the scenes (assets, files, styles, constraints), and exits 1 if any diagnostic is an error. See [The `check` Command](../cli-reference/overview.md#the-check-command).
 - **`flint validate <scene>`** prints the whole list for one scene, errors first, and exits 1 if any is an error. `--format json` puts the list in a `diagnostics` array (`severity`, `code`, `file`, `entity`, `component`, `field`, `message`, `hint`, `tried`) beside the constraint `violations`. It needs no constraint files.
+- **`flint edit <scene>`** lists it in the status panel at the bottom of the window, errors first, with each hint under its row, and lists it again on every hot reload. A row that names an entity is a link: clicking it selects the entity in the scene tree and the viewport. When an edit leaves the file unloadable (no longer TOML, say), the last good scene stays on screen and the panel shows the `toml-parse` error with its line. The panel is `flint validate`'s list, so `[project] strict` and the project's [allowed codes](#allowing-a-code) apply to it as they do there.
 - **Every scene load** (`flint play`, `flint-player`, `flint render`, the viewer, a scene transition, a `load_chunk`) logs one summary line and the first five, as warnings, and carries on. A scene with mistakes still plays; `flint validate` is the gate to run before playing.
 
 ```
@@ -189,8 +190,9 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `file-unreadable` | error | the scene file could not be read |
 | `bad-prefab` | error | a `[prefabs.<name>]` instance whose template is missing, doesn't parse, or collides with an entity; the rest of the scene is still checked |
 | `no-schemas` | warning | no schema is loaded at all, so nothing was checked (said once, not per entity) |
-| `needs-component` | warning | a component that does nothing without another the entity lacks: a `collider` with no `rigidbody`. Raised [while the game runs](#diagnostics-while-the-game-runs), by the system that reads it |
+| `needs-component` | warning | a component that does nothing without another the entity lacks: a `collider` with no `rigidbody` (written or from its archetype; a terrain or spline mesh makes its own body). Raised by `flint validate` and at load, and again [while the game runs](#diagnostics-while-the-game-runs) by the system that reads it |
 | `unknown-entity` | error | an `entity` field, or an entity's `parent`, names no entity of the scene; the hint is the nearest name. An empty string is "not set" and passes |
+| `parent-cycle` | error | the entities' `parent`s close into a loop: one parented to itself, or `a` under `b` under `a`. Said once a loop, on its first entity by name, with the chain; the scene does not load |
 | `missing-asset` | error | an `asset` field names no file the project's asset search finds; the hint lists every path tried |
 | `old-type-name` | warning | a schema file of the game's spells a type the old way (`float` for `f32`); it still loads |
 | `unknown-type` | warning | a schema file of the game's names a type that is none, an `asset` with no `kind`, or a `kind` that is no asset kind; the field is checked as a string |
@@ -198,6 +200,8 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `bad-panel` | warning | a component schema's fields say something about its [F3 panel](../guides/debug-panels.md#a-panel-from-a-schema) the loader can't use (a role that is none, a key a field's panel doesn't hold, a `format` with no placeholder); that row is left off the panel |
 | `unknown-table` | warning | a top-level table of the scene that no loaded schema directory declares as a [`[table.<name>]`](#scene-level-tables); the hint is the nearest table name. Not raised when no table schema is loaded at all |
 | `post-range` | warning | a `[post_process]` value outside the range its built-in effect is tuned for (`flint render --list-effects` lists every key with its range); it still draws, as a style value past its range does |
+| `light-cap` | warning | a light past the number of its type the shader takes (4 directional, 16 point, 8 spot): the strongest directional lights and the point and spot lights nearest the camera are drawn, and this one is off while it isn't among them. Raised [while the game runs](#diagnostics-while-the-game-runs), by the renderer ([Lighting](lighting.md#when-a-light-cant-be-drawn)) |
+| `two-forms` | warning | a value written in two forms of which one is read, such as a spot's `inner_angle` (radians) beside `inner_angle_deg`; the degrees win. Raised while the game runs |
 
 `old-type-name`, `unknown-type`, `ignored-schema-key` and `bad-panel` are about a schema file, not the scene: `flint validate` and `flint check` print them with the file's name, for the game's own schema directories only. A schema file inside a Flint engine checkout (the engine's repository, or the `engine/` subtree a game carries) is the engine's, and is not reported.
 
@@ -211,6 +215,7 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `scene-load` | error | the scene parses and the engine still cannot build it |
 | `bad-spec` | error | the procgen spec a model or texture is made from does not parse |
 | `bad-spline` | error | a `.spline.toml` a scene's `spline.file` names does not parse, placed by line and column; at load, also a `spline_mesh.profile` that is no polygon |
+| `bad-emitter` | error | an inline `particle_emitter` has a key the emitter doesn't read or a value it can't use (a curve or range of the wrong form, a zero lifetime, an unknown shape), named by entity and key; it replaces the schema's `unknown-field`, `bad-type` and `bad-enum-value` for that component, since the emitter reads more keys and forms than the schema lists |
 | `bad-input-config` | error | the input config the scene or the manifest names does not parse |
 | `bad-user-style` | error | a user style does not load or its shader does not compile (a warning for what the style's own check only warns about) |
 | `bad-style-setting` | warning | `[post_process.styles]` names a style, a key or a value there is not |
@@ -253,9 +258,9 @@ WARN error[bad-enum-value] entity 'hero' animator.layers[1].mode: "overide" is n
 
 An entry of an array of tables is named by its index (`animator.layers[1].mode`).
 
-Each (entity, component, field) is reported **once**, however many frames read it, and again after the scene is reloaded. The codes are `bad-type` and `bad-enum-value`, as at load, and `needs-component`. An integer where a number is read (`move_speed = 8`) is not a mistake and is not reported. These are log lines only: `flint validate` does not run the game, so it does not print them.
+Each (entity, component, field) is reported **once**, however many frames read it, and again after the scene is reloaded. The codes are `bad-type` and `bad-enum-value`, as at load, and `needs-component`. An integer where a number is read (`move_speed = 8`) is not a mistake and is not reported. These are log lines only: `flint validate` does not run the game, so it does not print them. The one it can see without running, a collider on an entity with no rigidbody, it reports before the game starts as well.
 
-The components read this way are `rigidbody`, `collider`, `joint`, `character_controller`, `audio_source` and `audio_trigger`, and `material`'s `base_color_r/g/b/a`. A game's own Rust reads the same way: see [Player Extensions: Reading components](../guides/player-extensions.md#reading-components).
+The components read this way are `rigidbody`, `collider`, `joint`, `character_controller`, `audio_source`, `audio_trigger` and `light` (#682: an unknown `type`, a missing one, a spot angle in the wrong unit, a light past the shader's cap), and `material`'s `base_color_r/g/b/a`. A game's own Rust reads the same way: see [Player Extensions: Reading components](../guides/player-extensions.md#reading-components).
 
 ### Unknown fields and `strict`
 
@@ -271,7 +276,31 @@ flint validate scenes/hall.scene.toml --strict     # for one run
 strict = true
 ```
 
-To silence the warning for a field that is meant to be there, declare it: put your own copy of the component file in the game's schema directory with the engine's fields and yours. A later directory replaces a component of the same name whole, so the copy must carry every field.
+`strict` is a gate for the commands that pass or fail a scene: `flint validate`, `flint check` and the viewer's panel apply it. A **load does not**: `flint play`, `flint-player`, `flint render` and a scene transition log an unknown field as the warning it is raised as, `strict` or not, since a load never fails on what `strict` promotes and the scene plays the same either way.
+
+To silence the warning for a field that is meant to be there, declare it in the game's schema directory as an extension of the engine's component: see [Adding a field to an engine component](#adding-a-field-to-an-engine-component). Or allow it, below.
+
+### Allowing a code
+
+A project can accept a diagnostic by its code, everywhere or at one place, in `flint.toml`:
+
+```toml
+[project.diagnostics]
+allow = [
+  "unknown-field:material.wetness",   # one field of one component (and what is nested under it)
+  "unknown-field:weather",            # every unknown field of the `weather` component or scene table
+  "unknown-table",                    # the code everywhere
+]
+```
+
+An entry is a code from the table above, then optionally `:` and a place: a component or scene-table name, then `.` and a field's dotted path. A place covers what is nested under it, so `environment.fog` allows `environment.fog.colour`, and `material.wet` does not allow `material.wetness`. An allowed diagnostic is left out of what `flint validate`, `flint check`, the viewer's panel and every load's summary report, and each says how many it left out:
+
+```
+$ flint validate scenes/road.scene.toml
+scenes/road.scene.toml: 1 warning (2 allowed by flint.toml)
+```
+
+With `--format json` (and `flint check --json`) the count is `allowed`. An allowed error no longer fails the scene. A code that is none of the table's is refused when the manifest is read, with the nearest code (`project.diagnostics.allow[0]`: `unknown-feild` is no diagnostic code (did you mean `unknown-field`?)), and so are the codes that mean the file did not load at all (`toml-parse`, `file-unreadable`, `scene-load`, `bad-manifest`, `bad-prefab`), since nothing behind them was checked.
 
 ### A component only scripts read
 
@@ -303,15 +332,15 @@ runtime = { type = "bool" }                     # set by code that uploads a mes
 
 # schemas/components/light.toml
 [component.light.fields]
-type = { type = "enum", values = ["directional", "point", "spot"], default = "directional" }
+type = { type = "enum", values = ["directional", "point", "spot"] }
 color = { type = "vec3", default = [1.0, 1.0, 1.0] }
 intensity = { type = "f32", default = 1.0 }
 direction = { type = "vec3" }                   # directional: TOWARD the light
-# range, radius, source_radius, inner_angle, outer_angle, angular_size,
-# volumetric_intensity, volumetric_color
+# range, radius, source_radius, inner_angle_deg, outer_angle_deg,
+# inner_angle, outer_angle, angular_size, volumetric_intensity, volumetric_color
 ```
 
-Most light fields carry no `default`. A default is written into the component when a scene loads, and some of these mean something by being absent: `range` falls back to the older `radius`, and `volumetric_color` follows `color`. Their fallbacks are in the field descriptions. `spline` and `spline_mesh` have schemas too ([Scenes: Splines](scenes.md#splines)).
+Most light fields carry no `default`. A default is written into the component when a scene loads, and some of these mean something by being absent: `range` falls back to the older `radius`, `volumetric_color` follows `color`, `direction` follows the entity's rotation, and a missing `type` reaches the renderer, which says so ([Lighting](lighting.md#when-a-light-cant-be-drawn)). Their fallbacks are in the field descriptions. `spline` and `spline_mesh` have schemas too ([Scenes: Splines](scenes.md#splines)).
 
 ### Transform
 
@@ -510,7 +539,7 @@ flint schema light --schemas engine/schemas --schemas schemas
 
 With no `--schemas`, `flint schema` reads the directories the project's `flint.toml` names, or `schemas/` in the working directory when there is no manifest ([Which directories load](#which-directories-load)).
 
-`flint schema <name>` prints the fields, types, defaults and ranges; a table that declares fields of its own (a `[[wooze.zone]]`) has them listed beneath it. A name that is no component, scene table or archetype is an error (exit code 1) with the nearest name as a suggestion.
+`flint schema <name>` prints the fields, types, defaults and ranges; a table that declares fields of its own (a `[[wooze.zone]]`) has them listed beneath it. It names the file the component was declared in, and when a later layer [extended](#adding-a-field-to-an-engine-component) it, numbers the files and ends each field's line with the number of the one that declared it. A name that is no component, scene table or archetype is an error (exit code 1) with the nearest name as a suggestion.
 
 ### Schemas as data
 
@@ -520,7 +549,7 @@ flint schema light --format json     # one component or archetype
 flint schema --format json           # everything: every field's type, default, range, values
 ```
 
-`--json` is `--format json`. The whole export has `schema_dirs`, `types` (the type names above), `old_type_names`, `components`, `tables` (the [scene-level tables](#scene-level-tables)) and `archetypes`. A component or a table has `kind`, `description`, `open` (true when it declares no fields) and `fields`; a field has `type`, `required`, and where they apply `default`, `description`, `min`, `max`, `values` (an enum), `element` (an array), `kinds` and `unless` (an asset) and `fields` (a table).
+`--json` is `--format json`. The whole export has `schema_dirs`, `types` (the type names above), `old_type_names`, `components`, `tables` (the [scene-level tables](#scene-level-tables)) and `archetypes`. A component or a table has `kind`, `description`, `open` (true when it declares no fields), `fields`, and, when it was read from a file, `declared_in` (that file) and `extended_by` (each file that added fields to it, in load order); a field has `type`, `required`, `file` (the file that declared it, beside `declared_in`), and where they apply `default`, `description`, `min`, `max`, `values` (an enum), `element` (an array), `kinds` and `unless` (an asset) and `fields` (a table).
 
 ### Editor completion: a JSON Schema for scenes
 
@@ -613,7 +642,48 @@ Games can define their own schemas that extend or override the engine's built-in
 schemas = ["engine/schemas", "schemas"]
 ```
 
-Here `engine/schemas/` provides the engine's built-in components (transform, material, rigidbody, etc.) and the game's own `schemas/` adds game-specific components (health, weapon, enemy AI). If both directories define a component with the same name, the game's definition wins.
+Here `engine/schemas/` provides the engine's built-in components (transform, material, rigidbody, etc.) and the game's own `schemas/` adds game-specific components (health, weapon, enemy AI). If both directories define a component with the same name, the game's definition replaces the engine's whole, unless the game's says `extend = true` (next section).
+
+### Adding a field to an engine component
+
+A game that wants one more field on an engine component, say a `wetness` its rain script reads from every `material`, declares only that field, and marks the table `extend = true`:
+
+```toml
+# schemas/components/material.toml, in the game
+[component.material]
+extend = true
+
+[component.material.fields]
+wetness = { type = "f32", default = 0.0, min = 0.0, max = 1.0, description = "Read by scripts/rain.rhai" }
+```
+
+The engine's own `material` fields stay as the engine declares them, and follow it when it changes; `wetness` is checked like any of them, its default is written into each `material` a scene declares, and `flint validate` says nothing about a scene that sets it. What an extension does:
+
+- **Adds fields** to the component of that name an earlier directory declared, or a file of the same directory declared: a directory's extensions apply after all its files have loaded, so file names don't matter.
+- **Redefines a field** it names again: the extension's definition replaces the earlier one for that field only (a narrower range, a different default). The engine's other fields are untouched.
+- **Keeps the earlier description.** A `description` beside `extend = true` is ignored, and `flint validate` says so (`ignored-schema-key`); describe each field you add instead.
+- **Adds panel rows** after the earlier ones: an added field's `panel = "tune"` puts it on the component's [F3 panel](../guides/debug-panels.md), and a `[component.<name>.panel]` table replaces the earlier one.
+- **Is an error when nothing earlier declares the name**: `component 'materail' says extend = true, and no earlier schema declares a component of that name to add its fields to: did you mean material?` An extension of nothing would check nothing.
+
+Without `extend`, a later layer's `[component.material]` replaces the engine's whole, as it always has: that is how a game swaps a component's definition for its own, and the copy must then carry every field it wants checked. `flint schema material` shows which file each field came from:
+
+```text
+Component: material
+Description: PBR material properties with optional texture reference
+Declared in: [1] engine/schemas/components/material.toml
+Extended by: [2] schemas/components/material.toml
+
+Fields:
+  ...
+  roughness : f32 = 0.7   [1]
+    # Roughness factor 0.0-1.0
+  ...
+  wetness : f32 = 0   [2]
+    # Read by scripts/rain.rhai
+    # Range: 0 .. 1
+```
+
+The same works for a scene-level table: `[table.<name>]` with `extend = true` under the game's `scene/`.
 
 ### Which directories load
 

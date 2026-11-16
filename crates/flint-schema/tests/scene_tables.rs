@@ -177,36 +177,17 @@ fn scenes() -> Vec<(String, toml::Table)> {
     out
 }
 
-/// What the checks found in the examples the day they were turned on
-/// (#686): keys and tables that no code has ever read, so each of these
-/// scenes has been playing without them. All are warnings, and none is in a
-/// frozen fixture. They are named here so the list can't grow; repairing a
-/// scene takes its lines off (the test fails on a line that no longer
-/// applies).
+/// Keys and tables in the repository's scenes that no code reads, each
+/// pinned here so the list can't grow; repairing a scene takes its line off
+/// (the test fails on a line that no longer applies).
 ///
-/// - `[camera] orthographic = true` in four 2D examples: the key is
-///   `projection = "orthographic"`, so they have been drawn in perspective.
-/// - `[camera] distance / pitch / yaw` in rolling_meadow: those are
-///   `flint render` flags, not scene keys.
-/// - `[lights.*]` in campfire: lights are entities with a `light` component,
-///   so the scene is lit by the default lights.
-const NOTHING_READS: &[&str] = &[
-    "examples/campfire.scene.toml: [lights] is no scene table",
-    "examples/collision_2d_test/collision_2d_test.scene.toml: not declared: \
-     warning[unknown-field] [camera] orthographic: `camera` has no field `orthographic`",
-    "examples/rolling_meadow.scene.toml: not declared: warning[unknown-field] [camera] \
-     distance: `camera` has no field `distance`",
-    "examples/rolling_meadow.scene.toml: not declared: warning[unknown-field] [camera] pitch: \
-     `camera` has no field `pitch`",
-    "examples/rolling_meadow.scene.toml: not declared: warning[unknown-field] [camera] yaw: \
-     `camera` has no field `yaw`",
-    "examples/scrolling_test/scrolling_test.scene.toml: not declared: warning[unknown-field] \
-     [camera] orthographic: `camera` has no field `orthographic`",
-    "examples/ui_test/ui_fonts.scene.toml: not declared: warning[unknown-field] [camera] \
-     orthographic: `camera` has no field `orthographic`",
-    "examples/ui_test/ui_test.scene.toml: not declared: warning[unknown-field] [camera] \
-     orthographic: `camera` has no field `orthographic`",
-];
+/// Empty since #807. The first run (#686) found six examples: four 2D ones
+/// wrote `[camera] orthographic = true` (the key is `projection =
+/// "orthographic"`), so they were drawn in perspective; rolling_meadow wrote
+/// `flint render`'s `distance / pitch / yaw` flags as `[camera]` keys; and
+/// campfire's `[lights.*]` table lit nothing (a light is an entity with a
+/// `light` component). Each scene now says what it meant.
+const NOTHING_READS: &[&str] = &[];
 
 /// No scene in the repository (the examples, the frozen fixtures the goldens
 /// load, the showcase game) writes a top-level table the schemas don't

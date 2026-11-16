@@ -395,7 +395,7 @@ fn upload(
 
 /// Name the uploaded mesh in the entity's `model.asset`, so it is drawn.
 fn set_model_asset(world: &mut FlintWorld, id: EntityId, asset: &str) {
-    if let Some(comps) = world.get_components_mut(id) {
+    if let Some(mut comps) = world.get_components_mut(id) {
         comps.set_field(comp::MODEL, "asset", toml::Value::String(asset.into()));
     } else {
         let mut model = toml::map::Map::new();

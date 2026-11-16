@@ -691,7 +691,7 @@ impl SkeletalSync {
     /// as an explicit restart.
     pub fn write_back(&mut self, world: &mut FlintWorld) {
         for entity_id in self.completed_blends.drain(..) {
-            let Some(components) = world.get_components_mut(entity_id) else {
+            let Some(mut components) = world.get_components_mut(entity_id) else {
                 continue;
             };
             components.set_field(
@@ -722,7 +722,7 @@ impl SkeletalSync {
             let Some(state) = self.states.get(entity_id) else {
                 continue;
             };
-            let Some(components) = world.get_components_mut(*entity_id) else {
+            let Some(mut components) = world.get_components_mut(*entity_id) else {
                 continue;
             };
             let Some(layers) = components
@@ -1169,7 +1169,7 @@ mod tests {
     #[test]
     fn a_joint_offset_turns_a_clipless_skeleton_and_what_hangs_from_it() {
         let mut sync = SkeletalSync::new();
-        let eid = EntityId::new();
+        let eid = EntityId::from_raw(1);
         let mut skeleton = two_joint_skeleton();
         skeleton.rest_poses[1].translation = [0.0, 1.0, 0.0];
         skeleton.local_poses = skeleton.rest_poses.clone();

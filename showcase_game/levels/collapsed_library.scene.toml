@@ -133,8 +133,10 @@ source = "torch_flicker.rhai"
 #  ROOM
 # ============================================================
 
+# The level's root, a transform its walls, floors and lamps hang from. Not a
+# `room`: the examples' room is a box with `bounds` that draws as an outline,
+# and its `rooms_have_bounds` constraint asks for one (#804).
 [entities.library_main]
-archetype = "room"
 [entities.library_main.transform]
 position = [0, 0, 0]
 

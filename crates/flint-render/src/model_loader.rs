@@ -355,7 +355,7 @@ pub fn load_models_from_world(
                     renderer,
                     device,
                 );
-                if let Some(components) = world.get_components_mut(*entity_id) {
+                if let Some(mut components) = world.get_components_mut(*entity_id) {
                     components.remove(comp::MODEL);
                 }
                 result.models.push(LoadedModel {
@@ -400,7 +400,7 @@ pub fn load_models_from_world(
                             renderer,
                             device,
                         );
-                        if let Some(components) = world.get_components_mut(*entity_id) {
+                        if let Some(mut components) = world.get_components_mut(*entity_id) {
                             components.remove(comp::MODEL);
                         }
                         result.models.push(LoadedModel {
@@ -522,7 +522,7 @@ pub fn load_models_from_world(
                         device,
                     );
 
-                    if let Some(components) = world.get_components_mut(*entity_id) {
+                    if let Some(mut components) = world.get_components_mut(*entity_id) {
                         components.remove(comp::MODEL);
                     }
 

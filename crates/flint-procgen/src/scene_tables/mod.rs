@@ -49,6 +49,24 @@ impl LivingTables {
         })
     }
 
+    /// Each of the two tables that doesn't fit its type, by name, with what
+    /// serde said: what [`of`](Self::of) stops at, but for both tables, so a
+    /// check can report each (#807).
+    pub fn problems(scene: &SceneFile) -> Vec<(&'static str, String)> {
+        let living = read_table::<LivingDef>(scene, "living").err();
+        let wooze = read_table::<WoozeDef>(scene, "wooze").err();
+        [("living", living), ("wooze", wooze)]
+            .into_iter()
+            .filter_map(|(name, problem)| {
+                let said = problem?;
+                let said = said
+                    .strip_prefix(&format!("[{name}]: "))
+                    .map_or(said.clone(), str::to_string);
+                Some((name, said))
+            })
+            .collect()
+    }
+
     /// [`of`](Self::of) for a scene that has been through [`settle_scene`],
     /// which is where a table that doesn't fit stops the load: here one is
     /// warned about and read as absent.

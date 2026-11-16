@@ -874,3 +874,66 @@ fn test_entity_count_with_component() {
         .unwrap();
     assert_eq!(count, 4, "should find exactly 4 entities with 'light'");
 }
+
+/// The names a script sees from `find_entities_with("enemy")`, the
+/// children of `squad`, and `persist_keys()`, in the order it is handed
+/// them, from a world and a save built in the order `names` gives (#689).
+fn query_orders(names: &[&str]) -> Vec<Vec<String>> {
+    let engine = ScriptEngine::new();
+    let mut world = FlintWorld::new();
+    let squad = world.spawn("squad").unwrap();
+    let mut store = flint_runtime::PersistentStore::new();
+    for name in names {
+        let id = world.spawn(*name).unwrap();
+        world
+            .set_component(id, "enemy", toml::Value::Table(Default::default()))
+            .unwrap();
+        world.set_parent(id, squad).unwrap();
+        store.set(&format!("seen_{name}"), toml::Value::Boolean(true));
+    }
+    let mut sm = flint_runtime::GameStateMachine::new();
+    let physics = flint_physics::PhysicsSystem::new();
+    let _world = crate::context::WorldScope::new(&engine.ctx, &mut world);
+    let _state = crate::context::StateScope::new(&engine.ctx, &mut sm, &mut store, &physics);
+    let out: rhai::Array = engine
+        .rhai_engine()
+        .eval(
+            r#"
+            let found = [];
+            for id in find_entities_with("enemy") { found.push(entity_name(id)); }
+            let kids = [];
+            for id in get_children(get_entity("squad")) { kids.push(entity_name(id)); }
+            [found, kids, persist_keys()]
+        "#,
+        )
+        .unwrap();
+    out.into_iter()
+        .map(|list| {
+            list.into_array()
+                .unwrap()
+                .into_iter()
+                .map(|n| n.into_string().unwrap())
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn entity_queries_come_in_name_order_however_the_world_was_built() {
+    let names = [
+        "wolf", "bat", "orc", "ghoul", "slime", "imp", "troll", "rat", "crab", "newt", "yeti",
+        "eel",
+    ];
+    let mut reversed = names;
+    reversed.reverse();
+    let forward = query_orders(&names);
+    let backward = query_orders(&reversed);
+    assert_eq!(forward, backward, "spawn order leaked into a query");
+
+    let mut sorted = names.map(String::from).to_vec();
+    sorted.sort();
+    assert_eq!(forward[0], sorted, "find_entities_with");
+    assert_eq!(forward[1], sorted, "get_children");
+    let keys: Vec<String> = sorted.iter().map(|n| format!("seen_{n}")).collect();
+    assert_eq!(forward[2], keys, "persist_keys");
+}

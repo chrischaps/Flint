@@ -12,8 +12,7 @@ use flint_ecs::FlintWorld;
 /// Set fields of the entity's `sprite` table, when it has one.
 fn set_sprite(world: &mut FlintWorld, id: EntityId, fields: &[(&str, toml::Value)]) {
     let table = world
-        .get_components_mut(id)
-        .and_then(|comps| comps.get_mut(comp::SPRITE))
+        .get_component_mut(id, comp::SPRITE)
         .and_then(|sprite| sprite.as_table_mut());
     if let Some(table) = table {
         for (key, value) in fields {
@@ -31,7 +30,7 @@ fn set_animator(
     id: EntityId,
     fields: &[(&str, toml::Value)],
 ) -> CallResult<()> {
-    if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+    if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
         for (key, value) in fields {
             comps.set_field(comp::SPRITE_ANIMATOR, key, value.clone());
         }

@@ -266,8 +266,8 @@ mod tests {
         let events = vec![
             GameEvent::ActionPressed("jump".into()),
             GameEvent::CollisionStarted {
-                entity_a: flint_core::EntityId::new(),
-                entity_b: flint_core::EntityId::new(),
+                entity_a: flint_core::EntityId::from_raw(1),
+                entity_b: flint_core::EntityId::from_raw(2),
             },
         ];
 

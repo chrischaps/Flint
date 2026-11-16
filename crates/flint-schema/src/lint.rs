@@ -143,6 +143,22 @@ pub fn lint_schema_file(kind: SchemaKind, text: &str, file: Option<&Path>) -> Ve
 fn lint_component(kind: SchemaKind, name: &str, def: &toml::Table, found: &mut Vec<Diagnostic>) {
     let key_word = kind.key();
     lint_panel(kind, name, def, found);
+    // An extension adds fields (#794); the description is the declaring layer's
+    let extends = def.get("extend").and_then(|v| v.as_bool()) == Some(true);
+    if extends && def.contains_key("description") {
+        found.push(
+            Diagnostic::warning(
+                codes::IGNORED_SCHEMA_KEY,
+                format!(
+                    "`description` is ignored: `[{key_word}.{name}]` says `extend = true`, so \
+                     it adds fields to the `{name}` an earlier layer declared, which keeps that \
+                     layer's description"
+                ),
+            )
+            .field("description")
+            .hint("describe each field you add with its own `description`"),
+        );
+    }
     for (key, value) in def {
         if key == "fields" {
             for (field, field_def) in value.as_table().into_iter().flatten() {
@@ -164,7 +180,10 @@ fn lint_component(kind: SchemaKind, name: &str, def: &toml::Table, found: &mut V
             } else {
                 Diagnostic::warning(
                     codes::IGNORED_SCHEMA_KEY,
-                    format!("`{key}` is ignored: a {key_word} holds `description` and `fields`"),
+                    format!(
+                        "`{key}` is ignored: a {key_word} holds `description`, `fields`, \
+                         `panel` and `extend`"
+                    ),
                 )
                 .hint_opt(diagnostic::did_you_mean(
                     key,
@@ -421,7 +440,7 @@ desciption = "Typo"
             lines,
             [
                 "warning[ignored-schema-key] collider.desciption: `desciption` is ignored: a \
-                 component holds `description` and `fields`",
+                 component holds `description`, `fields`, `panel` and `extend`",
                 "warning[ignored-schema-key] collider.friction: `friction` is ignored: it is \
                  written under `[component.collider]`, and fields are read from \
                  `[component.collider.fields]`",

@@ -44,7 +44,6 @@ impl PlayerApp {
     /// An error is a startup failure (physics would not initialize); at a
     /// transition the same failure is logged and the scene plays on.
     pub(super) fn enter_scene(&mut self, entry: SceneEntry) -> Result<()> {
-        self.core.world.rebuild_component_index();
         // Which project the scene is in, before anything is searched for
         self.refresh_project();
 
@@ -396,6 +395,9 @@ impl PlayerApp {
         self.core
             .script
             .set_current_scene(&self.core.scene_path, &self.core.project);
+        // The looks the scene can see and the one it draws with, for
+        // on_init's list_looks() and get_look() (#497)
+        self.publish_looks();
         {
             let _state_scope = self.core.script.state_scope(
                 &mut self.core.state_machine,

@@ -45,8 +45,9 @@ position = [0.0, 1.5, 6.0]
 target = [0.0, 1.0, 0.0]
 fov = 50.0
 
-[entities.sun.directional_light]
-direction = [0.6, -0.5, -0.4]
+[entities.sun.light]
+type = "directional"
+direction = [-0.6, 0.5, 0.4]
 color = [1.0, 0.9, 0.8]
 intensity = 2.5
 
@@ -389,6 +390,27 @@ fn a_clocked_sweep_can_be_cropped() {
     ok(&o);
     let sheet = image::open(dir.join("crop.png")).unwrap().into_rgb8();
     assert_eq!(sheet.width(), sheet_width(2, 32));
+
+    // #501: the same region in fractions of the 64x48 frame is the same
+    // sheet, locator and all
+    let o = render(
+        &dir,
+        "fraction.png",
+        &[
+            "--time",
+            "1.3",
+            "--sweep",
+            "wooze.glide=0,1",
+            "--sweep-crop",
+            "0.25,0.25,0.5,0.5",
+        ],
+    );
+    ok(&o);
+    let fraction = image::open(dir.join("fraction.png")).unwrap().into_rgb8();
+    assert!(
+        fraction == sheet,
+        "a crop in fractions draws the pixel crop's sheet"
+    );
 }
 
 /// A still of the moment is its own reference: distance 0, and in a sweep the

@@ -823,7 +823,7 @@ mod tests {
     #[test]
     fn test_read_audio_params_defaults() {
         let world = FlintWorld::new();
-        let (vol, pitch) = read_audio_params(&world, EntityId::new());
+        let (vol, pitch) = read_audio_params(&world, EntityId::from_raw(1));
         assert_eq!(vol, 1.0);
         assert_eq!(pitch, 1.0);
     }

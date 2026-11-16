@@ -211,6 +211,34 @@ fn a_wrong_argument_names_the_function_the_parameter_and_the_kind() {
     assert!(err.contains("line 2"), "{err}");
 }
 
+/// #680: a parent cycle from a script is a script error at its line, and
+/// nothing is stored (it used to be, and the next matrix walk overflowed).
+#[test]
+fn set_parent_refuses_a_cycle_with_a_script_error() {
+    let (engine, mut world, cube) = engine_and_world();
+    let lid = world.spawn("lid").unwrap().raw() as i64;
+    let err = eval::<()>(
+        &engine,
+        &mut world,
+        &format!(
+            "let x = 1;
+set_parent({cube}, {cube})"
+        ),
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("set_parent: Parent cycle: `cube` can't be parented to itself"),
+        "{err}"
+    );
+    assert!(err.contains("line 2"), "{err}");
+
+    eval::<()>(&engine, &mut world, &format!("set_parent({lid}, {cube})")).unwrap();
+    let err = eval::<()>(&engine, &mut world, &format!("set_parent({cube}, {lid})")).unwrap_err();
+    assert!(err.contains("`cube` can't be parented to `lid`"), "{err}");
+    let parent: i64 = eval(&engine, &mut world, &format!("get_parent({cube})")).unwrap();
+    assert_eq!(parent, -1, "the refused link is not kept");
+}
+
 #[test]
 fn a_missing_entity_returns_the_fallback_and_warns_once() {
     let (engine, mut world, id) = engine_and_world();

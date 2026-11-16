@@ -1101,7 +1101,7 @@ spacing = 9             # the rest of graphite's pencil table stays
 
 `--look` goes the other way, over the scene's keys, so a look can be tried on any scene as it stands. A scene whose block is only `look = "graphite"` draws exactly what `--look graphite` draws on the same scene without a block: the two renders of `examples/looks.scene.toml` are byte-identical. `flint render` prints `Scene look: graphite`, and `flint validate` warns about a look it can't find or one whose keys don't fit. In the player a missing look is a warning and the scene draws without it.
 
-The player and the viewer (`flint edit scene.toml`) read the look when the scene loads. **F4 → Look** lists every look the scene can reach (each `styles/` from its folder up to the project root, the mounted engine's, then the built-ins no file shadows) and switches to the one you pick. The pick replaces the whole post config, so edits made in F4's other sections before the pick are gone. The viewer keeps the pick across hot reloads, so you can edit a look file in the scene's `styles/` and watch it change. Scripts switch looks with `set_look("matrix")` and take them off with `clear_look()` ([Scripting → Style API](scripting.md#style-api)), or fade to one with `set_look("matrix", 2.0)` (next section). Every switch starts again from the scene's own keys, so nothing from the previous look carries over.
+The player and the viewer (`flint edit scene.toml`) read the look when the scene loads. **F4 → Look** lists every look the scene can reach (each `styles/` from its folder up to the project root, the mounted engine's, then the built-ins no file shadows) and switches to the one you pick. The pick replaces the whole post config, so edits made in F4's other sections before the pick are gone. The viewer keeps the pick across hot reloads, so you can edit a look file in the scene's `styles/` and watch it change. Scripts switch looks with `set_look("matrix")` and take them off with `clear_look()` ([Scripting → Style API](scripting.md#style-api)), or fade to one with `set_look("matrix", 2.0)` (next section). `get_look()` says which look is on, whoever chose it (the scene, F4, a script or a transition), and `list_looks()` names every look F4 would list (#497). Every switch starts again from the scene's own keys, so nothing from the previous look carries over.
 
 ![F4's Look picker in the player: examples/looks.scene.toml's graphite swapped for watercolor by hand; the post chain below mirrors the new exposure and vignette](../images/f4-look-picker.png)
 
@@ -1164,14 +1164,16 @@ A style sized in points, such as ASCII's `cell` or pencil's `spacing`, draws as 
 - **`--sweep-crop X,Y,W,H`** draws every cell at `--width`x`--height` (1920x1080 unless you set them) and keeps that region pixel for pixel. The glyphs come out exactly the size the final render draws them, but you only see part of the frame. Choose a region that holds what the key affects, such as a prop's edge for glow or a gradient for a ramp.
 - **`--sweep-scale full`** draws every cell at the full size and shrinks it to 640 wide. The composition matches the final render (where glyphs land, how much of the frame the tone fills), but the glyphs blur.
 
-Both flags work with a grid. The sheet's subtitle states the scale, for example `1:1 640x360 at 760,520 of 1920x1080` or `1920x1080 shown at 33%`, so a reader knows what they are looking at. A crop that goes past the frame is refused before anything is drawn. `--sweep-scale cell` is the default.
+Both flags work with a grid. The sheet's subtitle states the scale, for example `1:1 640x360 at 760,520 of 1920x1080` or `1920x1080 shown at 33%`, so a reader knows what they are looking at. A crop sheet also carries a **locator** in its header, top right: the first cell's whole frame, shrunk, with the kept region outlined and the rest dimmed, so you can see which part of the scene every cell comes from (#501). A pixel crop that goes past the frame is refused before anything is drawn. `--sweep-scale cell` is the default.
+
+A crop can be given **in fractions** of the frame instead of pixels: when any value has a decimal point, all four are shares of the width and height, from 0 to 1. `--sweep-crop 0.4,0.48,0.33,0.33` keeps the same part of the frame at 1920x1080 or at 1280x720, so a crop you've found works at any `--width`/`--height`. Its edges are rounded to pixels, and the subtitle gives the region it came to.
 
 ```bash
 flint render examples/stylize_props.scene.toml --look ascii_noir \
     --sweep ascii.glow=0,0.6,1.2 --sweep-crop 760,520,640,360 -o glow.png
 ```
 
-![ascii_noir's glow swept as 1:1 crops of a 1080p frame: the radio and the barrel at their final glyph size](../images/sweep-crop-noir-glow.png)
+![ascii_noir's glow swept as 1:1 crops of a 1080p frame: the chair and the crate at their final glyph size, and top right the locator, the whole frame with the crop boxed in amber](../images/sweep-crop-noir-glow.png)
 
 Rendering at full size costs more: each cell is a whole 1080p frame. The pixel-identical check compares the full frames before they're cropped, so a crop can't hide a difference elsewhere in the frame.
 

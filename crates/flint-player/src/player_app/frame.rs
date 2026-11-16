@@ -1132,6 +1132,9 @@ impl super::game_core::FrameHost for PlayerApp {
                 script.set_transition_state(*elapsed as f64, "entering");
             }
         }
+        // The look drawn now (#497): F4's pick and a script's set_look
+        // already said so; this hears a game that set it by hand
+        self.publish_look();
         let (screen_w, screen_h) = self.script_screen_size();
         let script = &mut self.core.script;
         script.set_screen_size(screen_w, screen_h);

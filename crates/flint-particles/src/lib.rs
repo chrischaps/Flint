@@ -30,8 +30,8 @@ use flint_runtime::RuntimeSystem;
 
 pub use curves::{Curve, Interp};
 pub use effect::{
-    BurstDef, CountDef, CurveDef, EmitterDef, ForceDef, Key, ParticleEffect, RangeDef,
-    ResolveContext, ShapeDef, SubEmitterDef,
+    BurstDef, CountDef, CurveDef, EmitterDef, EmitterProblem, ForceDef, Key, ParticleEffect,
+    RangeDef, ResolveContext, ShapeDef, SubEmitterDef,
 };
 pub use emitter::{
     Burst, EmissionShape, EmitterConfig, EmitterState, Force, ParticleBlendMode, SortMode,

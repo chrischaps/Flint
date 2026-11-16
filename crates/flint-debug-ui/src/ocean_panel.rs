@@ -337,7 +337,7 @@ impl DebugPanel for OceanDebugPanel {
             return;
         }
         if let Some(id) = ctx.world.get_id(&self.ocean_entity_name) {
-            if let Some(comps) = ctx.world.get_components_mut(id) {
+            if let Some(mut comps) = ctx.world.get_components_mut(id) {
                 for (field, value) in self.config.to_fields() {
                     comps.set_field(flint_geometry::components::OCEAN, field, value);
                 }

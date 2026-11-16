@@ -208,6 +208,63 @@ fn strict_makes_an_unknown_field_an_error() {
     );
 }
 
+/// #795: `[project.diagnostics] allow` leaves out what it names, at the
+/// place it names, and `flint validate` and `flint check` say how many,
+/// in text and JSON. An allowed error no longer fails the scene; an entry
+/// that names no code fails every command, naming the key.
+#[test]
+fn the_manifest_allows_a_code_and_validate_counts_it() {
+    let manifest = "[project]\nschemas = [\"schemas\"]\n\n[project.diagnostics]\n\
+                    allow = [\"unknown-field:lamp.brightnes\", \"unknown-component:lapm\"]\n";
+    let dir = project("allowed", manifest);
+    let broken = "scenes/broken.scene.toml";
+
+    let o = flint(&dir, &["validate", broken]);
+    let out = stdout(&o);
+    assert_eq!(o.status.code(), Some(1), "three errors are left: {out}");
+    assert!(
+        out.starts_with("scenes/broken.scene.toml: 3 errors (2 allowed by flint.toml)\n"),
+        "{out}"
+    );
+    assert!(!out.contains("lamp.brightnes"), "{out}");
+    assert!(!out.contains("lapm"), "{out}");
+    assert!(
+        out.contains("error[bad-enum-value]"),
+        "the rest stays: {out}"
+    );
+
+    let o = flint(&dir, &["validate", broken, "--format", "json"]);
+    let doc: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(doc["allowed"], 2, "{doc}");
+    assert_eq!(doc["errors"], 3, "{doc}");
+    assert_eq!(doc["warnings"], 0, "{doc}");
+
+    let o = flint(&dir, &["check", broken, "--json"]);
+    let doc: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(doc["allowed"], 2, "{doc}");
+    let summary = doc["summary"].as_str().unwrap();
+    assert!(summary.ends_with("(2 allowed by flint.toml)"), "{summary}");
+
+    // The one warning allowed: nothing left, and still said
+    let o = flint(&dir, &["validate", "scenes/typo_only.scene.toml"]);
+    let out = stdout(&o);
+    assert!(o.status.success(), "{out}");
+    assert!(
+        out.starts_with("scenes/typo_only.scene.toml: no problems (1 allowed by flint.toml)\n"),
+        "{out}"
+    );
+
+    let bad = project(
+        "allowed_typo",
+        "[project.diagnostics]\nallow = [\"unknown-feild\"]\n",
+    );
+    let o = flint(&bad, &["validate", broken]);
+    let said = String::from_utf8_lossy(&o.stderr);
+    assert_ne!(o.status.code(), Some(0), "{said}");
+    assert!(said.contains("project.diagnostics.allow[0]"), "{said}");
+    assert!(said.contains("did you mean `unknown-field`?"), "{said}");
+}
+
 /// #339's scene: three mistakes in one component, with a constraint that
 /// passes. Before ADR 0115 the loader logged a warning for the first field
 /// (`cell`), and validate printed "All constraints passed." and exited 0.
@@ -295,6 +352,171 @@ fn every_field_of_one_component_is_named_and_fails_when_constraints_pass() {
             ("bad-type", "a", "ascii_style", "tint"),
         ]
     );
+}
+
+/// #807: one mistake in `[living]` or `[wooze]` is one diagnostic. The scene
+/// pass names the field (an undeclared key is its `unknown-field`, a wrong
+/// type its `bad-type`), and the type check that refuses the load made a
+/// second, `toml-parse`, diagnostic of it with no field. Now the pass's is
+/// the error, with the load's hint, and nothing else is said of the table.
+#[test]
+fn one_mistake_in_living_or_wooze_is_one_diagnostic_with_its_field() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("validate_diagnostics_cli")
+        .join("living_once");
+    let _ = std::fs::remove_dir_all(&dir);
+    // The engine's own table schemas, so `[table.living]` is the real one
+    let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+    let manifest = format!(
+        "[project]\nschemas = [\"{}\"]\n",
+        engine.display().to_string().replace('\\', "/")
+    );
+    for (path, text) in [
+        ("flint.toml", manifest.as_str()),
+        (
+            "typo.scene.toml",
+            "[scene]\nname = \"Typo\"\n\n[living]\nshadowz = \"drift\"\n",
+        ),
+        (
+            "wrong_type.scene.toml",
+            "[scene]\nname = \"Type\"\n\n[living]\nsoftness = \"soft\"\n",
+        ),
+        (
+            "wooze.scene.toml",
+            "[scene]\nname = \"Wooze\"\n\n[wooze]\ngilde = 0.5\n",
+        ),
+    ] {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(path), text).unwrap();
+    }
+    for (scene, table, code, field, said) in [
+        (
+            "typo.scene.toml",
+            "living",
+            "unknown-field",
+            "shadowz",
+            "error[unknown-field] [living] shadowz: `living` has no field `shadowz`\n      \
+             hint: did you mean `shadows`?; the scene does not load until the table fits\n",
+        ),
+        (
+            "wrong_type.scene.toml",
+            "living",
+            "bad-type",
+            "softness",
+            "error[bad-type] [living] softness:",
+        ),
+        (
+            "wooze.scene.toml",
+            "wooze",
+            "unknown-field",
+            "gilde",
+            "error[unknown-field] [wooze] gilde: `wooze` has no field `gilde`",
+        ),
+    ] {
+        let o = flint(&dir, &["validate", scene]);
+        let out = stdout(&o);
+        assert_eq!(o.status.code(), Some(1), "{scene} refuses to load: {out}");
+        assert!(out.starts_with(&format!("{scene}: 1 error\n")), "{out}");
+        assert!(out.contains(said), "missing:\n{said}\nin:\n{out}");
+        assert!(!out.contains("toml-parse"), "{out}");
+
+        let o = flint(&dir, &["validate", scene, "--format", "json"]);
+        let doc: serde_json::Value = serde_json::from_str(&stdout(&o)).expect("one JSON document");
+        let found = doc["diagnostics"].as_array().unwrap();
+        assert_eq!(found.len(), 1, "{found:#?}");
+        let d = &found[0];
+        assert_eq!(
+            (&d["severity"], &d["code"], &d["table"], &d["field"]),
+            (&"error".into(), &code.into(), &table.into(), &field.into()),
+            "{d:#?}"
+        );
+    }
+}
+
+/// #804's boxes, through the binary: a model registered only in the asset
+/// catalog passes; a misspelt particle effect and sequence fail, though a
+/// file of the misspelling's stem is there (they are known by the `name`
+/// inside); a colour in the old table form fails with the array to write;
+/// a collider with no rigidbody is a warning. The schemas copy the engine's
+/// field types, so the engine's files can change under the test.
+#[test]
+fn catalog_assets_pass_and_effect_sequence_colour_and_collider_mistakes_are_named() {
+    const HASH: &str = "ab12000000000000000000000000000000000000000000000000000000000000";
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("validate_diagnostics_cli")
+        .join("references_804");
+    let _ = std::fs::remove_dir_all(&dir);
+    let sidecar =
+        format!("[asset]\nname = \"oak_table\"\ntype = \"mesh\"\nhash = \"sha256:{HASH}\"\n");
+    let stored = format!(".flint/assets/ab/{HASH}.glb");
+    for (path, text) in [
+        ("flint.toml", MANIFEST),
+        (
+            "schemas/components/model.toml",
+            "[component.model.fields]\nasset = { type = \"asset\", kind = [\"models\", \"specs\"] }\n",
+        ),
+        (
+            "schemas/components/particle_effect.toml",
+            "[component.particle_effect.fields]\n\
+             effect = { type = \"asset\", kind = \"particles\", default = \"\" }\n",
+        ),
+        (
+            "schemas/components/animator.toml",
+            "[component.animator.fields]\n\
+             sequence = { type = \"asset\", kind = \"sequences\", default = \"\" }\n",
+        ),
+        (
+            "schemas/components/material.toml",
+            "[component.material.fields]\ncolor = \"color\"\n",
+        ),
+        ("schemas/components/collider.toml", "[component.collider]\n"),
+        ("schemas/components/rigidbody.toml", "[component.rigidbody]\n"),
+        ("assets/oak_table.asset.toml", sidecar.as_str()),
+        (stored.as_str(), "glTF"),
+        ("particles/fire.particles.toml", "name = \"campfire\"\n"),
+        ("animations/greet.sequence.toml", "name = \"wave\"\n"),
+        (
+            "scenes/props.scene.toml",
+            "[scene]\nname = \"Props\"\n\n\
+             [entities.table.model]\nasset = \"oak_table\"\n\n\
+             [entities.hearth.particle_effect]\neffect = \"campfire\"\n\n\
+             [entities.brazier.particle_effect]\neffect = \"fire\"\n\n\
+             [entities.greeter.animator]\nsequence = \"wave\"\n\n\
+             [entities.waver.animator]\nsequence = \"greet\"\n\n\
+             [entities.rug.material]\ncolor = { r = 0.8, g = 0.2, b = 0.1 }\n\n\
+             [entities.crate.collider]\n",
+        ),
+    ] {
+        let file = dir.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    let o = flint(&dir, &["validate", "scenes/props.scene.toml"]);
+    let out = stdout(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(
+        out.starts_with("scenes/props.scene.toml: 3 errors, 1 warning\n"),
+        "{out}"
+    );
+    for expected in [
+        "  error[missing-asset] entity 'brazier' particle_effect.effect: particle effect \
+         'fire' not found\n      hint: tried scenes/particles, particles\n",
+        "  error[bad-type] entity 'rug' material.color: a color is [r, g, b] or [r, g, b, a], \
+         and no reader takes a table: write [0.8, 0.2, 0.1]\n",
+        "  error[missing-asset] entity 'waver' animator.sequence: animation sequence 'greet' \
+         not found\n",
+        "  warning[needs-component] entity 'crate' component 'collider': a collider with no \
+         rigidbody collides with nothing\n",
+    ] {
+        assert!(out.contains(expected), "missing:\n{expected}\nin:\n{out}");
+    }
+    assert!(!out.contains("oak_table"), "the catalog holds it: {out}");
+
+    // `flint check` says the same about the catalog and the effect
+    let o = flint(&dir, &["check", "scenes/props.scene.toml"]);
+    let out = stdout(&o);
+    assert!(!out.contains("oak_table"), "{out}");
+    assert!(out.contains("particle effect 'fire' not found"), "{out}");
 }
 
 /// The ticket's fourth box: a file that is not TOML is named, by validate
