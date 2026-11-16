@@ -1,0 +1,91 @@
+# A near-black stage under one soft pool of light (#503).
+#
+# Almost everything here is a dark gradient: the pool's falloff across the
+# floor and up the backdrop, from dim to nothing. In 8 bits that falloff
+# comes out in bands. The dither below hides them: added in display levels
+# (dither_style 2, triangular noise) at one 8-bit step (0.004), it is the
+# same size on screen at every brightness, so it leaves no pattern either.
+#
+# The original dither (dither_style 0) is added in linear light, so near
+# black it is many levels: compare the three, at a strength that shows each
+# pattern, and at one step, where styles 1 and 2 show none:
+#
+#   flint render examples/dark_stage.scene.toml --no-grid --sweep post.dither_style=0,1,2
+#   flint render examples/dark_stage.scene.toml --no-grid --sweep post.dither_enabled=false,true
+
+[scene]
+name = "Dark Stage"
+description = "A near-black stage under one soft pool of light: dither against banding in the dark"
+
+[environment]
+ambient_sky = [0.004, 0.0045, 0.006]
+ambient_ground = [0.002, 0.0018, 0.0015]
+shadows = false
+
+[camera]
+position = [0.0, 2.4, 8.5]
+target = [0.0, 1.1, 0.0]
+fov = 45.0
+
+[post_process]
+bloom_enabled = false
+ssao_enabled = false
+vignette_enabled = true
+vignette_intensity = 0.25
+dither_enabled = true
+dither_style = 2
+dither_intensity = 0.004
+
+# --- the light --------------------------------------------------------------
+
+# One wide, soft spot from above and in front: its edge falls off slowly
+# across the floor and the backdrop, the gradient that bands
+[entities.pool.transform]
+position = [0.0, 7.0, 4.0]
+
+[entities.pool.light]
+type = "spot"
+direction = [0.0, -0.8, -0.6]
+color = [1.0, 0.84, 0.66]
+intensity = 60.0
+range = 24.0
+inner_angle_deg = 6
+outer_angle_deg = 42
+source_radius = 0.4
+
+# --- the stage --------------------------------------------------------------
+
+[entities.floor.transform]
+position = [0.0, -0.1, 0.0]
+
+[entities.floor.bounds]
+min = [-20.0, 0.0, -6.0]
+max = [20.0, 0.1, 12.0]
+
+[entities.floor.material]
+color = [0.32, 0.3, 0.29, 1.0]
+roughness = 0.95
+
+[entities.backdrop.transform]
+position = [0.0, 0.0, -6.0]
+
+[entities.backdrop.bounds]
+min = [-20.0, 0.0, -0.1]
+max = [20.0, 12.0, 0.0]
+
+[entities.backdrop.material]
+color = [0.2, 0.21, 0.24, 1.0]
+roughness = 1.0
+
+# Something to stand in the light
+[entities.plinth.transform]
+position = [0.0, 0.0, 0.0]
+rotation = [0.0, 30.0, 0.0]
+
+[entities.plinth.bounds]
+min = [-0.45, 0.0, -0.45]
+max = [0.45, 1.6, 0.45]
+
+[entities.plinth.material]
+color = [0.7, 0.66, 0.62, 1.0]
+roughness = 0.8

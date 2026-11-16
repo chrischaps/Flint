@@ -341,7 +341,23 @@ Desaturation mixes toward `luma * 0.62` rather than neutral grey on purpose: it 
 | `vignette_intensity` | f32 | `0.3` | Vignette strength |
 | `vignette_smoothness` | f32 | `2.0` | Falloff exponent from center to edge |
 | `dither_enabled` | bool | `false` | 8x8 Bayer ordered dither to reduce banding |
-| `dither_intensity` | f32 | `0.03` | Dither strength (0.02--0.05 works best) |
+| `dither_intensity` | f32 | `0.03` | Dither strength. Style 0: linear light (0.02--0.05 for the retro crosshatch). Styles 1 and 2: display levels, where `0.004` (one 8-bit step) hides banding |
+| `dither_style` | u32 | `0` | Where the dither is added: `0` linear light, `1` Bayer in display levels, `2` triangular noise in display levels |
+
+### Dither against banding
+
+The original dither (`dither_style = 0`) is added in linear light, before the target's sRGB encode, so its size on screen follows the encode's slope: near black a linear offset becomes about 13 times as many display levels as it does in the midtones. Any intensity small enough to vanish in the midtones is a visible 8x8 crosshatch over a dark sky or floor, and one that hides the dark's banding vanishes everywhere else. It stays the default, since a scene may be built on that look.
+
+Styles 1 and 2 add the dither where the 8-bit quantization happens, in display levels (#503): the composite encodes to sRGB, adds the dither, and decodes again for the target to encode. `dither_intensity` is then levels over 255 at every brightness, so `0.004` is one step. Style 1 is the same Bayer matrix, ±half a step at one step's intensity: the pattern is evenly faint from black to white. Style 2 is triangular noise (Roberts' R2 sequence remapped to a triangular distribution), ±one step at one step's intensity, the textbook amount that leaves no banding and no error that follows the image, with no tile for the eye to find. For a dark scene with soft gradients:
+
+```toml
+[post_process]
+dither_enabled = true
+dither_style = 2
+dither_intensity = 0.004
+```
+
+`examples/dark_stage.scene.toml` is the bench: a near-black stage under one soft pool of light. `flint render examples/dark_stage.scene.toml --sweep post.dither_style=0,1,2` draws the three side by side (raise the intensity to see each pattern; at one step, styles 1 and 2 show none).
 
 ## MSAA
 
@@ -542,7 +558,7 @@ When the post-processing pipeline is active, the engine sets `enable_tonemapping
 10. **Desaturation** --- mix toward ash grey
 11. **Vignette** --- edge darkening
 12. **Film grain** --- 24 Hz hash noise, before dither because grain is signal
-13. **Dither** --- 8x8 Bayer, always last inside composite
+13. **Dither** --- 8x8 Bayer or triangular noise, in linear light or display levels (`dither_style`), always last inside composite
 
 The composite is the same for every game: no game's look lives in it (#746). The looks that once did are [the reality styles](#the-reality-styles), display styles after it.
 
