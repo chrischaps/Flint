@@ -1776,10 +1776,8 @@ impl PostProcessPipeline {
             })
         });
 
-        let timed = timer.map(|t| {
-            let scope = t.begin(encoder, "FXAA");
-            (t, scope)
-        });
+        let mut timer = timer;
+        let scope = crate::gpu_labels::begin(timer.as_deref_mut(), encoder, "FXAA");
         fullscreen_pass(
             encoder,
             "FXAA Pass",
@@ -1788,9 +1786,7 @@ impl PostProcessPipeline {
             &fxaa.pipeline,
             &[&uniform_bg, &texture_bg],
         );
-        if let Some((timer, scope)) = timed {
-            timer.end(encoder, scope);
-        }
+        crate::gpu_labels::end(timer, encoder, scope);
     }
 
     /// Run the bloom downsample/upsample chain.
@@ -2473,10 +2469,8 @@ impl PostProcessPipeline {
                 })
             });
 
-        let timed = timer.map(|t| {
-            let scope = t.begin(encoder, "Composite");
-            (t, scope)
-        });
+        let mut timer = timer;
+        let scope = crate::gpu_labels::begin(timer.as_deref_mut(), encoder, "Composite");
         fullscreen_pass(
             encoder,
             "Composite Pass",
@@ -2488,9 +2482,7 @@ impl PostProcessPipeline {
             },
             &[&uniform_bg, &scene_bg, &bloom_bg, &ssao_depth_bg],
         );
-        if let Some((timer, scope)) = timed {
-            timer.end(encoder, scope);
-        }
+        crate::gpu_labels::end(timer, encoder, scope);
     }
 }
 

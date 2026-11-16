@@ -401,11 +401,9 @@ impl SceneRenderer {
         }
         if self.grass.config.as_ref().is_some_and(|c| c.enabled) {
             let grass_time = self.grass_time;
-            let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Grass"));
+            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Grass");
             self.dispatch_grass_compute(device, queue, encoder, camera, grass_time);
-            if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
-                timer.end(encoder, scope);
-            }
+            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
             // Its count is read back once the frame is submitted
             self.grass.readback_due = true;
         } else {
@@ -415,11 +413,9 @@ impl SceneRenderer {
         // Shadow pass: render depth from light perspective. It sees every
         // draw (culled per cascade), since a caster outside the view can
         // still shadow what's in it.
-        let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Shadows"));
+        let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Shadows");
         self.render_shadow_pass(device, queue, encoder, camera, camera_pos);
-        if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
-            timer.end(encoder, scope);
-        }
+        crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
 
         // Set aside draws outside the camera frustum for the rest of the frame.
         self.cull_draws_to_camera();
@@ -515,7 +511,7 @@ impl SceneRenderer {
             (scene_target_view, None, depth_view)
         };
 
-        let scene_scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Scene"));
+        let scene_scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Scene");
 
         if !self.water.grab_this_frame {
             // Single-pass path (unchanged for scenes without an ocean), split
@@ -698,28 +694,22 @@ impl SceneRenderer {
             }
         }
 
-        if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scene_scope) {
-            timer.end(encoder, scope);
-        }
+        crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scene_scope);
 
         // The fog veil (#513): the translucent draws' weight, depth and
         // coverage, against the finished frame's single-sample depth
         if fog_veiled {
-            let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Fog veil"));
+            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Fog veil");
             self.fog_veil.drawn = self.encode_fog_veil(device, encoder, depth_view);
-            if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
-                timer.end(encoder, scope);
-            }
+            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
         }
 
         // The entity style mask (#263): the styled entities' ids, drawn
         // against the frame's single-sample depth, while a style reads it.
         if has_postprocess && self.style_mask_wanted() {
-            let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Style mask"));
+            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Style mask");
             self.encode_style_mask(device, queue, encoder, depth_view, depth_key);
-            if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
-                timer.end(encoder, scope);
-            }
+            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
         }
 
         // The style albedo (#869): the opaque meshes' own colour, while a
@@ -727,11 +717,9 @@ impl SceneRenderer {
         if has_postprocess
             && crate::stylize::any_uses_albedo(&self.postprocess_config, &self.style_mask.ids)
         {
-            let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "Style albedo"));
+            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Style albedo");
             self.encode_style_albedo(device, encoder, depth_view);
-            if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
-                timer.end(encoder, scope);
-            }
+            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
         }
 
         // The editor's selection (#602): its draws into a mask, against the
@@ -739,13 +727,9 @@ impl SceneRenderer {
         let selection = self.selection_set();
         let outlining = !selection.is_empty();
         if outlining {
-            let scope = gpu_timer
-                .as_mut()
-                .map(|t| t.begin(encoder, "Selection mask"));
+            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Selection mask");
             self.encode_selection_mask(device, encoder, depth_view, &selection);
-            if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
-                timer.end(encoder, scope);
-            }
+            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
         }
 
         // Composite: always needed to convert HDR → sRGB surface
@@ -771,20 +755,16 @@ impl SceneRenderer {
         // The selection outline, over the finished image: after every
         // style and the tonemap, so its colour is the one asked for (#602)
         if outlining {
-            let scope = gpu_timer
-                .as_mut()
-                .map(|t| t.begin(encoder, "Selection outline"));
+            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Selection outline");
             self.encode_selection_outline(queue, encoder, target_view);
-            if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
-                timer.end(encoder, scope);
-            }
+            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
         }
 
         // World lines (ADR 0083) go over the finished image, tested against
         // the frame's single-sample depth. Without the HDR chain an MSAA depth
         // is never resolved, so they're skipped there.
         if !self.world_lines.is_empty() && (has_postprocess || self.pipelines.samples() == 1) {
-            let scope = gpu_timer.as_mut().map(|t| t.begin(encoder, "World lines"));
+            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "World lines");
             self.render_world_lines(
                 device,
                 queue,
@@ -793,9 +773,7 @@ impl SceneRenderer {
                 target_view,
                 camera,
             );
-            if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
-                timer.end(encoder, scope);
-            }
+            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
         }
         self.gpu_timer = gpu_timer;
     }
