@@ -1489,12 +1489,42 @@ impl StyleFrame<'_> {
     /// Outside it a per-entity style's passthrough holds, so a pass that
     /// writes the input there ([`kit::scissored_pass`]) is the full pass.
     pub fn styled_rect(&self, pad: u32) -> Option<kit::PixelRect> {
-        if self.covers_frame() || !scissor_enabled() {
+        if self.covers_frame() {
+            return None;
+        }
+        self.variants_rect(pad, |_, v| !v.off)
+    }
+
+    /// The pixels of this frame where the style mask can hold one of the
+    /// style's ids (#507): the screen bounds of every per-entity variant's
+    /// draws, opt-outs included, grown by `pad` and the mask's rounding as
+    /// [`styled_rect`](Self::styled_rect) is, whether or not the style
+    /// covers the frame. Outside it every mask texel within `pad` pixels
+    /// reads as none of the style's, so a whole-frame pass can skip its
+    /// mask reads there. `None` when the ids could be anywhere (as for
+    /// `styled_rect`, `FLINT_STYLE_SCISSOR=0` included); empty when none is
+    /// in view.
+    pub fn mask_rect(&self, pad: u32) -> Option<kit::PixelRect> {
+        self.variants_rect(pad, |_, _| true)
+    }
+
+    /// [`mask_rect`](Self::mask_rect) of the one variant with mask id `id`:
+    /// where its own pixels can be.
+    pub fn variant_rect(&self, id: u16, pad: u32) -> Option<kit::PixelRect> {
+        self.variants_rect(pad, |of, _| of == id)
+    }
+
+    fn variants_rect(
+        &self,
+        pad: u32,
+        with: impl Fn(u16, &crate::style_mask::StyleVariant) -> bool,
+    ) -> Option<kit::PixelRect> {
+        if !scissor_enabled() {
             return None;
         }
         let mut uv = crate::style_mask::IdBounds::Nowhere;
         for (id, v) in self.variants() {
-            if !v.off {
+            if with(id, v) {
                 uv = uv.union(self.style_bounds.get(id));
             }
         }
