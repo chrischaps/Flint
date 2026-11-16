@@ -16,8 +16,16 @@
 //! Once the ring is full a closed frame takes the oldest record's place,
 //! script buffer and all, so recording allocates nothing per frame once
 //! warm (a script seen for the first time grows one buffer once).
+//!
+//! Each frame also carries its notes (#1077): what the engine did in it,
+//! said by the code that did it through `flint_core::frame_notes` (a model
+//! load, a pipeline build, a transition) and taken as the frame closes,
+//! and two the history adds itself from what it already knows: a frame
+//! that ran more than one physics step, and a clock stall that pacing
+//! passed through.
 
 use super::perf::Phase;
+use flint_core::frame_notes::{self, FrameNote, NoteKind};
 use std::collections::VecDeque;
 use web_time::Instant;
 
@@ -27,6 +35,10 @@ pub(crate) const HISTORY_FRAMES: usize = 600;
 /// Whether this build records every frame: the `frame-history` feature
 /// (default on; a shipped game can leave it out).
 pub(crate) const BUILT_IN: bool = cfg!(feature = "frame-history");
+
+/// A tick longer than this is a stall the clock passed through rather than
+/// paced (`GameClock`'s clamp, 250 ms): noted on the frame it measured.
+pub(crate) const STALL_MS: f32 = 250.0;
 
 /// Whether to record every frame: `FLINT_FRAME_HISTORY=0|1` (also
 /// `off`/`on`, `false`/`true`) over the build's default. Anything else is
@@ -108,6 +120,11 @@ pub(crate) struct Frame {
     /// The GPU's busy time of the newest frame read back during it (a
     /// frame or two old); `None` with GPU timing off or nothing read back.
     pub gpu_ms: Option<f32>,
+    /// What the engine did in it, in the order the work began
+    /// (`flint_core::frame_notes`, #1077).
+    pub notes: Vec<FrameNote>,
+    /// Notes the channel had no room for in it.
+    pub notes_dropped: u32,
 }
 
 impl Frame {
@@ -133,12 +150,15 @@ impl Frame {
         self.at + self.ms as f64 / 1000.0
     }
 
-    /// Back to an empty frame, keeping the script buffer's room.
+    /// Back to an empty frame, keeping the script and note buffers' room.
     fn reset(&mut self) {
         let mut scripts = std::mem::take(&mut self.scripts);
         scripts.clear();
+        let mut notes = std::mem::take(&mut self.notes);
+        notes.clear();
         *self = Frame {
             scripts,
+            notes,
             ..Frame::default()
         };
     }
@@ -207,6 +227,8 @@ impl FrameHistory {
 
     pub(crate) fn begin_frame_at(&mut self, now: Instant) {
         self.frames_begun += 1;
+        // What the engine said since the last frame began is this frame's
+        self.under_way.notes_dropped += frame_notes::take(&mut self.under_way.notes);
         if let Some(began) = self.frame_start {
             self.under_way.at = began.duration_since(self.start).as_secs_f64();
             self.under_way.ms = now.duration_since(began).as_secs_f32() * 1000.0;
@@ -283,6 +305,13 @@ impl FrameHistory {
     /// The fixed physics steps that ran in the frame under way.
     pub(crate) fn fixed_steps(&mut self, steps: u32) {
         self.under_way.fixed_steps = steps;
+        if steps > 1 {
+            self.under_way.notes.push(FrameNote::new(
+                NoteKind::PhysicsSteps,
+                format!("{steps} fixed steps"),
+                None,
+            ));
+        }
     }
 
     /// The GPU time read back during the frame under way, if any.
@@ -301,6 +330,13 @@ impl FrameHistory {
         }
         if let Some(newest) = self.frames.back_mut() {
             newest.clock = Some(sample);
+            if sample.raw_ms > STALL_MS {
+                newest.notes.push(FrameNote::new(
+                    NoteKind::ClockStall,
+                    format!("{:.0} ms between ticks, past pacing", sample.raw_ms),
+                    Some(sample.raw_ms),
+                ));
+            }
         }
     }
 

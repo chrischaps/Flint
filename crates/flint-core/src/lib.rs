@@ -10,6 +10,7 @@
 //! - `bundle` - Game bundles: a game's files in one fetchable blob for the vfs
 //! - `project` - A project's root and its `flint.toml` manifest, found through the vfs
 //! - `step_clock` - The stepped hold-and-glide clock everything drawn on ticks reads (#747)
+//! - `frame_notes` - What the engine did on a frame (loads, builds, reloads), for the hitch detector (#1077)
 //! - `field` - Named numbers as one function of place and time: zones, falloff, ramps (ADR 0123)
 #![cfg_attr(test, allow(clippy::disallowed_methods))] // unit tests read their files off the disk and assert on TOML as written; the lib build still holds the rules (#761)
 
@@ -21,6 +22,7 @@ mod error;
 pub mod events;
 pub mod field;
 pub mod file_watch;
+pub mod frame_notes;
 mod hash;
 mod id;
 pub mod ik;

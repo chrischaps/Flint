@@ -673,6 +673,10 @@ impl GameCore {
     #[cfg(feature = "procgen")]
     #[profiling::function]
     pub(crate) fn tick_procgen(&mut self, lent: Lent<'_>) {
+        use flint_core::frame_notes::{self, NoteKind};
+        // Whether the queue made anything is known only after: timed by
+        // hand, noted (#1077) when it did
+        let began = frame_notes::listening().then(web_time::Instant::now);
         let completed = self
             .procgen_resolver
             .process_frame(lent.camera.position_array());
@@ -680,6 +684,7 @@ impl GameCore {
         if completed.is_empty() && failures.is_empty() {
             return;
         }
+        let detail = began.map(|_| procgen_note(&completed, failures.len()));
         if let (Some(renderer), Some((device, queue))) = (lent.renderer, lent.gpu) {
             // Catalog names never reach the queue, so the file fallback
             // needs only the scene's own search paths.
@@ -696,7 +701,28 @@ impl GameCore {
             super::procgen_assets::apply_completed(&completed, &mut sink);
             super::procgen_assets::apply_failures(&failures, &mut sink);
         }
+        if let (Some(began), Some(detail)) = (began, detail) {
+            let ms = began.elapsed().as_secs_f32() * 1000.0;
+            frame_notes::note(NoteKind::Procgen, || detail, Some(ms));
+        }
     }
+}
+
+/// `2 generated: oak_tree, stone_wall; 1 failed`, for a frame note.
+#[cfg(feature = "procgen")]
+fn procgen_note(completed: &[flint_procgen::CompletedAsset], failed: usize) -> String {
+    let mut line = String::new();
+    if !completed.is_empty() {
+        let names: Vec<&str> = completed.iter().map(|c| c.spec_name.as_str()).collect();
+        line = format!("{} generated: {}", completed.len(), names.join(", "));
+    }
+    if failed > 0 {
+        if !line.is_empty() {
+            line.push_str("; ");
+        }
+        line.push_str(&format!("{failed} failed"));
+    }
+    line
 }
 
 /// Carry out what the scripts have asked since the last drain (#697), in

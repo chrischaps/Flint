@@ -184,6 +184,9 @@ impl PerfRecorder {
 
     /// A new frame begins now: the one before it ends.
     pub(crate) fn begin_frame(&mut self) {
+        // The engine's notes are kept on this thread only while there is a
+        // record to put them on (#1077); otherwise each is a flag read
+        flint_core::frame_notes::listen(self.recording());
         if self.recording() {
             self.history.begin_frame();
         }

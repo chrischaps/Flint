@@ -120,6 +120,10 @@ impl PlayerApp {
             tracing::warn!("Chunk '{}' already loaded, skipping", chunk_id);
             return;
         }
+        let _note =
+            flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::ChunkLoad, || {
+                format!("{chunk_id} ({path})")
+            });
 
         // A path the script names: found by the project's one search
         // (`AssetKind::Files`), from the scene's directory first. A miss is
@@ -309,6 +313,12 @@ impl PlayerApp {
     /// it was read from and why, and makes the run end non-zero
     /// (`run_failure`, #723). Returns whether the new scene was entered.
     pub(super) fn execute_scene_transition(&mut self, target_scene: &str) -> bool {
+        // One frame does all of it: a frame note (#1077), with the models,
+        // textures, scripts and pipelines it loaded noted inside it
+        let _note = flint_core::frame_notes::begin(
+            flint_core::frame_notes::NoteKind::SceneTransition,
+            || target_scene.to_string(),
+        );
         let next = match self.read_scene(target_scene) {
             Ok(next) => next,
             Err(e) => {

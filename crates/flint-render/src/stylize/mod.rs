@@ -2193,20 +2193,36 @@ impl StyleSet {
                 StyleStage::Hdr => crate::postprocess::HDR_FORMAT,
                 StyleStage::Display => surface_format,
             };
-            let (made, files) = dev_shader::build(descriptor.name, || {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    // One descriptor at one format builds the same layouts
-                    // every time: what lets its pipelines be kept (#911)
-                    let scope = (descriptor.name, id, format);
-                    crate::pipeline_cache::in_scope(scope, || {
-                        (descriptor.create)(&StyleDevice {
-                            device,
-                            descriptor,
-                            format,
-                        })
+            // A frame note (#1077): a style switched on mid-game builds on
+            // the frame that first draws it, and that frame says so
+            let noted = || {
+                if is_native(descriptor.name) {
+                    descriptor.name.to_string()
+                } else {
+                    format!("{} (user style)", descriptor.name)
+                }
+            };
+            let (made, files) = flint_core::frame_notes::timed(
+                flint_core::frame_notes::NoteKind::StyleBuild,
+                noted,
+                || {
+                    dev_shader::build(descriptor.name, || {
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            // One descriptor at one format builds the same
+                            // layouts every time: what lets its pipelines be
+                            // kept (#911)
+                            let scope = (descriptor.name, id, format);
+                            crate::pipeline_cache::in_scope(scope, || {
+                                (descriptor.create)(&StyleDevice {
+                                    device,
+                                    descriptor,
+                                    format,
+                                })
+                            })
+                        }))
                     })
-                }))
-            });
+                },
+            );
             self.files[i] = files;
             match made {
                 Ok(pass) => {
