@@ -385,6 +385,7 @@ mod tests {
                 &Hitch {
                     index: 3,
                     at: 1.0,
+                    game_time: 1.0,
                     ms: 50.0,
                     judged_ms: 50.0,
                     median_ms: 16.7,

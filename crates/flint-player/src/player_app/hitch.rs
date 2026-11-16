@@ -111,8 +111,7 @@ pub(crate) enum Cause {
     Elsewhere { present_ms: f32 },
 }
 
-// Read by the hitch log (#1079); tested here.
-#[cfg_attr(not(test), allow(dead_code))]
+// Read by the F2 graph and the hitch log (#1078, #1079); tested here.
 impl Cause {
     /// `player` or `elsewhere`, for a log line.
     pub(crate) fn label(&self) -> &'static str {
@@ -130,6 +129,8 @@ pub(crate) struct Hitch {
     pub index: u64,
     /// When it began, seconds since the history started.
     pub at: f64,
+    /// The game time it ran at ([`Frame::game_time`]).
+    pub game_time: f64,
     /// Its wall time.
     pub ms: f32,
     /// The time it was judged by: paced where the clock paces, else wall.
@@ -162,7 +163,7 @@ pub(crate) const NO_ENGINE_EVENT: &str = "no engine event";
 /// How many top-level notes [`Hitch::likely_cause`] names before "N more".
 const CAUSES_NAMED: usize = 3;
 
-#[cfg_attr(not(test), allow(dead_code))] // the hitch log's (#1079)
+// Read by the hitch log, the report and the readouts (#1079)
 impl Hitch {
     /// The notes that say what the engine was doing (not a clock stall,
     /// which is the long frame itself).
@@ -204,6 +205,66 @@ impl Hitch {
             line.push_str(&format!("; {} more", top.len() - CAUSES_NAMED));
         }
         line
+    }
+
+    /// What the hitch was, in a line: the engine's events when it noted
+    /// any, else whose time it was: `script stall.rhai:on_update 80.1 ms`,
+    /// `physics +41.0 ms`, `elsewhere, present 30.2 ms` (#1079: the exit
+    /// report, `--perf`'s line, `?perf=1`).
+    pub(crate) fn cause_line(&self) -> String {
+        if self.engine_events().any(|n| n.note.depth == 0) {
+            return self.likely_cause();
+        }
+        if let Some((name, ms)) = self.blamed_script() {
+            return format!("script {name} {ms:.1} ms");
+        }
+        match &self.cause {
+            Cause::Player {
+                phase, phase_ms, ..
+            } => format!("{} +{phase_ms:.1} ms", phase.label()),
+            Cause::Elsewhere { present_ms } => format!("elsewhere, present {present_ms:.1} ms"),
+        }
+    }
+
+    /// The script callback to blame: the frame's longest, when it took at
+    /// least half of what its phase grew by. A render stall in a frame
+    /// whose longest callback took 0.3 ms is the render's, not the script's.
+    fn blamed_script(&self) -> Option<(&str, f32)> {
+        match &self.cause {
+            Cause::Player {
+                phase_ms,
+                script: Some((name, ms)),
+                ..
+            } if *ms >= phase_ms * PLAYER_SHARE => Some((name, *ms)),
+            _ => None,
+        }
+    }
+
+    /// The cause with no times in it, so hitches of one cause count
+    /// together: the kind of the engine's first event (`model load`), else
+    /// the script (`script stall.rhai:on_update`), the phase (`physics`)
+    /// or `elsewhere`.
+    pub(crate) fn cause_key(&self) -> String {
+        let mut top: Vec<&HitchNote> = self.engine_events().filter(|n| n.note.depth == 0).collect();
+        // This frame's before the frame before's, the longest first
+        top.sort_by(|a, b| {
+            a.frame_before.cmp(&b.frame_before).then(
+                b.note
+                    .ms
+                    .unwrap_or(-1.0)
+                    .total_cmp(&a.note.ms.unwrap_or(-1.0)),
+            )
+        });
+        if let Some(first) = top.first() {
+            return first.note.kind.label().to_string();
+        }
+        if let Some((name, _)) = self.blamed_script() {
+            return format!("script {name}");
+        }
+        match &self.cause {
+            Cause::Player { phase, .. } => phase.label().to_string(),
+            Cause::Elsewhere { .. } => "elsewhere".to_string(),
+        }
     }
 }
 
@@ -348,6 +409,7 @@ impl HitchDetector {
             notes,
             index: frame.index,
             at: frame.at,
+            game_time: frame.game_time,
             ms: frame.ms,
             judged_ms: judged,
             median_ms: median,
@@ -420,7 +482,6 @@ impl HitchDetector {
     }
 
     /// The hitches kept, oldest first (the last [`HITCHES_KEPT`]).
-    #[cfg_attr(not(any(test, feature = "debug-hud")), allow(dead_code))]
     pub(crate) fn hitches(&self) -> &VecDeque<Hitch> {
         &self.hitches
     }
@@ -432,7 +493,6 @@ impl HitchDetector {
     }
 
     /// The counts since the run began.
-    #[cfg_attr(not(any(test, feature = "debug-hud")), allow(dead_code))]
     pub(crate) fn session(&self) -> HitchCounts {
         let mut c = self.session;
         let clean_from = self.clean_from.unwrap_or(self.judged_to);
@@ -675,6 +735,38 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(h.cause.label(), "player");
+    }
+
+    /// #1079, found on a real run: a frame whose render grew 21 ms, and
+    /// whose longest script callback took 0.3 ms, is the render's.
+    #[test]
+    fn a_render_stall_is_not_blamed_on_a_quick_script() {
+        let mut run = Run::new(None);
+        let quick = [("scripts/hud.rhai:on_update", 0.3)];
+        for _ in 0..120 {
+            run.frame_scripts(steady(HZ60_MS), &quick);
+        }
+        let slow = F {
+            render: 40.0,
+            ..steady(60.0)
+        };
+        assert_eq!(run.frame_scripts(slow, &quick), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "render +38.0 ms");
+        assert_eq!(h.cause_key(), "render");
+        // The script that did take the time is still named
+        let slow = F {
+            scripts: 41.0,
+            ..steady(60.0)
+        };
+        run.frames(60, steady(HZ60_MS));
+        assert_eq!(
+            run.frame_scripts(slow, &[("scripts/whale.rhai:on_update", 40.0)]),
+            1
+        );
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "script whale.rhai:on_update 40.0 ms");
+        assert_eq!(h.cause_key(), "script whale.rhai:on_update");
     }
 
     /// Fifo on a hybrid-GPU laptop lets frames through 6, 6, 6, then about

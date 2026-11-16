@@ -31,7 +31,8 @@ use winit::window::Window;
 impl PlayerApp {
     /// Why the run failed, once `run_app` has returned: the player didn't
     /// start, a run that asked for a screenshot doesn't have it (#639), or
-    /// a script failed under `--strict-scripts` (#693). A binary exits
+    /// a script failed under `--strict-scripts` (#693), or the run hitched
+    /// more than `--max-hitches` allows (#1079). A binary exits
     /// non-zero on `Some`, so a capture that left no file can't pass for
     /// one that did, nor a broken game for a working one.
     pub fn run_failure(&self) -> Option<String> {
@@ -45,9 +46,12 @@ impl PlayerApp {
             return Some(missing);
         }
         if self.launch.strict_scripts {
-            return self.core.script.errors().strict_failure();
+            if let Some(failure) = self.core.script.errors().strict_failure() {
+                return Some(failure);
+            }
         }
-        None
+        // `--max-hitches` and `--max-hitches-startup` (#1079)
+        self.stats.watch.failure()
     }
 
     pub fn new(

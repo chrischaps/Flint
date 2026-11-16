@@ -26,6 +26,10 @@ export function parsePerfLine(line) {
       out.scale = num(m[3]);
     } else if ((m = /^frame p50 ([\d.]+) p90 ([\d.]+) p99 ([\d.]+) max ([\d.]+) ms \((\d+) frames\/(\d+)s\)$/.exec(part))) {
       out.frame = { p50: num(m[1]), p90: num(m[2]), p99: num(m[3]), max: num(m[4]), frames: num(m[5]), secs: num(m[6]) };
+    } else if ((m = /^hitches (\d+) in (\d+)s \((\d+) in run\)(?:, worst ([\d.]+) ms: (.*))?$/.exec(part))) {
+      // since #1079: the window's hitches, the run's, and the worst one's cause
+      out.hitches = { window: num(m[1]), secs: num(m[2]), run: num(m[3]) };
+      if (m[4] !== undefined) out.hitches.worst = { ms: num(m[4]), cause: m[5] };
     } else if ((m = /^cpu ([\d.]+) ms/.exec(part))) {
       out.cpu = num(m[1]);
     } else if ((m = /^present (\S+)$/.exec(part))) {

@@ -34,6 +34,9 @@ pub mod headless_animation;
 pub mod headless_game;
 mod hitch;
 #[cfg(test)]
+mod hitch_log_tests;
+mod hitch_watch;
+#[cfg(test)]
 mod hold_tests;
 mod hud_render;
 mod init;

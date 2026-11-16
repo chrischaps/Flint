@@ -8,7 +8,7 @@
 //! did, and every read and write is the same one through the group.
 
 use super::input_config::{InputConfigPaths, PendingRebind};
-use super::{camera_cut, expression_feed, fonts, hitch, perf};
+use super::{camera_cut, expression_feed, fonts, hitch, hitch_watch, perf};
 use super::{egui_input, render_scale, text_halo, world_text};
 use flint_asset::{AssetCatalog, ContentStore};
 use flint_runtime::{InputConfig, SaveDebounce};
@@ -431,6 +431,9 @@ pub(super) struct Stats {
     /// What counts as a hitch, and the hitches so far (#1076), judged as
     /// each frame's clock comes in.
     pub(super) hitches: hitch::HitchDetector,
+    /// What the run keeps of them (#1079): the hitch log, the exit
+    /// report's counts and the `--max-hitches` gate.
+    pub(super) watch: hitch_watch::HitchWatch,
 }
 
 impl Default for Stats {
@@ -445,6 +448,7 @@ impl Default for Stats {
             perf: perf::PerfRecorder::recording_always(super::frame_history::always_on_from_env()),
             // `FLINT_HITCH_FACTOR` / `FLINT_HITCH_FLOOR_MS`, read once.
             hitches: hitch::HitchDetector::new(hitch::HitchThresholds::from_env()),
+            watch: Default::default(),
         }
     }
 }
