@@ -6,7 +6,7 @@
 //! A section has the style's toggle, a row per setting (a combo or text
 //! field for an option, a slider for a parameter, one colour picker for an
 //! `_r/_g/_b` triple; labels, hover text and whole-number steps come from
-//! the descriptor's hints), and four buttons: **Defaults** clears the
+//! each setting's own `StyleUi`, #510), and four buttons: **Defaults** clears the
 //! style's values, **Authored** puts back what the scene says, **Copy
 //! TOML** puts the `[post_process.styles.<name>]` block that reproduces
 //! what is on screen on the clipboard, so a look tuned by eye goes back
@@ -560,7 +560,7 @@ impl StylesEditor {
         authored: Option<&StyleSettings>,
     ) -> bool {
         let label = style.label_for(control.name());
-        let help = style.hint(control.name()).map_or("", |h| h.help);
+        let help = style.help_for(control.name());
         // A setting the current options don't read (#365) is drawn greyed
         // out, its hover line saying why; its reset and authored cells stay
         // live, so it can still be put back
@@ -668,7 +668,7 @@ impl StylesEditor {
                 }
             }
             StyleControl::Param(p) => {
-                let integer = style.hint(p.name).is_some_and(|h| h.integer);
+                let integer = style.is_integer(p.name);
                 let mut value = style.param(pp, p.name);
                 let scene = authored.map(|a| a.param(style.name, p.name).unwrap_or(p.default));
                 {
@@ -1266,7 +1266,7 @@ mod tests {
 
     #[test]
     fn a_style_without_conditions_draws_every_row_alike() {
-        // pencil has hints but no conditions: every label at one strength
+        // pencil has labels but no conditions: every label at one strength
         let mut editor = StylesEditor::default();
         let mut pp = PostProcessConfig::default();
         pp.styles.set_enabled("pencil", true);

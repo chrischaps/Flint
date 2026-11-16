@@ -20,7 +20,7 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleOption, StyleParam,
     StylePass, StyleStage,
 };
 use crate::palette::{oklab, Palette, PaletteCache, BUILTIN_PALETTES, MAX_COLORS};
@@ -34,46 +34,30 @@ pub const DEFAULT_PALETTE: &str = "cga";
 pub const TABLE_SLOTS: usize = MAX_COLORS + 1;
 
 const PARAMS: &[StyleParam] = &[
-    StyleParam::new("dither", 0.0, 0.0..=1.0),
-    StyleParam::new("pixel", 1.0, 1.0..=32.0),
-    StyleParam::new("chroma", 1.0, 0.0..=4.0),
+    StyleParam::new("dither", 0.0, 0.0..=1.0)
+        .label("Dither")
+        .help("Ordered 4x4 dither between the two nearest colours (a ladder: half a rung either way), fixed to the blocks: 0 = flat bands"),
+    StyleParam::new("pixel", 1.0, 1.0..=32.0)
+        .label("Pixel size")
+        .help("Block size in points: 1 = every pixel its own colour, more = a chunky low-resolution screen")
+        .integer(),
+    StyleParam::new("chroma", 1.0, 0.0..=4.0)
+        .label("Chroma")
+        .help("For a nearest palette: scales each block's saturation (OKLab a/b) before matching, so a muted scene reaches the palette's colours; 1 = as it is"),
 ];
 
 const OPTIONS: &[StyleOption] = &[
     // The scene's own palettes too, as ASCII offers them (#322)
     StyleOption::new("palette", DEFAULT_PALETTE, BUILTIN_PALETTES)
-        .discovered(super::ascii::palette_choices),
-];
-
-const HINTS: &[StyleHint] = &[
-    StyleHint::new(
-        "palette",
-        "Palette",
-        "A built-in, or palettes/<name>.palette.toml beside the scene",
-    ),
-    StyleHint::new(
-        "dither",
-        "Dither",
-        "Ordered 4x4 dither between the two nearest colours (a ladder: half a rung either way), fixed to the blocks: 0 = flat bands",
-    ),
-    StyleHint::new(
-        "pixel",
-        "Pixel size",
-        "Block size in points: 1 = every pixel its own colour, more = a chunky low-resolution screen",
-    )
-    .integer(),
-    StyleHint::new(
-        "chroma",
-        "Chroma",
-        "For a nearest palette: scales each block's saturation (OKLab a/b) before matching, so a muted scene reaches the palette's colours; 1 = as it is",
-    ),
+        .discovered(super::ascii::palette_choices)
+        .label("Palette")
+        .help("A built-in, or palettes/<name>.palette.toml beside the scene"),
 ];
 
 pub(super) static STYLE: StyleDescriptor =
     StyleDescriptor::new("palette", "Palette", StyleStage::Display, create)
         .params(PARAMS)
-        .options(OPTIONS)
-        .hints(HINTS);
+        .options(OPTIONS);
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     let device = d.device;

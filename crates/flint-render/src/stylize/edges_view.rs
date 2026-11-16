@@ -20,7 +20,7 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleNeed, StyleParam,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleNeed, StyleParam,
     StylePass, StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
@@ -30,28 +30,17 @@ pub(super) static STYLE: StyleDescriptor =
         // A debug view of the whole frame (#384)
         .draws_over_entities()
         .params(&[
-            StyleParam::new("dim", 0.3, 0.0..=1.0),
-            StyleParam::new("threshold", 1.0, 0.1..=4.0),
-            StyleParam::new("ghost", 0.5, 0.0..=1.0),
+            StyleParam::new("dim", 0.3, 0.0..=1.0)
+                .label("Scene dim")
+                .help("Brightness of the grey scene under the edges"),
+            StyleParam::new("threshold", 1.0, 0.1..=4.0)
+                .label("Threshold")
+                .help("Strength that counts as an edge; 1 is the shared edge_depth / edge_normal"),
+            StyleParam::new("ghost", 0.5, 0.0..=1.0)
+                .label("Near misses")
+                .help("How much a strength under the threshold shows"),
         ])
-        .needs(&[StyleNeed::Edges])
-        .hints(&[
-            StyleHint::new(
-                "dim",
-                "Scene dim",
-                "Brightness of the grey scene under the edges",
-            ),
-            StyleHint::new(
-                "threshold",
-                "Threshold",
-                "Strength that counts as an edge; 1 is the shared edge_depth / edge_normal",
-            ),
-            StyleHint::new(
-                "ghost",
-                "Near misses",
-                "How much a strength under the threshold shows",
-            ),
-        ]);
+        .needs(&[StyleNeed::Edges]);
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     let device = d.device;

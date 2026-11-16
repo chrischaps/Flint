@@ -103,7 +103,7 @@
 use super::images::{ImageSlot, ImageUse, StyleImage};
 use super::kit;
 use super::{
-    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleOption, StyleParam,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleOption, StyleParam,
     StylePass, StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
@@ -143,35 +143,86 @@ pub const FLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const TENSOR: f32 = 2.0;
 
 const PARAMS: &[StyleParam] = &[
-    StyleParam::new("spacing", 6.0, 2.0..=24.0),
-    StyleParam::new("thickness", 1.0, 0.25..=4.0),
-    StyleParam::new("layers", 3.0, 0.0..=4.0),
-    StyleParam::new("angle", 50.0, 0.0..=180.0),
-    StyleParam::new("brightness", 0.0, -1.0..=1.0),
-    StyleParam::new("contrast", 1.2, 0.0..=4.0),
-    StyleParam::new("darkness", 0.85, 0.0..=1.0),
-    StyleParam::new("shade", 0.25, 0.0..=1.0),
-    StyleParam::new("contour", 1.0, 0.0..=2.0),
-    StyleParam::new("contour_width", 1.25, 0.5..=4.0),
-    StyleParam::new("depth", 1.0, 0.0..=4.0),
-    StyleParam::new("grazing", 0.0, 0.0..=1.0),
-    StyleParam::new("clutter", 0.0, 0.0..=1.0),
-    StyleParam::new("crease", 1.0, 0.0..=4.0),
-    StyleParam::new("detail", 0.35, 0.0..=2.0),
-    StyleParam::new("wobble", 1.5, 0.0..=8.0),
-    StyleParam::new("sketchy", 0.6, 0.0..=1.0),
-    StyleParam::new("grain", 0.5, 0.0..=1.0),
-    StyleParam::new("color", 0.0, 0.0..=1.0),
-    StyleParam::new("seed", 0.0, 0.0..=9999.0),
-    StyleParam::new("boil", 0.0, 0.0..=24.0),
-    StyleParam::new("paper_r", 0.95, 0.0..=1.0),
+    StyleParam::new("spacing", 6.0, 2.0..=24.0)
+        .label("Spacing (pt)")
+        .help("Hatch line spacing in points"),
+    StyleParam::new("thickness", 1.0, 0.25..=4.0)
+        .label("Stroke width (pt)")
+        .help("Hatch stroke width in points"),
+    StyleParam::new("layers", 3.0, 0.0..=4.0)
+        .label("Hatch layers")
+        .help("Up to four; each joins, crossing the last, as the tone darkens")
+        .integer(),
+    StyleParam::new("angle", 50.0, 0.0..=180.0)
+        .label("Angle (deg)")
+        .help("The base hatch angle; where surface or tensor directions are unsure it shows through"),
+    StyleParam::new("brightness", 0.0, -1.0..=1.0)
+        .label("Brightness")
+        .help("Shifts the tone before it picks hatch layers"),
+    StyleParam::new("contrast", 1.2, 0.0..=4.0)
+        .label("Contrast")
+        .help("Spreads the tone around mid-grey before it picks hatch layers"),
+    StyleParam::new("darkness", 0.85, 0.0..=1.0)
+        .label("Stroke darkness")
+        .help("How dark one hatch stroke is"),
+    StyleParam::new("shade", 0.25, 0.0..=1.0)
+        .label("Rubbed shade")
+        .help("Soft graphite under the strokes, in the darks"),
+    StyleParam::new("contour", 1.0, 0.0..=2.0).label("Outline").help("Outline strength; 0 = none"),
+    StyleParam::new("contour_width", 1.25, 0.5..=4.0)
+        .label("Outline width (pt)")
+        .help("Outline width in points"),
+    StyleParam::new("depth", 1.0, 0.0..=4.0)
+        .label("Silhouettes")
+        .help("Outline sensitivity to depth steps"),
+    StyleParam::new("grazing", 0.0, 0.0..=1.0)
+        .label("Spare grazing planes")
+        .help("1 draws a silhouette only at a true step, so a floor seen edge-on doesn't ink the horizon in a band; 0 = every depth step"),
+    StyleParam::new("clutter", 0.0, 0.0..=1.0)
+        .label("Spare clutter")
+        .help("1 drops the lines of a field of small silhouettes (a meadow's blades) where they would merge into a black fill, keeping near blades and true outlines; 0 = every line"),
+    StyleParam::new("crease", 1.0, 0.0..=4.0)
+        .label("Creases")
+        .help("Outline sensitivity to where the surface turns"),
+    StyleParam::new("detail", 0.35, 0.0..=2.0)
+        .label("Texture lines")
+        .help("Outlines from the picture's own luminance edges"),
+    StyleParam::new("wobble", 1.5, 0.0..=8.0)
+        .label("Wobble (pt)")
+        .help("How far lines wander off true"),
+    StyleParam::new("sketchy", 0.6, 0.0..=1.0)
+        .label("Sketchy")
+        .help("A second, offset outline beside the first"),
+    StyleParam::new("grain", 0.5, 0.0..=1.0)
+        .label("Paper grain")
+        .help("Paper grain, and how much its tooth breaks the strokes"),
+    StyleParam::new("color", 0.0, 0.0..=1.0)
+        .label("Colour")
+        .help("0 draws on paper; 1 draws over the scene's own colour (coloured pencil)"),
+    StyleParam::new("seed", 0.0, 0.0..=9999.0)
+        .label("Seed")
+        .help("Another whole number is another hand; the same seed draws the same picture")
+        .integer(),
+    StyleParam::new("boil", 0.0, 0.0..=24.0)
+        .label("Boil (per s)")
+        .help("Redraws a second, for animated lines; 0 = still"),
+    StyleParam::new("paper_r", 0.95, 0.0..=1.0)
+        .label("Paper")
+        .help("Paper colour (display values)"),
     StyleParam::new("paper_g", 0.93, 0.0..=1.0),
     StyleParam::new("paper_b", 0.88, 0.0..=1.0),
-    StyleParam::new("lead_r", 0.16, 0.0..=1.0),
+    StyleParam::new("lead_r", 0.16, 0.0..=1.0)
+        .label("Lead")
+        .help("Graphite colour (display values)"),
     StyleParam::new("lead_g", 0.16, 0.0..=1.0),
     StyleParam::new("lead_b", 0.19, 0.0..=1.0),
-    StyleParam::new("paper_scale", 1.0, 0.25..=8.0),
-    StyleParam::new("stroke_rows", 1.0, 1.0..=16.0),
+    StyleParam::new("paper_scale", 1.0, 0.25..=8.0)
+        .label("Paper scale (pt)")
+        .help("Points one texel of the paper image covers"),
+    StyleParam::new("stroke_rows", 1.0, 1.0..=16.0)
+        .label("Strokes in strip")
+        .help("How many strokes the strip stacks, top to bottom")
+        .integer(),
 ];
 
 /// The value of `paper_image` / `stroke_image` that names no image.
@@ -200,55 +251,35 @@ pub fn names_image(value: &str) -> bool {
 }
 
 const OPTIONS: &[StyleOption] = &[
-    StyleOption::new("direction", "surface", DIRECTIONS),
-    StyleOption::new("scope", "screen", SCOPES),
-    StyleOption::new("grid", "screen", GRIDS),
-    StyleOption::new("tone", "picture", TONES),
-    StyleOption::new("transition", "fade", TRANSITIONS),
-    StyleOption::new("paper_image", NO_IMAGE, &[]).discovered(paper_choices),
-    StyleOption::new("stroke_image", NO_IMAGE, &[]).discovered(stroke_choices),
-];
-
-const HINTS: &[StyleHint] = &[
-    StyleHint::new("direction", "Stroke direction", "surface: round the form, along iso-depth lines; screen: all at the angle; tensor: along the picture's edges"),
-    StyleHint::new("scope", "Scope", "screen: the table draws the whole frame; entities: it is only the preset for pencil_style entities"),
-    StyleHint::new("grid", "Hatch anchor", "screen: hatching fixed to the screen; object: pinned to each entity's origin, so strokes travel with it; world: laid on the surfaces, so they hold as the camera moves"),
-    StyleHint::new("tone", "Tone from", "picture: hatch where the picture is dark, dark paint included; light: hatch where the light falls off (the picture over each mesh's own colour), so a dark floor in the sun stays blank and a white prop in shadow is hatched"),
-    StyleHint::new("transition", "Transition", "How a blend below 1 shows the drawing: fade cross-fades every pixel, faint all over; draw draws it on, the outlines growing along their length up to the blend, the hatching a stroke at a time after them, the paper's wash last"),
-    StyleHint::new("spacing", "Spacing (pt)", "Hatch line spacing in points"),
-    StyleHint::new("thickness", "Stroke width (pt)", "Hatch stroke width in points"),
-    StyleHint::new("layers", "Hatch layers", "Up to four; each joins, crossing the last, as the tone darkens").integer(),
-    StyleHint::new("angle", "Angle (deg)", "The base hatch angle; where surface or tensor directions are unsure it shows through"),
-    StyleHint::new("brightness", "Brightness", "Shifts the tone before it picks hatch layers"),
-    StyleHint::new("contrast", "Contrast", "Spreads the tone around mid-grey before it picks hatch layers"),
-    StyleHint::new("darkness", "Stroke darkness", "How dark one hatch stroke is"),
-    StyleHint::new("shade", "Rubbed shade", "Soft graphite under the strokes, in the darks"),
-    StyleHint::new("contour", "Outline", "Outline strength; 0 = none"),
-    StyleHint::new("contour_width", "Outline width (pt)", "Outline width in points"),
-    StyleHint::new("depth", "Silhouettes", "Outline sensitivity to depth steps"),
-    StyleHint::new("grazing", "Spare grazing planes", "1 draws a silhouette only at a true step, so a floor seen edge-on doesn't ink the horizon in a band; 0 = every depth step"),
-    StyleHint::new("clutter", "Spare clutter", "1 drops the lines of a field of small silhouettes (a meadow's blades) where they would merge into a black fill, keeping near blades and true outlines; 0 = every line"),
-    StyleHint::new("crease", "Creases", "Outline sensitivity to where the surface turns"),
-    StyleHint::new("detail", "Texture lines", "Outlines from the picture's own luminance edges"),
-    StyleHint::new("wobble", "Wobble (pt)", "How far lines wander off true"),
-    StyleHint::new("sketchy", "Sketchy", "A second, offset outline beside the first"),
-    StyleHint::new("grain", "Paper grain", "Paper grain, and how much its tooth breaks the strokes"),
-    StyleHint::new("color", "Colour", "0 draws on paper; 1 draws over the scene's own colour (coloured pencil)"),
-    StyleHint::new("seed", "Seed", "Another whole number is another hand; the same seed draws the same picture").integer(),
-    StyleHint::new("boil", "Boil (per s)", "Redraws a second, for animated lines; 0 = still"),
-    StyleHint::new("paper", "Paper", "Paper colour (display values)"),
-    StyleHint::new("lead", "Lead", "Graphite colour (display values)"),
-    StyleHint::new("paper_image", "Paper image", "A scanned paper (papers/<name>.png): its relief is the tooth, its hue tints the paper; none = procedural"),
-    StyleHint::new("paper_scale", "Paper scale (pt)", "Points one texel of the paper image covers"),
-    StyleHint::new("stroke_image", "Stroke image", "A strip of real strokes (strokes/<name>.png), one stretched along each dash; none = drawn bars"),
-    StyleHint::new("stroke_rows", "Strokes in strip", "How many strokes the strip stacks, top to bottom").integer(),
+    StyleOption::new("direction", "surface", DIRECTIONS)
+        .label("Stroke direction")
+        .help("surface: round the form, along iso-depth lines; screen: all at the angle; tensor: along the picture's edges"),
+    StyleOption::new("scope", "screen", SCOPES)
+        .label("Scope")
+        .help("screen: the table draws the whole frame; entities: it is only the preset for pencil_style entities"),
+    StyleOption::new("grid", "screen", GRIDS)
+        .label("Hatch anchor")
+        .help("screen: hatching fixed to the screen; object: pinned to each entity's origin, so strokes travel with it; world: laid on the surfaces, so they hold as the camera moves"),
+    StyleOption::new("tone", "picture", TONES)
+        .label("Tone from")
+        .help("picture: hatch where the picture is dark, dark paint included; light: hatch where the light falls off (the picture over each mesh's own colour), so a dark floor in the sun stays blank and a white prop in shadow is hatched"),
+    StyleOption::new("transition", "fade", TRANSITIONS)
+        .label("Transition")
+        .help("How a blend below 1 shows the drawing: fade cross-fades every pixel, faint all over; draw draws it on, the outlines growing along their length up to the blend, the hatching a stroke at a time after them, the paper's wash last"),
+    StyleOption::new("paper_image", NO_IMAGE, &[])
+        .discovered(paper_choices)
+        .label("Paper image")
+        .help("A scanned paper (papers/<name>.png): its relief is the tooth, its hue tints the paper; none = procedural"),
+    StyleOption::new("stroke_image", NO_IMAGE, &[])
+        .discovered(stroke_choices)
+        .label("Stroke image")
+        .help("A strip of real strokes (strokes/<name>.png), one stretched along each dash; none = drawn bars"),
 ];
 
 pub(super) static STYLE: StyleDescriptor =
     StyleDescriptor::new("pencil", "Pencil", StyleStage::Display, create)
         .params(PARAMS)
         .options(OPTIONS)
-        .hints(HINTS)
         .uses_albedo(super::MaskUse::When(reads_albedo))
         .draws_blend(draws_on)
         .component("pencil_style");

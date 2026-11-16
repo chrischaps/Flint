@@ -18,7 +18,7 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleParam, StylePass,
     StyleStage,
 };
 use crate::postprocess::{PostProcessConfig, HDR_FORMAT};
@@ -31,48 +31,27 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
     create,
 )
 .params(&[
-    StyleParam::new("width", 1.25, 0.25..=5.0),
-    StyleParam::new("threshold", 0.08, 0.01..=0.5),
-    StyleParam::new("strength", 0.9, 0.0..=1.0),
-    StyleParam::new("luma", 0.5, 0.0..=2.0),
-    StyleParam::new("color_r", 0.015, 0.0..=1.0),
+    StyleParam::new("width", 1.25, 0.25..=5.0)
+        .label("Width (px)")
+        .help("Half a line's width, in pixels at 1080p; scaled with the frame"),
+    StyleParam::new("threshold", 0.08, 0.01..=0.5)
+        .label("Threshold")
+        .help("How strong an edge must be before it inks; lower draws more"),
+    StyleParam::new("strength", 0.9, 0.0..=1.0).label("Strength").help("How dark the ink goes"),
+    StyleParam::new("luma", 0.5, 0.0..=2.0)
+        .label("Luma")
+        .help("How much edges in luminance count against edges in depth; 0 is silhouettes only"),
+    StyleParam::new("color_r", 0.015, 0.0..=1.0)
+        .label("Ink")
+        .help("The ink's colour, as the HDR scene holds it (linear)"),
     StyleParam::new("color_g", 0.012, 0.0..=1.0),
     StyleParam::new("color_b", 0.02, 0.0..=1.0),
-    StyleParam::new("fade", 30.0, 0.0..=200.0),
-    StyleParam::new("boil", 0.0, 0.0..=2.0),
-])
-.hints(&[
-    StyleHint::new(
-        "width",
-        "Width (px)",
-        "Half a line's width, in pixels at 1080p; scaled with the frame",
-    ),
-    StyleHint::new(
-        "threshold",
-        "Threshold",
-        "How strong an edge must be before it inks; lower draws more",
-    ),
-    StyleHint::new("strength", "Strength", "How dark the ink goes"),
-    StyleHint::new(
-        "luma",
-        "Luma",
-        "How much edges in luminance count against edges in depth; 0 is silhouettes only",
-    ),
-    StyleHint::new(
-        "color",
-        "Ink",
-        "The ink's colour, as the HDR scene holds it (linear)",
-    ),
-    StyleHint::new(
-        "fade",
-        "Fade (m)",
-        "Metres at which a line has faded by half, so distance doesn't go solid; 0 never fades",
-    ),
-    StyleHint::new(
-        "boil",
-        "Boil",
-        "How far each drawing of the wooze field moves the lines; needs a [wooze] table",
-    ),
+    StyleParam::new("fade", 30.0, 0.0..=200.0)
+        .label("Fade (m)")
+        .help("Metres at which a line has faded by half, so distance doesn't go solid; 0 never fades"),
+    StyleParam::new("boil", 0.0, 0.0..=2.0)
+        .label("Boil")
+        .help("How far each drawing of the wooze field moves the lines; needs a [wooze] table"),
 ]);
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {

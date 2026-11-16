@@ -87,7 +87,7 @@ The keys are checked against the style's declaration: a number for a parameter, 
 
 In the player and the scene viewer, **F4 → Styles** lists every style that reads the table, each in a section of its own drawn from the style's declaration (#268). A style needs no UI code to appear there:
 
-- **A row per setting.** A combo per option with a list of choices, a text field per option that takes any name (it applies on Enter), a slider per parameter, and one colour picker for each `<base>_r`, `<base>_g`, `<base>_b` triple (ASCII's `tint`). The rows are labelled, explained on hover, and step by whole numbers where the style says so ([hints](#writing-a-style)). A setting the current options don't read is greyed out, and its hover line says why: in ASCII's `source` colour mode, Tint and Palette are both idle until `color` is `tint` or `palette`.
+- **A row per setting.** A combo per option with a list of choices, a text field per option that takes any name (it applies on Enter), a slider per parameter, and one colour picker for each `<base>_r`, `<base>_g`, `<base>_b` triple (ASCII's `tint`). The rows are labelled, explained on hover, and step by whole numbers where the style says so (each setting's own [label and help](#writing-a-style)). A setting the current options don't read is greyed out, and its hover line says why: in ASCII's `source` colour mode, Tint and Palette are both idle until `color` is `tint` or `palette`.
 - **The scene's own files** (#322). An option can find its choices at run time (`StyleOption::discovered`), and ASCII's do: `palette` offers the built-ins, then every `palettes/*.palette.toml` the scene can see; `font` offers `builtin`, then every `fonts/*.glyphs.toml` it can see; and `ramp` offers the ramps the chosen font has, so a project's set lists its own names rather than the built-in four. "Can see" is [the one asset search](assets.md#where-the-engine-looks-for-a-file): the folder beside the scene, in each directory above it up to the project root, then in the mounted engine, a nearer file hiding a farther one of its name. The list is the resolver's own (`Project::list`), so every name offered is one the style will find, and a scene two folders down is offered the project's palettes. The folders are read through the vfs, so a bundle on the web lists the same files. The list is found when the scene loads (and reloads) and when another option it depends on changes, not every frame. A value the scene names that isn't listed (a palette by its path) still shows, selected. `flint render <scene> --list-styles` lists the same choices.
 - **↺** beside a value that isn't the default puts it back.
 - **Defaults** clears the style's values. **Authored** puts back what the scene says, on and off included. **Copy TOML** puts the `[post_process.styles.<name>]` block that reproduces what's on screen on the clipboard, with only the values that differ from the defaults, so a look tuned by eye goes back into the scene in one paste:
@@ -1321,11 +1321,13 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
     StyleStage::Display,
     create,                        // fn(&StyleDevice) -> Box<dyn StylePass>: pipelines in d.format
 )
-.params(&[StyleParam::new("strength", 1.0, 0.0..=1.0)])
-.hints(&[StyleHint::new("strength", "Strength", "0 = none, 1 = the full negative")]);
+.params(&[StyleParam::new("strength", 1.0, 0.0..=1.0)
+    .label("Strength")
+    .help("0 = none, 1 = the full negative")]);
 // Everything else has a default, and a setter for a style that differs:
 //   .options(&[StyleOption::new(name, default, choices)])   named strings;
-//       .discovered(fn) finds choices beside the scene (#322)
+//       .discovered(fn) finds choices beside the scene (#322);
+//       .label(..) and .help(..) as a parameter's
 //   .uses_mask(MaskUse::Always)    the renderer draws the entity style mask for it;
 //       MaskUse::When(fn(&config, &ids) -> bool): only while it says so (#350)
 //   .needs(&[StyleNeed::Edges])    the shared geometry edges (#301)
@@ -1337,14 +1339,23 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
 
 An option's `choices` are a closed list unless it is `discovered`: its `fn(&ChoiceScope) -> Vec<String>` then gives the list wherever a scene is known (`StyleOption::choices_in`, which the F4 menu and `--list-styles` read), from `scope.files(AssetKind::Palettes)` (every file of the kind the scene can see, by `Project::list` from the scope's `AssetScope`, through the vfs; a scope with no scene offers what is built in alone) and the other options' values (`(scope.option)("font")`). A discovered option is open: `--style ascii:palette=tidepool` passes, and the style resolves the name and warns if it can't.
 
-`hints` are optional, and F4 draws a style without them: a setting with no hint shows its own name (`edge_max` becomes "Edge max") on a plain slider. A hint gives a setting (or a colour, by its key) a label, a hover line, and `.integer()` for a value that only makes sense whole (ASCII's cell size). `.when(option, &[values])` says the setting is read only while that option has one of those values, and `.unless(option, &[values])` that it is idle while it does; F4 greys the row out while a condition fails (a hint holds up to two). ASCII's are
+How a setting is shown rides on the setting itself (#510), and all of it is optional: F4 draws a setting with none under its own name (`edge_max` becomes "Edge max") on a plain slider. `.label(..)` and `.help(..)` give it a label and a hover line, and `.integer()` (parameters only) marks a value that only makes sense whole (ASCII's cell size: the slider steps by 1 and Copy TOML writes `cell = 8`). `.when(option, &[values])` says the setting is read only while that option has one of those values, and `.unless(option, &[values])` that it is idle while it does; F4 greys the row out while a condition fails (a setting holds up to two). A colour's go on its red channel, where its picker stands. ASCII's are
 
 ```rust
-StyleHint::new("tint", "Tint", "The ink for colour mode tint").when("color", &["tint"]),
-StyleHint::new("background", "Background", "How much of the scene shows behind the glyphs (dim ground)")
+StyleParam::new("tint_r", 0.35, 0.0..=1.0)
+    .label("Tint")
+    .help("The ink for colour mode tint")
+    .when("color", &["tint"]),
+StyleParam::new("tint_g", 1.0, 0.0..=1.0),
+StyleParam::new("tint_b", 0.45, 0.0..=1.0),
+StyleParam::new("background", 0.15, 0.0..=1.0)
+    .label("Background")
+    .help("How much of the scene shows behind the glyphs (dim ground)")
     .when("ground", &["dim", "inverse"])
     .unless("color", &["palette"]),
 ```
+
+`StyleDescriptor::label_for`, `help_for` and `is_integer` read them back by any setting's name, a colour's key included (`ui(name)` gives the whole `StyleUi`).
 
 A greyed row's reset button stays live, and the value is kept: it only stops mattering. `StyleDescriptor::unused_reason(config, name)` gives the hover line, or `None` while the setting is read.
 
@@ -1459,7 +1470,7 @@ fn style(p: StylePixel) -> vec4<f32> {
 }
 ```
 
-It is then a style like the built-ins: `[post_process.styles.greyscale]` turns it on, `--style greyscale:amount=0.5` and `--sweep greyscale.amount=0,0.5,1` reach it, and the F4 menu draws its sliders (`<base>_r/_g/_b` params become one colour picker).
+It is then a style like the built-ins: `[post_process.styles.greyscale]` turns it on, `--style greyscale:amount=0.5` and `--sweep greyscale.amount=0,0.5,1` reach it, and the F4 menu draws its sliders (`<base>_r/_g/_b` params become one colour picker, named and explained by the `_r` param's `label` and `help`, as a built-in colour is).
 
 Flint writes everything around the function: the bindings, a `params` struct with one `f32` per parameter, and the entry points. `p.uv` is 0..1 from the top left, `p.pos` the pixel, `p.color` the input there. At the display stage colours in and out are display values on any target, so a style never decodes sRGB itself. At the hdr stage they are linear HDR.
 

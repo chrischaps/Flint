@@ -11,19 +11,16 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleParam, StylePass,
     StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
 
 pub(super) static STYLE: StyleDescriptor =
     StyleDescriptor::new("invert", "Invert", StyleStage::Display, create)
-        .params(&[StyleParam::new("strength", 1.0, 0.0..=1.0)])
-        .hints(&[StyleHint::new(
-            "strength",
-            "Strength",
-            "How far toward the negative: 0 = none, 1 = full",
-        )]);
+        .params(&[StyleParam::new("strength", 1.0, 0.0..=1.0)
+            .label("Strength")
+            .help("How far toward the negative: 0 = none, 1 = full")]);
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     let device = d.device;

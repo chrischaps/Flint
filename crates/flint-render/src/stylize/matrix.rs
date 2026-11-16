@@ -10,39 +10,39 @@
 //! ```
 
 use super::reality::{self, row};
-use super::{StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleParam, StylePass, StyleStage};
+use super::{StyleDescriptor, StyleDevice, StyleFrame, StyleParam, StylePass, StyleStage};
 
 pub(super) static STYLE: StyleDescriptor =
     StyleDescriptor::new("matrix", "Matrix", StyleStage::Display, create)
         .params(&[
-            StyleParam::new("cell_w", 8.0, 2.0..=32.0),
-            StyleParam::new("cell_h", 12.0, 2.0..=48.0),
-            StyleParam::new("rate", 6.0, 0.0..=30.0),
-            StyleParam::new("fall", 1.0, 0.0..=4.0),
-            StyleParam::new("ink_r", 0.15, 0.0..=1.0),
+            StyleParam::new("cell_w", 8.0, 2.0..=32.0)
+                .label("Cell width")
+                .help("A glyph cell's width, in points"),
+            StyleParam::new("cell_h", 12.0, 2.0..=48.0)
+                .label("Cell height")
+                .help("A glyph cell's height, in points"),
+            StyleParam::new("rate", 6.0, 0.0..=30.0)
+                .label("Rate")
+                .help("Glyph rerolls a second; 0 reads as 6, the code's flicker"),
+            StyleParam::new("fall", 1.0, 0.0..=4.0)
+                .label("Fall")
+                .help("How fast the rain heads fall; 0 holds them"),
+            StyleParam::new("ink_r", 0.15, 0.0..=1.0).label("Ink").help("A lit glyph's colour"),
             StyleParam::new("ink_g", 1.0, 0.0..=1.0),
             StyleParam::new("ink_b", 0.3, 0.0..=1.0),
-            StyleParam::new("ground_r", 0.0, 0.0..=1.0),
+            StyleParam::new("ground_r", 0.0, 0.0..=1.0)
+                .label("Ground")
+                .help("An unlit cell's colour"),
             StyleParam::new("ground_g", 0.025, 0.0..=1.0),
             StyleParam::new("ground_b", 0.005, 0.0..=1.0),
-            StyleParam::new("head_r", 0.7, 0.0..=1.0),
+            StyleParam::new("head_r", 0.7, 0.0..=1.0)
+                .label("Head")
+                .help("The falling rain head's colour"),
             StyleParam::new("head_g", 1.0, 0.0..=1.0),
             StyleParam::new("head_b", 0.8, 0.0..=1.0),
-            StyleParam::new("glow", 0.6, 0.0..=2.0),
-        ])
-        .hints(&[
-            StyleHint::new("cell_w", "Cell width", "A glyph cell's width, in points"),
-            StyleHint::new("cell_h", "Cell height", "A glyph cell's height, in points"),
-            StyleHint::new(
-                "rate",
-                "Rate",
-                "Glyph rerolls a second; 0 reads as 6, the code's flicker",
-            ),
-            StyleHint::new("fall", "Fall", "How fast the rain heads fall; 0 holds them"),
-            StyleHint::new("ink", "Ink", "A lit glyph's colour"),
-            StyleHint::new("ground", "Ground", "An unlit cell's colour"),
-            StyleHint::new("head", "Head", "The falling rain head's colour"),
-            StyleHint::new("glow", "Glow", "How bright the rain head burns over its glyphs"),
+            StyleParam::new("glow", 0.6, 0.0..=2.0)
+                .label("Glow")
+                .help("How bright the rain head burns over its glyphs"),
         ])
         // Like the composite's mode it was, it draws over every pixel, a
         // styled prop's too: an ASCII prop in a tear glyphs the code

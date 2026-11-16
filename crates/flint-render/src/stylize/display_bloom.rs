@@ -24,7 +24,7 @@
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleParam, StylePass,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleParam, StylePass,
     StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
@@ -60,39 +60,22 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
 // Glow over the finished frame, crossing styles as light does (#384)
 .draws_over_entities()
 .params(&[
-    StyleParam::new("intensity", 1.5, 0.0..=4.0),
-    StyleParam::new("threshold", 0.55, 0.0..=1.0),
-    StyleParam::new("knee", 0.25, 0.0..=1.0),
-    StyleParam::new("levels", 5.0, 1.0..=7.0),
-    StyleParam::new("saturation", 1.0, 0.0..=1.0),
-])
-.hints(&[
-    StyleHint::new(
-        "intensity",
-        "Intensity",
-        "How much halo is added over the picture",
-    ),
-    StyleHint::new(
-        "threshold",
-        "Threshold",
-        "The display value (0-1) a pixel's brightest channel must pass to glow",
-    ),
-    StyleHint::new(
-        "knee",
-        "Knee",
-        "How softly the threshold starts, as a share of it",
-    ),
-    StyleHint::new(
-        "levels",
-        "Reach",
-        "Mip levels: each doubles how far the halo spreads (in points)",
-    )
-    .integer(),
-    StyleHint::new(
-        "saturation",
-        "Saturation",
-        "1 keeps the glowing pixel's hue, 0 glows white",
-    ),
+    StyleParam::new("intensity", 1.5, 0.0..=4.0)
+        .label("Intensity")
+        .help("How much halo is added over the picture"),
+    StyleParam::new("threshold", 0.55, 0.0..=1.0)
+        .label("Threshold")
+        .help("The display value (0-1) a pixel's brightest channel must pass to glow"),
+    StyleParam::new("knee", 0.25, 0.0..=1.0)
+        .label("Knee")
+        .help("How softly the threshold starts, as a share of it"),
+    StyleParam::new("levels", 5.0, 1.0..=7.0)
+        .label("Reach")
+        .help("Mip levels: each doubles how far the halo spreads (in points)")
+        .integer(),
+    StyleParam::new("saturation", 1.0, 0.0..=1.0)
+        .label("Saturation")
+        .help("1 keeps the glowing pixel's hue, 0 glows white"),
 ])
 // A display style draws after bloom; it is the bloom here
 .feeds_bloom(false);

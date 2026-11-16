@@ -57,8 +57,8 @@
 
 use super::kit;
 use super::{
-    MaskUse, StyleDescriptor, StyleDevice, StyleFrame, StyleHint, StyleInput, StyleNeed,
-    StyleOption, StyleParam, StylePass, StyleStage,
+    MaskUse, StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleNeed, StyleOption,
+    StyleParam, StylePass, StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
 use flint_core::project::{shown, AssetKind, AssetScope};
@@ -2483,10 +2483,24 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
     messages.extend(missing_images.iter().cloned());
     let image_error = (!missing_images.is_empty()).then(|| missing_images.join("\n"));
     let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    // Each setting's label, help and `integer` ride on it (#510); a
+    // colour's on its `_r` channel, as a built-in style's do
     let params: Vec<StyleParam> = source
         .params
         .iter()
-        .map(|(name, p)| StyleParam::new(leak(name.clone()), p.default, p.min..=p.max))
+        .map(|(name, p)| {
+            let mut param = StyleParam::new(leak(name.clone()), p.default, p.min..=p.max);
+            if let Some(label) = &p.label {
+                param = param.label(leak(label.clone()));
+            }
+            if let Some(help) = &p.help {
+                param = param.help(leak(help.clone()));
+            }
+            if p.integer {
+                param = param.integer();
+            }
+            param
+        })
         .collect();
     let options: Vec<StyleOption> = source
         .options
@@ -2495,45 +2509,20 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
             let choices: Vec<&'static str> = o.choices.iter().map(|c| leak(c.clone())).collect();
             // A fixed list (an image option's found once, here): closed, so
             // a scene naming another value is warned at load (#318)
-            StyleOption::new(
+            let mut option = StyleOption::new(
                 leak(name.clone()),
                 leak(o.default.clone()),
                 Box::leak(choices.into_boxed_slice()),
-            )
-        })
-        .collect();
-    let mut hints: Vec<StyleHint> = source
-        .params
-        .iter()
-        .zip(&params)
-        .filter(|((_, p), _)| p.label.is_some() || p.help.is_some() || p.integer)
-        .map(|((name, p), sp)| {
-            let hint = StyleHint::new(
-                sp.name,
-                leak(p.label.clone().unwrap_or_else(|| super::humanize(name))),
-                leak(p.help.clone().unwrap_or_default()),
             );
-            if p.integer {
-                hint.integer()
-            } else {
-                hint
+            if let Some(label) = &o.label {
+                option = option.label(leak(label.clone()));
             }
+            if let Some(help) = &o.help {
+                option = option.help(leak(help.clone()));
+            }
+            option
         })
         .collect();
-    hints.extend(
-        source
-            .options
-            .iter()
-            .zip(&options)
-            .filter(|((_, o), _)| o.label.is_some() || o.help.is_some())
-            .map(|((name, o), so)| {
-                StyleHint::new(
-                    so.name,
-                    leak(o.label.clone().unwrap_or_else(|| super::humanize(name))),
-                    leak(o.help.clone().unwrap_or_default()),
-                )
-            }),
-    );
     let name = leak(source.name.clone());
     let mut built = StyleDescriptor::new(name, leak(source.label.clone()), source.stage, create);
     if let Some(component) = &source.component {
@@ -2552,7 +2541,6 @@ fn install(source: StyleSource, messages: &mut Vec<String>, replace: bool) {
         } else {
             &[]
         })
-        .hints(Box::leak(hints.into_boxed_slice()))
         .feeds_bloom(source.feeds_bloom);
     let descriptor: &'static StyleDescriptor = Box::leak(Box::new(if blends_itself {
         built.blends_itself()

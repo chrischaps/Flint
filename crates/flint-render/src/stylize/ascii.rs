@@ -153,8 +153,7 @@
 use super::kit;
 use super::text::{self, GlyphCell, GlyphText};
 use super::{
-    choices_with, ChoiceScope, MaskUse, StyleDescriptor, StyleDevice, StyleFrame, StyleHint,
-    StyleInput, StyleOption, StyleParam, StylePass, StyleStage, StyleTexture,
+    choices_with, ChoiceScope, MaskUse, StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleOption, StyleParam, StylePass, StyleStage, StyleTexture,
 };
 use crate::glyph_atlas::{
     calibrated_bounds, GlyphRamp, GlyphSet, GlyphSetCache, GpuGlyphStack, RampMap, BUILTIN_SET,
@@ -228,199 +227,143 @@ fn ramp_choices(scope: &ChoiceScope<'_>) -> Vec<String> {
 }
 
 const PARAMS: &[StyleParam] = &[
-    StyleParam::new("cell", 8.0, 4.0..=32.0),
-    StyleParam::new("brightness", 0.0, -1.0..=1.0),
-    StyleParam::new("contrast", 1.0, 0.0..=4.0),
-    StyleParam::new("background", 0.15, 0.0..=1.0),
-    StyleParam::new("ink", 1.0, 0.0..=2.0),
-    StyleParam::new("levels", 0.0, 0.0..=16.0),
-    StyleParam::new("footprint", 1.0, 1.0..=4.0),
-    StyleParam::new("smoothing", 0.6, 0.0..=0.95),
-    StyleParam::new("hysteresis", 0.35, 0.0..=1.0),
-    StyleParam::new("dither", 0.0, 0.0..=1.0),
-    StyleParam::new("chroma", 1.0, 0.0..=4.0),
-    StyleParam::new("palette_dither", 0.0, 0.0..=1.0),
-    StyleParam::new("exposure", 0.0, -4.0..=4.0),
-    StyleParam::new("normalize", 0.0, 0.0..=1.0),
-    StyleParam::new("tint_r", 0.35, 0.0..=1.0),
+    StyleParam::new("cell", 8.0, 4.0..=32.0)
+        .label("Cell size (pt)")
+        .help("Cell width in points; the height follows the font")
+        .integer(),
+    StyleParam::new("brightness", 0.0, -1.0..=1.0)
+        .label("Brightness")
+        .help("Shifts the tone before a glyph is picked"),
+    StyleParam::new("contrast", 1.0, 0.0..=4.0)
+        .label("Contrast")
+        .help("Spreads the tone around mid-grey before a glyph is picked"),
+    StyleParam::new("background", 0.15, 0.0..=1.0)
+        .label("Background")
+        .help("How much of the scene shows behind the glyphs (dim ground)")
+        .when("ground", &["dim", "inverse"])
+        .unless("color", &["palette"]),
+    StyleParam::new("ink", 1.0, 0.0..=2.0).label("Ink").help("Multiplies the glyph colour"),
+    StyleParam::new("levels", 0.0, 0.0..=16.0)
+        .label("Tone bands")
+        .help("Quantise tone to this many bands; 0 = smooth")
+        .integer(),
+    StyleParam::new("footprint", 1.0, 1.0..=4.0)
+        .label("Footprint (cells)")
+        .help("How many cells wide each cell's colour is averaged over")
+        .integer(),
+    StyleParam::new("smoothing", 0.6, 0.0..=0.95)
+        .label("Smoothing")
+        .help("How much of last frame's colour a cell keeps, per 60 Hz frame (the same settling time at any frame rate); a cell whose colour jumps takes the new one at once. Edge cells keep its square root of their line's length, direction and place"),
+    StyleParam::new("hysteresis", 0.35, 0.0..=1.0)
+        .label("Hysteresis")
+        .help("How far, in ramp steps, a cell's tone may stray before its glyph changes; and how far an edge's length, direction and place may stray before its line glyph changes"),
+    StyleParam::new("dither", 0.0, 0.0..=1.0)
+        .label("Dither")
+        .help("Ordered 4x4 dither before the ramp, fixed to the grid: gradients become a still pattern"),
+    StyleParam::new("chroma", 1.0, 0.0..=4.0)
+        .label("Palette chroma")
+        .help("For a nearest-ink palette: scales the cell's saturation before matching, so a muted scene reaches the palette's colours; 1 = as it is")
+        .when("color", &["palette"]),
+    StyleParam::new("palette_dither", 0.0, 0.0..=1.0)
+        .label("Palette dither")
+        .help("For a nearest-ink palette: mixes the two nearest inks by a 4x4 Bayer pattern on the cells, so gradients step through inks instead of banding")
+        .when("color", &["palette"]),
+    StyleParam::new("exposure", 0.0, -4.0..=4.0)
+        .label("Exposure (stops)")
+        .help("Brightens (or darkens) the cell's colour before its glyph is picked: +1 doubles it in linear light"),
+    StyleParam::new("normalize", 0.0, 0.0..=1.0)
+        .label("Normalize")
+        .help("Stretches this style's own tone range (the whole frame's, or each styled entity's) over the glyph ramp, so a dark prop draws its full ramp; 0 off, 1 full"),
+    StyleParam::new("tint_r", 0.35, 0.0..=1.0)
+        .label("Tint")
+        .help("The ink for colour mode tint")
+        .when("color", &["tint"]),
     StyleParam::new("tint_g", 1.0, 0.0..=1.0),
     StyleParam::new("tint_b", 0.45, 0.0..=1.0),
-    StyleParam::new("glow", 0.0, 0.0..=2.0),
-    StyleParam::new("edges", 1.0, 0.0..=1.0),
-    StyleParam::new("edge_threshold", 0.5, 0.05..=2.0),
-    StyleParam::new("edge_max", 3.0, 0.5..=8.0),
-    StyleParam::new("edge_depth", 0.6, 0.05..=4.0),
-    StyleParam::new("edge_normal", 2.5, 0.2..=8.0),
+    StyleParam::new("glow", 0.0, 0.0..=2.0)
+        .label("Glow")
+        .help("A halo around bright glyphs, inside each cell"),
+    StyleParam::new("edges", 1.0, 0.0..=1.0)
+        .label("Edges")
+        .help("Line glyphs along silhouettes, creases and styled outlines, over the tone glyph; 0 = off"),
+    StyleParam::new("edge_threshold", 0.5, 0.05..=2.0)
+        .label("Edge threshold")
+        .help("Cell widths of edge a cell needs to draw a line glyph; lower finds more"),
+    StyleParam::new("edge_max", 3.0, 0.5..=8.0)
+        .label("Edge max")
+        .help("More edge than this (in cell widths) is texture, like grass, and keeps its tone glyph"),
+    StyleParam::new("edge_depth", 0.6, 0.05..=4.0)
+        .label("Edge depth")
+        .help("The relative view-distance step that counts as a silhouette; lower finds more"),
+    StyleParam::new("edge_normal", 2.5, 0.2..=8.0)
+        .label("Edge crease")
+        .help("The normal change that counts as a crease; lower finds more"),
     // Corners (#348): a cell whose edge pixels run in no one direction
     // (the structure tensor's coherence under this) draws the corner or tee
     // its neighbours' line glyphs meet in, where its font has one
-    StyleParam::new("edge_corner", 0.9, 0.0..=1.0),
+    StyleParam::new("edge_corner", 0.9, 0.0..=1.0)
+        .label("Edge corners")
+        .help("Where a cell's edge turns (its direction this uncertain or less, 0..1), it draws the corner or tee its neighbours' lines meet in: ┌ ├ ┼; so do a line ending beside a perpendicular one and a gap between two (#637); 0 = every corner off"),
     // The edge ink (#351): `edge_ink = "color"` inks line glyphs in
     // this colour (the ASCII spike's warm off-white), mixed toward the
     // near side's hue by `edge_tint`
-    StyleParam::new("edge_color_r", 0.85, 0.0..=1.0),
+    StyleParam::new("edge_color_r", 0.85, 0.0..=1.0)
+        .label("Edge colour")
+        .help("The line glyphs' ink for edge ink color"),
     StyleParam::new("edge_color_g", 0.82, 0.0..=1.0),
     StyleParam::new("edge_color_b", 0.74, 0.0..=1.0),
-    StyleParam::new("edge_tint", 0.0, 0.0..=1.0),
-    StyleParam::new("outline", 1.0, 0.0..=4.0),
-    StyleParam::new("min_coverage", 0.5, 0.0..=1.0),
-    StyleParam::new("cell_share", 0.5, 0.0625..=1.0),
+    StyleParam::new("edge_tint", 0.0, 0.0..=1.0)
+        .label("Edge tint")
+        .help("For edge ink color: mixes the colour toward the near side's hue; 0 = the colour alone, 1 = the hue"),
+    StyleParam::new("outline", 1.0, 0.0..=4.0)
+        .label("Silhouette (pt)")
+        .help("Per-entity: inks the entity's own pixels this wide along its silhouette, so legs and rails thinner than a cell keep their shape; 0 = off"),
+    StyleParam::new("min_coverage", 0.5, 0.0..=1.0)
+        .label("Min coverage")
+        .help("Per-entity: the least ink in a cell the entity only grazes (a thin feature), 0..1"),
+    StyleParam::new("cell_share", 0.5, 0.0625..=1.0)
+        .label("Cell share")
+        .help("Per-entity, silhouette cell: how much of a cell the entity must cover for the cell to be drawn as its glyph; lower keeps thinner features"),
 ];
 
 const OPTIONS: &[StyleOption] = &[
-    StyleOption::new("font", "builtin", &[]).discovered(font_choices),
-    StyleOption::new("ramp", "", RAMPS).discovered(ramp_choices),
-    StyleOption::new("color", "source", COLOR_MODES),
-    StyleOption::new("palette", DEFAULT_PALETTE, BUILTIN_PALETTES).discovered(palette_choices),
-    StyleOption::new("ground", "dim", GROUND_MODES),
-    StyleOption::new("temporal", "on", TEMPORAL_MODES),
-    StyleOption::new("scope", "screen", SCOPES),
-    StyleOption::new("grid", "screen", GRIDS),
-    StyleOption::new("transition", "fade", TRANSITIONS),
-    StyleOption::new("edge_ink", "cell", EDGE_INKS),
-    StyleOption::new("silhouette", "pixel", SILHOUETTES),
-];
-
-const HINTS: &[StyleHint] = &[
-    StyleHint::new("font", "Font", "builtin, or a fonts/<name>.glyphs.toml set beside the scene"),
-    StyleHint::new("ramp", "Ramp", "Which of the font's ramps maps tone to glyphs; (default) is the font's own"),
-    StyleHint::new("color", "Colour mode", "source: the cell's hue; tint: one colour; raw: the cell's colour; mono: white; palette: a palette's inks"),
-    StyleHint::new("palette", "Palette", "For colour mode palette: a built-in, or palettes/<name>.palette.toml")
+    StyleOption::new("font", "builtin", &[])
+        .discovered(font_choices)
+        .label("Font")
+        .help("builtin, or a fonts/<name>.glyphs.toml set beside the scene"),
+    StyleOption::new("ramp", "", RAMPS)
+        .discovered(ramp_choices)
+        .label("Ramp")
+        .help("Which of the font's ramps maps tone to glyphs; (default) is the font's own"),
+    StyleOption::new("color", "source", COLOR_MODES)
+        .label("Colour mode")
+        .help("source: the cell's hue; tint: one colour; raw: the cell's colour; mono: white; palette: a palette's inks"),
+    StyleOption::new("palette", DEFAULT_PALETTE, BUILTIN_PALETTES)
+        .discovered(palette_choices)
+        .label("Palette")
+        .help("For colour mode palette: a built-in, or palettes/<name>.palette.toml")
         .when("color", &["palette"]),
-    StyleHint::new("ground", "Ground", "Behind the glyphs: dim scene, black, or inverse (ink fills the cell, the glyph is cut out)"),
-    StyleHint::new("cell", "Cell size (pt)", "Cell width in points; the height follows the font").integer(),
-    StyleHint::new("brightness", "Brightness", "Shifts the tone before a glyph is picked"),
-    StyleHint::new("contrast", "Contrast", "Spreads the tone around mid-grey before a glyph is picked"),
-    StyleHint::new("background", "Background", "How much of the scene shows behind the glyphs (dim ground)")
-        .when("ground", &["dim", "inverse"])
-        .unless("color", &["palette"]),
-    StyleHint::new("ink", "Ink", "Multiplies the glyph colour"),
-    StyleHint::new(
-        "exposure",
-        "Exposure (stops)",
-        "Brightens (or darkens) the cell's colour before its glyph is picked: +1 doubles it in linear light",
-    ),
-    StyleHint::new(
-        "normalize",
-        "Normalize",
-        "Stretches this style's own tone range (the whole frame's, or each styled entity's) over the glyph ramp, so a dark prop draws its full ramp; 0 off, 1 full",
-    ),
-    StyleHint::new("levels", "Tone bands", "Quantise tone to this many bands; 0 = smooth").integer(),
-    StyleHint::new("footprint", "Footprint (cells)", "How many cells wide each cell's colour is averaged over").integer(),
-    StyleHint::new(
-        "temporal",
-        "Temporal",
-        "on: cells keep part of last frame so glyphs don't shimmer in motion; reproject: each cell reads its past where its surface was last frame, so glyphs travel with a moving camera; off: every frame stands alone",
-    ),
-    StyleHint::new(
-        "smoothing",
-        "Smoothing",
-        "How much of last frame's colour a cell keeps, per 60 Hz frame (the same settling time at any frame rate); a cell whose colour jumps takes the new one at once. Edge cells keep its square root of their line's length, direction and place",
-    ),
-    StyleHint::new(
-        "hysteresis",
-        "Hysteresis",
-        "How far, in ramp steps, a cell's tone may stray before its glyph changes; and how far an edge's length, direction and place may stray before its line glyph changes",
-    ),
-    StyleHint::new(
-        "dither",
-        "Dither",
-        "Ordered 4x4 dither before the ramp, fixed to the grid: gradients become a still pattern",
-    ),
-    StyleHint::new(
-        "chroma",
-        "Palette chroma",
-        "For a nearest-ink palette: scales the cell's saturation before matching, so a muted scene reaches the palette's colours; 1 = as it is",
-    )
-    .when("color", &["palette"]),
-    StyleHint::new(
-        "palette_dither",
-        "Palette dither",
-        "For a nearest-ink palette: mixes the two nearest inks by a 4x4 Bayer pattern on the cells, so gradients step through inks instead of banding",
-    )
-    .when("color", &["palette"]),
-    StyleHint::new(
-        "scope",
-        "Scope",
-        "screen: the whole frame in glyphs; entities: only ascii_style entities, starting from this table",
-    ),
-    StyleHint::new(
-        "grid",
-        "Grid",
-        "screen: one grid centred on the frame; object: cells pinned to each styled entity's origin",
-    ),
-    StyleHint::new(
-        "transition",
-        "Transition",
-        "How an entity with blend below 1 shows the glyphs: fade cross-fades every pixel; dissolve turns that share of its cells, in patches",
-    ),
-    StyleHint::new("tint", "Tint", "The ink for colour mode tint").when("color", &["tint"]),
-    StyleHint::new("glow", "Glow", "A halo around bright glyphs, inside each cell"),
-    StyleHint::new(
-        "edges",
-        "Edges",
-        "Line glyphs along silhouettes, creases and styled outlines, over the tone glyph; 0 = off",
-    ),
-    StyleHint::new(
-        "edge_threshold",
-        "Edge threshold",
-        "Cell widths of edge a cell needs to draw a line glyph; lower finds more",
-    ),
-    StyleHint::new(
-        "edge_max",
-        "Edge max",
-        "More edge than this (in cell widths) is texture, like grass, and keeps its tone glyph",
-    ),
-    StyleHint::new(
-        "edge_depth",
-        "Edge depth",
-        "The relative view-distance step that counts as a silhouette; lower finds more",
-    ),
-    StyleHint::new(
-        "edge_normal",
-        "Edge crease",
-        "The normal change that counts as a crease; lower finds more",
-    ),
-    StyleHint::new(
-        "edge_corner",
-        "Edge corners",
-        "Where a cell's edge turns (its direction this uncertain or less, 0..1), it draws the corner or tee its neighbours' lines meet in: ┌ ├ ┼; so do a line ending beside a perpendicular one and a gap between two (#637); 0 = every corner off",
-    ),
-    StyleHint::new(
-        "edge_ink",
-        "Edge ink",
-        "What inks the line glyphs: cell (as the cell's tone glyph), color (one colour, Edge colour), or hue (the near side's own colour, not the cell's mix of it and what's behind)",
-    ),
-    StyleHint::new(
-        "edge_color",
-        "Edge colour",
-        "The line glyphs' ink for edge ink color",
-    ),
-    StyleHint::new(
-        "edge_tint",
-        "Edge tint",
-        "For edge ink color: mixes the colour toward the near side's hue; 0 = the colour alone, 1 = the hue",
-    ),
-    StyleHint::new(
-        "outline",
-        "Silhouette (pt)",
-        "Per-entity: inks the entity's own pixels this wide along its silhouette, so legs and rails thinner than a cell keep their shape; 0 = off",
-    ),
-    StyleHint::new(
-        "min_coverage",
-        "Min coverage",
-        "Per-entity: the least ink in a cell the entity only grazes (a thin feature), 0..1",
-    ),
-    StyleHint::new(
-        "silhouette",
-        "Silhouette",
-        "Per-entity: pixel cuts the glyphs at the entity's exact edge; cell draws each edge cell whole or not at all, by how much of it the entity covers",
-    ),
-    StyleHint::new(
-        "cell_share",
-        "Cell share",
-        "Per-entity, silhouette cell: how much of a cell the entity must cover for the cell to be drawn as its glyph; lower keeps thinner features",
-    ),
+    StyleOption::new("ground", "dim", GROUND_MODES)
+        .label("Ground")
+        .help("Behind the glyphs: dim scene, black, or inverse (ink fills the cell, the glyph is cut out)"),
+    StyleOption::new("temporal", "on", TEMPORAL_MODES)
+        .label("Temporal")
+        .help("on: cells keep part of last frame so glyphs don't shimmer in motion; reproject: each cell reads its past where its surface was last frame, so glyphs travel with a moving camera; off: every frame stands alone"),
+    StyleOption::new("scope", "screen", SCOPES)
+        .label("Scope")
+        .help("screen: the whole frame in glyphs; entities: only ascii_style entities, starting from this table"),
+    StyleOption::new("grid", "screen", GRIDS)
+        .label("Grid")
+        .help("screen: one grid centred on the frame; object: cells pinned to each styled entity's origin"),
+    StyleOption::new("transition", "fade", TRANSITIONS)
+        .label("Transition")
+        .help("How an entity with blend below 1 shows the glyphs: fade cross-fades every pixel; dissolve turns that share of its cells, in patches"),
+    StyleOption::new("edge_ink", "cell", EDGE_INKS)
+        .label("Edge ink")
+        .help("What inks the line glyphs: cell (as the cell's tone glyph), color (one colour, Edge colour), or hue (the near side's own colour, not the cell's mix of it and what's behind)"),
+    StyleOption::new("silhouette", "pixel", SILHOUETTES)
+        .label("Silhouette")
+        .help("Per-entity: pixel cuts the glyphs at the entity's exact edge; cell draws each edge cell whole or not at all, by how much of it the entity covers"),
 ];
 
 pub(super) static STYLE: StyleDescriptor =
@@ -430,7 +373,6 @@ pub(super) static STYLE: StyleDescriptor =
         // The mask gives styled entities their outlines (#267), so only while
         // edges are on and something is styled (#350)
         .uses_mask(MaskUse::When(reads_mask))
-        .hints(HINTS)
         .component("ascii_style")
         // Its fade mixes in display space and its dissolve turns whole cells (#278)
         .blends_itself();
