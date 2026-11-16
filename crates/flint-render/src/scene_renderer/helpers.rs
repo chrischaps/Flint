@@ -1,7 +1,6 @@
 //! Free helper functions used by the scene renderer.
 
 use crate::pipeline::BlendMode;
-use flint_core::toml_util::toml_vec3;
 
 pub(super) fn identity_matrix() -> [[f32; 4]; 4] {
     [
@@ -59,13 +58,14 @@ pub(super) fn mat4_inv_transpose(m: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
     ]
 }
 
-/// Extract both the size and center offset from bounds.
-pub(super) fn extract_bounds_info(bounds: &toml::Value) -> Option<([f32; 3], [f32; 3])> {
-    let min = bounds.get("min")?;
-    let max = bounds.get("max")?;
-
-    let min_arr = toml_vec3(min)?;
-    let max_arr = toml_vec3(max)?;
+/// Extract both the size and center offset from a `bounds` component, read
+/// through the typed view (ADR 0115: a corner that is no vector is reported
+/// once). `None` without both corners.
+pub(super) fn extract_bounds_info(
+    bounds: &flint_ecs::ComponentView<'_>,
+) -> Option<([f32; 3], [f32; 3])> {
+    let min_arr = bounds.opt_vec3("min")?;
+    let max_arr = bounds.opt_vec3("max")?;
 
     let size = [
         max_arr[0] - min_arr[0],
@@ -81,6 +81,11 @@ pub(super) fn extract_bounds_info(bounds: &toml::Value) -> Option<([f32; 3], [f3
 
     Some((size, center))
 }
+
+/// `material.blend_mode`'s values, the schema's list too (a test holds the
+/// two together). Read with `ComponentView::choice`, so an unknown one is
+/// reported and reads as `alpha`.
+pub(super) const BLEND_MODES: &[&str] = &["alpha", "additive", "multiply"];
 
 /// Parse a blend mode string from TOML into the BlendMode enum
 pub(super) fn parse_blend_mode(s: &str) -> BlendMode {

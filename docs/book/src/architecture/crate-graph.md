@@ -66,14 +66,14 @@ The workspace has 31 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 1 | `flint-geometry` | core | cli, debug-ui, player, procgen, render, script, viewer |
 | 1 | `flint-music` | core | cli, input-capture, player (optional), rhythm |
 | 1 | `flint-schema` | core | android, cli, constraint, debug-ui, ecs, player, procgen, render, scene, viewer |
-| 1 | `flint-terrain` | core | cli, debug-ui, player, render, script |
 | 1 | `flint-wooze` | core | cli, debug-ui, player, procgen, render, viewer |
-| 2 | `flint-ecs` | core, schema | android, animation, audio, cli, constraint, debug-ui, particles, physics, player, query, render, runtime, scene, script, viewer |
+| 2 | `flint-ecs` | core, schema | android, animation, audio, cli, constraint, debug-ui, particles, physics, player, query, render, runtime, scene, script, terrain, viewer |
 | 2 | `flint-import` | asset, core | animation, asset-gen, cli, player, procgen, render, viewer |
 | 2 | `flint-rhythm` | core, music | cli, input-capture, player (optional) |
 | 3 | `flint-query` | core, ecs | cli, constraint |
 | 3 | `flint-runtime` | core, ecs | animation, audio, cli, input-capture, particles, physics, player, script |
 | 3 | `flint-scene` | core, ecs, schema | android, cli, debug-ui, player, procgen, render, viewer |
+| 3 | `flint-terrain` | core, ecs | cli, debug-ui, player, render, script |
 | 4 | `flint-animation` | core, ecs, import, runtime | cli, player, script |
 | 4 | `flint-audio` | core, ecs, runtime | player |
 | 4 | `flint-constraint` | core, ecs, query, schema | cli, viewer |

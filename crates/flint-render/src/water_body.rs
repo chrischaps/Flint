@@ -16,7 +16,7 @@
 //! above sea level hides the sea under it.
 
 use bytemuck::{Pod, Zeroable};
-use flint_core::toml_util::{toml_color, toml_f32};
+use flint_core::toml_util::toml_f32;
 use wgpu::util::DeviceExt;
 
 /// A water mesh vertex: where the surface rests, which way is up for it,
@@ -259,13 +259,14 @@ impl Default for WaterBodyLook {
 }
 
 impl WaterBodyLook {
-    /// Read the look fields of a `water_body` component.
-    pub fn from_component(value: &toml::Value) -> Self {
+    /// Read the look fields of a `water_body` component, through the typed
+    /// view (ADR 0115): a wrong type reads as the default and is reported once.
+    pub fn from_component(view: &flint_ecs::ComponentView<'_>) -> Self {
         let d = Self::default();
-        let f = |name: &str, dv: f32| value.get(name).and_then(toml_f32).unwrap_or(dv);
+        let f = |name: &str, dv: f32| view.f32(name, dv);
         Self {
-            deep_color: value.get("deep_color").and_then(toml_color),
-            shallow_color: value.get("shallow_color").and_then(toml_color),
+            deep_color: view.opt_color("deep_color"),
+            shallow_color: view.opt_color("shallow_color"),
             wave_scale: f("wave_scale", d.wave_scale).clamp(0.0, 2.0),
             flow_foam: f("flow_foam", d.flow_foam).clamp(0.0, 2.0),
             flow_period: f("flow_period", d.flow_period).clamp(0.25, 30.0),
@@ -693,12 +694,15 @@ mod tests {
 shore_foam = 0.25",
         )
         .unwrap();
-        let look = WaterBodyLook::from_component(&stream);
+        let reports = flint_ecs::ReadReports::new();
+        let view = |v| flint_ecs::ComponentView::of("stream", "water_body", Some(v), &reports);
+        let look = WaterBodyLook::from_component(&view(&stream));
         assert_eq!(look.shore_foam, 0.25);
         // Still or flowing, the band is the body's.
         assert_eq!(look.to_gpu(&sea, false).params[3], 0.25);
         assert_eq!(look.to_gpu(&sea, true).params[3], 0.25);
         let none: toml::Value = toml::from_str("shore_foam = -1").unwrap();
-        assert_eq!(WaterBodyLook::from_component(&none).shore_foam, 0.0);
+        assert_eq!(WaterBodyLook::from_component(&view(&none)).shore_foam, 0.0);
+        assert!(reports.is_empty());
     }
 }

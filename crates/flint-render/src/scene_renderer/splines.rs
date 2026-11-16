@@ -99,9 +99,8 @@ pub fn load_scene_splines(
         .collect();
     for (id, name) in &entities {
         let Some(file_rel) = world
-            .get_component(*id, components::SPLINE)
-            .and_then(|s| s.get("file"))
-            .and_then(|v| v.as_str())
+            .view(*id, components::SPLINE)
+            .opt_str("file")
             .map(String::from)
         else {
             continue;
@@ -324,12 +323,21 @@ fn mesh_def(world: &FlintWorld, id: EntityId) -> Option<MeshDef> {
         }
     };
 
-    let offset = match view.raw("offset").and_then(|v| v.as_array()) {
-        Some(arr) => match toml_f32_slice(arr) {
-            Some(vals) if vals.len() >= 2 => [vals[0], vals[1]],
-            _ => [0.0, 0.0],
-        },
+    let offset = match view.raw("offset") {
         None => [0.0, 0.0],
+        Some(value) => match value.as_array().and_then(|arr| toml_f32_slice(arr)) {
+            Some(vals) if vals.len() >= 2 => [vals[0], vals[1]],
+            _ => {
+                view.report("offset", || {
+                    Diagnostic::error(
+                        codes::BAD_TYPE,
+                        format!("expected [right, up], 2 numbers, got {value}"),
+                    )
+                    .hint("the default [0, 0] is used")
+                });
+                [0.0, 0.0]
+            }
+        },
     };
     let stripes = view.opt_color("stripe_color").map(|color| Stripes {
         color,

@@ -1,8 +1,8 @@
 //! Bridges ECS `animator` components to the animation player
 
+use crate::animator::Animator;
 use crate::player::{advance, AnimationPlayer, PlaybackState};
 use flint_core::components as comp;
-use flint_core::toml_util::toml_f64;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::HashMap;
@@ -35,40 +35,16 @@ impl AnimationSync {
     /// detect clip/playing/speed changes written by scripts.
     pub fn sync_from_world(&mut self, world: &FlintWorld, player: &AnimationPlayer) {
         for &entity_id in world.entities_with_component(comp::ANIMATOR) {
-            let Some(components) = world.get_components(entity_id) else {
-                continue;
-            };
-            let Some(animator) = components.get(comp::ANIMATOR) else {
-                continue;
-            };
-
-            let clip_name = animator
-                .get("clip")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            let animator = Animator::of(world, entity_id);
+            let clip_name = animator.clip.to_string();
 
             if clip_name.is_empty() || !player.has_clip(&clip_name) {
                 continue;
             }
 
-            let speed = animator.get("speed").and_then(toml_f64).unwrap_or(1.0);
-
-            let looping = animator
-                .get("loop")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-
-            let autoplay = animator
-                .get("autoplay")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-
-            let ecs_playing = animator
-                .get("playing")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-                || autoplay;
+            let speed = animator.speed;
+            let looping = animator.looping;
+            let ecs_playing = animator.starts_playing();
 
             // For already-tracked entities, detect changes from scripts
             if let Some(state) = self.states.get_mut(&entity_id) {

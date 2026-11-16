@@ -4,12 +4,12 @@
 //! Analogous to `SkeletalSync` but writes to child entity transforms instead of
 //! computing bone matrices for GPU skinning.
 
+use crate::animator::Animator;
 use crate::node_clip::NodeClip;
 use crate::playback_state::ClipPlaybackState;
 use crate::skeletal_clip::{JointProperty, JointTrack};
 use crate::skeletal_sampler::sample_joint_track;
 use flint_core::components as comp;
-use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::HashMap;
@@ -82,30 +82,19 @@ impl NodeSync {
             };
 
             // Must have animator but NOT skeleton (skeletal handled by SkeletalSync)
-            let Some(animator) = components.get(comp::ANIMATOR) else {
-                continue;
-            };
-            if components.get(comp::SKELETON).is_some() {
+            if components.get(comp::ANIMATOR).is_none() || components.get(comp::SKELETON).is_some()
+            {
                 continue;
             }
+            let animator = Animator::of(world, entity_id);
 
             // If already tracked, check for clip changes and blend_target changes
             if let Some(state) = self.states.get_mut(&entity_id) {
                 // Check if clip name changed (e.g. script called play_clip)
-                let ecs_clip = animator
-                    .get("clip")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let ecs_playing = animator
-                    .get("playing")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let ecs_speed = animator.get("speed").and_then(toml_f64).unwrap_or(1.0);
-                let ecs_looping = animator
-                    .get("loop")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
+                let ecs_clip = animator.clip.to_string();
+                let ecs_playing = animator.playing;
+                let ecs_speed = animator.speed;
+                let ecs_looping = animator.looping;
 
                 // Clip changed — reset playback
                 if !ecs_clip.is_empty()
@@ -128,15 +117,8 @@ impl NodeSync {
                 state.looping = ecs_looping;
 
                 // Check for blend_target changes
-                let ecs_blend_target = animator
-                    .get("blend_target")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let ecs_blend_duration = animator
-                    .get("blend_duration")
-                    .and_then(toml_f32)
-                    .unwrap_or(0.3);
+                let ecs_blend_target = animator.blend_target.to_string();
+                let ecs_blend_duration = animator.blend_duration;
 
                 if !ecs_blend_target.is_empty()
                     && ecs_blend_target != state.blend_target
@@ -150,45 +132,20 @@ impl NodeSync {
             }
 
             // New entity — create playback state
-            let clip_name = animator
-                .get("clip")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            let clip_name = animator.clip.to_string();
 
             if clip_name.is_empty() || !self.clips.contains_key(&clip_name) {
                 continue;
             }
 
-            let speed = animator.get("speed").and_then(toml_f64).unwrap_or(1.0);
-
-            let looping = animator
-                .get("loop")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-
-            let autoplay = animator
-                .get("autoplay")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-
-            let playing = animator
-                .get("playing")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-                || autoplay;
-
-            let mut state = NodePlaybackState::new(clip_name, speed, looping, playing);
-
-            state.blend_target = animator
-                .get("blend_target")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            state.blend_duration = animator
-                .get("blend_duration")
-                .and_then(toml_f32)
-                .unwrap_or(0.3);
+            let mut state = NodePlaybackState::new(
+                clip_name,
+                animator.speed,
+                animator.looping,
+                animator.starts_playing(),
+            );
+            state.blend_target = animator.blend_target.to_string();
+            state.blend_duration = animator.blend_duration;
 
             self.states.insert(entity_id, state);
         }

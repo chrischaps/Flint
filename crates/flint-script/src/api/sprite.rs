@@ -120,15 +120,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     m.func("get_sprite_layer", "An entity's sprite layer.")
         .arg("id", Entity)
         .returns(Int, "0 without a sprite or a layer")
-        .run(|call, (id,)| {
-            Ok(call
-                .world()?
-                .get_components(id)
-                .and_then(|comps| comps.get(comp::SPRITE))
-                .and_then(|sprite| sprite.get("layer"))
-                .and_then(|v| v.as_integer())
-                .unwrap_or(0))
-        });
+        .run(|call, (id,)| Ok(call.world()?.view(id, comp::SPRITE).i64("layer", 0)));
 
     // ── sprite_animator ──
     // Verb first, like play_clip; each under its name and, for one
@@ -188,11 +180,8 @@ pub(crate) fn register(api: &mut ScriptApi) {
             .run(|call, (id,)| {
                 Ok(call
                     .world()?
-                    .get_components(id)
-                    .and_then(|comps| comps.get(comp::SPRITE_ANIMATOR))
-                    .and_then(|sa| sa.get("playing"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false))
+                    .view(id, comp::SPRITE_ANIMATOR)
+                    .bool("playing", false))
             });
     }
 }

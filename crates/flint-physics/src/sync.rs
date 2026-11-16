@@ -10,12 +10,12 @@
 use crate::world::PhysicsWorld;
 use flint_core::components as comp;
 use flint_core::diagnostic::{codes, Diagnostic};
-use flint_core::toml_util::{toml_f32, toml_vec3};
+use flint_core::toml_util::toml_f32;
 use flint_core::{
     euler_deg_to_quat, mat4_scale, mat4_to_rigid, quat_rotate_vec3, rigid_inverse_apply, EntityId,
     Transform, Vec3,
 };
-use flint_ecs::{ComponentView, DynamicComponents, FlintWorld};
+use flint_ecs::{ComponentView, FlintWorld};
 use rapier3d::na;
 use rapier3d::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -123,7 +123,7 @@ impl PhysicsSync {
             let mode_2d = rb.bool("mode_2d", false);
 
             // World rigid pose (parent chain applied), sprite lift, 2D clamp
-            let iso = self.body_world_pose(world, entity_id, components, mode_2d);
+            let iso = self.body_world_pose(world, entity_id, mode_2d);
 
             // `additional_mass` sets mass only: a body with no collider would
             // keep zero angular inertia and could never be rotated, not by a
@@ -196,7 +196,9 @@ impl PhysicsSync {
                     .restitution(restitution)
                     .active_events(ActiveEvents::COLLISION_EVENTS);
 
-                if let Some(local) = collider_local_isometry(components, &col) {
+                if let Some(local) =
+                    collider_local_isometry(&world.view(entity_id, comp::BOUNDS), &col)
+                {
                     builder = builder.position(local);
                 }
 
@@ -246,7 +248,6 @@ impl PhysicsSync {
         &mut self,
         world: &FlintWorld,
         entity_id: EntityId,
-        components: &DynamicComponents,
         mode_2d: bool,
     ) -> Isometry<f32> {
         let mat = world
@@ -274,7 +275,8 @@ impl PhysicsSync {
         }
 
         let z = if mode_2d { 0.0 } else { pos.z };
-        let translation = na::Vector3::new(pos.x, pos.y + sprite_anchor_offset_y(components), z);
+        let translation =
+            na::Vector3::new(pos.x, pos.y + sprite_anchor_offset_y(world, entity_id), z);
         Isometry::from_parts(translation.into(), quat_to_na(quat))
     }
 
@@ -299,10 +301,7 @@ impl PhysicsSync {
                 .get(&cur)
                 .and_then(|h| physics.get_rigid_body(*h))
             {
-                let lift = world
-                    .get_components(cur)
-                    .map(sprite_anchor_offset_y)
-                    .unwrap_or(0.0);
+                let lift = sprite_anchor_offset_y(world, cur);
                 let mut iso = *body.position();
                 iso.translation.vector.y -= lift;
                 let mut mat = iso_to_mat4(&iso);
@@ -342,15 +341,14 @@ impl PhysicsSync {
                 continue;
             }
 
-            let components = match world.get_components(*entity_id) {
-                Some(c) => c,
-                None => continue,
-            };
+            if world.get_components(*entity_id).is_none() {
+                continue;
+            }
 
             let iso = body.position();
             let t = iso.translation.vector;
             // Reverse the sprite anchor lift applied when the body was placed
-            let world_pos = Vec3::new(t.x, t.y - sprite_anchor_offset_y(components), t.z);
+            let world_pos = Vec3::new(t.x, t.y - sprite_anchor_offset_y(world, *entity_id), t.z);
             let world_quat = na_to_quat(&iso.rotation);
 
             let (mut local_pos, local_quat) = match world
@@ -454,7 +452,7 @@ impl PhysicsSync {
             let mode_2d = world
                 .view(entity_id, comp::RIGIDBODY)
                 .bool("mode_2d", false);
-            let iso = self.body_world_pose(world, entity_id, components, mode_2d);
+            let iso = self.body_world_pose(world, entity_id, mode_2d);
 
             if let Some(body_mut) = physics.rigid_body_set.get_mut(body_handle) {
                 // Rapier refreshes a body's world centre of mass only for
@@ -1110,27 +1108,18 @@ fn normalize_or_x(v: [f32; 3]) -> [f32; 3] {
 /// Lift so the body centre sits at the sprite's visual centre: with
 /// `anchor_y = 0` (bottom-anchored) the centre is `height / 2` above the
 /// entity position. `sync_from_rapier` reverses it.
-fn sprite_anchor_offset_y(components: &DynamicComponents) -> f32 {
-    components
-        .get(comp::SPRITE)
-        .map(|s| {
-            let anchor_y = s.get("anchor_y").and_then(toml_f32).unwrap_or(0.0);
-            let height = s.get("height").and_then(toml_f32).unwrap_or(1.0);
-            (0.5 - anchor_y) * height
-        })
-        .unwrap_or(0.0)
+fn sprite_anchor_offset_y(world: &FlintWorld, id: EntityId) -> f32 {
+    let sprite = world.view(id, comp::SPRITE);
+    if !sprite.exists() {
+        return 0.0;
+    }
+    (0.5 - sprite.f32("anchor_y", 0.0)) * sprite.f32("height", 1.0)
 }
 
 /// Collider pose relative to the body: bounds centre + `collider.offset`,
 /// rotated by `collider.rotation` (Euler degrees). `None` when identity.
-fn collider_local_isometry(
-    components: &DynamicComponents,
-    col: &ComponentView,
-) -> Option<Isometry<f32>> {
-    let bounds_center = components
-        .get(comp::BOUNDS)
-        .and_then(compute_bounds_center)
-        .unwrap_or([0.0, 0.0, 0.0]);
+fn collider_local_isometry(bounds: &ComponentView, col: &ComponentView) -> Option<Isometry<f32>> {
+    let bounds_center = compute_bounds_center(bounds).unwrap_or([0.0, 0.0, 0.0]);
     let offset = col.vec3("offset", [0.0; 3]);
     let rotation = col.vec3("rotation", [0.0; 3]);
 
@@ -1152,9 +1141,9 @@ fn collider_local_isometry(
 }
 
 /// Compute the center offset of a bounds component
-fn compute_bounds_center(bounds: &toml::Value) -> Option<[f32; 3]> {
-    let min = toml_vec3(bounds.get("min")?)?;
-    let max = toml_vec3(bounds.get("max")?)?;
+fn compute_bounds_center(bounds: &ComponentView) -> Option<[f32; 3]> {
+    let min = bounds.opt_vec3("min")?;
+    let max = bounds.opt_vec3("max")?;
     Some([
         (min[0] + max[0]) / 2.0,
         (min[1] + max[1]) / 2.0,

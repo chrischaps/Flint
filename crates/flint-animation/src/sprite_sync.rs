@@ -6,7 +6,6 @@
 
 use crate::sprite_clip::{LoopMode, SpriteAnimClip};
 use flint_core::components as comp;
-use flint_core::toml_util::toml_f32;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::HashMap;
@@ -106,32 +105,16 @@ impl SpriteAnimSync {
     /// playback states as needed.
     pub fn sync_from_world(&mut self, world: &FlintWorld) {
         for &entity_id in world.entities_with_component(comp::SPRITE_ANIMATOR) {
-            let Some(components) = world.get_components(entity_id) else {
-                continue;
-            };
-            let Some(sprite_animator) = components.get(comp::SPRITE_ANIMATOR) else {
-                continue;
-            };
-
-            let clip_name = sprite_animator
-                .get("clip")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            // Through the typed view (ADR 0115): a wrong type is reported once
+            let sprite_animator = world.view(entity_id, comp::SPRITE_ANIMATOR);
+            let clip_name = sprite_animator.str("clip", "").to_string();
 
             if clip_name.is_empty() || !self.clips.contains_key(&clip_name) {
                 continue;
             }
 
-            let speed = sprite_animator
-                .get("speed")
-                .and_then(toml_f32)
-                .unwrap_or(1.0);
-
-            let ecs_playing = sprite_animator
-                .get("playing")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+            let speed = sprite_animator.f32("speed", 1.0);
+            let ecs_playing = sprite_animator.bool("playing", false);
 
             if let Some(state) = self.states.get_mut(&entity_id) {
                 // Clip changed → reset playback
