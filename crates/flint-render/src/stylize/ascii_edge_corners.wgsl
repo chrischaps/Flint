@@ -33,6 +33,12 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 struct ThinUniforms {
     history: u32,
     reach: f32,
+    // Who draws a cell and the grid (#493), read by the thin pass alone
+    variants: u32,
+    whole_frame: u32,
+    cell: vec2<f32>,
+    origin: vec2<f32>,
+    size: vec2<f32>,
     _pad: vec2<u32>,
 };
 

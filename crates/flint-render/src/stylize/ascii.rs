@@ -97,7 +97,10 @@
 //! summed structure tensor of every edge pixel in it. The glyph pass draws
 //! it over the tone glyph in the one cell the line passes within half a
 //! cell of (#352: the cell pass records where the line crosses the cell's
-//! centre column or row; `ascii_edge_thin.wgsl` keeps it there).
+//! centre column or row; `ascii_edge_thin.wgsl` keeps it there). Per
+//! entity that cell can be one the style doesn't draw, just outside a
+//! silhouette that runs along a cell border, so the thin pass gives the
+//! line to the drawn cell beside it (#493).
 //! Which glyph each edge cell draws, its thinned line or the corner its
 //! neighbours' lines meet in (#348, #637), is decided once per cell in two
 //! more passes, `ascii_edge_thin.wgsl` and `ascii_edge_corners.wgsl`
@@ -697,14 +700,24 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         &[&uniform_bgl, &input_bgl, &edges_in_bgl, &edge_view_cells_bgl],
         d.format,
     );
+    // The thin pass's last group: last frame's edge slots (#477) and the
+    // style mask, which with the table says which cells are drawn (#493)
+    let thin_in_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ASCII Edge Thin Inputs BGL"),
+        entries: &[
+            texture_entry(0, wgpu::TextureSampleType::Uint),
+            texture_entry(1, wgpu::TextureSampleType::Uint),
+        ],
+    });
     // Each edge cell's glyph, once per cell (#910): thinned lines and
     // marked corners' arms, then the glyph every cell draws
     let edge_thin_pipeline = kit::fullscreen_pipeline(
         device,
         "ASCII Edge Thin Pipeline",
         &kit::shader(device, "ASCII Edge Thin Shader", EDGE_THIN_SHADER),
-        // Its uniform and last frame's edge slots (#477)
-        &[&edges_in_bgl, &uniform_bgl, &cells_bgl],
+        // The variant table, the edge cells, its uniform, then last
+        // frame's edge slots (#477) and the mask (#493)
+        &[&table_bgl, &edges_in_bgl, &uniform_bgl, &thin_in_bgl],
         EDGE_SLOT_FORMAT,
     );
     let edge_corner_pipeline = kit::fullscreen_pipeline(
@@ -754,6 +767,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         edge_view_cells_bgl,
         edge_thin_pipeline,
         edge_corner_pipeline,
+        thin_in_bgl,
         edge_view_uniforms: kit::uniform_buffer::<EdgeViewUniforms>(
             device,
             "ASCII Edge View Uniforms",
@@ -1014,6 +1028,16 @@ struct EdgeThinUniforms {
     /// Cells past the border a line may go and stay with the cell that drew
     /// it last frame.
     reach: f32,
+    /// Rows of the variant table in use (1 = the whole frame alone), and
+    /// 1 when the whole frame's cells are drawn, not passed through: with
+    /// the grid, what says which cells draw a line (#493). Here and not
+    /// read from the ASCII uniform, which is written after the edge passes
+    /// and not at all under the edge view.
+    variants: u32,
+    whole_frame: u32,
+    cell: [f32; 2],
+    origin: [f32; 2],
+    size: [f32; 2],
     _pad: [u32; 2],
 }
 
@@ -1299,6 +1323,7 @@ const EDGE_VIEW_SHADER: kit::Wgsl = kit::wgsl!(
     "ascii_edge_slot.wgsl"
 );
 const EDGE_THIN_SHADER: kit::Wgsl = kit::wgsl!(
+    "ascii_common.wgsl",
     "ascii_edge_slot.wgsl",
     "ascii_edge_thin.wgsl"
 );
@@ -1916,6 +1941,9 @@ struct Ascii {
     /// pass and the edge view read one texel a cell.
     edge_thin_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     edge_corner_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    /// The thin pass's last group (#493): last frame's edge slots and the
+    /// style mask.
+    thin_in_bgl: wgpu::BindGroupLayout,
     edges_in_bgl: wgpu::BindGroupLayout,
     depth_bgl: wgpu::BindGroupLayout,
     mask_bgl: wgpu::BindGroupLayout,
@@ -2616,7 +2644,8 @@ impl Ascii {
         input: &StyleInput<'_>,
         [edge_cells, edge_slots]: [&Owned; 2],
         cell: [f32; 2],
-        table: &wgpu::BindGroup,
+        [table, edge_table]: [&wgpu::BindGroup; 2],
+        variants: usize,
         glyph_rect: Option<kit::PixelRect>,
     ) {
         let origin = grid_origin([frame.width, frame.height], cell);
@@ -2711,7 +2740,11 @@ impl Ascii {
             &edges.view,
             edges.size,
             &self.edge_pipeline,
-            &[table, &depth, mask.as_deref().unwrap_or(&self.no_mask_bind)],
+            &[
+                edge_table,
+                &depth,
+                mask.as_deref().unwrap_or(&self.no_mask_bind),
+            ],
             regions.map(|r| r.edge_pixels),
         );
 
@@ -2738,6 +2771,11 @@ impl Ascii {
             history: history as u32,
             // Under half a cell, so the border never reaches a cell's centre
             reach: (hold * EDGE_REACH).min(0.45),
+            variants: variants as u32,
+            whole_frame: (frame.whole_frame() && frame.option("scope") != "entities") as u32,
+            cell,
+            origin,
+            size: [frame.width as f32, frame.height as f32],
             _pad: [0; 2],
         };
         frame.queue.write_buffer(
@@ -2783,12 +2821,35 @@ impl Ascii {
             [edge_cells.size[0] + pad, edge_cells.size[1] + pad],
             &self.cells_bgl,
         );
+        // Last frame's slots and the mask (#493): with the variant table
+        // they say which cells the glyph pass draws in this style
+        let thin_mask = frame.mask.unwrap_or(&self.no_mask_view);
+        let thin_inputs = frame.bind(
+            "ASCII Edge Thin Inputs BG",
+            bind_key(&[past_slots.generation, frame.mask.is_some() as u64]),
+            || {
+                frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("ASCII Edge Thin Inputs BG"),
+                    layout: &self.thin_in_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&past_slots.view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(thin_mask),
+                        },
+                    ],
+                })
+            },
+        );
         kit::fullscreen_pass(
             encoder,
             "ASCII Edge Thin Pass",
             &thin.view,
             &self.edge_thin_pipeline,
-            &[&edge_cells.bind, &thin_uniform, &past_slots.bind],
+            &[table, &edge_cells.bind, &thin_uniform, &thin_inputs],
         );
         kit::fullscreen_pass(
             encoder,
@@ -3156,7 +3217,8 @@ impl StylePass for Ascii {
                 input,
                 [edge_cells, edge_slots],
                 cell,
-                &edge_table,
+                [&uniform, &edge_table],
+                variants.len(),
                 glyph_rect,
             );
         }
@@ -3654,7 +3716,8 @@ mod tests {
         assert_eq!(std::mem::size_of::<EdgeUniforms>(), 112);
         // #477's history, hold and smoothing
         assert_eq!(std::mem::size_of::<EdgeCellUniforms>(), 64);
-        assert_eq!(std::mem::size_of::<EdgeThinUniforms>(), 16);
+        // #493's grid and who draws
+        assert_eq!(std::mem::size_of::<EdgeThinUniforms>(), 48);
     }
 
     #[test]

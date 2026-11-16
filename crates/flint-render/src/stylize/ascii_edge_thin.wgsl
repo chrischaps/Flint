@@ -10,8 +10,11 @@
 // took 25-66 s to compile on DX12. With history (#477) the border between
 // two cells moves toward the one that drew the line last frame
 // (`thinned_slot`), and the corner pass reads the same uniform.
+// ascii_common.wgsl comes before ascii_edge_slot.wgsl (#493): the variant
+// table and the style mask say which cells this style draws, so a line on
+// a per-entity variant's border goes to the cell that shows it.
 
-@group(0) @binding(0) var edge_cells: texture_2d<f32>;
+@group(1) @binding(0) var edge_cells: texture_2d<f32>;
 
 // Temporal stability (#477): a line near the border between two cells
 // stays with the one that drew it last frame until it is `reach` past the
@@ -21,12 +24,24 @@ struct ThinUniforms {
     history: u32,
     // Cells past the border a line may go and stay with its cell
     reach: f32,
+    // Who draws a cell (#493): rows of the variant table in use (1 = the
+    // whole frame alone), 1 when the whole frame's cells are drawn, and the
+    // screen grid (cell, origin) over the output's size. The ASCII uniform
+    // `u` holds them too, but it is written after these passes
+    variants: u32,
+    whole_frame: u32,
+    cell: vec2<f32>,
+    origin: vec2<f32>,
+    size: vec2<f32>,
     _pad: vec2<u32>,
 };
 
-@group(1) @binding(0) var<uniform> t: ThinUniforms;
+@group(2) @binding(0) var<uniform> t: ThinUniforms;
 // Last frame's edge slots (the corner pass's texture), grid-sized
-@group(2) @binding(0) var past_slots: texture_2d<u32>;
+@group(3) @binding(0) var past_slots: texture_2d<u32>;
+// The style mask (#493; a 1x1 unstyled texel while no entity asks for the
+// style), at the scene's resolution
+@group(3) @binding(1) var thin_mask: texture_2d<u32>;
 
 // Whether the edge cell at texel `c` drew a line last frame: its thinned
 // line, which the slot texel keeps in its lowest bits
@@ -35,16 +50,32 @@ fn drew_line(c: vec2<i32>) -> bool {
     return (textureLoad(past_slots, clamp(c, vec2<i32>(0), cmax), 0).x & 15u) != NO_EDGE;
 }
 
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-};
-
-@vertex
-fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
-    let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
-    var out: VertexOutput;
-    out.position = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
-    return out;
+// Whether the glyph pass draws the screen-grid cell under edge cell texel
+// `c` in this style, line glyphs and all (#493): who holds the pixel at
+// the centre of the cell's visible part, where `fs_text` reads the cell.
+// The whole frame's cells when the whole frame is drawn, and a per-entity
+// variant's that is on and shares the screen grid; not one that passes
+// through (opted out, faded to 0, the whole frame under `scope =
+// "entities"`) or keeps its own grid, whose cells keep their tone glyphs.
+// A snapped silhouette (#338) is judged by the mask, not the whole cell.
+fn drawn_cell(c: vec2<i32>) -> bool {
+    if t.variants <= 1u {
+        return t.whole_frame == 1u;
+    }
+    let cell = vec2<f32>(c - vec2<i32>(CELL_OFFSET));
+    let lo = max(cell * t.cell + t.origin, vec2<f32>(0.0));
+    let hi = min((cell + 1.0) * t.cell + t.origin, t.size);
+    let p = floor((lo + hi) * 0.5) + 0.5;
+    let msize = vec2<i32>(textureDimensions(thin_mask));
+    let mp = vec2<i32>(floor(p * vec2<f32>(msize) / t.size));
+    let m = textureLoad(thin_mask, clamp(mp, vec2<i32>(0), msize - 1), 0).rg;
+    let slot = slot_of(m.x);
+    if slot == 0u {
+        return t.whole_frame == 1u;
+    }
+    let v = variants[slot];
+    return (v.flags & 1u) == 0u && m.y > 0u
+        && all(v.cell == t.cell) && all(v.origin == t.origin);
 }
 
 @fragment
@@ -95,16 +126,48 @@ fn edge_crosses_x(e: vec4<f32>) -> bool {
     return (u32(e.z) & 2u) != 0u;
 }
 
+// The neighbour an edge cell's line leans toward: across the line (its
+// cross axis), on the side of the centre the line passes
+fn lean_step(e: vec4<f32>) -> vec2<i32> {
+    let side = select(-1, 1, e.w >= 0.0);
+    return select(vec2<i32>(0, side), vec2<i32>(side, 0), edge_crosses_x(e));
+}
+
+// A line the edge cell at texel `c` takes from a neighbour (#493), or
+// NO_EDGE: `c` draws none of its own but this style draws it, and the
+// neighbour isn't drawn, holds a line glyph, and leans toward `c`. A
+// per-entity silhouette whose outline pixels all lie in the cell just
+// outside the entity (a barrel's top two pixel rows in the row above)
+// leaves the cells inside with no edge pixels; its glyph would be drawn in
+// a cell whose pixels pass the picture through. `c` draws it under a cell
+// from where it lies, the line being in the half of the neighbour nearer
+// `c`. The neighbour keeps it as well (`thinned_slot`), for its sliver of
+// the entity's pixels.
+fn taken_slot(c: vec2<i32>) -> u32 {
+    if !drawn_cell(c) {
+        return NO_EDGE;
+    }
+    var taken = NO_EDGE;
+    for (var k = 0; k < 4; k++) {
+        let d = select(vec2<i32>(1 - 2 * (k & 1), 0), vec2<i32>(0, 1 - 2 * (k & 1)), k >= 2);
+        let g = edge_cell_at(c + d);
+        if taken == NO_EDGE && g.x > 0.5 && all(lean_step(g) == -d) && !drawn_cell(c + d) {
+            taken = min(u32(g.x - 0.5), 3u);
+        }
+    }
+    return taken;
+}
+
 fn thinned_slot(c: vec2<i32>) -> u32 {
     let e = edge_cell_at(c);
     if e.x < 0.5 {
-        return NO_EDGE;
+        return taken_slot(c);
     }
     let slot = min(u32(e.x - 0.5), 3u);
     let cross_x = edge_crosses_x(e);
     var offset = e.w;
     let side = select(-1, 1, offset >= 0.0);
-    let step = select(vec2<i32>(0, side), vec2<i32>(side, 0), cross_x);
+    let step = lean_step(e);
     let n = edge_cell_at(c + step);
     // The neighbour's offset, from this cell's centre
     let theirs = n.w + f32(side);
@@ -140,7 +203,21 @@ fn thinned_slot(c: vec2<i32>) -> u32 {
     // Only the border on the neighbour's side moves
     let lo = select(-0.5, -border, side < 0);
     let hi = select(0.5, border, side > 0);
-    if (offset > lo && offset <= hi) || n.x < 0.5 {
+    if n.x < 0.5 {
+        return slot;
+    }
+    var mine = offset > lo && offset <= hi;
+    // Of two cells that both hold the line, the one this style draws takes
+    // it when the other isn't drawn (#493). A per-entity silhouette along
+    // a cell border can belong to the cell just outside the entity, whose
+    // pixels pass the picture through: its glyph would be drawn nowhere.
+    // That cell keeps its line too, so the sliver of entity in it (a pixel
+    // or two along the border) draws as it did, not a tone glyph's stray
+    // ink beside the line. Between drawn cells exactly one draws it still
+    if drawn_cell(c) && !drawn_cell(c + step) {
+        mine = true;
+    }
+    if mine {
         return slot;
     }
     return NO_EDGE;
