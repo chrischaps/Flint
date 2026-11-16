@@ -89,11 +89,6 @@ const CHECKED_AGAINST_SCENES: &[&str] = &[
 /// Tables that look like a light and that nothing reads.
 const STALE_LIGHT_TABLES: &[&str] = &["directional_light", "point_light", "spot_light"];
 
-/// Where a stale light table may stay: the frozen scenes the goldens load
-/// (`tests/fixtures/scenes/README.md`). They are lit by the defaults, their
-/// pixels are pinned, and making the table a real light would move them.
-const FROZEN: &[&str] = &["tests/fixtures/", "crates/flint-cli/tests/golden/fixtures/"];
-
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -475,10 +470,11 @@ fn the_repository_scenes_fit_the_new_schemas() {
 }
 
 #[test]
-fn no_example_carries_a_light_table_nothing_reads() {
+fn no_scene_carries_a_light_table_nothing_reads() {
+    // The frozen fixtures too, since #796 deleted theirs: nothing read them,
+    // so the goldens that load them were lit by the defaults either way
     let stale: BTreeSet<String> = scene_entities()
         .into_iter()
-        .filter(|(file, _, _)| !FROZEN.iter().any(|frozen| file.starts_with(frozen)))
         .flat_map(|(file, entity, table)| {
             STALE_LIGHT_TABLES
                 .iter()
