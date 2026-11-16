@@ -156,6 +156,15 @@ pub struct RenderArgs {
     #[arg(long, value_name = "PNG")]
     pub reference: Option<String>,
 
+    /// The reference's glyph grid, as `--ascii-text` wrote it (#495). With
+    /// it, a frame the ASCII style drew is scored by its glyphs (mean
+    /// colour, glyph coverage, glyph layout) instead of its pixels, so a
+    /// halo that smears ink into the ground isn't read as the letters
+    /// changing. `--reference x.png --ascii-text x.txt` on the reference's
+    /// own render writes both
+    #[arg(long, value_name = "TXT", requires = "reference")]
+    pub reference_text: Option<String>,
+
     /// Refine --look toward --reference (#357): an agent proposes edits,
     /// each is rendered and measured, the best is kept while the distance
     /// falls. Writes the refined look (--refine-out), a JSON log beside it
@@ -1125,6 +1134,9 @@ pub(super) fn render(
     if let Some(look) = &look {
         say!("Look: {} ({})", look.name, look.source);
     }
+    let reference = measured_reference(args, reference, &configs[0])?;
+    // A reference grid scores frames by their glyphs: every frame's grid is read
+    let reads_glyphs = reference.as_ref().is_some_and(|r| r.ink.is_some());
 
     // A render with clocks goes through stages (#216, #487)
     let timed = args.time.is_some()
@@ -1275,7 +1287,7 @@ pub(super) fn render(
         CaptureSetup {
             scene_file: &scene_file,
             config: configs[0].clone(),
-            text_capture: wants_text || wants_flips || args.report.is_some(),
+            text_capture: wants_text || wants_flips || args.report.is_some() || reads_glyphs,
             first: true,
         },
     )?;
@@ -1382,7 +1394,10 @@ pub(super) fn render(
         return refine_look(args, look, reference, &mut |table| {
             let def = super::look::overlay(scene_pp, table)?;
             let config = post_process_config(args, Some(&def))?;
-            draw_frame(ctx, &mut renderer, &camera, Some(config), Some(&world))
+            let scale = reads_glyphs.then(|| ink_scale(args, &config));
+            let image = draw_frame(ctx, &mut renderer, &camera, Some(config), Some(&world))?;
+            let ink = scale.and_then(|s| frame_ink(&renderer, ctx, &s));
+            Ok(super::look_refine::Frame { image, ink })
         });
     }
 
@@ -1401,14 +1416,19 @@ pub(super) fn render(
                 (i > 0 || redraw).then(|| config.clone()),
                 Some(&world),
             )?;
-            if args.report.is_some() {
-                texts.push(renderer.style_text(&ctx.device, "ascii"));
+            // The grid is read back once a frame: a second read finds nothing
+            let measured = args.report.is_some() || reads_glyphs;
+            let text = (measured || wants_text)
+                .then(|| renderer.style_text(&ctx.device, "ascii"))
+                .flatten();
+            if measured {
+                texts.push(text.clone());
             }
             if wants_text {
                 write_ascii_text(
                     args.ascii_text.as_deref(),
                     args.ascii_text_ansi.as_deref(),
-                    renderer.style_text(&ctx.device, "ascii"),
+                    text,
                 )?;
             }
             let mut img = image::RgbaImage::from_raw(width, height, pixels)
@@ -1774,13 +1794,60 @@ fn draw_frame(
         .context("Failed to create image from pixel data")
 }
 
+/// The reference a render measures against (#357): the `--reference`
+/// picture and, with `--reference-text`, its glyph grid (#495), read
+/// through the glyph set `config` draws with. A reference picture of an
+/// ASCII frame with no grid is said once: its letters are scored as pixels.
+fn measured_reference(
+    args: &RenderArgs,
+    image: Option<image::RgbImage>,
+    config: &flint_render::PostProcessConfig,
+) -> Result<Option<super::look_measure::Reference>> {
+    use super::look_measure as lm;
+    let Some(image) = image else {
+        return Ok(None);
+    };
+    let ink = match &args.reference_text {
+        Some(path) => Some(lm::load_reference_text(path, &ink_scale(args, config))?),
+        None => {
+            if config.styles.is_enabled("ascii") {
+                say!(
+                    "Note: the reference is scored by its pixels; give --reference-text \
+                     (its --ascii-text) to score glyphs as glyphs (#495)"
+                );
+            }
+            None
+        }
+    };
+    Ok(Some(lm::Reference { image, ink }))
+}
+
+/// How a glyph's ink is read under `config`: its ASCII font's atlas.
+fn ink_scale(
+    args: &RenderArgs,
+    config: &flint_render::PostProcessConfig,
+) -> super::look_measure::InkScale {
+    super::look_measure::InkScale::for_config(config, Path::new(&args.scene))
+}
+
+/// The glyph grid the last frame drew, as ink; `None` when ASCII didn't draw.
+fn frame_ink(
+    renderer: &SceneRenderer,
+    ctx: &HeadlessContext,
+    scale: &super::look_measure::InkScale,
+) -> Option<super::look_measure::InkGrid> {
+    renderer
+        .style_text(&ctx.device, "ascii")
+        .map(|t| super::look_measure::InkGrid::from_text(&t, scale))
+}
+
 /// `--ai-refine` (#357): run the loop, then write the refined look, its log
 /// and the sheet of rounds.
 fn refine_look(
     args: &RenderArgs,
     look: super::look::Look,
-    reference: image::RgbImage,
-    draw: &mut dyn FnMut(&toml::Table) -> Result<image::RgbaImage>,
+    reference: super::look_measure::Reference,
+    draw: &mut dyn FnMut(&toml::Table) -> Result<super::look_refine::Frame>,
 ) -> Result<()> {
     use super::look_refine as lr;
     let (agent, meter) =
@@ -1835,6 +1902,12 @@ fn refine_look(
         log.stopped,
         log.calls,
         log.cost_usd
+    );
+    say!(
+        "  by {}: start {}; end {}",
+        log.metric.name(),
+        log.start.terms_line(),
+        log.end.terms_line()
     );
     say!(
         "Wrote {} (load it with --look {})",
@@ -2564,7 +2637,7 @@ struct StagedRender<'a> {
     /// The scene's `[post_process]`, under its own look, for `--ai-refine`.
     scene_pp: Option<&'a flint_scene::PostProcessDef>,
     look: Option<super::look::Look>,
-    reference: Option<image::RgbImage>,
+    reference: Option<super::look_measure::Reference>,
     camera_path: Option<&'a super::frame_seq::CameraPath>,
 }
 
@@ -2613,6 +2686,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
     }
     let wants_text = args.ascii_text.is_some() || args.ascii_text_ansi.is_some();
     let wants_flips = args.flip_stats || args.flip_json.is_some();
+    let reads_glyphs = reference.as_ref().is_some_and(|r| r.ink.is_some());
 
     let cells = grid.map_or(vec![(0, 0)], |g| g.cells());
     let count = cells.len();
@@ -2683,7 +2757,10 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         return refine_look(args, look, reference, &mut |table| {
             let def = super::look::overlay(scene_pp, table)?;
             let config = post_process_config(args, Some(&def))?;
-            stage.redraw(args, ctx, t, frame_step, config)
+            let scale = reads_glyphs.then(|| ink_scale(args, &config));
+            let image = stage.redraw(args, ctx, t, frame_step, config)?;
+            let ink = scale.and_then(|s| frame_ink(&stage.renderer, ctx, &s));
+            Ok(super::look_refine::Frame { image, ink })
         });
     }
 
@@ -2750,7 +2827,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                 }
             }
             pictures.push(stage.capture(args, ctx, t, frame_step)?);
-            if wants_text || wants_flips || report_file.is_some() {
+            if wants_text || wants_flips || report_file.is_some() || reads_glyphs {
                 texts.push(stage.renderer.style_text(&ctx.device, "ascii"));
             }
             if report_json {
@@ -2823,7 +2900,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
             );
             let first = captures.len().saturating_sub(count);
             for (capture, column) in captures[first..].iter_mut().zip(&columns) {
-                capture.distance = column.distance.map(|d| d.score);
+                capture.distance = column.distance.as_ref().map(|d| d.score);
             }
         }
         let nearest = super::look_measure::RenderReport::nearest_column(&columns);
@@ -3080,13 +3157,13 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
 
 /// Measures (#357) of each cell as the sheet shows it, a line each in the
 /// terminal. The ASCII section counts the whole drawn frame's grid, which a
-/// crop shows only part of.
+/// crop shows only part of, and so does the glyph distance (#495).
 fn measure_cells(
     args: &RenderArgs,
     pictures: &[image::RgbaImage],
     texts: &[Option<flint_render::stylize::GlyphText>],
     configs: &[flint_render::PostProcessConfig],
-    reference: Option<&image::RgbImage>,
+    reference: Option<&super::look_measure::Reference>,
     grid: Option<&super::sweep::SweepGrid>,
     cells: &[(usize, usize)],
 ) -> Vec<super::look_measure::ColumnReport> {
@@ -3094,11 +3171,18 @@ fn measure_cells(
     let mut columns = Vec::with_capacity(pictures.len());
     for (i, img) in pictures.iter().enumerate() {
         let image = lm::measure(img);
-        let ascii =
-            texts.get(i).cloned().flatten().map(|t| {
-                lm::measure_ascii(&t, lm::ascii_ramp(&configs[i], Path::new(&args.scene)))
-            });
-        let distance = reference.map(|r| lm::distance_to(r, img));
+        let text = texts.get(i).cloned().flatten();
+        let ascii = text
+            .as_ref()
+            .map(|t| lm::measure_ascii(t, lm::ascii_ramp(&configs[i], Path::new(&args.scene))));
+        let distance = reference.map(|r| {
+            let ink = r
+                .ink
+                .as_ref()
+                .and(text.as_ref())
+                .map(|t| lm::InkGrid::from_text(t, &ink_scale(args, &configs[i])));
+            r.distance(img, ink.as_ref())
+        });
         let value = grid.map(|g| {
             let (c, r) = cells[i];
             g.describe(c, r)
@@ -3108,7 +3192,13 @@ fn measure_cells(
             value.as_deref().unwrap_or("frame"),
             lm::summary(&image, ascii.as_ref()),
             distance
-                .map(|d| format!("  distance {:.2}", d.score))
+                .as_ref()
+                .map(|d| format!(
+                    "  distance {:.2} by {} ({})",
+                    d.score,
+                    d.metric.name(),
+                    d.terms_line()
+                ))
                 .unwrap_or_default()
         );
         columns.push(lm::ColumnReport {
@@ -3116,7 +3206,7 @@ fn measure_cells(
             value,
             image,
             ascii,
-            distance: distance.map(Into::into),
+            distance,
         });
     }
     columns
@@ -3132,13 +3222,15 @@ fn distance_labels(
     labels
         .into_iter()
         .enumerate()
-        .map(|(i, l)| match columns.get(i).and_then(|c| c.distance) {
-            Some(d) => {
-                let star = if nearest == Some(i) { " *" } else { "" };
-                format!("{l}  d {:.1}{star}", d.score)
-            }
-            None => l,
-        })
+        .map(
+            |(i, l)| match columns.get(i).and_then(|c| c.distance.as_ref()) {
+                Some(d) => {
+                    let star = if nearest == Some(i) { " *" } else { "" };
+                    format!("{l}  d {:.1}{star}", d.score)
+                }
+                None => l,
+            },
+        )
         .collect()
 }
 
@@ -3711,7 +3803,8 @@ impl Stage {
                     || args.ascii_text_ansi.is_some()
                     || args.flip_stats
                     || args.flip_json.is_some()
-                    || report_file,
+                    || report_file
+                    || args.reference_text.is_some(),
                 first: index == 0,
             },
         )?;

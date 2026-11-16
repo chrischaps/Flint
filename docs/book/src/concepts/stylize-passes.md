@@ -1170,6 +1170,21 @@ $ flint render examples/stylize_props.scene.toml --look ascii_noir \
 
 **`--reference ref.png`** adds each column's distance to a target image, using the metric `flint gen --ai-refine` uses (#183): mean colour, a 16-bin luminance histogram and a 16x16 luminance layout, as a score out of 100 where 0 is the reference itself. It's a ruler, not a judge. It can say whether one column is closer than another, but it doesn't measure taste. On a sheet each label gets `d <score>`, the nearest column is starred, and `nearest` in the report names it. Under `--sweep-crop` or `--sweep-scale full` the image measures and distance are taken from the cell as the sheet shows it, while the ASCII section still counts the whole drawn frame's grid. A two-key grid reports every cell, each `value` naming both keys, but its labels carry no distances.
 
+**`--reference-text ref.txt`** (#495) reads an ASCII frame as letters, not pixels. Pixels are the wrong ruler for glyphs: a glyph is texture to a luminance histogram, so a `glow` that smears ink into the ground moves the histogram more than a change of letters does. Give the reference's own grid, as `--ascii-text` writes it, and every frame the ASCII style drew is scored by three terms. **Mean colour** is the pixels' term, as before. **Glyph coverage** reads each cell as the ink of its glyph in the atlas (0 for blank, 1 for the densest printable letter) and takes the earth mover's distance between the two grids' ink mixes, so `+` for `*` is a short move and `.` for `@` a long one. **Glyph layout** is the mean ink difference over 16x16 regions of the frame. The grids don't have to share a cell size: a cell of 9 compares with a cell of 8. Each score is printed with its terms, and in the report `distance` has `metric` (`pixels` or `glyphs`), `terms` (each term's distance and the points it adds; they sum to `score`), the pixel terms, and `glyph`. A frame that draws no glyphs scores as a blank grid. Without `--reference-text`, a render whose ASCII style is on says it is scoring by pixels. On `stylize_props`, with ascii_noir toward the matrix look, a glow sweep moves the two metrics very differently:
+
+```text
+$ flint render examples/stylize_props.scene.toml --look matrix -o ref.png --ascii-text ref.txt
+$ flint render examples/stylize_props.scene.toml --look ascii_noir --sweep ascii.glow=0,1.5 \
+    --reference ref.png -o glow.png
+  [ascii.glow = 0] ...  distance 22.27 by pixels (mean colour 2.07 + histogram 17.65 + layout 2.55)
+  [ascii.glow = 1.5] ...  distance 14.25 by pixels (mean colour 1.50 + histogram 11.31 + layout 1.44)
+$ ... --reference ref.png --reference-text ref.txt
+  [ascii.glow = 0] ...  distance 12.60 by glyphs (mean colour 2.07 + glyph coverage 5.30 + glyph layout 5.22)
+  [ascii.glow = 1.5] ...  distance 12.03 by glyphs (mean colour 1.50 + glyph coverage 5.30 + glyph layout 5.22)
+```
+
+Under glyphs, the ramp and the tone keys are what move the score (`ascii.ramp=detailed` 11.52, `ascii.brightness=0.45` 6.16).
+
 **`--ai-refine`** closes the loop: `flint render scene --look <x> --reference ref.png --ai-refine`. Each round an agent sees the reference, the current render, the look's block, every key it may change (with ranges) and every edit tried so far with its score. It proposes up to `--refine-candidates` (4) candidates in `--sweep` key syntax. Each candidate is checked like a sweep value, then rendered and measured. The best is kept if it lowers the distance by more than 0.05. The loop stops after `--refine-rounds` (4), or after two rounds in a row with no gain, or when the agent has nothing left to propose. It writes:
 
 - `<look>_refined.look.toml` beside `-o` (or `--refine-out`): the kept block, plus a note of what was kept and what it cost;
@@ -1181,6 +1196,10 @@ $ flint render examples/stylize_props.scene.toml --look ascii_noir \
 Toward the `matrix` look's render, with Claude (four calls, $0.115), ascii_noir went 25.66 → 15.09. Claude turned the colour to `tint` and the ramp to `detailed`, then found that `glow` was the strongest lever. It also learned from the log that whitening the tint and turning off the vignette both scored worse:
 
 ![Refining ascii_noir toward the matrix look: reference, start 25.7, then rounds at 25.0, 19.2, 15.2, 15.1](../images/look-refine-noir-to-matrix.png)
+
+That was the pixel metric, and `glow` won because it smeared the sky into a pale band with no letters in it. Rerun on main in November 2026 (start 22.27), the pixel refine kept glow in two of its four rounds. Given `--reference-text`, the same refine scores by glyphs (12.77 → 4.02, four calls, $0.149) and keeps no glow at all. It kept the `detailed` ramp with brightness 0.3 and `tint`, then cell 8 (the reference's own 80 columns), then ink 1.3 with a whiter tint. After round 3 Claude noted that coverage and layout hadn't moved since round 2, "so only a ramp, brightness or contrast change will shift them". The weak term is now mean colour. Over a mostly dark frame it is only about 2 of the 12 points, so the whiter tint it kept reads greyer than the reference's green:
+
+![Refining ascii_noir toward the matrix look by glyphs: reference, start 12.8, then rounds at 5.2, 4.9, 4.0](../images/look-refine-noir-to-matrix-glyphs.png)
 
 ### Choosing cell size and ramp
 

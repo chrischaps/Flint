@@ -146,6 +146,13 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                           main.rs / render_goldens fill RenderArgs::command_line for it)
    #   --report m.json --reference ref.png   (#357: per column luma, near-black/white, edge
    #                          density, ASCII ramp-step shares, #183's distance; `look_measure.rs`)
+   #   --reference-text ref.txt   (#495: the reference's --ascii-text grid; an ASCII frame is then
+   #                          scored by glyphs: mean colour + glyph coverage (earth mover's over cell
+   #                          ink, InkScale = atlas coverage / densest printable letter) + glyph layout
+   #                          (16x16 regions, cells shared by area); look_measure::Reference/InkGrid.
+   #                          Every DistanceReport lists `terms` (points sum to score) and `metric`.
+   #                          The grid reads back ONCE a frame (read_text takes it): read it once
+   #                          and share it, or --report + --ascii-text finds it gone)
    #   --look x --reference ref.png --ai-refine [--ai-provider anthropic|mock --max-cost 0.5
    #                          --refine-rounds 4 --refine-candidates 4 --refine-out f.look.toml]
    #                          (agent proposes sweep-key edits, each rendered + measured, best kept

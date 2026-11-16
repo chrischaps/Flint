@@ -107,7 +107,8 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--sweep-crop <x,y,w,h>` | (none) | Draw each sweep cell at `--width`x`--height` (default 1920x1080) and keep this region 1:1, so point-sized styles show their final glyph size ([Cells at the final scale](../concepts/stylize-passes.md#cells-at-the-final-scale)) |
 | `--sweep-scale <cell\|full>` | `cell` | `full`: draw each sweep cell at the full size and shrink it to 640 wide, so the cell shows the final composition |
 | `--report <file.json>` | (none) | Each column's (or the frame's) measures: mean luminance, near-black/white shares, edge density, the ASCII ramp-step histogram, the distance to `--reference` ([Measuring and refining a look](../concepts/stylize-passes.md#measuring-and-refining-a-look)) |
-| `--reference <png>` | (none) | A target image: each frame or column's distance to it, printed, on the sheet's labels and in the report |
+| `--reference <png>` | (none) | A target image: each frame or column's distance to it, printed with its terms, on the sheet's labels and in the report |
+| `--reference-text <txt>` | (none) | The reference's glyph grid, as `--ascii-text` wrote it: an ASCII frame is then scored by its letters (mean colour, glyph coverage, glyph layout) rather than its pixels, in a sweep, a report and `--ai-refine` (#495; [Measuring and refining a look](../concepts/stylize-passes.md#measuring-and-refining-a-look)) |
 | `--ai-refine` | off | With `--look` and `--reference`: an agent proposes edits, each rendered and measured, kept while the distance falls; writes `<look>_refined.look.toml`, its `.json` log and a sheet of the rounds. `--refine-rounds 4`, `--refine-candidates 4`, `--refine-out`, `--ai-provider anthropic\|mock`, `--ai-model`, `--max-cost` |
 | `--grade-lift <r,g,b>` | `0,0,0` | Color grade lift |
 | `--grade-gamma <r,g,b>` | `1,1,1` | Color grade gamma |
