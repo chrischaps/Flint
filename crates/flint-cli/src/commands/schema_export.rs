@@ -277,22 +277,8 @@ fn type_schema(field_type: &FieldType) -> Map<String, Value> {
         FieldType::Vec2 => numbers(2, 2),
         FieldType::Vec3 => vec3_schema(),
         FieldType::Vec4 => numbers(4, 4),
-        FieldType::Color => json!({
-            "anyOf": [
-                numbers(3, 4),
-                {
-                    "type": "object",
-                    "properties": {
-                        "r": { "type": "number" },
-                        "g": { "type": "number" },
-                        "b": { "type": "number" },
-                        "a": { "type": "number" },
-                    },
-                    "required": ["r", "g", "b"],
-                },
-                { "type": "integer", "minimum": 0, "maximum": 0xFFFFFF },
-            ]
-        }),
+        // [r, g, b] or [r, g, b, a] and nothing else: what the readers take (#804)
+        FieldType::Color => numbers(3, 4),
         FieldType::Transform => json!({
             "type": "object",
             "properties": {

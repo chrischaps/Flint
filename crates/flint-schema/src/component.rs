@@ -114,8 +114,9 @@ pub enum FieldType {
     Vec4,
     Transform,
     /// `[r, g, b]` or `[r, g, b, a]`, what `flint_core::toml_util::toml_color`
-    /// reads. The older `{ r, g, b }` table and `0xRRGGBB` integer still
-    /// validate; no engine reader takes them.
+    /// reads, and nothing else: the older `{ r, g, b }` table and
+    /// `0xRRGGBB` integer are `bad-type`, as no engine reader takes them
+    /// (#804).
     Color,
     /// A TOML table with no fixed shape (one animator layer, say). Validated
     /// only as "is a table"; the component that reads it checks its keys.

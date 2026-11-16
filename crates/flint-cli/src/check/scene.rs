@@ -6,7 +6,7 @@
 //! the disk is.
 
 use super::{Checks, SceneSchemas};
-use flint_asset::{AssetCatalog, ContentStore, ProjectStore};
+use flint_asset::HeldAssets;
 use flint_constraint::{ConstraintEvaluator, BAD_CONSTRAINT};
 use flint_core::diagnostic::{self, codes, Diagnostic, Severity};
 use flint_core::project::{shown, AssetKind, Project};
@@ -95,33 +95,9 @@ fn cannot_load(diagnostics: &[Diagnostic]) -> bool {
 pub struct Memo {
     /// Scene directories whose user styles have been loaded and reported.
     style_dirs: BTreeSet<PathBuf>,
-    /// The asset catalog of each project root.
-    catalogs: BTreeMap<PathBuf, Option<Catalog>>,
-}
-
-/// A project's asset catalog and content store: asked before the files for
-/// a model or a texture, as the player asks.
-struct Catalog {
-    catalog: AssetCatalog,
-    store: ContentStore,
-}
-
-impl Catalog {
-    fn of(project: &Project) -> Option<Self> {
-        let catalog = AssetCatalog::load_from_directory(project.catalog_dir()).ok()?;
-        Some(Self {
-            catalog,
-            store: ContentStore::new(project.store_dir()),
-        })
-    }
-
-    fn holds(&self, name: &str) -> bool {
-        self.catalog
-            .get(name)
-            .and_then(|meta| flint_core::ContentHash::from_prefixed_hex(&meta.hash))
-            .and_then(|hash| self.store.get(&hash))
-            .is_some()
-    }
+    /// The asset catalog of each project root: asked before the files for a
+    /// model or a texture, as the player asks, and as `diagnose` does.
+    catalogs: BTreeMap<PathBuf, Option<HeldAssets>>,
 }
 
 /// What a scene's check found, and the files it reached: the scripts,
@@ -276,8 +252,11 @@ fn assets(
     let catalog = memo
         .catalogs
         .entry(project.root.clone())
-        .or_insert_with(|| Catalog::of(project));
+        .or_insert_with(|| HeldAssets::of(project));
     let in_catalog = |name: &str| catalog.as_ref().is_some_and(|c| c.holds(name));
+    // An asset an `asset_def` of the scene declares is one `flint asset
+    // resolve` makes: no file need be there yet (`diagnose` passes it too)
+    let to_be_made = flint_scene::declared_assets(file);
     // A model or texture name may be a procgen spec's: the player builds it
     let specs: BTreeMap<String, PathBuf> = project
         .list(AssetKind::Specs, scene_dir)
@@ -315,7 +294,7 @@ fn assets(
             let Some(name) = data.get(field).and_then(|v| v.as_str()) else {
                 continue;
             };
-            if name.is_empty() {
+            if name.is_empty() || to_be_made.contains(name) {
                 continue;
             }
             let made = matches!(kind, AssetKind::Models | AssetKind::Textures);

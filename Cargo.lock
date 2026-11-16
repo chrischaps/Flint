@@ -2094,6 +2094,7 @@ dependencies = [
 name = "flint-scene"
 version = "0.1.0"
 dependencies = [
+ "flint-asset",
  "flint-core",
  "flint-ecs",
  "flint-schema",

@@ -69,7 +69,10 @@ use std::sync::{Mutex, OnceLock};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AssetKind {
-    /// Particle effects: `particles/<name>.particles.toml`.
+    /// Particle effects: `particles/<name>.particles.toml`. The particle
+    /// system registers each under the top-level `name` it states (its stem
+    /// when it states none), which is what a scene names
+    /// ([`Project::explain_registered`], #804).
     Particles,
     /// Models: `models/<name>.glb`, then `.gltf`.
     Models,
@@ -83,7 +86,9 @@ pub enum AssetKind {
     Animations,
     /// Sprite-sheet clips: `animations/<name>.sprite.toml`.
     SpriteAnimations,
-    /// Animator sequences: `animations/<name>.sequence.toml`.
+    /// Animator sequences: `animations/<name>.sequence.toml`, each known by
+    /// the top-level `name` it states, as the animation system registers it
+    /// ([`Project::explain_registered`], #804).
     Sequences,
     /// Sounds: a file named from the scene (`audio/hit.ogg`), or in `audio/`.
     Audio,
@@ -163,6 +168,13 @@ pub struct KindInfo {
     /// found by that name whatever it is called on disk, in the same places
     /// and the same order, and a file that states no name is not listed.
     pub named_inside: Option<InnerName>,
+    /// The kind's files are searched and listed by their stem, and the
+    /// loader that takes them all registers each under the name it states
+    /// (a particle effect's or a sequence's top-level `name`, its stem when
+    /// it states none). A scene names one by that registered name, which
+    /// [`Project::explain_registered`] looks for (#804). `None`: a file is
+    /// known by the name it is found by.
+    pub registered_as: Option<InnerName>,
     /// TEMPORARY, for one release (ADR 0114 decision 3, #765): the search
     /// this kind had before the one rule, as the file it would have picked.
     /// `None` once the release has passed, or when the kind never differed.
@@ -183,8 +195,10 @@ type OldRule = fn(name: &str, scene_dir: &Path) -> Option<PathBuf>;
 /// scene in `scene_dir`, where two of one name the first is the one kept.
 type OldList = fn(scene_dir: &Path) -> Vec<PathBuf>;
 
-/// The name a file gives itself, read from its text ([`KindInfo::named_inside`]).
-pub type InnerName = fn(text: &str) -> Option<String>;
+/// The name a file gives itself, read from its text ([`KindInfo::named_inside`]);
+/// `stem` is its file name less the kind's extension, for a kind whose
+/// loader falls back to it.
+pub type InnerName = fn(text: &str, stem: &str) -> Option<String>;
 
 static PARTICLES: KindInfo = KindInfo {
     label: "particles",
@@ -194,6 +208,7 @@ static PARTICLES: KindInfo = KindInfo {
     named_by_file: false,
     deep: false,
     named_inside: None,
+    registered_as: Some(top_level_name),
     old_rule: Some(old_particles),
     old_list: None,
 };
@@ -206,6 +221,7 @@ static MODELS: KindInfo = KindInfo {
     named_by_file: false,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_models),
     old_list: None,
 };
@@ -218,6 +234,7 @@ static TEXTURES: KindInfo = KindInfo {
     named_by_file: true,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_textures),
     old_list: None,
 };
@@ -230,6 +247,7 @@ static SPRITES: KindInfo = KindInfo {
     named_by_file: true,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_sprites),
     old_list: None,
 };
@@ -242,6 +260,7 @@ static ANIMATIONS: KindInfo = KindInfo {
     named_by_file: false,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_animations),
     old_list: Some(old_animation_list),
 };
@@ -254,6 +273,7 @@ static SPRITE_ANIMATIONS: KindInfo = KindInfo {
     named_by_file: false,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_sprite_animations),
     old_list: Some(old_sprite_animation_list),
 };
@@ -266,6 +286,7 @@ static SEQUENCES: KindInfo = KindInfo {
     named_by_file: false,
     deep: false,
     named_inside: None,
+    registered_as: Some(top_level_name),
     old_rule: Some(old_sequences),
     old_list: Some(old_sequence_list),
 };
@@ -278,6 +299,7 @@ static AUDIO: KindInfo = KindInfo {
     named_by_file: true,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_audio),
     old_list: Some(old_audio_list),
 };
@@ -290,6 +312,7 @@ static SCRIPTS: KindInfo = KindInfo {
     named_by_file: true,
     deep: true,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_scripts),
     old_list: None,
 };
@@ -302,6 +325,7 @@ static SPECS: KindInfo = KindInfo {
     named_by_file: false,
     deep: true,
     named_inside: Some(spec_name),
+    registered_as: None,
     old_rule: Some(old_specs),
     old_list: Some(old_spec_list),
 };
@@ -314,6 +338,7 @@ static PREFABS: KindInfo = KindInfo {
     named_by_file: false,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_prefabs),
     old_list: None,
 };
@@ -326,6 +351,7 @@ static WOOZE_PRESETS: KindInfo = KindInfo {
     named_by_file: false,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_wooze_presets),
     old_list: None,
 };
@@ -356,6 +382,7 @@ static FILES: KindInfo = KindInfo {
     named_by_file: true,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_from_scene),
     old_list: None,
 };
@@ -377,6 +404,7 @@ static PARTICLE_TEXTURES: KindInfo = KindInfo {
     named_by_file: true,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_particle_textures),
     old_list: None,
 };
@@ -389,6 +417,7 @@ static SCENES: KindInfo = KindInfo {
     named_by_file: true,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_scenes),
     old_list: None,
 };
@@ -401,6 +430,7 @@ static PALETTES: KindInfo = KindInfo {
     named_by_file: false,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_palettes),
     old_list: None,
 };
@@ -413,6 +443,7 @@ static GLYPH_SETS: KindInfo = KindInfo {
     named_by_file: false,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_glyph_sets),
     old_list: None,
 };
@@ -425,6 +456,7 @@ static FONTS: KindInfo = KindInfo {
     named_by_file: false,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_fonts),
     old_list: None,
 };
@@ -439,6 +471,7 @@ static FONT_FACES: KindInfo = KindInfo {
     named_by_file: true,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_font_faces),
     old_list: Some(old_font_face_list),
 };
@@ -451,6 +484,7 @@ static LOOKS: KindInfo = KindInfo {
     named_by_file: false,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_looks),
     old_list: None,
 };
@@ -463,6 +497,7 @@ static PAPERS: KindInfo = KindInfo {
     named_by_file: false,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_papers),
     old_list: None,
 };
@@ -475,6 +510,7 @@ static STROKES: KindInfo = KindInfo {
     named_by_file: false,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_strokes),
     old_list: None,
 };
@@ -487,6 +523,7 @@ static STYLES: KindInfo = KindInfo {
     named_by_file: false,
     deep: false,
     named_inside: None,
+    registered_as: None,
     old_rule: Some(old_styles),
     old_list: Some(old_style_list),
 };
@@ -652,9 +689,24 @@ fn old_scenes(name: &str, scene_dir: &Path) -> Option<PathBuf> {
 
 /// A procgen spec's own name: `[meta] name`, which is what a scene's
 /// `model.asset` or `texture` asks for.
-fn spec_name(text: &str) -> Option<String> {
+fn spec_name(text: &str, _stem: &str) -> Option<String> {
     let doc = text.parse::<toml::Table>().ok()?;
     Some(doc.get("meta")?.get("name")?.as_str()?.to_string())
+}
+
+/// The name a particle effect or an animation sequence is registered under:
+/// its top-level `name`, which is what a `particle_effect.effect` or an
+/// `animator.sequence` asks for (#804). With none (or a file that is not
+/// TOML) the stem, as `flint_particles::load_effect_from_file` falls back to
+/// it; a sequence with no name is then taken under its stem, and its loader
+/// says what is wrong with it.
+fn top_level_name(text: &str, stem: &str) -> Option<String> {
+    let named = text
+        .parse::<toml::Table>()
+        .ok()
+        .and_then(|doc| Some(doc.get("name")?.as_str()?.to_string()))
+        .filter(|name| !name.is_empty());
+    Some(named.unwrap_or_else(|| stem.to_string()))
 }
 
 /// TEMPORARY. The first of `<folder>/` beside the scene or one level up
@@ -989,10 +1041,22 @@ impl KindInfo {
     pub fn name_at(&self, file: &Path) -> Option<String> {
         match self.named_inside {
             Some(read) => {
-                self.name_of(file)?;
-                read(&vfs::read_to_string(file).ok()?)
+                let stem = self.name_of(file)?;
+                read(&vfs::read_to_string(file).ok()?, &stem)
             }
             None => self.name_of(file),
+        }
+    }
+
+    /// The name the kind's loader registers `file` under
+    /// ([`registered_as`](Self::registered_as)), else [`name_at`](Self::name_at).
+    pub fn registered_name(&self, file: &Path) -> Option<String> {
+        match self.registered_as {
+            Some(read) => {
+                let stem = self.name_of(file)?;
+                read(&vfs::read_to_string(file).ok()?, &stem)
+            }
+            None => self.name_at(file),
         }
     }
 }
@@ -1172,6 +1236,37 @@ impl Project {
             found,
             tried,
             order_change,
+        }
+    }
+
+    /// [`explain`](Self::explain) for what a scene names: the file the kind's
+    /// loader registers as `name`. For a kind
+    /// [registered as](KindInfo::registered_as) the name its files state
+    /// (particle effects, sequences; #804), that is the nearest visible file
+    /// stating it, as the loader keeps the nearest of a name, and `tried` is
+    /// the folders read (all of them on a miss); a name written as a path
+    /// is a file, found as `explain` finds it. Any other kind: `explain`.
+    pub fn explain_registered(&self, kind: AssetKind, name: &str, scene_dir: &Path) -> Resolution {
+        let info = kind.info();
+        if info.registered_as.is_none() || as_written(name) != Written::Name {
+            return self.explain(kind, name, scene_dir);
+        }
+        let found = self
+            .visible(kind, scene_dir)
+            .into_iter()
+            .find(|listed| info.registered_name(&listed.path).as_deref() == Some(name))
+            .map(|listed| listed.path);
+        let mut tried = self.places(kind, scene_dir, false);
+        if let Some(found) = &found {
+            let before = tried.iter().position(|dir| found.starts_with(dir));
+            tried.truncate(before.unwrap_or(0));
+        }
+        Resolution {
+            kind,
+            name: name.to_string(),
+            found,
+            tried,
+            order_change: None,
         }
     }
 
