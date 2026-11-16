@@ -435,3 +435,94 @@ fn a_capture_styles_tweens_and_reads_as_the_player_does() {
     assert!(run.skipped().is_empty(), "{:?}", run.skipped());
     assert!(run.notes().is_empty(), "{:?}", run.notes());
 }
+
+/// What `run` wrote to the log, every level (#1013).
+fn logged(run: impl FnOnce()) -> String {
+    use std::sync::{Arc, Mutex};
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let log = Captured::default();
+    let writer = log.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .finish();
+    tracing::subscriber::with_default(subscriber, run);
+    let text = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+    text
+}
+
+/// A script's `log`, `log_warn` and `log_error` each print once in a
+/// capture, as in the player (#1013): asking a command's name used to apply
+/// it to a probe host, whose default `log` wrote the line a second time.
+#[test]
+fn a_script_log_line_is_written_once_in_a_capture() {
+    let (dir, scene) = scene_folder("log_once", &[]);
+    let mut run = load(&scene, FlintWorld::new());
+    let said = [
+        (LogLevel::Info, "said once at info"),
+        (LogLevel::Warn, "said once at warn"),
+        (LogLevel::Error, "said once at error"),
+    ];
+    let text = logged(|| {
+        run.dispatch_for_test(
+            said.iter()
+                .map(|(level, message)| ScriptCommand::Log {
+                    level: level.clone(),
+                    message: (*message).into(),
+                })
+                .collect(),
+        );
+    });
+    let _ = std::fs::remove_dir_all(dir);
+    for (_, message) in said {
+        assert_eq!(
+            text.matches(message).count(),
+            1,
+            "{message:?} should be one line of the log:\n{text}"
+        );
+    }
+}
+
+/// The name a capture's refusal looks a command up by is the name its
+/// `ScriptHost` default reports (`host::command_name`, #1013), for every
+/// variant: a table, so that asking carries nothing out.
+#[test]
+fn the_name_table_is_what_each_default_reports() {
+    /// Records what a default calls unsupported, and says nothing for
+    /// `log`, the one default that does something.
+    #[derive(Default)]
+    struct Probe(Option<&'static str>);
+    impl ScriptHost for Probe {
+        fn unsupported(&mut self, command: &'static str) {
+            self.0 = Some(command);
+        }
+        fn log(&mut self, _level: LogLevel, _message: String) {}
+    }
+    let mut world = FlintWorld::new();
+    let entity = world.spawn("barrel").unwrap();
+    let mut mismatched = Vec::new();
+    for cmd in one_of_each(entity) {
+        let mut probe = Probe::default();
+        flint_script::host::apply(&mut probe, cmd.clone());
+        let table = flint_script::host::command_name(&cmd);
+        if table != probe.0 {
+            mismatched.push(format!(
+                "{}: the table says {table:?}, the default {:?}",
+                variant(&cmd),
+                probe.0
+            ));
+        }
+    }
+    assert!(mismatched.is_empty(), "{mismatched:#?}");
+}
