@@ -800,8 +800,9 @@ fn fs_main(input: VertexOutput, @builtin(front_facing) front: bool) -> @location
         let cone = spot_cone_factor(-light_vec, light.direction, light.inner_angle, light.outer_angle);
         let radiance = light.color * light.intensity * atten * cone;
         var contribution = evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness_l, n_dot_v, wrap, oren);
-        // The one spot whose shadow map is drawn (#504)
-        if (light.shadow > 0.5) {
+        // The one spot whose shadow map is drawn (#504), where it gives
+        // light: outside its cone and range the filter would darken nothing
+        if (light.shadow > 0.5 && atten * cone > 0.0) {
             contribution = contribution * spot_shadow_factor(in.world_pos, normalize(in.normal),
                 light.position, light.direction, light.source_radius, in.clip_position.xy);
         }
