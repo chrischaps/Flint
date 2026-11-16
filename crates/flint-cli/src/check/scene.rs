@@ -127,11 +127,14 @@ impl Catalog {
 pub struct SceneFound {
     pub diagnostics: Vec<Diagnostic>,
     pub reached: Vec<PathBuf>,
+    /// How many the project's `[project.diagnostics] allow` took out (#795).
+    pub allowed: usize,
 }
 
 /// Everything `checks` asks of the scene at `scene`. Never stops at the
 /// first problem; a scene that can't be read at all is the one case with
-/// nothing more to ask.
+/// nothing more to ask. What the scene's project allows is left out of the
+/// list, and counted.
 pub fn check(
     scene: &Path,
     schemas: &SceneSchemas,
@@ -139,14 +142,28 @@ pub fn check(
     strict: bool,
     memo: &mut Memo,
 ) -> SceneFound {
-    let mut out = SceneFound::default();
     let project = Project::for_scene(scene);
+    let mut out = check_all(scene, &project, schemas, checks, strict, memo);
+    out.allowed = diagnostic::drop_allowed(&mut out.diagnostics, &project.allow);
+    out
+}
+
+/// [`check`] with nothing allowed.
+fn check_all(
+    scene: &Path,
+    project: &Project,
+    schemas: &SceneSchemas,
+    checks: Checks,
+    strict: bool,
+    memo: &mut Memo,
+) -> SceneFound {
+    let mut out = SceneFound::default();
     let scene_dir = scene
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
 
-    let mut found = flint_scene::diagnose(scene, &schemas.registry, &project);
+    let mut found = flint_scene::diagnose_all(scene, &schemas.registry, project);
     if strict {
         diagnostic::promote_strict(&mut found);
     }
@@ -207,7 +224,7 @@ pub fn check(
         });
     }
     if checks.files {
-        assets(scene, scene_dir, &file, &project, memo, &mut out);
+        assets(scene, scene_dir, &file, project, memo, &mut out);
     }
     if checks.styles {
         styles(scene, scene_dir, &file, &text, memo, &mut out.diagnostics);

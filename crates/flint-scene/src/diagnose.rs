@@ -42,10 +42,24 @@ const ASSET_DEF: &str = "asset_def";
 /// archetype declared in any of them is known. `project` finds the prefabs
 /// and the assets, and its `[project] strict = true` makes an unknown field
 /// an error, as [`diagnostic::promote_strict`] does for
-/// `flint validate --strict`.
+/// `flint validate --strict`. What its `[project.diagnostics] allow` names
+/// is left out ([`diagnose_all`] keeps it, for a host that counts it).
 ///
 /// Entities are reported in name order, so two runs print the same list.
 pub fn diagnose(
+    scene_file: &Path,
+    registry: &SchemaRegistry,
+    project: &Project,
+) -> Vec<Diagnostic> {
+    let mut found = diagnose_all(scene_file, registry, project);
+    diagnostic::drop_allowed(&mut found, &project.allow);
+    found
+}
+
+/// [`diagnose`] with nothing left out for the project's allow list: what
+/// `flint validate` and `flint check` run, applying the list (and counting
+/// what it took) once every check of theirs has spoken.
+pub fn diagnose_all(
     scene_file: &Path,
     registry: &SchemaRegistry,
     project: &Project,
@@ -1046,12 +1060,41 @@ intensity = 1.0
     /// hint says what a light is.
     #[test]
     fn a_stale_light_table_says_what_a_light_is() {
-        let found =
-            found_in("[scene]\nname = \"s\"\n[entities.sun.directional_light]\nintensity = 2.0\n");
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].code, codes::UNKNOWN_COMPONENT);
-        let hint = found[0].hint.as_deref().unwrap();
-        assert!(hint.contains("type = \"directional\""), "{hint}");
+        for kind in ["directional", "point", "spot"] {
+            let found = found_in(&format!(
+                "[scene]\nname = \"s\"\n[entities.sun.{kind}_light]\nintensity = 2.0\n"
+            ));
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].code, codes::UNKNOWN_COMPONENT);
+            let hint = found[0].hint.as_deref().unwrap();
+            assert!(hint.contains("a `light` component"), "{hint}");
+            assert!(hint.contains(&format!("type = \"{kind}\"")), "{hint}");
+        }
+    }
+
+    /// `[project.diagnostics] allow` (#795): what it names is left out of
+    /// `diagnose` and of a load's list, kept by `diagnose_all`, and nothing
+    /// else is touched.
+    #[test]
+    fn the_manifest_allows_a_code_at_a_field() {
+        let scene = "[scene]\nname = \"s\"\n[entities.sun.light]\nintensty = 3.0\nwetness = 1.0\n";
+        let manifest = "[project.diagnostics]\nallow = [\"unknown-field:light.wetness\"]\n";
+        let files = [("scenes/a.scene.toml", scene), ("flint.toml", manifest)];
+        let (all, allowed, loaded) = with_scene(&files, |registry, project| {
+            let path = Path::new("scenes/a.scene.toml");
+            let loaded = crate::load_scene_diagnosed(path, registry).unwrap().2;
+            (
+                diagnose_all(path, registry, project),
+                diagnose(path, registry, project),
+                loaded,
+            )
+        });
+        let fields = |list: &[Diagnostic]| -> Vec<String> {
+            list.iter().filter_map(|d| d.field.clone()).collect()
+        };
+        assert_eq!(fields(&all), ["intensty", "wetness"]);
+        assert_eq!(fields(&allowed), ["intensty"]);
+        assert_eq!(fields(&loaded), ["intensty"]);
     }
 
     #[test]

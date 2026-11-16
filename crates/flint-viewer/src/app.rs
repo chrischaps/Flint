@@ -3,8 +3,8 @@
 
 use crate::panels::transform_gizmo::apply_gizmo_delta;
 use crate::panels::{
-    CameraView, EntityInspector, GizmoAction, GizmoMode, RenderStats, SceneTree, SplinePanelAction,
-    TransformGizmo, ViewGizmo,
+    CameraView, DiagnosticsPanel, EntityInspector, GizmoAction, GizmoMode, RenderStats, SceneTree,
+    SplinePanelAction, TransformGizmo, ViewGizmo,
 };
 use crate::picking::{build_pick_targets, pick_entity};
 use crate::spline_editor::{DragMode, SplineEditor, SplineEditorConfig};
@@ -354,6 +354,9 @@ pub struct ViewerApp {
     violation_count: usize,
     violation_messages: Vec<String>,
 
+    /// The scene's diagnostics, as `flint validate` lists them (#795)
+    diagnostics: DiagnosticsPanel,
+
     // Editor mode (None = standard viewer)
     editor: Option<SplineEditor>,
 
@@ -624,6 +627,7 @@ impl ViewerApp {
             last_frame_time: Instant::now(),
             violation_count: 0,
             violation_messages: Vec::new(),
+            diagnostics: DiagnosticsPanel::new(),
             editor: None,
             undo_stack: UndoStack::new(),
             dirty: false,
@@ -692,6 +696,7 @@ impl ViewerApp {
             last_frame_time: Instant::now(),
             violation_count: 0,
             violation_messages: Vec::new(),
+            diagnostics: DiagnosticsPanel::new(),
             editor: Some(editor),
             undo_stack: UndoStack::new(),
             dirty: false,
@@ -935,8 +940,9 @@ impl ViewerApp {
             );
         }
 
-        // Run initial constraint evaluation
+        // Run initial constraint evaluation, and say what is wrong with the scene
         self.update_constraints();
+        self.update_diagnostics();
 
         // Build initial scene tree
         {
@@ -950,6 +956,16 @@ impl ViewerApp {
         self.egui_renderer = Some(egui_renderer);
 
         Ok(())
+    }
+
+    /// The diagnostics panel for the scene as the file now stands. A viewer
+    /// given a world and no file (`run_with_world`) has nothing to diagnose.
+    fn update_diagnostics(&mut self) {
+        let state = self.state.lock().unwrap();
+        let scene = Path::new(&state.scene_path);
+        if flint_core::vfs::is_file(scene) {
+            self.diagnostics.refresh(scene, &state.registry);
+        }
     }
 
     fn update_constraints(&mut self) {
@@ -1558,6 +1574,7 @@ impl ViewerApp {
         let render_stats = &self.render_stats;
         let violation_count = self.violation_count;
         let violation_messages = &self.violation_messages;
+        let diagnostics = &self.diagnostics;
         let state = &self.state;
         let view_gizmo = &mut self.view_gizmo;
         let transform_gizmo = &mut self.transform_gizmo;
@@ -1638,12 +1655,15 @@ impl ViewerApp {
                         }
                     });
 
-                // Bottom panel: stats + constraint violations + mode indicator + undo info
+                // Bottom panel: the scene's diagnostics + constraint
+                // violations + mode indicator + undo info
                 egui::Panel::bottom("status_panel")
-                    .default_size(100.0)
+                    .default_size(150.0)
                     .resizable(true)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
+                            diagnostics.summary_ui(ui);
+                            ui.separator();
                             if violation_count == 0 {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(100, 200, 100),
@@ -1700,6 +1720,14 @@ impl ViewerApp {
                                 }
                             }
                         });
+
+                        if !diagnostics.diagnostics().is_empty() {
+                            ui.separator();
+                            if let Some(name) = diagnostics.ui(ui, 110.0) {
+                                let id = state.lock().unwrap().world.get_id(&name);
+                                scene_tree.select(id);
+                            }
+                        }
 
                         if !violation_messages.is_empty() {
                             ui.separator();
@@ -2434,6 +2462,7 @@ impl ViewerApp {
                         self.scene_tree.update(&state.world);
                     }
                     self.update_constraints();
+                    self.update_diagnostics();
 
                     // External reload clears undo and dirty state
                     self.undo_stack.clear();
@@ -2449,6 +2478,9 @@ impl ViewerApp {
                 }
                 Err(e) => {
                     tracing::error!("Failed to reload scene: {:?}", e);
+                    // The last world stays on screen; the panel says why
+                    // the file no longer loads
+                    self.update_diagnostics();
                 }
             }
         }

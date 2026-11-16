@@ -161,10 +161,11 @@ scenes/hall.scene.toml: 4 errors, 1 warning
       hint: did you mean `position`?
 ```
 
-The same pass runs in three places:
+The same pass runs in four places:
 
 - **`flint check [dir|scene]`** runs it over every scene of a project, with the checks of the project around the scenes (assets, files, styles, constraints), and exits 1 if any diagnostic is an error. See [The `check` Command](../cli-reference/overview.md#the-check-command).
 - **`flint validate <scene>`** prints the whole list for one scene, errors first, and exits 1 if any is an error. `--format json` puts the list in a `diagnostics` array (`severity`, `code`, `file`, `entity`, `component`, `field`, `message`, `hint`, `tried`) beside the constraint `violations`. It needs no constraint files.
+- **`flint edit <scene>`** lists it in the status panel at the bottom of the window, errors first, with each hint under its row, and lists it again on every hot reload. A row that names an entity is a link: clicking it selects the entity in the scene tree and the viewport. When an edit leaves the file unloadable (no longer TOML, say), the last good scene stays on screen and the panel shows the `toml-parse` error with its line. The panel is `flint validate`'s list, so `[project] strict` and the project's [allowed codes](#allowing-a-code) apply to it as they do there.
 - **Every scene load** (`flint play`, `flint-player`, `flint render`, the viewer, a scene transition, a `load_chunk`) logs one summary line and the first five, as warnings, and carries on. A scene with mistakes still plays; `flint validate` is the gate to run before playing.
 
 ```
@@ -268,7 +269,31 @@ flint validate scenes/hall.scene.toml --strict     # for one run
 strict = true
 ```
 
-To silence the warning for a field that is meant to be there, declare it: put your own copy of the component file in the game's schema directory with the engine's fields and yours. A later directory replaces a component of the same name whole, so the copy must carry every field.
+`strict` is a gate for the commands that pass or fail a scene: `flint validate`, `flint check` and the viewer's panel apply it. A **load does not**: `flint play`, `flint-player`, `flint render` and a scene transition log an unknown field as the warning it is raised as, `strict` or not, since a load never fails on what `strict` promotes and the scene plays the same either way.
+
+To silence the warning for a field that is meant to be there, declare it: put your own copy of the component file in the game's schema directory with the engine's fields and yours. A later directory replaces a component of the same name whole, so the copy must carry every field. Or allow it, below.
+
+### Allowing a code
+
+A project can accept a diagnostic by its code, everywhere or at one place, in `flint.toml`:
+
+```toml
+[project.diagnostics]
+allow = [
+  "unknown-field:material.wetness",   # one field of one component (and what is nested under it)
+  "unknown-field:weather",            # every unknown field of the `weather` component or scene table
+  "unknown-table",                    # the code everywhere
+]
+```
+
+An entry is a code from the table above, then optionally `:` and a place: a component or scene-table name, then `.` and a field's dotted path. A place covers what is nested under it, so `environment.fog` allows `environment.fog.colour`, and `material.wet` does not allow `material.wetness`. An allowed diagnostic is left out of what `flint validate`, `flint check`, the viewer's panel and every load's summary report, and each says how many it left out:
+
+```
+$ flint validate scenes/road.scene.toml
+scenes/road.scene.toml: 1 warning (2 allowed by flint.toml)
+```
+
+With `--format json` (and `flint check --json`) the count is `allowed`. An allowed error no longer fails the scene. A code that is none of the table's is refused when the manifest is read, with the nearest code (`project.diagnostics.allow[0]`: `unknown-feild` is no diagnostic code (did you mean `unknown-field`?)), and so are the codes that mean the file did not load at all (`toml-parse`, `file-unreadable`, `scene-load`, `bad-manifest`, `bad-prefab`), since nothing behind them was checked.
 
 ### A component only scripts read
 
