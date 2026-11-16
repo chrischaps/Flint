@@ -7,7 +7,9 @@
 //! every edit tried so far with the distance it scored. It proposes a few
 //! candidate edits in `--sweep` key syntax (`ascii.brightness=0.25`,
 //! `post.exposure=1.3`). Each candidate is rendered and measured against the
-//! reference ([`look_measure::distance_to`], #183's metric); the best one is
+//! reference ([`look_measure::Reference::distance`]: #183's metric, or with
+//! the reference's glyph grid, #495's, which reads an ASCII frame as letters
+//! of some ink rather than as pixel texture); the best one is
 //! kept if it moves the distance down, and the loop stops when no candidate
 //! does, or after `--refine-rounds`. What's kept is written as a new
 //! `.look.toml`, the run as a JSON log beside it, and the rounds as a
@@ -20,7 +22,7 @@
 //! coordinate search, the same loop with a simpler proposer.
 
 use super::look::{self, Look};
-use super::look_measure::{self, DistanceReport, ImageMeasures};
+use super::look_measure::{self, DistanceReport, ImageMeasures, InkGrid, Metric, Reference};
 use super::sweep::{parse_value, Sweep, SweepKey};
 use anyhow::{bail, Context, Result};
 use flint_procgen_ai::cost::{CostLedger, CostMeter};
@@ -127,10 +129,14 @@ pub struct Ask<'a> {
     /// The current (best so far) `[post_process]`.
     pub current: &'a toml::Table,
     pub current_png: &'a [u8],
-    pub current_distance: f64,
+    pub current_distance: &'a DistanceReport,
     pub current_measures: &'a ImageMeasures,
+    /// The current frame's glyph grid, when the ASCII style drew.
+    pub current_ink: Option<&'a InkGrid>,
     pub reference_png: &'a [u8],
     pub reference_measures: &'a ImageMeasures,
+    /// The reference's glyph grid, when it was given (`--reference-text`).
+    pub reference_ink: Option<&'a InkGrid>,
     pub history: &'a [Tried],
     /// How many candidates to propose.
     pub want: usize,
@@ -234,9 +240,10 @@ pub struct ClaudeLooks {
 const SYSTEM: &str = "You tune post-processing looks for Flint, a 3D engine. A look is a \
 [post_process] block (TOML) merged over a scene's own. You are shown a REFERENCE image (the \
 target), the CURRENT render of the scene under the look, the look's block, the keys you may \
-change with their ranges, image measures of both pictures, and every edit tried so far with the \
-distance it scored to the reference (a score out of 100, lower is closer: mean colour, a \
-luminance histogram and a 16x16 luminance layout). The scene, camera and models never change: \
+change with their ranges, measures of both pictures, and every edit tried so far with the \
+distance it scored to the reference: a score out of 100, lower is closer, the sum of the terms \
+listed beside it (the message says what each term measures). The scene, camera and models never \
+change: \
 only the look does, so aim at tone, colour, contrast, cell size, line work and grain, not \
 content. Propose candidate edits that should move the CURRENT picture toward the REFERENCE. \
 Each candidate is one to three edits applied together over the current block. Keys: \
@@ -374,12 +381,30 @@ pub fn key_catalogue(current: &toml::Table) -> String {
     out
 }
 
+/// What the score's terms measure, for the agent.
+fn metric_text(metric: Metric) -> &'static str {
+    match metric {
+        Metric::Pixels => {
+            "The distance reads both pictures as pixels: mean colour, a 16-bin luminance \
+             histogram and a 16x16 luminance layout."
+        }
+        Metric::Glyphs => {
+            "Both pictures are ASCII glyph grids, so the distance reads them as glyphs, each \
+             cell the ink of the letter it shows (0 blank, 1 the densest letter): mean colour \
+             (pixels), glyph coverage (how far the mix of blank, light and dense letters is \
+             from the reference's) and glyph layout (where the dense letters sit, over 16x16 \
+             regions). A halo or blur that smears ink into the ground doesn't change a cell's \
+             letter; the ramp, cell size, brightness, contrast and tone keys do."
+        }
+    }
+}
+
 fn ask_text(ask: &Ask) -> String {
     let block = toml::to_string(ask.current).unwrap_or_default();
     let mut history = String::new();
     for t in ask.history {
         let score = match (&t.distance, &t.refused) {
-            (Some(d), _) => format!("{:.2}", d.score),
+            (Some(d), _) => format!("{:.2} ({})", d.score, d.terms_line()),
             (None, Some(why)) => format!("refused: {why}"),
             _ => "-".into(),
         };
@@ -395,9 +420,22 @@ fn ask_text(ask: &Ask) -> String {
         history.push_str("  (none yet)\n");
     }
     let m = |x: &ImageMeasures| look_measure::summary(x, None);
+    let glyphs = match (ask.reference_ink, ask.current_ink) {
+        (None, None) => String::new(),
+        (r, c) => {
+            let line =
+                |g: Option<&InkGrid>| g.map_or("no glyph grid".to_string(), InkGrid::summary);
+            format!(
+                "CURRENT glyphs:     {}\nREFERENCE glyphs:   {}\n",
+                line(c),
+                line(r)
+            )
+        }
+    };
     format!(
         "Round {round}. Look `{name}`: {desc}\nIts notes: {notes}\nIts suggested sweeps: {tune}\n\n\
-         CURRENT distance to the reference: {d:.2}\nCURRENT measures:   {cm}\nREFERENCE measures: {rm}\n\n\
+         {metric}\nCURRENT distance to the reference: {d:.2} = {terms}\n\
+         CURRENT measures:   {cm}\nREFERENCE measures: {rm}\n{glyphs}\n\
          The look's [post_process] block now:\n```toml\n{block}```\n\nKeys you may change:\n{keys}\n\
          Tried so far:\n{history}\nPropose up to {want} candidates.",
         round = ask.round,
@@ -405,7 +443,9 @@ fn ask_text(ask: &Ask) -> String {
         desc = ask.look.description,
         notes = ask.look.notes.trim(),
         tune = ask.look.tune.join("; "),
-        d = ask.current_distance,
+        metric = metric_text(ask.current_distance.metric),
+        d = ask.current_distance.score,
+        terms = ask.current_distance.terms_line(),
         cm = m(ask.current_measures),
         rm = m(ask.reference_measures),
         keys = key_catalogue(ask.current),
@@ -419,7 +459,7 @@ fn ask_text(ask: &Ask) -> String {
 pub struct Options {
     pub look: Look,
     pub reference_path: String,
-    pub reference: RgbImage,
+    pub reference: Reference,
     pub rounds: u32,
     pub candidates: usize,
 }
@@ -431,6 +471,8 @@ pub struct RefineLog {
     pub look_source: String,
     pub reference: String,
     pub agent: String,
+    /// Which terms the scores are made of.
+    pub metric: Metric,
     pub start: DistanceReport,
     pub end: DistanceReport,
     pub rounds_run: u32,
@@ -458,13 +500,31 @@ fn rgba(img: &RgbImage) -> RgbaImage {
     image::DynamicImage::ImageRgb8(img.clone()).to_rgba8()
 }
 
+/// One candidate drawn: its picture, and its glyph grid when the ASCII
+/// style drew (read only when the reference has one).
+pub struct Frame {
+    pub image: RgbaImage,
+    pub ink: Option<InkGrid>,
+}
+
+impl From<RgbaImage> for Frame {
+    fn from(image: RgbaImage) -> Self {
+        Self { image, ink: None }
+    }
+}
+
+/// A candidate's score line: the score, then its terms in points.
+fn scored(d: &DistanceReport) -> String {
+    format!("{:.2}  ({})", d.score, d.terms_line())
+}
+
 /// Run the loop. `draw` renders a look's `[post_process]` block over the
 /// scene; `meter` is read for the log.
 pub fn run(
     opts: Options,
     agent: &dyn LookAgent,
     meter: &CostMeter,
-    draw: &mut dyn FnMut(&toml::Table) -> Result<RgbaImage>,
+    draw: &mut dyn FnMut(&toml::Table) -> Result<Frame>,
 ) -> Result<RefineLog> {
     let Options {
         look,
@@ -473,26 +533,31 @@ pub fn run(
         rounds,
         candidates,
     } = opts;
-    let reference_rgba = rgba(&reference);
+    let reference_rgba = rgba(&reference.image);
     let reference_png = png(&reference_rgba)?;
     let reference_measures = look_measure::measure(&reference_rgba);
 
     let mut best = look.post_process.clone();
-    let mut best_img = draw(&best)?;
-    let mut best_d = look_measure::distance_to(&reference, &best_img);
-    let start = DistanceReport::from(best_d);
+    let Frame {
+        image: mut best_img,
+        ink: mut best_ink,
+    } = draw(&best)?;
+    let mut best_d = reference.distance(&best_img, best_ink.as_ref());
+    let start = best_d.clone();
     println!(
-        "Refine {} toward {reference_path} with {}: start {:.2}",
+        "Refine {} toward {reference_path} with {}, by {}: start {}",
         look.name,
         agent.name(),
-        best_d.score
+        start.metric.name(),
+        scored(&start)
     );
     let mut log = RefineLog {
         look: look.name.clone(),
         look_source: look.source.clone(),
         reference: reference_path.clone(),
         agent: agent.name(),
-        start,
+        metric: start.metric,
+        start: start.clone(),
         end: start,
         rounds_run: 0,
         stopped: format!("ran all {rounds} rounds"),
@@ -513,10 +578,12 @@ pub fn run(
             look: &look,
             current: &best,
             current_png: &best_png,
-            current_distance: best_d.score,
+            current_distance: &best_d,
             current_measures: &best_measures,
+            current_ink: best_ink.as_ref(),
             reference_png: &reference_png,
             reference_measures: &reference_measures,
+            reference_ink: reference.ink.as_ref(),
             history: &log.tried,
             want: candidates,
         })?;
@@ -527,7 +594,7 @@ pub fn run(
             break;
         }
         let first = log.tried.len();
-        let mut winner: Option<(usize, toml::Table, RgbaImage, flint_procgen_ai::Distance)> = None;
+        let mut winner: Option<(usize, toml::Table, Frame, DistanceReport)> = None;
         for candidate in proposed.into_iter().take(candidates) {
             let mut table = best.clone();
             let refused = candidate
@@ -546,24 +613,24 @@ pub fn run(
                 });
                 continue;
             }
-            let img = draw(&table)?;
-            let d = look_measure::distance_to(&reference, &img);
-            println!("  {:<40} {:.2}", candidate.label(), d.score);
+            let frame = draw(&table)?;
+            let d = reference.distance(&frame.image, frame.ink.as_ref());
+            println!("  {:<40} {}", candidate.label(), scored(&d));
             let index = log.tried.len();
             log.tried.push(Tried {
                 round,
                 candidate,
-                distance: Some(d.into()),
+                distance: Some(d.clone()),
                 refused: None,
-                image: Some(look_measure::measure(&img)),
+                image: Some(look_measure::measure(&frame.image)),
                 kept: false,
             });
             if winner.as_ref().is_none_or(|w| d.score < w.3.score) {
-                winner = Some((index, table, img, d));
+                winner = Some((index, table, frame, d));
             }
         }
         match winner {
-            Some((index, table, img, d)) if d.score < best_d.score - MIN_GAIN => {
+            Some((index, table, frame, d)) if d.score < best_d.score - MIN_GAIN => {
                 log.tried[index].kept = true;
                 log.kept.extend(log.tried[index].candidate.edits.clone());
                 println!(
@@ -573,9 +640,10 @@ pub fn run(
                     d.score
                 );
                 log.frames
-                    .push((format!("round {round} {:.1}", d.score), img.clone()));
+                    .push((format!("round {round} {:.1}", d.score), frame.image.clone()));
                 best = table;
-                best_img = img;
+                best_img = frame.image;
+                best_ink = frame.ink;
                 best_d = d;
                 misses = 0;
             }
@@ -595,7 +663,7 @@ pub fn run(
             }
         }
     }
-    log.end = best_d.into();
+    log.end = best_d;
     log.calls = meter.calls();
     log.cost_usd = meter.spent();
     log.post_process = best;
@@ -753,6 +821,8 @@ mod tests {
     fn the_walker_skips_current_and_tried_values() {
         let look = noir();
         let m = look_measure::measure(&RgbaImage::new(1, 1));
+        let flat = RgbImage::new(1, 1);
+        let d = DistanceReport::from(flint_procgen_ai::measure::distance_rgb(&flat, &flat));
         let ask = |history: &[Tried]| {
             TuneWalker
                 .propose(&Ask {
@@ -760,10 +830,12 @@ mod tests {
                     look: &look,
                     current: &look.post_process,
                     current_png: &[],
-                    current_distance: 0.0,
+                    current_distance: &d,
                     current_measures: &m,
+                    current_ink: None,
                     reference_png: &[],
                     reference_measures: &m,
+                    reference_ink: None,
                     history,
                     want: 3,
                 })
@@ -799,6 +871,68 @@ mod tests {
         );
     }
 
+    /// #495: a halo-like key that moves only pixels wins on pixels, and
+    /// loses to a key that moves the letters once the reference has a grid.
+    /// The fake renderer's grey is the exposure; its glyphs' ink is twice
+    /// the ASCII brightness. The reference is grey 150 in ink 0.9: each key
+    /// matches one half of it.
+    #[test]
+    fn with_a_reference_grid_the_letters_win_over_the_pixels() {
+        let look = Look::parse(
+            "t",
+            "[look]\ndescription = \"test\"\n\
+             tune = [\"post.exposure=0.5,1.5\", \"ascii.brightness=0,0.45\"]\n\
+             [post_process]\nexposure = 0.5\n\
+             [post_process.styles.ascii]\nbrightness = 0.0",
+            "test",
+        )
+        .unwrap();
+        let filled = |ink: f32| InkGrid {
+            ink: vec![ink; 8 * 4],
+            ..InkGrid::blank(8, 4)
+        };
+        let mut draw = |t: &toml::Table| -> Result<Frame> {
+            let e = t.get("exposure").and_then(|v| v.as_float()).unwrap_or(1.0);
+            let b = t["styles"]["ascii"]["brightness"].as_float().unwrap_or(0.0);
+            let g = (e * 100.0).clamp(0.0, 255.0) as u8;
+            Ok(Frame {
+                image: RgbaImage::from_pixel(16, 16, image::Rgba([g, g, g, 255])),
+                ink: Some(filled((b * 2.0) as f32)),
+            })
+        };
+        let kept = |ink: Option<InkGrid>, draw: &mut dyn FnMut(&toml::Table) -> Result<Frame>| {
+            let log = run(
+                Options {
+                    look: look.clone(),
+                    reference_path: "ref.png".into(),
+                    reference: Reference {
+                        image: RgbImage::from_pixel(16, 16, image::Rgb([150, 150, 150])),
+                        ink,
+                    },
+                    rounds: 1,
+                    candidates: 2,
+                },
+                &TuneWalker,
+                &CostMeter::new("mock"),
+                draw,
+            )
+            .unwrap();
+            assert_eq!(log.tried.len(), 2, "both keys tried");
+            (
+                log.metric,
+                log.kept.iter().map(Edit::to_string).collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            kept(None, &mut draw),
+            (Metric::Pixels, vec!["post.exposure=1.5".to_string()])
+        );
+        assert_eq!(
+            kept(Some(filled(0.9)), &mut draw),
+            (Metric::Glyphs, vec!["ascii.brightness=0.45".to_string()])
+        );
+    }
+
     /// A fake renderer: the picture's grey level is the look's exposure,
     /// so the loop's job is to walk exposure toward the reference's grey.
     #[test]
@@ -810,11 +944,14 @@ mod tests {
             "test",
         )
         .unwrap();
-        let reference = RgbImage::from_pixel(16, 16, image::Rgb([150, 150, 150]));
-        let mut draw = |t: &toml::Table| -> Result<RgbaImage> {
+        let reference = Reference {
+            image: RgbImage::from_pixel(16, 16, image::Rgb([150, 150, 150])),
+            ink: None,
+        };
+        let mut draw = |t: &toml::Table| -> Result<Frame> {
             let e = t.get("exposure").and_then(|v| v.as_float()).unwrap_or(1.0);
             let g = (e * 100.0).clamp(0.0, 255.0) as u8;
-            Ok(RgbaImage::from_pixel(16, 16, image::Rgba([g, g, g, 255])))
+            Ok(RgbaImage::from_pixel(16, 16, image::Rgba([g, g, g, 255])).into())
         };
         let meter = CostMeter::new("mock");
         let log = run(
