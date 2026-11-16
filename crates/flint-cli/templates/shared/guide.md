@@ -18,7 +18,7 @@ flint play
 - `flint validate scenes/main.scene.toml` checks one scene against the schemas and the constraints, and `--fix` applies the fixes a constraint offers.
 - `flint render` draws the scene to a PNG with no window, through the scene's `[camera]`. Look at the picture after every visual change. `--no-grid` leaves the editor grid out and `--width` / `--height` set the size; `flint render --help` lists the rest. `--scripts --time 0.5` runs the scripts for half a second first. A script's HUD is not drawn in a render, only in play.
 - `flint play` opens the scene `flint.toml` names under `[project]`, or the scene you pass. Esc quits.
-- `flint edit scenes/main.scene.toml` opens the scene in a viewer that reloads when the file changes.
+- `flint edit scenes/main.scene.toml` opens the scene in a viewer that reloads when the file changes. When a person moves or tweaks something there and saves (Ctrl+S), each field written is a JSON line (entity, component, field, old, new) in `viewer-edits.jsonl`, in the project's `.flint` folder, which the save makes: read its tail to see what they changed.
 
 ## What is where
 

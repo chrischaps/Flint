@@ -744,9 +744,9 @@ See the [Particle Editor guide](../guides/particle-editor.md).
 | Space | Return to the scene's authored `[camera]` framing (viewer default if the scene has none) |
 | O | Toggle auto-orbit |
 | `[` / `]` | Slow down / speed up auto-orbit |
-| Ctrl+S | Save scene to disk: only the fields you edited are written, the rest of the file stays as it is; with nothing edited the file isn't touched |
-| Ctrl+Z | Undo position change |
-| Ctrl+Shift+Z | Redo position change |
+| Ctrl+S | Save scene to disk: only the fields that differ from the file are written (a prefab's entity into its instance's overrides), and each is a line in `.flint/viewer-edits.jsonl` ([What you changed](../getting-started/viewing.md#what-you-changed)); with nothing changed the file isn't touched |
+| Ctrl+Z | Undo the last edit |
+| Ctrl+Shift+Z / Ctrl+Y | Redo it |
 | Escape | Cancel gizmo drag / exit |
 | F2 | Toggle the render stats overlay |
 | F3 | Toggle normal arrows |

@@ -2172,6 +2172,7 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "pollster",
+ "serde_json",
  "toml",
  "tracing",
  "wgpu",
