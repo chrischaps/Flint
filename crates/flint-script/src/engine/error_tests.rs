@@ -184,3 +184,29 @@ fn a_scene_change_takes_errors_off_the_screen_and_keeps_them_in_the_count() {
         "[script] 1 error (1 time in all)"
     );
 }
+
+/// A Rhai function's last expression is its value, so a callback ending in
+/// a call that returns one (`play_sound`'s handle, #699) returns it. The
+/// engine reads no callback's value: it is no failure (#1031).
+#[test]
+fn a_callback_ending_in_a_value_is_no_failure() {
+    let dir = scripts_dir(
+        "ends-in-a-value",
+        &[(
+            "ends.rhai",
+            "let t = 0.0;\n\
+             fn on_init() { 7 }\n\
+             fn on_update() {\n    t += 1.0;\n    if t >= 1.0 { play_sound(\"a.ogg\", 0.5) }\n}\n\
+             fn on_draw_ui() { random() }\n",
+        )],
+    );
+    let mut system = system_in(&dir);
+    let mut world = FlintWorld::new();
+    scripted(&mut world, "ender", "ends.rhai");
+    system.initialize(&mut world).unwrap();
+    for _ in 0..3 {
+        system.update(&mut world, 1.0 / 60.0).unwrap();
+        system.call_draw_uis(&mut world);
+    }
+    assert!(system.errors().is_empty(), "{:?}", system.errors().all());
+}

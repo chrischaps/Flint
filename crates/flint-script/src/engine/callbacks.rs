@@ -29,6 +29,11 @@ impl ScriptEngine {
     /// callback and the line; returns whether it ran without one. An entity
     /// with no script is not called and is no failure. With timing on, the
     /// call is timed under its script's source and `callback` (#703).
+    ///
+    /// What the callback returns is dropped: a Rhai function's last
+    /// expression is its value, so `if t <= 0.0 { play_sound(..) }` at the
+    /// end of `on_update` returns the sound's handle, and calling for `()`
+    /// made that a failure every time it played (#1031).
     pub(crate) fn call(
         &mut self,
         entity: EntityId,
@@ -40,15 +45,15 @@ impl ScriptEngine {
         }
         let began = self.times.is_some().then(web_time::Instant::now);
         let script = self.scripts.get_mut(&entity).unwrap();
-        let result = self
-            .engine
-            .call_fn::<()>(&mut script.scope, &script.calls, callback, args);
+        let result =
+            self.engine
+                .call_fn::<rhai::Dynamic>(&mut script.scope, &script.calls, callback, args);
         if let (Some(times), Some(began)) = (&mut self.times, began) {
             let ms = began.elapsed().as_secs_f32() * 1000.0;
             times.callback(&script.source_path, callback, ms);
         }
         match result {
-            Ok(()) => true,
+            Ok(_) => true,
             Err(e) => {
                 let failure = Failure::eval(&script.file, &name_of(script, entity), callback, &e);
                 self.errors.record(failure);
