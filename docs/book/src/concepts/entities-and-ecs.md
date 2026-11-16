@@ -1,6 +1,6 @@
 # Entities and ECS
 
-Flint uses an Entity-Component-System (ECS) architecture, built on top of the [hecs](https://crates.io/crates/hecs) crate. This page explains how entities, components, and IDs work in Flint.
+Flint uses an Entity-Component-System (ECS) architecture, with a world of its own (`flint-ecs`). This page explains how entities, components, and IDs work in Flint.
 
 ## What Is ECS?
 
@@ -18,7 +18,7 @@ Every entity gets a stable `EntityId` --- a 64-bit integer that:
 - Is deterministic: a scene spawns its entities in name order, so the same scene gives the same names the same ids every load, in this process or the next
 - Is never reused across a scene transition or an editor's reload either: the next world's ids start past the last one's, so an id a script kept names nothing in the new scene
 
-Internally, Flint maintains a bidirectional map (`BiMap`) between `EntityId` values and hecs `Entity` handles. This allows efficient lookup in both directions.
+The world keys everything by `EntityId`: an entity's record (its name and components), its parent and its children. A name finds its id, and an id its name, in one map access.
 
 ```rust
 // From flint-core
@@ -85,7 +85,7 @@ parent = "main_hall"
 The ECS layer tracks these relationships, enabling:
 - Hierarchical transforms (child positions are relative to parent). A parent with no `transform` is a bare group: it moves nothing, and its children are placed relative to the nearest ancestors above it that have one
 - Tree queries ("find all children of main_hall")
-- Cascading operations (deleting a parent removes children)
+- Cascading operations: despawning an entity removes all its descendants with it (a child's position is relative to its parent, so left behind it would jump). To keep a child, give it another parent first. `flint entity delete` refuses an entity with children unless given `--recursive`
 
 ## Archetypes
 

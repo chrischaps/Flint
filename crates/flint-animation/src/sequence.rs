@@ -499,7 +499,7 @@ impl SequenceSync {
                         .get(&entity_id)
                         .is_some_and(|s| !s.is_empty())
                     {
-                        if let Some(comps) = world.get_components_mut(entity_id) {
+                        if let Some(mut comps) = world.get_components_mut(entity_id) {
                             comps.set_field(
                                 comp::ANIMATOR,
                                 "sequence",
@@ -516,7 +516,7 @@ impl SequenceSync {
                         .get(&entity_id)
                         .is_some_and(|s| !s.is_empty())
                     {
-                        if let Some(comps) = world.get_components_mut(entity_id) {
+                        if let Some(mut comps) = world.get_components_mut(entity_id) {
                             comps.set_field(
                                 comp::ANIMATOR,
                                 "sequence",
@@ -539,7 +539,7 @@ impl SequenceSync {
         ev: &SequenceEvent,
         cues: &mut Vec<SequenceCueEvent>,
     ) {
-        let Some(comps) = world.get_components_mut(entity_id) else {
+        let Some(mut comps) = world.get_components_mut(entity_id) else {
             return;
         };
         match &ev.step {
@@ -575,7 +575,7 @@ impl SequenceSync {
                 mode,
                 mask,
             } => {
-                layer_edit::edit_layer_table(comps, *index, |t| {
+                layer_edit::edit_layer_table(&mut comps, *index, |t| {
                     // A slot that was inactive has no meaningful weight;
                     // a fade onto it should start from silence, not 1.0.
                     let was_inactive = t

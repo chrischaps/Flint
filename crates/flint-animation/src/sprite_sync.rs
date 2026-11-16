@@ -204,7 +204,7 @@ impl SpriteAnimSync {
                 let w = clip.frame_width as f64;
                 let h = clip.frame_height as f64;
 
-                if let Some(components) = world.get_components_mut(*entity_id) {
+                if let Some(mut components) = world.get_components_mut(*entity_id) {
                     components.set_field(
                         comp::SPRITE,
                         "source_rect",

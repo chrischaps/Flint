@@ -33,7 +33,7 @@ This page shows how Flint's crates depend on each other. Dependencies flow downw
       ▼      ▼      ▼        ▼         ▼                 │  runtime  │
   ┌──────┐┌────────────────────────────────────────┐     └─────┬─────┘
   │scene ││                 flint-ecs               │◄──────────┘
-  └──┬───┘│      (hecs wrapper, stable IDs)        │
+  └──┬───┘│    (stable IDs, components, index)     │
      │    └──────────────────┬──────────────────────┘
      │                       ▼
      │                ┌──────────────┐        ┌────────┐        ┌────────┐
@@ -117,7 +117,6 @@ Key third-party crates used across the workspace:
 
 | Crate | Used By | Purpose |
 |-------|---------|---------|
-| `hecs` | flint-ecs | Underlying ECS implementation |
 | `toml` | most crates | TOML parsing and serialization |
 | `serde` | all crates | Serialization framework |
 | `pest` | flint-query | PEG parser generator |
@@ -141,7 +140,6 @@ Key third-party crates used across the workspace:
 | `gilrs-core` | flint-input-capture | Direct 1 kHz polling and XInput rumble |
 | `noise` | flint-procgen, flint-terrain | Perlin / simplex / Worley noise |
 | `rand`, `rand_chacha` | flint-procgen, flint-procgen-ai, flint-terrain | Seeded, reproducible randomness |
-| `bimap` | flint-ecs | The `EntityId` ↔ hecs `Entity` map |
 | `syn` | flint-arch-analyzer | Rust source parsing for the architecture analyzer |
 | `ureq` | flint-asset-gen | HTTP client for AI provider APIs |
 | `uuid` | flint-asset-gen | Unique job identifiers |

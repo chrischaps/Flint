@@ -59,7 +59,7 @@ The most significant architectural choice: components are stored as `toml::Value
 
 ### Stable Entity IDs
 
-Entity IDs are 64-bit integers that each world hands out from its own counter and never recycles. A scene spawns its entities in name order, so the same scene gets the same ids in every run, and a host that replaces its world (a transition, a reload) starts the next world past the last one's ids. A `BiMap` maintains the mapping between `EntityId` and hecs `Entity` handles.
+Entity IDs are 64-bit integers that each world hands out from its own counter and never recycles. A scene spawns its entities in name order, so the same scene gets the same ids in every run, and a host that replaces its world (a transition, a reload) starts the next world past the last one's ids. Each world keys its own maps by `EntityId`: there is no second handle to translate to.
 
 ### Scene as Source of Truth
 
@@ -78,7 +78,7 @@ All crates use `thiserror` for error types. Each crate defines its own error enu
 | Component | Technology | Rationale |
 |-----------|------------|-----------|
 | Language | Rust | Performance, safety, game ecosystem |
-| ECS | hecs | Lightweight, standalone, well-tested |
+| ECS | flint-ecs (its own maps) | Components are TOML values, so a typed ECS stored nothing (#691) |
 | Rendering | wgpu 30 | Cross-platform, modern GPU API |
 | Windowing | winit 0.30 | `ApplicationHandler` trait pattern |
 | Physics | Rapier 3D 0.22 | Mature Rust physics, character controller |
@@ -163,10 +163,11 @@ Loads component and archetype definitions from TOML files. Provides a registry f
 
 ### flint-ecs
 
-Wraps hecs with:
-- `BiMap<EntityId, hecs::Entity>` for stable ID mapping
-- Named entity lookup
-- Parent-child relationship tracking
+The world, in maps of its own (#691; it once wrapped a hecs world that stored nothing):
+- One record per `EntityId`: the entity's name and its dynamic components
+- Named entity lookup both ways, each a map access
+- Parent-child links both ways, children in name order; despawning an entity takes its subtree
+- A component index (component name to the entities that have it) that every write keeps: `get_components_mut` hands out a `ComponentsMut` guard, not the map
 - A per-world ID counter, and ordered walks (`entities_with_component` by id, `all_entities` by name), so a scene loads the same way every run
 
 ### flint-scene

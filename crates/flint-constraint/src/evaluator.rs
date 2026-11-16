@@ -303,8 +303,8 @@ mod tests {
 
         // Create a door entity without a child handle
         let door_id = world.spawn("front_door").unwrap();
-        let components = world.get_components_mut(door_id).unwrap();
-        components.archetype = Some("door".to_string());
+        let mut components = world.get_components_mut(door_id).unwrap();
+        components.set_archetype(Some("door".to_string()));
         components.set(
             "door",
             toml::Value::Table({
@@ -336,8 +336,8 @@ mod tests {
 
         // Create a room with bounds
         let room_id = world.spawn("main_room").unwrap();
-        let components = world.get_components_mut(room_id).unwrap();
-        components.archetype = Some("room".to_string());
+        let mut components = world.get_components_mut(room_id).unwrap();
+        components.set_archetype(Some("room".to_string()));
         components.set(
             "bounds",
             toml::Value::Table({
@@ -407,8 +407,8 @@ mod tests {
         // Add a handle child to the door
         let door_id = world.get_id("front_door").unwrap();
         let handle_id = world.spawn("door_handle").unwrap();
-        let components = world.get_components_mut(handle_id).unwrap();
-        components.archetype = Some("handle".to_string());
+        let mut components = world.get_components_mut(handle_id).unwrap();
+        components.set_archetype(Some("handle".to_string()));
         world.set_parent(handle_id, door_id).unwrap();
 
         let evaluator = ConstraintEvaluator::new(&world, &schemas, &constraints);
@@ -421,8 +421,8 @@ mod tests {
     fn test_required_component_violation() {
         let mut world = FlintWorld::new();
         let id = world.spawn("bare_door").unwrap();
-        let components = world.get_components_mut(id).unwrap();
-        components.archetype = Some("door".to_string());
+        let mut components = world.get_components_mut(id).unwrap();
+        components.set_archetype(Some("door".to_string()));
         // No transform component!
 
         let schemas = SchemaRegistry::new();
@@ -476,8 +476,8 @@ mod tests {
     fn test_value_range_violation() {
         let mut world = FlintWorld::new();
         let id = world.spawn("bad_door").unwrap();
-        let components = world.get_components_mut(id).unwrap();
-        components.archetype = Some("door".to_string());
+        let mut components = world.get_components_mut(id).unwrap();
+        components.set_archetype(Some("door".to_string()));
         components.set(
             "door",
             toml::Value::Table({
@@ -538,8 +538,8 @@ mod tests {
     fn test_reference_valid_violation() {
         let mut world = FlintWorld::new();
         let id = world.spawn("linked_entity").unwrap();
-        let components = world.get_components_mut(id).unwrap();
-        components.archetype = Some("linked".to_string());
+        let mut components = world.get_components_mut(id).unwrap();
+        components.set_archetype(Some("linked".to_string()));
         components.set(
             "link",
             toml::Value::Table({
@@ -609,8 +609,8 @@ mod tests {
     fn test_multiple_constraints() {
         let mut world = FlintWorld::new();
         let id = world.spawn("bare_door").unwrap();
-        let components = world.get_components_mut(id).unwrap();
-        components.archetype = Some("door".to_string());
+        let mut components = world.get_components_mut(id).unwrap();
+        components.set_archetype(Some("door".to_string()));
 
         let schemas = SchemaRegistry::new();
         let mut constraints = ConstraintRegistry::new();

@@ -743,7 +743,7 @@ impl SkeletalSync {
     /// as an explicit restart.
     pub fn write_back(&mut self, world: &mut FlintWorld) {
         for entity_id in self.completed_blends.drain(..) {
-            let Some(components) = world.get_components_mut(entity_id) else {
+            let Some(mut components) = world.get_components_mut(entity_id) else {
                 continue;
             };
             components.set_field(
@@ -774,7 +774,7 @@ impl SkeletalSync {
             let Some(state) = self.states.get(entity_id) else {
                 continue;
             };
-            let Some(components) = world.get_components_mut(*entity_id) else {
+            let Some(mut components) = world.get_components_mut(*entity_id) else {
                 continue;
             };
             let Some(layers) = components

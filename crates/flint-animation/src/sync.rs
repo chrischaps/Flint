@@ -117,7 +117,7 @@ impl AnimationSync {
             };
 
             // Write sampled values back to the entity's components
-            let Some(components) = world.get_components_mut(*entity_id) else {
+            let Some(mut components) = world.get_components_mut(*entity_id) else {
                 continue;
             };
 

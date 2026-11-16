@@ -287,8 +287,8 @@ fn populate_world(
                 }
             }
             // Set archetype name after defaults so get_components check works
-            if let Some(components) = world.get_components_mut(id) {
-                components.archetype = Some(archetype.clone());
+            if let Some(mut components) = world.get_components_mut(id) {
+                components.set_archetype(Some(archetype.clone()));
             }
         }
 
@@ -305,7 +305,7 @@ fn populate_world(
         // Apply component schema defaults for missing fields
         for comp_name in entity_def.components.keys() {
             if let Some(schema) = registry.get_component(comp_name) {
-                if let Some(components) = world.get_components_mut(id) {
+                if let Some(mut components) = world.get_components_mut(id) {
                     for (field_name, field_schema) in &schema.fields {
                         if let Some(default) = &field_schema.default {
                             if components.get_field(comp_name, field_name).is_none() {

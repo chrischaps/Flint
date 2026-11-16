@@ -152,8 +152,8 @@ mod tests {
         let mut world = FlintWorld::new();
 
         let id1 = world.spawn("door1").unwrap();
-        let components = world.get_components_mut(id1).unwrap();
-        components.archetype = Some("door".to_string());
+        let mut components = world.get_components_mut(id1).unwrap();
+        components.set_archetype(Some("door".to_string()));
         components.set(
             "door",
             toml::toml! {
@@ -164,8 +164,8 @@ mod tests {
         );
 
         let id2 = world.spawn("door2").unwrap();
-        let components = world.get_components_mut(id2).unwrap();
-        components.archetype = Some("door".to_string());
+        let mut components = world.get_components_mut(id2).unwrap();
+        components.set_archetype(Some("door".to_string()));
         components.set(
             "door",
             toml::toml! {
@@ -176,8 +176,8 @@ mod tests {
         );
 
         let id3 = world.spawn("room1").unwrap();
-        let components = world.get_components_mut(id3).unwrap();
-        components.archetype = Some("room".to_string());
+        let mut components = world.get_components_mut(id3).unwrap();
+        components.set_archetype(Some("room".to_string()));
 
         world
     }

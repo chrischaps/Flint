@@ -20,7 +20,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("id", Entity)
     .arg("clip", Str)
     .run(|call, (id, clip)| {
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
             comps.set_field(
                 comp::ANIMATOR,
                 "clip",
@@ -34,7 +34,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     m.func("stop_clip", "Stop the entity's animator.")
         .arg("id", Entity)
         .run(|call, (id,)| {
-            if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+            if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
                 comps.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(false));
             }
             Ok(())
@@ -48,7 +48,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("clip", Str)
     .arg("duration", Num)
     .run(|call, (id, clip, duration)| {
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
             comps.set_field(
                 comp::ANIMATOR,
                 "blend_target",
@@ -70,7 +70,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("id", Entity)
     .arg("speed", Num)
     .run(|call, (id, speed)| {
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
             comps.set_field(comp::ANIMATOR, "speed", toml::Value::Float(speed));
         }
         Ok(())
@@ -188,7 +188,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("id", Entity)
     .arg("name", Str)
     .run(|call, (id, name)| {
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
             comps.set_field(
                 comp::ANIMATOR,
                 "sequence",
@@ -202,7 +202,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     m.func("stop_sequence", "Stop the animator's sequence.")
         .arg("id", Entity)
         .run(|call, (id,)| {
-            if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+            if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
                 comps.set_field(
                     comp::ANIMATOR,
                     "sequence",
@@ -226,8 +226,8 @@ fn edit_anim_layer(
     if index < 0 {
         return Ok(());
     }
-    if let Some(comps) = world.get_components_mut(id) {
-        flint_animation::layer_edit::edit_layer_table(comps, index as usize, edit);
+    if let Some(mut comps) = world.get_components_mut(id) {
+        flint_animation::layer_edit::edit_layer_table(&mut comps, index as usize, edit);
     }
     Ok(())
 }

@@ -154,7 +154,7 @@ A map costs a call about 0.15 to 0.22 µs more than four colour numbers: buildin
 | `find_entities_with(component: str)` | `array`: their ids, in name order | Every entity that has a component of this name. |
 | `entity_count_with(component: str)` | `int` | How many entities have a component of this name. |
 | `spawn_entity(name: str)` | `entity`: its id, or -1 when the name is taken | Make an entity with this name, with no components. |
-| `despawn_entity(id: entity)` | — | Remove the entity (and its children's link to it). |
+| `despawn_entity(id: entity)` | — | Remove the entity and all its descendants (`set_parent` a child elsewhere first to keep it). |
 
 <!-- script-api:end -->
 
