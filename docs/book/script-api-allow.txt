@@ -10,7 +10,7 @@
 # page, don't list it here.
 
 # Rust: the engine's traits and types, named in prose
-architecture/overview.md: assign_columns constraint create_spec_from_prompt estimate_cost generate interpret_spec param_schema refine_spec update validate_model
+architecture/overview.md: assign_columns constraint create_spec_from_prompt estimate_cost generate interpret_spec param_schema refine_spec update validate_model weight
 concepts/ai-generation.md: import_gltf
 concepts/animation.md: fixed_update update
 concepts/audio.md: fixed_update update
@@ -18,13 +18,14 @@ concepts/glyph-atlas.md: atlas_indices bounds coverage for_angle for_arms invers
 concepts/lighting.md: lighting_levers
 concepts/particles.md: resolve
 concepts/physics-and-runtime.md: fixed_update initialize shutdown update
-concepts/procgen.md: import_gltf revision
+concepts/procgen.md: import_gltf revision warp    # flint_core::step_clock (ADR 0123)
 concepts/quality-settings.md: effective_post_process_config post_process_config
 concepts/rendering.md: segment
 concepts/scripting.md: update layer_painter    # the RuntimeSystem phase; the architecture diagram
 concepts/terrain.md: register_static_trimesh
 concepts/touch-input.md: TouchStart TouchMove TouchEnd binding_value   # the touch pipeline diagram
 guides/android.md: AAssetDir_getNextFileName android_main resumed suspended
+guides/debug-panels.md: weight    # the DebugPanel trait's layout weight
 guides/player-extensions.md: Some bool color exists f32 fonts i64 is_available pressed raw remove_mesh root_ui set_ground str ui update upload_mesh_with vec3 vec4 view
 guides/upgrading-the-engine.md: get_current_texture show_animated
 guides/profiling.md: present set_gpu_timing
