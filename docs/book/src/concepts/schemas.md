@@ -138,7 +138,7 @@ wind = [3.0, 0.0, -1.0]
 kind = "storm"
 ```
 
-and read it from the game's Rust: [Player Extensions: Reading the scene's tables](../guides/player-extensions.md#reading-the-scenes-tables). The loader keeps every top-level table it has no field for, as written, so the table reaches the extension whether or not a schema declares it; the schema is what gets it checked, and gets `[wether]` and `rian = 0.7` named. Like a component, a table declared with no fields is open: known, and nothing in it checked. A later schema directory replaces a table of the same name whole.
+and read it from the game's Rust: [Player Extensions: Reading the scene's tables](../guides/player-extensions.md#reading-the-scenes-tables). The loader keeps every top-level table it has no field for, as written, so the table reaches the extension whether or not a schema declares it; the schema is what gets it checked, and gets `[wether]` and `rian = 0.7` named. Like a component, a table declared with no fields is open: known, and nothing in it checked. A later schema directory replaces a table of the same name whole, unless it says `extend = true`, which adds its fields to it, as for a component ([Adding a field to an engine component](#adding-a-field-to-an-engine-component)): `[table.post_process]` with `extend = true` gives the engine's `[post_process]` a key of the game's own.
 
 `schemas/components/` holds only components: a `[table.*]` written there (or a `[component.*]` under `scene/`) is ignored, and `flint validate` says so (`ignored-schema-key`) with the directory it belongs in.
 
@@ -272,7 +272,7 @@ flint validate scenes/hall.scene.toml --strict     # for one run
 strict = true
 ```
 
-To silence the warning for a field that is meant to be there, declare it: put your own copy of the component file in the game's schema directory with the engine's fields and yours. A later directory replaces a component of the same name whole, so the copy must carry every field.
+To silence the warning for a field that is meant to be there, declare it in the game's schema directory as an extension of the engine's component: see [Adding a field to an engine component](#adding-a-field-to-an-engine-component).
 
 ### A component only scripts read
 
@@ -511,7 +511,7 @@ flint schema light --schemas engine/schemas --schemas schemas
 
 With no `--schemas`, `flint schema` reads the directories the project's `flint.toml` names, or `schemas/` in the working directory when there is no manifest ([Which directories load](#which-directories-load)).
 
-`flint schema <name>` prints the fields, types, defaults and ranges; a table that declares fields of its own (a `[[wooze.zone]]`) has them listed beneath it. A name that is no component, scene table or archetype is an error (exit code 1) with the nearest name as a suggestion.
+`flint schema <name>` prints the fields, types, defaults and ranges; a table that declares fields of its own (a `[[wooze.zone]]`) has them listed beneath it. It names the file the component was declared in, and when a later layer [extended](#adding-a-field-to-an-engine-component) it, numbers the files and ends each field's line with the number of the one that declared it. A name that is no component, scene table or archetype is an error (exit code 1) with the nearest name as a suggestion.
 
 ### Schemas as data
 
@@ -521,7 +521,7 @@ flint schema light --format json     # one component or archetype
 flint schema --format json           # everything: every field's type, default, range, values
 ```
 
-`--json` is `--format json`. The whole export has `schema_dirs`, `types` (the type names above), `old_type_names`, `components`, `tables` (the [scene-level tables](#scene-level-tables)) and `archetypes`. A component or a table has `kind`, `description`, `open` (true when it declares no fields) and `fields`; a field has `type`, `required`, and where they apply `default`, `description`, `min`, `max`, `values` (an enum), `element` (an array), `kinds` and `unless` (an asset) and `fields` (a table).
+`--json` is `--format json`. The whole export has `schema_dirs`, `types` (the type names above), `old_type_names`, `components`, `tables` (the [scene-level tables](#scene-level-tables)) and `archetypes`. A component or a table has `kind`, `description`, `open` (true when it declares no fields), `fields`, and, when it was read from a file, `declared_in` (that file) and `extended_by` (each file that added fields to it, in load order); a field has `type`, `required`, `file` (the file that declared it, beside `declared_in`), and where they apply `default`, `description`, `min`, `max`, `values` (an enum), `element` (an array), `kinds` and `unless` (an asset) and `fields` (a table).
 
 ### Editor completion: a JSON Schema for scenes
 
@@ -614,7 +614,48 @@ Games can define their own schemas that extend or override the engine's built-in
 schemas = ["engine/schemas", "schemas"]
 ```
 
-Here `engine/schemas/` provides the engine's built-in components (transform, material, rigidbody, etc.) and the game's own `schemas/` adds game-specific components (health, weapon, enemy AI). If both directories define a component with the same name, the game's definition wins.
+Here `engine/schemas/` provides the engine's built-in components (transform, material, rigidbody, etc.) and the game's own `schemas/` adds game-specific components (health, weapon, enemy AI). If both directories define a component with the same name, the game's definition replaces the engine's whole, unless the game's says `extend = true` (next section).
+
+### Adding a field to an engine component
+
+A game that wants one more field on an engine component, say a `wetness` its rain script reads from every `material`, declares only that field, and marks the table `extend = true`:
+
+```toml
+# schemas/components/material.toml, in the game
+[component.material]
+extend = true
+
+[component.material.fields]
+wetness = { type = "f32", default = 0.0, min = 0.0, max = 1.0, description = "Read by scripts/rain.rhai" }
+```
+
+The engine's own `material` fields stay as the engine declares them, and follow it when it changes; `wetness` is checked like any of them, its default is written into each `material` a scene declares, and `flint validate` says nothing about a scene that sets it. What an extension does:
+
+- **Adds fields** to the component of that name an earlier directory declared, or a file of the same directory declared: a directory's extensions apply after all its files have loaded, so file names don't matter.
+- **Redefines a field** it names again: the extension's definition replaces the earlier one for that field only (a narrower range, a different default). The engine's other fields are untouched.
+- **Keeps the earlier description.** A `description` beside `extend = true` is ignored, and `flint validate` says so (`ignored-schema-key`); describe each field you add instead.
+- **Adds panel rows** after the earlier ones: an added field's `panel = "tune"` puts it on the component's [F3 panel](../guides/debug-panels.md), and a `[component.<name>.panel]` table replaces the earlier one.
+- **Is an error when nothing earlier declares the name**: `component 'materail' says extend = true, and no earlier schema declares a component of that name to add its fields to: did you mean material?` An extension of nothing would check nothing.
+
+Without `extend`, a later layer's `[component.material]` replaces the engine's whole, as it always has: that is how a game swaps a component's definition for its own, and the copy must then carry every field it wants checked. `flint schema material` shows which file each field came from:
+
+```text
+Component: material
+Description: PBR material properties with optional texture reference
+Declared in: [1] engine/schemas/components/material.toml
+Extended by: [2] schemas/components/material.toml
+
+Fields:
+  ...
+  roughness : f32 = 0.7   [1]
+    # Roughness factor 0.0-1.0
+  ...
+  wetness : f32 = 0   [2]
+    # Read by scripts/rain.rhai
+    # Range: 0 .. 1
+```
+
+The same works for a scene-level table: `[table.<name>]` with `extend = true` under the game's `scene/`.
 
 ### Which directories load
 

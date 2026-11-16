@@ -113,8 +113,10 @@ pub fn run(args: SchemaArgs) -> Result<()> {
             registry.get_component(name),
             registry.get_table(name),
         ) {
-            (Some(component), _) => schema_export::component_json(component),
-            (None, Some(table)) => schema_export::table_json(table),
+            (Some(component), _) => {
+                schema_export::component_json(component, registry.component_origin(name))
+            }
+            (None, Some(table)) => schema_export::table_json(table, registry.table_origin(name)),
             (None, None) => schema_export::archetype_json(registry.get_archetype(name).unwrap()),
         }),
         (Format::JsonSchema, None) if args.list => {
@@ -237,10 +239,20 @@ fn one_text(name: &str, registry: &SchemaRegistry) -> String {
     let mut out = String::new();
     // Try component first, then scene table, then archetype
     let fielded = [
-        ("Component", "component", registry.get_component(name)),
-        ("Scene table", "table", registry.get_table(name)),
+        (
+            "Component",
+            "component",
+            registry.get_component(name),
+            registry.component_origin(name),
+        ),
+        (
+            "Scene table",
+            "table",
+            registry.get_table(name),
+            registry.table_origin(name),
+        ),
     ];
-    for (heading, noun, schema) in fielded {
+    for (heading, noun, schema, origin) in fielded {
         let Some(component) = schema else {
             continue;
         };
@@ -251,13 +263,45 @@ fn one_text(name: &str, registry: &SchemaRegistry) -> String {
         if let Some(desc) = &component.description {
             out.push_str(&format!("Description: {desc}\n"));
         }
+        // Each field's layer (#794): one file says it for every field; with
+        // an extension, the files are numbered and each field gives its number
+        let mut layers = None;
+        if let Some(origin) = origin {
+            let extended = !origin.extended_by.is_empty();
+            let files: Vec<&std::path::Path> = origin
+                .declared_in
+                .iter()
+                .chain(&origin.extended_by)
+                .map(|file| file.as_path())
+                .collect();
+            let declared = origin.declared_in.is_some();
+            for (at, file) in files.iter().enumerate() {
+                let what = if at == 0 && declared {
+                    "Declared in:"
+                } else {
+                    "Extended by:"
+                };
+                let number = if extended {
+                    format!("[{}] ", at + 1)
+                } else {
+                    String::new()
+                };
+                out.push_str(&format!(
+                    "{what} {number}{}\n",
+                    schema_export::shown_file(file)
+                ));
+            }
+            if extended {
+                layers = Some(Layers { origin, files });
+            }
+        }
         out.push_str("\nFields:\n");
         if component.is_open() {
             out.push_str(&format!(
                 "  (none declared: the {noun} is open, and nothing in it is checked)\n"
             ));
         }
-        fields_text(&component.fields, 1, &mut out);
+        fields_text(&component.fields, layers.as_ref(), 1, &mut out);
     }
     if !out.is_empty() {
         return out;
@@ -308,9 +352,28 @@ fn one_text(name: &str, registry: &SchemaRegistry) -> String {
 
 /// `fields` by name, each with its description and range below it. A table
 /// that declares its own fields (and an array of such tables: a
-/// `[[wooze.zone]]`) has them listed under it, a level in.
+/// The numbered files of a component another layer extended (#794), as
+/// its header lists them.
+struct Layers<'a> {
+    origin: &'a flint_schema::SchemaOrigin,
+    files: Vec<&'a std::path::Path>,
+}
+
+impl Layers<'_> {
+    /// `[2]`: the number of the file `field` was declared in.
+    fn tag(&self, field: &str) -> Option<String> {
+        let file = self.origin.field_file(field)?;
+        let at = self.files.iter().position(|f| *f == file)?;
+        Some(format!("[{}]", at + 1))
+    }
+}
+
+/// `[[wooze.zone]]`) has them listed under it, a level in. With `layers`
+/// (a component another layer extended, #794), each top-level field's line
+/// ends with the number of the file that declared it.
 fn fields_text(
     fields: &std::collections::HashMap<String, flint_schema::FieldSchema>,
+    layers: Option<&Layers>,
     depth: usize,
     out: &mut String,
 ) {
@@ -333,6 +396,9 @@ fn fields_text(
         ));
         if let Some(default) = &field_schema.default {
             out.push_str(&format!(" = {}", format_toml_value(default)));
+        }
+        if let Some(tag) = layers.and_then(|layers| layers.tag(field_name)) {
+            out.push_str(&format!("   {tag}"));
         }
         out.push('\n');
 
@@ -360,7 +426,7 @@ fn fields_text(
             if nested.values().any(|f| {
                 f.description.is_some() || f.required || f.min.is_some() || f.max.is_some()
             }) {
-                fields_text(nested, depth + 2, out);
+                fields_text(nested, None, depth + 2, out);
             }
         }
     }

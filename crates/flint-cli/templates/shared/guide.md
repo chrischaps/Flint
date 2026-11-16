@@ -87,6 +87,18 @@ current_hp = { type = "i32", default = 100, min = 0 }
 
 An archetype (a named bundle of components with defaults) is a file in `schemas/archetypes`. A game schema with the same name as an engine one replaces it, so pick new names unless you mean to.
 
+To add a field to an engine component instead (a `wetness` the game's scripts read on every `material`), declare only that field and say `extend = true`:
+
+```toml
+[component.material]
+extend = true
+
+[component.material.fields]
+wetness = { type = "f32", default = 0.0 }
+```
+
+The engine's own fields stay as the engine declares them, and `flint schema material` shows which file each field came from.
+
 ## Scripts
 
 Scripts are [Rhai](https://rhai.rs) files in `scripts`, attached with a `script` component (`source = "hud.rhai"`). The engine calls the functions a script defines: `on_init`, `on_update`, `on_draw_ui`, `on_collision`, `on_trigger_enter`, `on_trigger_exit`, `on_action`, `on_interact`, `on_event`. Scripts reload while the game runs.
