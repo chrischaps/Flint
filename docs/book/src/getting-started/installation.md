@@ -125,10 +125,12 @@ This runs the full test suite across all crates.
 To use `flint` directly without `cargo run`:
 
 ```bash
-cargo install --path crates/flint-cli
+cargo install --locked --path crates/flint-cli
 ```
 
 Or copy the release binary to a directory on your PATH.
+
+Keep `--locked`. Unlike `cargo build`, `cargo install` ignores `Cargo.lock` without it and resolves the newest dependency versions allowed, which Flint hasn't been built with: rhai 1.27, for one, fails to compile `flint-script` (`no method named statements found for enum ScriptFuncPayload`). With `--locked` it warns that a few packages in the lock file (`clipboard-win`, `core2`, `spin`) are yanked, each with `help: consider running without --locked`: a yanked version still installs from the lock file, so ignore the hint. The install takes about five minutes on a desktop.
 
 `cargo install` puts a copy in `~/.cargo/bin`, which rustup already put on your PATH. Run it again after pulling engine changes, or `flint` stays the version you installed. The copy still knows the checkout it was built from: `flint init` names that checkout's schemas by absolute path, so leave the checkout where it is.
 

@@ -29,10 +29,10 @@ cargo test
 From here on, and in what `flint init` prints, commands call `flint` by name. To make that work, install it from the checkout:
 
 ```bash
-cargo install --path crates/flint-cli
+cargo install --locked --path crates/flint-cli
 ```
 
-That copies the binary into Cargo's bin folder (`~/.cargo/bin`, which rustup puts on your PATH). It is a copy, so run the command again after pulling engine changes, or `flint` stays the old version. To skip installing, call the build by its path: `target/release/flint` in the checkout (`flint.exe` on Windows).
+`--locked` builds with the dependency versions in `Cargo.lock`, the ones Flint is built and tested with. Without it, `cargo install` ignores the lock file and takes the newest versions allowed, and those can fail to compile (rhai 1.27, for one, breaks `flint-script`). It warns that a few locked packages are yanked and suggests running without `--locked`; ignore that. The command copies the binary into Cargo's bin folder (`~/.cargo/bin`, which rustup puts on your PATH). It is a copy, so run the command again after pulling engine changes, or `flint` stays the old version. To skip installing, call the build by its path: `target/release/flint` in the checkout (`flint.exe` on Windows).
 
 ### Starting a game
 
