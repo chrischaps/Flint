@@ -54,8 +54,8 @@ mod tests {
 
         bus.push(GameEvent::ActionPressed("jump".into()));
         bus.push(GameEvent::CollisionStarted {
-            entity_a: EntityId::new(),
-            entity_b: EntityId::new(),
+            entity_a: EntityId::from_raw(1),
+            entity_b: EntityId::from_raw(2),
         });
 
         assert_eq!(bus.len(), 2);

@@ -98,7 +98,9 @@ position = [0, 0.15, 0]
 effect = "campfire"
 ```
 
-Unknown keys in an asset are a load error (typos fail loudly); inline components stay lenient. A missing `name` falls back to the file stem.
+Unknown keys in an asset are a load error (typos fail loudly). A missing `name` falls back to the file stem.
+
+An inline `particle_emitter` is held to the same reader by `flint validate` and `flint check`: a key the emitter doesn't read (`emision_rate`) and a value it can't use (`color = "orange"`, a zero `lifetime`, `shape = "donut"`) are `bad-emitter` errors naming the entity and the key, with the nearest key or the forms the value takes as the hint. While the game runs, the same mistakes are a warning naming both, and the emitter is never replaced by a default one: a bad value set at run time leaves it as it was, and one that is bad when the scene loads makes no emitter until the table is fixed. A key it doesn't read is left out and the rest plays.
 
 ## How It Works
 

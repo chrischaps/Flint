@@ -173,8 +173,8 @@ impl<'a> ConstraintFixer<'a> {
                 }
 
                 let child_id = world.spawn(&child_name)?;
-                let components = world.get_components_mut(child_id).unwrap();
-                components.archetype = Some(archetype.clone());
+                let mut components = world.get_components_mut(child_id).unwrap();
+                components.set_archetype(Some(archetype.clone()));
 
                 // Apply archetype defaults from schema
                 if let Some(arch_schema) = self.schema_registry.get_archetype(archetype) {
@@ -212,7 +212,7 @@ impl<'a> ConstraintFixer<'a> {
                     return Ok(None);
                 }
 
-                let components = match world.get_components_mut(id) {
+                let mut components = match world.get_components_mut(id) {
                     Some(c) => c,
                     None => return Ok(None),
                 };
@@ -237,7 +237,7 @@ impl<'a> ConstraintFixer<'a> {
                 if let ConstraintKind::ValueRange { field, .. } = &constraint.kind {
                     let parts: Vec<&str> = field.split('.').collect();
                     if parts.len() >= 2 {
-                        if let Some(components) = world.get_components_mut(id) {
+                        if let Some(mut components) = world.get_components_mut(id) {
                             if let Some(comp_data) = components.get_mut(parts[0]) {
                                 if let Some(table) = comp_data.as_table_mut() {
                                     table.remove(parts[1]);
@@ -283,7 +283,7 @@ impl<'a> ConstraintFixer<'a> {
                 if let Some(value) = value {
                     let target_parts: Vec<&str> = field.split('.').collect();
                     if target_parts.len() >= 2 {
-                        if let Some(components) = world.get_components_mut(id) {
+                        if let Some(mut components) = world.get_components_mut(id) {
                             components.set_field(target_parts[0], target_parts[1], value);
                         }
                     }
@@ -316,8 +316,8 @@ fn clone_world(source: &FlintWorld) -> FlintWorld {
         let dest_id = dest.get_id(&info.name).unwrap();
 
         if let Some(components) = source.get_components(info.id) {
-            let dest_components = dest.get_components_mut(dest_id).unwrap();
-            dest_components.archetype = components.archetype.clone();
+            let mut dest_components = dest.get_components_mut(dest_id).unwrap();
+            dest_components.set_archetype(components.archetype.clone());
             for (name, value) in &components.data {
                 dest_components.set(name.clone(), value.clone());
             }
@@ -342,8 +342,8 @@ mod tests {
         let mut world = FlintWorld::new();
 
         let door_id = world.spawn("front_door").unwrap();
-        let components = world.get_components_mut(door_id).unwrap();
-        components.archetype = Some("door".to_string());
+        let mut components = world.get_components_mut(door_id).unwrap();
+        components.set_archetype(Some("door".to_string()));
         components.set(
             "door",
             toml::Value::Table({
@@ -417,8 +417,8 @@ mod tests {
     fn test_set_default_fix() {
         let mut world = FlintWorld::new();
         let id = world.spawn("bad_door").unwrap();
-        let components = world.get_components_mut(id).unwrap();
-        components.archetype = Some("door".to_string());
+        let mut components = world.get_components_mut(id).unwrap();
+        components.set_archetype(Some("door".to_string()));
         components.set(
             "door",
             toml::Value::Table({
@@ -466,8 +466,8 @@ mod tests {
     fn test_remove_invalid_fix() {
         let mut world = FlintWorld::new();
         let id = world.spawn("bad_door").unwrap();
-        let components = world.get_components_mut(id).unwrap();
-        components.archetype = Some("door".to_string());
+        let mut components = world.get_components_mut(id).unwrap();
+        components.set_archetype(Some("door".to_string()));
         components.set(
             "door",
             toml::Value::Table({

@@ -33,7 +33,7 @@ This page shows how Flint's crates depend on each other. Dependencies flow downw
       ▼      ▼      ▼        ▼         ▼                 │  runtime  │
   ┌──────┐┌────────────────────────────────────────┐     └─────┬─────┘
   │scene ││                 flint-ecs               │◄──────────┘
-  └──┬───┘│      (hecs wrapper, stable IDs)        │
+  └──┬───┘│    (stable IDs, components, index)     │
      │    └──────────────────┬──────────────────────┘
      │                       ▼
      │                ┌──────────────┐        ┌────────┐        ┌────────┐
@@ -60,7 +60,7 @@ The workspace has 31 crates under `crates/`, plus one tool (`tools/arch-analyzer
 |-----:|-------|-----------|----------------|
 | 0 | `flint-arch-analyzer` (`tools/arch-analyzer`) | *(none)* | *(none)* |
 | 0 | `flint-audio-worklet` | *(none)* | *(none)* |
-| 0 | `flint-core` | *(none)* | animation, asset, asset-gen, audio, cli, constraint, debug-ui, ecs, geometry, import, input-capture, music, particles, physics, player, procgen, query, render, rhythm, runtime, scene, schema, script, terrain, viewer, wooze |
+| 0 | `flint-core` | *(none)* | android, animation, asset, asset-gen, audio, cli, constraint, debug-ui, ecs, geometry, import, input-capture, music, particles, physics, player, procgen, query, render, rhythm, runtime, scene, schema, script, terrain, viewer, wooze |
 | 0 | `flint-pixels` | *(none)* | render |
 | 1 | `flint-asset` | core | asset-gen, cli, import, player |
 | 1 | `flint-geometry` | core | cli, debug-ui, player, procgen, render, script, viewer |
@@ -88,7 +88,7 @@ The workspace has 31 crates under `crates/`, plus one tool (`tools/arch-analyzer
 | 6 | `flint-debug-ui` | core, ecs, geometry, particles, procgen (optional), render, scene, schema, terrain, wooze | cli, player (optional), viewer |
 | 7 | `flint-player` | animation, asset, audio, core, debug-ui (optional), ecs, geometry, import, input-capture (optional), music (optional), particles, physics, procgen (optional), render, rhythm (optional), runtime, scene, schema, script, terrain, wooze | android, cli |
 | 7 | `flint-viewer` | constraint, core, debug-ui, ecs, geometry, import, particles, procgen, render, scene, schema, wooze | cli |
-| 8 | `flint-android` | ecs, player, scene, schema | *(none)* |
+| 8 | `flint-android` | core, ecs, player, scene, schema | *(none)* |
 | 8 | `flint-cli` | animation, asset, asset-gen, constraint, core, debug-ui, ecs, geometry, import, input-capture, music, particles, physics, player, procgen, procgen-ai, query, render, rhythm, runtime, scene, schema, script, terrain, viewer, wooze | *(none)* |
 
 <!-- crate-table:end -->
@@ -117,7 +117,6 @@ Key third-party crates used across the workspace:
 
 | Crate | Used By | Purpose |
 |-------|---------|---------|
-| `hecs` | flint-ecs | Underlying ECS implementation |
 | `toml` | most crates | TOML parsing and serialization |
 | `serde` | all crates | Serialization framework |
 | `pest` | flint-query | PEG parser generator |
@@ -141,7 +140,6 @@ Key third-party crates used across the workspace:
 | `gilrs-core` | flint-input-capture | Direct 1 kHz polling and XInput rumble |
 | `noise` | flint-procgen, flint-terrain | Perlin / simplex / Worley noise |
 | `rand`, `rand_chacha` | flint-procgen, flint-procgen-ai, flint-terrain | Seeded, reproducible randomness |
-| `bimap` | flint-ecs | The `EntityId` ↔ hecs `Entity` map |
 | `syn` | flint-arch-analyzer | Rust source parsing for the architecture analyzer |
 | `ureq` | flint-asset-gen | HTTP client for AI provider APIs |
 | `uuid` | flint-asset-gen | Unique job identifiers |

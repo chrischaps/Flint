@@ -15,7 +15,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("id", Entity)
     .arg("value", Num)
     .run(|call, (id, value)| {
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
             comps.set_field(comp::UI_FILL, "value", toml::Value::Float(value));
         }
         Ok(())
@@ -25,7 +25,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
         .arg("id", Entity)
         .arg("text", Str)
         .run(|call, (id, text)| {
-            if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+            if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
                 comps.set_field(comp::UI_TEXT, "text", toml::Value::String(text.to_string()));
             }
             Ok(())
@@ -38,7 +38,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
         .arg("b", Num)
         .arg("a", Num)
         .run(|call, (id, r, g, b, a)| {
-            if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+            if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
                 let color =
                     toml::Value::Array([r, g, b, a].into_iter().map(toml::Value::Float).collect());
                 comps.set_field(comp::UI_TEXT, "color", color);
@@ -53,7 +53,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("id", Entity)
     .arg("anchor", Str)
     .run(|call, (id, anchor)| {
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
             comps.set_field(
                 comp::SCREEN_ANCHOR,
                 "anchor",
@@ -71,7 +71,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .arg("x", Num)
     .arg("y", Num)
     .run(|call, (id, x, y)| {
-        if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
             comps.set_field(comp::SCREEN_ANCHOR, "offset_x", toml::Value::Float(x));
             comps.set_field(comp::SCREEN_ANCHOR, "offset_y", toml::Value::Float(y));
         }

@@ -102,7 +102,7 @@ impl DebugPanel for CameraDebugPanel {
         }
         ctx.camera.fov = self.config.fov_deg;
         if let Some(id) = ctx.world.get_id(&self.entity_name) {
-            if let Some(comps) = ctx.world.get_components_mut(id) {
+            if let Some(mut comps) = ctx.world.get_components_mut(id) {
                 for (field, value) in self.config.to_fields() {
                     comps.set_field(CAMERA_TUNING, field, value);
                 }

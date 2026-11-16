@@ -101,7 +101,6 @@ thiserror = "2.0"
 anyhow = "1.0"
 
 # ECS
-hecs = "0.10"
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }
@@ -141,8 +140,13 @@ kira = { version = "0.11", default-features = false, features = ["mp3", "ogg", "
 hound = "3.5"
 glam = { version = "0.30", features = ["mint"] }
 
-# Scripting
-rhai = { version = "1", features = ["sync"] }
+# Scripting. Held to 1.24.x: flint-script turns on rhai's `internals` (its
+# AST, for `flint script check`), which rhai changes between minor versions.
+# Under "1", a resolve without this lock file (`cargo install` without
+# --locked, a game's own lock, `cargo update`) took 1.27.0, and flint-script
+# stopped compiling (`f.body` became a `ScriptFuncPayload`). Moving to a newer
+# minor is a port: bump this, fix `crates/flint-script/src/check.rs`.
+rhai = { version = "~1.24", features = ["sync"] }
 
 # Game loop. std's Instant panics on wasm32 ("time not implemented on this
 # platform"); web-time re-exports std's types on native and wraps
@@ -174,7 +178,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ureq = { version = "3", features = ["json"] }
 
 # Utilities
-bimap = "0.6"
 sha2 = "0.10"
 uuid = { version = "1.11", features = ["v4"] }
 dirs = "6"

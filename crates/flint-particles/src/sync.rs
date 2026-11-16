@@ -5,7 +5,7 @@
 //! iteration — and therefore draw order and RNG consumption — is
 //! deterministic frame to frame and run to run (ADR 0068).
 
-use crate::effect::ParticleEffect;
+use crate::effect::{EmitterDef, ParticleEffect};
 use crate::emitter::{EmitterConfig, EmitterState, ParticleBlendMode, SortMode};
 use crate::particle::ParticleInstance;
 use crate::sim::{apply_spawn_requests, step_emitter, EmitterFrame, SpawnRequest, IDENTITY};
@@ -377,6 +377,10 @@ pub struct ParticleSync {
     ranges: Vec<DrawRange>,
     order_scratch: Vec<usize>,
     warned_missing: HashSet<String>,
+    /// Inline emitters whose table didn't resolve when first seen, with the
+    /// fingerprint of that table: they emit nothing, said once, until the
+    /// table changes (#690).
+    rejected: HashMap<EntityId, u64>,
     /// Where effects were searched for, so a missing one can say where
     /// (set by `load_particle_effects_from_world`; ADR 0114).
     search: Option<EffectSearch>,
@@ -445,6 +449,7 @@ impl ParticleSync {
             ranges: Vec::new(),
             order_scratch: Vec::new(),
             warned_missing: HashSet::new(),
+            rejected: HashMap::new(),
             search: None,
             hold: EmitterHold::default(),
         }
@@ -557,6 +562,7 @@ impl ParticleSync {
         self.instance_buffer.clear();
         self.ranges.clear();
         self.warned_missing.clear();
+        self.rejected.clear();
         self.hold.kept.clear();
         self.time = 0.0;
     }
@@ -565,6 +571,7 @@ impl ParticleSync {
     /// re-simulating from t = 0).
     pub fn clear_instances(&mut self) {
         self.states.clear();
+        self.rejected.clear();
         self.detached.clear();
         self.instance_buffer.clear();
         self.ranges.clear();
@@ -603,12 +610,22 @@ impl ParticleSync {
 
             if let Some(inst) = self.states.get_mut(&entity_id) {
                 if inst.fingerprint != fp {
-                    let cfg = EmitterConfig::from_toml(table);
-                    apply_inline_config(inst, cfg);
+                    // A table that doesn't resolve leaves the emitter as it
+                    // was, said once per edit (#690)
+                    if let Some(cfg) = inline_config(world, entity_id, table, true) {
+                        apply_inline_config(inst, cfg);
+                    }
                     inst.fingerprint = fp;
                 }
             } else {
-                let cfg = EmitterConfig::from_toml(table);
+                if self.rejected.get(&entity_id) == Some(&fp) {
+                    continue;
+                }
+                let Some(cfg) = inline_config(world, entity_id, table, false) else {
+                    self.rejected.insert(entity_id, fp);
+                    continue;
+                };
+                self.rejected.remove(&entity_id);
                 let name = world.get_name(entity_id).unwrap_or("").to_string();
                 let seed = mix_seed(0xDEAD_BEEF, entity_salt(world, entity_id));
                 let mut inst = EffectInstance::new(EffectSource::Inline, name, vec![cfg], seed);
@@ -712,6 +729,7 @@ impl ParticleSync {
 
         // Remove states for despawned entities
         self.states.retain(|id, _| seen.contains(id));
+        self.rejected.retain(|id, _| seen.contains(id));
         self.hold.kept.retain(|id, _| seen.contains(id));
     }
 
@@ -1049,6 +1067,37 @@ fn set_param(inst: &mut EffectInstance, param: &str, value: f64) -> bool {
 
 /// Apply a re-parsed inline config, preserving play-state edges the way
 /// scripts expect (`start_emitter` / `stop_emitter` flip `playing`).
+/// The config an inline `particle_emitter` table gives, warning by the
+/// entity's name about every key it doesn't read and about a value that
+/// doesn't resolve (#690). `None` for the second: the caller keeps the
+/// emitter it has (`has_previous`) or makes none, never a default emitter.
+fn inline_config(
+    world: &FlintWorld,
+    entity_id: EntityId,
+    table: &toml::value::Table,
+    has_previous: bool,
+) -> Option<EmitterConfig> {
+    let who = || match world.get_name(entity_id) {
+        Some(name) => format!("particle_emitter on '{name}'"),
+        None => format!("particle_emitter on entity {}", entity_id.raw()),
+    };
+    for problem in EmitterDef::unknown_key_problems(table) {
+        tracing::warn!("{}: {problem}; it is ignored", who());
+    }
+    match EmitterConfig::from_toml(table) {
+        Ok(cfg) => Some(cfg),
+        Err(problem) => {
+            let kept = if has_previous {
+                "the emitter keeps its last good settings"
+            } else {
+                "the emitter emits nothing until it is fixed"
+            };
+            tracing::warn!("{}: {problem}; {kept}", who());
+            None
+        }
+    }
+}
+
 fn apply_inline_config(inst: &mut EffectInstance, cfg: EmitterConfig) {
     let Some(em) = inst.emitters.first_mut() else {
         return;
@@ -1390,6 +1439,77 @@ mod tests {
         world.despawn(id).unwrap();
         sync.sync_from_world(&world);
         assert_eq!(sync.emitter_count(), 0);
+    }
+
+    /// #690: one bad value set at run time (a string where a curve goes, a
+    /// lifetime of zero) leaves a working emitter as it was, where it used
+    /// to become the default emitter (10 a second, white dots). The next
+    /// good edit applies.
+    #[test]
+    fn a_bad_edit_keeps_the_last_good_emitter() {
+        let (mut world, id) = world_with_emitter("");
+        let set = |world: &mut FlintWorld, key: &str, value: toml::Value| {
+            world
+                .set_field(id, comp::PARTICLE_EMITTER, key, value)
+                .unwrap();
+        };
+        set(&mut world, "emission_rate", toml::Value::Float(50.0));
+        let mut sync = ParticleSync::new();
+        sync.sync_from_world(&world);
+        let rate = |sync: &ParticleSync| {
+            sync.instance(InstanceKey::Entity(id)).unwrap().emitters[0]
+                .config
+                .emission_rate
+        };
+        assert_eq!(rate(&sync), 50.0);
+
+        set(&mut world, "color", toml::Value::String("red".into()));
+        sync.sync_from_world(&world);
+        assert_eq!(rate(&sync), 50.0, "a bad curve reset the emitter");
+        let lifetime = sync.instance(InstanceKey::Entity(id)).unwrap().emitters[0]
+            .config
+            .lifetime_max;
+        assert_eq!(lifetime, 100.0);
+
+        // Fixed, and a second key edited with it: both apply
+        world
+            .get_components_mut(id)
+            .unwrap()
+            .get_mut(comp::PARTICLE_EMITTER)
+            .and_then(|v| v.as_table_mut())
+            .unwrap()
+            .remove("color");
+        set(&mut world, "emission_rate", toml::Value::Float(20.0));
+        sync.sync_from_world(&world);
+        assert_eq!(rate(&sync), 20.0);
+
+        set(&mut world, "lifetime_max", toml::Value::Float(0.0));
+        set(&mut world, "lifetime_min", toml::Value::Float(0.0));
+        sync.sync_from_world(&world);
+        assert_eq!(rate(&sync), 20.0, "a zero lifetime reset the emitter");
+    }
+
+    /// #690: an emitter whose table is bad when first seen emits nothing
+    /// (never the default emitter) until the table is fixed.
+    #[test]
+    fn a_bad_first_table_makes_no_emitter_until_fixed() {
+        let (mut world, id) = world_with_emitter("shape = \"donut\"");
+        let mut sync = ParticleSync::new();
+        sync.sync_from_world(&world);
+        sync.sync_from_world(&world);
+        assert!(sync.instance(InstanceKey::Entity(id)).is_none());
+        assert_eq!(sync.emitter_count(), 0);
+
+        world
+            .set_field(
+                id,
+                comp::PARTICLE_EMITTER,
+                "shape",
+                toml::Value::String("sphere".into()),
+            )
+            .unwrap();
+        sync.sync_from_world(&world);
+        assert_eq!(sync.emitter_count(), 1);
     }
 
     #[test]

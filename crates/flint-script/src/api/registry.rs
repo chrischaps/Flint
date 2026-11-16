@@ -137,6 +137,14 @@ mod native {
              getters return #{} for an entity without a transform.",
         ),
         (
+            "order",
+            "A function that returns entities returns them in name order \
+             (find_entities_with, get_children, overlap_rect), and persist_keys returns its \
+             keys sorted, so a loop over the result does the same thing every run, however \
+             and in whatever order the world was built. Ids are not an order: they depend \
+             on what was spawned first.",
+        ),
+        (
             "names",
             "A name puts its verb first, then what it acts on: play_sprite, \
              set_sprite_speed, shake_camera, stop_camera_shake. A value a script can \

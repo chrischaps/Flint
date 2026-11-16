@@ -1,5 +1,5 @@
-# The stylize props clearing (#271, #386): sky, two lights, the ground and
-# six props, none of them styled. Each bench scene places it once and
+# The stylize props clearing (#271, #386): sky, the ground and six props,
+# none of them styled, lit by the engine's default key and fill. Each bench scene places it once and
 # gives props their styles with overrides, so the clearing is written once
 # and a bench carries only the styles its cases test:
 #
@@ -33,22 +33,6 @@ haze_color = [0.95, 0.80, 0.60, 0.7]
 cloud_tint = [1.0, 0.90, 0.78, 0.8]
 cloud_coverage = 0.3
 sun_glow = 1.4
-
-[entities.sun]
-[entities.sun.transform]
-position = [0, 50, 0]
-[entities.sun.directional_light]
-direction = [0.75, -0.38, 0.35]
-color = [1.0, 0.86, 0.66]
-intensity = 2.4
-
-[entities.fill]
-[entities.fill.transform]
-position = [0, 30, 0]
-[entities.fill.directional_light]
-direction = [-0.4, -0.8, -0.4]
-color = [0.55, 0.65, 0.85]
-intensity = 0.35
 
 [entities.ground]
 archetype = "furniture"

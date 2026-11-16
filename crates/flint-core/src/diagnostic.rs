@@ -84,6 +84,9 @@ pub mod codes {
     /// An `entity` field (or an entity's `parent`) that names no entity of
     /// the scene. An empty string is "not set" and passes.
     pub const UNKNOWN_ENTITY: &str = "unknown-entity";
+    /// Entities whose `parent`s close into a loop: one parented to itself,
+    /// or `a` to `b` to `a` (#680). The scene does not load.
+    pub const PARENT_CYCLE: &str = "parent-cycle";
     /// An `asset` field (or, in `flint check`, an asset of a known kind) that
     /// names no file the project's asset search finds; the hint, or `tried`,
     /// lists the paths.
@@ -112,6 +115,13 @@ pub mod codes {
     /// for (#741), as a style value past its range warns (#355): it still
     /// draws, maybe badly.
     pub const POST_RANGE: &str = "post-range";
+    /// A light past the number of its type the shader takes (#682): the
+    /// strongest directional lights and the point and spot lights nearest
+    /// the camera are drawn, and this one is off while it isn't among them.
+    pub const LIGHT_CAP: &str = "light-cap";
+    /// A value written in two forms of which one is read (#682: a spot's
+    /// `inner_angle` and `inner_angle_deg`): the other does nothing.
+    pub const TWO_FORMS: &str = "two-forms";
 
     // What `flint check` adds (#687): the project around the scene.
 
@@ -150,6 +160,10 @@ pub mod codes {
     /// A `.spline.toml` a scene names does not parse, or a `spline_mesh`
     /// profile is no polygon (#750). Placed by line and column.
     pub const BAD_SPLINE: &str = "bad-spline";
+    /// An inline `particle_emitter` the engine can't play as written (#690):
+    /// a key it doesn't read, or a value that doesn't parse or resolve. At
+    /// run time the emitter keeps its last good settings (or makes none).
+    pub const BAD_EMITTER: &str = "bad-emitter";
 
     /// A game's Cargo workspace lacks a `[patch.crates-io]` line the engine
     /// it builds by path has (#982): cargo applies `[patch]` only from the
@@ -256,6 +270,11 @@ pub mod codes {
             "an entity reference that names no entity in the scene",
         ),
         (
+            PARENT_CYCLE,
+            Severity::Error,
+            "entities whose parents close into a loop, so the scene does not load",
+        ),
+        (
             MISSING_ASSET,
             Severity::Error,
             "an asset reference that names no file the project's search finds",
@@ -352,6 +371,11 @@ pub mod codes {
             "a spline file a scene names does not parse, or a spline_mesh profile is no polygon",
         ),
         (
+            BAD_EMITTER,
+            Severity::Error,
+            "an inline particle_emitter has a key it does not read or a value it cannot use",
+        ),
+        (
             MISSING_CARGO_PATCH,
             Severity::Warning,
             "a game's Cargo workspace lacks a [patch.crates-io] line of the engine it builds",
@@ -411,6 +435,16 @@ pub mod codes {
             POST_RANGE,
             Severity::Warning,
             "a [post_process] value outside what its effect is tuned for",
+        ),
+        (
+            LIGHT_CAP,
+            Severity::Warning,
+            "a light past the number of its type the shader takes, off while it is",
+        ),
+        (
+            TWO_FORMS,
+            Severity::Warning,
+            "a value written in two forms, of which one is read",
         ),
     ];
 }
@@ -669,6 +703,128 @@ pub fn log_summary(scene: &str, diagnostics: &[Diagnostic]) {
     }
 }
 
+/// Codes a project may not allow: each says the file did not load, so
+/// there is nothing behind it to check, and allowing it would pass a scene
+/// that does not play.
+pub const NOT_ALLOWABLE: &[&str] = &[
+    codes::TOML_PARSE,
+    codes::FILE_UNREADABLE,
+    codes::SCENE_LOAD,
+    codes::BAD_MANIFEST,
+    codes::BAD_PREFAB,
+];
+
+/// One entry of a project's `[project.diagnostics] allow` (#795): a code,
+/// and optionally the place it is allowed at.
+///
+/// `"unknown-field"` allows every unknown field. `"unknown-field:material"`
+/// allows those of `material` (a component, or a scene table of that name),
+/// and `"unknown-field:material.wetness"` that one field, with whatever is
+/// nested under it (`environment.fog` covers `environment.fog.colour`). An
+/// allowed diagnostic is left out of the list; the hosts that report a list
+/// say how many were.
+///
+/// ```
+/// use flint_core::diagnostic::{codes, Allow, Diagnostic};
+///
+/// let allow = Allow::parse("unknown-field:material.wetness").unwrap();
+/// let wet = Diagnostic::warning(codes::UNKNOWN_FIELD, "no field `wetness`")
+///     .entity("road")
+///     .component("material")
+///     .field("wetness");
+/// let dry = wet.clone().field("dryness");
+/// assert!(allow.matches(&wet));
+/// assert!(!allow.matches(&dry));
+/// assert!(Allow::parse("unknown-feild").unwrap_err().contains("did you mean `unknown-field`?"));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Allow {
+    /// One of [`codes`].
+    pub code: &'static str,
+    /// `component`, `component.field`, `table` or `table.field`; `None` is
+    /// everywhere.
+    pub place: Option<String>,
+}
+
+impl Allow {
+    /// `code` or `code:place`. A code that is none of [`codes::ALL`], or one
+    /// of [`NOT_ALLOWABLE`], is refused with what to write instead.
+    pub fn parse(entry: &str) -> Result<Self, String> {
+        let (code, place) = match entry.split_once(':') {
+            Some((code, place)) => (code.trim(), Some(place.trim())),
+            None => (entry.trim(), None),
+        };
+        let Some(&(known, _, _)) = codes::ALL.iter().find(|(c, _, _)| *c == code) else {
+            let hint =
+                did_you_mean(code, codes::ALL.iter().map(|(c, _, _)| *c)).unwrap_or_else(|| {
+                    "the codes are listed in the book, concepts/schemas.md".to_string()
+                });
+            return Err(format!("`{code}` is no diagnostic code ({hint})"));
+        };
+        if NOT_ALLOWABLE.contains(&known) {
+            return Err(format!(
+                "`{known}` means the file did not load, so it can't be allowed"
+            ));
+        }
+        let place = match place {
+            Some("") => {
+                return Err(format!(
+                    "nothing after `{known}:`; write `{known}` alone to allow it everywhere"
+                ))
+            }
+            Some(place) => Some(place.to_string()),
+            None => None,
+        };
+        Ok(Self { code: known, place })
+    }
+
+    /// Whether `d` is the code, at the place if one is given.
+    pub fn matches(&self, d: &Diagnostic) -> bool {
+        if d.code != self.code {
+            return false;
+        }
+        let Some(place) = &self.place else {
+            return true;
+        };
+        let at = match (d.component.as_ref().or(d.table.as_ref()), &d.field) {
+            (Some(owner), Some(field)) => format!("{owner}.{field}"),
+            (Some(owner), None) => owner.clone(),
+            (None, Some(field)) => field.clone(),
+            (None, None) => return false,
+        };
+        at.strip_prefix(place.as_str())
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '[']))
+    }
+}
+
+impl fmt::Display for Allow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.place {
+            Some(place) => write!(f, "{}:{place}", self.code),
+            None => f.write_str(self.code),
+        }
+    }
+}
+
+/// Take out of `diagnostics` every one an entry of `allow` matches, and say
+/// how many that was.
+pub fn drop_allowed(diagnostics: &mut Vec<Diagnostic>, allow: &[Allow]) -> usize {
+    if allow.is_empty() {
+        return 0;
+    }
+    let before = diagnostics.len();
+    diagnostics.retain(|d| !allow.iter().any(|a| a.matches(d)));
+    before - diagnostics.len()
+}
+
+/// ` (2 allowed by flint.toml)` after a count line, or nothing for none.
+pub fn allowed_note(allowed: usize) -> String {
+    match allowed {
+        0 => String::new(),
+        n => format!(" ({n} allowed by flint.toml)"),
+    }
+}
+
 /// The candidate closest to `name`, if one is close enough to be what was
 /// meant: the same letters in another case or with `-`/`_` moved wins, then
 /// the smallest edit distance, within a third of the name's length (1 to 3).
@@ -796,7 +952,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 46);
+        assert_eq!(seen.len(), 50);
     }
 
     /// A problem in a scene-level table names the table as its header is
@@ -880,5 +1036,104 @@ mod tests {
         assert_eq!(edit_distance("lihgt", "light"), 1);
         assert_eq!(edit_distance("", "abc"), 3);
         assert_eq!(edit_distance("kitten", "sitting"), 3);
+    }
+
+    /// `[project.diagnostics] allow` (#795): a code everywhere, a code at a
+    /// component or table, at one field and what is nested under it, and
+    /// never a field whose name only starts the same.
+    #[test]
+    fn an_allow_entry_matches_its_code_and_place() {
+        let field = |component: &str, field: &str| {
+            Diagnostic::warning(codes::UNKNOWN_FIELD, "m")
+                .entity("e")
+                .component(component)
+                .field(field)
+        };
+        let table = |table: &str, field: &str| {
+            Diagnostic::warning(codes::UNKNOWN_FIELD, "m")
+                .table(table)
+                .field(field)
+        };
+        let allows = |entry: &str, d: &Diagnostic| Allow::parse(entry).unwrap().matches(d);
+
+        assert!(allows("unknown-field", &field("material", "wetness")));
+        assert!(allows(
+            "unknown-field:material",
+            &field("material", "wetness")
+        ));
+        assert!(allows(
+            "unknown-field:material.wetness",
+            &field("material", "wetness")
+        ));
+        assert!(!allows(
+            "unknown-field:material.wetness",
+            &field("material", "wet")
+        ));
+        assert!(!allows(
+            "unknown-field:material.wet",
+            &field("material", "wetness")
+        ));
+        assert!(!allows(
+            "unknown-field:light",
+            &field("material", "wetness")
+        ));
+        assert!(allows(
+            "unknown-field:environment.fog",
+            &table("environment", "fog.colour")
+        ));
+        // A place starts at the component: a field name alone is no place
+        assert!(!allows("unknown-field:layers", &field("terrain", "layers")));
+        assert!(allows(
+            "unknown-field:terrain.layers",
+            &field("terrain", "layers[1].clip")
+        ));
+        assert!(allows(
+            "unknown-field:weather.rian",
+            &table("weather", "rian")
+        ));
+        assert!(allows(
+            " unknown-table : weather ",
+            &Diagnostic::warning(codes::UNKNOWN_TABLE, "m").table("weather")
+        ));
+        // Another code at the same place is not allowed
+        let bad_type = Diagnostic::error(codes::BAD_TYPE, "m")
+            .component("material")
+            .field("wetness");
+        assert!(!allows("unknown-field:material.wetness", &bad_type));
+        // A place given, and nothing to place the diagnostic by
+        assert!(!allows(
+            "no-schemas:x",
+            &Diagnostic::warning(codes::NO_SCHEMAS, "m")
+        ));
+
+        let mut list = vec![
+            field("material", "wetness"),
+            field("material", "dryness"),
+            bad_type,
+        ];
+        let rules = [Allow::parse("unknown-field:material.wetness").unwrap()];
+        assert_eq!(drop_allowed(&mut list, &rules), 1);
+        assert_eq!(list.len(), 2);
+        assert_eq!(drop_allowed(&mut list, &[]), 0);
+        assert_eq!(allowed_note(0), "");
+        assert_eq!(allowed_note(2), " (2 allowed by flint.toml)");
+        assert_eq!(rules[0].to_string(), "unknown-field:material.wetness");
+    }
+
+    #[test]
+    fn an_allow_entry_that_names_no_code_says_so() {
+        let refused = |entry: &str| Allow::parse(entry).unwrap_err();
+        assert!(
+            refused("unknown-feild").contains("did you mean `unknown-field`?"),
+            "{}",
+            refused("unknown-feild")
+        );
+        assert!(refused("wibble").contains("concepts/schemas.md"));
+        assert!(refused("toml-parse").contains("did not load"));
+        assert!(refused("unknown-field:").contains("alone"));
+        for code in NOT_ALLOWABLE {
+            assert!(codes::ALL.iter().any(|(c, _, _)| c == code), "{code}");
+            assert!(refused(code).contains("did not load"), "{code}");
+        }
     }
 }

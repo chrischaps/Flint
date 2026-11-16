@@ -20,6 +20,30 @@ pub struct SceneDocument {
 /// A dirty field identifier: (entity_name, component_name, field_name)
 pub type DirtyField = (String, String, String);
 
+/// Where [`SceneDocument::write_entity_field`] wrote a field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FieldHome {
+    /// The entity's own `[entities.<name>]` table
+    Entity,
+    /// The overrides of the prefab instance that makes the entity:
+    /// `[prefabs.<instance>.overrides.<entity>]`, `entity` being its name in
+    /// the template
+    PrefabOverride { instance: String, entity: String },
+}
+
+impl FieldHome {
+    /// The table the field is in, as its TOML header says it:
+    /// `entities.crate.transform`, `prefabs.props.overrides.barrel.transform`.
+    pub fn table(&self, entity_name: &str, component: &str) -> String {
+        match self {
+            FieldHome::Entity => format!("entities.{entity_name}.{component}"),
+            FieldHome::PrefabOverride { instance, entity } => {
+                format!("prefabs.{instance}.overrides.{entity}.{component}")
+            }
+        }
+    }
+}
+
 impl SceneDocument {
     /// Parse a scene file into an editable document
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
@@ -86,6 +110,98 @@ impl SceneDocument {
         }
 
         Ok(())
+    }
+
+    /// Write one field of an entity the world holds (#679): into its
+    /// `[entities.<name>.<component>]` when the file writes the entity, else
+    /// into the overrides of the prefab instance that makes it,
+    /// `[prefabs.<instance>.overrides.<entity>.<component>]`, which the
+    /// loader merges over the template field by field. `None` takes the
+    /// field away. Says where the value went, or why it went nowhere.
+    pub fn write_entity_field(
+        &mut self,
+        entity_name: &str,
+        component: &str,
+        field: &str,
+        value: Option<&toml::Value>,
+    ) -> Result<FieldHome, String> {
+        if self.has_entity(entity_name) {
+            match value {
+                Some(v) => self.patch_field(entity_name, component, field, v)?,
+                None => self.remove_field(entity_name, component, field),
+            }
+            return Ok(FieldHome::Entity);
+        }
+        let (instance, entity) = self.prefab_origin(entity_name)?;
+        let path: Vec<String> = ["prefabs", &instance, "overrides", &entity, component]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        match value {
+            Some(v) => {
+                let table = header_table(self.doc.as_table_mut(), &path, None)?;
+                match table.get_mut(field).and_then(|item| item.as_value_mut()) {
+                    Some(there) if says_same(there, v) => {}
+                    Some(there) => {
+                        let decor = there.decor().clone();
+                        *there = toml_to_edit_value(v);
+                        *there.decor_mut() = decor;
+                    }
+                    None => {
+                        table.insert(field, toml_edit::Item::Value(toml_to_edit_value(v)));
+                    }
+                }
+            }
+            None => {
+                let mut at: Option<&mut dyn toml_edit::TableLike> = Some(self.doc.as_table_mut());
+                for segment in &path {
+                    at = at
+                        .and_then(|t| t.get_mut(segment))
+                        .and_then(|item| item.as_table_like_mut());
+                }
+                if let Some(table) = at {
+                    table.remove(field);
+                }
+            }
+        }
+        Ok(FieldHome::PrefabOverride { instance, entity })
+    }
+
+    /// The `[prefabs.<instance>]` that makes `entity_name`, and the name of
+    /// the entity in its template: the one instance whose `prefix`, then `_`,
+    /// starts the name (the loader names them `<prefix>_<entity>`). An error
+    /// saying why when there's none, or more than one could be.
+    pub fn prefab_origin(&self, entity_name: &str) -> Result<(String, String), String> {
+        let mut found = Vec::new();
+        if let Some(prefabs) = self.doc.get("prefabs").and_then(|p| p.as_table_like()) {
+            for (instance, item) in prefabs.iter() {
+                let prefix = item
+                    .as_table_like()
+                    .and_then(|t| t.get("prefix"))
+                    .and_then(|p| p.as_str());
+                if let Some(rest) = prefix
+                    .and_then(|p| entity_name.strip_prefix(p))
+                    .and_then(|r| r.strip_prefix('_'))
+                    .filter(|r| !r.is_empty())
+                {
+                    found.push((instance.to_string(), rest.to_string()));
+                }
+            }
+        }
+        match found.len() {
+            1 => Ok(found.remove(0)),
+            0 => Err(format!(
+                "'{entity_name}' isn't written in the scene file and no [prefabs] instance makes it"
+            )),
+            _ => Err(format!(
+                "'{entity_name}' could come from any of {}: the file doesn't say which, so it isn't saved",
+                found
+                    .iter()
+                    .map(|(i, _)| format!("[prefabs.{i}]"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
     }
 
     /// Take `field` out of an entity's component table. Nothing to do if the
@@ -1208,7 +1324,7 @@ intensity = 2.0
         let before = every_table_world();
         let mut after = every_table_world();
         let door = after.get_id("door").unwrap();
-        let comps = after.get_components_mut(door).unwrap();
+        let mut comps = after.get_components_mut(door).unwrap();
         comps.set_field("door", "open_angle", toml::Value::Float(90.0));
         let mut fixer = SceneDocument::from_str(EVERY_TABLE).unwrap();
         assert!(fixer.apply_world_diff(&before, &after).is_empty());
@@ -1247,7 +1363,7 @@ intensity = 2.0
         let before = every_table_world();
         let mut after = every_table_world();
         let door = after.get_id("door").unwrap();
-        let comps = after.get_components_mut(door).unwrap();
+        let mut comps = after.get_components_mut(door).unwrap();
         // remove_invalid: the field goes
         comps
             .get_mut("door")
@@ -1256,8 +1372,8 @@ intensity = 2.0
             .remove("open_angle");
         // add_child: a new entity, parented
         let handle = after.spawn("door_handle").unwrap();
-        let comps = after.get_components_mut(handle).unwrap();
-        comps.archetype = Some("handle".into());
+        let mut comps = after.get_components_mut(handle).unwrap();
+        comps.set_archetype(Some("handle".into()));
         comps.set_field("transform", "position", toml::Value::Array(vec![]));
         after.set_parent(handle, door).unwrap();
         // a lamp despawned
@@ -1297,5 +1413,120 @@ intensity = 2.0
         assert_eq!(problems.len(), 1, "{problems:?}");
         assert!(problems[0].contains("porch_bulb"), "{problems:?}");
         assert_eq!(doc.to_string(), EVERY_TABLE);
+    }
+
+    const PROPS: &str = r#"[scene]
+name = "Props"
+
+[prefabs.props]
+template = "stylize_props"
+prefix = "props"
+
+# The barrel is drawn in ASCII
+[prefabs.props.overrides.barrel.style_mask]
+style = "ascii"
+
+[prefabs.kart]
+template = "kart"
+prefix = "kart"
+
+[prefabs.kart_ai]
+template = "kart"
+prefix = "kart_ai"
+
+[entities.floor]
+archetype = "floor"
+"#;
+
+    fn vec3(x: f64, y: f64, z: f64) -> toml::Value {
+        toml::Value::Array(vec![x.into(), y.into(), z.into()])
+    }
+
+    #[test]
+    fn a_prefab_entity_field_goes_to_its_instance_overrides() {
+        // #679: the viewer dropped this edit and said "Saved!"
+        let mut doc = SceneDocument::from_str(PROPS).unwrap();
+        let position = vec3(1.0, 0.0, 2.0);
+        assert!(doc
+            .patch_field("props_barrel", "transform", "position", &position)
+            .is_err());
+        let home = doc
+            .write_entity_field("props_barrel", "transform", "position", Some(&position))
+            .unwrap();
+        assert_eq!(
+            home,
+            FieldHome::PrefabOverride {
+                instance: "props".into(),
+                entity: "barrel".into()
+            }
+        );
+        assert_eq!(
+            home.table("props_barrel", "transform"),
+            "prefabs.props.overrides.barrel.transform"
+        );
+        let pencil = toml::Value::from("pencil");
+        let home = doc
+            .write_entity_field("props_barrel", "style_mask", "style", Some(&pencil))
+            .unwrap();
+        assert!(matches!(home, FieldHome::PrefabOverride { .. }));
+        let out = doc.to_string();
+        let file: crate::SceneFile = toml::from_str(&out).unwrap();
+        let barrel = &file.prefabs["props"].overrides["barrel"];
+        assert_eq!(barrel["transform"]["position"], position);
+        assert_eq!(barrel["style_mask"]["style"].as_str(), Some("pencil"));
+        // One new header, under the instance; the rest as written
+        assert!(out.contains("# The barrel is drawn in ASCII\n"), "{out}");
+        assert!(
+            out.contains("[prefabs.props.overrides.barrel.transform]"),
+            "{out}"
+        );
+        assert!(!out.contains("[prefabs.props.overrides]\n"), "{out}");
+        assert!(
+            out.find("overrides.barrel.transform") < out.find("[prefabs.kart]"),
+            "{out}"
+        );
+
+        // Taking it away again leaves the instance's other overrides
+        doc.write_entity_field("props_barrel", "transform", "position", None)
+            .unwrap();
+        let file: crate::SceneFile = toml::from_str(&doc.to_string()).unwrap();
+        let barrel = &file.prefabs["props"].overrides["barrel"];
+        assert!(barrel["transform"].get("position").is_none());
+        assert_eq!(barrel["style_mask"]["style"].as_str(), Some("pencil"));
+    }
+
+    #[test]
+    fn an_entity_field_the_file_writes_goes_to_its_table() {
+        let mut doc = SceneDocument::from_str(PROPS).unwrap();
+        let scale = vec3(2.0, 1.0, 2.0);
+        let home = doc
+            .write_entity_field("floor", "transform", "scale", Some(&scale))
+            .unwrap();
+        assert_eq!(home, FieldHome::Entity);
+        assert_eq!(home.table("floor", "transform"), "entities.floor.transform");
+        assert!(doc.to_string().contains("[entities.floor.transform]"));
+    }
+
+    #[test]
+    fn a_field_with_no_home_says_why() {
+        let mut doc = SceneDocument::from_str(PROPS).unwrap();
+        let two = toml::Value::Float(2.0);
+        let none = doc
+            .write_entity_field("lamp", "light", "intensity", Some(&two))
+            .unwrap_err();
+        assert!(
+            none.contains("'lamp'") && none.contains("no [prefabs]"),
+            "{none}"
+        );
+        // kart_ai_body is kart's "ai_body" or kart_ai's "body": only the
+        // templates know, and the file doesn't hold them
+        let both = doc
+            .write_entity_field("kart_ai_body", "light", "intensity", Some(&two))
+            .unwrap_err();
+        assert!(
+            both.contains("[prefabs.kart]") && both.contains("[prefabs.kart_ai]"),
+            "{both}"
+        );
+        assert_eq!(doc.to_string(), PROPS);
     }
 }

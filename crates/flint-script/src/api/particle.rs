@@ -103,7 +103,7 @@ fn set_emitter(
     field: &str,
     value: toml::Value,
 ) -> CallResult<()> {
-    if let Some(comps) = call.world_mut()?.get_components_mut(id) {
+    if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
         comps.set_field(comp::PARTICLE_EMITTER, field, value);
     }
     Ok(())

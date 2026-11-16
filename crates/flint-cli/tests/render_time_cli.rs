@@ -45,8 +45,9 @@ position = [0.0, 1.5, 6.0]
 target = [0.0, 1.0, 0.0]
 fov = 50.0
 
-[entities.sun.directional_light]
-direction = [0.6, -0.5, -0.4]
+[entities.sun.light]
+type = "directional"
+direction = [-0.6, 0.5, 0.4]
 color = [1.0, 0.9, 0.8]
 intensity = 2.5
 

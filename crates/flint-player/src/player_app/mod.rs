@@ -44,6 +44,8 @@ pub mod living_props;
 mod living_subsystem;
 #[cfg(feature = "living")]
 pub(crate) mod living_tuning;
+#[cfg(test)]
+mod look_read_tests;
 mod missing_features;
 mod pacing;
 mod perf;

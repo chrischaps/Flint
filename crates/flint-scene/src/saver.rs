@@ -59,8 +59,8 @@ pub fn world_to_scene_file(world: &FlintWorld, name: impl Into<String>) -> Scene
         environment: None,
         post_process: None,
         tables: toml::Table::new(),
-        prefabs: std::collections::HashMap::new(),
-        entities: std::collections::HashMap::new(),
+        prefabs: std::collections::BTreeMap::new(),
+        entities: std::collections::BTreeMap::new(),
         written: toml::Table::new(),
     };
 
@@ -70,7 +70,9 @@ pub fn world_to_scene_file(world: &FlintWorld, name: impl Into<String>) -> Scene
         let entity_def = EntityDef {
             archetype: components.and_then(|c| c.archetype.clone()),
             parent: info.parent,
-            components: components.map(|c| c.data.clone()).unwrap_or_default(),
+            components: components
+                .map(|c| c.data.clone().into_iter().collect())
+                .unwrap_or_default(),
         };
 
         scene.entities.insert(info.name, entity_def);
@@ -88,7 +90,9 @@ pub fn update_scene_file(world: &FlintWorld, existing: &mut SceneFile) {
         let entity_def = EntityDef {
             archetype: components.and_then(|c| c.archetype.clone()),
             parent: info.parent,
-            components: components.map(|c| c.data.clone()).unwrap_or_default(),
+            components: components
+                .map(|c| c.data.clone().into_iter().collect())
+                .unwrap_or_default(),
         };
 
         existing.entities.insert(info.name, entity_def);

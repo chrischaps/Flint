@@ -119,7 +119,7 @@ flint-debug-ui = { workspace = true }
 log = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-# ahash (egui, hecs, rhai) pulls getrandom 0.3; on the web it needs the JS
+# ahash (egui, rhai) pulls getrandom 0.3; on the web it needs the JS
 # backend, plus the matching cfg in .cargo/config.toml.
 getrandom = { version = "0.3", features = ["wasm_js"] }
 # egui-winit's default `clipboard` feature pulls arboard, which has no web

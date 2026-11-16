@@ -114,8 +114,9 @@ pub enum FieldType {
     Vec4,
     Transform,
     /// `[r, g, b]` or `[r, g, b, a]`, what `flint_core::toml_util::toml_color`
-    /// reads. The older `{ r, g, b }` table and `0xRRGGBB` integer still
-    /// validate; no engine reader takes them.
+    /// reads, and nothing else: the older `{ r, g, b }` table and
+    /// `0xRRGGBB` integer are `bad-type`, as no engine reader takes them
+    /// (#804).
     Color,
     /// A TOML table with no fixed shape (one animator layer, say). Validated
     /// only as "is a table"; the component that reads it checks its keys.
@@ -264,6 +265,12 @@ pub struct ComponentSchemaDefinition {
     /// `[component.<name>.panel]`: the F3 panel's own keys (#744).
     #[serde(default)]
     pub panel: Option<toml::Value>,
+    /// `extend = true` (#794): these fields are added to the component an
+    /// earlier schema layer declared, rather than replacing it whole. A field
+    /// the earlier layer declared too is redefined. Without it a later
+    /// layer's component of the same name replaces the earlier one.
+    #[serde(default)]
+    pub extend: bool,
     /// Keys beside `description` and `fields`, which the loader refuses
     /// (#792): eleven engine files once declared their fields here, under
     /// `[component.x]` instead of `[component.x.fields]`, and loaded empty.
@@ -273,7 +280,7 @@ pub struct ComponentSchemaDefinition {
 
 /// The keys a `[component.<name>]` table may hold; any other is ignored by
 /// the loader and reported by [`lint`](crate::lint).
-pub const COMPONENT_KEYS: &[&str] = &["description", "fields", "panel"];
+pub const COMPONENT_KEYS: &[&str] = &["description", "fields", "panel", "extend"];
 
 /// The keys a field definition may hold ([`DetailedFieldSchema`]).
 pub const FIELD_KEYS: &[&str] = &[

@@ -296,7 +296,7 @@ fn parse_layer_spec(spec: &str) -> AnimLayer {
 
 /// Write a layer list to the preview entity's animator component.
 fn write_layers_to_world(world: &mut FlintWorld, entity_id: EntityId, layers: &[AnimLayer]) {
-    if let Some(components) = world.get_components_mut(entity_id) {
+    if let Some(mut components) = world.get_components_mut(entity_id) {
         components.set_field(
             comp::ANIMATOR,
             "layers",
@@ -476,14 +476,20 @@ impl ModelStats {
 
 /// Create an ECS world with one entity at origin containing transform + model + animator components.
 /// Returns (world, asset_name, entity_id).
-fn create_model_world(model_path: &Path, anim_speed: f32) -> (FlintWorld, String, EntityId) {
+/// The model's entity in `world`, an empty world: `FlintWorld::new()` at
+/// start, `FlintWorld::after(&old)` for a reload, so the new entity's id is
+/// one the renderer's caches have never seen (#688).
+fn create_model_world(
+    model_path: &Path,
+    anim_speed: f32,
+    mut world: FlintWorld,
+) -> (FlintWorld, String, EntityId) {
     let asset_name = model_path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("model")
         .to_string();
 
-    let mut world = FlintWorld::new();
     let entity_id = world.spawn("preview_model").expect("spawn entity");
 
     // Transform at origin
@@ -704,7 +710,7 @@ fn register_animation_data(
     let clip_name = &all_clip_names[current_clip_index];
 
     // Set the clip on the animator component so sync_from_world picks it up
-    if let Some(components) = world.get_components_mut(entity_id) {
+    if let Some(mut components) = world.get_components_mut(entity_id) {
         components.set_field(
             comp::ANIMATOR,
             "clip",
@@ -874,7 +880,8 @@ fn render_image(args: &PreviewArgs) -> Result<image::RgbaImage> {
     );
 
     // Build world and load model
-    let (mut world, asset_name, entity_id) = create_model_world(&model_path, args.anim_speed);
+    let (mut world, asset_name, entity_id) =
+        create_model_world(&model_path, args.anim_speed, FlintWorld::new());
     let config = model_load_config(&model_path, &asset_name);
     let load_result = model_loader::load_models_from_world(
         &mut world,
@@ -1024,7 +1031,8 @@ fn run_interactive(args: PreviewArgs) -> Result<()> {
         if !model_path.exists() {
             anyhow::bail!("Model file not found: {}", model_path.display());
         }
-        let (world, asset_name, entity_id) = create_model_world(&model_path, args.anim_speed);
+        let (world, asset_name, entity_id) =
+            create_model_world(&model_path, args.anim_speed, FlintWorld::new());
         // Import to get bounds and cache the result for UI display
         let import = import_gltf(&model_path).ok();
         initial_bounds = import.as_ref().and_then(|r| r.bounds());
@@ -1402,7 +1410,11 @@ impl PreviewApp {
         let bounds = import.bounds();
         let stats = ModelStats::from_import(&import);
 
-        let (world, asset_name, entity_id) = create_model_world(&path, self.args.anim_speed);
+        let after = match self.state.lock() {
+            Ok(state) => FlintWorld::after(&state.world),
+            Err(_) => FlintWorld::new(),
+        };
+        let (world, asset_name, entity_id) = create_model_world(&path, self.args.anim_speed, after);
 
         // Clear and reload
         let load_result;
@@ -1492,8 +1504,11 @@ impl PreviewApp {
             state.model_stats = Some(ModelStats::from_import(&import));
             state.import_result = Some(import);
 
-            let (world, asset_name, entity_id) =
-                create_model_world(&model_path, self.args.anim_speed);
+            let (world, asset_name, entity_id) = create_model_world(
+                &model_path,
+                self.args.anim_speed,
+                FlintWorld::after(&state.world),
+            );
             state.world = world;
             state.asset_name = asset_name.clone();
             state.entity_id = Some(entity_id);
@@ -1551,7 +1566,7 @@ impl PreviewApp {
         // Update animator component in ECS so sync_from_world picks up the change
         if let Ok(mut state) = self.state.lock() {
             if let Some(eid) = state.entity_id {
-                if let Some(components) = state.world.get_components_mut(eid) {
+                if let Some(mut components) = state.world.get_components_mut(eid) {
                     components.set_field(
                         comp::ANIMATOR,
                         "clip",
@@ -2910,7 +2925,7 @@ impl PreviewApp {
             self.anim_paused = paused;
             if let Ok(mut state) = self.state.lock() {
                 if let Some(eid) = state.entity_id {
-                    if let Some(components) = state.world.get_components_mut(eid) {
+                    if let Some(mut components) = state.world.get_components_mut(eid) {
                         components.set_field(
                             comp::ANIMATOR,
                             "playing",
@@ -2932,7 +2947,7 @@ impl PreviewApp {
         if let Some(spd) = new_speed {
             if let Ok(mut state) = self.state.lock() {
                 if let Some(eid) = state.entity_id {
-                    if let Some(components) = state.world.get_components_mut(eid) {
+                    if let Some(mut components) = state.world.get_components_mut(eid) {
                         components.set_field(comp::ANIMATOR, "speed", toml::Value::Float(spd));
                     }
                 }
@@ -3018,7 +3033,7 @@ impl PreviewApp {
                     if self.anim_paused {
                         self.anim_paused = false;
                         if let Ok(mut state) = self.state.lock() {
-                            if let Some(c) = state.world.get_components_mut(eid) {
+                            if let Some(mut c) = state.world.get_components_mut(eid) {
                                 c.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(true));
                             }
                         }
@@ -3248,7 +3263,7 @@ impl ApplicationHandler for PreviewApp {
                                 // Update playing state in ECS
                                 if let Ok(mut state) = self.state.lock() {
                                     if let Some(eid) = state.entity_id {
-                                        if let Some(components) =
+                                        if let Some(mut components) =
                                             state.world.get_components_mut(eid)
                                         {
                                             components.set_field(
@@ -3310,7 +3325,7 @@ impl ApplicationHandler for PreviewApp {
                             if self.anim_info.is_some() {
                                 if let Ok(mut state) = self.state.lock() {
                                     if let Some(eid) = state.entity_id {
-                                        if let Some(components) =
+                                        if let Some(mut components) =
                                             state.world.get_components_mut(eid)
                                         {
                                             let current = components
@@ -3339,7 +3354,7 @@ impl ApplicationHandler for PreviewApp {
                             if self.anim_info.is_some() {
                                 if let Ok(mut state) = self.state.lock() {
                                     if let Some(eid) = state.entity_id {
-                                        if let Some(components) =
+                                        if let Some(mut components) =
                                             state.world.get_components_mut(eid)
                                         {
                                             let current = components
@@ -3368,7 +3383,7 @@ impl ApplicationHandler for PreviewApp {
                             if self.anim_info.is_some() {
                                 if let Ok(mut state) = self.state.lock() {
                                     if let Some(eid) = state.entity_id {
-                                        if let Some(components) =
+                                        if let Some(mut components) =
                                             state.world.get_components_mut(eid)
                                         {
                                             components.set_field(
