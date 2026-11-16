@@ -60,7 +60,9 @@ impl StyleTargets {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -72,6 +74,19 @@ impl StyleTargets {
         });
         textures.insert((name, format), made.clone());
         made
+    }
+
+    /// SPIKE (#1082): every texture it holds, by name.
+    pub fn spike_textures(&self) -> Vec<(&'static str, wgpu::Texture)> {
+        let Ok(textures) = self.textures.lock() else {
+            return Vec::new();
+        };
+        let mut v: Vec<_> = textures
+            .iter()
+            .map(|((n, _), t)| (*n, t.texture.clone()))
+            .collect();
+        v.sort_by(|a, b| a.0.cmp(b.0));
+        v
     }
 
     /// How many textures it holds.

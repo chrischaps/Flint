@@ -3592,6 +3592,9 @@ fn stage_look(
         .map(str::to_string)
 }
 
+#[path = "render_spike_capture.rs"]
+mod spike_capture;
+
 /// One scene in one renderer, with its own clocks.
 struct Stage {
     /// The scene's game (#725): its world, clock, living props and wooze
@@ -4120,6 +4123,10 @@ impl Stage {
         self.renderer
             .prepare(&ctx.device, &ctx.queue, self.game.world(), &inputs);
 
+        // SPIKE (#1082): FLINT_SPIKE_FRESH draws the captured frame with no style history
+        if spike_capture::due(t) && std::env::var_os("FLINT_SPIKE_FRESH").is_some() {
+            self.renderer.reset_style_history();
+        }
         // Render, as comic panels when the scene has them (#880)
         self.renderer.render_frame_to(
             &ctx.device,
@@ -4130,9 +4137,28 @@ impl Stage {
             Some(self.game.world()),
         );
 
+        // SPIKE (#1082): what this frame's inputs were, owned
+        let spike_inputs = spike_capture::due(t).then(|| spike_capture::Inputs {
+            time: inputs.time,
+            dt: inputs.dt,
+            look_time: inputs.look_time,
+            grass_time: inputs.grass_time,
+            grass_wooze: inputs.grass_wooze,
+            shallow_wooze: inputs.shallow_wooze.to_vec(),
+            boil: inputs.boil,
+            pixels_per_point: inputs.pixels_per_point,
+            view_2d: inputs.view_2d,
+            particles: inputs.particles.is_some(),
+            ocean_tint: inputs.ocean_tint,
+        });
+        drop(inputs);
+
         // Read back pixels
         let pixels =
             pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
+        if let Some(si) = spike_inputs {
+            spike_capture::run(self, args, ctx, t, si, &pixels)?;
+        }
         image::RgbaImage::from_raw(ctx.width, ctx.height, pixels)
             .context("Failed to create image from pixel data")
     }

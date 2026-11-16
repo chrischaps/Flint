@@ -2,6 +2,10 @@
 
 mod assets;
 mod binding;
+mod capture_spike;
+mod capture_spike_bones;
+pub use capture_spike::{SpikeTap, SpikeTiming};
+pub use capture_spike_bones::SpikeSkinning;
 mod draw_list;
 mod draws;
 mod extract;
