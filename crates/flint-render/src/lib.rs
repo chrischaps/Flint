@@ -24,6 +24,7 @@ pub(crate) mod grass_pipeline;
 pub mod ground_fog;
 mod headless;
 pub mod look;
+pub mod look_fade;
 pub mod model_loader;
 pub mod motion_hold;
 pub(crate) mod ocean_pipeline;

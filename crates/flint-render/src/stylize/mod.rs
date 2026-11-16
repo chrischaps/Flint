@@ -1923,6 +1923,19 @@ impl StyleSettings {
         }
     }
 
+    /// Make style `name`'s settings exactly `setting`, or (`None`) give it
+    /// none: a look's cross-fade (#496) lays each in-between setting so.
+    pub fn put(&mut self, name: &str, setting: Option<StyleSetting>) {
+        match setting {
+            Some(setting) => {
+                self.styles.insert(name.to_string(), setting);
+            }
+            None => {
+                self.styles.remove(name);
+            }
+        }
+    }
+
     /// Whether style `name` is set the same here and in `other`. A style
     /// with no settings is the same as one that is off with none.
     pub fn same_style(&self, name: &str, other: &StyleSettings) -> bool {

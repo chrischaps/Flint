@@ -1101,13 +1101,33 @@ spacing = 9             # the rest of graphite's pencil table stays
 
 `--look` goes the other way, over the scene's keys, so a look can be tried on any scene as it stands. A scene whose block is only `look = "graphite"` draws exactly what `--look graphite` draws on the same scene without a block: the two renders of `examples/looks.scene.toml` are byte-identical. `flint render` prints `Scene look: graphite`, and `flint validate` warns about a look it can't find or one whose keys don't fit. In the player a missing look is a warning and the scene draws without it.
 
-The player and the viewer (`flint edit scene.toml`) read the look when the scene loads. **F4 → Look** lists every look the scene can reach (each `styles/` from its folder up to the project root, the mounted engine's, then the built-ins no file shadows) and switches to the one you pick. The pick replaces the whole post config, so edits made in F4's other sections before the pick are gone. The viewer keeps the pick across hot reloads, so you can edit a look file in the scene's `styles/` and watch it change. Scripts switch looks with `set_look("matrix")` and take them off with `clear_look()` ([Scripting → Style API](scripting.md#style-api)). Every switch starts again from the scene's own keys, so nothing from the previous look carries over.
+The player and the viewer (`flint edit scene.toml`) read the look when the scene loads. **F4 → Look** lists every look the scene can reach (each `styles/` from its folder up to the project root, the mounted engine's, then the built-ins no file shadows) and switches to the one you pick. The pick replaces the whole post config, so edits made in F4's other sections before the pick are gone. The viewer keeps the pick across hot reloads, so you can edit a look file in the scene's `styles/` and watch it change. Scripts switch looks with `set_look("matrix")` and take them off with `clear_look()` ([Scripting → Style API](scripting.md#style-api)), or fade to one with `set_look("matrix", 2.0)` (next section). Every switch starts again from the scene's own keys, so nothing from the previous look carries over.
 
 ![F4's Look picker in the player: examples/looks.scene.toml's graphite swapped for watercolor by hand; the post chain below mirrors the new exposure and vignette](../images/f4-look-picker.png)
 
 ![examples/looks.scene.toml in flint-player: scripts/looks_tour.rhai calls set_look every three seconds of game time (graphite, ascii_noir, matrix, ink_wash, watercolor) and then clear_look](../images/looks-tour-player.png)
 
 *Captured with `flint-player examples/looks.scene.toml --frame-step 0.1 --screenshot tour.png --screenshot-at 1.5 --screenshot-every 3`.*
+
+#### Fading from one look to the next
+
+A cut suits a menu or a debug pick; a story beat wants the old look to give way to the new one. `set_look("watercolor", 2.0)` (and `clear_look(2.0)`) eases from what the frame draws now to what the look resolves to, over that many seconds of game time, slow out and slow in (#496). F4's Look picker in the player has a **Fade** time beside it that does the same for a pick.
+
+What crosses, and how:
+
+- **Numbers and colours** lerp: exposure, SSAO intensity, a fog colour, every number or colour key a [built-in effect](post-processing.md) has, and each parameter of a style both looks run (a parameter one look leaves unset reads as the style's default).
+- **An effect one look turns on** (vignette, bloom, SSAO, fog, height fog, volumetric light, dither) stays on through the fade and its strength runs from 0, or down to 0 as it turns off, so it never appears halfway.
+- **Whole numbers and switches** (sample counts, FXAA, `boil_on`) change at the midpoint.
+- **A style only one look has** fades by its whole-frame `blend`: graphite's pencil from 1 to 0 while watercolor's washes come up from 0 to 1. At 0 a style leaves its chain, so both ends are the frame without it, byte for byte. In between the two styles chain in their usual order, the later one reading the earlier's half-faded frame: the outgoing look fades out under the incoming one, rather than the two being drawn apart and mixed.
+- **A style's options** (a ramp, a palette, a font), its place in the chain and its reveal switch at the midpoint: there is one of each style, so it can't be drawn both ways at once.
+
+The fade writes only what the two looks set differently. Whatever else moves the config meanwhile keeps moving: a script's `set_post_process` overrides are stamped over the fade each frame, and a style a script tweens that neither look touches is left to the tween. At the end the config is exactly what the cut would have drawn, and `look_faded` fires. A scene transition drops a fade in progress.
+
+`flint render --scripts --time T` captures a fade at T, from the game time the script asked: `examples/look_fade.scene.toml` holds each look for 1.5 s and fades for 2, so `--time 2.5` is halfway from graphite to watercolor.
+
+![examples/look_fade.scene.toml in flint-player: graphite fading into watercolor over two seconds, at 1.0, 2.0, 2.5, 3.0 and 3.7 s of game time; the HUD bar is time, the picture eases](../images/look-fade-player.jpg)
+
+*Captured with `flint-player examples/look_fade.scene.toml --frame-step 0.0333333 --screenshot fade.png --screenshot-every 0.0333333 --exit-after 4`.*
 
 **`--sweep KEY=V1,V2,...`** renders the same frame once per value and lays the frames out as one labelled contact sheet, four across, in the ASCII style's built-in glyphs. KEY can be:
 

@@ -255,6 +255,91 @@ pub(super) fn gpu() -> Option<&'static HeadlessContext> {
     })
 }
 
+/// #496: a look fades in over game time, fires `look_faded` and ends on
+/// the cut's config; a cut during a fade ends it.
+#[test]
+fn a_look_fades_in_on_game_time_and_says_when_it_arrives() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("look fade test");
+        return;
+    };
+    vfs::scoped(Arc::new(game()), || a_look_fades(gpu));
+}
+
+fn a_look_fades(gpu: &'static HeadlessContext) {
+    let mut app = started_in_a(Some(gpu));
+    let drawn = |app: &PlayerApp| {
+        app.scene_renderer
+            .as_ref()
+            .unwrap()
+            .post_process_config()
+            .clone()
+    };
+    let exposure = drawn(&app).exposure;
+
+    app.fade_to_look(Some("watercolor"), 2.0).unwrap();
+    assert_eq!(
+        app.current_look(),
+        Some("watercolor"),
+        "the look is the new one at once"
+    );
+    assert!(app.look_fading());
+    assert!(
+        !drawn(&app).styles.is_enabled("watercolor"),
+        "nothing moves before a step"
+    );
+
+    app.step_look_fade(1.0);
+    let half = drawn(&app);
+    assert!(half.styles.is_enabled("watercolor"));
+    assert!(
+        (half.styles.blend("watercolor") - 0.5).abs() < 1e-5,
+        "smoothstep(0.5) is 0.5"
+    );
+    assert_eq!(
+        half.exposure, exposure,
+        "the scene's own exposure is under both looks"
+    );
+    assert!(app.core.events.drain().is_empty(), "no arrival yet");
+
+    app.step_look_fade(1.5);
+    assert!(!app.look_fading());
+    let arrived: Vec<_> = app
+        .core
+        .events
+        .drain()
+        .into_iter()
+        .filter_map(|e| match e {
+            flint_runtime::GameEvent::Custom { name, data } if name == crate::LOOK_FADED => {
+                Some(data)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arrived.len(), 1);
+    assert_eq!(
+        arrived[0].get("look").and_then(|v| v.as_str()),
+        Some("watercolor")
+    );
+    let cut = app.scene_post_config();
+    assert_eq!(
+        format!("{:?}", drawn(&app).styles),
+        format!("{:?}", cut.styles),
+        "the fade ends on what the cut would draw"
+    );
+
+    // A cut during a fade takes over at once
+    app.fade_to_look(None, 3.0).unwrap();
+    app.step_look_fade(0.5);
+    assert!(app.look_fading());
+    app.set_look(Some("graphite")).unwrap();
+    assert!(!app.look_fading());
+    let graphite = drawn(&app);
+    assert!(graphite.styles.is_enabled("pencil"));
+    assert!(!graphite.styles.is_enabled("watercolor"));
+    assert!(app.core.events.drain().is_empty(), "a cut fires nothing");
+}
+
 #[test]
 fn a_transition_resets_the_renderer_to_the_next_scene() {
     let Some(gpu) = gpu() else {

@@ -58,11 +58,14 @@ impl PlayerApp {
             return;
         }
         self.update_render_scale();
-        if let Some(look) = self.style.pending_look.take() {
-            if let Err(e) = self.set_look(look.as_deref()) {
+        if let Some((look, seconds)) = self.style.pending_look.take() {
+            if let Err(e) = self.fade_to_look(look.as_deref(), seconds) {
                 tracing::warn!("look: {e}");
             }
         }
+        // A look's cross-fade (#496) eases what the two looks differ in, on
+        // game time, under the scripts' overrides stamped below
+        self.step_look_fade(self.core.clock.delta_time);
         let Some(context) = &self.render_context else {
             return;
         };
@@ -122,7 +125,7 @@ impl PlayerApp {
                 self.post.debug_freeze = freeze;
             }
             if let Some(look) = host.look {
-                self.style.pending_look = Some(look);
+                self.style.pending_look = Some((look, host.look_seconds));
             }
             self.particles_render_enabled = host.particles_render;
             // A style the F4 or F3 editor just wrote into the scene file

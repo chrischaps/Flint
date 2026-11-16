@@ -465,9 +465,14 @@ pub(super) struct Outcome {
 pub(super) struct StyleState {
     /// Resets style history when the camera cuts (#343)
     pub(super) camera_cut: camera_cut::CameraCutDetector,
-    /// A look F4's picker chose this frame (#356; `Some(None)`: none),
-    /// laid under the scene's keys at the start of the next render.
-    pub(super) pending_look: Option<Option<String>>,
+    /// A look F4's picker chose this frame (#356; `Some(None)`: none) and
+    /// the seconds to fade to it over (#496; 0 cuts), laid under the
+    /// scene's keys at the start of the next render.
+    pub(super) pending_look: Option<(Option<String>, f64)>,
+    /// A cross-fade to a look in progress (#496) and the look it ends on,
+    /// stepped on game time each render; dropped at its end, a cut, or a
+    /// scene's teardown.
+    pub(super) look_fade: Option<(flint_render::look_fade::LookFade, Option<String>)>,
 }
 
 /// The input config's layers (built-in, game, user overrides, CLI) and a

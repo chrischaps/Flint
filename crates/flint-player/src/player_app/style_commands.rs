@@ -206,6 +206,11 @@ fn tween_done(entity: EntityId, param: &str) -> GameEvent {
     }
 }
 
+/// The event a look's cross-fade fires when it reaches the new look (#496:
+/// `set_look(name, seconds)`, `clear_look(seconds)`, F4's picker with a fade
+/// time), with `#{ look }`: its name, `""` for none.
+pub const LOOK_FADED: &str = "look_faded";
+
 /// The event a finished whole-frame style tween fires (#406), with
 /// `#{ style, param }`.
 pub const POST_STYLE_TWEEN_DONE: &str = "post_style_tween_done";

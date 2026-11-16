@@ -67,6 +67,8 @@ pub struct PanelHost {
     pub freeze_scripts: Option<bool>,
     /// A look to switch to (`Some(None)`: the scene's own).
     pub look: Option<Option<String>>,
+    /// Seconds to fade to `look` over (#496); 0 cuts.
+    pub look_seconds: f64,
     /// The scene's authored styles after a panel wrote one into the file.
     pub committed_styles: Option<flint_render::stylize::StyleSettings>,
     /// Whether particles draw (the Particles panel's switch).

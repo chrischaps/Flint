@@ -3592,6 +3592,9 @@ struct Stage {
     look_applied: ScriptLook,
     /// What the deprecated render mode overwrote (#746), to put back.
     mode_shim: flint_render::render_mode::RenderModeShim,
+    /// A script's cross-fade to a look (#496) and the game time it was asked
+    /// at: each capture lays it at its own moment, as the player's frame does.
+    look_fade: Option<(flint_render::look_fade::LookFade, f64)>,
     /// The scene's own `[post_process]` block, which a script's `set_look`
     /// lays a look under (#697), as the player's does.
     scene_post: Option<flint_scene::PostProcessDef>,
@@ -3906,6 +3909,7 @@ impl Stage {
             laid_styles,
             look_applied: ScriptLook::default(),
             mode_shim: Default::default(),
+            look_fade: None,
             scene_post: scene_file.post_process.clone(),
             pixels_per_point,
             view_2d,
@@ -3915,17 +3919,20 @@ impl Stage {
     }
 
     /// Lay on the renderer what the scripts have asked of it that waits for
-    /// the capture: a look (it replaces the config, as the player's does),
-    /// then the post-processing overrides, sticky as the player's. Their
-    /// styles, boil tunes, distance and quality levers landed as they asked.
-    fn lay_script_requests(&mut self, args: &RenderArgs) -> Result<()> {
+    /// the capture: a look (it replaces the config, as the player's does, or
+    /// fades to it from the moment it was asked, #496), then the
+    /// post-processing overrides, sticky as the player's. Their styles, boil
+    /// tunes, distance and quality levers landed as they asked. `t` is the
+    /// capture's moment on the game clock.
+    fn lay_script_requests(&mut self, args: &RenderArgs, t: f64) -> Result<()> {
         let asked = self.game.take_look_request();
         let mut config = self.renderer.post_process_config().clone();
         let mut changed = false;
         // Whole-frame styles the scripts changed since the last capture,
         // which go over a look's, as they did before the look
         let styled = config.styles != self.laid_styles;
-        if let Some(name) = &asked {
+        if let Some(flint_player::LookRequest { name, seconds, at }) = &asked {
+            let before = config.clone();
             let base = match &self.scene_post {
                 Some(def) => def.clone(),
                 None => flint_scene::PostProcessDef::from_authored(toml::Table::new())
@@ -3952,12 +3959,36 @@ impl Stage {
                     self.look_applied = ScriptLook::default();
                     self.mode_shim.forget();
                     changed = true;
+                    self.look_fade = None;
+                    if *seconds > 0.0 && seconds.is_finite() {
+                        // Drawn from where the frame was; a style the new
+                        // look turns on is built at the capture it shows in
+                        let fade = flint_render::look_fade::LookFade::new(
+                            before.clone(),
+                            config,
+                            *seconds as f32,
+                        );
+                        config = before;
+                        self.look_fade = Some((fade, *at));
+                    }
                 }
                 Err(e) => tracing::warn!("set_look: {e}"),
             }
         }
+        let fading = self.look_fade.is_some();
+        if let Some((fade, at)) = &mut self.look_fade {
+            let mut at_moment = fade.clone();
+            at_moment.step((t - *at) as f32);
+            at_moment.apply(&mut config);
+            changed = true;
+            if at_moment.done() {
+                self.look_fade = None;
+            }
+        }
         let look = self.game.look();
-        if look != self.look_applied {
+        // A fade rewrites what the looks differ in each capture, so the
+        // scripts' overrides go over it again
+        if look != self.look_applied || fading {
             flint_player::apply_look(&mut config, &look, &mut self.mode_shim);
             self.look_applied = look;
             changed = true;
@@ -3988,7 +4019,7 @@ impl Stage {
         // What the scripts asked of the renderer that waits for a capture
         // (#697): a look, then the post overrides
         if self.scripted {
-            self.lay_script_requests(args)?;
+            self.lay_script_requests(args, t)?;
         }
         // A style switched on since the last capture (by a script, a look)
         // gets what it draws with

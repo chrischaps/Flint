@@ -360,6 +360,8 @@ impl PlayerApp {
         // A render mode a script held on: the next frame would otherwise
         // put the old scene's settings back over the new scene's
         self.post.mode_shim.forget();
+        // A look's fade eases toward this scene's config, not the next's
+        self.style.look_fade = None;
 
         // Clear all systems
         self.core.script.clear();

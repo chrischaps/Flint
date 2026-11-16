@@ -13,6 +13,9 @@ fn on_init() {
 fn on_update() {
     set_look("  ");
     clear_look();
+    set_look("watercolor", 2);
+    clear_look(0.5);
+    set_look("ink_wash", -1.0);
 }
 "#;
 
@@ -27,7 +30,10 @@ fn a_script_sets_and_clears_a_look() {
     engine.call_inits(&mut world);
     let init = engine.drain_commands();
     assert!(
-        matches!(init.as_slice(), [ScriptCommand::SetLook { name: Some(n) }] if n == "graphite"),
+        matches!(
+            init.as_slice(),
+            [ScriptCommand::SetLook { name: Some(n), seconds }] if n == "graphite" && *seconds == 0.0
+        ),
         "{init:?}"
     );
 
@@ -37,10 +43,13 @@ fn a_script_sets_and_clears_a_look() {
         matches!(
             update.as_slice(),
             [
-                ScriptCommand::SetLook { name: None },
-                ScriptCommand::SetLook { name: None }
-            ]
+                ScriptCommand::SetLook { name: None, .. },
+                ScriptCommand::SetLook { name: None, .. },
+                ScriptCommand::SetLook { name: Some(fade), seconds: fade_secs },
+                ScriptCommand::SetLook { name: None, seconds: clear_secs },
+                ScriptCommand::SetLook { name: Some(_), seconds: cut },
+            ] if fade == "watercolor" && *fade_secs == 2.0 && *clear_secs == 0.5 && *cut == 0.0
         ),
-        "a blank name is no look: {update:?}"
+        "a blank name is no look, an integer is seconds, and a negative fade is a cut: {update:?}"
     );
 }

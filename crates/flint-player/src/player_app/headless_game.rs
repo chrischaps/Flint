@@ -148,7 +148,7 @@ pub struct HeadlessGame {
     /// sticky in the player, so only the last write of each value matters.
     look: ScriptLook,
     /// `set_look` / `clear_look` since the stage last asked.
-    look_request: Option<Option<String>>,
+    look_request: Option<LookRequest>,
     /// What a debug key would say (#367): nobody presses one in a capture.
     key_note: super::key_note::KeyNote,
     /// What scripts are told the capture draws at (`--pixels-per-point`).
@@ -415,9 +415,10 @@ impl HeadlessGame {
         }
     }
 
-    /// A look the scripts asked for since the last call (`Some(None)`:
-    /// none), to lay under the scene's keys before the next draw.
-    pub fn take_look_request(&mut self) -> Option<Option<String>> {
+    /// A look the scripts asked for since the last call (its `name` `None`:
+    /// none), to lay under the scene's keys before the next draw, or to fade
+    /// to from the game time it was asked at (#496).
+    pub fn take_look_request(&mut self) -> Option<LookRequest> {
         self.look_request.take()
     }
 
@@ -607,8 +608,12 @@ impl ScriptHost for CaptureFrame<'_> {
         // transition_complete: a capture has no transition to end
     }
 
-    fn set_look(&mut self, name: Option<String>) {
-        self.game.look_request = Some(name);
+    fn set_look(&mut self, name: Option<String>, seconds: f64) {
+        self.game.look_request = Some(LookRequest {
+            name,
+            seconds,
+            at: self.game.core.clock.total_time,
+        });
     }
 
     fn set_quality(&mut self, settings: QualitySettings) {
@@ -634,6 +639,17 @@ impl ScriptHost for CaptureFrame<'_> {
             &style,
         );
     }
+}
+
+/// A script's `set_look` / `clear_look` in a capture (#356, #496).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LookRequest {
+    /// The look, `None` for the scene's keys alone.
+    pub name: Option<String>,
+    /// The cross-fade's length; 0 is a cut.
+    pub seconds: f64,
+    /// The game time the script asked at, which the fade runs from.
+    pub at: f64,
 }
 
 /// Lay `look` over a post-process config, as the player's frame does with its
