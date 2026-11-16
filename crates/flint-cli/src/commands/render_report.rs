@@ -21,6 +21,10 @@ pub struct RenderReport {
     pub wooze_zones: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sweep: Option<String>,
+    /// `--frame-dump`'s file (#1084): the described frame, the last capture
+    /// of the first cell.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_dump: Option<String>,
     /// One per image in the file: a moment and, in a sweep, a column.
     pub captures: Vec<CaptureReport>,
     /// Entities asking to be living props that drew as still models, with the reason
@@ -318,6 +322,7 @@ mod tests {
             wooze_field: false,
             wooze_zones: 0,
             sweep: None,
+            frame_dump: None,
             captures: vec![CaptureReport {
                 time: 3.5,
                 column: None,
@@ -333,6 +338,7 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert!(json.get("sweep").is_none());
+        assert!(json.get("frame_dump").is_none());
         // Present and empty when every script ran clean (#693)
         assert_eq!(json["script_errors"], serde_json::json!([]));
         assert_eq!(json["captures"][0]["time"], 3.5);

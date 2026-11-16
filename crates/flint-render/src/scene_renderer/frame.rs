@@ -168,6 +168,10 @@ impl SceneRenderer {
         world: &FlintWorld,
         inputs: &FrameInputs<'_>,
     ) {
+        // A described frame starts its log here (#1084)
+        if let Some(log) = &mut self.frame_log {
+            **log = Default::default();
+        }
         self.take_inputs(queue, inputs);
         self.update_from_world(world, device);
         match inputs.particles {
@@ -335,8 +339,18 @@ impl SceneRenderer {
             return;
         }
         // Taken for the frame, so the phases can be scoped while self is
-        // borrowed; put back at the end (ADR 0108).
-        let mut gpu_timer = self.gpu_timer.take();
+        // borrowed; put back at the end (ADR 0108). With them the frame's
+        // description, while one is asked for (#1084): each part logs its
+        // pass where it opens its scope.
+        let mut scopes = crate::frame_capture::FrameScopes {
+            timer: self.gpu_timer.take(),
+            log: self.frame_log.take(),
+        };
+        if let Some(log) = scopes.log() {
+            log.begin_view(self.surface_size.into());
+        }
+        // The depth the scene draws against, in the description's names
+        let sd = self.scene_depth_id();
         // Below render scale 1 the scene draws against a depth buffer of
         // its own size, copied into the caller's once the frame is drawn
         // (#122). Every scene pass and effect below sees that one.
@@ -401,21 +415,33 @@ impl SceneRenderer {
         }
         if self.grass.config.as_ref().is_some_and(|c| c.enabled) {
             let grass_time = self.grass_time;
-            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Grass");
+            let scope = scopes.begin(encoder, "Grass");
             self.dispatch_grass_compute(device, queue, encoder, camera, grass_time);
-            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
+            scopes.end(encoder, scope);
+            scopes.note("Grass", |p| {
+                p.writes(&["grass_instances"]);
+            });
             // Its count is read back once the frame is submitted
             self.grass.readback_due = true;
         } else {
             self.grass.instance_count = 0;
+            let config = self.grass.config.is_some();
+            scopes.skip("Grass", || {
+                if config {
+                    "grass is off (enabled = false)"
+                } else {
+                    "no grass in the scene"
+                }
+                .to_string()
+            });
         }
 
         // Shadow pass: render depth from light perspective. It sees every
         // draw (culled per cascade), since a caster outside the view can
         // still shadow what's in it.
-        let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Shadows");
-        self.render_shadow_pass(device, queue, encoder, camera, camera_pos);
-        crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
+        let scope = scopes.begin(encoder, "Shadows");
+        self.render_shadow_pass(device, queue, encoder, camera, camera_pos, scopes.log());
+        scopes.end(encoder, scope);
 
         // Set aside draws outside the camera frustum for the rest of the frame.
         self.cull_draws_to_camera();
@@ -511,11 +537,26 @@ impl SceneRenderer {
             (scene_target_view, None, depth_view)
         };
 
-        let scene_scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Scene");
+        let scene_scope = scopes.begin(encoder, "Scene");
+        scopes.note("Scene", |p| {
+            p.reads(&["shadow_map"]);
+            if msaa_active {
+                p.writes(&["msaa_color", "msaa_depth"]);
+            }
+            p.writes(&[
+                if has_postprocess {
+                    "hdr_scene"
+                } else {
+                    "surface"
+                },
+                sd,
+            ]);
+        });
 
         if !self.water.grab_this_frame {
             // Single-pass path (unchanged for scenes without an ocean), split
             // before the translucent draws while the fog veil is drawn.
+            scopes.note("Scene", |p| p.render_pass("Render Pass"));
             let mut render_pass = scene_pass(
                 encoder,
                 "Render Pass",
@@ -538,6 +579,10 @@ impl SceneRenderer {
             drop(render_pass);
             if fog_veiled {
                 self.copy_fog_veil_behind(encoder);
+                scopes.note("Scene", |p| {
+                    p.writes(&["fog_veil_behind"]);
+                    p.render_pass("Render Pass (translucent)");
+                });
                 let mut render_pass = scene_pass(
                     encoder,
                     "Render Pass (translucent)",
@@ -560,6 +605,12 @@ impl SceneRenderer {
         } else {
             // ── Grab-pass split: opaque scene → snapshot → ocean + rest ──
             // Pass A: sky + all opaque geometry (including the legs).
+            scopes.note("Scene", |p| {
+                p.writes(&["ocean_grab_color", "ocean_grab_depth"]);
+                p.render_pass("Render Pass A (pre-ocean)");
+                p.render_pass("Ocean Grab Blit");
+                p.render_pass("Render Pass B (ocean + transparents)");
+            });
             {
                 let mut pass_a = scene_pass(
                     encoder,
@@ -670,6 +721,10 @@ impl SceneRenderer {
             }
             if fog_veiled {
                 self.copy_fog_veil_behind(encoder);
+                scopes.note("Scene", |p| {
+                    p.writes(&["fog_veil_behind"]);
+                    p.render_pass("Render Pass C (transparents)");
+                });
                 let mut pass_c = scene_pass(
                     encoder,
                     "Render Pass C (transparents)",
@@ -694,22 +749,47 @@ impl SceneRenderer {
             }
         }
 
-        crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scene_scope);
+        scopes.end(encoder, scene_scope);
+        if let Some(pass) = scopes.log().and_then(|l| l.named("Scene")) {
+            self.log_scene_draws(pass, camera_pos);
+        }
 
         // The fog veil (#513): the translucent draws' weight, depth and
         // coverage, against the finished frame's single-sample depth
         if fog_veiled {
-            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Fog veil");
+            let scope = scopes.begin(encoder, "Fog veil");
             self.fog_veil.drawn = self.encode_fog_veil(device, encoder, depth_view);
-            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
+            scopes.end(encoder, scope);
+            scopes.note("Fog veil", |p| {
+                p.reads(&[sd]).writes(&["fog_veil"]);
+            });
+        } else {
+            scopes.skip("Fog veil", || {
+                if !has_postprocess {
+                    "no HDR chain"
+                } else if wireframe_only {
+                    "the wireframe view"
+                } else {
+                    "no fog reaches a translucent draw"
+                }
+                .to_string()
+            });
         }
 
         // The entity style mask (#263): the styled entities' ids, drawn
         // against the frame's single-sample depth, while a style reads it.
         if has_postprocess && self.style_mask_wanted() {
-            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Style mask");
+            let scope = scopes.begin(encoder, "Style mask");
             self.encode_style_mask(device, queue, encoder, depth_view, depth_key);
-            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
+            scopes.end(encoder, scope);
+            scopes.note("Style mask", |p| {
+                p.reads(&[sd])
+                    .writes(&["style veil", crate::style_mask::MASK_TARGET]);
+            });
+        } else {
+            scopes.skip("Style mask", || {
+                "no style reads the entity mask".to_string()
+            });
         }
 
         // The style albedo (#869): the opaque meshes' own colour, while a
@@ -717,9 +797,14 @@ impl SceneRenderer {
         if has_postprocess
             && crate::stylize::any_uses_albedo(&self.postprocess_config, &self.style_mask.ids)
         {
-            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Style albedo");
+            let scope = scopes.begin(encoder, "Style albedo");
             self.encode_style_albedo(device, encoder, depth_view);
-            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
+            scopes.end(encoder, scope);
+            scopes.note("Style albedo", |p| {
+                p.reads(&[sd]).writes(&[crate::style_albedo::ALBEDO_TARGET]);
+            });
+        } else {
+            scopes.skip("Style albedo", || "no style reads the albedo".to_string());
         }
 
         // The editor's selection (#602): its draws into a mask, against the
@@ -727,9 +812,11 @@ impl SceneRenderer {
         let selection = self.selection_set();
         let outlining = !selection.is_empty();
         if outlining {
-            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Selection mask");
+            let scope = scopes.begin(encoder, "Selection mask");
             self.encode_selection_mask(device, encoder, depth_view, &selection);
-            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
+            scopes.end(encoder, scope);
+        } else {
+            scopes.skip("Selection mask", || "nothing selected".to_string());
         }
 
         // Composite: always needed to convert HDR → sRGB surface
@@ -742,7 +829,7 @@ impl SceneRenderer {
                 depth_key,
                 target_view,
                 camera,
-                gpu_timer.as_mut(),
+                &mut scopes,
             );
         }
 
@@ -750,21 +837,29 @@ impl SceneRenderer {
         // below and the caller's own (world text, gizmos) test against.
         if let (Some(_), Some(upscale)) = (&scaled_depth, &self.depth_upscale) {
             upscale.record(encoder, surface_depth_view);
+            if let Some(log) = scopes.log() {
+                log.ran("Depth upscale", false)
+                    .reads(&["scene_depth"])
+                    .writes(&["depth"]);
+            }
         }
 
         // The selection outline, over the finished image: after every
         // style and the tonemap, so its colour is the one asked for (#602)
         if outlining {
-            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "Selection outline");
+            let scope = scopes.begin(encoder, "Selection outline");
             self.encode_selection_outline(queue, encoder, target_view);
-            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
+            scopes.end(encoder, scope);
+        } else {
+            scopes.skip("Selection outline", || "nothing selected".to_string());
         }
 
         // World lines (ADR 0083) go over the finished image, tested against
         // the frame's single-sample depth. Without the HDR chain an MSAA depth
         // is never resolved, so they're skipped there.
-        if !self.world_lines.is_empty() && (has_postprocess || self.pipelines.samples() == 1) {
-            let scope = crate::gpu_labels::begin(gpu_timer.as_mut(), encoder, "World lines");
+        let lines_drawable = has_postprocess || self.pipelines.samples() == 1;
+        if !self.world_lines.is_empty() && lines_drawable {
+            let scope = scopes.begin(encoder, "World lines");
             self.render_world_lines(
                 device,
                 queue,
@@ -773,9 +868,23 @@ impl SceneRenderer {
                 target_view,
                 camera,
             );
-            crate::gpu_labels::end(gpu_timer.as_mut(), encoder, scope);
+            scopes.end(encoder, scope);
+            scopes.note("World lines", |p| {
+                p.reads(&["depth"]).writes(&["surface"]);
+            });
+        } else {
+            let none = self.world_lines.is_empty();
+            scopes.skip("World lines", || {
+                if none {
+                    "no world lines this frame"
+                } else {
+                    "MSAA without the HDR chain"
+                }
+                .to_string()
+            });
         }
-        self.gpu_timer = gpu_timer;
+        self.gpu_timer = scopes.timer;
+        self.frame_log = scopes.log;
     }
 
     /// [`encode_to`](Self::encode_to) a second time in a frame, for the other

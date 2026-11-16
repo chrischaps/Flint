@@ -38,6 +38,7 @@ pub mod prefab;
 pub mod preview;
 pub mod query;
 pub mod render;
+mod render_frame_dump;
 pub mod render_goldens;
 pub mod render_plan;
 pub mod render_report;
