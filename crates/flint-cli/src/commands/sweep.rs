@@ -407,28 +407,91 @@ pub enum CellView {
     Small,
     /// Each drawn at the full size and a region kept pixel for pixel
     /// (`--sweep-crop X,Y,W,H`): glyphs true to size, a part of the frame.
-    Crop { x: u32, y: u32, w: u32, h: u32 },
+    Crop(Crop),
     /// Each drawn at the full size and shrunk to a cell (`--sweep-scale
     /// full`): the whole composition the final render has, its glyphs blurred.
     Full,
 }
 
+/// The region a `--sweep-crop` keeps: in pixels of the frame, or as
+/// fractions of it (#501), so one crop holds at any `--width/--height`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Crop {
+    /// `700,380,480,270`: X, Y, W, H in pixels.
+    Pixels([u32; 4]),
+    /// `0.4,0.48,0.33,0.33`: X, Y, W, H as shares of the frame's width and
+    /// height, each in 0..=1, the region inside the frame.
+    Fraction([f64; 4]),
+}
+
+impl Crop {
+    /// The region in pixels of a `width` x `height` frame. A fraction's
+    /// edges are rounded, not its size, so a region that ends at the frame's
+    /// edge ends there at any size; it keeps at least a pixel each way.
+    pub fn pixels(&self, width: u32, height: u32) -> (u32, u32, u32, u32) {
+        match *self {
+            Crop::Pixels([x, y, w, h]) => (x, y, w, h),
+            Crop::Fraction([fx, fy, fw, fh]) => {
+                let edge = |f: f64, size: u32| ((f * f64::from(size)).round() as u32).min(size);
+                let (x0, y0) = (edge(fx, width), edge(fy, height));
+                let (x1, y1) = (edge(fx + fw, width), edge(fy + fh, height));
+                let x0 = x0.min(width.saturating_sub(1));
+                let y0 = y0.min(height.saturating_sub(1));
+                (x0, y0, x1.max(x0 + 1) - x0, y1.max(y0 + 1) - y0)
+            }
+        }
+    }
+}
+
 /// How wide a `CellView::Full` cell is shrunk to.
 pub const FULL_CELL_WIDTH: u32 = 640;
 
-/// `clap`'s value parser for `--sweep-crop X,Y,W,H`.
+/// `clap`'s value parser for `--sweep-crop X,Y,W,H`: pixels of the full
+/// frame, or, when any value has a decimal point, fractions of it (#501).
 pub fn parse_crop(spec: &str) -> Result<CellView, String> {
     let parts: Vec<&str> = spec.split(',').map(str::trim).collect();
+    let usage = || {
+        format!(
+            "--sweep-crop takes X,Y,W,H in pixels of the full frame or as fractions of it \
+             (got '{spec}'), e.g. 640,360,640,360 or 0.33,0.33,0.33,0.33 for the middle \
+             of a 1920x1080 frame"
+        )
+    };
+    if parts.iter().any(|p| p.contains('.')) {
+        let numbers: Option<Vec<f64>> = parts.iter().map(|p| p.parse().ok()).collect();
+        let Some(&[x, y, w, h]) = numbers.as_deref() else {
+            return Err(usage());
+        };
+        const SLACK: f64 = 1e-9;
+        if [x, y, w, h]
+            .iter()
+            .any(|v| !(v.is_finite() && (0.0..=1.0).contains(v)))
+        {
+            return Err(format!(
+                "--sweep-crop {spec}: a crop in fractions takes each value from 0 to 1 \
+                 (pixels have no decimal point: 700,380,480,270)"
+            ));
+        }
+        if w <= 0.0 || h <= 0.0 {
+            return Err(format!(
+                "--sweep-crop {spec}: the width and height must be over 0"
+            ));
+        }
+        if x + w > 1.0 + SLACK || y + h > 1.0 + SLACK {
+            return Err(format!(
+                "--sweep-crop {spec}: the region reaches past the frame (X + W and Y + H \
+                 must be at most 1)"
+            ));
+        }
+        return Ok(CellView::Crop(Crop::Fraction([x, y, w, h])));
+    }
     let numbers: Option<Vec<u32>> = parts.iter().map(|p| p.parse().ok()).collect();
     match numbers.as_deref() {
-        Some(&[x, y, w, h]) if w > 0 && h > 0 => Ok(CellView::Crop { x, y, w, h }),
+        Some(&[x, y, w, h]) if w > 0 && h > 0 => Ok(CellView::Crop(Crop::Pixels([x, y, w, h]))),
         Some(&[_, _, _, _]) => Err(format!(
             "--sweep-crop {spec}: the width and height must be over 0"
         )),
-        _ => Err(format!(
-            "--sweep-crop takes X,Y,W,H in pixels of the full frame (got '{spec}'), \
-             e.g. 640,360,640,360 for the middle of a 1920x1080 frame"
-        )),
+        _ => Err(usage()),
     }
 }
 
@@ -446,38 +509,44 @@ impl CellView {
     pub fn render_size(&self, width: Option<u32>, height: Option<u32>) -> (u32, u32) {
         let (w, h) = match self {
             CellView::Small => CELL_SIZE,
-            CellView::Crop { .. } | CellView::Full => FULL_SIZE,
+            CellView::Crop(_) | CellView::Full => FULL_SIZE,
         };
         (width.unwrap_or(w), height.unwrap_or(h))
     }
 
-    /// A crop that leaves the frame is refused before any drawing.
+    /// A crop that leaves the frame is refused before any drawing. A crop
+    /// in fractions never does.
     pub fn check(&self, width: u32, height: u32) -> Result<(), String> {
-        if let CellView::Crop { x, y, w, h } = *self {
+        if let CellView::Crop(Crop::Pixels([x, y, w, h])) = *self {
             if x.saturating_add(w) > width || y.saturating_add(h) > height {
                 return Err(format!(
                     "--sweep-crop {x},{y},{w},{h} reaches past the {width}x{height} frame \
-                     (set --width/--height, or a smaller crop)"
+                     (set --width/--height, a smaller crop, or give it in fractions)"
                 ));
             }
         }
         Ok(())
     }
 
+    /// The region a crop keeps of a `width` x `height` frame, in pixels;
+    /// `None` for a cell that shows the whole frame.
+    pub fn region(&self, width: u32, height: u32) -> Option<(u32, u32, u32, u32)> {
+        match self {
+            CellView::Crop(crop) => Some(crop.pixels(width, height)),
+            CellView::Small | CellView::Full => None,
+        }
+    }
+
     /// The cell a drawn frame becomes.
     pub fn cell(&self, frame: image::RgbaImage) -> image::RgbaImage {
+        let (fw, fh) = frame.dimensions();
+        if let Some((x, y, w, h)) = self.region(fw, fh) {
+            return image::imageops::crop_imm(&frame, x, y, w, h).to_image();
+        }
         match *self {
-            CellView::Small => frame,
-            CellView::Crop { x, y, w, h } => {
-                image::imageops::crop_imm(&frame, x, y, w, h).to_image()
-            }
-            CellView::Full => {
-                let (w, h) = frame.dimensions();
-                if w <= FULL_CELL_WIDTH {
-                    return frame;
-                }
-                let th = ((u64::from(h) * u64::from(FULL_CELL_WIDTH) + u64::from(w) / 2)
-                    / u64::from(w))
+            CellView::Full if fw > FULL_CELL_WIDTH => {
+                let th = ((u64::from(fh) * u64::from(FULL_CELL_WIDTH) + u64::from(fw) / 2)
+                    / u64::from(fw))
                 .max(1) as u32;
                 image::imageops::resize(
                     &frame,
@@ -486,14 +555,28 @@ impl CellView {
                     image::imageops::FilterType::Triangle,
                 )
             }
+            _ => frame,
         }
+    }
+
+    /// Where a crop sheet's cells come from (#501): the whole of one drawn
+    /// frame, with the region its cells keep. `None` unless this is a crop.
+    /// A crop is the same region of every cell's frame, so the first one
+    /// stands for them all.
+    pub fn locator(&self, frame: &image::RgbaImage) -> Option<super::style_sheet::Locator> {
+        let (w, h) = frame.dimensions();
+        self.region(w, h).map(|region| super::style_sheet::Locator {
+            frame: frame.clone(),
+            region,
+        })
     }
 
     /// What a reader has to know about the scale, for the sheet's subtitle.
     pub fn describe(&self, width: u32, height: u32) -> String {
         match *self {
             CellView::Small => format!("{width}x{height} frames"),
-            CellView::Crop { x, y, w, h } => {
+            CellView::Crop(crop) => {
+                let (x, y, w, h) = crop.pixels(width, height);
                 format!("1:1 {w}x{h} at {x},{y} of {width}x{height}")
             }
             CellView::Full => {
@@ -842,6 +925,70 @@ mod tests {
 
         let small = CellView::from_args(None, None);
         assert_eq!(small.render_size(None, Some(200)), (640, 200));
+    }
+
+    /// #501: a crop in fractions of the frame, the same region at any size.
+    #[test]
+    fn a_crop_in_fractions_scales_with_the_frame() {
+        let crop = parse_crop("0.25,0.5,0.5,0.5").unwrap();
+        assert_eq!(crop.region(1920, 1080), Some((480, 540, 960, 540)));
+        assert_eq!(crop.region(640, 360), Some((160, 180, 320, 180)));
+        assert_eq!(crop.describe(640, 360), "1:1 320x180 at 160,180 of 640x360");
+        assert!(crop.check(17, 3).is_ok(), "a fraction is always inside");
+        let frame = image::RgbaImage::new(1280, 720);
+        assert_eq!(crop.cell(frame).dimensions(), (640, 360));
+        // Edges round, not sizes: a region to the frame's edge ends there
+        let right = parse_crop("0.5,0,0.5,1").unwrap();
+        assert_eq!(right.region(101, 7), Some((51, 0, 50, 7)));
+        // The golden pair: these fractions are 220,130,240,135 of 640x360
+        assert_eq!(
+            parse_crop("0.34375,0.3611,0.375,0.375")
+                .unwrap()
+                .region(640, 360),
+            parse_crop("220,130,240,135").unwrap().region(640, 360),
+        );
+        // Never empty, even far smaller than a pixel
+        assert_eq!(
+            parse_crop("0.999,0.999,0.0001,0.0001")
+                .unwrap()
+                .region(100, 100),
+            Some((99, 99, 1, 1))
+        );
+        // Any decimal point makes the whole crop fractional
+        assert_eq!(
+            parse_crop("0,0,1.0,1").unwrap(),
+            CellView::Crop(Crop::Fraction([0.0, 0.0, 1.0, 1.0]))
+        );
+        assert_eq!(
+            parse_crop("0,0,1,1").unwrap(),
+            CellView::Crop(Crop::Pixels([0, 0, 1, 1]))
+        );
+    }
+
+    #[test]
+    fn crops_in_fractions_that_cant_be_are_refused() {
+        assert!(parse_crop("700,0.5,0.3,0.3")
+            .unwrap_err()
+            .contains("from 0 to 1"));
+        assert!(parse_crop("0.5,0.5,0,0.2").unwrap_err().contains("over 0"));
+        assert!(parse_crop("0.6,0,0.5,0.5")
+            .unwrap_err()
+            .contains("past the frame"));
+        assert!(parse_crop("0.1,0.1,0.5").is_err());
+        assert!(parse_crop("0.1,NaN,0.5,0.5").is_err());
+    }
+
+    /// The locator is the first frame whole, with the region it keeps; only
+    /// a crop has one.
+    #[test]
+    fn only_a_crop_has_a_locator() {
+        let frame = image::RgbaImage::new(640, 360);
+        let crop = parse_crop("0.5,0.5,0.25,0.25").unwrap();
+        let locator = crop.locator(&frame).unwrap();
+        assert_eq!(locator.region, (320, 180, 160, 90));
+        assert_eq!(locator.frame.dimensions(), (640, 360));
+        assert!(CellView::Full.locator(&frame).is_none());
+        assert!(CellView::Small.locator(&frame).is_none());
     }
 
     #[test]

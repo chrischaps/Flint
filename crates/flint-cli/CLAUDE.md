@@ -136,7 +136,10 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                          and --ai-refine too, measures at one moment only, #596);
    #                          cells 640x360 unless --width/--height. Cells are in points:
    #                          --sweep-crop X,Y,W,H draws each at full size (1920x1080) and
-   #                          keeps a 1:1 region, --sweep-scale full shrinks the whole frame;
+   #                          keeps a 1:1 region (pixels, or fractions when any value has a
+   #                          decimal point: sweep::Crop, #501; the sheet's header draws a
+   #                          style_sheet::Locator, the first frame whole with the region
+   #                          boxed), --sweep-scale full shrinks the whole frame;
    #                          two --sweep flags make a grid, first across, second down, #358)
    #   --variant "label: --flag v ..." (repeatable) | --variants v.toml   [--zoom X0,Y0,X1,Y1@N]
    #                          (#291: any flags side by side: each variant = this command line + its

@@ -99,7 +99,10 @@ pub struct RenderArgs {
     /// A sweep's cells at the final render's scale (#358): draw each at
     /// --width/--height (default 1920x1080) and keep this region pixel for
     /// pixel, X,Y,W,H. Point-sized styles (ASCII cells) then draw as many
-    /// glyphs across it as the final render does there
+    /// glyphs across it as the final render does there. In pixels, or with
+    /// a decimal point as fractions of the frame (0.4,0.48,0.33,0.33), the
+    /// same region at any size (#501). The sheet's header maps the region
+    /// onto the whole frame
     #[arg(long, value_parser = super::sweep::parse_crop, conflicts_with = "sweep_scale")]
     pub sweep_crop: Option<super::sweep::CellView>,
 
@@ -1506,7 +1509,12 @@ pub(super) fn render(
         }
 
         // The pictures the sheet is made of: each frame as its cell shows it
-        // (cropped or shrunk under --sweep-crop / --sweep-scale, #358)
+        // (cropped or shrunk under --sweep-crop / --sweep-scale, #358), and
+        // for a crop the first frame whole, to show where they sit (#501)
+        let locator = grid
+            .as_ref()
+            .and_then(|_| frames.first())
+            .and_then(|f| view.locator(f));
         let pictures: Vec<image::RgbaImage> = match &grid {
             Some(_) => frames.into_iter().map(|f| view.cell(f)).collect(),
             None => frames,
@@ -1553,14 +1561,13 @@ pub(super) fn render(
                         // With a reference, each label carries its distance and
                         // the nearest is starred (#357)
                         let labels = distance_labels(label(&grid.columns), &columns, nearest);
-                        super::style_sheet::compose(
-                            &pictures,
-                            &super::style_sheet::SheetText::new(
-                                scene_file.scene.name.clone(),
-                                subtitle,
-                                labels,
-                            ),
-                        )
+                        let mut text = super::style_sheet::SheetText::new(
+                            scene_file.scene.name.clone(),
+                            subtitle,
+                            labels,
+                        );
+                        text.locator = locator;
+                        super::style_sheet::compose(&pictures, &text)
                     }
                     Some(rows) => super::style_sheet::compose_grid(
                         &pictures,
@@ -1571,6 +1578,7 @@ pub(super) fn render(
                             column_labels: label(&grid.columns),
                             row_labels: label(rows),
                             time: String::new(),
+                            locator,
                         },
                     ),
                 }
@@ -2903,7 +2911,10 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
 
         // Each cell as the sheet shows it (cropped or shrunk, #358), and measured
         // from those pixels as the one-renderer path measures
+        // A crop's first frame stays whole for the sheet's locator (#501)
+        let mut locator = None;
         if grid.is_some() {
+            locator = pictures.first().and_then(|p| view.locator(p));
             pictures = pictures.into_iter().map(|p| view.cell(p)).collect();
         }
         if measured {
@@ -2939,6 +2950,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                     reference: args.reference.as_deref(),
                     columns: &columns,
                     nearest,
+                    locator,
                 },
                 &stages,
                 &pictures,
@@ -3293,6 +3305,8 @@ struct StageSheet<'a> {
     reference: Option<&'a str>,
     columns: &'a [super::look_measure::ColumnReport],
     nearest: Option<usize>,
+    /// Where a crop's cells sit in the frame (#501).
+    locator: Option<super::style_sheet::Locator>,
 }
 
 /// One moment's sheet of a clocked sweep: a row of columns, or a grid for two
@@ -3319,6 +3333,7 @@ fn stage_sheet(
             text.subtitle.push_str(&scale);
             text.subtitle.push_str(&reference);
             text.labels = distance_labels(text.labels, sheet.columns, sheet.nearest);
+            text.locator = sheet.locator;
             super::style_sheet::compose(pictures, &text)
         }
         Some(rows) => super::style_sheet::compose_grid(
@@ -3334,6 +3349,7 @@ fn stage_sheet(
                 column_labels: label(&grid.columns),
                 row_labels: label(rows),
                 time: format!("T {:.2}S", sheet.t),
+                locator: sheet.locator,
             },
         ),
     }

@@ -37,6 +37,8 @@ pub struct SheetText {
     /// One per cell, or none: anything a reader has to know to believe the
     /// label, dim under it. Empty notes take no room.
     pub notes: Vec<String>,
+    /// A crop sheet's map of where its cells come from (#501), top right.
+    pub locator: Option<Locator>,
 }
 
 impl SheetText {
@@ -48,6 +50,142 @@ impl SheetText {
             time: String::new(),
             labels,
             notes: Vec::new(),
+            locator: None,
+        }
+    }
+}
+
+/// Where a crop sheet's cells sit in the frame they were cut from (#501):
+/// the whole frame, shrunk into the sheet's header with everything outside
+/// `region` dimmed and the region outlined, so a reader knows what part of
+/// the scene they're judging.
+pub struct Locator {
+    /// One drawn frame, whole, at the size it was drawn.
+    pub frame: RgbaImage,
+    /// The region every cell keeps of it: X, Y, W, H in its pixels.
+    pub region: (u32, u32, u32, u32),
+}
+
+/// The locator's outline.
+pub const LOCATOR_BOX: Rgba<u8> = TITLE;
+/// How much of the paper is laid over the frame outside the region, of 255.
+const LOCATOR_DIM: u8 = 150;
+
+impl Locator {
+    /// How big the locator draws on a sheet `sheet_w` wide of `cell_w`-wide
+    /// cells: half a cell, between 96 and 320 pixels wide but never more than
+    /// a third of the sheet, and the frame's shape.
+    fn size(&self, cell_w: u32, sheet_w: u32) -> (u32, u32) {
+        let (fw, fh) = self.frame.dimensions();
+        let w = (cell_w / 2).clamp(96, 320).min(sheet_w / 3).min(fw).max(8);
+        let h = ((u64::from(fh) * u64::from(w) + u64::from(fw.max(1)) / 2) / u64::from(fw.max(1)))
+            .max(1) as u32;
+        (w, h)
+    }
+
+    /// The frame at `w` x `h`: dimmed outside the region, which is outlined
+    /// `line` pixels thick on its edge, inside it.
+    fn draw(&self, w: u32, h: u32, line: u32) -> RgbaImage {
+        let (fw, fh) = self.frame.dimensions();
+        let mut thumb =
+            image::imageops::resize(&self.frame, w, h, image::imageops::FilterType::Triangle);
+        let (x, y, rw, rh) = self.region;
+        // The region's edges in the thumbnail, out to the pixels they touch
+        let lo = |v: u32, size: u32, full: u32| {
+            (u64::from(v) * u64::from(size) / u64::from(full.max(1))) as u32
+        };
+        let hi = |v: u32, size: u32, full: u32| {
+            (u64::from(v) * u64::from(size)).div_ceil(u64::from(full.max(1))) as u32
+        };
+        let x0 = lo(x, w, fw).min(w - 1);
+        let y0 = lo(y, h, fh).min(h - 1);
+        let x1 = hi(x + rw, w, fw).clamp(x0 + 1, w);
+        let y1 = hi(y + rh, h, fh).clamp(y0 + 1, h);
+        for (px, py, p) in thumb.enumerate_pixels_mut() {
+            let inside = (x0..x1).contains(&px) && (y0..y1).contains(&py);
+            if !inside {
+                *p = blend(*p, PAPER, LOCATOR_DIM);
+            } else {
+                p[3] = 255;
+                let edge = px < x0 + line || px + line >= x1 || py < y0 + line || py + line >= y1;
+                if edge {
+                    *p = LOCATOR_BOX;
+                }
+            }
+        }
+        thumb
+    }
+}
+
+/// A sheet's header, laid out once for drawing and for [`cell_origin`]:
+/// the title, the moment, the subtitle's lines to the left, a crop's
+/// locator to the right.
+struct Head {
+    /// The subtitle, wrapped to the room the locator leaves.
+    subtitle: Vec<String>,
+    /// From the sheet's top margin to the first row's top.
+    height: u32,
+    /// Where the title's line ends on the right, for the moment.
+    text_right: u32,
+    /// The locator's size, when the sheet has one.
+    locator: Option<(u32, u32)>,
+}
+
+impl Head {
+    fn new(
+        sheet_w: u32,
+        cell_w: u32,
+        scale: u32,
+        subtitle: &str,
+        locator: Option<&Locator>,
+    ) -> Self {
+        let line = GLYPH * scale;
+        let locator = locator.map(|l| l.size(cell_w, sheet_w));
+        let text_right = match locator {
+            Some((w, _)) => (sheet_w - MARGIN).saturating_sub(w + 2 + GUTTER),
+            None => sheet_w - MARGIN,
+        };
+        let subtitle = wrap_at_breaks(subtitle, text_right.saturating_sub(MARGIN), scale);
+        let text = GLYPH * (scale + 1) + 6 * scale + subtitle.len() as u32 * (line + 3 * scale)
+            - 3 * scale
+            + 10 * scale;
+        let height = match locator {
+            Some((_, h)) => text.max(h + 2 + 10 * scale),
+            None => text,
+        };
+        Self {
+            subtitle,
+            height,
+            text_right,
+            locator,
+        }
+    }
+
+    /// Title, moment, subtitle and locator onto `sheet`.
+    fn draw(
+        &self,
+        sheet: &mut RgbaImage,
+        font: &GlyphAtlas,
+        scale: u32,
+        title: &str,
+        time: &str,
+        locator: Option<&Locator>,
+    ) {
+        let title_scale = scale + 1;
+        let line = GLYPH * scale;
+        let title = fit_text(title, self.text_right.saturating_sub(MARGIN), title_scale);
+        draw_text(sheet, font, MARGIN, MARGIN, title_scale, TITLE, &title);
+        draw_time(sheet, font, time, title_scale, self.text_right);
+        let y = MARGIN + GLYPH * title_scale + 6 * scale;
+        for (k, part) in self.subtitle.iter().enumerate() {
+            let y = y + k as u32 * (line + 3 * scale);
+            draw_text(sheet, font, MARGIN, y, scale, DIM, part);
+        }
+        if let (Some(locator), Some((w, h))) = (locator, self.locator) {
+            let x = sheet.width() - MARGIN - (w + 2);
+            frame(sheet, x, MARGIN, w + 2, h + 2);
+            let thumb = locator.draw(w, h, scale.min(2));
+            image::imageops::replace(sheet, &thumb, i64::from(x + 1), i64::from(MARGIN + 1));
         }
     }
 }
@@ -64,39 +202,27 @@ pub fn compose(cells: &[RgbaImage], text: &SheetText) -> RgbaImage {
     let columns = cells.len().clamp(1, PER_ROW) as u32;
     let rows = cells.len().div_ceil(PER_ROW).max(1) as u32;
     let scale = text_scale(cell_w);
-    let title_scale = scale + 1;
     let line = GLYPH * scale;
 
     let width = MARGIN * 2 + columns * (cell_w + 2) + (columns - 1) * GUTTER;
-    let subtitle = wrap_at_breaks(&text.subtitle, width.saturating_sub(2 * MARGIN), scale);
-    let head = GLYPH * title_scale + 6 * scale + subtitle.len() as u32 * (line + 3 * scale)
-        - 3 * scale
-        + 10 * scale;
+    let head = Head::new(width, cell_w, scale, &text.subtitle, text.locator.as_ref());
     let noted = text.notes.iter().any(|note| !note.is_empty());
     let note_band = if noted { 3 * scale + line } else { 0 };
     let label_band = 6 * scale + line + note_band + 4 * scale;
     let row_h = cell_h + 2 + label_band;
-    let height = MARGIN * 2 + head + rows * row_h + (rows - 1) * GUTTER;
+    let height = MARGIN * 2 + head.height + rows * row_h + (rows - 1) * GUTTER;
     let mut sheet = RgbaImage::from_pixel(width, height, PAPER);
     let font = GlyphAtlas::builtin();
 
-    let mut y = MARGIN;
-    draw_text(
+    head.draw(
         &mut sheet,
         &font,
-        MARGIN,
-        y,
-        title_scale,
-        TITLE,
+        scale,
         &text.title,
+        &text.time,
+        text.locator.as_ref(),
     );
-    draw_time(&mut sheet, &font, &text.time, title_scale);
-    y += GLYPH * title_scale + 6 * scale;
-    for (k, part) in subtitle.iter().enumerate() {
-        let y = y + k as u32 * (line + 3 * scale);
-        draw_text(&mut sheet, &font, MARGIN, y, scale, DIM, part);
-    }
-    let top = MARGIN + head;
+    let top = MARGIN + head.height;
 
     for (i, cell) in cells.iter().enumerate() {
         let (col, row) = ((i % PER_ROW) as u32, (i / PER_ROW) as u32);
@@ -136,10 +262,7 @@ pub fn cell_origin(cell_w: u32, cell_h: u32, text: &SheetText, i: usize) -> (u32
     // The subtitle wraps at the sheet's width, as `compose` lays it out
     let columns = text.labels.len().clamp(1, PER_ROW) as u32;
     let width = MARGIN * 2 + columns * (cell_w + 2) + (columns - 1) * GUTTER;
-    let lines =
-        wrap_at_breaks(&text.subtitle, width.saturating_sub(2 * MARGIN), scale).len() as u32;
-    let head =
-        GLYPH * (scale + 1) + 6 * scale + lines * (line + 3 * scale) - 3 * scale + 10 * scale;
+    let head = Head::new(width, cell_w, scale, &text.subtitle, text.locator.as_ref()).height;
     let noted = text.notes.iter().any(|note| !note.is_empty());
     let note_band = if noted { 3 * scale + line } else { 0 };
     let row_h = cell_h + 2 + 6 * scale + line + note_band + 4 * scale;
@@ -152,14 +275,13 @@ pub fn cell_origin(cell_w: u32, cell_h: u32, text: &SheetText, i: usize) -> (u32
 
 /// The moment a sheet shows, right-aligned on the title's line and clipped at
 /// the left margin; nothing when `time` is empty.
-fn draw_time(sheet: &mut RgbaImage, font: &GlyphAtlas, time: &str, title_scale: u32) {
+fn draw_time(sheet: &mut RgbaImage, font: &GlyphAtlas, time: &str, title_scale: u32, right: u32) {
     if time.is_empty() {
         return;
     }
-    let width = sheet.width();
-    let fit = fit_text(time, width - 2 * MARGIN, title_scale);
+    let fit = fit_text(time, right.saturating_sub(MARGIN), title_scale);
     let w = fit.chars().count() as u32 * GLYPH * title_scale;
-    let x = (width - MARGIN).saturating_sub(w).max(MARGIN);
+    let x = right.saturating_sub(w).max(MARGIN);
     draw_text(sheet, font, x, MARGIN, title_scale, LABEL, &fit);
 }
 
@@ -175,6 +297,9 @@ pub struct GridText {
     /// Top right, or nothing when empty: the moment the cells show, as
     /// [`SheetText::time`].
     pub time: String,
+    /// A crop sheet's map of where its cells come from, as
+    /// [`SheetText::locator`].
+    pub locator: Option<Locator>,
 }
 
 /// Lay `cells` (all one size, a row at a time) out as a grid of
@@ -185,7 +310,6 @@ pub fn compose_grid(cells: &[RgbaImage], text: &GridText) -> RgbaImage {
     let columns = text.column_labels.len().max(1) as u32;
     let rows = cells.len().div_ceil(columns as usize).max(1) as u32;
     let scale = text_scale(cell_w);
-    let title_scale = scale + 1;
     let line = GLYPH * scale;
 
     let column_band = line + 6 * scale;
@@ -199,30 +323,20 @@ pub fn compose_grid(cells: &[RgbaImage], text: &GridText) -> RgbaImage {
         .min(16) as u32;
     let side = longest * line + GUTTER;
     let width = MARGIN * 2 + side + columns * (cell_w + 2) + (columns - 1) * GUTTER;
-    let subtitle = wrap_at_breaks(&text.subtitle, width.saturating_sub(2 * MARGIN), scale);
-    let head = GLYPH * title_scale + 6 * scale + subtitle.len() as u32 * (line + 3 * scale)
-        - 3 * scale
-        + 10 * scale;
-    let height = MARGIN * 2 + head + column_band + rows * (cell_h + 2) + (rows - 1) * GUTTER;
+    let head = Head::new(width, cell_w, scale, &text.subtitle, text.locator.as_ref());
+    let height = MARGIN * 2 + head.height + column_band + rows * (cell_h + 2) + (rows - 1) * GUTTER;
     let mut sheet = RgbaImage::from_pixel(width, height, PAPER);
     let font = GlyphAtlas::builtin();
 
-    draw_text(
+    head.draw(
         &mut sheet,
         &font,
-        MARGIN,
-        MARGIN,
-        title_scale,
-        TITLE,
+        scale,
         &text.title,
+        &text.time,
+        text.locator.as_ref(),
     );
-    draw_time(&mut sheet, &font, &text.time, title_scale);
-    let y = MARGIN + GLYPH * title_scale + 6 * scale;
-    for (k, part) in subtitle.iter().enumerate() {
-        let y = y + k as u32 * (line + 3 * scale);
-        draw_text(&mut sheet, &font, MARGIN, y, scale, DIM, part);
-    }
-    let band_y = MARGIN + head;
+    let band_y = MARGIN + head.height;
     let top = band_y + column_band;
     // The down key heads the row labels, level with the first row's top,
     // apart from the column labels' line
@@ -561,7 +675,96 @@ mod tests {
             column_labels: columns.iter().map(|l| l.to_string()).collect(),
             row_labels: rows.iter().map(|l| l.to_string()).collect(),
             time: String::new(),
+            locator: None,
         }
+    }
+
+    /// A 1920x1080 frame, blue but for a red block where the crop sits.
+    fn located(region: (u32, u32, u32, u32)) -> Locator {
+        let (x, y, w, h) = region;
+        let mut frame = RgbaImage::from_pixel(1920, 1080, BLUE);
+        for py in y..y + h {
+            for px in x..x + w {
+                frame.put_pixel(px, py, RED);
+            }
+        }
+        Locator { frame, region }
+    }
+
+    /// #501's done-when: a crop sheet shows where in the frame its cells come
+    /// from, as the whole frame in the header with the region boxed. The
+    /// cells stay whole and where `cell_origin` says.
+    #[test]
+    fn a_crop_sheet_maps_its_cells_into_the_frame() {
+        let cells = vec![RgbaImage::from_pixel(480, 270, RED); 3];
+        let plain = text(&["0", "1", "2"]);
+        let mut mapped = text(&["0", "1", "2"]);
+        mapped.locator = Some(located((960, 540, 480, 270)));
+        let before = compose(&cells, &plain);
+        let sheet = compose(&cells, &mapped);
+        assert_eq!(
+            sheet.width(),
+            before.width(),
+            "the locator sits in the header"
+        );
+        assert!(
+            sheet.height() > before.height(),
+            "and the header grows to hold it"
+        );
+        for i in 0..3 {
+            let (x, y) = cell_origin(480, 270, &mapped, i);
+            assert_eq!(*sheet.get_pixel(x, y), RED, "cell {i} at its origin");
+            assert_eq!(*sheet.get_pixel(x + 479, y + 269), RED);
+        }
+
+        // Half a cell wide at the right margin, the frame's shape: 240x135
+        let (lx, ly) = (sheet.width() - MARGIN - 241, MARGIN + 1);
+        assert_eq!(
+            *sheet.get_pixel(lx - 1, ly - 1),
+            FRAME,
+            "framed like a cell"
+        );
+        // 960,540 480x270 of 1920x1080 is 120..180 x 67..102 of it: outlined
+        // two pixels in, its inside the frame's own, the rest dimmed
+        assert_eq!(
+            *sheet.get_pixel(lx + 120, ly + 80),
+            LOCATOR_BOX,
+            "left edge"
+        );
+        assert_eq!(*sheet.get_pixel(lx + 150, ly + 68), LOCATOR_BOX, "top edge");
+        assert_eq!(
+            *sheet.get_pixel(lx + 179, ly + 101),
+            LOCATOR_BOX,
+            "far corner"
+        );
+        assert_eq!(
+            *sheet.get_pixel(lx + 150, ly + 85),
+            RED,
+            "inside the box, as drawn"
+        );
+        assert_ne!(*sheet.get_pixel(lx + 181, ly + 85), LOCATOR_BOX, "past it");
+        let outside = *sheet.get_pixel(lx + 40, ly + 30);
+        assert_eq!(outside, blend(BLUE, PAPER, LOCATOR_DIM), "outside, dimmed");
+        assert!(ly + 135 < cell_origin(480, 270, &mapped, 0).1);
+    }
+
+    #[test]
+    fn a_crop_grid_maps_its_cells_too() {
+        let cells = vec![RgbaImage::from_pixel(240, 135, RED); 4];
+        let plain = compose_grid(&cells, &grid_text(&["0", "1"], &["x", "y"]));
+        let mut text = grid_text(&["0", "1"], &["x", "y"]);
+        text.time = "T 1.00S".into();
+        text.locator = Some(located((0, 0, 960, 540)));
+        let sheet = compose_grid(&cells, &text);
+        assert_eq!(sheet.width(), plain.width());
+        assert!(count(&sheet, LOCATOR_BOX) > 0, "the region is outlined");
+        assert_eq!(count(&sheet, RED) - count(&plain, RED), {
+            // The thumbnail's red: its upper left quarter less the outline
+            let l = located((0, 0, 960, 540));
+            let (w, h) = l.size(240, sheet.width());
+            let thumb = l.draw(w, h, 1);
+            thumb.pixels().filter(|p| **p == RED).count()
+        });
     }
 
     #[test]
