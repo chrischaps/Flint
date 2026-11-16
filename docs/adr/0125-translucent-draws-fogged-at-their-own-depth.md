@@ -111,6 +111,21 @@ style's result isn't the picture the veil and the copy were taken over.
   tiny fragment, and on veiled pixels the fog twice more (ground fog's march
   included).
 
+## Measured
+
+`examples/fog_veil.scene.toml` at 1280x720, `flint render --time 2 --gpu-time
+200`, RTX 4070 on Vulkan, debug build, main's binary and this branch's run
+alternately three times, the least p50 of each pass:
+
+| Pass | Main | This branch |
+|---|---|---|
+| Scene (with the split and the copy) | 0.209 ms | 0.226 ms |
+| Fog veil | | 0.054 ms |
+| Composite | 0.016 ms | 0.025 ms |
+| Sum | 0.225 ms | 0.305 ms |
+
+About 0.08 ms a frame while the veil is drawn; nothing on a frame without it.
+
 Book: [Post-Processing, Fog](../book/src/concepts/post-processing.md#fog).
 Bench: `examples/fog_veil.scene.toml`. Test:
 `crates/flint-render/tests/runtime_mesh.rs::a_translucent_draw_is_fogged_at_its_own_depth`.
