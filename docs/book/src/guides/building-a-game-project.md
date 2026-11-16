@@ -8,6 +8,8 @@ Game projects live in their own git repositories with the Flint engine included 
 
 ### 1. Start the project with `flint init`
 
+Run it from the folder that will hold the game, outside the Flint checkout: it creates `my_game/` under the directory you're in. This uses a `flint` on your PATH; without one, call the engine's build by its path ([Installation](../getting-started/installation.md#running-without-installing)).
+
 ```bash
 flint init my_game --engine subtree
 ```
