@@ -454,6 +454,10 @@ impl ScriptSystem {
         entity_id: flint_core::EntityId,
         script_path: &std::path::Path,
     ) {
+        let _note =
+            flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::ScriptLoad, || {
+                flint_core::project::shown(script_path)
+            });
         match self.engine.compile_file(script_path) {
             Ok(ast) => {
                 let source = script_path

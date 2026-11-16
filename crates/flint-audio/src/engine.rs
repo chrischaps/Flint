@@ -680,6 +680,11 @@ impl AudioEngine {
         if self.has_sound(name) {
             return Ok(());
         }
+        // A whole sound decoded on the frame (#1077)
+        let _note =
+            flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::AudioDecode, || {
+                flint_core::project::shown(path)
+            });
 
         let sound_data = static_sound_from_file(path).map_err(|e| {
             flint_core::FlintError::AudioError(format!(
@@ -731,6 +736,12 @@ impl AudioEngine {
         if self.decodes.is_empty() {
             return 0;
         }
+        // The frame's share of the queue (#1077): budgeted, but on the frame
+        let queued = self.decodes.len();
+        let _note =
+            flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::AudioDecode, || {
+                format!("queue, {queued} waiting")
+            });
         for decoded in self.decodes.run(budget) {
             self.finish_decode(decoded);
         }
@@ -779,6 +790,10 @@ impl AudioEngine {
         }
         match self.decodes.size_of(name) {
             Some(size) if size <= DECODE_NOW_BYTES => {
+                let _note = flint_core::frame_notes::begin(
+                    flint_core::frame_notes::NoteKind::AudioDecode,
+                    || format!("{name}, now, to play it"),
+                );
                 if let Some(decoded) = self.decodes.decode_now(name) {
                     self.finish_decode(decoded);
                 }

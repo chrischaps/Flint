@@ -20,9 +20,16 @@
 //! grew by at least half of the frame's excess over the median; the worst
 //! phase and script callback are named. Otherwise the time went elsewhere:
 //! the compositor, the driver, the present wait, the OS.
+//!
+//! Whose time says nothing of why. A hitch also keeps the frame notes
+//! (#1077, `flint_core::frame_notes`) of its frame and the frame before,
+//! since GPU work lands a frame late: a model loaded, a pipeline built, a
+//! transition. [`Hitch::likely_cause`] names them, or says
+//! [`NO_ENGINE_EVENT`].
 
 use super::frame_history::FrameHistory;
 use super::perf::{script_name, Phase};
+use flint_core::frame_notes::FrameNote;
 use std::collections::VecDeque;
 
 /// The frames before a frame it is judged against: two seconds at 60 fps.
@@ -134,6 +141,70 @@ pub(crate) struct Hitch {
     /// Under vsync, how many refreshes it stood for (1 is on time).
     pub refreshes: Option<u32>,
     pub cause: Cause,
+    /// What the engine did in this frame and the one before it (#1077),
+    /// this frame's first: the GPU's share of a frame's work lands a
+    /// frame late, so a pipeline built or a texture uploaded the frame
+    /// before is as likely a cause.
+    pub notes: Vec<HitchNote>,
+}
+
+/// One of a hitch's notes, and whose frame it came from.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct HitchNote {
+    pub note: FrameNote,
+    /// From the frame before the hitch, not the hitch's own.
+    pub frame_before: bool,
+}
+
+/// What a hitch with no engine note says it was.
+pub(crate) const NO_ENGINE_EVENT: &str = "no engine event";
+
+/// How many top-level notes [`Hitch::likely_cause`] names before "N more".
+const CAUSES_NAMED: usize = 3;
+
+#[cfg_attr(not(test), allow(dead_code))] // the hitch log's (#1079)
+impl Hitch {
+    /// The notes that say what the engine was doing (not a clock stall,
+    /// which is the long frame itself).
+    pub(crate) fn engine_events(&self) -> impl Iterator<Item = &HitchNote> {
+        self.notes.iter().filter(|n| !n.note.kind.is_symptom())
+    }
+
+    /// The engine's events as a cause, in a line: the outermost notes
+    /// (a transition, not each model it loaded), this frame's first, then
+    /// by time, longest first; `no engine event` when there are none.
+    /// `model load models/crate.glb, 41.2 ms; pipeline build pbr, 9.0 ms
+    /// (frame before)`
+    pub(crate) fn likely_cause(&self) -> String {
+        let mut top: Vec<&HitchNote> = self.engine_events().filter(|n| n.note.depth == 0).collect();
+        if top.is_empty() {
+            return NO_ENGINE_EVENT.to_string();
+        }
+        top.sort_by(|a, b| {
+            a.frame_before.cmp(&b.frame_before).then(
+                b.note
+                    .ms
+                    .unwrap_or(-1.0)
+                    .total_cmp(&a.note.ms.unwrap_or(-1.0)),
+            )
+        });
+        let mut line = top
+            .iter()
+            .take(CAUSES_NAMED)
+            .map(|n| {
+                if n.frame_before {
+                    format!("{} (frame before)", n.note)
+                } else {
+                    n.note.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        if top.len() > CAUSES_NAMED {
+            line.push_str(&format!("; {} more", top.len() - CAUSES_NAMED));
+        }
+        line
+    }
 }
 
 /// The counts over a span of frames.
@@ -260,7 +331,21 @@ impl HitchDetector {
             return false;
         }
         let cause = self.cause(history, at, before, judged - median);
+        let notes = at
+            .checked_sub(1)
+            .map(|b| (&frames[b], true))
+            .into_iter()
+            .chain([(frame, false)])
+            .rev()
+            .flat_map(|(f, frame_before)| {
+                f.notes.iter().map(move |note| HitchNote {
+                    note: note.clone(),
+                    frame_before,
+                })
+            })
+            .collect();
         let hitch = Hitch {
+            notes,
             index: frame.index,
             at: frame.at,
             ms: frame.ms,
@@ -760,13 +845,116 @@ mod tests {
             std::hint::black_box(Instant::now());
         }
         let now_us = marks.elapsed().as_secs_f64() * 1e6 / frames as f64;
+        // The frame notes' share (#1077): the frame's take of an empty
+        // channel, and a note made where no one listens (every call site's
+        // cost in a build that records nothing)
+        let mut taken = Vec::new();
+        flint_core::frame_notes::listen(true);
+        let takes = Instant::now();
+        for _ in 0..frames {
+            std::hint::black_box(flint_core::frame_notes::take(&mut taken));
+        }
+        let take_ns = takes.elapsed().as_secs_f64() * 1e9 / frames as f64;
+        flint_core::frame_notes::listen(false);
+        let unheard = Instant::now();
+        for _ in 0..frames {
+            let _note = flint_core::frame_notes::begin(
+                flint_core::frame_notes::NoteKind::ModelLoad,
+                || unreachable!(),
+            );
+            std::hint::black_box(&_note);
+        }
+        let unheard_ns = unheard.elapsed().as_secs_f64() * 1e9 / frames as f64;
         println!(
-            "always-on recording: {us:.2} us a frame ({:.4} ms); one Instant::now {:.0} ns; off: {:.0} ns a frame (the present's own Instant::now included)",
+            "always-on recording: {us:.2} us a frame ({:.4} ms); one Instant::now {:.0} ns; off: {:.0} ns a frame (the present's own Instant::now included); notes: a take {take_ns:.1} ns, a note no one hears {unheard_ns:.1} ns",
             us / 1000.0,
             now_us * 1000.0,
             off_us * 1000.0
         );
         assert!(history.frames().len() == HISTORY_FRAMES);
+    }
+
+    /// #1077: a hitch carries its frame's notes and the frame before's, and
+    /// names the outermost as its likely cause.
+    #[test]
+    fn a_hitch_names_what_the_engine_did_in_it_and_the_frame_before() {
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(120, steady(HZ60_MS));
+        // The frame before: a pipeline built, its GPU work landing late
+        frame_notes::note(NoteKind::PipelineBuild, || "bloom".into(), Some(6.0));
+        run.frame(steady(HZ60_MS));
+        // The hitch: a transition that loaded a model inside it
+        frame_notes::timed(
+            NoteKind::SceneTransition,
+            || "b.scene.toml".into(),
+            || frame_notes::note(NoteKind::ModelLoad, || "models/box.glb".into(), Some(40.0)),
+        );
+        assert_eq!(run.frame(steady(100.0)), 1);
+        let h = run.detector.last().unwrap();
+        let kinds: Vec<_> = h
+            .notes
+            .iter()
+            .map(|n| (n.note.kind, n.frame_before))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                (NoteKind::SceneTransition, false),
+                (NoteKind::ModelLoad, false),
+                (NoteKind::PipelineBuild, true)
+            ]
+        );
+        let cause = h.likely_cause();
+        assert!(
+            cause.starts_with("scene transition b.scene.toml, "),
+            "{cause}"
+        );
+        assert!(
+            cause.ends_with("; pipeline build bloom, 6.0 ms (frame before)"),
+            "{cause}"
+        );
+        assert!(!cause.contains("box.glb"), "inside the transition: {cause}");
+        frame_notes::listen(false);
+    }
+
+    #[test]
+    fn a_hitch_with_no_notes_says_no_engine_event() {
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(120, steady(HZ60_MS));
+        assert_eq!(run.frame(steady(100.0)), 1);
+        assert!(run.detector.last().unwrap().notes.is_empty());
+        assert_eq!(run.detector.last().unwrap().likely_cause(), NO_ENGINE_EVENT);
+
+        // A stall the clock passed through is the long frame itself, not
+        // what the engine was doing: kept, but no cause
+        run.frames(60, steady(HZ60_MS));
+        assert_eq!(run.frame(steady(400.0)), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.notes.len(), 1);
+        assert_eq!(h.notes[0].note.kind, NoteKind::ClockStall);
+        assert_eq!(h.likely_cause(), NO_ENGINE_EVENT);
+        frame_notes::listen(false);
+    }
+
+    #[test]
+    fn a_frame_of_two_physics_steps_says_so() {
+        use flint_core::frame_notes::NoteKind;
+        let mut h = FrameHistory::new(4);
+        let t = h.start;
+        h.begin_frame_at(t);
+        h.fixed_steps(1);
+        h.begin_frame_at(t + ms(16.0));
+        assert!(h.newest().unwrap().notes.is_empty(), "one step is no news");
+        h.fixed_steps(2);
+        h.begin_frame_at(t + ms(32.0));
+        let notes = &h.newest().unwrap().notes;
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].kind, NoteKind::PhysicsSteps);
+        assert_eq!(notes[0].to_string(), "physics steps 2 fixed steps");
     }
 
     #[test]

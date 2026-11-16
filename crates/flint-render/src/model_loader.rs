@@ -9,6 +9,7 @@
 
 use crate::SceneRenderer;
 use flint_core::components as comp;
+use flint_core::frame_notes::{self, NoteKind};
 use flint_core::project::{AssetKind, NotFound, Project};
 use flint_core::vfs;
 use flint_core::EntityId;
@@ -392,6 +393,13 @@ pub fn load_models_from_world(
                 resolve_model_path(config, asset_name).ok()
             };
             if let Some(model_path) = file {
+                // Read again only to see whether it expands (#1077 notes it)
+                let _note = frame_notes::begin(NoteKind::ModelLoad, || {
+                    format!(
+                        "{} (again, to expand)",
+                        flint_core::project::shown(&model_path)
+                    )
+                });
                 if let Ok(import_result) = import_gltf(&model_path) {
                     if import_result.needs_expansion() {
                         let nmap = expand_nodes_animated(
@@ -445,6 +453,11 @@ pub fn load_models_from_world(
             }
         };
 
+        // Read, decoded and uploaded on this frame: a frame note (#1077),
+        // timed until the entity's model is in place
+        let _note = frame_notes::begin(NoteKind::ModelLoad, || {
+            flint_core::project::shown(&model_path)
+        });
         match import_gltf(&model_path) {
             Ok(import_result) => {
                 let has_skins = !import_result.skeletons.is_empty();

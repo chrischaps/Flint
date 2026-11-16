@@ -180,6 +180,33 @@ Each frame is judged as the next one begins. It is a hitch when its time is over
 
 A hitch is the player's when the player's own work (every phase but `present`) grew by at least half the frame's excess over the median, and it names the phase that grew most and the slowest script callback. Otherwise the time went **elsewhere**: the compositor, the driver, the wait in `present`, the OS. The counts run over the session and over the frames kept: hitches, hitches a minute, the worst frame, the time since the last hitch and the longest stretch without one.
 
+Whose time it was doesn't say why. Each frame also keeps **notes**: what the engine did on it, said by the code that did it, with how long it took. A hitch keeps the notes of its own frame and of the frame before (the GPU's share of a frame's work lands a frame late), and names them as its likely cause, or says `no engine event`. A transition that loaded a model reads:
+
+```text
+scene transition b.scene.toml, 21.5 ms
+  model load game/scenes/models/card.glb, 3.6 ms
+```
+
+A note made inside another, such as a model inside a transition or a pipeline inside a style's build, is kept beneath it, and its time is also counted in the outer note's. The notes cover:
+
+| Note | When |
+|---|---|
+| `model load` | a glTF file read, decoded and uploaded, at a scene's load or a procgen fallback |
+| `texture load` | a texture file decoded and uploaded the first time its name is asked for |
+| `pipeline build` | a pipeline built, by its label (the scene's at start, a style's on its first draw) |
+| `style build` | a post-process style's passes built, a user style marked so |
+| `scene transition` | a scene left and the next one entered |
+| `chunk load` | a chunk's entities spawned |
+| `script load`, `script reload` | a script compiled at load, or a changed one swapped in |
+| `reload poll` | the hot-reload poll itself, when it took 1 ms or more |
+| `procgen` | procedural assets made at a scene's load or by the frame's queue |
+| `audio decode` | a sound decoded on the frame, whole or the queue's share |
+| `surface reconfigure` | the window's swapchain made again (a resize) |
+| `physics steps` | a frame that ran more than one fixed step |
+| `clock stall` | a frame over 250 ms, which pacing passed through as it was |
+
+A `clock stall` is the long frame itself, so it is kept on the hitch but is no cause. Notes are made only on the player's frame thread and only while the history records. Otherwise each call site costs a flag read, about 1 ns. Collecting a frame's notes costs 2 to 3 ns. The F2 graph and the hitch log are what show them.
+
 `FLINT_HITCH_FACTOR` (at least 1, default 2) and `FLINT_HITCH_FLOOR_MS` (default 8) change the thresholds.
 
 The history is flint-player's `frame-history` Cargo feature, on by default. A shipped game that wants none of it builds flint-player without it (`default-features = false` and the features it does want). The player then records frames only while `--perf` is on, as it did before, and each call the frame makes costs a branch (measured at nothing beside the `Instant::now` the player takes anyway). `FLINT_FRAME_HISTORY=0` turns the history off in a build that has it, and `FLINT_FRAME_HISTORY=1` turns it on in one that doesn't.

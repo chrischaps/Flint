@@ -163,7 +163,7 @@ pub fn shared_some<T: Send + Sync + 'static>(
     build: impl FnOnce() -> Option<T>,
 ) -> Option<Arc<T>> {
     if !enabled() {
-        let made = timed(build).map(Arc::new);
+        let made = timed(label, build).map(Arc::new);
         if made.is_some() {
             count(label, false);
         }
@@ -184,7 +184,7 @@ pub fn shared_some<T: Send + Sync + 'static>(
         return Some(kept);
     }
     // Built with the lock released: a build may ask for what it uses
-    let made = Arc::new(timed(build)?);
+    let made = Arc::new(timed(label, build)?);
     count(label, false);
     let mut guard = cache();
     let cache = guard.get_or_insert_with(Cache::default);
@@ -200,7 +200,19 @@ thread_local! {
 
 /// Run `build`, adding its time to [`thread_build_time`]. A build inside a
 /// build (one that asks for what it uses) counts once, as the outer one's.
-pub(crate) fn timed<R>(build: impl FnOnce() -> R) -> R {
+/// It is also a frame note (#1077, `flint_core::frame_notes`): a pipeline
+/// built on its first draw is a likely hitch, so the frame it lands in
+/// names it by `label`.
+pub(crate) fn timed<R>(label: &str, build: impl FnOnce() -> R) -> R {
+    use flint_core::frame_notes::{self, NoteKind};
+    frame_notes::timed(
+        NoteKind::PipelineBuild,
+        || label.to_string(),
+        || timed_build(build),
+    )
+}
+
+fn timed_build<R>(build: impl FnOnce() -> R) -> R {
     struct Leave(web_time::Instant);
     impl Drop for Leave {
         fn drop(&mut self) {
@@ -274,7 +286,7 @@ pub(crate) fn scoped<T: Send + Sync + 'static>(
         Some(place) => shared(device, label, (place, parts), build),
         None => {
             count(label, false);
-            Arc::new(timed(build))
+            Arc::new(timed(label, build))
         }
     }
 }

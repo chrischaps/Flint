@@ -526,6 +526,10 @@ impl AssetSink for GpuSink<'_> {
                 let Ok(path) = model_loader::resolve_model_path(self.config, name) else {
                     return false;
                 };
+                let _note = flint_core::frame_notes::begin(
+                    flint_core::frame_notes::NoteKind::ModelLoad,
+                    || flint_core::project::shown(&path),
+                );
                 match flint_import::import_gltf(&path) {
                     Ok(import) => {
                         self.renderer.remove_mesh(name);
@@ -578,6 +582,18 @@ pub fn resolve_scene(
     let before = resolver.cache_stats();
     resolve(&requests, resolver, &mut sink, mode);
     let stats = resolver.cache_stats();
+    // A frame note (#1077) when the scene had assets to make or find
+    flint_core::frame_notes::note(
+        flint_core::frame_notes::NoteKind::Procgen,
+        || {
+            format!(
+                "{} asset(s) for {}",
+                requests.len(),
+                flint_core::project::shown(std::path::Path::new(scene_path))
+            )
+        },
+        Some(started.elapsed().as_secs_f32() * 1000.0),
+    );
     // One line a load: how long procgen held the scene up, and where the
     // assets came from (#181: the disk tier is what makes a relaunch fast).
     // Deferred assets are queued, so they appear in none of the three.

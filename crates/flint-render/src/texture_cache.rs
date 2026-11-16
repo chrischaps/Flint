@@ -231,6 +231,11 @@ impl TextureCache {
         if self.textures.contains_key(name) {
             return Ok(false);
         }
+        // A texture decoded on first sight is a likely hitch (#1077)
+        let _note =
+            flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::TextureLoad, || {
+                flint_core::project::shown(path)
+            });
 
         let img = open_image(path)
             .map_err(|e| format!("Failed to open image '{}': {}", path.display(), e))?;
