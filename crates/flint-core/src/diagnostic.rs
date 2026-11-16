@@ -115,6 +115,13 @@ pub mod codes {
     /// for (#741), as a style value past its range warns (#355): it still
     /// draws, maybe badly.
     pub const POST_RANGE: &str = "post-range";
+    /// A light past the number of its type the shader takes (#682): the
+    /// strongest directional lights and the point and spot lights nearest
+    /// the camera are drawn, and this one is off while it isn't among them.
+    pub const LIGHT_CAP: &str = "light-cap";
+    /// A value written in two forms of which one is read (#682: a spot's
+    /// `inner_angle` and `inner_angle_deg`): the other does nothing.
+    pub const TWO_FORMS: &str = "two-forms";
 
     // What `flint check` adds (#687): the project around the scene.
 
@@ -428,6 +435,16 @@ pub mod codes {
             POST_RANGE,
             Severity::Warning,
             "a [post_process] value outside what its effect is tuned for",
+        ),
+        (
+            LIGHT_CAP,
+            Severity::Warning,
+            "a light past the number of its type the shader takes, off while it is",
+        ),
+        (
+            TWO_FORMS,
+            Severity::Warning,
+            "a value written in two forms, of which one is read",
         ),
     ];
 }
@@ -813,7 +830,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 47);
+        assert_eq!(seen.len(), 49);
     }
 
     /// A problem in a scene-level table names the table as its header is

@@ -21,36 +21,76 @@ source_radius = 0.15               # meters; softens the specular hotspot
 
 [entities.spot.light]
 type = "spot"
-direction = [0.0, -1.0, 0.0]
+direction = [0.0, -1.0, 0.0]       # the way it shines; leave it out to follow the entity's rotation
 color = [1.0, 1.0, 1.0]
 intensity = 20.0
 range = 15.0
-inner_angle = 0.3                  # radians
-outer_angle = 0.5
+inner_angle_deg = 17               # degrees, like every other angle in a scene
+outer_angle_deg = 28
 source_radius = 0.1
 ```
 
 Point and spot lights sit at their entity's world position, so they follow transform hierarchies and animation like any other entity. Directional lights ignore position.
 
+**Direction follows rotation when it isn't written** (#682). A light with no `direction` shines down its entity's own -Y axis, turned by the entity's rotation and every parent's: a spot light under a hand, a car or a swinging lamp turns with it. Unturned, a spot points straight down and a directional light is a sun overhead. A `direction` that is written is world space and stays put whatever the entity does, as it always has. `examples/swinging_lamp.scene.toml` hangs a lamp on an arm a script swings, and its beam sweeps the yard with it.
+
+```toml
+[entities.arm.transform]
+position = [0, 4, 0]
+rotation = [0, 0, 40]              # degrees: the beam swings toward +x
+
+[entities.torch]
+parent = "arm"
+
+[entities.torch.light]
+type = "spot"                      # no direction: it shines down the arm's -Y
+intensity = 40
+range = 14
+inner_angle_deg = 14
+outer_angle_deg = 23
+```
+
 | Field | Applies to | Type | Default | Description |
 |-------|-----------|------|---------|-------------|
-| `type` | all | string | `"directional"` | `directional`, `point` or `spot` |
+| `type` | all | string | directional, warned | `directional`, `point` or `spot`. Any other value lights nothing and says so by entity name; left out, the light is directional and that is said once too |
 | `color` | all | [f32; 3] | `[1, 1, 1]` | Linear RGB |
 | `intensity` | all | f32 | `1.0` | Radiance multiplier |
-| `direction` | directional, spot | [f32; 3] | `[0, -1, 0]` | For directional lights this points **toward** the light; for spots it is the cone axis |
+| `direction` | directional, spot | [f32; 3] | the entity's -Y, turned | World space. For directional lights this points **toward** the light; for spots it is the cone axis, the way the light shines. Unset: the light shines down its entity's own -Y and turns with it (above) |
 | `angular_size` | directional | f32 | `0.0` | Apparent size of the source in degrees (sun about 0.5, softbox 2--5). 0 keeps hard 3x3 PCF shadows ([ADR 0056](https://github.com/chrischaps/Flint/blob/main/docs/adr/0056-source-radius-area-lights.md)) |
 | `range` (alias `radius`) | point, spot | f32 | `10.0` | Falloff distance in world units |
 | `source_radius` | point, spot | f32 | `0.0` | Physical radius of the emitter in meters; 0 = punctual ([ADR 0056](https://github.com/chrischaps/Flint/blob/main/docs/adr/0056-source-radius-area-lights.md)) |
-| `inner_angle` | spot | f32 | `0.3` | Full-intensity cone half-angle, radians |
-| `outer_angle` | spot | f32 | `0.5` | Cone edge half-angle, radians |
+| `inner_angle_deg` | spot | f32 | about 17.2 | Full-intensity cone half-angle, degrees (0 to 90). Wins over `inner_angle` |
+| `outer_angle_deg` | spot | f32 | about 28.6 | Cone edge half-angle, degrees (0 to 90). Wins over `outer_angle` |
+| `inner_angle` | spot | f32 | `0.3` | The older form, radians; read when `inner_angle_deg` is unset |
+| `outer_angle` | spot | f32 | `0.5` | The older form, radians; read when `outer_angle_deg` is unset |
 | `volumetric_intensity` | directional | f32 | `0.0` | God-ray strength for this light; see [Post-Processing](post-processing.md#volumetric-lighting-god-rays) |
 | `volumetric_color` | directional | [f32; 3] | light color | Tint of the shafts |
 
-The same fields are the engine's `light` schema (`schemas/components/light.toml`), so `flint schema light` prints them from a terminal, with each fallback in its description. Only `type`, `color` and `intensity` carry a schema default: a default is written into the component at load, and `range` given one would beat an authored `radius`.
+The same fields are the engine's `light` schema (`schemas/components/light.toml`), so `flint schema light` prints them from a terminal, with each fallback in its description. Only `color` and `intensity` carry a schema default: a default is written into the component at load, so `range` given one would beat an authored `radius`, and `type` given one would hide a light that forgot it.
+
+### Angles are degrees
+
+Every angle a scene writes is in degrees: transforms, joints, a directional light's `angular_size`, and a spot's cone as `inner_angle_deg` and `outer_angle_deg` (#682). The radian keys `inner_angle` and `outer_angle` are the older spelling and still read exactly as before, so no scene changes its look; write the `_deg` keys in anything new. Where both are written the degrees win, and the light says so once (`two-forms`). A radian key holding more than a quarter turn (1.5708) is almost surely degrees in the wrong key: `flint validate` reports it as out of range, and the renderer says which key to use:
+
+```text
+WARN warning[out-of-range] entity 'torch' light.outer_angle: 30 is past a quarter turn, and `outer_angle` is in radians (for 30 degrees, write `outer_angle_deg = 30`)
+```
+
+### When a light can't be drawn
+
+The renderer reads each light through a typed view ([Diagnostics while the game runs](schemas.md#diagnostics-while-the-game-runs)), so what it can't use is said once per entity, by name, with the reason, and not just at load: a `type` a script sets is checked too.
+
+```text
+WARN error[bad-enum-value] entity 'lamp' light.type: "spott" is not a light type, so this light is off (did you mean `spot`? a light is directional, point or spot)
+WARN 1 light entity but none the renderer can use: the built-in key and fill light the scene (each light's problem is above)
+WARN warning[light-cap] entity 'lamp_01' component 'light': the shader takes 16 point lights, the nearest the camera, and this one is not among them; it is off while it isn't (fewer point lights, or merge near ones into one stronger light)
+```
+
+The second line matters most: a scene whose only light is misspelled used to come out lit by the built-in pair with nothing said, which looks like a working scene.
 
 **A light is the `light` table and no other.** Nothing reads `[entities.sun.directional_light]` or `[entities.lamp.point_light]`: a scene whose only lights are spelled that way is lit by the built-in key and fill described below, and looks plausible enough that the mistake can live for a long time (about forty of the engine's own examples carried it until #681). To turn one into a real light, name the table `light`, add `type = "directional"`, and check `direction`: it points *toward* the light, so a sun written as the way its rays travel, `[-0.5, -0.6, -0.3]`, becomes `[0.5, 0.6, 0.3]`.
 
-Limits: the shader takes a fixed number of directional, point and spot lights. Only one directional light casts cascaded shadows: the one with the highest `intensity`, with entity-name order breaking ties ([ADR 0045](https://github.com/chrischaps/Flint/blob/main/docs/adr/0045-deterministic-shadow-caster-order.md)), so a fill light can never steal the sun's shadows because of how it was named. If no scene light exists at all, the renderer falls back to a built-in warm key light and cool fill, unless the scene says `default_lights = false` in [`[environment]`](#the-environment-block).
+Limits: the shader takes 4 directional, 16 point and 8 spot lights. Past that, it keeps the strongest directional lights by `intensity`, and the point and spot lights **nearest the camera**, chosen again each frame (and for each [comic panel](comic-panels.md)'s camera), so a street of lamps lights the stretch you're looking at; each light left out is named once a scene (`light-cap`, above). Under the cap every light is drawn in name order, exactly as before. Only one directional light casts cascaded shadows: the one with the highest `intensity`, with entity-name order breaking ties ([ADR 0045](https://github.com/chrischaps/Flint/blob/main/docs/adr/0045-deterministic-shadow-caster-order.md)), so a fill light can never steal the sun's shadows because of how it was named. If no scene light exists at all, the renderer falls back to a built-in warm key light and cool fill, unless the scene says `default_lights = false` in [`[environment]`](#the-environment-block).
 
 ## Area Lights
 

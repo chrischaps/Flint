@@ -67,6 +67,11 @@ topic = "rendering"
 purpose = "Directional, point and spot lights together"
 
 [[example]]
+scene = "swinging_lamp.scene.toml"
+topic = "rendering"
+purpose = "A spot light with no direction swings with the arm it hangs from; its cone in degrees"
+
+[[example]]
 scene = "transparency_test.scene.toml"
 topic = "rendering"
 purpose = "Transparent materials beside opaque ones"
