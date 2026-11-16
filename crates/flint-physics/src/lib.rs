@@ -13,6 +13,8 @@ pub mod world;
 
 #[cfg(test)]
 mod joint_tests;
+#[cfg(test)]
+mod order_tests;
 
 use character::CharacterController;
 use flint_core::components as comp;

@@ -2,25 +2,25 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Global counter for generating unique IDs
-static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A stable entity identifier that persists across save/load cycles.
 ///
 /// Unlike internal ECS entity IDs which may be recycled or change,
 /// `EntityId` provides a stable reference for scene files and queries.
+///
+/// Ids are handed out by a world, never minted on their own (#688): each
+/// `FlintWorld` counts from 1 (or from past the world before it, so a scene
+/// transition never reuses an id something may still hold), and a scene
+/// spawns its entities in name order, so the same scene always gives the
+/// same names the same ids. There was a process-wide counter, which made
+/// ids depend on whatever had been spawned before; it is gone, and with it
+/// `EntityId::new()`. An id no world gave out (a test's "nobody") is
+/// [`EntityId::from_raw`].
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct EntityId(pub u64);
 
 impl EntityId {
-    /// Create a new unique EntityId
-    pub fn new() -> Self {
-        Self(NEXT_ID.fetch_add(1, Ordering::Relaxed))
-    }
-
     /// Create an EntityId from a raw value (for deserialization/testing)
     pub fn from_raw(id: u64) -> Self {
         Self(id)
@@ -29,33 +29,6 @@ impl EntityId {
     /// Get the raw u64 value
     pub fn raw(&self) -> u64 {
         self.0
-    }
-
-    // There is no way to lower or reset the counter, on purpose (#803): it is
-    // shared by every thread in the process, so a test that reset it while
-    // another test was spawning ids made both of them flaky. Tests assert
-    // relative to an id they took themselves.
-
-    /// Set the counter to at least the given value (for loading scenes)
-    pub fn ensure_counter_above(value: u64) {
-        let mut current = NEXT_ID.load(Ordering::Relaxed);
-        while current <= value {
-            match NEXT_ID.compare_exchange_weak(
-                current,
-                value + 1,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(c) => current = c,
-            }
-        }
-    }
-}
-
-impl Default for EntityId {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -75,19 +48,6 @@ impl fmt::Display for EntityId {
 mod tests {
     use super::*;
 
-    // These run in parallel with every other test in the binary, all sharing
-    // the one process-wide counter, so they never assume what its value is:
-    // the counter only ever rises, and each assertion is relative to an id
-    // the test took itself (#803).
-
-    #[test]
-    fn test_id_generation() {
-        let id1 = EntityId::new();
-        let id2 = EntityId::new();
-        assert_ne!(id1, id2);
-        assert!(id2.0 > id1.0);
-    }
-
     #[test]
     fn test_from_raw() {
         let id = EntityId::from_raw(42);
@@ -95,22 +55,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ensure_counter_above() {
-        // A floor above anything handed out so far, as a loaded scene's
-        // highest id would be.
-        let floor = EntityId::new().0 + 100;
-        EntityId::ensure_counter_above(floor);
-        let id = EntityId::new();
-        assert!(id.0 > floor, "{} should be above {floor}", id.0);
-    }
-
-    #[test]
-    fn test_ensure_counter_above_never_lowers() {
-        let before = EntityId::new();
-        // A floor already passed (a scene of low ids) leaves the counter alone.
-        EntityId::ensure_counter_above(before.0.saturating_sub(1));
-        EntityId::ensure_counter_above(0);
-        let after = EntityId::new();
-        assert!(after.0 > before.0, "{after:?} should follow {before:?}");
+    fn ids_order_by_value() {
+        assert!(EntityId::from_raw(2) < EntityId::from_raw(10));
     }
 }

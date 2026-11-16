@@ -59,7 +59,7 @@ The most significant architectural choice: components are stored as `toml::Value
 
 ### Stable Entity IDs
 
-Entity IDs are monotonically increasing 64-bit integers that never recycle. A `BiMap` maintains the mapping between `EntityId` and hecs `Entity` handles. On scene load, the ID counter adjusts to be above the maximum existing ID.
+Entity IDs are 64-bit integers that each world hands out from its own counter and never recycles. A scene spawns its entities in name order, so the same scene gets the same ids in every run, and a host that replaces its world (a transition, a reload) starts the next world past the last one's ids. A `BiMap` maintains the mapping between `EntityId` and hecs `Entity` handles.
 
 ### Scene as Source of Truth
 
@@ -167,7 +167,7 @@ Wraps hecs with:
 - `BiMap<EntityId, hecs::Entity>` for stable ID mapping
 - Named entity lookup
 - Parent-child relationship tracking
-- Atomic ID counter for deterministic allocation
+- A per-world ID counter, and ordered walks (`entities_with_component` by id, `all_entities` by name), so a scene loads the same way every run
 
 ### flint-scene
 
