@@ -242,7 +242,7 @@ fn attach_sequence(
             .cloned()
             .unwrap_or(toml::Value::Table(Default::default())),
     };
-    println!(
+    crate::output::say!(
         "Sequence '{}': {:.2}s, {} events",
         ui.name,
         ui.duration,
@@ -638,7 +638,7 @@ fn register_animation_data(
                 }
                 for imported_clip in &import_result.skeletal_clips {
                     let clip = SkeletalClip::from_imported(imported_clip);
-                    println!(
+                    crate::output::say!(
                         "  Skeletal clip: {} ({:.1}s, {} tracks)",
                         clip.name,
                         clip.duration,
@@ -666,7 +666,7 @@ fn register_animation_data(
         if let Some(ref import_result) = loaded.import_result {
             for imported_clip in &import_result.node_clips {
                 let clip = NodeClip::from_imported(imported_clip);
-                println!(
+                crate::output::say!(
                     "  Node clip: {} ({:.1}s, {} tracks)",
                     clip.name,
                     clip.duration,
@@ -798,9 +798,11 @@ fn run_headless(args: &PreviewArgs, output_path: &str) -> Result<()> {
     img.save(output_path)
         .context(format!("Failed to save image to {}", output_path))?;
 
-    println!(
+    crate::output::say!(
         "Rendered {}x{} preview to {}",
-        args.width, args.height, output_path
+        args.width,
+        args.height,
+        output_path
     );
 
     Ok(())
@@ -929,9 +931,11 @@ fn render_image(args: &PreviewArgs) -> Result<image::RgbaImage> {
                 // together, not one big dt.
                 let fired =
                     seek_sequence_in_world(seq, &mut animation, &mut world, eid, anim_time as f64);
-                println!(
+                crate::output::say!(
                     "Sampled sequence '{}' at t={:.3}s ({} events fired)",
-                    seq.name, anim_time, fired
+                    seq.name,
+                    anim_time,
+                    fired
                 );
             } else {
                 // Use update() which handles all three tiers
@@ -941,7 +945,7 @@ fn render_image(args: &PreviewArgs) -> Result<image::RgbaImage> {
                     anim_time as f64,
                 );
             }
-            println!("Sampled animation at t={:.3}s", anim_time);
+            crate::output::say!("Sampled animation at t={:.3}s", anim_time);
         }
 
         // Upload bone matrices
@@ -1078,7 +1082,7 @@ fn run_interactive(args: PreviewArgs) -> Result<()> {
                 }
             });
 
-            println!("Watching for changes...");
+            crate::output::say!("Watching for changes...");
             Some(debouncer)
         } else {
             None
@@ -1328,14 +1332,18 @@ impl PreviewApp {
         self.apply_motion_hold();
 
         if let Some(info) = &self.anim_info {
-            println!(
+            crate::output::say!(
                 "Animation: {} clip(s) found — {}",
                 info.clip_names.len(),
                 info.clip_names.join(", ")
             );
-            println!("  Tab=toggle UI  P=play/pause  ,/.=prev/next clip  +/-=speed  0=reset speed");
+            crate::output::say!(
+                "  Tab=toggle UI  P=play/pause  ,/.=prev/next clip  +/-=speed  0=reset speed"
+            );
             if self.args.sequence.is_some() {
-                println!("  R=restart sequence  Home=seek to 0  (Loop checkbox / --sequence-loop)");
+                crate::output::say!(
+                    "  R=restart sequence  Home=seek to 0  (Loop checkbox / --sequence-loop)"
+                );
             }
         }
     }
@@ -1466,9 +1474,9 @@ impl PreviewApp {
             window.set_title(&format!("Flint Preview \u{2014} {}", file_name));
         }
 
-        println!("Loaded: {}", path.display());
+        crate::output::say!("Loaded: {}", path.display());
         if let Some(info) = &self.anim_info {
-            println!(
+            crate::output::say!(
                 "Animation: {} clip(s) — {}",
                 info.clip_names.len(),
                 info.clip_names.join(", ")
@@ -1544,7 +1552,7 @@ impl PreviewApp {
         }
         self.camera.update_orbit();
 
-        println!("Reloaded: {}", model_display);
+        crate::output::say!("Reloaded: {}", model_display);
     }
 
     /// Switch to a different animation clip by index
@@ -1580,7 +1588,7 @@ impl PreviewApp {
             }
         }
 
-        println!("Switched to clip: {}", clip_name);
+        crate::output::say!("Switched to clip: {}", clip_name);
     }
 
     /// Update the window title with animation playback info
@@ -3279,7 +3287,7 @@ impl ApplicationHandler for PreviewApp {
                         PhysicalKey::Code(KeyCode::KeyR) => {
                             if self.sequence.is_some() {
                                 self.seek_sequence_to(0.0);
-                                println!("Sequence restarted");
+                                crate::output::say!("Sequence restarted");
                             }
                         }
                         PhysicalKey::Code(KeyCode::Home) => {
@@ -3307,18 +3315,24 @@ impl ApplicationHandler for PreviewApp {
                         }
                         PhysicalKey::Code(KeyCode::KeyO) => {
                             self.orbit.auto_orbit = !self.orbit.auto_orbit;
-                            println!(
+                            crate::output::say!(
                                 "Auto-orbit: {}",
                                 if self.orbit.auto_orbit { "ON" } else { "OFF" }
                             );
                         }
                         PhysicalKey::Code(KeyCode::BracketRight) => {
                             self.orbit.adjust_auto_orbit_speed(1.5);
-                            println!("Auto-orbit speed: {:.2} rad/s", self.orbit.auto_orbit_speed);
+                            crate::output::say!(
+                                "Auto-orbit speed: {:.2} rad/s",
+                                self.orbit.auto_orbit_speed
+                            );
                         }
                         PhysicalKey::Code(KeyCode::BracketLeft) => {
                             self.orbit.adjust_auto_orbit_speed(1.0 / 1.5);
-                            println!("Auto-orbit speed: {:.2} rad/s", self.orbit.auto_orbit_speed);
+                            crate::output::say!(
+                                "Auto-orbit speed: {:.2} rad/s",
+                                self.orbit.auto_orbit_speed
+                            );
                         }
                         PhysicalKey::Code(KeyCode::Equal) => {
                             // Increase speed (×1.5)
@@ -3464,7 +3478,7 @@ impl ApplicationHandler for PreviewApp {
                             self.animation.advance_sequences(&mut state.world, dt_secs);
                         }
                         for cue in self.animation.drain_sequence_cues() {
-                            println!("[sequence] cue '{}' at {:.2}s", cue.cue, cue.time);
+                            crate::output::say!("[sequence] cue '{}' at {:.2}s", cue.cue, cue.time);
                         }
                     }
                     if let Ok(state) = self.state.lock() {

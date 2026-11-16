@@ -3,6 +3,7 @@
 mod check;
 mod commands;
 mod file_dialog;
+mod output;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -23,6 +24,12 @@ struct Cli {
     /// the working directory if omitted
     #[arg(long, global = true, value_name = "DIR")]
     project: Option<std::path::PathBuf>,
+
+    /// Answer with exactly one JSON document on stdout (every other line
+    /// goes to stderr); a failure is exit 1, with an `error` document when
+    /// the command printed none. A command that opens a window refuses it
+    #[arg(long, global = true)]
+    json: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -190,7 +197,7 @@ enum Commands {
     Style(style::StyleCommands),
 }
 
-fn main() -> Result<()> {
+fn main() -> std::process::ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -203,9 +210,32 @@ fn main() -> Result<()> {
         .init();
 
     // `render-suite <x>.goldens.toml` is `goldens` (#327)
-    let cli = Cli::parse_from(render_goldens::route_render_suite_goldens(
-        std::env::args_os().collect(),
-    ));
+    let argv = render_goldens::route_render_suite_goldens(std::env::args_os().collect());
+    let cli = match Cli::try_parse_from(&argv) {
+        Ok(cli) => cli,
+        Err(e) => {
+            // A mistake on the command line under --json is still one
+            // document on stdout; --help and --version print as always
+            use clap::error::ErrorKind;
+            let help = matches!(
+                e.kind(),
+                ErrorKind::DisplayHelp
+                    | ErrorKind::DisplayVersion
+                    | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            );
+            if !help && argv.iter().any(|a| a == "--json") {
+                output::document(&serde_json::json!({
+                    "error": { "message": e.kind().to_string(), "usage": e.to_string() }
+                }));
+            }
+            e.exit();
+        }
+    };
+    output::set_json(cli.json);
+    output::finish(run(cli))
+}
+
+fn run(cli: Cli) -> Result<()> {
     if let Some(dir) = &cli.project {
         if !dir.is_dir() {
             anyhow::bail!("--project {}: not a directory", dir.display());
@@ -215,6 +245,10 @@ fn main() -> Result<()> {
         let project =
             flint_core::project::Project::at(dir).map_err(|e| anyhow::anyhow!("--project {e}"))?;
         flint_core::project::set_override(project);
+    }
+
+    if let Some(name) = cli.command.interactive() {
+        output::refuse_interactive(name)?;
     }
 
     match cli.command {
@@ -269,9 +303,45 @@ fn main() -> Result<()> {
         Commands::TexEdit(args) => tex_edit::run(args),
         Commands::Render(mut args) => {
             // --variant builds each variant's command line on this one (#291)
-            args.command_line = commands::variants::subcommand_words(std::env::args_os());
+            // --json is the global flag, not render's: a variant's words leave it out
+            args.command_line = commands::variants::subcommand_words(std::env::args_os())
+                .into_iter()
+                .filter(|w| w != "--json")
+                .collect();
+            if output::json() && args.watch {
+                anyhow::bail!(
+                    "--watch renders until stopped and has no one JSON document: drop --json"
+                );
+            }
+            // --json is --report json: the render's report is its document
+            if output::json() && args.report.is_none() {
+                args.report = Some("json".into());
+            }
             render::run(args)
         }
         Commands::Style(cmd) => style::run(cmd),
+    }
+}
+
+impl Commands {
+    /// The command's name when it opens a window (or plays sound and reads
+    /// a pad), which `--json` refuses. `flint edit` decides for itself: a
+    /// model's or effect's `--render` snapshot answers with the file it wrote.
+    fn interactive(&self) -> Option<&'static str> {
+        Some(match self {
+            Commands::Serve { .. } => "serve",
+            Commands::SplineEdit(_) => "spline-edit",
+            Commands::PlaySuite(_) => "play-suite",
+            Commands::Calibrate(_) => "calibrate",
+            Commands::PlayChart(_) => "play-chart",
+            Commands::SpikeRumble(_) => "spike-rumble",
+            Commands::Play(_) => "play",
+            Commands::Preview(args) if args.render.is_none() => "preview",
+            Commands::GenPreview(_) => "gen-preview",
+            Commands::TerrainEdit(_) => "terrain-edit",
+            Commands::TexEdit(_) => "tex-edit",
+            Commands::Prefab(_) => "prefab view",
+            _ => return None,
+        })
     }
 }

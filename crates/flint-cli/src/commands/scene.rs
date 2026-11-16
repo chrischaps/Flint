@@ -1,8 +1,10 @@
 //! Scene management commands
 
+use crate::output::{self, Answer};
 use anyhow::{Context, Result};
 use clap::Subcommand;
 use flint_scene::SceneFile;
+use serde_json::json;
 use std::fs;
 use std::path::Path;
 
@@ -74,9 +76,10 @@ fn create(path: &str, name: Option<&str>) -> Result<()> {
 
     fs::write(&path, content)?;
 
-    println!("Created scene: {}", path);
-
-    Ok(())
+    output::emit(&Answer::new(
+        format!("Created scene: {path}"),
+        json!({ "created": path, "name": scene_name }),
+    ))
 }
 
 fn list(dir: &str) -> Result<()> {
@@ -130,32 +133,54 @@ fn list(dir: &str) -> Result<()> {
         }
     }
 
-    if scenes.is_empty() {
-        println!("No scene files found in {}", dir);
+    let text = if scenes.is_empty() {
+        format!("No scene files found in {dir}")
     } else {
-        println!("Scene files:");
-        for (path, name) in scenes {
-            println!("  {} ({})", path, name);
+        let mut text = String::from(
+            "Scene files:
+",
+        );
+        for (path, name) in &scenes {
+            text += &format!(
+                "  {path} ({name})
+"
+            );
         }
-    }
-
-    Ok(())
+        text
+    };
+    let listed: Vec<_> = scenes
+        .iter()
+        .map(|(path, name)| json!({ "path": path.replace('\\', "/"), "name": name }))
+        .collect();
+    output::emit(&Answer::new(text, json!({ "dir": dir, "scenes": listed })))
 }
 
 fn info(path: &str) -> Result<()> {
     let content = fs::read_to_string(path).context("Failed to read scene file")?;
     let scene: SceneFile = toml::from_str(&content).context("Failed to parse scene file")?;
 
-    println!("Scene: {}", scene.scene.name);
-    println!("Version: {}", scene.scene.version);
+    let mut text = format!(
+        "Scene: {}
+Version: {}
+",
+        scene.scene.name, scene.scene.version
+    );
     if let Some(desc) = &scene.scene.description {
-        println!("Description: {}", desc);
+        text += &format!(
+            "Description: {desc}
+"
+        );
     }
-    println!("Entities: {}", scene.entities.len());
+    text += &format!(
+        "Entities: {}
+",
+        scene.entities.len()
+    );
 
     if !scene.entities.is_empty() {
-        println!("");
-        println!("Entity list:");
+        text += "
+Entity list:
+";
         for (name, def) in &scene.entities {
             let archetype = def.archetype.as_deref().unwrap_or("(none)");
             let parent = def
@@ -163,9 +188,27 @@ fn info(path: &str) -> Result<()> {
                 .as_deref()
                 .map(|p| format!(" -> {}", p))
                 .unwrap_or_default();
-            println!("  {} [{}]{}", name, archetype, parent);
+            text += &format!(
+                "  {name} [{archetype}]{parent}
+"
+            );
         }
     }
-
-    Ok(())
+    let entities: Vec<_> = scene
+        .entities
+        .iter()
+        .map(
+            |(name, def)| json!({ "name": name, "archetype": def.archetype, "parent": def.parent }),
+        )
+        .collect();
+    output::emit(&Answer::new(
+        text,
+        json!({
+            "path": path,
+            "name": scene.scene.name,
+            "version": scene.scene.version,
+            "description": scene.scene.description,
+            "entities": entities,
+        }),
+    ))
 }

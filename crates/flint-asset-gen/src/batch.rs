@@ -143,7 +143,8 @@ fn check_asset_field(
     }
 }
 
-/// Resolve missing assets in a scene using the specified strategy
+/// Resolve missing assets in a scene using the specified strategy. The
+/// progress goes to stderr; the [`BatchResult`] is the answer.
 pub fn resolve_scene(
     scene_path: &str,
     strategy: BatchStrategy,
@@ -155,8 +156,8 @@ pub fn resolve_scene(
     let found = total - missing_assets.len();
     let project = Project::for_path(Path::new(scene_path))?;
 
-    println!("Scanning scene for asset references...");
-    println!(
+    eprintln!("Scanning scene for asset references...");
+    eprintln!(
         "Found {} references, {} missing:",
         total,
         missing_assets.len()
@@ -167,13 +168,13 @@ pub fn resolve_scene(
     let mut failed = 0;
 
     for asset in &missing_assets {
-        print!("  {} ({})  -> ", asset.asset_name, asset.kind);
+        eprint!("  {} ({})  -> ", asset.asset_name, asset.kind);
 
         match strategy {
             BatchStrategy::AiGenerate => {
                 match generate_asset(&project, asset, style, config, output_dir) {
                     Ok(secs) => {
-                        println!(
+                        eprintln!(
                             "Generated via {} ({:.1}s)",
                             config.default_provider(asset.kind),
                             secs
@@ -181,34 +182,34 @@ pub fn resolve_scene(
                         generated += 1;
                     }
                     Err(e) => {
-                        println!("FAILED: {}", e);
+                        eprintln!("FAILED: {}", e);
                         failed += 1;
                     }
                 }
             }
             BatchStrategy::HumanTask => match create_human_task(asset, style, output_dir) {
                 Ok(path) => {
-                    println!("Task created: {}", path.display());
+                    eprintln!("Task created: {}", path.display());
                     tasks_created += 1;
                 }
                 Err(e) => {
-                    println!("FAILED: {}", e);
+                    eprintln!("FAILED: {}", e);
                     failed += 1;
                 }
             },
             BatchStrategy::AiThenHuman => {
                 match generate_asset(&project, asset, style, config, output_dir) {
                     Ok(secs) => {
-                        println!("Generated ({:.1}s)", secs);
+                        eprintln!("Generated ({:.1}s)", secs);
                         generated += 1;
                     }
                     Err(_) => match create_human_task(asset, style, output_dir) {
                         Ok(path) => {
-                            println!("AI failed, task created: {}", path.display());
+                            eprintln!("AI failed, task created: {}", path.display());
                             tasks_created += 1;
                         }
                         Err(e) => {
-                            println!("FAILED: {}", e);
+                            eprintln!("FAILED: {}", e);
                             failed += 1;
                         }
                     },
@@ -217,7 +218,7 @@ pub fn resolve_scene(
         }
     }
 
-    println!(
+    eprintln!(
         "\nResolution: {}/{} resolved, {} generated, {} tasks, {} failed",
         found + generated + tasks_created,
         total,

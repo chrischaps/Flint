@@ -436,9 +436,13 @@ pub fn cost_report(ledger: &CostLedger, since: Option<&str>) -> Result<()> {
         );
     }
     let summary = CostSummary::from_entries(&contents.entries, since.as_deref());
-    print!("{}", summary.render());
-    println!("\nLedger: {}", ledger.path().display());
-    Ok(())
+    let ledger_path = ledger.path().display().to_string().replace('\\', "/");
+    let mut document = serde_json::to_value(&summary)?;
+    document["ledger"] = ledger_path.clone().into();
+    crate::output::emit(&crate::output::Answer::new(
+        format!("{}\nLedger: {}", summary.render(), ledger.path().display()),
+        document,
+    ))
 }
 
 #[cfg(test)]

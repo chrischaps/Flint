@@ -128,7 +128,7 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
         super::common_args::load_schemas(Some(&args.scene), &args.schemas)?;
     super::common_args::warn_dropped_schemas(&schema_dirs);
     if schema_dirs.dirs.is_empty() {
-        println!("Warning: No schemas directories found");
+        eprintln!("Warning: No schemas directories found");
     }
 
     // A --style word may name one of the scene's own styles (#274): check

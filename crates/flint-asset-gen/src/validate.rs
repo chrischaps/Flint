@@ -30,27 +30,35 @@ impl ValidationReport {
         self.checks.iter().filter(|c| c.status == status).count()
     }
 
-    /// Print the model's header, each check as `flint gen --validate`
-    /// prints it, and the result.
-    pub fn print_summary(&self) {
-        println!("Validation: {}", self.path);
-        println!(
-            "  Meshes: {}, Materials: {}, Triangles: {}",
-            self.mesh_count, self.material_count, self.total_triangles
-        );
+    /// The model's header, each check as `flint gen --validate` prints it,
+    /// and the result, a line each.
+    pub fn summary_text(&self) -> String {
         let report = flint_procgen::ValidationReport {
             checks: self.checks.clone(),
         };
-        report.print_checks();
-        println!("  {}", report.summary());
-        if self.passed {
-            println!("  Result: PASSED");
+        let mut lines = vec![
+            format!("Validation: {}", self.path),
+            format!(
+                "  Meshes: {}, Materials: {}, Triangles: {}",
+                self.mesh_count, self.material_count, self.total_triangles
+            ),
+        ];
+        lines.extend(report.check_lines());
+        lines.push(format!("  {}", report.summary()));
+        lines.push(if self.passed {
+            "  Result: PASSED".to_string()
         } else {
-            println!(
+            format!(
                 "  Result: FAILED ({} issues)",
                 self.count_by_status(CheckStatus::Fail)
-            );
-        }
+            )
+        });
+        lines.join("\n") + "\n"
+    }
+
+    /// Print [`summary_text`](Self::summary_text).
+    pub fn print_summary(&self) {
+        print!("{}", self.summary_text());
     }
 }
 

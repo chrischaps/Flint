@@ -37,10 +37,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// With `--report json`, stdout is the report and everything else goes to stderr.
 static HUMAN_TO_STDERR: AtomicBool = AtomicBool::new(false);
 
-/// `println!` for the human lines; see [`HUMAN_TO_STDERR`].
+/// `println!` for the human lines; see [`HUMAN_TO_STDERR`]. The global
+/// `--json` sends them to stderr too (`crate::output`).
 macro_rules! say {
     ($($t:tt)*) => {
-        if HUMAN_TO_STDERR.load(Ordering::Relaxed) {
+        if HUMAN_TO_STDERR.load(Ordering::Relaxed) || crate::output::stdout_reserved() {
             eprintln!($($t)*)
         } else {
             println!($($t)*)
@@ -814,10 +815,6 @@ pub struct RenderArgs {
     #[arg(long, conflicts_with = "list_styles")]
     pub list_effects: bool,
 
-    /// With --list-styles or --list-effects: print the list as JSON
-    #[arg(long, requires = "listing")]
-    pub json: bool,
-
     /// Keep running and write -o again on every save (#432): the scene,
     /// its folder, its style folders, its schemas and the files the flags
     /// name (--look, --variants, --reference, --camera-path,
@@ -867,11 +864,8 @@ fn list_styles(args: &RenderArgs) -> Result<()> {
             eprintln!("warning: {message}");
         }
     }
-    if args.json {
-        say!(
-            "{}",
-            serde_json::to_string_pretty(&catalog::catalog_in(&assets))?
-        );
+    if crate::output::json() {
+        crate::output::document(&serde_json::to_value(catalog::catalog_in(&assets))?);
     } else {
         print!("{}", catalog::catalog_text_in(&assets));
     }
@@ -879,10 +873,10 @@ fn list_styles(args: &RenderArgs) -> Result<()> {
 }
 
 /// `--list-effects [--json]`: every built-in post effect's keys (#741).
-fn list_effects(args: &RenderArgs) -> Result<()> {
+fn list_effects(_args: &RenderArgs) -> Result<()> {
     use flint_schema::post_effects;
-    if args.json {
-        say!("{}", serde_json::to_string_pretty(post_effects::EFFECTS)?);
+    if crate::output::json() {
+        crate::output::document(&serde_json::to_value(post_effects::EFFECTS)?);
     } else {
         print!("{}", post_effects::catalog_text());
     }
@@ -981,9 +975,12 @@ pub(super) fn render(
         if adapters.is_empty() {
             eprintln!("No GPU adapters found: {}", flint_render::no_adapter_hint());
         }
-        for a in adapters {
+        for a in &adapters {
             say!("{a}");
         }
+        crate::output::when_json(
+            || serde_json::json!({ "adapters": adapters.iter().map(|a| a.to_string()).collect::<Vec<_>>() }),
+        );
         return Ok(());
     }
     if args.list_styles {
@@ -993,7 +990,12 @@ pub(super) fn render(
         return list_effects(args);
     }
     if args.look.as_deref() == Some("help") {
-        print!("{}", super::look::help(&args.scene));
+        let help = super::look::help(&args.scene);
+        if crate::output::json() {
+            crate::output::document(&serde_json::json!({ "help": help }));
+        } else {
+            print!("{help}");
+        }
         return Ok(());
     }
     if args.scene.is_empty() {
@@ -1105,7 +1107,7 @@ pub(super) fn render(
         super::common_args::load_schemas(Some(&args.scene), &args.schemas)?;
     super::common_args::warn_dropped_schemas(&schema_dirs);
     if schema_dirs.dirs.is_empty() {
-        say!("Warning: No schemas directories found");
+        eprintln!("Warning: No schemas directories found");
     }
     // Its archetypes' placeholder boxes, from the same schemas (#751)
     let binding = binding.with_archetypes(&registry);
@@ -3179,7 +3181,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                 .collect(),
         };
         let json = serde_json::to_string(&report).context("serialising the render report")?;
-        println!("{json}");
+        crate::output::document_text(&json);
     }
     if args.strict_scripts {
         if let Some(why) = script_errors.strict_failure() {

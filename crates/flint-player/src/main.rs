@@ -326,7 +326,7 @@ fn main() -> Result<()> {
         eprintln!("{warning}");
     }
     if schema_dirs.dirs.is_empty() {
-        println!("Warning: No schemas directories found");
+        eprintln!("Warning: No schemas directories found");
     }
 
     // --style words, checked once the scene's own styles are registered
