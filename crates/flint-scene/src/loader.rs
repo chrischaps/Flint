@@ -632,6 +632,31 @@ position = [0, 0, 0]
         assert!(world.get_parent(gp).is_none());
     }
 
+    /// #680: a self-parent, or two entities parented to each other, used
+    /// to load and then overflow the stack at the first matrix walk. Now
+    /// the load fails, naming the entities.
+    #[test]
+    fn a_parent_cycle_fails_the_load_naming_the_entities() {
+        let registry = SchemaRegistry::new();
+        let itself = "[scene]\nname = \"s\"\n\n[entities.lamp]\nparent = \"lamp\"\n";
+        let err = load_scene_string(itself, &registry).err().expect("refused");
+        assert_eq!(
+            err.to_string(),
+            "Parent cycle: `lamp` can't be parented to itself"
+        );
+
+        let two = "[scene]\nname = \"s\"\n\n[entities.cart]\nparent = \"wheel\"\n\n\
+                   [entities.wheel]\nparent = \"cart\"\n";
+        let err = load_scene_string(two, &registry).err().expect("refused");
+        // Which link closes the loop depends on the load order; both are named
+        let text = err.to_string();
+        assert!(text.starts_with("Parent cycle: `"), "{text}");
+        assert!(
+            text.contains("`cart`") && text.contains("`wheel`"),
+            "{text}"
+        );
+    }
+
     #[test]
     fn test_load_camera_metadata() {
         let registry = SchemaRegistry::new();

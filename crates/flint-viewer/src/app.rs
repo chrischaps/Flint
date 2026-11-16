@@ -1,6 +1,7 @@
 //! Main viewer application — combines wgpu scene rendering with egui panels.
 //! Supports an optional spline editor mode for interactive track editing.
 
+use crate::edits::FieldEdits;
 use crate::panels::transform_gizmo::apply_gizmo_delta;
 use crate::panels::{
     CameraView, EntityInspector, GizmoAction, GizmoMode, RenderStats, SceneTree, SplinePanelAction,
@@ -374,9 +375,12 @@ pub struct ViewerApp {
     // from the stored start transform to the current transform
     gizmo_drag_ended: bool,
 
-    // Dirty field tracking for structure-preserving saves
-    // Each entry is (entity_name, component, field)
-    dirty_fields: std::collections::HashSet<(String, String, String)>,
+    /// Every field edited since the file was read or saved, with the value
+    /// it had then (#679): `dirty` is whether the world differs from it
+    edits: FieldEdits,
+    /// Why the last save couldn't write some of those edits, shown in the
+    /// status bar while they're still unsaved
+    save_problems: Vec<String>,
 
     // Status message (e.g., "Saved!" in editor mode)
     status_message: Option<(String, Instant)>,
@@ -632,7 +636,8 @@ impl ViewerApp {
             user_style_polls: 0,
             pending_edits: Vec::new(),
             gizmo_drag_ended: false,
-            dirty_fields: std::collections::HashSet::new(),
+            edits: FieldEdits::default(),
+            save_problems: Vec::new(),
             status_message: None,
             scene_post_enabled: true,
             picked_look: None,
@@ -700,7 +705,8 @@ impl ViewerApp {
             user_style_polls: 0,
             pending_edits: Vec::new(),
             gizmo_drag_ended: false,
-            dirty_fields: std::collections::HashSet::new(),
+            edits: FieldEdits::default(),
+            save_problems: Vec::new(),
             status_message: None,
             scene_post_enabled: true,
             picked_look: None,
@@ -1076,6 +1082,8 @@ impl ViewerApp {
             self.gizmo_drag_ended = false;
             self.finalize_gizmo_undo();
         }
+        // A gizmo drag's frames edit the world as it moves
+        self.refresh_dirty();
 
         self.render_context.as_ref().unwrap().queue.present(output);
     }
@@ -1565,6 +1573,7 @@ impl ViewerApp {
         let editor = &mut self.editor;
         let camera = &self.camera;
         let dirty = self.dirty;
+        let save_problems = &self.save_problems;
         let undo_stack = &self.undo_stack;
         let status_message = &self.status_message;
         let render_panel = &mut self.render_panel;
@@ -1661,6 +1670,20 @@ impl ViewerApp {
                             // Dirty indicator
                             if dirty {
                                 ui.colored_label(egui::Color32::from_rgb(255, 200, 80), "Modified");
+                            }
+                            // Edits the last save couldn't write (#679): shown
+                            // until they're saved or put back
+                            if let Some(first) = save_problems.first() {
+                                ui.separator();
+                                let more = match save_problems.len() {
+                                    1 => String::new(),
+                                    n => format!(" (+{} more)", n - 1),
+                                };
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(255, 100, 100),
+                                    format!("Not saved: {first}{more}"),
+                                )
+                                .on_hover_text(save_problems.join(", "));
                             }
 
                             // Gizmo mode indicator (non-editor mode)
@@ -1919,11 +1942,15 @@ impl ViewerApp {
         if !gizmo_edits.is_empty() {
             let mut st = self.state.lock().unwrap();
             for edit in &gizmo_edits {
-                if let Some(components) = st.world.get_components_mut(edit.entity_id) {
-                    components.set_field(&edit.component, &edit.field, edit.new_value.clone());
-                }
+                self.edits.set(
+                    &mut st.world,
+                    edit.entity_id,
+                    &edit.component,
+                    &edit.field,
+                    edit.new_value.clone(),
+                );
             }
-            self.dirty = true;
+            // `dirty` is refreshed once the frame is drawn
         }
 
         if gizmo_drag_just_ended {
@@ -2009,17 +2036,13 @@ impl ViewerApp {
         {
             let mut st = self.state.lock().unwrap();
             for edit in &edits {
-                // Track dirty fields for structure-preserving save
-                if let Some(name) = st.world.get_name(edit.entity_id) {
-                    self.dirty_fields.insert((
-                        name.to_string(),
-                        edit.component.clone(),
-                        edit.field.clone(),
-                    ));
-                }
-                if let Some(components) = st.world.get_components_mut(edit.entity_id) {
-                    components.set_field(&edit.component, &edit.field, edit.new_value.clone());
-                }
+                self.edits.set(
+                    &mut st.world,
+                    edit.entity_id,
+                    &edit.component,
+                    &edit.field,
+                    edit.new_value.clone(),
+                );
             }
         }
 
@@ -2033,7 +2056,7 @@ impl ViewerApp {
             actions: edits,
             description: desc,
         });
-        self.dirty = true;
+        self.refresh_dirty();
     }
 
     /// Finalize a gizmo drag into a single undo command
@@ -2047,7 +2070,6 @@ impl ViewerApp {
             let cur_pos = [current.position.x, current.position.y, current.position.z];
             let cur_rot = [current.rotation.x, current.rotation.y, current.rotation.z];
             let cur_scl = [current.scale.x, current.scale.y, current.scale.z];
-            let entity_name = st.world.get_name(eid).map(|n| n.to_string());
             drop(st);
 
             let mut actions = Vec::new();
@@ -2081,17 +2103,6 @@ impl ViewerApp {
             }
 
             if !actions.is_empty() {
-                // Track dirty fields for patcher
-                if let Some(name) = &entity_name {
-                    for action in &actions {
-                        self.dirty_fields.insert((
-                            name.clone(),
-                            action.component.clone(),
-                            action.field.clone(),
-                        ));
-                    }
-                }
-
                 let mode_name = match self.transform_gizmo.mode {
                     GizmoMode::Translate => "Move",
                     GizmoMode::Rotate => "Rotate",
@@ -2107,20 +2118,23 @@ impl ViewerApp {
         self.transform_gizmo.clear_drag_start();
     }
 
-    /// Undo the last edit
+    /// Undo the last edit. It goes through the edit path like any other
+    /// (#679), so undo after a save leaves the scene dirty and the next save
+    /// writes the value it put back.
     fn undo(&mut self) {
         if let Some(cmd) = self.undo_stack.undo() {
             let mut st = self.state.lock().unwrap();
             for action in &cmd.actions {
-                if let Some(components) = st.world.get_components_mut(action.entity_id) {
-                    components.set_field(
-                        &action.component,
-                        &action.field,
-                        action.old_value.clone(),
-                    );
-                }
+                self.edits.set(
+                    &mut st.world,
+                    action.entity_id,
+                    &action.component,
+                    &action.field,
+                    action.old_value.clone(),
+                );
             }
             drop(st);
+            self.refresh_dirty();
             println!("Undo: {}", cmd.description);
         }
     }
@@ -2130,55 +2144,43 @@ impl ViewerApp {
         if let Some(cmd) = self.undo_stack.redo() {
             let mut st = self.state.lock().unwrap();
             for action in &cmd.actions {
-                if let Some(components) = st.world.get_components_mut(action.entity_id) {
-                    components.set_field(
-                        &action.component,
-                        &action.field,
-                        action.new_value.clone(),
-                    );
-                }
+                self.edits.set(
+                    &mut st.world,
+                    action.entity_id,
+                    &action.component,
+                    &action.field,
+                    action.new_value.clone(),
+                );
             }
             drop(st);
+            self.refresh_dirty();
             println!("Redo: {}", cmd.description);
         }
     }
 
-    /// Save the scene: write the edited fields into the file through its
-    /// `SceneDocument`, leaving everything else as written (#677). With
-    /// nothing edited this does nothing, so Ctrl+S on an untouched scene, or
-    /// a second Ctrl+S, leaves the file byte for byte as it was.
+    /// Save the scene: write each field that differs from the file into it
+    /// through its `SceneDocument`, leaving everything else as written
+    /// (#677). An entity a prefab instance makes goes into the instance's
+    /// overrides. A field that can't be written is named in the status bar
+    /// and keeps the scene dirty; "Saved!" means every edit is in the file
+    /// (#679). Each field written is a line appended to the project's
+    /// `.flint/viewer-edits.jsonl`. With nothing changed this does nothing,
+    /// so Ctrl+S on an untouched scene leaves the file byte for byte as it was.
     fn save(&mut self) {
-        if self.dirty_fields.is_empty() {
-            self.dirty = false;
-            self.update_window_title();
+        let mut guard = self.state.lock().unwrap();
+        if !self.edits.is_dirty(&guard.world) {
+            drop(guard);
+            self.refresh_dirty();
             self.status_message = Some(("Nothing to save".to_string(), Instant::now()));
             return;
         }
-        let mut st = self.state.lock().unwrap();
+        let st = &mut *guard;
         let scene_path = st.scene_path.clone();
-
-        // Collect patch data from world first (immutable borrow of world)
-        let patches: Vec<(String, String, String, toml::Value)> = self
-            .dirty_fields
-            .iter()
-            .filter_map(|(entity_name, component, field)| {
-                let eid = st.world.get_id(entity_name)?;
-                let components = st.world.get_components(eid)?;
-                let value = components.get_field(component, field)?;
-                Some((
-                    entity_name.clone(),
-                    component.clone(),
-                    field.clone(),
-                    value.clone(),
-                ))
-            })
-            .collect();
-
         // No document means the file didn't parse when it was read. The world
         // alone would write a scene without its look, camera, wooze field and
         // prefabs, so the viewer doesn't write it at all.
         let Some(doc) = st.scene_doc.as_mut() else {
-            drop(st);
+            drop(guard);
             tracing::error!("Not saving {scene_path}: it didn't parse as TOML when it was read");
             self.status_message = Some((
                 "Save refused: the scene file didn't parse; reload it".to_string(),
@@ -2186,38 +2188,69 @@ impl ViewerApp {
             ));
             return;
         };
-        let mut skipped = Vec::new();
-        for (entity_name, component, field, value) in &patches {
-            if let Err(e) = doc.patch_field(entity_name, component, field, value) {
-                tracing::warn!("Not saved: {}", e);
-                skipped.push(e);
-            }
+        let plan = self.edits.plan(&st.world, doc);
+        for (_, why) in &plan.failed {
+            tracing::warn!("Not saved: {why}");
         }
-
-        match doc.save(&scene_path) {
+        let written = if plan.written.is_empty() {
+            Ok(())
+        } else {
+            doc.save(&scene_path)
+        };
+        drop(guard);
+        match written {
             Ok(()) => {
-                drop(st);
-                self.dirty = false;
-                self.dirty_fields.clear();
-                self.last_save_time = Some(Instant::now());
-                self.suppress_reload_until = Some(Instant::now() + Duration::from_millis(1500));
-                self.update_window_title();
-                let message = match skipped.first() {
-                    None => "Saved!".to_string(),
-                    // An entity a prefab instance expands into isn't in the file
-                    Some(first) => format!(
-                        "Saved, but {} edit(s) had nowhere to go: {first}",
-                        skipped.len()
+                self.edits.saved(&plan);
+                if !plan.written.is_empty() {
+                    self.last_save_time = Some(Instant::now());
+                    self.suppress_reload_until = Some(Instant::now() + Duration::from_millis(1500));
+                    println!("Saved scene to {}", scene_path);
+                    self.log_edits(&plan, &scene_path);
+                }
+                let message = match plan.failed.first() {
+                    None => format!("Saved! ({} field(s))", plan.written.len()),
+                    Some((_, why)) => format!(
+                        "Not saved: {} of {} edit(s): {why}",
+                        plan.failed.len(),
+                        plan.failed.len() + plan.written.len()
                     ),
                 };
                 self.status_message = Some((message, Instant::now()));
-                println!("Saved scene to {}", scene_path);
             }
             Err(e) => {
                 tracing::error!("Failed to save scene: {}", e);
-                drop(st);
                 self.status_message = Some((format!("Save failed: {}", e), Instant::now()));
             }
+        }
+        self.refresh_dirty();
+    }
+
+    /// Append what a save wrote to the project's change list, for an agent
+    /// to read what the human changed (#679).
+    fn log_edits(&self, plan: &crate::edits::SavePlan, scene_path: &str) {
+        let path = crate::edits::edit_log_path(Path::new(scene_path));
+        #[allow(clippy::disallowed_methods)] // a wall-clock stamp for the log, native only
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let lines =
+            crate::edits::log_lines(plan, &crate::edits::scene_in_log(&path, scene_path), now);
+        if let Err(e) = crate::edits::append_log(&path, &lines) {
+            tracing::warn!("Couldn't append to {}: {e}", path.display());
+        }
+    }
+
+    /// `dirty` is whether the world differs from the file: set it, and the
+    /// title's marker and the status bar's unsaved-edit notes with it.
+    fn refresh_dirty(&mut self) {
+        let st = self.state.lock().unwrap();
+        let dirty = self.edits.is_dirty(&st.world);
+        self.save_problems = self.edits.problems(&st.world);
+        drop(st);
+        if dirty != self.dirty {
+            self.dirty = dirty;
+            self.update_window_title();
         }
     }
 
@@ -2441,8 +2474,9 @@ impl ViewerApp {
 
                     // External reload clears undo and dirty state
                     self.undo_stack.clear();
+                    self.edits.clear();
+                    self.save_problems.clear();
                     self.dirty = false;
-                    self.dirty_fields.clear();
                     self.update_window_title();
 
                     // Re-parse scene document for patcher

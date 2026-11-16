@@ -55,12 +55,24 @@ The gizmo uses constraint-plane dragging: for single-axis movement, it automatic
 | Input | Action |
 |-------|--------|
 | W / E / R | Gizmo mode: translate / rotate / scale (entity selected) |
-| Ctrl+S | Save scene to disk: only the fields you edited are written, the rest of the file stays as it is; with nothing edited the file isn't touched |
-| Ctrl+Z | Undo position change |
-| Ctrl+Shift+Z | Redo position change |
+| Ctrl+S | Save scene to disk: only the fields that differ from the file are written, the rest of the file stays as it is; with nothing changed the file isn't touched |
+| Ctrl+Z | Undo the last edit |
+| Ctrl+Shift+Z / Ctrl+Y | Redo it |
 | Escape | Cancel current gizmo drag |
 
-All position changes are tracked in an undo/redo stack. Saving writes the modified positions back to the scene TOML file.
+Every edit, from the gizmo or the inspector, is on an undo/redo stack. The title's `*` and the status bar's **Modified** say the scene differs from its file: an undo after a save marks it again (the next save writes the value it put back), and undoing back to what the file says clears it.
+
+An entity a prefab instance makes isn't written in the scene file, so its edits go into the instance's overrides, `[prefabs.<instance>.overrides.<entity>.<component>]`, which the loader merges over the template. An edit that can't be written anywhere (an entity the file doesn't have and no instance makes) is named in red in the status bar and keeps the scene marked; the save doesn't say "Saved!".
+
+### What you changed
+
+Each save appends one JSON line per field it wrote to `.flint/viewer-edits.jsonl` under the project root, so an agent can read what was tweaked without diffing the file:
+
+```json
+{"component":"transform","entity":"props_barrel","field":"position","new":[-2.0,0.48,3.0],"old":[1.3,0.48,5.6],"saved_at":1794808511,"scene":"scenes/props.scene.toml","table":"prefabs.props.overrides.barrel.transform"}
+```
+
+`old` is the value the file had (`null`: the entity didn't have the field), `new` the one written, `table` where it went, and `saved_at` the save's time in Unix seconds; one save's lines share it. `flint init` puts the file in the project's `.gitignore`.
 
 ## The Inspector Panel
 

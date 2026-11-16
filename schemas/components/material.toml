@@ -7,6 +7,7 @@ metallic = { type = "f32", description = "Metallic factor 0.0-1.0", default = 0.
 roughness = { type = "f32", description = "Roughness factor 0.0-1.0", default = 0.7 }
 opacity = { type = "f32", description = "Opacity 0.0-1.0", default = 1.0 }
 blend_mode = { type = "enum", values = ["alpha", "additive", "multiply"], description = "Blend mode: alpha, additive, multiply", default = "alpha" }
+emissive = { type = "color", description = "Light an entity drawn from its bounds gives off: [r, g, b], linear, added after lighting, so values above 1 are what bloom takes up (a lamp, a marker). Times emissive_scale. Unset is none. A model's emission is its GLB's; recolour it with material_overrides." }
 emissive_scale = { type = "f32", description = "Multiplies the mesh's emission (its own and per-vertex), read every frame. 1 = as uploaded, 0 = no light. Imported and runtime meshes; inherited from the parent.", default = 1.0 }
 glow_surface = { type = "f32", description = "How much of each per-vertex light part is also lit surface, 0.0-1.0, read every frame. Its light is unchanged (emissive_scale sets that). 0 = as uploaded. Inherited from the parent.", default = 0.0 }
 vertex_tint_r = { type = "f32", description = "Red of the tint a vertex-coloured mesh's colours are multiplied by, surface and per-vertex light alike, read every frame. Set all three or none; none = white, the mesh as uploaded. Imported and runtime meshes; inherited from the parent." }

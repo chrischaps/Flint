@@ -22,5 +22,5 @@ pub use loader::{
     load_scene, load_scene_after, load_scene_diagnosed, load_scene_string, load_scene_text,
     reload_scene, reload_scene_string,
 };
-pub use patcher::SceneDocument;
+pub use patcher::{FieldHome, SceneDocument};
 pub use saver::{save_scene, save_scene_string, update_scene_file};

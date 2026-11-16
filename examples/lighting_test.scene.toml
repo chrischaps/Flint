@@ -67,8 +67,8 @@ direction = [0, -1, 0]
 color = [0.3, 0.5, 1.0]
 intensity = 20.0
 radius = 15.0
-inner_angle = 0.2
-outer_angle = 0.5
+inner_angle_deg = 11.5
+outer_angle_deg = 28.6
 
 # --- Geometry ---
 

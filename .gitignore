@@ -69,6 +69,8 @@ arch-data.json
 
 # Procgen outputs kept between runs (#181); rebuilt on demand
 **/.flint/procgen-cache/
+# What `flint edit` saves write for an agent to read (#679)
+**/.flint/viewer-edits.jsonl
 
 # Python bytecode (tools/showcase)
 __pycache__/

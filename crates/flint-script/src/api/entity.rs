@@ -158,13 +158,13 @@ pub(crate) fn register(api: &mut ScriptApi) {
         "Every entity that has a component of this name.",
     )
     .arg("component", Str)
-    .returns(Array, "their ids")
+    .returns(Array, "their ids, in name order")
     .run(|call, (component,)| {
         let world = call.world()?;
         Ok(world
-            .entities_with_component(&component)
-            .iter()
-            .map(|id| Dynamic::from(id_of(*id)))
+            .in_name_order(world.entities_with_component(&component).iter().copied())
+            .into_iter()
+            .map(|id| Dynamic::from(id_of(id)))
             .collect::<rhai::Array>())
     });
 
@@ -418,13 +418,21 @@ pub(crate) fn register(api: &mut ScriptApi) {
         });
 
     // ── Hierarchy ──
-    m.func("set_parent", "Make one entity the child of another.")
-        .arg("child", Entity)
-        .arg("parent", Entity)
-        .run(|call, (child, parent)| {
-            let _ = call.world_mut()?.set_parent(child, parent);
-            Ok(())
-        });
+    m.func(
+        "set_parent",
+        "Make one entity the child of another; a script error if the parent is the child or below it.",
+    )
+    .arg("child", Entity)
+    .arg("parent", Entity)
+    .run(|call, (child, parent)| {
+        // A cycle used to be stored and overflow the stack at the next
+        // matrix walk (#680); now it is refused, and said at the call's line
+        let refused = call.world_mut()?.set_parent(child, parent).err();
+        match refused {
+            Some(e) => Err(call.error(e)),
+            None => Ok(()),
+        }
+    });
 
     m.func("get_parent", "The entity's parent.")
         .arg("id", Entity)
@@ -434,7 +442,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
 
     m.func("get_children", "The entity's children.")
         .arg("id", Entity)
-        .returns(Array, "their ids")
+        .returns(Array, "their ids, in name order")
         .run(|call, (id,)| {
             Ok(call
                 .world()?

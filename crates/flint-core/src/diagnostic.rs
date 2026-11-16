@@ -84,6 +84,9 @@ pub mod codes {
     /// An `entity` field (or an entity's `parent`) that names no entity of
     /// the scene. An empty string is "not set" and passes.
     pub const UNKNOWN_ENTITY: &str = "unknown-entity";
+    /// Entities whose `parent`s close into a loop: one parented to itself,
+    /// or `a` to `b` to `a` (#680). The scene does not load.
+    pub const PARENT_CYCLE: &str = "parent-cycle";
     /// An `asset` field (or, in `flint check`, an asset of a known kind) that
     /// names no file the project's asset search finds; the hint, or `tried`,
     /// lists the paths.
@@ -112,6 +115,13 @@ pub mod codes {
     /// for (#741), as a style value past its range warns (#355): it still
     /// draws, maybe badly.
     pub const POST_RANGE: &str = "post-range";
+    /// A light past the number of its type the shader takes (#682): the
+    /// strongest directional lights and the point and spot lights nearest
+    /// the camera are drawn, and this one is off while it isn't among them.
+    pub const LIGHT_CAP: &str = "light-cap";
+    /// A value written in two forms of which one is read (#682: a spot's
+    /// `inner_angle` and `inner_angle_deg`): the other does nothing.
+    pub const TWO_FORMS: &str = "two-forms";
 
     // What `flint check` adds (#687): the project around the scene.
 
@@ -150,6 +160,10 @@ pub mod codes {
     /// A `.spline.toml` a scene names does not parse, or a `spline_mesh`
     /// profile is no polygon (#750). Placed by line and column.
     pub const BAD_SPLINE: &str = "bad-spline";
+    /// An inline `particle_emitter` the engine can't play as written (#690):
+    /// a key it doesn't read, or a value that doesn't parse or resolve. At
+    /// run time the emitter keeps its last good settings (or makes none).
+    pub const BAD_EMITTER: &str = "bad-emitter";
 
     /// A game's Cargo workspace lacks a `[patch.crates-io]` line the engine
     /// it builds by path has (#982): cargo applies `[patch]` only from the
@@ -256,6 +270,11 @@ pub mod codes {
             "an entity reference that names no entity in the scene",
         ),
         (
+            PARENT_CYCLE,
+            Severity::Error,
+            "entities whose parents close into a loop, so the scene does not load",
+        ),
+        (
             MISSING_ASSET,
             Severity::Error,
             "an asset reference that names no file the project's search finds",
@@ -352,6 +371,11 @@ pub mod codes {
             "a spline file a scene names does not parse, or a spline_mesh profile is no polygon",
         ),
         (
+            BAD_EMITTER,
+            Severity::Error,
+            "an inline particle_emitter has a key it does not read or a value it cannot use",
+        ),
+        (
             MISSING_CARGO_PATCH,
             Severity::Warning,
             "a game's Cargo workspace lacks a [patch.crates-io] line of the engine it builds",
@@ -411,6 +435,16 @@ pub mod codes {
             POST_RANGE,
             Severity::Warning,
             "a [post_process] value outside what its effect is tuned for",
+        ),
+        (
+            LIGHT_CAP,
+            Severity::Warning,
+            "a light past the number of its type the shader takes, off while it is",
+        ),
+        (
+            TWO_FORMS,
+            Severity::Warning,
+            "a value written in two forms, of which one is read",
         ),
     ];
 }
@@ -796,7 +830,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 46);
+        assert_eq!(seen.len(), 49);
     }
 
     /// A problem in a scene-level table names the table as its header is

@@ -165,6 +165,7 @@ impl SceneRenderer {
         self.reset_ambient();
         self.set_scene_shadows(true);
         self.set_default_lights(true);
+        self.lights.forget_warnings();
         if let Some(env) = &binding.environment {
             self.set_environment(env);
         }

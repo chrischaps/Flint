@@ -7,6 +7,7 @@
 //! spline editor mode for interactive track editing.
 
 pub mod app;
+pub mod edits;
 pub mod panels;
 pub mod picking;
 pub mod projection;

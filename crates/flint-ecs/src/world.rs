@@ -21,10 +21,10 @@ static EMPTY_ENTITY_SET: BTreeSet<EntityId> = BTreeSet::new();
 ///
 /// **Order** (#688): a world hands out its own ids, counting up from 1 (or
 /// from past the world it follows, [`FlintWorld::after`]), and every walk it
-/// offers is ordered: [`all_entities`](Self::all_entities) and
-/// [`entity_names`](Self::entity_names) by name,
-/// [`entities_with_component`](Self::entities_with_component) and
-/// [`get_children`](Self::get_children) by id. A scene spawns its entities
+/// offers is ordered: [`all_entities`](Self::all_entities),
+/// [`entity_names`](Self::entity_names) and
+/// [`get_children`](Self::get_children) (#689) by name,
+/// [`entities_with_component`](Self::entities_with_component) by id. A scene spawns its entities
 /// in name order, so loading the same scene gives the same ids every time,
 /// in this process or the next, and what iterates a component (physics
 /// creating bodies, scripts, the renderer) meets entities in the same order
@@ -34,13 +34,18 @@ pub struct FlintWorld {
     world: hecs::World,
     /// Bidirectional mapping: EntityId <-> hecs::Entity
     id_map: BiMap<EntityId, hecs::Entity>,
-    /// Entity name -> EntityId mapping, by name
+    /// Entity name -> EntityId mapping, by name (#688)
     name_map: BTreeMap<String, EntityId>,
+    /// EntityId -> entity name: the other way, so `get_name` and sorting by
+    /// name are lookups, not scans of `name_map`
+    names: HashMap<EntityId, String>,
     /// Dynamic components for each entity
     components: HashMap<EntityId, DynamicComponents>,
-    /// Parent relationships: child -> parent, by child id
-    parents: BTreeMap<EntityId, EntityId>,
-    /// Reverse index: component name -> the entities that have it, by id
+    /// Parent relationships: child -> parent
+    parents: HashMap<EntityId, EntityId>,
+    /// The other way: parent -> its children, in name order (#689)
+    children: HashMap<EntityId, Vec<EntityId>>,
+    /// Reverse index: component name -> the entities that have it, by id (#688)
     component_index: HashMap<String, BTreeSet<EntityId>>,
     /// The id the next spawn gets. It only rises: [`FlintWorld::clear`]
     /// keeps it, so a scene reloaded into the same world never reuses an id
@@ -62,8 +67,10 @@ impl FlintWorld {
             world: hecs::World::new(),
             id_map: BiMap::new(),
             name_map: BTreeMap::new(),
+            names: HashMap::new(),
             components: HashMap::new(),
-            parents: BTreeMap::new(),
+            parents: HashMap::new(),
+            children: HashMap::new(),
             component_index: HashMap::new(),
             next_id: 1,
             read_reports: ReadReports::new(),
@@ -106,6 +113,7 @@ impl FlintWorld {
         let hecs_entity = self.world.spawn(());
 
         self.id_map.insert(entity_id, hecs_entity);
+        self.names.insert(entity_id, name.clone());
         self.name_map.insert(name, entity_id);
         self.components.insert(entity_id, DynamicComponents::new());
 
@@ -126,6 +134,7 @@ impl FlintWorld {
         let hecs_entity = self.world.spawn(());
 
         self.id_map.insert(id, hecs_entity);
+        self.names.insert(id, name.clone());
         self.name_map.insert(name, id);
         self.components.insert(id, DynamicComponents::new());
 
@@ -171,7 +180,9 @@ impl FlintWorld {
             .ok_or_else(|| FlintError::EntityNotFound(id.to_string()))?;
 
         // Remove from name map
-        self.name_map.retain(|_, v| *v != id);
+        if let Some(name) = self.names.remove(&id) {
+            self.name_map.remove(&name);
+        }
 
         // Remove from world
         self.world
@@ -188,10 +199,12 @@ impl FlintWorld {
             }
         }
         self.components.remove(&id);
-        self.parents.remove(&id);
+        self.unlink_from_parent(id);
 
-        // Remove as parent from any children
-        self.parents.retain(|_, parent| *parent != id);
+        // Its children lose their parent and become roots
+        for child in self.children.remove(&id).unwrap_or_default() {
+            self.parents.remove(&child);
+        }
 
         Ok(())
     }
@@ -214,10 +227,28 @@ impl FlintWorld {
 
     /// Get entity name by ID
     pub fn get_name(&self, id: EntityId) -> Option<&str> {
-        self.name_map
-            .iter()
-            .find(|(_, v)| **v == id)
-            .map(|(k, _)| k.as_str())
+        self.names.get(&id).map(String::as_str)
+    }
+
+    /// These entities in name order (#689): the order every list a script
+    /// is handed comes in, so it is the same however and in whatever order
+    /// the world was built. Names are unique; an id that names nothing (a
+    /// despawned entity) goes last, by id.
+    pub fn in_name_order(&self, ids: impl IntoIterator<Item = EntityId>) -> Vec<EntityId> {
+        let mut ids: Vec<EntityId> = ids.into_iter().collect();
+        ids.sort_unstable_by(|a, b| self.name_order(*a, *b));
+        ids
+    }
+
+    /// Name order between two entities: by name, then by id, an entity with
+    /// no name after every named one.
+    fn name_order(&self, a: EntityId, b: EntityId) -> std::cmp::Ordering {
+        match (self.names.get(&a), self.names.get(&b)) {
+            (Some(x), Some(y)) => x.cmp(y).then(a.cmp(&b)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.cmp(&b),
+        }
     }
 
     /// Get components for an entity
@@ -283,7 +314,13 @@ impl FlintWorld {
         self.components.get(&id).and_then(|c| c.get(component))
     }
 
-    /// Set parent relationship
+    /// Set parent relationship.
+    ///
+    /// Refused with [`FlintError::ParentCycle`] when `parent` is `child`
+    /// itself or one of its descendants (#680), and the hierarchy is left as
+    /// it was. That refusal is what keeps every parent chain finite, which
+    /// every walk up a chain (the matrices, visibility, the renderer's and
+    /// physics' own) counts on: this is the only place a parent is written.
     pub fn set_parent(&mut self, child: EntityId, parent: EntityId) -> Result<()> {
         if !self.id_map.contains_left(&child) {
             return Err(FlintError::EntityNotFound(child.to_string()));
@@ -292,8 +329,66 @@ impl FlintWorld {
             return Err(FlintError::EntityNotFound(parent.to_string()));
         }
 
+        // Walk up from the new parent: reaching the child means the child
+        // would become its own ancestor. The chains already here are finite
+        // (this check held when each link was made), so the walk ends
+        let mut at = parent;
+        while at != child {
+            match self.parents.get(&at) {
+                Some(&up) => at = up,
+                None => {
+                    self.link(child, parent);
+                    return Ok(());
+                }
+            }
+        }
+
+        // Refused: the same walk again, by name, for the message
+        let name = |id: EntityId| {
+            self.get_name(id)
+                .map(String::from)
+                .unwrap_or_else(|| id.to_string())
+        };
+        let mut chain = vec![name(parent)];
+        let mut at = parent;
+        while at != child {
+            at = self.parents[&at];
+            chain.push(name(at));
+        }
+        Err(FlintError::ParentCycle {
+            child: name(child),
+            parent: name(parent),
+            chain,
+        })
+    }
+
+    /// Make `parent` the parent of `child`, which [`Self::set_parent`] has
+    /// checked makes no cycle: out of the old parent's children list, into
+    /// the new one's at its place by name (#689).
+    fn link(&mut self, child: EntityId, parent: EntityId) {
+        if self.parents.get(&child) == Some(&parent) {
+            return;
+        }
+        self.unlink_from_parent(child);
         self.parents.insert(child, parent);
-        Ok(())
+        let at = {
+            let siblings = self.children.get(&parent).map_or(&[][..], Vec::as_slice);
+            siblings.partition_point(|s| self.name_order(*s, child).is_lt())
+        };
+        self.children.entry(parent).or_default().insert(at, child);
+    }
+
+    /// Take `child` out of its parent's children list, and forget the parent.
+    fn unlink_from_parent(&mut self, child: EntityId) {
+        let Some(parent) = self.parents.remove(&child) else {
+            return;
+        };
+        if let Some(siblings) = self.children.get_mut(&parent) {
+            siblings.retain(|s| *s != child);
+            if siblings.is_empty() {
+                self.children.remove(&parent);
+            }
+        }
     }
 
     /// Set parent by name
@@ -313,13 +408,10 @@ impl FlintWorld {
         self.parents.get(&child).copied()
     }
 
-    /// Get children of an entity, by id
+    /// The entity's children, in name order (#689). A lookup in the
+    /// children index, not a scan of every entity.
     pub fn get_children(&self, parent: EntityId) -> Vec<EntityId> {
-        self.parents
-            .iter()
-            .filter(|(_, p)| **p == parent)
-            .map(|(c, _)| *c)
-            .collect()
+        self.children.get(&parent).cloned().unwrap_or_default()
     }
 
     /// Get info about all entities, by name.
@@ -375,8 +467,10 @@ impl FlintWorld {
         self.world.clear();
         self.id_map.clear();
         self.name_map.clear();
+        self.names.clear();
         self.components.clear();
         self.parents.clear();
+        self.children.clear();
         self.component_index.clear();
         self.read_reports.clear();
     }
@@ -419,24 +513,62 @@ impl FlintWorld {
     /// through it to the ancestors above (see [`Self::get_frame_matrix`]).
     pub fn get_world_matrix(&self, id: EntityId) -> Option<[[f32; 4]; 4]> {
         let local = self.get_transform(id)?.to_matrix();
-        Some(match self.parents.get(&id) {
-            Some(parent_id) => mat4_mul(&self.get_frame_matrix(*parent_id), &local),
-            None => local,
-        })
+        Some(self.in_parents_frame(id, local))
     }
 
     /// The frame an entity's children are placed in: its world matrix, with a
     /// missing transform anywhere up the chain, this entity's included, taken
     /// as identity. Unlike [`Self::get_world_matrix`] it always has an answer.
     pub fn get_frame_matrix(&self, id: EntityId) -> [[f32; 4]; 4] {
-        let local = self
-            .get_transform(id)
+        self.in_parents_frame(id, self.local_frame(id))
+    }
+
+    /// An entity's own matrix as its children see it: identity with no
+    /// transform.
+    fn local_frame(&self, id: EntityId) -> [[f32; 4]; 4] {
+        self.get_transform(id)
             .unwrap_or(Transform::IDENTITY)
-            .to_matrix();
-        match self.parents.get(&id) {
-            Some(parent_id) => mat4_mul(&self.get_frame_matrix(*parent_id), &local),
-            None => local,
+            .to_matrix()
+    }
+
+    /// `local` (the matrix of `id`) placed in its parent's frame, walking up
+    /// the chain with a loop rather than recursion (#680), so no depth of
+    /// hierarchy can overflow the stack. The product is taken from the root
+    /// down, `root * .. * parent * local`, in the order the recursive walk
+    /// multiplied, so the matrices are bit for bit what they were.
+    fn in_parents_frame(&self, id: EntityId, local: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
+        let Some(&parent) = self.parents.get(&id) else {
+            return local;
+        };
+        // The ancestors, nearest first: the first NEAR on the stack (deeper
+        // than that is rare), the rest in a Vec
+        const NEAR: usize = 16;
+        let mut near = [parent; NEAR];
+        let mut count = 0;
+        let mut far = Vec::new();
+        let mut at = Some(parent);
+        while let Some(ancestor) = at {
+            if count < NEAR {
+                near[count] = ancestor;
+            } else {
+                far.push(ancestor);
+            }
+            count += 1;
+            // A chain holds each entity once, so it can't be longer than the
+            // map; `set_parent` refuses a cycle, and this cap is the second
+            // line should one ever be made some other way
+            if count > self.parents.len() {
+                break;
+            }
+            at = self.parents.get(&ancestor).copied();
         }
+        let mut root_down = far.iter().rev().chain(near[..count.min(NEAR)].iter().rev());
+        let root = root_down.next().expect("the parent is in the chain");
+        let mut frame = self.local_frame(*root);
+        for ancestor in root_down {
+            frame = mat4_mul(&frame, &self.local_frame(*ancestor));
+        }
+        mat4_mul(&frame, &local)
     }
 
     /// Get the world-space position for an entity (extracts translation from world matrix)
@@ -474,7 +606,8 @@ impl FlintWorld {
         let mut hidden = roots.clone();
         for &child in self.parents.keys() {
             let mut at = child;
-            // Depth-capped: a parent chain never loops, but a cap costs nothing
+            // Depth-capped: a parent chain never loops (`set_parent` refuses
+            // a cycle, #680), but a cap costs nothing
             for _ in 0..256 {
                 match self.parents.get(&at) {
                     Some(parent) if roots.contains(parent) => {
@@ -494,7 +627,8 @@ impl FlintWorld {
     /// Returns a reference to the internal set, **in ascending id order**
     /// (#688): for a loaded scene that is name order, then the order later
     /// entities were spawned in, the same every run. An empty set for a
-    /// component no entity has.
+    /// component no entity has. A list that must be in name order whatever
+    /// spawned what goes through [`Self::in_name_order`] (#689).
     pub fn entities_with_component(&self, component: &str) -> &BTreeSet<EntityId> {
         self.component_index
             .get(component)
@@ -663,6 +797,70 @@ mod tests {
 
         assert_eq!(world.get_parent(child), Some(parent));
         assert!(world.get_children(parent).contains(&child));
+    }
+
+    fn names_of(world: &FlintWorld, ids: &[EntityId]) -> Vec<String> {
+        ids.iter()
+            .map(|id| world.get_name(*id).unwrap().to_string())
+            .collect()
+    }
+
+    /// The children index (#689) is in name order and follows every change
+    /// to the hierarchy: a reparent moves the child, despawning a child
+    /// takes it out, despawning a parent leaves its children as roots.
+    #[test]
+    fn children_are_in_name_order_and_follow_the_hierarchy() {
+        let mut world = FlintWorld::new();
+        let a = world.spawn("a").unwrap();
+        let b = world.spawn("b").unwrap();
+        let kids: Vec<EntityId> = ["mid", "zed", "alpha", "kilo"]
+            .iter()
+            .map(|n| world.spawn(*n).unwrap())
+            .collect();
+        for &k in &kids {
+            world.set_parent(k, a).unwrap();
+        }
+        assert_eq!(
+            names_of(&world, &world.get_children(a)),
+            ["alpha", "kilo", "mid", "zed"]
+        );
+
+        // Setting the same parent again changes nothing.
+        world.set_parent(kids[0], a).unwrap();
+        assert_eq!(world.get_children(a).len(), 4);
+
+        // Reparent: out of a's list, into b's.
+        world.set_parent(kids[1], b).unwrap();
+        assert_eq!(
+            names_of(&world, &world.get_children(a)),
+            ["alpha", "kilo", "mid"]
+        );
+        assert_eq!(names_of(&world, &world.get_children(b)), ["zed"]);
+
+        // Despawn a child: gone from its parent's list.
+        world.despawn(kids[3]).unwrap();
+        assert_eq!(names_of(&world, &world.get_children(a)), ["alpha", "mid"]);
+        assert_eq!(world.get_name(kids[3]), None);
+
+        // Despawn the parent: its children are roots.
+        world.despawn(a).unwrap();
+        assert_eq!(world.get_parent(kids[0]), None);
+        assert_eq!(world.get_parent(kids[2]), None);
+        assert_eq!(world.get_parent(kids[1]), Some(b));
+        assert!(world.get_children(a).is_empty());
+
+        world.clear();
+        assert!(world.get_children(b).is_empty());
+    }
+
+    #[test]
+    fn in_name_order_sorts_by_name_and_puts_the_unnamed_last() {
+        let mut world = FlintWorld::new();
+        let z = world.spawn("z").unwrap();
+        let m = world.spawn("m").unwrap();
+        let gone = world.spawn("a").unwrap();
+        world.despawn(gone).unwrap();
+        assert_eq!(world.in_name_order([gone, z, m]), [m, z, gone]);
     }
 
     #[test]
@@ -985,10 +1183,11 @@ mod tests {
             .iter()
             .map(|n| world.spawn(*n).unwrap())
             .collect();
-        for kid in kids.iter().rev() {
+        for kid in &kids {
             world.set_parent(*kid, root).unwrap();
         }
-        assert_eq!(world.get_children(root), kids);
+        // Children by name (#689), whatever order they were spawned or linked
+        assert_eq!(world.get_children(root), [kids[2], kids[1], kids[0]]);
         let names: Vec<&str> = world.entity_names().collect();
         assert_eq!(names, ["a", "m", "root", "z"]);
     }
@@ -1272,5 +1471,157 @@ intensity = 1.0
 
         assert_eq!(world.get_parent(child_id), Some(parent_id));
         assert!(world.get_children(parent_id).contains(&child_id));
+    }
+
+    // ── Parent cycles (#680) ───────────────────────────────────────
+
+    fn cycle_of(result: Result<()>) -> (String, String, Vec<String>) {
+        match result {
+            Err(FlintError::ParentCycle {
+                child,
+                parent,
+                chain,
+            }) => (child, parent, chain),
+            other => panic!("expected a parent cycle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_entity_cannot_be_its_own_parent() {
+        let mut world = FlintWorld::new();
+        let lamp = world.spawn("lamp").unwrap();
+        let refused = world.set_parent(lamp, lamp);
+        assert_eq!(
+            refused.as_ref().unwrap_err().to_string(),
+            "Parent cycle: `lamp` can't be parented to itself"
+        );
+        assert_eq!(
+            cycle_of(refused),
+            ("lamp".into(), "lamp".into(), vec!["lamp".into()])
+        );
+        assert_eq!(world.get_parent(lamp), None, "nothing was stored");
+        // And the walks that used to overflow end
+        assert!(world.get_world_matrix(lamp).is_none());
+        assert_eq!(
+            world.get_frame_matrix(lamp),
+            Transform::IDENTITY.to_matrix()
+        );
+    }
+
+    #[test]
+    fn a_two_and_a_three_entity_cycle_are_refused() {
+        let mut world = FlintWorld::new();
+        let cart = world.spawn("cart").unwrap();
+        let wheel = world.spawn("wheel").unwrap();
+        world.set_parent(wheel, cart).unwrap();
+        let (child, parent, chain) = cycle_of(world.set_parent(cart, wheel));
+        assert_eq!((child.as_str(), parent.as_str()), ("cart", "wheel"));
+        assert_eq!(chain, ["wheel", "cart"]);
+        assert_eq!(world.get_parent(cart), None, "the refused link isn't kept");
+        assert_eq!(world.get_parent(wheel), Some(cart), "the other one is");
+
+        let hub = world.spawn("hub").unwrap();
+        world.set_parent(hub, wheel).unwrap();
+        let refused = world.set_parent(cart, hub);
+        assert_eq!(
+            refused.as_ref().unwrap_err().to_string(),
+            "Parent cycle: `cart` can't be parented to `hub`, which is below it \
+             (hub -> wheel -> cart, each the child of the next)"
+        );
+        // A middle link can't close one either
+        let (_, _, chain) = cycle_of(world.set_parent(wheel, hub));
+        assert_eq!(chain, ["hub", "wheel"]);
+    }
+
+    #[test]
+    fn reparenting_that_makes_no_loop_is_allowed() {
+        let mut world = FlintWorld::new();
+        let a = world.spawn("a").unwrap();
+        let b = world.spawn("b").unwrap();
+        let c = world.spawn("c").unwrap();
+        world.set_parent(b, a).unwrap();
+        world.set_parent(c, b).unwrap();
+        // The same parent again, a sibling's, and the root under a leaf
+        // once the leaf has moved out from under it
+        world.set_parent(c, b).unwrap();
+        world.set_parent(c, a).unwrap();
+        world.set_parent(c, b).unwrap();
+        world.set_parent(c, a).unwrap();
+        let other = world.spawn("other").unwrap();
+        world.set_parent(a, other).unwrap();
+        assert_eq!(world.get_parent(a), Some(other));
+    }
+
+    /// The loop that replaced the recursion multiplies in the order the
+    /// recursion did, so every matrix is the same bits as before.
+    #[test]
+    fn the_world_matrix_is_the_product_from_the_root_down() {
+        let mut world = FlintWorld::new();
+        let placed = |p: [f64; 3], r: [f64; 3], s: [f64; 3]| {
+            let v = |a: [f64; 3]| toml::Value::Array(a.iter().map(|x| (*x).into()).collect());
+            let mut m = toml::map::Map::new();
+            m.insert("position".into(), v(p));
+            m.insert("rotation".into(), v(r));
+            m.insert("scale".into(), v(s));
+            toml::Value::Table(m)
+        };
+        let names = ["root", "arm", "bare", "hand", "finger"];
+        let ids: Vec<EntityId> = names.iter().map(|n| world.spawn(*n).unwrap()).collect();
+        for (i, id) in ids.iter().enumerate() {
+            if names[i] != "bare" {
+                let f = i as f64;
+                world
+                    .set_component(
+                        *id,
+                        "transform",
+                        placed(
+                            [0.3 * f, 1.7 - f, 0.11 * f],
+                            [13.0 * f, 29.0 + f, -7.0 * f],
+                            [1.0 + 0.1 * f, 0.9, 1.3],
+                        ),
+                    )
+                    .unwrap();
+            }
+            if i > 0 {
+                world.set_parent(*id, ids[i - 1]).unwrap();
+            }
+        }
+        let local = |id: EntityId| world.local_frame(id);
+        let mut expected = local(ids[0]);
+        for id in &ids[1..] {
+            expected = mat4_mul(&expected, &local(*id));
+        }
+        let finger = *ids.last().unwrap();
+        assert_eq!(world.get_world_matrix(finger).unwrap(), expected);
+        assert_eq!(world.get_frame_matrix(finger), expected);
+    }
+
+    /// A chain far deeper than the stack the recursion had: 20,000 levels
+    /// on a test thread's 2 MB stack.
+    #[test]
+    fn a_deep_chain_does_not_overflow_the_stack() {
+        let mut world = FlintWorld::new();
+        let step = {
+            let mut m = toml::map::Map::new();
+            m.insert(
+                "position".into(),
+                toml::Value::Array(vec![1.0.into(), 0.0.into(), 0.0.into()]),
+            );
+            toml::Value::Table(m)
+        };
+        let links: Vec<EntityId> = (0..20_000)
+            .map(|i| {
+                let id = world.spawn(format!("link{i}")).unwrap();
+                world.set_component(id, "transform", step.clone()).unwrap();
+                id
+            })
+            .collect();
+        // Linked from the bottom up, so each parent has none yet and the
+        // cycle check walks one step, not the whole chain
+        for pair in links.windows(2).rev() {
+            world.set_parent(pair[1], pair[0]).unwrap();
+        }
+        let pos = world.get_world_position(*links.last().unwrap()).unwrap();
+        assert_eq!(pos.x, 20_000.0);
     }
 }
