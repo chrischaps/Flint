@@ -5,6 +5,7 @@ use flint_scene::load_scene;
 use winit::event_loop::{ControlFlow, EventLoop};
 
 #[derive(clap::Args)]
+#[command(after_help = flint_core::env::help_section(&flint_core::env::PLAYER_GROUPS))]
 pub struct PlayArgs {
     /// Path to scene file. Without it: the project's default scene,
     /// flint.toml's `[project] scene`

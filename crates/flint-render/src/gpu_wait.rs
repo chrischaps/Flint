@@ -23,17 +23,15 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 /// `FLINT_GPU_WAIT_TIMEOUT` in seconds; `None` (no limit) when unset, `0`
-/// or not a number.
+/// or not a number (which warns).
 pub fn gpu_wait_timeout() -> Option<Duration> {
     static TIMEOUT: OnceLock<Option<Duration>> = OnceLock::new();
-    *TIMEOUT.get_or_init(|| parse_timeout(std::env::var("FLINT_GPU_WAIT_TIMEOUT").ok().as_deref()))
+    *TIMEOUT.get_or_init(|| timeout_of(flint_core::env::GPU_WAIT_TIMEOUT.number()))
 }
 
-fn parse_timeout(value: Option<&str>) -> Option<Duration> {
-    value
-        .and_then(|s| s.trim().parse::<f64>().ok())
-        .filter(|s| s.is_finite() && *s > 0.0)
-        .map(Duration::from_secs_f64)
+/// The limit of a timeout the table accepted: `0` is none.
+fn timeout_of(secs: Option<f64>) -> Option<Duration> {
+    secs.filter(|s| *s > 0.0).map(Duration::from_secs_f64)
 }
 
 /// Block until the device has finished the work submitted to it, for at
@@ -63,16 +61,17 @@ mod tests {
 
     #[test]
     fn the_timeout_is_seconds_and_unset_means_none() {
-        assert_eq!(parse_timeout(None), None);
-        assert_eq!(parse_timeout(Some("")), None);
-        assert_eq!(parse_timeout(Some("0")), None);
-        assert_eq!(parse_timeout(Some("-3")), None);
-        assert_eq!(parse_timeout(Some("soon")), None);
-        assert_eq!(parse_timeout(Some("inf")), None);
-        assert_eq!(parse_timeout(Some("240")), Some(Duration::from_secs(240)));
-        assert_eq!(
-            parse_timeout(Some(" 1.5 ")),
-            Some(Duration::from_millis(1500))
-        );
+        let var = &flint_core::env::GPU_WAIT_TIMEOUT;
+        let parse = |s: &str| match var.parse(s) {
+            Ok(flint_core::env::Value::Number(n)) => timeout_of(Some(n)),
+            _ => None,
+        };
+        assert_eq!(timeout_of(None), None);
+        assert_eq!(parse("0"), None);
+        for bad in ["-3", "soon", "inf"] {
+            assert!(var.parse(bad).is_err(), "{bad} warns");
+        }
+        assert_eq!(parse("240"), Some(Duration::from_secs(240)));
+        assert_eq!(parse(" 1.5 "), Some(Duration::from_millis(1500)));
     }
 }

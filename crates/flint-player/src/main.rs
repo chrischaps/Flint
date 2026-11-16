@@ -30,6 +30,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 #[derive(Parser)]
 #[command(name = "flint-player")]
 #[command(about = "Flint game player - run scenes with physics and first-person controls")]
+#[command(after_help = flint_core::env::help_section(&flint_core::env::PLAYER_GROUPS))]
 struct Args {
     /// Path to scene file. Without it: the project's default scene,
     /// flint.toml's `[project] scene` (with --bundle: the bundle's start

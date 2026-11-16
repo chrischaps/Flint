@@ -328,11 +328,11 @@ impl DevProfile {
         // The perf lines also go to `perf.log` beside the profile, started
         // fresh each run: a busy device's logcat can drop or evict them.
         if table.get("perf").and_then(|v| v.as_bool()).unwrap_or(false)
-            && std::env::var("FLINT_PERF_LOG").is_err()
+            && !flint_core::env::PERF_LOG.is_set()
         {
             let log = data_dir.join("perf.log");
             let _ = std::fs::remove_file(&log);
-            std::env::set_var("FLINT_PERF_LOG", &log);
+            std::env::set_var(flint_core::env::PERF_LOG.name, &log);
         }
         Some(Self { table })
     }

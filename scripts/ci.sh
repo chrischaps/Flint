@@ -4,6 +4,7 @@
 #   scripts/ci.sh          formatting, every cited ADR has a record
 #                          (scripts/adr-check.sh), every clippy.toml is the
 #                          root list's copy (scripts/clippy-conf.sh --check, #761),
+#                          no FLINT_* read past flint_core::env (#715),
 #                          the tree's shape (#760) and its size budget
 #                          (scripts/size-check.py, ADR 0122):
 #                          seconds, no build. `scripts/issue.sh
@@ -13,7 +14,8 @@
 #                          `cargo clippy --all-targets`, the book's crate table
 #                          (tools/arch-analyzer --check-book), the book against
 #                          the script API (`flint script api --check-book`, CI's
-#                          headless job), the book's flags, styles and images
+#                          headless job), the book's environment page (`flint env
+#                          --check-book`, the same job), the book's flags, styles and images
 #                          against that `flint` (scripts/docs-check.py, the
 #                          same job) and scripts/wasm-check.sh. Minutes, and
 #                          three builds (the third is the debug `flint` most
@@ -38,6 +40,17 @@ bash scripts/adr-check.sh
 
 echo "ci: scripts/clippy-conf.sh --check"
 bash scripts/clippy-conf.sh --check
+
+# Every FLINT_* switch is read through its row in flint_core::env (#715), so
+# `flint env` and the book list it and a bad value warns. The table's test
+# (crates/flint-core/tests/env_table.rs) also holds every "FLINT_..." name to it.
+echo "ci: FLINT_* read only through flint_core::env"
+reads=$(git grep -nE '(^|[^_[:alnum:]])var(_os)?\(\s*"FLINT_' -- '*.rs' ':!crates/flint-core/src/env.rs' || true)
+if [ -n "$reads" ]; then
+    echo "ci: these read a FLINT_* variable past flint_core::env; use the switch's getter (add a row for a new one):" >&2
+    echo "$reads" >&2
+    exit 1
+fi
 
 # The tree (#760): a symlink checks out as a text file on Windows without the
 # symlink privilege, and the root is for manifests and docs (a render, spec
@@ -69,6 +82,8 @@ if [ "${1:-}" = "--full" ]; then
     cargo run --locked -q -p flint-arch-analyzer -- --check-book
     echo "ci: flint script api --check-book"
     cargo run --locked -q -p flint-cli --bin flint -- script api --check-book
+    echo "ci: flint env --check-book"
+    cargo run --locked -q -p flint-cli --bin flint -- env --check-book
     echo "ci: scripts/docs-check.py"
     # The flint just built; python3 where it runs (Windows' may be a stub)
     py=python3

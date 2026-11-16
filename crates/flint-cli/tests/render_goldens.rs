@@ -28,9 +28,9 @@ const FLINT: &str = env!("CARGO_BIN_EXE_flint");
 
 /// Where this run's goldens output goes, and whether to keep it on a pass.
 fn goldens_out_dir() -> (PathBuf, bool) {
-    match std::env::var_os("FLINT_GOLDENS_OUT") {
-        Some(dir) if !dir.is_empty() => (PathBuf::from(dir), true),
-        _ => (run_dir("stylize-goldens"), false),
+    match flint_core::env::GOLDENS_OUT.path() {
+        Some(dir) => (dir, true),
+        None => (run_dir("stylize-goldens"), false),
     }
 }
 
@@ -49,7 +49,7 @@ fn stylize_goldens_hold() {
     eprintln!("goldens out-dir: {}", out.display());
     let mut cmd = Command::new(FLINT);
     cmd.arg("goldens").arg(&manifest).arg("--out-dir").arg(&out);
-    if std::env::var_os("FLINT_BLESS").is_some() {
+    if flint_core::env::BLESS.flag() == Some(true) {
         cmd.arg("--bless");
     }
     let run = cmd.output().expect("run flint");

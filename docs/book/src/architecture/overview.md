@@ -383,7 +383,7 @@ Standalone player binary that wires together runtime, physics, audio, animation,
 
 ### flint-cli
 
-Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: `init`, `entity`, `scene`, `query`, `schema`, `script`, `edit`, `validate`, `check`, `examples`, `bundle`, `export`, `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `spike-rumble`, `replay-chart`, `render-suite`, `goldens`, `prefab`, `asset`, `play`, `gen`, `render`, `dxc` and `style`, of which `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `spike-rumble`, `replay-chart` and `render-suite` are the rhythm-game tools. The pre-`edit` tools (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`, `spline-edit`) survive as hidden subcommands. [The CLI reference](../cli-reference/overview.md) covers each one.
+Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: `init`, `entity`, `scene`, `query`, `schema`, `script`, `edit`, `validate`, `check`, `examples`, `env`, `bundle`, `export`, `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `spike-rumble`, `replay-chart`, `render-suite`, `goldens`, `prefab`, `asset`, `play`, `gen`, `render`, `dxc` and `style`, of which `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `spike-rumble`, `replay-chart` and `render-suite` are the rhythm-game tools. The pre-`edit` tools (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`, `spline-edit`) survive as hidden subcommands. [The CLI reference](../cli-reference/overview.md) covers each one.
 
 ### tools/arch-analyzer
 

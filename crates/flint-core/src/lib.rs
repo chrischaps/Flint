@@ -11,6 +11,7 @@
 //! - `project` - A project's root and its `flint.toml` manifest, found through the vfs
 //! - `step_clock` - The stepped hold-and-glide clock everything drawn on ticks reads (#747)
 //! - `frame_notes` - What the engine did on a frame (loads, builds, reloads), for the hitch detector (#1077)
+//! - `env` - Every `FLINT_*` environment switch, in one table with typed getters (#715)
 //! - `field` - Named numbers as one function of place and time: zones, falloff, ramps (ADR 0123)
 #![cfg_attr(test, allow(clippy::disallowed_methods))] // unit tests read their files off the disk and assert on TOML as written; the lib build still holds the rules (#761)
 
@@ -18,6 +19,7 @@ pub mod bundle;
 pub mod callbacks;
 pub mod components;
 pub mod diagnostic;
+pub mod env;
 mod error;
 pub mod events;
 pub mod field;

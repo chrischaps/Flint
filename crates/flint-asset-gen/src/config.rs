@@ -190,10 +190,14 @@ impl FlintConfig {
     }
 
     fn apply_env_overrides(config: &mut FlintConfigFile) {
-        let provider_names = ["flux", "meshy", "elevenlabs"];
-        for name in &provider_names {
-            let env_key = format!("FLINT_{}_API_KEY", name.to_uppercase());
-            if let Ok(key) = std::env::var(&env_key) {
+        use flint_core::env::{ELEVENLABS_API_KEY, FLUX_API_KEY, MESHY_API_KEY};
+        let providers = [
+            ("flux", &FLUX_API_KEY),
+            ("meshy", &MESHY_API_KEY),
+            ("elevenlabs", &ELEVENLABS_API_KEY),
+        ];
+        for (name, var) in providers {
+            if let Some(key) = var.secret() {
                 let entry = config.providers.entry(name.to_string()).or_default();
                 entry.api_key = Some(key);
             }
