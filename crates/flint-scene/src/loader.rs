@@ -18,6 +18,12 @@ use std::path::Path;
 /// there: [`diagnose_scene_in`]) doesn't stop the load: it is logged once, as
 /// a summary line and the first few (ADR 0115).
 /// [`load_scene_diagnosed`] returns the list instead.
+///
+/// The project's `[project.diagnostics] allow` is applied here as in
+/// `flint validate` (#795), and `[project] strict` is not: strict is a gate
+/// for the commands that pass or fail a scene, and a load never fails on
+/// what it promotes, so the summary keeps each code at the severity it is
+/// raised with.
 pub fn load_scene<P: AsRef<Path>>(
     path: P,
     registry: &SchemaRegistry,
@@ -102,9 +108,19 @@ fn load_text_into(
 
     // Expand prefab instances into entities before building world
     prefab::expand_prefabs(&mut scene_file, path)?;
-    let found = diagnose_scene_in(&scene_file, path, registry, &Project::for_scene(path));
+    let found = load_diagnostics(&scene_file, path, registry);
     populate_world(&mut world, &scene_file, registry)?;
     Ok((world, scene_file, found))
+}
+
+/// What a load says of a scene it parsed: [`diagnose_scene_in`], less what
+/// the project allows. Not promoted by `[project] strict` (see
+/// [`load_scene`]).
+fn load_diagnostics(scene: &SceneFile, path: &Path, registry: &SchemaRegistry) -> Vec<Diagnostic> {
+    let project = Project::for_scene(path);
+    let mut found = diagnose_scene_in(scene, path, registry, &project);
+    diagnostic::drop_allowed(&mut found, &project.allow);
+    found
 }
 
 /// Parse a scene's text. A file that isn't TOML, or isn't a scene, is an
@@ -203,7 +219,7 @@ pub fn reload_scene<P: AsRef<Path>>(
 
     // Expand prefab instances
     prefab::expand_prefabs(&mut scene_file, path)?;
-    let found = diagnose_scene_in(&scene_file, path, registry, &Project::for_scene(path));
+    let found = load_diagnostics(&scene_file, path, registry);
     diagnostic::log_summary(&flint_core::project::shown(path), &found);
 
     // Clear existing world
