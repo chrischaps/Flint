@@ -114,7 +114,7 @@ use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// The mask's format: one style id a pixel in `.r`, 0 where no style
 /// drew, and the entity's blend in `.g` (#278), `0..=BLEND_ONE` for 0..1.
@@ -847,7 +847,7 @@ pub(crate) fn resolve_blended(
         ids.set(Vec::new());
         return;
     }
-    let mut roots: HashSet<EntityId> = world.entities_with_component(STYLE_MASK_COMPONENT).clone();
+    let mut roots: BTreeSet<EntityId> = world.entities_with_component(STYLE_MASK_COMPONENT).clone();
     for c in crate::stylize::registry()
         .iter()
         .filter_map(|d| d.component)

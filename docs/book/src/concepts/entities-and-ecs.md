@@ -14,10 +14,9 @@ Flint's twist: components are **dynamic**. Instead of being Rust structs compile
 ## Entity IDs
 
 Every entity gets a stable `EntityId` --- a 64-bit integer that:
-- Is unique within a scene
-- Never gets recycled (monotonically increasing)
-- Persists across save/load cycles
-- Is deterministic (the same scene always produces the same IDs)
+- Is unique within a world, and never reused by it (each world counts its own ids up from 1)
+- Is deterministic: a scene spawns its entities in name order, so the same scene gives the same names the same ids every load, in this process or the next
+- Is never reused across a scene transition or an editor's reload either: the next world's ids start past the last one's, so an id a script kept names nothing in the new scene
 
 Internally, Flint maintains a bidirectional map (`BiMap`) between `EntityId` values and hecs `Entity` handles. This allows efficient lookup in both directions.
 
@@ -26,7 +25,13 @@ Internally, Flint maintains a bidirectional map (`BiMap`) between `EntityId` val
 pub struct EntityId(pub u64);
 ```
 
-When loading a saved scene, the ID counter is adjusted to be higher than any existing ID, preventing collisions when new entities are created.
+Ids are a world's to hand out (`world.spawn(name)`); there is no way to make one on its own. An entity spawned with a given id (`spawn_with_id`) moves the world's counter past it, so the next spawn can't collide.
+
+The ids are the names' ranks, so adding or renaming an entity moves the ids after it. Something that should stay the same while the scene is edited, such as a seed, comes from the entity's name.
+
+### Order
+
+Everything that walks the world does it in a fixed order, the same every run: the entities with a component (`entities_with_component`) by id, which for a loaded scene is name order; all entities, their names and an entity's children by name. Physics creates its bodies in that order, so a pile of dynamic bodies settles the same way every time a scene is loaded (`examples/physics_pile.scene.toml`).
 
 ## Named Entities
 

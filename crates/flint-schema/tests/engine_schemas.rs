@@ -521,6 +521,8 @@ fn the_four_schemas_say_what_their_readers_take() {
             "source_radius",
             "inner_angle",
             "outer_angle",
+            "inner_angle_deg",
+            "outer_angle_deg",
             "volumetric_intensity",
             "volumetric_color",
         ])
@@ -557,8 +559,9 @@ fn the_four_schemas_say_what_their_readers_take() {
 
     // A default is written into the component at load (`populate_world`),
     // so only a field whose reader falls back to that very value may carry
-    // one: `range` with a default would beat an authored `radius`, and
-    // `volumetric_color` would stop following `color`.
+    // one: `range` with a default would beat an authored `radius`,
+    // `volumetric_color` would stop following `color`, and `type` would hide
+    // a light that forgot it, which the renderer says (#682).
     let with_default = |name: &str| -> BTreeSet<String> {
         registry
             .get_component(name)
@@ -569,7 +572,7 @@ fn the_four_schemas_say_what_their_readers_take() {
             .map(|(k, _)| k.clone())
             .collect()
     };
-    assert_eq!(with_default("light"), set(&["type", "color", "intensity"]));
+    assert_eq!(with_default("light"), set(&["color", "intensity"]));
     for name in ["model", "spline", "spline_mesh"] {
         assert_eq!(with_default(name), set(&[]), "{name}");
     }

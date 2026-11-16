@@ -659,7 +659,10 @@ fn fs_main(input: VertexOutput, @builtin(front_facing) front: bool) -> @location
             shade_dist = max(distance, light.source_radius);
         }
         let atten = attenuation(shade_dist, light.radius);
-        let cone = spot_cone_factor(light_vec, light.direction, light.inner_angle, light.outer_angle);
+        // The cone is about the way the spot shines, light to fragment: light_vec
+        // runs the other way, so this took a spot pointing down for one pointing
+        // up and lit nothing it was aimed at (#682). The terrain shader passes -L.
+        let cone = spot_cone_factor(-light_vec, light.direction, light.inner_angle, light.outer_angle);
         let radiance = light.color * light.intensity * atten * cone;
         Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness_l, n_dot_v, wrap, oren);
     }

@@ -1220,7 +1220,7 @@ mod tests {
     #[test]
     fn a_joint_offset_turns_a_clipless_skeleton_and_what_hangs_from_it() {
         let mut sync = SkeletalSync::new();
-        let eid = EntityId::new();
+        let eid = EntityId::from_raw(1);
         let mut skeleton = two_joint_skeleton();
         skeleton.rest_poses[1].translation = [0.0, 1.0, 0.0];
         skeleton.local_poses = skeleton.rest_poses.clone();

@@ -67,6 +67,11 @@ topic = "rendering"
 purpose = "Directional, point and spot lights together"
 
 [[example]]
+scene = "swinging_lamp.scene.toml"
+topic = "rendering"
+purpose = "A spot light with no direction swings with the arm it hangs from; its cone in degrees"
+
+[[example]]
 scene = "transparency_test.scene.toml"
 topic = "rendering"
 purpose = "Transparent materials beside opaque ones"
@@ -373,6 +378,11 @@ purpose = "A particle effect asset beside an inline sparks emitter, for comparis
 scene = "joint_test.scene.toml"
 topic = "runtime"
 purpose = "Physics joints: a hinge pendulum, a sprung slider, a gimballed pod and a wheel"
+
+[[example]]
+scene = "physics_pile.scene.toml"
+topic = "runtime"
+purpose = "Forty-eight crates tumbling into a tray: a pile that settles the same way to the bit every run (#688)"
 
 [[example]]
 scene = "skeletal_test.scene.toml"
