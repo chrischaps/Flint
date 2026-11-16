@@ -72,7 +72,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | `set_visible(id: entity, visible: bool)` | — | Show or hide the entity and its descendants; hidden ones still simulate. |
 | `is_visible(id: entity)` | `bool`: true when unset | The entity's own visibility switch (a hidden ancestor isn't counted). |
 | `distance(a: entity, b: entity)` | `num`: metres; f64::MAX when either has no transform | The distance between two entities' positions. |
-| `set_parent(child: entity, parent: entity)` | — | Make one entity the child of another. |
+| `set_parent(child: entity, parent: entity)` | — | Make one entity the child of another; a script error if the parent is the child or below it. |
 | `get_parent(id: entity)` | `entity`: its id, or -1 when it has none | The entity's parent. |
 | `get_children(id: entity)` | `array`: their ids | The entity's children. |
 | `get_world_position(id: entity)` | `map`: `#{x, y, z}`; empty when it has no transform | The entity's position in the world, through its parents. |
