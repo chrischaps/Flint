@@ -330,6 +330,9 @@ pub(crate) struct PerfContext {
     pub pacing: Option<String>,
     /// The WebGPU calls a frame made, on the web (#139).
     pub webgpu: Option<WebGpuCalls>,
+    /// The hitches in the window and the run, and the window's worst with
+    /// its cause (#1079); `None` while frames aren't judged.
+    pub hitches: Option<super::hitch_watch::HitchReadout>,
 }
 
 /// The mean frame's calls into WebGPU, counted by the page (`?perf`
@@ -509,6 +512,9 @@ pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
         "worst  {:.1} ms, {:.1} of it the player's",
         s.worst_frame, s.worst_frame_cpu
     ));
+    if let Some(h) = &c.hitches {
+        line(h.rows());
+    }
     line(format!(
         "canvas {}x{} px at DPR {}",
         c.surface[0],
@@ -643,6 +649,11 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
     ];
     if let Some(pacing) = &c.pacing {
         parts.insert(5, format!("pace {pacing}"));
+    }
+    // Beside the frame times: how many of them stood out, and why (#1079)
+    if let Some(h) = &c.hitches {
+        let at = parts.len() - 1;
+        parts.insert(at, h.part());
     }
     if let Some(mode) = c.present {
         parts.push(format!("present {}", present_name(mode)));
@@ -789,6 +800,11 @@ impl super::PlayerApp {
                 present: Some(context.present_mode_in_use()),
                 pacing: self.frame_rate_line(),
                 webgpu: None,
+                hitches: Some(super::hitch_watch::HitchReadout::of(
+                    &self.stats.hitches,
+                    perf,
+                    WINDOW_SECS,
+                )),
             },
         ))
     }
@@ -1042,8 +1058,36 @@ mod tests {
                 buffers: 0.0,
                 passes: 14.0,
             }),
+            hitches: Some(super::super::hitch_watch::HitchReadout {
+                secs: 10.0,
+                window: 2,
+                run: 5,
+                worst: Some((84.2, "script whale.rhai:on_update 80.1 ms".into())),
+            }),
         };
         (rec.summary().unwrap(), c)
+    }
+
+    /// #1079: the copied line and the readout carry the hitches, so
+    /// `tools/web-perf/run.mjs` reads them with no change.
+    #[test]
+    fn the_copied_line_and_the_readout_count_the_hitches() {
+        let (s, mut c) = sample();
+        let line = summary_line(&s, &c);
+        assert!(
+            line.contains(" | hitches 2 in 10s (5 in run), worst 84.2 ms: script whale.rhai:on_update 80.1 ms | cpu "),
+            "{line}"
+        );
+        let text = readout(&s, &c);
+        assert!(
+            text.contains("hitch  2 in 10 s, 5 in the run\n       worst 84.2 ms: script whale.rhai:on_update 80.1 ms"),
+            "{text}"
+        );
+        c.hitches = Some(super::super::hitch_watch::HitchReadout {
+            secs: 10.0,
+            ..Default::default()
+        });
+        assert!(summary_line(&s, &c).contains(" | hitches 0 in 10s (0 in run) | "));
     }
 
     #[test]

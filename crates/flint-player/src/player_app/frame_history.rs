@@ -105,6 +105,9 @@ pub(crate) struct Frame {
     pub at: f64,
     /// Wall time from its start to the next frame's.
     pub ms: f32,
+    /// The game time it ran at: `GameClock::total_time` once its own tick
+    /// had stepped, what its scripts read as `total_time()` (#1079).
+    pub game_time: f64,
     /// Each phase of the player's work, indexed by `Phase as usize`.
     pub phases: [f32; Phase::COUNT],
     /// Each script callback's time, indexed as
@@ -338,6 +341,11 @@ impl FrameHistory {
                 ));
             }
         }
+    }
+
+    /// The game time the frame under way runs at (its tick's `total_time`).
+    pub(crate) fn game_time(&mut self, total_time: f64) {
+        self.under_way.game_time = total_time;
     }
 
     /// The frames kept, oldest first.

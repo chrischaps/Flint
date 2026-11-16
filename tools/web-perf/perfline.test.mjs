@@ -70,6 +70,15 @@ test('the GPU part says how it was timed (#380)', () => {
   assert.deepEqual(parsePerfLine('gpu 3.90 ms under vsync: SSAO 0.80').gpu, { frame: 3.9, passes: { SSAO: 0.8 }, vsync: true });
 });
 
+test('the hitches part counts the window and the run, and names the worst (#1079)', () => {
+  const p = parsePerfLine(
+    'frame p50 16.7 p90 16.7 p99 17.0 max 151.2 ms (600 frames/10s) | hitches 1 in 10s (3 in run), worst 151.2 ms: script stall.rhai:on_update 150.1 ms | cpu 0.92 ms: input 0.01/0.1',
+  );
+  assert.deepEqual(p.hitches, { window: 1, secs: 10, run: 3, worst: { ms: 151.2, cause: 'script stall.rhai:on_update 150.1 ms' } });
+  assert.equal(p.cpu, 0.92);
+  assert.deepEqual(parsePerfLine('hitches 0 in 10s (0 in run)').hitches, { window: 0, secs: 10, run: 0 });
+});
+
 test('a line without GPU timing says so', () => {
   assert.deepEqual(parsePerfLine('flint perf · x · t=3s | gpu off').gpu, { frame: null, passes: {}, note: 'gpu off' });
   assert.deepEqual(parsePerfLine(undefined), {});

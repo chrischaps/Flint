@@ -4,6 +4,7 @@
 //! for running Flint scenes with physics and first-person controls.
 
 pub mod extension;
+pub mod hitch_args;
 #[cfg(feature = "music")]
 mod music;
 mod player_app;
@@ -23,6 +24,7 @@ pub use flint_render::{
 };
 pub use flint_script::{Projector, ScreenPoint, View};
 pub use flint_terrain::{GrassConfig, GroundField, Heightmap};
+pub use hitch_args::{HitchArgs, HitchClass, HitchGate};
 #[cfg(not(target_arch = "wasm32"))]
 pub use player_app::expression_feed::ExpressionListener;
 pub use player_app::expression_feed::{ExpressionFeed, ExpressionTimeline, TimedState};

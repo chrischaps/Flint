@@ -9,6 +9,7 @@
 //!                [--screenshot-every <secs>] [--exit-after <secs>]
 //!                [--frame-step <secs>] [--input-script <file>]
 //!                [--expression-timeline <file>] [--expression-listen <ip:port>]
+//!                [--hitch-log <file>] [--max-hitches <n>]
 //!   flint-player --bundle <game.flintpack> [scene.toml]
 //!
 //! Screenshots capture the presented frame — the 3D scene *and* the egui
@@ -243,6 +244,11 @@ struct Args {
     /// Every error is counted either way, and --exit-after prints them
     #[arg(long)]
     strict_scripts: bool,
+
+    /// `--hitch-log`, `--max-hitches`, `--max-hitches-startup` and
+    /// `--max-hitches-of` (#1079)
+    #[command(flatten)]
+    hitches: flint_player::HitchArgs,
 }
 
 fn main() -> Result<()> {
@@ -402,6 +408,7 @@ fn main() -> Result<()> {
     }
     app.launch.touch_device = args.touch_device;
     app.launch.strict_scripts = args.strict_scripts;
+    args.hitches.apply(&mut app)?;
     app.launch.pixels_per_point = args.pixels_per_point.filter(|p| *p > 0.0);
     if let Some(name) = &args.look {
         // Refuse a bad name now. The scene's user styles first: a look may

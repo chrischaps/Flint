@@ -209,7 +209,63 @@ A `clock stall` is the long frame itself, so it is kept on the hitch but is no c
 
 `FLINT_HITCH_FACTOR` (at least 1, default 2) and `FLINT_HITCH_FLOOR_MS` (default 8) change the thresholds.
 
-The history is flint-player's `frame-history` Cargo feature, on by default. A shipped game that wants none of it builds flint-player without it (`default-features = false` and the features it does want). The player then records frames only while `--perf` is on, as it did before, and each call the frame makes costs a branch (measured at nothing beside the `Instant::now` the player takes anyway). `FLINT_FRAME_HISTORY=0` turns the history off in a build that has it, and `FLINT_FRAME_HISTORY=1` turns it on in one that doesn't.
+The history is flint-player's `frame-history` Cargo feature, on by default. A shipped game that wants none of it builds flint-player without it (`default-features = false` and the features it does want). The player then records frames only while `--perf` is on, as it did before, and each call the frame makes costs a branch (measured at nothing beside the `Instant::now` the player takes anyway). `FLINT_FRAME_HISTORY=0` turns the history off in a build that has it, and `FLINT_FRAME_HISTORY=1` turns it on in one that doesn't. `--hitch-log` and `--max-hitches` (next section) turn it on whatever the build says.
+
+### Finding a hitch
+
+A hitch is found in four steps: see it, record it, gate it, then look inside it.
+
+**See it.** Play the game with F2 open (`--stats` opens it from the first frame), or with `--perf`, whose ten-second line counts the hitches in its window and in the run and names the worst one's cause. `?perf=1` in a browser shows the same in its corner and copies it in the same line, so `tools/web-perf/run.mjs` keeps it with the rest:
+
+```text
+… | frame p50 4.2 p90 4.8 p99 5.6 max 153.8 ms (2232 frames/10s) | hitches 5 in 10s (5 in run), worst 153.8 ms: script stall2.rhai:on_update 150.1 ms | cpu 4.36 ms: … | …
+```
+
+The perf line's count includes the start's hitches; the exit report below sets them apart.
+
+**Record it.** `--hitch-log FILE` writes one JSON line a hitch as the run goes. Each line waits for the eight frames after its hitch, so it can show them (about 130 ms at 60 fps), and is flushed as it's written, so a run that crashes keeps every line before the crash. The fields:
+
+| Field | What |
+|---|---|
+| `frame` | the frame's number since recording began |
+| `game_time` | the game time it ran at, what its scripts read as `total_time()` |
+| `wall_time` | when it began, seconds since recording began |
+| `ms`, `judged_ms`, `median_ms` | its wall time, the time it was judged by (paced under vsync) and the median it stood out from |
+| `missed_refreshes` | under vsync, the refreshes it ran past its one; `null` without vsync |
+| `class` | `player` or `elsewhere` |
+| `startup` | it came in the first two seconds of game time |
+| `player_ms` | the player's own work in it, every phase but `present` |
+| `phase`, `phase_ms` | the phase that grew most, and by how much (`player` only) |
+| `script`, `script_ms` | the script callback that took longest (`player` only) |
+| `present_ms` | the `present` phase's share (`elsewhere` only) |
+| `cause` | the line the report and the perf line name it by: the engine's notes when it has any, else the script, the phase or `elsewhere` |
+| `notes` | the frame notes of its frame and the frame before, each with `kind`, `detail`, `ms`, `depth` and `frame_before` |
+| `before_ms`, `after_ms` | the eight frames either side, oldest first |
+
+```text
+{"frame":681,"game_time":3.013,"wall_time":4.36,"ms":166.44,"judged_ms":154.17,"median_ms":4.17,"missed_refreshes":36,"class":"player","startup":false,"player_ms":153.68,"phase":"scripts","phase_ms":150.26,"script":"stall.rhai:on_update","script_ms":150.26,"present_ms":null,"cause":"script stall.rhai:on_update 150.3 ms","notes":[],"before_ms":[3.68,3.51,4.93,3.25,6.45,3.01,4.11,4.94],"after_ms":[3.66,6.41,4.15,2.39,2.65,1.99,2.01,2.06]}
+```
+
+That is a script that stalls 150 ms at t = 1, 3, 4 and 5 s, on a 240 Hz display (a 4.17 ms refresh, so the frame ran 36 refreshes past its one). The log times every script callback, as `--perf` does, so a `player` hitch names its script, but only when the script took at least half of what its phase grew by: a render stall in a frame whose slowest callback took 0.3 ms reads `render +21.1 ms`. `--exit-after` totals the run on stderr beside its other `[perf]` lines:
+
+```text
+[perf] hitches: 3 (35.9/min over 5.0 s after t=2 s; 3 player, 0 elsewhere), worst 166.4 ms at t=3.01 s (script stall.rhai:on_update 150.3 ms); causes: 3 script stall.rhai:on_update
+[perf] startup hitches (before t=2 s, not gated): 1, worst 154.4 ms at t=1.01 s (script stall.rhai:on_update 150.2 ms); causes: 1 script stall.rhai:on_update
+[perf] hitch log: hitches.jsonl (4 lines)
+```
+
+Hitches in the first two seconds of game time (loading's last uploads, the first pipeline compiles) are counted apart as **startup**. They're the same two seconds the `[perf]` averages leave out.
+
+**Gate it.** `--max-hitches N` makes the run exit non-zero when it had more than N hitches after the start, the way `--strict-scripts` does for script errors, so a scripted run can fail:
+
+```sh
+flint-player levels/demo.scene.toml --frame-step 0.0166667 --input-script route.txt \
+  --exit-after 30 --hitch-log hitches.jsonl --max-hitches 0
+```
+
+Startup hitches never count against `--max-hitches`. `--max-hitches-startup N` gives them a limit of their own. `--max-hitches-of player` counts only the engine's own work, and `--max-hitches-of elsewhere` only the time spent outside it. A hitch fix is then provable: the same input script, fewer lines. `flint play` takes the same four flags. The gate reads the wall clock, so a machine busy with other work hitches too. Keep it out of CI, and gate `player` hitches when the machine is shared. Pass `--no-hot-reload` to a gated run as to any capture: in a debug build the reload poll can itself take 14 ms, which the log names as `reload poll`. At high refresh rates the 8 ms floor is small beside a debug build's own spikes, and `FLINT_HITCH_FLOOR_MS` raises it for a gate.
+
+**Look inside it.** The log says which phase and which script, and what the engine was doing. To see what happened inside a slow phase, build with the `profile` feature and open the frame in Tracy (above).
 
 ## Further Reading
 

@@ -273,7 +273,7 @@ impl PlayerApp {
 
     /// `--exit-after`'s report, at its time or at a script's `quit_game()`
     /// before it (#659).
-    pub(super) fn print_exit_report(&self) {
+    pub(super) fn print_exit_report(&mut self) {
         // Headless perf figure: average frame time over the run, so a
         // scene change can be A/B'd without watching the overlay.
         let frames = self.capture.perf_frames;
@@ -317,6 +317,15 @@ impl PlayerApp {
                     "[perf] avg GPU {gpu_ms:.2} ms/frame over {gpu_frames} timed frames{}",
                     super::perf::gpu_vsync_note(present, gpu_ms as f32, avg_ms as f32)
                 );
+            }
+        }
+        // The run's hitches (#1079): a mean hides the one long frame. The
+        // log's last lines are written now, with the frames after them
+        // that there are.
+        if self.stats.perf.recording() {
+            self.stats.watch.finish();
+            for line in self.stats.watch.report() {
+                eprintln!("{line}");
             }
         }
         for line in self.subsystem_report() {
@@ -438,7 +447,12 @@ impl PlayerApp {
             self.stats
                 .perf
                 .clock_ticked(super::frame_history::ClockSample::of(&self.core.clock));
-            self.stats.hitches.observe(&self.stats.perf);
+            self.stats.perf.game_time(self.core.clock.total_time);
+            let found = self.stats.hitches.observe(&self.stats.perf);
+            // The hitch log, the exit report's counts and the gate (#1079)
+            self.stats
+                .watch
+                .observe(found, &self.stats.hitches, &self.stats.perf);
         }
         if self
             .launch

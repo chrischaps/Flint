@@ -88,6 +88,12 @@ pub struct PlayArgs {
     /// time (#693). Every error is counted either way
     #[arg(long)]
     pub strict_scripts: bool,
+
+    /// `--hitch-log FILE` (a JSON line for every hitch), `--max-hitches N`,
+    /// `--max-hitches-startup N` and `--max-hitches-of CLASS` (exit
+    /// non-zero past them) (#1079)
+    #[command(flatten)]
+    pub hitches: flint_player::HitchArgs,
 }
 
 pub fn run(mut args: PlayArgs) -> Result<()> {
@@ -173,6 +179,7 @@ pub fn run(mut args: PlayArgs) -> Result<()> {
 
     app.launch.save_dir = args.save_dir.clone();
     app.launch.strict_scripts = args.strict_scripts;
+    args.hitches.apply(&mut app)?;
     app.launch.window_size = args.window.size();
     app.launch.window_options = args.window.clone();
     app.launch.expression_feed = expression_feed;
