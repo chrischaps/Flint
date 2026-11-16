@@ -177,10 +177,80 @@ fn diagnose_entities(
             );
         }
     }
+    // A loop of parents needs the whole scene to see, and no schema
+    if lookup.is_some() {
+        found.extend(parent_cycles(scene));
+    }
     if let Some(file) = file {
         for d in &mut found {
             d.file = Some(file.to_path_buf());
         }
+    }
+    found
+}
+
+/// Every loop the scene's `parent`s close (#680), once each: `parent =
+/// "lamp"` on `lamp`, or `cart` under `wheel` under `cart`. The loader
+/// refuses the first link that closes one (`FlintWorld::set_parent`), which
+/// link that is depends on the order the entities load in, so the
+/// diagnostic is put on the loop's first entity by name and its chain
+/// starts there: the same words every run.
+fn parent_cycles(scene: &SceneFile) -> Vec<Diagnostic> {
+    let mut names: Vec<&str> = scene.entities.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    let parent_of = |name: &str| {
+        scene
+            .entities
+            .get(name)
+            .and_then(|e| e.parent.as_deref())
+            .filter(|p| scene.entities.contains_key(*p))
+    };
+    let mut done: HashSet<&str> = HashSet::new();
+    let mut found = Vec::new();
+    for &start in &names {
+        // Up from `start` until a name walked before: in this walk, a loop;
+        // in an earlier one, nothing new
+        let mut path: Vec<&str> = Vec::new();
+        let mut at = Some(start);
+        while let Some(name) = at {
+            if done.contains(name) {
+                break;
+            }
+            if let Some(i) = path.iter().position(|n| *n == name) {
+                let ring = &path[i..];
+                let first = (0..ring.len()).min_by_key(|&k| ring[k]).unwrap_or(0);
+                let mut chain: Vec<&str> = ring[first..]
+                    .iter()
+                    .chain(&ring[..first])
+                    .copied()
+                    .collect();
+                let entity = chain[0];
+                let message = if chain.len() == 1 {
+                    format!("`{entity}` is its own parent, so the scene does not load")
+                } else {
+                    chain.push(entity);
+                    format!(
+                        "the parents loop: {}, each the child of the next, so the scene does \
+                         not load",
+                        chain.join(" -> ")
+                    )
+                };
+                found.push(
+                    Diagnostic::error(codes::PARENT_CYCLE, message)
+                        .entity(entity)
+                        .field("parent")
+                        .hint(if ring.len() == 1 {
+                            format!("remove `parent = \"{entity}\"` from `{entity}`")
+                        } else {
+                            "remove or change the `parent` of one of them".to_string()
+                        }),
+                );
+                break;
+            }
+            path.push(name);
+            at = parent_of(name);
+        }
+        done.extend(path);
     }
     found
 }
@@ -1174,6 +1244,58 @@ target = "nope"
         );
         assert_eq!(found[2].hint.as_deref(), Some("did you mean `hand`?"));
         assert!(found.iter().all(Diagnostic::is_error));
+    }
+
+    /// #680: every loop of parents, once, on its first entity by name, with
+    /// the chain from there; a chain hanging off a loop is not one more.
+    #[test]
+    fn a_loop_of_parents_is_one_error_on_its_first_entity() {
+        let scene = r#"
+[scene]
+name = "s"
+
+[entities.lamp]
+parent = "lamp"
+
+[entities.wheel]
+parent = "cart"
+
+[entities.cart]
+parent = "hub"
+
+[entities.hub]
+parent = "wheel"
+
+[entities.spoke]
+parent = "hub"
+
+[entities.ground]
+
+[entities.tree]
+parent = "ground"
+"#;
+        let found = with_scene(
+            &[RIG, ("scenes/a.scene.toml", scene)],
+            |registry, project| diagnose(Path::new("scenes/a.scene.toml"), registry, project),
+        );
+        let said: Vec<String> = found.iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            said,
+            [
+                "error[parent-cycle] entity 'cart' field 'parent': the parents loop: \
+                 cart -> hub -> wheel -> cart, each the child of the next, so the scene \
+                 does not load",
+                "error[parent-cycle] entity 'lamp' field 'parent': `lamp` is its own parent, \
+                 so the scene does not load",
+            ]
+        );
+        assert_eq!(
+            found[1].hint.as_deref(),
+            Some("remove `parent = \"lamp\"` from `lamp`")
+        );
+        assert!(found
+            .iter()
+            .all(|d| d.file.as_deref() == Some(Path::new("scenes/a.scene.toml"))));
     }
 
     /// A prefab's references are written `${PREFIX}_<name>` and checked

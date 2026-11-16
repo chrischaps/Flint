@@ -741,7 +741,7 @@ mod tests {
 
         // Naming something with no draws builds nothing either.
         let draw = whole_sheet_draw().0;
-        renderer.set_shallow_wooze([(EntityId::new(), draw)]);
+        renderer.set_shallow_wooze([(EntityId::from_raw(1), draw)]);
         rig.image(&mut renderer, &world);
         assert_eq!(renderer.wooze_built(), (false, false, false));
 

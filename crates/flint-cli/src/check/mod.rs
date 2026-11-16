@@ -27,6 +27,7 @@
 //! | archetypes, components and fields fit the schemas | the same | `unknown-archetype` `unknown-component` `unknown-field` `bad-type` `bad-enum-value` `out-of-range` `missing-field` `no-schemas` |
 //! | entity and asset references (every `parent`, every field a schema types `entity` or `asset`; an `ik_two_bone.tip` that is not a child) | `flint_scene::diagnose` (#684; the tip, #687) | `unknown-entity` `missing-asset` `not-a-child` |
 //! | the scene builds | new | `scene-load` |
+//! | each inline `particle_emitter` against the emitter's reader (its keys, its values parse and resolve); replaces the schema's form checks of it | new (#690, [`scene`]) | `bad-emitter` |
 //! | the assets a scene names by kind, through the resolver | new ([`scene::ASSET_FIELDS`]) | `missing-asset` |
 //! | the procgen spec behind a model or texture parses | new | `bad-spec` |
 //! | the input config is there and parses | new | `missing-asset` `bad-input-config` |

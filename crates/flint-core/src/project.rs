@@ -661,6 +661,24 @@ pub fn host_schema_dirs(listed: &[impl AsRef<Path>], scene: Option<&Path>) -> Sc
     }
 }
 
+/// The schema directories of a game whose files were packed where the
+/// packer put the engine's schemas, as an Android APK unpacks into the app's
+/// files (#797): the scene's manifest list when its project names one, as
+/// every other host reads it (so a game that lists `engine/schemas/examples`
+/// gets the room-builder archetypes), else `packed` as a host list, the
+/// pair the packer copied in for a game with no manifest list. A manifest
+/// naming a directory that wasn't packed is [`schema_dirs`]'s error.
+pub fn packed_schema_dirs(
+    scene: &Path,
+    packed: &[impl AsRef<Path>],
+) -> Result<SchemaDirs, SchemaDirsError> {
+    let resolved = schema_dirs(Some(scene), &[] as &[&Path])?;
+    if resolved.source != SchemaSource::Discovery {
+        return Ok(resolved);
+    }
+    Ok(host_schema_dirs(packed, Some(scene)))
+}
+
 impl SchemaDirs {
     /// TEMPORARY, for one release (ADR 0114 decision 3, #765): one line for
     /// each directory in [`dropped`](Self::dropped), for a command that
@@ -1669,6 +1687,55 @@ save_version = 1.5
                 assert!(schema_dirs(None, &["s"]).is_ok());
             },
         );
+    }
+
+    /// Android (#797): what the APK unpacked is read by the manifest like
+    /// every other host, so a game can list the examples layer; with no list
+    /// it is the pair the packer copied in, as before.
+    #[test]
+    fn a_packed_game_reads_its_manifest_else_the_packed_pair() {
+        let packed = ["data/engine/schemas", "data/schemas"];
+        let scene = Path::new("data/scenes/a.scene.toml");
+        let tree = |manifest: Option<&'static str>| {
+            let mut files = vec![
+                ("data/engine/schemas/", ""),
+                ("data/engine/schemas/examples/", ""),
+                ("data/schemas/", ""),
+                ("data/scenes/a.scene.toml", ""),
+            ];
+            if let Some(text) = manifest {
+                files.push(("data/flint.toml", text));
+            }
+            files
+        };
+        let listed =
+            "[project]\nschemas = [\"engine/schemas\", \"engine/schemas/examples\", \"schemas\"]\n";
+        with_files(&tree(Some(listed)), || {
+            let dirs = packed_schema_dirs(scene, &packed).unwrap();
+            assert_eq!(dirs.source.name(), "manifest");
+            assert_eq!(
+                paths(&dirs),
+                [
+                    "data/engine/schemas",
+                    "data/engine/schemas/examples",
+                    "data/schemas"
+                ]
+            );
+        });
+        // A manifest with no list, or none at all: the packed pair
+        for manifest in [Some("[project]\nid = \"kart\"\n"), None] {
+            with_files(&tree(manifest), || {
+                let dirs = packed_schema_dirs(scene, &packed).unwrap();
+                assert_eq!(dirs.source, SchemaSource::Host, "{manifest:?}");
+                assert_eq!(paths(&dirs), packed, "{manifest:?}");
+            });
+        }
+        // A list naming what wasn't packed says so
+        let missing = "[project]\nschemas = [\"engine/schemas\", \"extra\"]\n";
+        with_files(&tree(Some(missing)), || {
+            let err = packed_schema_dirs(scene, &packed).unwrap_err();
+            assert!(err.to_string().contains("extra"), "{err}");
+        });
     }
 
     #[test]

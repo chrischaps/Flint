@@ -56,9 +56,11 @@ impl DynamicComponents {
         self.data.contains_key(component)
     }
 
-    /// Get all component names
+    /// The names of the components held, in name order (#688)
     pub fn component_names(&self) -> Vec<&str> {
-        self.data.keys().map(|s| s.as_str()).collect()
+        let mut names: Vec<&str> = self.data.keys().map(|s| s.as_str()).collect();
+        names.sort_unstable();
+        names
     }
 
     /// Get a field value from a component

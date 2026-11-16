@@ -30,7 +30,7 @@ use std::collections::HashMap;
 pub fn validate_component(schema: &ComponentSchema, data: &toml::Value) -> Vec<Diagnostic> {
     problems(schema, data)
         .into_iter()
-        .map(|problem| problem.diagnostic(schema))
+        .map(|problem| problem.diagnostic(schema, "component"))
         .collect()
 }
 
@@ -47,7 +47,7 @@ pub fn validate_table(schema: &TableSchema, data: &toml::Value) -> Vec<Diagnosti
                 Problem::NotATable { got } => Some(*got),
                 _ => None,
             };
-            let mut d = problem.diagnostic(schema);
+            let mut d = problem.diagnostic(schema, "table");
             d.component = None;
             d.table = Some(schema.name.clone());
             if let Some(got) = not_a_table {
@@ -112,7 +112,8 @@ enum Problem {
 }
 
 impl Problem {
-    fn diagnostic(self, schema: &ComponentSchema) -> Diagnostic {
+    /// `header` is the schema file's key for it: `component` or `table`.
+    fn diagnostic(self, schema: &ComponentSchema, header: &str) -> Diagnostic {
         let d = match self {
             Problem::NotATable { got } => Diagnostic::error(
                 codes::BAD_TYPE,
@@ -137,11 +138,20 @@ impl Problem {
                     Some(table) => field[table.len() + 1..].to_string(),
                     None => field.clone(),
                 };
+                // A field of the component itself can be added from a later
+                // layer in a few lines (#794); a nested table's are its own
+                let how = match &table {
+                    None => format!(
+                        "a game adds its own in its schema layer: `[{header}.{}]` with \
+                         `extend = true`, and `{key}` under `[{header}.{}.fields]`",
+                        schema.name, schema.name
+                    ),
+                    Some(_) => "a game's own field is declared in its schema layer".to_string(),
+                };
                 let hint = diagnostic::did_you_mean(&key, declared.iter().map(String::as_str))
                     .unwrap_or_else(|| {
                         format!(
-                            "the fields of `{owner}` are {}; a game's own field is declared in \
-                             its schema layer",
+                            "the fields of `{owner}` are {}; {how}",
                             listed(declared.iter())
                         )
                     });

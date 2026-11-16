@@ -675,6 +675,49 @@ fn a_look_fade_is_captured_at_each_moment_of_it() {
     );
 }
 
+/// #497: a capture's scripts read the look it draws with (`--look` here,
+/// over the scene's none) from `on_init`, and the one they set from the
+/// frame after the capture applied it; `list_looks()` has the built-ins.
+#[test]
+fn a_capture_tells_its_scripts_the_look_it_draws_with() {
+    let dir = project("get_look");
+    std::fs::write(
+        dir.join("scripts/tint.rhai"),
+        r#"
+let n = 0;
+fn on_init() {
+    print(`init:${get_look()}`);
+    print(`listed:${list_looks().contains("graphite")}`);
+    set_look("watercolor");
+    set_look("no_such_look");
+}
+fn on_update() {
+    if n < 2 { print(`update${n}:${get_look()}`); }
+    n += 1;
+}
+"#,
+    )
+    .unwrap();
+    let o = render(
+        &dir,
+        "look.png",
+        &["--look", "ink_wash", "--scripts", "--time", "0.1"],
+    );
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let err = stderr(&o);
+    for line in [
+        "init:ink_wash",
+        "listed:true",
+        "update0:ink_wash",
+        "update1:watercolor",
+    ] {
+        assert!(err.contains(line), "no {line} in\n{err}");
+    }
+}
+
 // #579: the boil, step_living and particles from scripts.
 
 /// A block on a floor under the shading boil, which nothing else moves: what

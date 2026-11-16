@@ -142,7 +142,7 @@ A game loads two schema directories, in order, with the later one overriding the
 1. **Engine schemas** from `engine/schemas/` --- built-in components like `transform`, `material`, `rigidbody`, `collider`, `character_controller`, `sprite`, etc.
 2. **Game schemas** from `schemas/` --- game-specific components like `health`, `weapon`, `enemy_ai`
 
-If both directories define a component with the same name, the game's version takes priority.
+If both directories define a component with the same name, the game's version replaces the engine's whole. To add a field to an engine component instead (a `wetness` on every `material`), the game's file says `extend = true` and declares only the new field; the engine's fields stay as the engine declares them. See [Schemas: Adding a field to an engine component](../concepts/schemas.md#adding-a-field-to-an-engine-component).
 
 The engine's set has no room-builder vocabulary in it: `furniture`, `wall`, `floor`, `ceiling`, `pillar`, `room` and `door` are the layer the engine's example scenes are written in, `engine/schemas/examples`. A game that wants them lists that directory between the two (`["engine/schemas", "engine/schemas/examples", "schemas"]`); most games define archetypes of their own instead. See [Schemas: The Examples Layer](../concepts/schemas.md#the-examples-layer).
 

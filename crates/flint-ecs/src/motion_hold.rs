@@ -55,7 +55,7 @@ pub fn held_rate(world: &FlintWorld, entity: EntityId, whole: f32) -> Option<f32
 
 fn rate_in(
     world: &FlintWorld,
-    tagged: &std::collections::HashSet<EntityId>,
+    tagged: &std::collections::BTreeSet<EntityId>,
     entity: EntityId,
 ) -> Option<f32> {
     let mut at = entity;

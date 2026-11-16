@@ -75,8 +75,11 @@ fn stops_a_load(d: &Diagnostic) -> bool {
         || dangling_parent(d)
 }
 
+/// A `parent` the loader refuses: one naming no entity, or one closing a
+/// loop (#680). Either is named with its entity, so the load's own failure
+/// says nothing more.
 fn dangling_parent(d: &Diagnostic) -> bool {
-    d.code == codes::UNKNOWN_ENTITY && d.component.is_none()
+    (d.code == codes::UNKNOWN_ENTITY && d.component.is_none()) || d.code == codes::PARENT_CYCLE
 }
 
 /// Whether the scene can't be read at all, so there is nothing more to ask.
@@ -190,7 +193,7 @@ fn check_all(
 
     let world = match load_scene_diagnosed(scene, &schemas.registry) {
         Ok((world, _, _)) => Some(world),
-        // A parent that isn't there has been named, with its entity
+        // A parent that isn't there, or loops, has been named with its entity
         Err(_) if no_parent => None,
         Err(e) => {
             out.diagnostics.push(
@@ -222,6 +225,11 @@ fn check_all(
             Some(table) => d.table(table),
             None => d,
         });
+    }
+    if checks.schema {
+        if let Some(world) = &world {
+            particle_emitters(scene, world, &mut out.diagnostics);
+        }
     }
     if checks.files {
         assets(scene, scene_dir, &file, project, memo, &mut out);
@@ -633,6 +641,68 @@ fn user_style_diagnostic(message: &str, scene_dir: &Path) -> Diagnostic {
         .hint("a style that doesn't load is drawn as a passthrough")
     };
     d.file(file)
+}
+
+/// Every inline `particle_emitter` held to the emitter's own reader, as the
+/// player reads it (#690): a key it doesn't read and a value it can't use
+/// are `bad-emitter` errors at their key. The schema lists fewer keys than
+/// the emitter reads and fewer forms (a curve, a `[min, max]` range, a shape
+/// table have no schema type), so what the schema pass says of this
+/// component's keys and forms (`unknown-field`, `bad-type`,
+/// `bad-enum-value`) is left to the reader, and so is anything at a key the
+/// reader found wrong: one mistake is said once, in the emitter's words.
+/// The schema's ranges and the texture's asset check stay.
+fn particle_emitters(scene: &Path, world: &FlintWorld, found: &mut Vec<Diagnostic>) {
+    use flint_core::components::PARTICLE_EMITTER;
+    use flint_particles::EmitterDef;
+
+    let top = |field: &str| field.split(['.', '[']).next().unwrap_or(field).to_string();
+    let mut ours = Vec::new();
+    let mut said: BTreeSet<(String, String)> = BTreeSet::new();
+    for &id in world.entities_with_component(PARTICLE_EMITTER) {
+        let Some(table) = world
+            .get_components(id)
+            .and_then(|c| c.get(PARTICLE_EMITTER))
+            .and_then(|v| v.as_table())
+        else {
+            continue;
+        };
+        let entity = world.get_name(id).unwrap_or("").to_string();
+        for problem in EmitterDef::problems(table) {
+            let what = if problem.unknown {
+                format!(
+                    "`{}` is not a key particle_emitter reads; the emitter plays without it",
+                    problem.key.as_deref().unwrap_or("")
+                )
+            } else {
+                format!(
+                    "{}; the emitter would not play (at run time it keeps its last good settings)",
+                    problem.message
+                )
+            };
+            let mut d = Diagnostic::error(codes::BAD_EMITTER, what)
+                .file(scene)
+                .entity(entity.clone())
+                .component(PARTICLE_EMITTER)
+                .hint_opt(problem.hint.clone());
+            if let Some(key) = &problem.key {
+                said.insert((entity.clone(), top(key)));
+                d = d.field(key.clone());
+            }
+            ours.push(d);
+        }
+    }
+    found.retain(|d| {
+        let on_emitter = d.component.as_deref() == Some(PARTICLE_EMITTER);
+        let at_ours = || {
+            let entity = d.entity.clone().unwrap_or_default();
+            let field = top(d.field.as_deref().unwrap_or(""));
+            said.contains(&(entity, field))
+        };
+        let of_form = [codes::UNKNOWN_FIELD, codes::BAD_TYPE, codes::BAD_ENUM_VALUE];
+        !(on_emitter && (of_form.contains(&d.code) || at_ours()))
+    });
+    found.extend(ours);
 }
 
 /// What's wrong with the scene's `[wooze]` table and the preset it names.

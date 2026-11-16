@@ -194,6 +194,24 @@ impl HeadlessGame {
         self.core.clock.total_time
     }
 
+    /// The look the capture draws with before any script asks for another
+    /// (#497): the scene's own, the `--look` over it, or a `look=` sweep's
+    /// column. Scripts' `get_look()` reads it, from `on_init` on, so call it
+    /// before [`start_scripts`](Self::start_scripts).
+    pub fn set_scene_look(&mut self, look: Option<&str>) {
+        self.core.script.set_current_look(look);
+    }
+
+    /// The scene's project and folder, which its looks are searched from.
+    fn asset_scope(&self) -> flint_core::project::AssetScope {
+        let scene = std::path::Path::new(&self.core.scene_path);
+        let dir = scene.parent().filter(|p| !p.as_os_str().is_empty());
+        flint_core::project::AssetScope::new(
+            self.core.project.clone(),
+            dir.unwrap_or_else(|| std::path::Path::new(".")),
+        )
+    }
+
     /// Resolve the scene's procgen assets as the player does at load, before
     /// the model loader, every one at once, with every living prop's lineage
     /// built and ring full. `living` is the scene's `[living]`.
@@ -292,6 +310,14 @@ impl HeadlessGame {
         // The modules the capture's subsystems own (#698), as the player
         // enables them before its scripts load
         core.enable_script_modules();
+        // The looks the scene can see, for list_looks() (#497), as the
+        // player lists them at the scene's entry
+        let looks = flint_render::look::list_in(&self.asset_scope())
+            .into_iter()
+            .map(|look| look.name)
+            .collect();
+        let core = &mut self.core;
+        core.script.set_looks(looks);
         core.script
             .load_scripts_from_scene(&core.scene_path, &core.project);
         core.script
@@ -609,6 +635,16 @@ impl ScriptHost for CaptureFrame<'_> {
     }
 
     fn set_look(&mut self, name: Option<String>, seconds: f64) {
+        // A look the search can't find changes nothing, as in the player:
+        // neither what get_look() reads (#497) nor an earlier request this
+        // frame, which the capture would otherwise drop for it
+        if let Some(n) = name.as_deref() {
+            if let Err(e) = flint_render::look::find_in(n, &self.game.asset_scope()) {
+                tracing::warn!("set_look: {e}");
+                return;
+            }
+        }
+        self.game.core.script.set_current_look(name.as_deref());
         self.game.look_request = Some(LookRequest {
             name,
             seconds,

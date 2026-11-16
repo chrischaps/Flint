@@ -310,6 +310,24 @@ impl ScriptSystem {
         crate::lock_or_recover(&self.engine.ctx).quality = quality;
     }
 
+    /// The look the scene draws with now, for `get_look()` (#497): `None`
+    /// for the scene's own keys alone. A host calls it whenever the look
+    /// changes (a script's `set_look`, F4, a transition), so a read sees
+    /// the look as the script finds it.
+    pub fn set_current_look(&mut self, look: Option<&str>) {
+        let look = look.unwrap_or("");
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        if c.look != look {
+            c.look = look.to_string();
+        }
+    }
+
+    /// Every look the scene can see, by name, for `list_looks()` (#497):
+    /// the host's `flint_render::look::list_in` of the scene, at its entry.
+    pub fn set_looks(&mut self, names: Vec<String>) {
+        crate::lock_or_recover(&self.engine.ctx).looks = names;
+    }
+
     /// What the GPU is, for `gpu_info()`.
     pub fn set_gpu_info(&mut self, info: flint_core::quality::GpuInfo) {
         crate::lock_or_recover(&self.engine.ctx).gpu_info = info;

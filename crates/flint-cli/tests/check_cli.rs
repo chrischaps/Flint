@@ -250,6 +250,42 @@ fn every_problem_of_a_project_is_listed_in_one_run() {
     assert_eq!(stderr(&o), "", "stderr");
 }
 
+/// #680: a loop of parents is one `parent-cycle` on its entity, not that
+/// and a `scene-load` saying the same thing again; `flint validate` agrees.
+#[test]
+fn a_parent_cycle_is_named_once_before_the_scene_is_played() {
+    let dir = project(
+        "parent_cycle",
+        &[(
+            "scenes/dock.scene.toml",
+            "[scene]\nname = \"Dock\"\n\n[entities.mast]\nparent = \"sail\"\n\n\
+             [entities.sail]\nparent = \"mast\"\n",
+        )],
+    );
+    let o = flint(&dir, &["check", ".", "--json"]);
+    assert_eq!(o.status.code(), Some(1), "{}", stdout(&o));
+    let doc = json(&o);
+    let codes: Vec<&str> = doc["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, ["parent-cycle"], "{doc:#}");
+    let cycle = diagnostic(&doc, "parent-cycle", Some("mast"));
+    assert_eq!(cycle["field"], "parent");
+    let message = cycle["message"].as_str().unwrap();
+    assert!(message.contains("mast -> sail -> mast"), "{message}");
+
+    let o = flint(&dir, &["validate", "scenes/dock.scene.toml"]);
+    assert_eq!(o.status.code(), Some(1), "{}", stdout(&o));
+    assert!(
+        stdout(&o).contains("error[parent-cycle] entity 'mast'"),
+        "{}",
+        stdout(&o)
+    );
+}
+
 #[test]
 fn the_same_list_is_one_json_document() {
     let dir = broken("json");

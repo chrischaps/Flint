@@ -328,16 +328,21 @@ impl Game {
     }
 
     fn validate(&self, scene: &str, extra: &[&str]) -> Output {
+        let mut args = vec!["validate", scene];
+        args.extend(extra);
+        self.flint(&args)
+    }
+
+    /// `flint <args>` in the game, over the engine's schemas and its own.
+    fn flint(&self, args: &[&str]) -> Output {
         let engine = repo().join("schemas");
-        let mut args = vec![
-            "validate",
-            scene,
+        let mut args = args.to_vec();
+        args.extend([
             "--schemas",
             engine.to_str().unwrap(),
             "--schemas",
             "schemas",
-        ];
-        args.extend(extra);
+        ]);
         Command::new(FLINT)
             .args(&args)
             .current_dir(&self.root)
@@ -436,6 +441,76 @@ fn validate_fails_on_a_reference_to_nothing_naming_the_field() {
 fn json_of_failure(out: &Output) -> serde_json::Value {
     assert_eq!(out.status.code(), Some(1), "{}", stderr(out));
     serde_json::from_str(&stdout(out)).unwrap_or_else(|e| panic!("{e}\n{}", stdout(out)))
+}
+
+/// #794's done-when: a game's file of a few lines adds a field to the
+/// engine's `material`, the scene using it validates with nothing said, and
+/// `flint schema material` names the layer of each field.
+#[test]
+fn a_game_adds_one_field_to_an_engine_component() {
+    const SCENE: &str = "[scene]\nname = \"Street\"\n\n\
+                         [entities.cobbles.material]\nroughness = 0.35\nwetness = 0.8\n";
+    let bare = Game::new(
+        "extend_bare",
+        &[
+            ("flint.toml", "[project]\nid = \"street\"\n"),
+            ("schemas/components/.gitkeep", ""),
+            ("scenes/street.scene.toml", SCENE),
+        ],
+    );
+    let out = bare.validate("scenes/street.scene.toml", &[]);
+    let text = stdout(&out);
+    assert!(
+        text.contains("`material` has no field `wetness`")
+            && text.contains("`[component.material]` with `extend = true`"),
+        "without the game's file the field is undeclared, and the hint says how: {text}"
+    );
+
+    let game = Game::new(
+        "extend",
+        &[
+            ("flint.toml", "[project]\nid = \"street\"\n"),
+            (
+                "schemas/components/material.toml",
+                "[component.material]\nextend = true\n\n\
+                 [component.material.fields]\nwetness = { type = \"f32\", default = 0.0 }\n",
+            ),
+            ("scenes/street.scene.toml", SCENE),
+        ],
+    );
+    let out = game.validate("scenes/street.scene.toml", &[]);
+    let text = stdout(&out);
+    assert!(out.status.success(), "{text}{}", stderr(&out));
+    assert!(text.starts_with("No problems found."), "{text}");
+
+    let out = game.flint(&["schema", "material"]);
+    let text = stdout(&out);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        text.contains("\nExtended by: [2] schemas/components/material.toml\n"),
+        "{text}"
+    );
+    assert!(text.contains("\n  wetness : f32 = 0   [2]\n"), "{text}");
+    assert!(text.contains("\n  roughness : f32 = 0.7   [1]\n"), "{text}");
+
+    let out = game.flint(&["schema", "material", "--json"]);
+    let material = json(&out);
+    assert_eq!(
+        material["extended_by"],
+        serde_json::json!(["schemas/components/material.toml"])
+    );
+    assert_eq!(
+        material["fields"]["wetness"]["file"],
+        "schemas/components/material.toml"
+    );
+    assert!(material["declared_in"]
+        .as_str()
+        .unwrap()
+        .ends_with("schemas/components/material.toml"));
+    assert_eq!(
+        material["fields"]["roughness"]["file"],
+        material["declared_in"]
+    );
 }
 
 /// Decision 3 of ADR 0115: an old spelling is warned about in a game's

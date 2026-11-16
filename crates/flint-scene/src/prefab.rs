@@ -4,7 +4,7 @@ use crate::format::{PrefabFile, SceneFile};
 use flint_core::project::{AssetKind, Project};
 use flint_core::vfs;
 use flint_core::{FlintError, Result};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 /// Expand all prefab instances in a scene file, inserting their entities into `scene.entities`.
@@ -40,7 +40,7 @@ pub fn expand_prefabs_in(
     let mut cache: HashMap<String, PrefabFile> = HashMap::new();
 
     // Collect instances (we need to drain prefabs to avoid borrow conflict)
-    let instances: Vec<_> = scene.prefabs.drain().collect();
+    let instances: Vec<_> = std::mem::take(&mut scene.prefabs).into_iter().collect();
 
     for (_instance_name, instance) in &instances {
         // Load template (cached)
@@ -141,7 +141,7 @@ fn substitute_in_value(value: &mut toml::Value, vars: &HashMap<String, String>) 
 /// Deep-merge override data into an entity's component map.
 /// If the component already exists as a Table, merge fields. Otherwise replace.
 fn deep_merge_component(
-    components: &mut HashMap<String, toml::Value>,
+    components: &mut BTreeMap<String, toml::Value>,
     comp_name: &str,
     override_value: toml::Value,
 ) {
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_deep_merge_component() {
-        let mut components = HashMap::new();
+        let mut components = BTreeMap::new();
         components.insert(
             "kart_physics".to_string(),
             toml::toml! {
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_deep_merge_adds_new_component() {
-        let mut components = HashMap::new();
+        let mut components = BTreeMap::new();
         let override_val: toml::Value = toml::toml! {
             throttle = 0.0
             steering = 0.0
@@ -251,8 +251,8 @@ mod tests {
             environment: None,
             post_process: None,
             tables: toml::Table::new(),
-            prefabs: HashMap::new(),
-            entities: HashMap::new(),
+            prefabs: BTreeMap::new(),
+            entities: BTreeMap::new(),
             written: toml::Table::new(),
         };
 

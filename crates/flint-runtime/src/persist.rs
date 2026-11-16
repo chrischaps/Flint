@@ -321,9 +321,11 @@ impl PersistentStore {
         self.data.clear();
     }
 
-    /// Return all keys.
+    /// Every key, sorted (#689): the map's own order differs run to run.
     pub fn keys(&self) -> Vec<&str> {
-        self.data.keys().map(|k| k.as_str()).collect()
+        let mut keys: Vec<&str> = self.data.keys().map(|k| k.as_str()).collect();
+        keys.sort_unstable();
+        keys
     }
 
     // ─── Version ──────────────────────────────────────────
