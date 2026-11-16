@@ -83,7 +83,7 @@ impl Band {
 /// The hitch mark's colour: Okabe and Ito's vermillion.
 pub const HITCH_COLOR: Color32 = Color32::from_rgb(213, 94, 0);
 
-//// One frame, as the graph draws it. Times are ms unless named.
+/// One frame, as the graph draws it. Times are ms unless named.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct GraphFrame {
     /// When it began, seconds (any epoch, the same for every frame).

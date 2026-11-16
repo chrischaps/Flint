@@ -215,7 +215,15 @@ A third press closes it. `flint-player --stats` opens the full overlay from the 
 flint-player examples/hitch_metronome.scene.toml --stats=graph
 ```
 
-The overlay draws every bar into one mesh, which it keeps and refills from frame to frame, and it reads the history only while it is open. Closed, it costs nothing: a test counts no allocations for a frame with F2 closed, and none once it is warm with F2 open. Open, it is part of the `hud` phase it measures: with vsync off in a debug build, the `hud` phase took HUD_CLOSED ms a frame with the overlay closed, HUD_GRAPH ms with the graph alone and HUD_FULL ms with the full overlay (`--perf` on the metronome scene, RTX 5070 laptop). While the graph shows, the history keeps at least four and a half seconds of frames, which at 240 Hz is more than its 600.
+The overlay draws every bar into one mesh, which it keeps and refills from frame to frame, and it reads the history only while it is open. Closed, it costs nothing: a test counts no allocations for a frame with F2 closed, and none once it is warm with F2 open. Open, it is part of the `hud` phase it measures. These are means over 10 s, from `--perf` on the metronome scene with `FLINT_VSYNC=0`, on an RTX 5070 laptop:
+
+| F2 shows | `hud`, release build | `hud`, debug build |
+|---|---|---|
+| nothing | 0.37–0.42 ms | 1.40–1.55 ms |
+| the graph alone | 0.54–0.61 ms | 2.07–2.15 ms |
+| the full overlay | 0.56–0.63 ms | 2.89–2.94 ms |
+
+The full overlay's figures include the rendering stats rows. While the graph shows, the history keeps at least four and a half seconds of frames, which at 240 Hz is more than its 600.
 
 The history is flint-player's `frame-history` Cargo feature, on by default. A shipped game that wants none of it builds flint-player without it (`default-features = false` and the features it does want). The player then records frames only while `--perf` is on, as it did before, and each call the frame makes costs a branch (measured at nothing beside the `Instant::now` the player takes anyway). `FLINT_FRAME_HISTORY=0` turns the history off in a build that has it, and `FLINT_FRAME_HISTORY=1` turns it on in one that doesn't.
 
