@@ -579,6 +579,47 @@ flint edit fx/fire.particles.toml              # Particle effect editor (created
 | `.particles.toml` | Particle effect editor | Emitters, curves, forces, bursts; scrub timeline; headless `--render` |
 | `.glb`, `.gltf` | Model previewer | Orbit camera, animation playback |
 
+### One host, the same flags
+
+Every editor runs in one host (`flint_viewer::host`, #712): it opens the
+window, the GPU and egui, feeds the orbit camera, watches the file and draws
+the `--render` still. A flag means the same in every editor that takes it,
+and one an editor doesn't take is an error that names the editors it applies
+to, before anything opens:
+
+| Flag | Editors |
+|------|---------|
+| `--width`, `--height`, `--watch`, `--render` | every editor |
+| `--no-grid`, `--distance`, `--yaw`, `--pitch`, `--target`, `--fov` | the ones with a 3D view: scene, track (`--spline`), procgen mesh, terrain, model, particles |
+| `--auto-orbit` | the same, but the track editor |
+| `--seed` | procgen specs, texture pipelines, terrain |
+| `--schemas` | scene, track |
+| `--no-inspector` | scene |
+| `--style`, `--style-time` | scene; a model's or effect's `--render` still |
+| `--motion-hold` | scene, model |
+| `--anim-time` | a model's or effect's `--render` still |
+| `--clip`, `--layer`, `--sequence`, `--sequence-loop`, `--anim-speed`, `--no-animate`, `--pose-bone`, `--show-skeleton` | model |
+| `--preset` | particles |
+
+The camera flags lay themselves over the editor's own framing (the model
+auto-fitted, the terrain from above, the scene's `[camera]`), so a flag left
+out keeps that part of it.
+
+`--render out.png` writes what the window would show, without the panels, at
+`--width` x `--height`, for every kind of file:
+
+```bash
+flint edit examples/specs/grove_oak.procgen.toml --render oak.png --yaw 60   # the mesh, auto-framed
+flint edit examples/specs/tavern_plank.procgen.toml --render plank.png       # albedo, normal, roughness side by side
+flint edit examples/rolling_meadow.terrain.toml --render meadow.png          # the terrain from above
+flint edit examples/stylize_props.scene.toml --render props.png --no-grid    # the scene viewer's frame
+```
+
+A texture generator's or a texture pipeline's still is its output maps side by
+side, in the order the editor's tabs list them, and the command prints that
+order. The track editor's spline handles are drawn by its panels, so its still
+is the scene from the editor's camera.
+
 ### GPU Selection
 
 Both windowed (`play`, `flint-player`, editors) and headless (`render`)

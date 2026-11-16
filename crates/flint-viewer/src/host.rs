@@ -1,0 +1,831 @@
+//! The editors' one host (#712): the window, the GPU, egui, the event loop,
+//! frame timing, the orbit camera's input, a file watch, and the offscreen
+//! `--render` still, for every editor `flint edit` opens.
+//!
+//! Each editor (the scene viewer and track editor here; the model,
+//! procgen, texture-graph, terrain and particle editors in flint-cli) is an
+//! [`Editor`]: it builds what it draws in [`Editor::init`], draws its view
+//! in [`Editor::draw`] and its panels in [`Editor::ui`]. [`run`] puts it in
+//! a window; [`render_still`] draws the same `init` and `draw` offscreen,
+//! so `flint edit <any file> --render out.png` shows what the window would,
+//! without the panels. A fix to resizing, surface loss, DPI or the camera
+//! flags is made here once, for all of them.
+
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result};
+use flint_render::{
+    AcquireFrame, Camera, DepthTarget, HeadlessContext, OrbitCameraController, RenderContext,
+    RendererConfig, SceneRenderer,
+};
+use winit::application::ApplicationHandler;
+use winit::dpi::PhysicalSize;
+use winit::event::{ElementState, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::{Window, WindowId};
+
+/// The device an editor draws with, a window's or an offscreen target's.
+/// Cheap to clone (wgpu's handles are shared), so an editor keeps one.
+#[derive(Clone)]
+pub struct Gpu {
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    /// The format the scene's last pass writes (`RenderContext::view_format`,
+    /// or the headless target's)
+    pub format: wgpu::TextureFormat,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Gpu {
+    fn of_window(context: &RenderContext) -> Self {
+        Self {
+            device: context.device.clone(),
+            queue: context.queue.clone(),
+            format: context.view_format,
+            width: context.config.width,
+            height: context.config.height,
+        }
+    }
+
+    fn of_headless(context: &HeadlessContext) -> Self {
+        Self {
+            device: context.device.clone(),
+            queue: context.queue.clone(),
+            format: context.format,
+            width: context.width,
+            height: context.height,
+        }
+    }
+
+    /// A scene renderer for this target, the same for a window and a still.
+    pub fn scene_renderer(&self, config: RendererConfig) -> SceneRenderer {
+        SceneRenderer::new_headless(
+            &self.device,
+            &self.queue,
+            self.format,
+            self.width,
+            self.height,
+            config,
+        )
+    }
+
+    pub fn aspect(&self) -> f32 {
+        self.width as f32 / self.height.max(1) as f32
+    }
+}
+
+/// What an editor is given once its target exists.
+pub struct InitCx<'a> {
+    pub gpu: &'a Gpu,
+    /// The context [`Editor::ui`] runs in; an editor keeps a clone to ask
+    /// it for modifiers or to load textures
+    pub egui: &'a egui::Context,
+    /// The window, or `None` for a `--render` still
+    pub window: Option<Arc<Window>>,
+}
+
+/// One frame's target.
+pub struct Target<'a> {
+    pub view: &'a wgpu::TextureView,
+    pub depth: DepthTarget<'a>,
+    pub gpu: &'a Gpu,
+}
+
+impl Target<'_> {
+    /// Draw `renderer`'s scene from `camera` into this target.
+    pub fn render(&self, renderer: &mut SceneRenderer, camera: &Camera) {
+        renderer.render_to(
+            &self.gpu.device,
+            &self.gpu.queue,
+            self.depth,
+            camera,
+            self.view,
+        );
+    }
+
+    /// Fill this target with one colour (an editor with no 3D view).
+    pub fn clear(&self, rgb: [f64; 3]) {
+        let mut encoder = self
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Editor Clear"),
+            });
+        {
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Editor Clear Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: self.view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: rgb[0],
+                            g: rgb[1],
+                            b: rgb[2],
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        }
+        self.gpu.queue.submit(std::iter::once(encoder.finish()));
+    }
+}
+
+/// The frame's clock.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Tick {
+    /// Seconds since the last frame (0 for a still)
+    pub dt: f32,
+    /// Frames drawn in the last second
+    pub fps: f32,
+}
+
+/// What an editor did with an event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Flow {
+    /// Not used: the host may act on it (orbit input, O, `[`, `]`)
+    Pass,
+    /// Used; the host does nothing more with it
+    Handled,
+    /// Close the editor
+    Exit,
+}
+
+/// The camera flags every editor with a 3D view takes the same way:
+/// `--distance`, `--yaw`, `--pitch` (degrees), `--target`, `--fov`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CameraFlags {
+    pub distance: Option<f32>,
+    pub yaw: Option<f32>,
+    pub pitch: Option<f32>,
+    pub target: Option<[f32; 3]>,
+    pub fov: Option<f32>,
+}
+
+impl CameraFlags {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Lay the flags over the editor's own framing.
+    pub fn apply(&self, camera: &mut Camera) {
+        if let Some(d) = self.distance {
+            camera.distance = d;
+        }
+        if let Some(y) = self.yaw {
+            camera.yaw = y.to_radians();
+        }
+        if let Some(p) = self.pitch {
+            camera.pitch = p.to_radians();
+        }
+        if let Some(t) = self.target {
+            camera.target = flint_core::Vec3::new(t[0], t[1], t[2]);
+        }
+        if let Some(f) = self.fov {
+            camera.fov = f;
+        }
+        camera.update_orbit();
+    }
+}
+
+/// How the host opens an editor.
+#[derive(Clone, Debug)]
+pub struct HostOptions {
+    /// The window's (or the still's) size in physical pixels
+    pub width: u32,
+    pub height: u32,
+    pub camera: CameraFlags,
+    /// Start the orbit camera turning (`--auto-orbit`)
+    pub auto_orbit: bool,
+}
+
+/// What `--render` asks of an editor.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StillOptions {
+    /// `--anim-time`: the moment to show, for an editor with a clock
+    pub time: Option<f32>,
+}
+
+/// One of `flint edit`'s editors.
+pub trait Editor {
+    /// The window's title.
+    fn title(&self) -> String;
+
+    /// Build what the editor draws, on `cx.gpu`. Called once, for a window
+    /// or a still; the camera flags are laid over the camera afterwards.
+    fn init(&mut self, cx: InitCx) -> Result<()>;
+
+    /// The orbit camera, for an editor the shared controller drives: the
+    /// host feeds it the mouse and WASD/QE, turns it with `--auto-orbit`,
+    /// O, `[` and `]`, and keeps its aspect.
+    fn orbit(&mut self) -> Option<(&mut Camera, &mut OrbitCameraController)> {
+        None
+    }
+
+    /// The camera the camera flags set and resizes keep in aspect; the
+    /// orbit camera's unless the editor drives its own.
+    fn camera(&mut self) -> Option<&mut Camera> {
+        self.orbit().map(|(camera, _)| camera)
+    }
+
+    /// Files whose change calls [`Editor::on_file_changed`] (debounced).
+    fn watched_files(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
+    /// A watched file changed on disk.
+    fn on_file_changed(&mut self) {}
+
+    /// An event before egui sees it, for shortcuts that must win over a
+    /// focused panel.
+    fn early_event(&mut self, _event: &WindowEvent) -> Flow {
+        Flow::Pass
+    }
+
+    /// An event egui didn't consume.
+    fn event(&mut self, _event: &WindowEvent) -> Flow {
+        Flow::Pass
+    }
+
+    /// The target changed size (`gpu` carries the new one).
+    fn resized(&mut self, _gpu: &Gpu) {}
+
+    /// Advance the editor's state for this frame.
+    fn update(&mut self, _tick: Tick) {}
+
+    /// Draw the editor's view into the target.
+    fn draw(&mut self, target: &Target);
+
+    /// Whether the panels are drawn this frame.
+    fn show_ui(&self) -> bool {
+        true
+    }
+
+    /// The panels, drawn over the view, and what they asked for. Called
+    /// once a frame (the host runs egui in one pass).
+    fn ui(&mut self, _ui: &mut egui::Ui) {}
+
+    /// Prepare a `--render` still: by default one frame at rest. An editor
+    /// whose still is not its 3D view (a texture) returns the picture.
+    fn still(&mut self, _options: &StillOptions) -> Result<Option<image::RgbaImage>> {
+        self.update(Tick::default());
+        Ok(None)
+    }
+
+    /// A line `--render` prints after writing the still.
+    fn still_note(&self) -> Option<String> {
+        None
+    }
+}
+
+/// Open `editor` in a window and run it until it closes.
+pub fn run(editor: impl Editor, options: HostOptions) -> Result<()> {
+    let event_loop = EventLoop::new()?;
+    event_loop.set_control_flow(ControlFlow::Poll);
+    let egui = egui::Context::default();
+    // One pass a frame: an editor's `ui` acts on what its panels report
+    // (a click saves, a key toggles), so a discarded second pass would act
+    // twice. The editors redraw every frame, so a layout egui would have
+    // redone settles on the next one.
+    egui.options_mut(|o| o.max_passes = std::num::NonZeroUsize::MIN);
+    let mut host = Host {
+        editor,
+        options,
+        window: None,
+        context: None,
+        gpu: None,
+        egui,
+        egui_winit: None,
+        egui_renderer: None,
+        clock: FrameClock::new(),
+        watch: None,
+        error: None,
+    };
+    event_loop.run_app(&mut host)?;
+    match host.error {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// Draw `editor` offscreen at the options' size: its `init`, the camera
+/// flags, its `still` and its `draw`, the panels left out.
+pub fn render_still(
+    editor: &mut impl Editor,
+    options: &HostOptions,
+    still: &StillOptions,
+) -> Result<image::RgbaImage> {
+    let (width, height) = (options.width.max(1), options.height.max(1));
+    let context = pollster::block_on(HeadlessContext::new(width, height))
+        .context("Failed to create headless render context")?;
+    let gpu = Gpu::of_headless(&context);
+    let egui = egui::Context::default();
+    editor.init(InitCx {
+        gpu: &gpu,
+        egui: &egui,
+        window: None,
+    })?;
+    lay_camera(editor, options, &gpu);
+    if let Some(picture) = editor.still(still)? {
+        return Ok(picture);
+    }
+    editor.draw(&Target {
+        view: &context.color_view,
+        depth: DepthTarget::new(&context.depth_view, context.depth_id),
+        gpu: &gpu,
+    });
+    let pixels =
+        pollster::block_on(context.read_pixels()).context("Failed to read rendered pixels")?;
+    image::RgbaImage::from_raw(width, height, pixels)
+        .context("Failed to create image from pixel data")
+}
+
+/// The camera flags over the editor's framing, its aspect the target's.
+fn lay_camera(editor: &mut impl Editor, options: &HostOptions, gpu: &Gpu) {
+    if let Some((_, orbit)) = editor.orbit() {
+        orbit.auto_orbit = options.auto_orbit;
+    }
+    if let Some(camera) = editor.camera() {
+        camera.aspect = gpu.aspect();
+        options.camera.apply(camera);
+    }
+}
+
+/// Frame times and the frames-a-second readout.
+struct FrameClock {
+    last: Instant,
+    frames: std::collections::VecDeque<Instant>,
+    fps: f32,
+    last_fps: Instant,
+}
+
+impl FrameClock {
+    fn new() -> Self {
+        Self {
+            last: Instant::now(),
+            frames: Default::default(),
+            fps: 0.0,
+            last_fps: Instant::now(),
+        }
+    }
+
+    fn tick(&mut self) -> Tick {
+        let now = Instant::now();
+        let dt = now.duration_since(self.last).as_secs_f32();
+        self.last = now;
+        self.frames.push_back(now);
+        while self
+            .frames
+            .front()
+            .is_some_and(|t| now.duration_since(*t) > Duration::from_secs(1))
+        {
+            self.frames.pop_front();
+        }
+        if now.duration_since(self.last_fps) > Duration::from_millis(250) {
+            self.fps = self.frames.len() as f32;
+            self.last_fps = now;
+        }
+        Tick { dt, fps: self.fps }
+    }
+}
+
+/// A debounced watch on the editor's files, raising a flag the frame reads.
+struct FileWatch {
+    changed: Arc<AtomicBool>,
+    _debouncer: notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>,
+}
+
+impl FileWatch {
+    fn new(files: &[PathBuf]) -> Result<Self> {
+        use notify_debouncer_mini::notify::RecursiveMode;
+        let changed = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&changed);
+        let mut debouncer = notify_debouncer_mini::new_debouncer(
+            Duration::from_millis(400),
+            move |result: notify_debouncer_mini::DebounceEventResult| match result {
+                Ok(_) => flag.store(true, Ordering::Release),
+                Err(e) => tracing::warn!("Watch error: {:?}", e),
+            },
+        )?;
+        for file in files {
+            debouncer
+                .watcher()
+                .watch(file, RecursiveMode::NonRecursive)
+                .with_context(|| format!("can't watch {}", file.display()))?;
+        }
+        Ok(Self {
+            changed,
+            _debouncer: debouncer,
+        })
+    }
+
+    fn take(&self) -> bool {
+        self.changed.swap(false, Ordering::AcqRel)
+    }
+}
+
+struct Host<E: Editor> {
+    editor: E,
+    options: HostOptions,
+    window: Option<Arc<Window>>,
+    context: Option<RenderContext>,
+    gpu: Option<Gpu>,
+    egui: egui::Context,
+    egui_winit: Option<egui_winit::State>,
+    egui_renderer: Option<egui_wgpu::Renderer>,
+    clock: FrameClock,
+    watch: Option<FileWatch>,
+    /// Why the editor couldn't open, returned from [`run`]
+    error: Option<anyhow::Error>,
+}
+
+impl<E: Editor> Host<E> {
+    /// The one place a window, a GPU and egui are made for an editor.
+    fn initialize(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
+        let window = Arc::new(
+            event_loop
+                .create_window(
+                    Window::default_attributes()
+                        .with_title(self.editor.title())
+                        .with_inner_size(PhysicalSize::new(
+                            self.options.width.max(1),
+                            self.options.height.max(1),
+                        )),
+                )
+                .context("Failed to create the editor's window")?,
+        );
+        let context = pollster::block_on(RenderContext::new(window.clone()))
+            .context("Failed to create the editor's render context")?;
+        let gpu = Gpu::of_window(&context);
+
+        self.editor.init(InitCx {
+            gpu: &gpu,
+            egui: &self.egui,
+            window: Some(window.clone()),
+        })?;
+        lay_camera(&mut self.editor, &self.options, &gpu);
+
+        let files = self.editor.watched_files();
+        if !files.is_empty() {
+            self.watch = Some(FileWatch::new(&files)?);
+        }
+
+        self.egui_winit = Some(egui_winit::State::new(
+            self.egui.clone(),
+            egui::ViewportId::ROOT,
+            &window,
+            Some(window.scale_factor() as f32),
+            None,
+            None,
+        ));
+        // egui draws into the plain view (RenderContext::hud_view, #428),
+        // so its translucent panels blend in display space in every editor
+        self.egui_renderer = Some(egui_wgpu::Renderer::new(
+            &context.device,
+            context.hud_format,
+            egui_wgpu::RendererOptions {
+                depth_stencil_format: None,
+                msaa_samples: 1,
+                dithering: false,
+                ..Default::default()
+            },
+        ));
+        self.window = Some(window);
+        self.context = Some(context);
+        self.gpu = Some(gpu);
+        Ok(())
+    }
+
+    fn resize(&mut self, size: PhysicalSize<u32>) {
+        if size.width == 0 || size.height == 0 {
+            return;
+        }
+        let Some(context) = &mut self.context else {
+            return;
+        };
+        context.resize(size);
+        let gpu = Gpu::of_window(context);
+        if let Some(camera) = self.editor.camera() {
+            camera.aspect = gpu.aspect();
+        }
+        self.editor.resized(&gpu);
+        self.gpu = Some(gpu);
+    }
+
+    /// The host's own keys and the orbit camera's input, for an event the
+    /// editor passed on.
+    fn default_event(&mut self, event: &WindowEvent) {
+        let over_ui = self.egui.is_pointer_over_egui();
+        let Some((camera, orbit)) = self.editor.orbit() else {
+            return;
+        };
+        match event {
+            WindowEvent::MouseInput { .. }
+            | WindowEvent::CursorMoved { .. }
+            | WindowEvent::MouseWheel { .. } => {
+                orbit.handle_event(event, camera, over_ui);
+            }
+            WindowEvent::KeyboardInput { event: key, .. }
+                if key.state == ElementState::Pressed && !key.repeat =>
+            {
+                match key.physical_key {
+                    PhysicalKey::Code(KeyCode::KeyO) => {
+                        orbit.auto_orbit = !orbit.auto_orbit;
+                        println!(
+                            "Auto-orbit: {}",
+                            if orbit.auto_orbit { "ON" } else { "OFF" }
+                        );
+                    }
+                    PhysicalKey::Code(KeyCode::BracketRight) => {
+                        orbit.adjust_auto_orbit_speed(1.5);
+                        println!("Auto-orbit speed: {:.2} rad/s", orbit.auto_orbit_speed);
+                    }
+                    PhysicalKey::Code(KeyCode::BracketLeft) => {
+                        orbit.adjust_auto_orbit_speed(1.0 / 1.5);
+                        println!("Auto-orbit speed: {:.2} rad/s", orbit.auto_orbit_speed);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn frame(&mut self) {
+        let tick = self.clock.tick();
+        if self.watch.as_ref().is_some_and(FileWatch::take) {
+            self.editor.on_file_changed();
+        }
+        if let Some((camera, orbit)) = self.editor.orbit() {
+            orbit.update(camera, tick.dt);
+        }
+        self.editor.update(tick);
+
+        let (Some(context), Some(gpu)) = (&self.context, &self.gpu) else {
+            return;
+        };
+        let output = match context.surface.acquire() {
+            Ok(output) => output,
+            Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => {
+                // Configure the surface again at its size; the next frame draws
+                let size = context.size;
+                self.resize(size);
+                return;
+            }
+            Err(e) => {
+                tracing::warn!("Surface error: {:?}", e);
+                return;
+            }
+        };
+        // The scene into the sRGB view, egui into the plain one, as the
+        // player does (#428)
+        let view = context.frame_view(&output.texture);
+        let hud_view = context.hud_view(&output.texture);
+        self.editor.draw(&Target {
+            view: &view,
+            depth: context.depth_target(),
+            gpu,
+        });
+        if self.editor.show_ui() {
+            self.paint_ui(&hud_view);
+        }
+        if let Some(context) = &self.context {
+            context.queue.present(output);
+        }
+    }
+
+    /// Run the editor's panels and paint them over the frame.
+    fn paint_ui(&mut self, target: &wgpu::TextureView) {
+        let (Some(window), Some(context), Some(egui_winit), Some(egui_renderer)) = (
+            &self.window,
+            &self.context,
+            &mut self.egui_winit,
+            &mut self.egui_renderer,
+        ) else {
+            return;
+        };
+        let raw_input = egui_winit.take_egui_input(window);
+        let editor = &mut self.editor;
+        // A real frame: its texture updates are uploaded below (#944)
+        #[allow(clippy::disallowed_methods)]
+        let mut output = self.egui.run_ui(raw_input, |ui| editor.ui(ui));
+        egui_winit.handle_platform_output(window, std::mem::take(&mut output.platform_output));
+
+        let paint_jobs = self
+            .egui
+            .tessellate(std::mem::take(&mut output.shapes), output.pixels_per_point);
+        let screen = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [context.config.width, context.config.height],
+            pixels_per_point: output.pixels_per_point,
+        };
+        let mut encoder = context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Editor egui"),
+            });
+        for (id, deltas) in &output.textures_delta.set {
+            for delta in deltas {
+                egui_renderer.update_texture(&context.device, &context.queue, *id, delta);
+            }
+        }
+        egui_renderer.update_buffers(
+            &context.device,
+            &context.queue,
+            &mut encoder,
+            &paint_jobs,
+            &screen,
+        );
+        {
+            let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Editor egui Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            let mut pass = pass.forget_lifetime();
+            egui_renderer.render(&mut pass, &paint_jobs, &screen);
+        }
+        context.queue.submit(std::iter::once(encoder.finish()));
+        for id in &output.textures_delta.free {
+            egui_renderer.free_texture(id);
+        }
+        // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
+        output.textures_delta.clear();
+    }
+}
+
+impl<E: Editor> ApplicationHandler for Host<E> {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+        // User styles and glyph sets ask a watcher thread from here on,
+        // never the disk in a frame (#633)
+        flint_core::file_watch::start();
+        if let Err(e) = self.initialize(event_loop) {
+            self.error = Some(e);
+            event_loop.exit();
+        }
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        match self.editor.early_event(&event) {
+            Flow::Pass => {}
+            Flow::Handled => return,
+            Flow::Exit => return event_loop.exit(),
+        }
+        if let (Some(egui_winit), Some(window)) = (&mut self.egui_winit, &self.window) {
+            if egui_winit.on_window_event(window, &event).consumed {
+                return;
+            }
+        }
+        match &event {
+            WindowEvent::CloseRequested => return event_loop.exit(),
+            WindowEvent::Resized(size) => return self.resize(*size),
+            WindowEvent::RedrawRequested => return self.frame(),
+            WindowEvent::KeyboardInput { event: key, .. } => {
+                // WASD/QE held for the keyboard orbit, whatever the editor does
+                if let Some((_, orbit)) = self.editor.orbit() {
+                    orbit.handle_key_event(key);
+                }
+            }
+            _ => {}
+        }
+        match self.editor.event(&event) {
+            Flow::Pass => self.default_event(&event),
+            Flow::Handled => {}
+            Flow::Exit => event_loop.exit(),
+        }
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
+}
+
+/// Textures as one picture `width` x `height`, for a still of an editor
+/// whose view is images rather than a scene: each scaled (nearest) to fit
+/// its cell of a grid with the fewest empty cells, on `background`.
+pub fn image_sheet(
+    images: &[image::RgbaImage],
+    width: u32,
+    height: u32,
+    background: [u8; 3],
+) -> image::RgbaImage {
+    let mut sheet = image::RgbaImage::from_pixel(
+        width,
+        height,
+        image::Rgba([background[0], background[1], background[2], 255]),
+    );
+    let n = images.len() as u32;
+    if n == 0 || width == 0 || height == 0 {
+        return sheet;
+    }
+    // The column count whose cells are largest
+    let (cols, rows) = (1..=n)
+        .map(|cols| (cols, n.div_ceil(cols)))
+        .max_by(|a, b| {
+            let side = |(c, r): (u32, u32)| (width / c).min(height / r);
+            side(*a).cmp(&side(*b)).then(b.0.cmp(&a.0))
+        })
+        .unwrap_or((1, 1));
+    let (cell_w, cell_h) = (width / cols, height / rows);
+    let gap = 4.min(cell_w / 8).min(cell_h / 8);
+    for (i, img) in images.iter().enumerate() {
+        let (iw, ih) = img.dimensions();
+        if iw == 0 || ih == 0 {
+            continue;
+        }
+        let (col, row) = (i as u32 % cols, i as u32 / cols);
+        let (room_w, room_h) = (cell_w - 2 * gap, cell_h - 2 * gap);
+        let scale = (room_w as f32 / iw as f32).min(room_h as f32 / ih as f32);
+        let (dw, dh) = (
+            ((iw as f32 * scale) as u32).max(1),
+            ((ih as f32 * scale) as u32).max(1),
+        );
+        let x0 = col * cell_w + (cell_w - dw) / 2;
+        let y0 = row * cell_h + (cell_h - dh) / 2;
+        for y in 0..dh {
+            let sy = ((y as f32 + 0.5) / scale) as u32;
+            for x in 0..dw {
+                let sx = ((x as f32 + 0.5) / scale) as u32;
+                let p = img.get_pixel(sx.min(iw - 1), sy.min(ih - 1));
+                // Over the background, so a transparent texel shows it
+                let a = p[3] as u32;
+                let mix = |c: u8, b: u8| ((c as u32 * a + b as u32 * (255 - a)) / 255) as u8;
+                sheet.put_pixel(
+                    x0 + x,
+                    y0 + y,
+                    image::Rgba([
+                        mix(p[0], background[0]),
+                        mix(p[1], background[1]),
+                        mix(p[2], background[2]),
+                        255,
+                    ]),
+                );
+            }
+        }
+    }
+    sheet
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn camera_flags_lay_over_the_editors_framing() {
+        let mut camera = Camera::new();
+        camera.distance = 3.0;
+        camera.yaw = 0.25;
+        CameraFlags {
+            distance: Some(9.0),
+            pitch: Some(30.0),
+            ..Default::default()
+        }
+        .apply(&mut camera);
+        assert_eq!(camera.distance, 9.0);
+        assert_eq!(camera.yaw, 0.25, "a flag left out keeps the editor's");
+        assert!((camera.pitch - 30f32.to_radians()).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_sheet_fits_every_image_and_keeps_its_size() {
+        let red = image::RgbaImage::from_pixel(8, 8, image::Rgba([255, 0, 0, 255]));
+        let blue = image::RgbaImage::from_pixel(16, 8, image::Rgba([0, 0, 255, 255]));
+        let sheet = image_sheet(&[red, blue], 200, 100, [10, 10, 10]);
+        assert_eq!(sheet.dimensions(), (200, 100));
+        // Two across: red's cell is the left half, blue's the right
+        assert_eq!(sheet.get_pixel(50, 50).0, [255, 0, 0, 255]);
+        assert_eq!(sheet.get_pixel(150, 50).0, [0, 0, 255, 255]);
+        // A corner is the background
+        assert_eq!(sheet.get_pixel(0, 0).0, [10, 10, 10, 255]);
+        // None: all background
+        let empty = image_sheet(&[], 4, 4, [1, 2, 3]);
+        assert_eq!(empty.get_pixel(2, 2).0, [1, 2, 3, 255]);
+    }
+}
