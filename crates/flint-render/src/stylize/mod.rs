@@ -3519,7 +3519,8 @@ mod tests {
         assert_eq!(names(&config), ["watercolor", "ascii", "pencil", "invert"]);
         // ... but for a descriptor's own default place (#746: the reality
         // styles, registered last, run first)
-        let mut registered: Vec<&str> = registry()
+        let before = registry();
+        let mut registered: Vec<&str> = before
             .iter()
             .filter(|d| d.stage == StyleStage::Display && d.default_order.is_none())
             .map(|d| d.name)
@@ -3530,7 +3531,18 @@ mod tests {
             .iter()
             .map(|(d, _)| d.name)
             .collect();
-        assert_eq!(chain, registered);
+        // Tests beside this one register user styles (#535), display styles
+        // by default, and the registry only grows: what joined since
+        // `before` has no order of its own and a later index, so it runs
+        // after every style that was there, in registration order
+        let joined: Vec<&str> = registry()[before.len()..]
+            .iter()
+            .filter(|d| d.stage == StyleStage::Display && d.default_order.is_none())
+            .map(|d| d.name)
+            .collect();
+        let (was, rest) = chain.split_at(registered.len().min(chain.len()));
+        assert_eq!(was, registered);
+        assert!(joined.starts_with(rest), "{rest:?} after, of {joined:?}");
 
         // Watercolor over ASCII, from the scene's syntax
         let tables: BTreeMap<String, toml::Table> = toml::from_str(
