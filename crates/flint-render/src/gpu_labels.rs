@@ -172,6 +172,13 @@ pub struct FrameScope {
     grouped: bool,
 }
 
+impl FrameScope {
+    /// The timer's scope, when a timer was handed to [`begin`].
+    pub fn timed(&self) -> Option<GpuScope> {
+        self.timed
+    }
+}
+
 /// Open a part of the frame named `label` in `encoder`: a debug group when
 /// [`groups`] are on and, with a timer, a timed scope inside it (ADR 0108).
 pub fn begin(

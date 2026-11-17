@@ -2,6 +2,7 @@
 
 mod assets;
 mod binding;
+mod describe;
 mod draw_list;
 mod draws;
 mod extract;
@@ -27,6 +28,7 @@ mod terrain;
 mod water;
 
 pub use binding::{BoundGrass, BoundScene, LoadedTerrain, SceneBinding};
+pub use describe::FrameHost;
 use draw_list::{Blend, Draw, DrawItem, DrawList, Layer, VertexStage};
 pub(crate) use fog_veil::FOG_VEIL_FORMAT;
 pub use frame::{FrameInputs, View2d};
@@ -565,6 +567,9 @@ pub struct SceneRenderer {
     grass: grass::GrassRenderer,
     /// Times the frame's phases on the GPU, while timing is on (ADR 0108)
     gpu_timer: Option<crate::gpu_timer::GpuTimer>,
+    /// The frame being described (#1084), only after `describe_next_frame`;
+    /// `None` costs a frame nothing (`describe.rs`)
+    frame_log: Option<Box<crate::frame_capture::FrameLog>>,
     /// Comic panels (#880, ADR 0120): the layout and each panel's view
     panel_state: panels::PanelState,
     /// Per-entity styles (#263): who is styled, how far, the mask and
@@ -800,6 +805,7 @@ impl SceneRenderer {
             lod_settings: LodSettings::from_env(),
             lod_culled: 0,
             gpu_timer: None,
+            frame_log: None,
             panel_state: Default::default(),
             style_mask: style_mask::StyleMaskState::new(),
             fog_veil: fog_veil::FogVeilState::default(),

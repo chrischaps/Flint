@@ -27,6 +27,8 @@ flint-terrain = { workspace = true }
 flint-particles = { workspace = true }
 toml = { workspace = true }
 serde = { workspace = true }
+# A frame's description (#1084): the drawn post config's values by key
+serde_json = { workspace = true }
 ab_glyph = { workspace = true }
 wgpu = { workspace = true }
 winit = { workspace = true }

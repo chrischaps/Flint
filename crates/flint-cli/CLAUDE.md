@@ -62,6 +62,12 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                           (GpuTimer::record/flush), first tenth (max 30) dropped; prints
    #                           min/p50/p90/max per pass + frame and the adapter/backend; the JSON
    #                           adds mean and each pass's samples_ms. gpu_timer::spread)
+   #   --frame-dump frame.json
+   #                          (#1084, ADR 0126: the rendered frame's FrameDescription as JSON, through
+   #                           render_frame_dump.rs: arm() before the frame (describe_next_frame, the timer on
+   #                           and recording for it), write() after the read-back (finish + flush, the raw times
+   #                           laid on). Still path: column 0; stage path: the first cell's last capture.
+   #                           Refused with --frames/--mesh/--sweep; --report json carries `frame_dump`)
    #   --mesh tree_a=out/oaks [--mesh tree_b='out/w*.glb'] [--sheet | -o x.gif --fps 4 | -o f-%03d.png]
    #                          (#222: a frame per GLB on that entity, one renderer; natural order;
    #                           multi-node GLBs baked flat, mesh_seq.rs; examples/mesh_sequence.scene.toml)
