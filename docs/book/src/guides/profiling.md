@@ -321,25 +321,44 @@ The browser's WebGPU makes each debug group a call of its own, so the web player
 
 Build the player with `--features profile` (a game binary passes it on: `profile = ["flint-player/profile"]`) and run [Tracy's viewer](https://github.com/wolfpld/tracy/releases) beside it. The viewer finds the game on this machine and shows each frame as a stack of scopes on a timeline ([ADR 0109](https://github.com/chrischaps/Flint/blob/main/docs/adr/0109-tracy-frame-profiler.md)):
 
-- the frame loop: `tick` and its phases (`run_extension_pre_updates`, `run_scripts`, `tick_fixed_physics`, `tick_av_systems`, `sync_renderer`, ...), then `render` and `render_hud`;
-- the renderer: `update_from_world`, `render_to`, and inside it `render_shadow_pass`, `render_main_pass` and `render_postprocess`;
+- `tick`, the game's step: `run_extension_pre_updates`, `publish_style_reader`, `tick_fixed_physics`, `sound`, `animate`, `tick_procgen`, `poll_user_styles`, and the renderer's `prepare` with `update_from_world` inside it;
+- `render`, the drawing: the renderer's `encode_to` with `render_shadow_pass`, `render_main_pass` and `render_postprocess` inside it, then `render_hud`;
 - wgpu's own scopes, from the same `profiling` crate.
 
 Each `RedrawRequested` ends a frame for Tracy, so its frame graph is the player's.
 
-The client listens on loopback only, so there's no firewall prompt, and it keeps nothing until a viewer connects, so a profile build run without one doesn't grow. Without the feature, the `#[profiling::function]` attributes and `profiling::scope!` calls compile to nothing.
+The client listens on loopback only, so there's no firewall prompt, and it keeps nothing until a viewer connects, so a profile build run without one doesn't grow. Without the feature, the scopes' Tracy half compiles to nothing.
 
-To scope a game's own code, depend on `profiling` (the version in Flint's `Cargo.toml`) and use the same attribute or macro. Under the player's `profile` feature they reach Tracy with the engine's:
+### One scope, two profilers
+
+The engine marks a scope with `flint_core::scope!` ([ADR 0128](https://github.com/chrischaps/Flint/blob/main/docs/adr/0128-one-scope-macro-two-sinks.md)). One line reaches Tracy, under the `profile` feature, and Flint's own recorder, a ring of the last few thousand scopes per thread that a run can save after a hitch has already happened. The recorder is compiled into every debug build and into a release build with the **`trace`** feature (`trace = ["flint-player/trace"]` in a game's binary); a default release build has none of it. Compiled in, it records nothing until something turns it on, and until then a scope costs about a nanosecond in release and 6 ns in a debug build. Recording, a scope costs about 40 ns in release.
+
+Three names sit close together, so to keep them apart:
+
+| Name | What it is |
+|---|---|
+| `profile` | a Cargo feature: stream scopes to Tracy's viewer, live |
+| `trace` | a Cargo feature: Flint's own recorder in a release build |
+| `profiling` | the crate under both, which wgpu uses too |
+
+To scope a game's own code, use the same macro. Its name is a string literal, and it can carry a detail, a count or a file name:
 
 ```rust
-#[profiling::function]
-fn rebuild_houses(&mut self) { /* ... */ }
+fn rebuild_houses(&mut self) {
+    flint_core::scope!("rebuild_houses");
+    for street in &self.streets {
+        flint_core::scope!("street", street.houses.len()); // a count: cheap
+        // ...
+    }
+}
 
 fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
-    profiling::scope!("net");
+    flint_core::scope!("net");
     self.session.poll();
 }
 ```
+
+A text detail (`flint_core::scope!("load_level", path)`) is copied into the recording, so keep it to scopes that run rarely, not to loops. A game's older `profiling::scope!` and `#[profiling::function]` still reach Tracy, but not the recorder.
 
 ## Frame pacing
 

@@ -243,7 +243,6 @@ impl SceneRenderer {
     /// (Self::set_motion_time) stamps the same `time`: a held entity's bones
     /// are gated by its hold's tick (#405), and the uploads precede the
     /// extraction that reads them.
-    #[profiling::function]
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -251,6 +250,7 @@ impl SceneRenderer {
         world: &FlintWorld,
         inputs: &FrameInputs<'_>,
     ) {
+        flint_core::scope!("prepare");
         // A described frame starts its log here (#1084)
         if let Some(log) = &mut self.frame_log {
             **log = Default::default();
@@ -385,7 +385,6 @@ impl SceneRenderer {
     /// with the next submission, so encode one camera per submission: a
     /// second camera's uniforms would overwrite this one's. After
     /// submitting, call [`frame_submitted`](Self::frame_submitted).
-    #[profiling::function]
     ///
     /// `depth` is the caller's depth buffer: a `&TextureView`, or a
     /// [`DepthTarget`](crate::bind_cache::DepthTarget) with an id
@@ -400,6 +399,7 @@ impl SceneRenderer {
         camera: &Camera,
         target_view: &wgpu::TextureView,
     ) {
+        flint_core::scope!("encode_to");
         if self.device_lost {
             return;
         }

@@ -12,6 +12,13 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 sha2 = { workspace = true }
 web-time = { workspace = true }
+# `scope!`'s Tracy half (ADR 0128); nothing without a backend feature.
+profiling = { workspace = true }
+
+[features]
+# Flint's own scope recorder in a release build (ADR 0128). A debug build
+# always has it. Off by default, so a shipped game carries none of it.
+trace = []
 
 [lints]
 workspace = true
