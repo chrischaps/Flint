@@ -289,17 +289,18 @@ The pass is named as `--passes` lists it (`Scene`, `Bloom`, `Shadow cascade 1`, 
 | `--width`, `--height` | The window's size in points (1600 x 1000); a screenshot's in pixels |
 | `--scale <x>` | A screenshot's pixels per point |
 | `--replay` | Draw the frame again as it opens (R in the window): needs the capture's `replay/`, the scene and a GPU |
-| `--draws <n>`, `--hide <name>`, `--skip <pass>`, `--outline <name>` | Replay it with the scene pass stopped after N draws, without an entity, without a pass, with an entity's pixels outlined (each implies `--replay`; `--hide` and `--skip` repeat). A screenshot waits for the replay |
+| `--draws <n>`, `--hide <name>`, `--skip <pass>`, `--outline <name>` | Replay it with a pass stopped after N draws (the `--pass` shown when it is a shadow layer, `Style mask` or `Style albedo`, else the scene pass), without an entity, without a pass, with an entity's pixels outlined (each implies `--replay`; `--hide` and `--skip` repeat). A screenshot waits for the replay |
 | `--scene <file>`, `--schemas <dir>` | The replay's scene, when it isn't where the capture says, and its schema directories |
 
 ### `flint frame replay`
 
-`flint frame replay <capture>` draws a captured frame again ([Replaying a frame](../guides/frame-debugger.md#replaying-a-frame)): the authored scene loaded as `flint render` loads it, the captured world laid over it by entity name, the renderer's state put back, no game step run. It writes the replayed frame as a capture, which every other `frame` view reads, and says whether its final image and its scene pass's image are byte-identical with the captured ones, or in how many pixels they differ and what the capture draws fresh. Each asset is checked against its recorded hash; a missing or changed one is named and the frame still drawn. A capture with no `replay/` is refused, saying so. `--json` carries `identical`, `final` and `scene` (`pixels`, `differing`), `assets` (each `same`, `moved`, `changed` or `missing`), `notes`, `fresh_only`, `refused` and `skippable`.
+`flint frame replay <capture>` draws a captured frame again ([Replaying a frame](../guides/frame-debugger.md#replaying-a-frame)): the authored scene loaded as `flint render` loads it, the captured world laid over it by entity name, the renderer's state put back, no game step run. It writes the replayed frame as a capture, which every other `frame` view reads, and says whether its final image and its scene pass's image are byte-identical with the captured ones, or in how many pixels they differ and what the capture draws fresh. Each asset is checked against its recorded hash; a missing or changed one is named and the frame still drawn. A capture with no `replay/` is refused, saying so. `--json` carries `identical`, `final` and `scene` (`pixels`, `differing`), `pass` (the stepped pass's own images, summed, when it isn't the scene's) and `pass_draws` (how many draws the capture's stepped pass has), `assets` (each `same`, `moved`, `changed` or `missing`), `notes`, `fresh_only`, `refused` and `skippable`.
 
 | Flag | What it does |
 |------|--------------|
 | `--out <dir>` | Where the replay goes (default: beside the capture, `<name>.replay.flintframe`) |
-| `--draws <n>` | Stop the scene pass after its first N draws, counted as `flint frame show --draws --pass Scene` lists them |
+| `--draws <n>` | Stop a pass after its first N draws, counted as `flint frame show --draws --pass <name>` lists them: the scene pass, or the one `--pass` names |
+| `--pass <name>` | The pass `--draws` steps (#1204): `Scene` (the default), `Shadow cascade 0` to `2`, `Spot shadow`, `Style mask` or `Style albedo`. Every other pass draws whole; a shadow layer's grass isn't counted. Another name is refused before the scene loads, naming these |
 | `--hide <name>` | Draw the frame without this entity in any pass (repeatable) |
 | `--skip <pass>` | Draw the frame without this pass: `Shadows`, `SSAO`, `Volumetric`, `Bloom`, `FXAA`, `Fog veil`, or a style's (repeatable). The text answer lists what this capture takes |
 | `--outline <name>` | Mark this entity's pixels with the selection outline |

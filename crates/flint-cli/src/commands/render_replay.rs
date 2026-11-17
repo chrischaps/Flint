@@ -30,13 +30,41 @@ use std::path::PathBuf;
 pub struct Controls {
     /// Entities drawn in no pass.
     pub hidden: Vec<String>,
-    /// The scene pass's first N draws only.
-    pub scene_draws: Option<usize>,
+    /// The pass `draws` steps, by its name in the frame's description
+    /// (`Scene`, `Shadow cascade 0`, `Style mask`...; #1204). `None` is the
+    /// scene pass.
+    pub pass: Option<String>,
+    /// That pass's first N draws only.
+    pub draws: Option<usize>,
     /// Passes switched off, by name (`Bloom`, `SSAO`, a style's).
     pub skip: Vec<String>,
     /// The entity whose pixels the selection outline marks, in place of
     /// the captured selection.
     pub outline: Option<String>,
+}
+
+impl Controls {
+    /// The pass `draws` steps: the scene's unless `pass` names another,
+    /// or why the name can't be stepped.
+    pub fn stepped(&self) -> Result<flint_render::SteppedPass, String> {
+        let Some(name) = &self.pass else {
+            return Ok(flint_render::SteppedPass::Scene);
+        };
+        flint_render::SteppedPass::from_name(name).ok_or_else(|| {
+            let names: Vec<&str> = flint_render::SteppedPass::all().map(|p| p.name()).collect();
+            format!(
+                "no pass named {name:?} steps a draw at a time (these do: {})",
+                names.join(", ")
+            )
+        })
+    }
+
+    /// The stepped pass's name as the description has it (`Scene`).
+    pub fn stepped_name(&self) -> &str {
+        self.stepped()
+            .map(|p| p.name())
+            .unwrap_or_else(|_| self.pass.as_deref().unwrap_or("Scene"))
+    }
 }
 
 /// One asset the capture names, as the replay found it.
@@ -391,11 +419,16 @@ impl ReplayHost {
             refused.push(format!("no entity named {name:?} to outline"));
         }
         renderer.set_selected_entity(outline);
-        let draw_controls = flint_render::DrawControls {
-            hidden,
-            scene_draws: controls.scene_draws,
+        let limit = match (controls.draws, controls.stepped()) {
+            (Some(draws), Ok(pass)) => Some(flint_render::DrawLimit { pass, draws }),
+            (Some(_), Err(why)) => {
+                refused.push(why);
+                None
+            }
+            (None, _) => None,
         };
-        let any = !draw_controls.hidden.is_empty() || draw_controls.scene_draws.is_some();
+        let draw_controls = flint_render::DrawControls { hidden, limit };
+        let any = !draw_controls.hidden.is_empty() || draw_controls.limit.is_some();
 
         let out_text = out.to_string_lossy().replace('\\', "/");
         let wanted = crate::commands::render_frame_dump::Wanted {
@@ -425,8 +458,8 @@ impl ReplayHost {
         if !controls.hidden.is_empty() {
             notes.push(format!("hidden: {}", controls.hidden.join(", ")));
         }
-        if let Some(n) = controls.scene_draws {
-            notes.push(format!("the scene pass stopped after {n} draws"));
+        if let (Some(n), Some(pass)) = (controls.draws, limit.map(|l| l.pass)) {
+            notes.push(format!("the {} pass stopped after {n} draws", pass.name()));
         }
         if !controls.skip.is_empty() {
             notes.push(format!("switched off: {}", controls.skip.join(", ")));
