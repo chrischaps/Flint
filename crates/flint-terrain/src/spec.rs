@@ -292,12 +292,59 @@ fn default_4f32() -> f32 {
     4.0
 }
 
+/// Something in a spec that parses but does nothing: a key no part of the
+/// spec reads, or a value the generator skips (#719).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpecIssue {
+    /// Where it is: `geometry.resolutoin`, `height_layers[1].octave`.
+    pub path: String,
+    /// What is wrong, and what was probably meant.
+    pub message: String,
+}
+
+impl std::fmt::Display for SpecIssue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.path, self.message)
+    }
+}
+
 impl TerrainSpec {
     /// Load a terrain spec from a `.terrain.toml` file.
     pub fn from_file(path: &Path) -> Result<Self, String> {
+        Self::from_file_checked(path).map(|(spec, _)| spec)
+    }
+
+    /// Load a terrain spec and say what in it would be ignored.
+    pub fn from_file_checked(path: &Path) -> Result<(Self, Vec<SpecIssue>), String> {
         let content = vfs::read_to_string(path)
             .map_err(|e| format!("Failed to read '{}': {}", path.display(), e))?;
-        toml::from_str(&content).map_err(|e| format!("Failed to parse '{}': {}", path.display(), e))
+        Self::parse_checked(&content)
+            .map_err(|e| format!("Failed to parse '{}': {}", path.display(), e))
+    }
+
+    /// Parse a spec from TOML text, with every key no field reads and every
+    /// value the generator skips. Serde drops an unknown key without a word,
+    /// so a typo (`octave = 8`) would quietly give the default.
+    pub fn parse_checked(text: &str) -> Result<(Self, Vec<SpecIssue>), String> {
+        let spec: Self = toml::from_str(text).map_err(|e| e.to_string())?;
+        let raw: toml::Value = toml::from_str(text).map_err(|e| e.to_string())?;
+        // What the spec keeps of the text: every field it has, filled with
+        // its defaults. A key the text has and this lacks was read by nothing.
+        let kept = toml::Value::try_from(&spec).map_err(|e| e.to_string())?;
+        let mut issues = Vec::new();
+        unread_keys(&raw, &kept, "", &mut issues);
+        for (i, rule) in spec.splat_rules.iter().enumerate() {
+            if rule.layer > 3 {
+                issues.push(SpecIssue {
+                    path: format!("splat_rules[{i}].layer"),
+                    message: format!(
+                        "layer {} is past the splat map's four (0 to 3); the rule paints nothing",
+                        rule.layer
+                    ),
+                });
+            }
+        }
+        Ok((spec, issues))
     }
 
     /// Save the spec to a `.terrain.toml` file.
@@ -363,9 +410,124 @@ impl TerrainSpec {
     }
 }
 
+/// Every key under `raw` with no counterpart under `kept`, walking tables by
+/// key and arrays by index.
+fn unread_keys(raw: &toml::Value, kept: &toml::Value, at: &str, out: &mut Vec<SpecIssue>) {
+    match (raw, kept) {
+        (toml::Value::Table(raw), toml::Value::Table(kept)) => {
+            for (key, value) in raw {
+                let path = if at.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{at}.{key}")
+                };
+                match kept.get(key) {
+                    Some(k) => unread_keys(value, k, &path, out),
+                    None => {
+                        let near = flint_core::diagnostic::did_you_mean(
+                            key,
+                            kept.keys().map(String::as_str),
+                        );
+                        let place = if at.is_empty() {
+                            "a terrain spec".to_string()
+                        } else {
+                            format!("`{at}`")
+                        };
+                        out.push(SpecIssue {
+                            path,
+                            message: match near {
+                                Some(near) => format!("unknown key in {place}; {near}"),
+                                None => format!("unknown key in {place}; nothing reads it"),
+                            },
+                        });
+                    }
+                }
+            }
+        }
+        (toml::Value::Array(raw), toml::Value::Array(kept)) => {
+            for (i, (r, k)) in raw.iter().zip(kept).enumerate() {
+                unread_keys(r, k, &format!("{at}[{i}]"), out);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_keys_are_named_with_their_path() {
+        let (spec, issues) = TerrainSpec::parse_checked(
+            r#"
+colour = "green"
+
+[meta]
+name = "typos"
+
+[geometry]
+resolutoin = 64
+
+[[height_layers]]
+op = "noise"
+octave = 8
+
+[[height_layers]]
+op = "erosion"
+talus_angle = 0.4
+
+[[splat_rules]]
+layer = 4
+"#,
+        )
+        .unwrap();
+        // The typo gave the default, which is why it has to be said
+        assert_eq!(spec.geometry.resolution, 256);
+        let paths: Vec<&str> = issues.iter().map(|i| i.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "colour",
+                "geometry.resolutoin",
+                "height_layers[0].octave",
+                "splat_rules[0].layer"
+            ]
+        );
+        assert!(issues[1].message.contains("`resolution`"), "{}", issues[1]);
+        assert!(issues[2].message.contains("`octaves`"), "{}", issues[2]);
+        assert!(
+            issues[0].message.contains("nothing reads it"),
+            "{}",
+            issues[0]
+        );
+    }
+
+    #[test]
+    fn a_key_of_another_layer_kind_is_unknown_here() {
+        let (_, issues) = TerrainSpec::parse_checked(
+            "[meta]\nname = \"x\"\n[[height_layers]]\nop = \"noise\"\niterations = 9\n",
+        )
+        .unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].path, "height_layers[0].iterations");
+    }
+
+    #[test]
+    #[allow(clippy::disallowed_methods)] // a test walking the checkout's examples
+    fn the_examples_have_nothing_unread() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+        let mut seen = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.to_string_lossy().ends_with(".terrain.toml") {
+                let (_, issues) = TerrainSpec::from_file_checked(&path).unwrap();
+                assert!(issues.is_empty(), "{}: {issues:?}", path.display());
+                seen += 1;
+            }
+        }
+        assert!(seen > 0, "no .terrain.toml in examples/");
+    }
 
     #[test]
     fn round_trip_serialize() {
