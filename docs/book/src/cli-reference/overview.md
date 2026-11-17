@@ -13,6 +13,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint scene list` | List scene files |
 | `flint scene info` | Show scene metadata and entity count |
 | `flint query "<query>"` | Query entities with the Flint query language |
+| `flint env [--json]` | Every `FLINT_*` environment switch, what it accepts and its value now; exit 1 on a value it can't take ([Environment Switches](environment.md)) |
 | `flint schema <name>` | Inspect a component or archetype schema; an unknown name exits 1. `--list` names every one loaded (`--json`); `--format json` is the schemas as data; `--format json-schema [--output file]` is a JSON Schema for a `.scene.toml`, for editor completion ([Introspecting Schemas](../concepts/schemas.md#introspecting-schemas)) |
 | `flint script api` | Every function a script can call, with its parameters and a one-line doc, and the callbacks; `--json` for the same as data, `--filter <text>` for names or modules containing it. A function a game's extension registers on the Rhai engine directly is listed with its parameter types only. `--book` writes the book's [Script API Reference](../reference/script-api.md) and the generated tables in its chapters; `--check-book` fails when they are stale or a chapter calls a function that doesn't exist (CI runs it) ([Scripting](../concepts/scripting.md#api-reference)) |
 | `flint script check [dir\|scene\|file.rhai]` | Compile every script and the modules it imports, and check each call's name and argument count against the script API, each callback's name and parameters, and each import, reported as `file:line:col`. Exits 1 on an error; `--json`; `--allow` / `--api` for a game's own functions ([Checking your scripts](../concepts/scripting.md#checking-your-scripts)) |
@@ -48,6 +49,27 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint goldens <file>.goldens.toml` | Render a list of scenes and gate each against its golden PNG ([Golden Suites](../guides/headless-rendering.md#golden-suites)) |
 
 The music commands are documented on their own page: [Music Commands](music.md). Until #709 they were top-level (`validate-suite`, `play-suite`, `calibrate`, `play-chart`, `replay-chart`, `render-suite`); those names still run for one release, printing their new spelling, and the rumble spike is an example program now.
+
+## Machine-readable output
+
+Every command that doesn't open a window takes `--json`, a global flag that goes anywhere on the line. With it the command prints exactly one JSON document on stdout, and every other line it would have printed (progress, warnings, what it wrote) goes to stderr, so `flint <cmd> --json | jq` always has one value to read:
+
+```bash
+flint check --json                          # the report: valid, errors, diagnostics...
+flint scene info scenes/main.scene.toml --json
+flint gen specs/stone_wall.procgen.toml -o wall.png --json   # the variants it made, and their files
+flint render scenes/main.scene.toml --json  # the render's report (--report json)
+```
+
+The exit status says whether the command succeeded: 0, or 1 on any failure. A command that answers with a report prints it whether or not it failed, so `flint check` of a broken project prints its `"valid": false` report and exits 1. Any other failure prints an error document instead, with the message and the errors that caused it:
+
+```json
+{ "error": { "message": "no component, scene table or archetype named `nope`", "causes": [] } }
+```
+
+A mistake on the command line itself (an unknown flag or subcommand) is an error document too, `{"error": {"message", "usage"}}`, with clap's exit status 2; `--help` and `--version` print as always. A command that opens a window (`play`, `edit` other than a model's or effect's `--render`, `prefab view`, `music play`, `music calibrate`, `music chart play`) refuses `--json` with an error document rather than opening one. `flint render --watch` refuses it too, since it never finishes.
+
+Where a command already had its own form, `--json` is that form: `validate`'s `--format json`, `query`'s and `entity list/show`'s `--format json`, `schema`'s `--format json` (a `--format json-schema` stays a JSON Schema), `render`'s `--report json`. `flint gen --report json` still prints a JSON line a variant; with `--json` the variants are one document's `variants` list instead. Paths in the documents use `/` on every platform. `crates/flint-cli/tests/json_cli.rs` runs every command `--help` lists with `--json` and parses what it prints, so a new command has a JSON form or is named as a window.
 
 ## The `init` Command
 
@@ -426,7 +448,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--gpu <name>` | (high-perf) | GPU adapter to use (substring match); `--list-gpus` prints the names |
 | `--list-styles` | | Print every registered style, its stage, table, and each parameter's default and range, then exit; with a scene, its `styles/` user styles too ([Stylize Passes](../concepts/stylize-passes.md#listing-the-styles)) |
 | `--list-effects` | | Print every built-in post effect and each of its `[post_process]` keys with its kind, default, the range it is tuned for and its help, then exit ([Post-Processing](../concepts/post-processing.md#listing-the-keys)) |
-| `--json` | | With `--list-styles` or `--list-effects`: the list as JSON, for agents |
+| `--json` | | The [global flag](#machine-readable-output): a render's report as one document, as `--report json` prints it; with `--list-styles`, `--list-effects` or `--list-gpus` the list; with `--variant` the files written |
 | `--watch` | `false` | Keep running and write `--output` again after every save to the scene's folder, its style folders, its schemas or a file a flag names (#432). A still or a `--sweep` keeps its GPU, scene and renderer, so a user style's `.wgsl` save is drawn again on them; anything else (and a `.shader.toml` whose description changed) loads the scene again on the same GPU. One `watch: render <n> in <s>` line a render, then each style's error. Ctrl-C stops it ([Stylize Passes](../concepts/stylize-passes.md#user-authored-styles)) |
 | `--distance <f32>` | (auto) | Camera distance from target |
 | `--yaw <deg>` | (auto) | Horizontal camera angle |
@@ -444,6 +466,8 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--msaa <n>` | `1` | MSAA sample count for the scene passes: `1` (off) or `4`. Default 1 keeps headless pixel-diff gates single-sample ([ADR 0058](https://github.com/chrischaps/Flint/blob/main/docs/adr/0058-opt-in-4x-msaa-for-scene-passes.md)) |
 | `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image on each side (0.25–1), upscaled in the composite, as `flint-player --render-scale` (#122) |
 | `--gpu-time <frames>` | (none) | Render the frame this many times with GPU timing on and print each pass's smoothed time ([ADR 0108](https://github.com/chrischaps/Flint/blob/main/docs/adr/0108-gpu-timing-from-timestamp-queries.md)) before writing the image |
+| `--frame-dump <file.json>` | (none) | Write the rendered frame's description as JSON (#1084, [ADR 0126](https://github.com/chrischaps/Flint/blob/main/docs/adr/0126-what-a-frame-capture-holds-and-how-it-replays.md)): every pass in the order drawn, named as `--gpu-time`'s rows are, with the targets it read and wrote, its draws by entity, what a cull set aside and why, why a skipped pass was skipped and its GPU time in that frame; then the frame's settings, targets, lights and stats. Of a `--time` span, the last frame; not with `--frames`, `--mesh` or `--sweep`. `--report json` names the file ([A frame's description](../guides/profiling.md#a-frames-description)) |
+| `--frame-capture <dir>` | (none) | Capture the rendered frame into a folder (#1085): its description as `manifest.json`, written last, and under `targets/` every target each pass wrote, as that pass left it (`NN-<target>.<ext>`: 8-bit as PNG, float as OpenEXR half, depth as OpenEXR f32). The last `surface` image is the `-o` output byte for byte. Of a `--time` span, the last frame; not with `--frames`, `--mesh` or `--sweep`; a folder holding anything else is refused. `--report json` names it as `frame_capture` ([A frame's images](../guides/profiling.md#a-frames-images)) |
 | `--frames <n>` | (none) | Draw a sequence of `n` frames on one renderer, written as `<stem>_0000.png`... beside `--output`; temporal styles see consecutive frames ([Frame sequences](../guides/headless-rendering.md#frame-sequences), #345) |
 | `--frame-dt <s>` | `1/60` | With `--frames`: seconds between frames; post time, grass wind and particles advance by it |
 | `--orbit <deg/s>` / `--camera-path <file>` | (still) | With `--frames`: orbit the camera about its target, or follow a TOML of `[[key]] time/position/target` keys |

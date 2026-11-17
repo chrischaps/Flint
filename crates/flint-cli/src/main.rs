@@ -3,11 +3,12 @@
 mod check;
 mod commands;
 mod file_dialog;
+mod output;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, bundle, check as check_cmd, dxc, edit_router, entity, examples, export, gen,
+    asset, bundle, check as check_cmd, dxc, edit_router, entity, env, examples, export, gen,
     gen_preview, init, legacy_names, music, play, prefab, preview, query, render, render_goldens,
     scene, schema, script, spike_rumble, spline_edit, style, terrain_edit, tex_edit, validate,
 };
@@ -22,6 +23,12 @@ struct Cli {
     /// the working directory if omitted
     #[arg(long, global = true, value_name = "DIR")]
     project: Option<std::path::PathBuf>,
+
+    /// Answer with exactly one JSON document on stdout (every other line
+    /// goes to stderr); a failure is exit 1, with an `error` document when
+    /// the command printed none. A command that opens a window refuses it
+    #[arg(long, global = true)]
+    json: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -110,6 +117,10 @@ enum Commands {
     /// topic, or --check that every one is indexed and validates
     Examples(Box<examples::ExamplesArgs>),
 
+    /// Every FLINT_* environment switch: what it accepts, what unset
+    /// means and its value now (--json); exits 1 on a value it can't take
+    Env(Box<env::EnvArgs>),
+
     /// Pack a game folder into .flintpack bundles for the web player
     Bundle(Box<bundle::BundleArgs>),
 
@@ -176,7 +187,7 @@ enum Commands {
     Style(Box<style::StyleCommands>),
 }
 
-fn main() -> Result<()> {
+fn main() -> std::process::ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -190,11 +201,35 @@ fn main() -> Result<()> {
 
     // The old names (`play-chart` is `music chart play`, #709;
     // `render-suite <x>.goldens.toml` is `goldens`, #327) still run
-    let (args, moved) = legacy_names::route(std::env::args_os().collect());
+    let (argv, moved) = legacy_names::route(std::env::args_os().collect());
     if let Some(note) = moved {
         eprintln!("{note}");
     }
-    let cli = Cli::parse_from(args);
+    let cli = match Cli::try_parse_from(&argv) {
+        Ok(cli) => cli,
+        Err(e) => {
+            // A mistake on the command line under --json is still one
+            // document on stdout; --help and --version print as always
+            use clap::error::ErrorKind;
+            let help = matches!(
+                e.kind(),
+                ErrorKind::DisplayHelp
+                    | ErrorKind::DisplayVersion
+                    | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            );
+            if !help && argv.iter().any(|a| a == "--json") {
+                output::document(&serde_json::json!({
+                    "error": { "message": e.kind().to_string(), "usage": e.to_string() }
+                }));
+            }
+            e.exit();
+        }
+    };
+    output::set_json(cli.json);
+    output::finish(run(cli))
+}
+
+fn run(cli: Cli) -> Result<()> {
     if let Some(dir) = &cli.project {
         if !dir.is_dir() {
             anyhow::bail!("--project {}: not a directory", dir.display());
@@ -204,6 +239,10 @@ fn main() -> Result<()> {
         let project =
             flint_core::project::Project::at(dir).map_err(|e| anyhow::anyhow!("--project {e}"))?;
         flint_core::project::set_override(project);
+    }
+
+    if let Some(name) = cli.command.interactive() {
+        output::refuse_interactive(name)?;
     }
 
     match cli.command {
@@ -221,6 +260,7 @@ fn main() -> Result<()> {
         Commands::Validate(args) => validate::run(*args),
         Commands::Check(args) => check_cmd::run(*args),
         Commands::Examples(args) => examples::run(*args),
+        Commands::Env(args) => env::run(*args),
         Commands::Bundle(args) => bundle::run(*args),
         Commands::Export(cmd) => export::run(*cmd),
         Commands::Dxc(cmd) => dxc::run(*cmd),
@@ -253,10 +293,49 @@ fn main() -> Result<()> {
         Commands::TexEdit(args) => tex_edit::run(*args),
         Commands::Render(mut args) => {
             // --variant builds each variant's command line on this one (#291)
-            args.command_line = commands::variants::subcommand_words(std::env::args_os());
+            // --json is the global flag, not render's: a variant's words leave it out
+            args.command_line = commands::variants::subcommand_words(std::env::args_os())
+                .into_iter()
+                .filter(|w| w != "--json")
+                .collect();
+            if output::json() && args.out.watch {
+                anyhow::bail!(
+                    "--watch renders until stopped and has no one JSON document: drop --json"
+                );
+            }
+            // --json is --report json: the render's report is its document
+            if output::json() && args.measure.report.is_none() {
+                args.measure.report = Some("json".into());
+            }
             render::run(*args)
         }
         Commands::Style(cmd) => style::run(*cmd),
+    }
+}
+
+impl Commands {
+    /// The command's name when it opens a window (or plays sound and reads
+    /// a pad), which `--json` refuses. `flint edit` decides for itself: a
+    /// model's or effect's `--render` snapshot answers with the file it wrote.
+    fn interactive(&self) -> Option<&'static str> {
+        Some(match self {
+            Commands::Serve { .. } => "serve",
+            Commands::SplineEdit(_) => "spline-edit",
+            Commands::Music(cmd) => match &**cmd {
+                music::MusicCommands::Play(_) => "music play",
+                music::MusicCommands::Calibrate(_) => "music calibrate",
+                music::MusicCommands::Chart(music::ChartCommands::Play(_)) => "music chart play",
+                _ => return None,
+            },
+            Commands::SpikeRumble(_) => "spike-rumble",
+            Commands::Play(_) => "play",
+            Commands::Preview(args) if args.render.is_none() => "preview",
+            Commands::GenPreview(_) => "gen-preview",
+            Commands::TerrainEdit(_) => "terrain-edit",
+            Commands::TexEdit(_) => "tex-edit",
+            Commands::Prefab(_) => "prefab view",
+            _ => return None,
+        })
     }
 }
 
@@ -286,7 +365,7 @@ mod stack_tests {
     /// 8 MB one, but the parser alone should never need it: a debug build's
     /// derived `augment_args` is one frame of about 8 KB a flag, and #708
     /// measured 1346 KB to parse any command line while `flint render` was
-    /// one struct of 130 flags (579 KB once each help heading was its own
+    /// one struct of 130 flags (643 KB once each help heading was its own
     /// struct). A stack overflow aborts the test binary, naming the thread.
     const WINDOWS_DEFAULT_STACK: usize = 1 << 20;
 

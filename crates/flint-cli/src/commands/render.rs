@@ -38,10 +38,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// With `--report json`, stdout is the report and everything else goes to stderr.
 static HUMAN_TO_STDERR: AtomicBool = AtomicBool::new(false);
 
-/// `println!` for the human lines; see [`HUMAN_TO_STDERR`].
+/// `println!` for the human lines; see [`HUMAN_TO_STDERR`]. The global
+/// `--json` sends them to stderr too (`crate::output`).
 macro_rules! say {
     ($($t:tt)*) => {
-        if HUMAN_TO_STDERR.load(Ordering::Relaxed) {
+        if HUMAN_TO_STDERR.load(Ordering::Relaxed) || crate::output::stdout_reserved() {
             eprintln!($($t)*)
         } else {
             println!($($t)*)
@@ -83,11 +84,8 @@ fn list_styles(args: &RenderArgs) -> Result<()> {
             eprintln!("warning: {message}");
         }
     }
-    if args.debug.json {
-        say!(
-            "{}",
-            serde_json::to_string_pretty(&catalog::catalog_in(&assets))?
-        );
+    if crate::output::json() {
+        crate::output::document(&serde_json::to_value(catalog::catalog_in(&assets))?);
     } else {
         print!("{}", catalog::catalog_text_in(&assets));
     }
@@ -95,10 +93,10 @@ fn list_styles(args: &RenderArgs) -> Result<()> {
 }
 
 /// `--list-effects [--json]`: every built-in post effect's keys (#741).
-fn list_effects(args: &RenderArgs) -> Result<()> {
+fn list_effects(_args: &RenderArgs) -> Result<()> {
     use flint_schema::post_effects;
-    if args.debug.json {
-        say!("{}", serde_json::to_string_pretty(post_effects::EFFECTS)?);
+    if crate::output::json() {
+        crate::output::document(&serde_json::to_value(post_effects::EFFECTS)?);
     } else {
         print!("{}", post_effects::catalog_text());
     }
@@ -197,9 +195,12 @@ pub(super) fn render(
         if adapters.is_empty() {
             eprintln!("No GPU adapters found: {}", flint_render::no_adapter_hint());
         }
-        for a in adapters {
+        for a in &adapters {
             say!("{a}");
         }
+        crate::output::when_json(
+            || serde_json::json!({ "adapters": adapters.iter().map(|a| a.to_string()).collect::<Vec<_>>() }),
+        );
         return Ok(());
     }
     if args.debug.list_styles {
@@ -209,7 +210,12 @@ pub(super) fn render(
         return list_effects(args);
     }
     if args.look.as_deref() == Some("help") {
-        print!("{}", super::look::help(&args.scene));
+        let help = super::look::help(&args.scene);
+        if crate::output::json() {
+            crate::output::document(&serde_json::json!({ "help": help }));
+        } else {
+            print!("{help}");
+        }
         return Ok(());
     }
     if args.scene.is_empty() {
@@ -307,6 +313,14 @@ pub(super) fn render(
             "--report / --reference measure one frame or a sweep: drop --frames / --mesh"
         );
     }
+    if (args.measure.frame_dump.is_some() || args.measure.frame_capture.is_some())
+        && (sequence || grid.is_some())
+    {
+        anyhow::bail!(
+            "--frame-dump / --frame-capture record one frame: drop --frames / --mesh / --sweep \
+             (a span's last frame is recorded: --time 0..4 --frame-capture f.flintframe)"
+        );
+    }
     if args.clock.time.is_some() && sequence {
         anyhow::bail!(
             "--time and --frames / --mesh each draw a span: --time 0..4 -o x.gif, or a sequence"
@@ -328,7 +342,7 @@ pub(super) fn render(
         super::common_args::load_schemas(Some(&args.scene), &args.debug.schemas)?;
     super::common_args::warn_dropped_schemas(&schema_dirs);
     if schema_dirs.dirs.is_empty() {
-        say!("Warning: No schemas directories found");
+        eprintln!("Warning: No schemas directories found");
     }
     // Its archetypes' placeholder boxes, from the same schemas (#751)
     let binding = binding.with_archetypes(&registry);
@@ -657,6 +671,16 @@ pub(super) fn render(
         let mut frames = Vec::with_capacity(configs.len());
         let mut texts = Vec::with_capacity(configs.len());
         for (i, config) in configs.iter().enumerate() {
+            // The frame's description (#1084) and capture (#1085): the
+            // still's own frame
+            let dump = super::render_frame_dump::Wanted::of(args)
+                .filter(|_| i == 0)
+                .map(|wanted| {
+                    (
+                        wanted,
+                        super::render_frame_dump::arm(ctx, &mut renderer, wanted),
+                    )
+                });
             let pixels = draw_pixels(
                 ctx,
                 &mut renderer,
@@ -664,6 +688,18 @@ pub(super) fn render(
                 (i > 0 || redraw).then(|| config.clone()),
                 Some(&world),
             )?;
+            if let Some((wanted, armed)) = dump {
+                let said = super::render_frame_dump::write(
+                    armed,
+                    ctx,
+                    &mut renderer,
+                    Some(&world),
+                    wanted,
+                )?;
+                for line in said {
+                    say!("{line}");
+                }
+            }
             // The grid is read back once a frame: a second read finds nothing
             let measured = args.measure.report.is_some() || reads_glyphs;
             let text = (measured || wants_text)
@@ -1807,7 +1843,29 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                     stage.camera.target = target;
                 }
             }
+            // The frame's description (#1084) and capture (#1085): the
+            // first cell's last capture
+            let dump = super::render_frame_dump::Wanted::of(args)
+                .filter(|_| i == 0 && index + 1 == times.len())
+                .map(|wanted| {
+                    (
+                        wanted,
+                        super::render_frame_dump::arm(ctx, &mut stage.renderer, wanted),
+                    )
+                });
             pictures.push(stage.capture(args, ctx, t, frame_step)?);
+            if let Some((wanted, armed)) = dump {
+                let said = super::render_frame_dump::write(
+                    armed,
+                    ctx,
+                    &mut stage.renderer,
+                    Some(stage.game.world()),
+                    wanted,
+                )?;
+                for line in said {
+                    say!("{line}");
+                }
+            }
             if wants_text || wants_flips || report_file.is_some() || reads_glyphs {
                 texts.push(stage.renderer.style_text(&ctx.device, "ascii"));
             }
@@ -2120,6 +2178,8 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
             wooze_field: field.is_some(),
             wooze_zones: field.map_or(0, |f| f.zones().len()),
             sweep: grid.map(super::sweep::SweepGrid::name),
+            frame_dump: args.measure.frame_dump.clone(),
+            frame_capture: args.measure.frame_capture.clone(),
             captures,
             still_props: still_props(&stages[0]),
             warnings,
@@ -2130,7 +2190,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                 .collect(),
         };
         let json = serde_json::to_string(&report).context("serialising the render report")?;
-        println!("{json}");
+        crate::output::document_text(&json);
     }
     if args.clock.strict_scripts {
         if let Some(why) = script_errors.strict_failure() {

@@ -332,6 +332,7 @@ impl Written {
             args.out.ascii_text.as_deref(),
             args.out.ascii_text_ansi.as_deref(),
             args.measure.gpu_time_json.as_deref(),
+            args.measure.frame_dump.as_deref(),
             args.seq.flip_json.as_deref(),
             args.refine.refine_out.as_deref(),
         ]

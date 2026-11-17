@@ -136,7 +136,7 @@ fn shadow_casters<'a>(
 
 /// Each shadow map layer's pass, by layer: a GPU debugger lists them by
 /// these names (#1083).
-const SHADOW_PASS_LABELS: [&str; crate::shadow::SHADOW_LAYERS] = {
+pub(super) const SHADOW_PASS_LABELS: [&str; crate::shadow::SHADOW_LAYERS] = {
     let mut labels = ["Shadow cascade"; crate::shadow::SHADOW_LAYERS];
     labels[0] = "Shadow cascade 0";
     labels[1] = "Shadow cascade 1";
@@ -225,7 +225,60 @@ fn draw_caster<'p>(
     pass.draw_indexed(0..count, 0, 0..1);
 }
 
+/// The pipeline [`draw_caster`] draws `caster` through, by its choices.
+fn caster_pipeline_name(caster: &Caster<'_>, woozy: bool) -> &'static str {
+    match (caster, woozy) {
+        (Caster::Mesh(d), true) if d.double_sided => "wooze shadow double-sided",
+        (Caster::Mesh(_), true) => "wooze shadow",
+        (Caster::Mesh(d), false) if d.double_sided => "shadow double-sided",
+        (Caster::Skinned(d), true) if d.double_sided => "wooze skinned shadow double-sided",
+        (Caster::Skinned(_), true) => "wooze skinned shadow",
+        (Caster::Skinned(d), false) if d.double_sided => "skinned shadow double-sided",
+        (Caster::Skinned(_), false) => "skinned shadow",
+        (Caster::Mesh(_), false) | (Caster::Terrain(_), _) => "shadow",
+    }
+}
+
 impl SceneRenderer {
+    /// Log each shadow map layer the pass drew as a pass of its own, with
+    /// the casters it drew: the same selector ([`shadow_casters`]) and the
+    /// same per-layer frustum test the draws made (#1084).
+    fn log_shadow_layers(
+        &self,
+        pass: &mut crate::frame_capture::LoggedPass,
+        layers: &[(usize, [[f32; 4]; 4])],
+        grass_casts: bool,
+    ) {
+        pass.writes(&["shadow_map"]);
+        let woozy_pass = self
+            .shadow_pass
+            .as_ref()
+            .is_some_and(|sp| sp.wooze.is_some());
+        for &(layer, vp) in layers {
+            let frustum = crate::frustum::Frustum::from_view_projection(&vp);
+            let mut logged = crate::frame_capture::LoggedPass::default();
+            logged.pass.name = SHADOW_PASS_LABELS[layer].to_string();
+            logged.pass.ran = true;
+            logged.writes(&["shadow_map"]);
+            logged.render_pass(SHADOW_PASS_LABELS[layer]);
+            if grass_casts && layer < GRASS_SHADOW_CASCADES {
+                logged.pass.also.push("Grass".into());
+            }
+            for (item, caster) in shadow_casters(&self.draws, &self.terrain.draws) {
+                let woozy = item.wooze().is_some() && woozy_pass;
+                let name = caster_pipeline_name(&caster, woozy);
+                if caster.visible(&frustum) {
+                    logged.draws.push(self.logged_draw(item, None, name));
+                } else {
+                    logged
+                        .culled
+                        .push(self.logged_draw(item, Some("outside the layer"), name));
+                }
+            }
+            pass.passes.push(logged);
+        }
+    }
+
     /// Render depth from light perspective for cascaded shadow mapping, and
     /// from the casting spot's for its layer (#504).
     #[profiling::function]
@@ -236,7 +289,10 @@ impl SceneRenderer {
         encoder: &mut wgpu::CommandEncoder,
         camera: &Camera,
         camera_pos: [f32; 3],
+        log: Option<&mut crate::frame_capture::FrameLog>,
     ) {
+        // The frame's description (#1084): the pass `encode_to` opened
+        let mut logged = log.and_then(|l| l.named("Shadows"));
         // Off, forbidden by the scene, or no sun that gives any light (#627)
         // and no spot that casts (#504): nothing to draw
         let sun_drawn = self.shadows_drawn();
@@ -244,6 +300,11 @@ impl SceneRenderer {
             .spot_shadow_drawn()
             .then(|| self.lights.shadow_spot().copied())
             .flatten();
+        if let Some(pass) = logged.as_deref_mut() {
+            if !sun_drawn && spot.is_none() {
+                pass.drew_nothing(self.shadows_off_reason());
+            }
+        }
         let shadow_pass = match &mut self.shadow_pass {
             Some(sp) => sp,
             None => return,
@@ -477,6 +538,9 @@ impl SceneRenderer {
                 }
             }
             group.leave(&mut pass);
+        }
+        if let Some(pass) = logged {
+            self.log_shadow_layers(pass, &layers, grass_casts);
         }
     }
 
@@ -1063,7 +1127,7 @@ impl SceneRenderer {
     /// Whether [`draw_main`](Self::draw_main) draws `item` (it passes over
     /// a terrain chunk out of view and a blended wireframe box), so a draw
     /// marker names only a draw.
-    fn main_pass_draws(&self, item: &DrawItem) -> bool {
+    pub(super) fn main_pass_draws(&self, item: &DrawItem) -> bool {
         match &item.draw {
             Draw::Terrain(n) => self.terrain_chunk_in_view(*n).is_some(),
             Draw::Static(d) => item.blend == Blend::Opaque || !d.is_wireframe,
@@ -1323,7 +1387,7 @@ impl SceneRenderer {
         depth_key: crate::bind_cache::DepthKey,
         target_view: &wgpu::TextureView,
         camera: &Camera,
-        mut timer: Option<&mut crate::gpu_timer::GpuTimer>,
+        scopes: &mut crate::frame_capture::FrameScopes,
     ) {
         let pp = match &self.postprocess_pipeline {
             Some(pp) => pp,
@@ -1338,14 +1402,9 @@ impl SceneRenderer {
         // so a slow frame names its pass, and a debug group of the same name
         // for GPU debuggers (#1083). All of them are in the frame's one
         // encoder (#139).
-        let mut scoped = |label: &'static str,
-                          encoder: &mut wgpu::CommandEncoder,
-                          run: &mut dyn FnMut(&mut wgpu::CommandEncoder)| {
-            let scope = crate::gpu_labels::begin(timer.as_deref_mut(), encoder, label);
-            run(encoder);
-            crate::gpu_labels::end(timer.as_deref_mut(), encoder, scope);
-        };
         let config = &self.postprocess_config;
+        // The depth the post chain reads, in the description's names (#1084)
+        let sd = self.scene_depth_id();
 
         // Stylize passes (#262). The frame every style reads; each stage
         // sets its own size and format.
@@ -1366,6 +1425,19 @@ impl SceneRenderer {
                 .active(crate::stylize::StyleStage::Display, config, ids),
             solo,
         );
+        // The styles this frame runs, for its description (#1084)
+        if let Some(styles) = scopes.log().and_then(|l| l.styles()) {
+            for (stage, list) in [("hdr", &hdr_styles), ("display", &display_styles)] {
+                styles.extend(
+                    list.iter()
+                        .map(|(d, _)| crate::frame_capture::StyleDescription {
+                            name: d.name.to_string(),
+                            stage: stage.to_string(),
+                            blend: config.styles.blend(d.name),
+                        }),
+                );
+            }
+        }
         // The entity style mask (#263), drawn this frame by encode_to while
         // a style that reads it is on
         let style_mask = crate::stylize::any_uses_mask(config, ids).then(|| {
@@ -1444,15 +1516,28 @@ impl SceneRenderer {
             frame.edges =
                 pp.styles
                     .encode_edges(&both, frame, encoder, &mut |label, encoder, run| {
-                        scoped(label, encoder, run)
+                        self.run_style_part(device, scopes, label, encoder, run, None)
                     });
+            scopes.note(crate::stylize::edges::EDGE_LABEL, |p| {
+                p.reads(&[sd]).writes(&["style edges"]);
+            });
         }
 
         // HDR stage: Kuwahara and friends, in linear HDR at scene resolution
+        let hdr_steps = crate::stylize::plan(hdr_styles.len(), false);
+        // Where each style writes, for a captured frame's taps (#1085)
+        let hdr_dsts = style_dsts(
+            scopes.taps.is_some(),
+            &hdr_styles,
+            &hdr_steps,
+            crate::stylize::StyleStage::Hdr,
+            "hdr_scene",
+            "",
+        );
         let hdr_result = match &mut style_frame {
             Some(frame) if !hdr_styles.is_empty() => crate::stylize::run_stage(
                 &hdr_styles,
-                &crate::stylize::plan(hdr_styles.len(), false),
+                &hdr_steps,
                 frame,
                 crate::stylize::StyleStage::Hdr,
                 encoder,
@@ -1464,26 +1549,56 @@ impl SceneRenderer {
                 pp.styles.blend_pass(),
                 pp.styles.ownership(),
                 pp.styles.fade(),
-                &mut |label, encoder, run| scoped(label, encoder, run),
+                &mut |label, encoder, run| {
+                    let dst = dst_of(&hdr_dsts, label);
+                    self.run_style_part(device, scopes, label, encoder, run, dst)
+                },
             ),
             _ => None,
         };
+        log_style_steps(
+            scopes,
+            &hdr_styles,
+            &hdr_steps,
+            crate::stylize::StyleStage::Hdr,
+            "hdr_scene",
+            "",
+            sd,
+        );
+        self.log_skipped_styles(scopes, crate::stylize::StyleStage::Hdr, &hdr_styles);
         let hdr_scene = hdr_result.as_ref().map(|(t, id)| (&t.view, *id));
+        // The target the HDR stage left its result in, by the
+        // description's name: the ping its last step wrote
+        let hdr_result_id = match hdr_steps.last() {
+            Some(&(_, slot)) if hdr_scene.is_some() => slot_id(
+                crate::stylize::StyleStage::Hdr,
+                slot,
+                "hdr_scene",
+                "hdr_scene",
+            ),
+            _ => "hdr_scene",
+        };
 
         // Run SSAO if enabled
         if config.enabled && config.ssao_enabled {
-            scoped("SSAO", encoder, &mut |encoder| {
+            scopes.run("SSAO", encoder, &mut |encoder| {
                 pp.run_ssao(
                     queue, encoder, device, resources, config, depth_view, depth_key, camera,
                 )
             });
+            scopes.note("SSAO", |p| {
+                p.reads(&[sd]).writes(&["ssao", "ssao_blur"]);
+            });
+            self.tap_pass(device, scopes, encoder, "SSAO");
+        } else {
+            scopes.skip("SSAO", || self.post_off_reason("ssao_enabled"));
         }
 
         // Run volumetric (god rays) if enabled and shadows are available
         if config.enabled && config.volumetric_enabled {
             if let Some(shadow_pass) = &self.shadow_pass {
                 if self.shadows_drawn() {
-                    scoped("Volumetric", encoder, &mut |encoder| {
+                    scopes.run("Volumetric", encoder, &mut |encoder| {
                         pp.run_volumetric(
                             queue,
                             encoder,
@@ -1502,8 +1617,20 @@ impl SceneRenderer {
                             },
                         )
                     });
+                    scopes.note("Volumetric", |p| {
+                        p.reads(&[sd, "shadow_map"])
+                            .writes(&["volumetric", "volumetric_blur"]);
+                    });
+                    self.tap_pass(device, scopes, encoder, "Volumetric");
                 }
             }
+            if !self.shadows_drawn() || self.shadow_pass.is_none() {
+                scopes.skip("Volumetric", || {
+                    "no sun shadow map to march through this frame".to_string()
+                });
+            }
+        } else {
+            scopes.skip("Volumetric", || self.post_off_reason("volumetric_enabled"));
         }
 
         // Run bloom if post-processing effects are enabled. It reads the
@@ -1520,9 +1647,42 @@ impl SceneRenderer {
                     id: crate::stylize::input_id::HDR,
                 },
             };
-            scoped("Bloom", encoder, &mut |encoder| {
-                pp.run_bloom(queue, encoder, device, resources, config, &source)
+            let from_style = source.id != crate::stylize::input_id::HDR;
+            // A captured frame reads each step's mip as it's written (#1085):
+            // the upsample writes over the downsample's
+            let scope = scopes.begin(encoder, "Bloom");
+            if scopes.taps.is_some() {
+                pp.run_bloom(
+                    queue,
+                    encoder,
+                    device,
+                    resources,
+                    config,
+                    &source,
+                    Some(&mut |encoder, mip, step| {
+                        let id = format!("bloom_mip_{mip}");
+                        self.tap_step(device, scopes, encoder, "Bloom", &id, step)
+                    }),
+                );
+            } else {
+                pp.run_bloom(queue, encoder, device, resources, config, &source, None);
+            }
+            scopes.end(encoder, scope);
+            let mips = resources.bloom_mips.len();
+            scopes.note("Bloom", |p| {
+                p.reads(&[if from_style {
+                    hdr_result_id
+                } else {
+                    "hdr_scene"
+                }]);
+                for i in 0..mips {
+                    p.writes(&[&format!("bloom_mip_{i}")]);
+                }
             });
+        } else if config.enabled && config.bloom_enabled {
+            scopes.skip("Bloom", || "no bloom mips at this size".to_string());
+        } else {
+            scopes.skip("Bloom", || self.post_off_reason("bloom_enabled"));
         }
 
         // FXAA (ADR 0050): when active, composite renders into the lazily
@@ -1572,6 +1732,25 @@ impl SceneRenderer {
         };
         // Composite: HDR + bloom + SSAO + volumetric + fog → tonemapped sRGB surface
         // (always runs — this is what converts Rgba16Float → surface format)
+        let composite_timed = !fxaa_active && scopes.timer.is_some();
+        if let Some(log) = scopes.log() {
+            let pass = log.ran("Composite", composite_timed);
+            pass.reads(&[hdr_result_id, sd]);
+            if config.bloom_enabled && !resources.bloom_mips.is_empty() {
+                pass.reads(&["bloom_mip_0"]);
+            }
+            if config.ssao_enabled {
+                pass.reads(&["ssao_blur"]);
+            }
+            if config.volumetric_enabled {
+                pass.reads(&["volumetric_blur"]);
+            }
+            pass.writes(&[match (&display_in, composite_slot, fxaa_active) {
+                (Some(_), crate::stylize::Slot::Input, _) => "style display in",
+                (_, _, true) => "fxaa_in",
+                _ => "surface",
+            }]);
+        }
         pp.composite(
             queue,
             encoder,
@@ -1598,11 +1777,20 @@ impl SceneRenderer {
             if fxaa_active {
                 None
             } else {
-                timer.as_deref_mut()
+                scopes.timer.as_mut()
             },
         );
+        self.tap_pass(device, scopes, encoder, "Composite");
 
         if let (Some(frame), Some(input)) = (&mut style_frame, &display_in) {
+            let display_dsts = style_dsts(
+                scopes.taps.is_some(),
+                &display_styles,
+                &display_steps,
+                crate::stylize::StyleStage::Display,
+                "style display in",
+                if fxaa_active { "fxaa_in" } else { "surface" },
+            );
             frame.width = input.width;
             frame.height = input.height;
             frame.format = pp.surface_format;
@@ -1625,15 +1813,152 @@ impl SceneRenderer {
                 pp.styles.ownership(),
                 pp.styles.fade(),
                 &mut |label, encoder, run| {
-                    let scope = crate::gpu_labels::begin(timer.as_deref_mut(), encoder, label);
-                    run(encoder);
-                    crate::gpu_labels::end(timer.as_deref_mut(), encoder, scope);
+                    let dst = dst_of(&display_dsts, label);
+                    self.run_style_part(device, scopes, label, encoder, run, dst)
                 },
             );
+            log_style_steps(
+                scopes,
+                &display_styles,
+                &display_steps,
+                crate::stylize::StyleStage::Display,
+                "style display in",
+                if fxaa_active { "fxaa_in" } else { "surface" },
+                sd,
+            );
         }
+        self.log_skipped_styles(scopes, crate::stylize::StyleStage::Display, &display_styles);
 
         if fxaa_active {
-            pp.run_fxaa(queue, encoder, device, resources, target_view, timer);
+            let timed = scopes.timer.is_some();
+            if let Some(log) = scopes.log() {
+                log.ran("FXAA", timed)
+                    .reads(&["fxaa_in"])
+                    .writes(&["surface"]);
+            }
+            pp.run_fxaa(
+                queue,
+                encoder,
+                device,
+                resources,
+                target_view,
+                scopes.timer.as_mut(),
+            );
+            self.tap_pass(device, scopes, encoder, "FXAA");
+        } else {
+            scopes.skip("FXAA", || self.post_off_reason("fxaa"));
         }
+    }
+
+    /// Log each style that is on but left out of this frame's chain, and
+    /// why (#399's blend 0, #406's reveal 0).
+    fn log_skipped_styles(
+        &self,
+        scopes: &mut crate::frame_capture::FrameScopes,
+        stage: crate::stylize::StyleStage,
+        ran: &[(
+            &'static crate::stylize::StyleDescriptor,
+            &dyn crate::stylize::StylePass,
+        )],
+    ) {
+        if scopes.log.is_none() {
+            return;
+        }
+        let config = &self.postprocess_config;
+        for d in crate::stylize::registry() {
+            if d.stage != stage || !d.is_on(config, &self.style_mask.ids) {
+                continue;
+            }
+            if ran.iter().any(|(r, _)| std::ptr::eq(*r, *d)) {
+                continue;
+            }
+            let why = if !config.enabled {
+                "post-processing is off".to_string()
+            } else if config.styles.blend(d.name) <= 0.0 {
+                "blend 0: the chain skips it, the frame is the one without it".to_string()
+            } else if !config.styles.shows_in(d.name, config) {
+                "not shown this frame (reveal 0, or a tear with no tear)".to_string()
+            } else {
+                "on but not built yet".to_string()
+            };
+            scopes.skip(d.label, || why);
+        }
+    }
+}
+
+/// Log what each style of one stage read and wrote, from the plan it ran
+/// by (#1084): a step's source and destination slots as target ids.
+fn log_style_steps(
+    scopes: &mut crate::frame_capture::FrameScopes,
+    styles: &[(
+        &'static crate::stylize::StyleDescriptor,
+        &dyn crate::stylize::StylePass,
+    )],
+    steps: &[(crate::stylize::Slot, crate::stylize::Slot)],
+    stage: crate::stylize::StyleStage,
+    input: &str,
+    last: &str,
+    sd: &str,
+) {
+    if scopes.log.is_none() {
+        return;
+    }
+    for ((d, _), (src, dst)) in styles.iter().zip(steps.iter().copied()) {
+        let (src, dst) = (
+            slot_id(stage, src, input, last),
+            slot_id(stage, dst, input, last),
+        );
+        scopes.note(d.label, |p| {
+            p.reads(&[&src, sd]).writes(&[&dst]);
+        });
+    }
+}
+
+/// Each style of one stage with the target its step writes (#1085), by the
+/// description's names: what a captured frame reads as the style ends.
+/// Empty, and nothing allocated, unless the frame is `capturing`.
+fn style_dsts(
+    capturing: bool,
+    styles: &[(
+        &'static crate::stylize::StyleDescriptor,
+        &dyn crate::stylize::StylePass,
+    )],
+    steps: &[(crate::stylize::Slot, crate::stylize::Slot)],
+    stage: crate::stylize::StyleStage,
+    input: &'static str,
+    last: &'static str,
+) -> Vec<(&'static str, &'static str)> {
+    if !capturing {
+        return Vec::new();
+    }
+    styles
+        .iter()
+        .zip(steps.iter().copied())
+        .map(|((d, _), (_, dst))| (d.label, slot_id(stage, dst, input, last)))
+        .collect()
+}
+
+/// The target `label`'s style writes, from [`style_dsts`].
+fn dst_of(dsts: &[(&'static str, &'static str)], label: &str) -> Option<&'static str> {
+    dsts.iter().find(|(l, _)| *l == label).map(|(_, d)| *d)
+}
+
+/// A style stage's slot as the description names its target: the stage's
+/// input, one of its two pings (`stylize`'s `HDR_PINGS` / `DISPLAY_PINGS`),
+/// or where its last style writes.
+fn slot_id<'a>(
+    stage: crate::stylize::StyleStage,
+    slot: crate::stylize::Slot,
+    input: &'a str,
+    last: &'a str,
+) -> &'a str {
+    let pings = match stage {
+        crate::stylize::StyleStage::Hdr => ["style hdr ping 0", "style hdr ping 1"],
+        crate::stylize::StyleStage::Display => ["style display ping 0", "style display ping 1"],
+    };
+    match slot {
+        crate::stylize::Slot::Input => input,
+        crate::stylize::Slot::Ping(n) => pings[n as usize & 1],
+        crate::stylize::Slot::Final => last,
     }
 }

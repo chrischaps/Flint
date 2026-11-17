@@ -29,6 +29,7 @@ const DEBUG_LISTS: &str = "Debug, lists, GPU and schemas";
 #[command(group(clap::ArgGroup::new("span").multiple(true).args(["time", "script_time", "mesh"])))]
 #[command(group(clap::ArgGroup::new("clock").multiple(true).args(["time", "script_time"])))]
 #[command(group(clap::ArgGroup::new("listing").args(["list_styles", "list_effects"])))]
+#[command(after_help = flint_core::env::help_section(&[flint_core::env::Group::Render]))]
 pub struct RenderArgs {
     /// Path to scene file
     #[arg(
@@ -482,6 +483,24 @@ pub struct MeasureArgs {
     /// kept frame's raw time per pass included
     #[arg(long, requires = "gpu_time")]
     pub gpu_time_json: Option<String>,
+
+    /// Write the rendered frame's description as JSON to this file
+    /// (#1084, ADR 0126): every pass in the order drawn, with the targets
+    /// it read and wrote, its draws by entity, what a cull set aside and
+    /// why, why a pass was skipped, and its GPU time in that frame; then
+    /// the frame's settings, targets, lights and stats. Of a span, the
+    /// last frame; not with a sweep or a sequence
+    #[arg(long)]
+    pub frame_dump: Option<String>,
+
+    /// Capture the rendered frame into this folder (#1085, ADR 0126): its
+    /// description as `manifest.json` (written last) and, under
+    /// `targets/`, every target each pass wrote, as that pass left it:
+    /// 8-bit as PNG, float as OpenEXR half, depth as OpenEXR f32 (`.flintframe`
+    /// by convention). The last image is the render's output byte for byte.
+    /// Of a span, the last frame; not with a sweep or a sequence
+    #[arg(long)]
+    pub frame_capture: Option<String>,
 }
 
 /// `--ai-refine`: a look refined toward a reference.
@@ -552,10 +571,6 @@ pub struct DebugArgs {
     /// help, by effect, then exit. Each is a `--set post.<key>=v`
     #[arg(long, conflicts_with = "list_styles")]
     pub list_effects: bool,
-
-    /// With --list-styles or --list-effects: print the list as JSON
-    #[arg(long, requires = "listing")]
-    pub json: bool,
 
     /// GPU adapter to use (case-insensitive substring of the adapter name,
     /// e.g. "NVIDIA"). Overrides WGPU_ADAPTER_NAME; default prefers the

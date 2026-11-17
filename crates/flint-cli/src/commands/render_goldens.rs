@@ -741,7 +741,7 @@ fn render_in_process(
         }
         Err(_) => {
             host.drop_device();
-            println!("  (panicked in this process; running the case again in its own)");
+            crate::output::say!("  (panicked in this process; running the case again in its own)");
             match render_spawned(flint, root, argv)? {
                 Rendered::Failed(log) => Ok(Rendered::Failed(format!(
                     "panicked in-process; in its own process:\n{log}"
@@ -818,7 +818,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
     }
 
     let flint = std::env::current_exe().context("finding the flint binary")?;
-    println!(
+    crate::output::say!(
         "goldens '{}': {} case(s){}, {}, from {}",
         manifest.suite.name,
         chosen.len(),
@@ -846,7 +846,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
     // On DX12 it names the shader compiler too (#912)
     let adapter = info.as_ref().map(flint_render::gpu_select::adapter_line);
     let key = info.as_ref().map(adapter_key);
-    println!(
+    crate::output::say!(
         "adapter: {}{}",
         adapter.as_deref().unwrap_or("none found"),
         key.as_deref()
@@ -1036,7 +1036,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
                 if let Some(want) = &case.error {
                     if !log.contains(want.as_str()) {
                         failed += 1;
-                        println!(
+                        crate::output::say!(
                             "  FAIL  {:<28} no user style error holding '{want}'; errors:\n{log}",
                             case.name
                         );
@@ -1051,14 +1051,14 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             }
             Rendered::NoGpu => {
                 no_gpu = true;
-                println!("  SKIP  {:<28} no GPU adapter", case.name);
+                crate::output::say!("  SKIP  {:<28} no GPU adapter", case.name);
                 report.message = Some("no GPU adapter".into());
                 reports.push(report);
                 continue;
             }
             Rendered::Failed(log) => {
                 failed += 1;
-                println!("  FAIL  {:<28} flint render failed:\n{log}", case.name);
+                crate::output::say!("  FAIL  {:<28} flint render failed:\n{log}", case.name);
                 report.status = "error";
                 report.message = Some(log);
                 reports.push(report);
@@ -1078,7 +1078,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
                 .max_flips
                 .map(|m| format!(" (limit {m:.1})"))
                 .unwrap_or_default();
-            println!(
+            crate::output::say!(
                 "  {}  {:<28} {:.2} reversals/frame (limit {:.2}), {:.1} flips/frame{}, \
                  {} frames, {}, {} ms",
                 if pass { "PASS" } else { "FAIL" },
@@ -1158,7 +1158,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             let (tc, text_diff) = compare_text(&want_text, got_text);
             let text_pass = tc.size == tc.golden_size && tc.cells <= case.text_cells;
             if !blessing {
-                println!(
+                crate::output::say!(
                     "  {}  {:<28} text {}x{}: {} cell(s) in {} row(s) differ (limit {})",
                     if text_pass { "PASS" } else { "FAIL" },
                     case.name,
@@ -1198,7 +1198,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
             if let (Some(path), Some(text)) = (&text_golden, &got_text) {
                 std::fs::write(path, text)
                     .with_context(|| format!("writing {}", path.display()))?;
-                println!("  BLESS {:<28} -> {}", case.name, path.display());
+                crate::output::say!("  BLESS {:<28} -> {}", case.name, path.display());
             }
             let moved = match &report.comparison {
                 Some(c) if c.changed == 0 => "unchanged".to_string(),
@@ -1210,7 +1210,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
                 ),
                 None => "new".to_string(),
             };
-            println!(
+            crate::output::say!(
                 "  BLESS {:<28} -> {} ({moved}, {ms} ms)",
                 case.name,
                 golden.display()
@@ -1221,7 +1221,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         }
 
         match (&report.comparison, report.status) {
-            (Some(cmp), _) => println!(
+            (Some(cmp), _) => crate::output::say!(
                 "  {}  {:<28} {:>6.2}% past {} (limit {:.2}%), mean {:.2} (limit {:.2}), max {}, {} ms{}",
                 if pass { "PASS" } else { "FAIL" },
                 case.name,
@@ -1240,12 +1240,12 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
                     ""
                 }
             ),
-            (None, "missing") => println!(
+            (None, "missing") => crate::output::say!(
                 "  FAIL  {:<28} no golden at {}; --bless makes it",
                 case.name,
                 golden.display()
             ),
-            (None, _) => println!(
+            (None, _) => crate::output::say!(
                 "  FAIL  {:<28} {}",
                 case.name,
                 report.message.as_deref().unwrap_or("")
@@ -1262,7 +1262,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
                 .comparison
                 .map(|c| format!("{} pixel(s) moved (max {})", c.changed, c.max))
                 .unwrap_or_default();
-            println!(
+            crate::output::say!(
                 "  DRIFT {:<28} {pixels}{text}: inside the tolerance, not byte-identical",
                 case.name
             );
@@ -1290,7 +1290,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         .collect();
     let compared = reports.iter().filter(|r| r.comparison.is_some()).count();
     if args.bless_drifted {
-        println!(
+        crate::output::say!(
             "re-blessed {} drifted case(s){}",
             rebless.len(),
             if rebless.is_empty() {
@@ -1301,9 +1301,11 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         );
     } else if !blessing && compared > 0 {
         if drifted.is_empty() {
-            println!("drift: none, every passing case is byte-identical with its golden");
+            crate::output::say!(
+                "drift: none, every passing case is byte-identical with its golden"
+            );
         } else {
-            println!(
+            crate::output::say!(
                 "drift: {} passing case(s) not byte-identical with their golden: {}
                    (--bless-drifted re-blesses only those, for a catch-up commit)",
                 drifted.len(),
@@ -1327,7 +1329,7 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
     let sheet_path = out_dir.join("index.html");
     std::fs::write(&sheet_path, super::golden_sheet::html(&sheet, &reports))
         .with_context(|| format!("writing {}", sheet_path.display()))?;
-    println!(
+    crate::output::say!(
         "{} case(s) in {seconds:.1} s ({}); contact sheet: {}",
         reports.len(),
         if args.isolate {
@@ -1338,9 +1340,26 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
         sheet_path.display()
     );
     if !args.isolate {
-        println!("{}", pipeline_summary(keep_pipelines));
+        crate::output::say!("{}", pipeline_summary(keep_pipelines));
     }
     flint_render::pipeline_cache::set_enabled(false);
+    // The document is report.json's cases with the run around them; a
+    // failing suite prints it before the error that exits 1
+    crate::output::when_json(|| {
+        let shown = |p: &Path| p.display().to_string().replace('\\', "/");
+        serde_json::json!({
+            "suite": manifest.suite.name,
+            "manifest": shown(manifest_path),
+            "valid": failed == 0 || blessing,
+            "failed": failed,
+            "drifted": drifted,
+            "no_gpu": no_gpu,
+            "seconds": seconds,
+            "report": shown(&report_path),
+            "sheet": shown(&sheet_path),
+            "cases": serde_json::to_value(&reports).unwrap_or_default(),
+        })
+    });
 
     if failed > 0 && !blessing {
         bail!("{failed} case(s) failed against their goldens");
@@ -1352,7 +1371,9 @@ pub fn run(manifest_path: &str, args: &GoldenArgs) -> Result<()> {
                 flint_render::list_adapters()
             );
         }
-        println!("no GPU adapter: skipped (--require-gpu or FLINT_REQUIRE_GPU=1 fails instead)");
+        crate::output::say!(
+            "no GPU adapter: skipped (--require-gpu or FLINT_REQUIRE_GPU=1 fails instead)"
+        );
     }
     Ok(())
 }

@@ -5,7 +5,11 @@
 /// The `collect_stats()` method on `SceneRenderer` populates the draw call
 /// and triangle fields. Timing (`fps`, `frame_time_ms`) and `resolution`
 /// are set by the caller (player or viewer) since they own the timing source.
-#[derive(Debug, Clone, Default)]
+///
+/// Serializable for a frame's description (#1084), `gpu_passes` left out
+/// (each described pass carries its own time).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct RenderStats {
     // Timing (set by caller)
     pub fps: f32,
@@ -39,6 +43,7 @@ pub struct RenderStats {
     // GPU time (ADR 0108): empty unless the renderer's GPU timing is on and
     // the device can time. Smoothed, and a frame or more late.
     /// Each timed scope, in the order the frame began them.
+    #[serde(skip)]
     pub gpu_passes: Vec<crate::gpu_timer::GpuPassTime>,
     /// From the frame's first timestamp to its last; 0 when untimed.
     pub gpu_frame_ms: f32,

@@ -55,6 +55,13 @@ pub struct GpuTimings {
 #[must_use = "a scope is timed only once ended"]
 pub struct GpuScope(Option<u32>);
 
+impl GpuScope {
+    /// Whether the frame had room to time it ([`MAX_SCOPES`]).
+    pub fn is_timed(self) -> bool {
+        self.0.is_some()
+    }
+}
+
 struct Scope {
     label: &'static str,
     /// Its first query; the second is the next.

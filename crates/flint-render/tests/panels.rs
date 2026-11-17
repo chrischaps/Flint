@@ -231,8 +231,8 @@ fn frame_camera() -> Camera {
 
 /// `FLINT_PANELS_DUMP=<dir>` writes a frame there, to look at a failure.
 fn dump(name: &str, frame: &[u8]) {
-    if let Ok(dir) = std::env::var("FLINT_PANELS_DUMP") {
-        let path = std::path::Path::new(&dir).join(format!("{name}.png"));
+    if let Some(dir) = flint_core::env::PANELS_DUMP.path() {
+        let path = dir.join(format!("{name}.png"));
         image::save_buffer(path, frame, W, H, image::ColorType::Rgba8).unwrap();
     }
 }

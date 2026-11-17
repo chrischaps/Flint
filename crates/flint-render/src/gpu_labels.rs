@@ -21,7 +21,8 @@
 //! | unset | [`GpuLabels::Draws`] under a capture tool ([`capture_tool`]), else [`GpuLabels::Groups`] natively and [`GpuLabels::Off`] on the web |
 //! | `0` or `off` | [`GpuLabels::Off`] |
 //! | `groups` | [`GpuLabels::Groups`] |
-//! | anything else (`1`) | [`GpuLabels::Draws`] |
+//! | `1`, `on` or `draws` | [`GpuLabels::Draws`] |
+//! | anything else | warned about once, then as unset |
 //!
 //! A group names a part, not a draw, so it costs a few calls a frame and no
 //! formatting: natively they are always on. On the web each is a WebGPU
@@ -81,10 +82,7 @@ pub fn level() -> GpuLabels {
     if v != UNSET {
         return GpuLabels::from_u8(v);
     }
-    let level = default_level(
-        std::env::var("FLINT_GPU_LABELS").ok().as_deref(),
-        capture_tool(),
-    );
+    let level = default_level(flint_core::env::GPU_LABELS.choice(), capture_tool());
     // A set_level that raced this one wins
     let _ = LEVEL.compare_exchange(UNSET, level as u8, Ordering::Relaxed, Ordering::Relaxed);
     GpuLabels::from_u8(LEVEL.load(Ordering::Relaxed))
@@ -170,6 +168,13 @@ fn loaded_capture_library() -> Option<&'static str> {
 pub struct FrameScope {
     timed: Option<GpuScope>,
     grouped: bool,
+}
+
+impl FrameScope {
+    /// The timer's scope, when a timer was handed to [`begin`].
+    pub fn timed(&self) -> Option<GpuScope> {
+        self.timed
+    }
 }
 
 /// Open a part of the frame named `label` in `encoder`: a debug group when

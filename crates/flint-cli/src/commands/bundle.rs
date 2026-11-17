@@ -468,8 +468,18 @@ pub fn run(args: BundleArgs) -> Result<()> {
     let dry_run = args.dry_run;
     let packed = pack(args)?;
     if !dry_run {
-        println!("written to {}", packed.out_dir.display());
+        crate::output::say!("written to {}", packed.out_dir.display());
     }
+    crate::output::when_json(|| {
+        serde_json::json!({
+            "scene": packed.scene,
+            "out_dir": packed.out_dir.display().to_string().replace('\\', "/"),
+            "dry_run": dry_run,
+            "files": packed.files.iter().map(|(file, bytes)| {
+                serde_json::json!({ "file": file, "bytes": bytes })
+            }).collect::<Vec<_>>(),
+        })
+    });
     Ok(())
 }
 
@@ -529,7 +539,7 @@ fn gather_game(args: &BundleArgs) -> Result<Gathered> {
         .collect();
     if !mounts.contains_key("engine/schemas") && !root.join("engine/schemas").is_dir() {
         if let Some(dir) = engine_schemas() {
-            println!(
+            crate::output::say!(
                 "no engine/schemas in the game: packing the engine's, from {}",
                 dir.display()
             );
@@ -714,7 +724,7 @@ fn gather_scene(args: &BundleArgs) -> Result<Gathered> {
     }
     if dirs.is_empty() {
         if let Some(dir) = engine_schemas() {
-            println!(
+            crate::output::say!(
                 "{scene} resolves no schemas: packing the engine's, from {}",
                 dir.display()
             );
@@ -868,7 +878,7 @@ fn gather_scene(args: &BundleArgs) -> Result<Gathered> {
     // Only the directories that hold something, as a game's bundle lists them
     schemas.retain(|s| files.keys().any(|p| p.starts_with(&format!("{s}/"))));
     let bytes: usize = files.values().map(Vec::len).sum();
-    println!(
+    crate::output::say!(
         "{scene}: {} files from {} ({} reached by name, {})",
         files.len(),
         flint_core::project::shown(&root),
@@ -1038,10 +1048,10 @@ fn write(gathered: Gathered, list: bool, dry_run: bool) -> Result<Packed> {
         for (part, list) in &parts {
             let label = part.as_deref().unwrap_or("main");
             for (path, bytes) in list {
-                println!("{:>10}  {label:<6}  {path}", bytes.len());
+                crate::output::say!("{:>10}  {label:<6}  {path}", bytes.len());
             }
         }
-        println!();
+        crate::output::say!();
     }
 
     let file_name = |part: &Option<String>| match part {
@@ -1081,9 +1091,9 @@ fn write(gathered: Gathered, list: bool, dry_run: bool) -> Result<Packed> {
     let bytes = Bundle::write(manifest, main.iter().map(|(p, b)| (p.as_str(), b.clone())));
     written.insert(0, (file_name(&None), main.len(), bytes));
 
-    println!("{name}: starts {scene}; schemas {}", schemas.join(", "));
+    crate::output::say!("{name}: starts {scene}; schemas {}", schemas.join(", "));
     for (file, count, bytes) in &written {
-        println!(
+        crate::output::say!(
             "  {:<32} {:>4} files  {:>9}",
             file,
             count,
@@ -1099,7 +1109,7 @@ fn write(gathered: Gathered, list: bool, dry_run: bool) -> Result<Packed> {
         out_dir: out_dir.clone(),
     };
     if dry_run {
-        println!("(dry run: nothing written)");
+        crate::output::say!("(dry run: nothing written)");
         return Ok(packed);
     }
     std::fs::create_dir_all(&out_dir).with_context(|| format!("creating {}", out_dir.display()))?;

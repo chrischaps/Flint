@@ -108,10 +108,10 @@ pub fn run(kind: AssetKind, name: &str, scene: Option<&str>, json: bool) -> Resu
     if json {
         let mut document = to_json(&project, &scene_dir, &answer);
         document["built_in"] = built_in.into();
-        println!("{}", serde_json::to_string_pretty(&document)?);
+        crate::output::document(&document);
         if answer.found.is_none() && !built_in {
             // The document is the answer; the exit code says there was none.
-            std::process::exit(1);
+            return Err(crate::output::failed());
         }
         return Ok(());
     }
