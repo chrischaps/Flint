@@ -14,6 +14,7 @@ The debug keys are a table (#717): each belongs to an owner (the player, or a sc
 |-----|--------|--------------|--------------------------|
 | `F1` | `keys` | This table, over the game | player, always |
 | `F2` | `stats` | The **stats overlay**: the [frame-time graph](profiling.md#the-frame-time-graph) and its hitch counters over the rendering stats; a second press shows the graph alone in a corner, a third closes it | player, always (the scene viewer's F2 shows its rendering stats alone) |
+| `Shift+F2` | `capture_frame` | Capture the next frame for the frame debugger: a `.flintframe` folder in `captures/` ([Capturing from the running player](profiling.md#capturing-from-the-running-player)); the note at the top names it | player, always (desktop) |
 | `F3` | `panels` | Every scene-component panel the current scene created (ocean, grass, camera, particles, styles, Living Props), a [panel for each component whose schema asks for one](#a-panel-from-a-schema), and every panel a game added | player, always |
 | `F4` | `render_panel` | The **Rendering & Effects** panel, on its own so it never flips out of phase with F3 | player, always (and the scene viewer) |
 | `F11` | `fullscreen` | Fullscreen, or back to the window | player, always |

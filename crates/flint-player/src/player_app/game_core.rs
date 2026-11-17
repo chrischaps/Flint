@@ -637,7 +637,10 @@ impl GameCore {
         let cues = self.animation.drain_sequence_cues();
         if !cues.is_empty() {
             for cue in &cues {
-                println!(
+                // Each cue is the script's to say (`on_sequence_cue`);
+                // `RUST_LOG=script=debug` lists them (#716)
+                tracing::debug!(
+                    target: "script",
                     "[sequence] {:?} '{}' cue '{}' at {:.2}s",
                     cue.entity_id, cue.sequence, cue.cue, cue.time
                 );
@@ -914,7 +917,7 @@ impl CoreCommands<'_> {
         if self.quiet {
             tracing::info!("{line}");
         } else {
-            println!("{line}");
+            tracing::info!(target: "script", "{line}");
         }
     }
 }

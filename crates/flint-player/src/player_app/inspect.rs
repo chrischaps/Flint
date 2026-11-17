@@ -84,8 +84,12 @@ impl InspectListener {
             closed.clone(),
             move |stream, peer| serve(stream, &to_frame, peer, &readers_closed),
         )?;
-        // stderr: a game's stdout may be what a harness reads
-        eprintln!("[inspect] listening on {addr}: flint query --attach {addr} \"entities\"");
+        // The player's one log (#716), under `inspect`, which --quiet keeps
+        tracing::info!(
+            target: "inspect",
+            addr = %addr,
+            "[inspect] listening on {addr}: flint query --attach {addr} \"entities\""
+        );
         Ok(Self { asks, addr, closed })
     }
 

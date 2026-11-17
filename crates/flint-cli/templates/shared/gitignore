@@ -2,6 +2,7 @@
 /dist/
 /save/
 /screenshots/
+/captures/
 .flint/procgen-cache/
 .flint/input.user.toml
 .flint/viewer-edits.jsonl

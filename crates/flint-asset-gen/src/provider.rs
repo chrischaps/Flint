@@ -144,18 +144,12 @@ pub enum ProviderStatus {
     NoApiKey,
 }
 
-/// Result of polling an async job
-#[derive(Debug, Clone)]
-pub enum JobPollResult {
-    /// Still processing, with progress percentage (0-100)
-    Processing(u8),
-    /// Completed successfully
-    Complete,
-    /// Failed with error message
-    Failed(String),
-}
-
-/// Trait implemented by each generation provider (Flux, Meshy, ElevenLabs, Mock)
+/// Trait implemented by each generation provider (Flux, Meshy, ElevenLabs, Mock).
+///
+/// A paid provider takes a [`crate::Calls`] when it is made
+/// ([`crate::providers::create_provider`]) and sends every request through
+/// it: the meter is asked before the call that costs money and records it
+/// once the provider has accepted it (#721).
 pub trait GenerationProvider: Send {
     /// Provider name (e.g. "flux", "meshy", "elevenlabs", "mock")
     fn name(&self) -> &str;
@@ -166,7 +160,9 @@ pub trait GenerationProvider: Send {
     /// Check if the provider is available (API key set, service reachable)
     fn health_check(&self) -> Result<ProviderStatus>;
 
-    /// Generate an asset synchronously (blocks until complete)
+    /// Generate an asset (blocks until complete). A provider whose work
+    /// takes minutes keeps a [`GenerationJob`] record while it waits, when
+    /// its `Calls` has a job store.
     fn generate(
         &self,
         request: &GenerateRequest,
@@ -174,18 +170,25 @@ pub trait GenerationProvider: Send {
         output_dir: &Path,
     ) -> Result<GenerateResult>;
 
-    /// Submit an async generation job (for long-running operations like 3D models)
-    fn submit_job(
-        &self,
-        request: &GenerateRequest,
-        style: Option<&StyleGuide>,
-    ) -> Result<GenerationJob>;
+    /// How many of the provider's price units `request` is billed (see
+    /// `prices.toml`: megapixels for Flux, seconds for ElevenLabs, tasks for
+    /// Meshy). A free provider counts 0.
+    fn billed_units(&self, request: &GenerateRequest) -> f64 {
+        let _ = request;
+        0.0
+    }
 
-    /// Poll the status of an async job
-    fn poll_job(&self, job: &GenerationJob) -> Result<JobPollResult>;
-
-    /// Download the result of a completed async job
-    fn download_result(&self, job: &GenerationJob, output_dir: &Path) -> Result<GenerateResult>;
+    /// Wait for a job a generate submitted and didn't see finish (the
+    /// process stopped, or the wait timed out), then download it. Nothing
+    /// new is paid for. Only a provider with remote jobs has any.
+    fn resume(&self, job: &GenerationJob, output_dir: &Path) -> Result<GenerateResult> {
+        let _ = output_dir;
+        Err(flint_core::FlintError::GenerationError(format!(
+            "job {} is {}'s, which has no remote jobs to resume",
+            job.id,
+            self.name()
+        )))
+    }
 
     /// Build the enriched prompt from request + style guide (for inspection)
     fn build_prompt(&self, request: &GenerateRequest, style: Option<&StyleGuide>) -> String;

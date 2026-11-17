@@ -10,7 +10,9 @@ mod shared_gpu;
 use flint_ecs::FlintWorld;
 use flint_import::ImportedMaterial;
 use flint_render::frame_capture::FrameDescription;
-use flint_render::{Camera, FrameHost, FrameInputs, RendererConfig, SceneRenderer, Vertex};
+use flint_render::{
+    Camera, DrawControls, FrameHost, FrameInputs, RendererConfig, SceneRenderer, Vertex,
+};
 
 const SIZE: u32 = 64;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -95,7 +97,17 @@ impl Gpu {
     /// One frame as a host draws it, timed when the device can time,
     /// then read back.
     fn frame(&self, renderer: &mut SceneRenderer, world: &FlintWorld) -> Vec<u8> {
-        renderer.prepare(self.device, self.queue, world, &FrameInputs::default());
+        self.frame_with(renderer, world, &FrameInputs::default())
+    }
+
+    /// [`frame`](Self::frame) with `inputs`.
+    fn frame_with(
+        &self,
+        renderer: &mut SceneRenderer,
+        world: &FlintWorld,
+        inputs: &FrameInputs,
+    ) -> Vec<u8> {
+        renderer.prepare(self.device, self.queue, world, inputs);
         let mut encoder = self.device.create_command_encoder(&Default::default());
         renderer.encode_to(
             self.device,
@@ -350,4 +362,131 @@ fn a_frame_nobody_asked_about_keeps_no_log_and_draws_the_same() {
     assert!(described
         .describe_frame(Some(&world), &FrameHost::default())
         .is_none());
+}
+
+/// The frame described under a replay's `controls` (#1089).
+fn described_with(
+    gpu: &Gpu,
+    renderer: &mut SceneRenderer,
+    world: &FlintWorld,
+    controls: Option<&DrawControls>,
+) -> (FrameDescription, Vec<u8>) {
+    renderer.describe_next_frame();
+    let inputs = FrameInputs {
+        draw_controls: controls,
+        ..Default::default()
+    };
+    let pixels = gpu.frame_with(renderer, world, &inputs);
+    let d = renderer
+        .describe_frame(Some(world), &FrameHost::default())
+        .expect("the frame was described");
+    (d, pixels)
+}
+
+fn scene_draws(d: &FrameDescription) -> Vec<String> {
+    d.pass("Scene")
+        .unwrap()
+        .draws
+        .iter()
+        .map(|dr| dr.entity.clone().unwrap_or_default())
+        .collect()
+}
+
+fn culled_as(d: &FrameDescription, why: &str) -> Vec<String> {
+    d.pass("Scene")
+        .unwrap()
+        .culled
+        .iter()
+        .filter(|c| c.culled.as_deref() == Some(why))
+        .map(|c| c.entity.clone().unwrap_or_default())
+        .collect()
+}
+
+fn casters(d: &FrameDescription) -> Vec<String> {
+    let mut names: Vec<String> = d
+        .pass("Shadows")
+        .unwrap()
+        .passes
+        .iter()
+        .flat_map(|p| &p.draws)
+        .filter_map(|dr| dr.entity.clone())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+#[test]
+fn a_replays_draw_limit_stops_the_scene_pass_and_leaves_the_shadows_whole() {
+    let gpu = gpu_or_skip!();
+    let world = world();
+    let mut renderer = gpu.renderer();
+    let (whole, full) = described_with(&gpu, &mut renderer, &world, None);
+    assert_eq!(scene_draws(&whole), ["crate", "in_view"]);
+
+    // The last step is the frame
+    let all = DrawControls {
+        scene_draws: Some(2),
+        ..Default::default()
+    };
+    let (d, pixels) = described_with(&gpu, &mut renderer, &world, Some(&all));
+    assert_eq!(scene_draws(&d), ["crate", "in_view"]);
+    assert_eq!(
+        pixels, full,
+        "a limit at the pass's own count changed the frame"
+    );
+
+    // One draw: the tile is set aside, and still casts
+    let one = DrawControls {
+        scene_draws: Some(1),
+        ..Default::default()
+    };
+    let (d, pixels) = described_with(&gpu, &mut renderer, &world, Some(&one));
+    assert_eq!(scene_draws(&d), ["crate"]);
+    assert_eq!(culled_as(&d, "past the draw limit"), ["in_view"]);
+    assert_eq!(casters(&d), casters(&whole));
+    assert_ne!(pixels, full);
+
+    // None at all
+    let none = DrawControls {
+        scene_draws: Some(0),
+        ..Default::default()
+    };
+    let (d, _) = described_with(&gpu, &mut renderer, &world, Some(&none));
+    assert!(scene_draws(&d).is_empty());
+
+    // And the controls last one frame
+    let (d, pixels) = described_with(&gpu, &mut renderer, &world, None);
+    assert_eq!(scene_draws(&d), ["crate", "in_view"]);
+    assert_eq!(pixels, full);
+}
+
+#[test]
+fn a_hidden_entity_draws_in_no_pass_as_if_it_were_never_there() {
+    let gpu = gpu_or_skip!();
+    let world = world();
+    let mut renderer = gpu.renderer();
+    let (whole, full) = described_with(&gpu, &mut renderer, &world, None);
+    assert!(casters(&whole).contains(&"crate".to_string()));
+
+    let crate_id = world.get_id("crate").unwrap();
+    let hide = DrawControls {
+        hidden: vec![crate_id],
+        ..Default::default()
+    };
+    let (d, hidden) = described_with(&gpu, &mut renderer, &world, Some(&hide));
+    assert_eq!(scene_draws(&d), ["in_view"]);
+    assert_eq!(culled_as(&d, "hidden"), ["crate"]);
+    assert!(
+        !casters(&d).contains(&"crate".to_string()),
+        "a hidden entity cast a shadow"
+    );
+    assert_ne!(hidden, full);
+
+    // The same pixels as the world without it
+    let mut without = self::world();
+    without.despawn(without.get_id("crate").unwrap()).unwrap();
+    let mut fresh = gpu.renderer();
+    let (_, gone) = described_with(&gpu, &mut fresh, &without, None);
+    assert_eq!(hidden, gone, "hiding the crate isn't the frame without it");
 }

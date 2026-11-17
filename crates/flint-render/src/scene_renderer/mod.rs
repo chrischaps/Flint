@@ -29,10 +29,11 @@ mod terrain;
 mod water;
 
 pub use binding::{BoundGrass, BoundScene, LoadedTerrain, SceneBinding};
+pub use capture::HeldFrameCapture;
 pub use describe::FrameHost;
 use draw_list::{Blend, Draw, DrawItem, DrawList, Layer, VertexStage};
 pub(crate) use fog_veil::FOG_VEIL_FORMAT;
-pub use frame::{FrameInputs, View2d};
+pub use frame::{DrawControls, FrameInputs, View2d};
 pub use grass_ground::{load_grass_ground_in, load_scene_grass_ground, LoadedGrassGround};
 pub use particles::load_scene_particle_textures;
 use post::next_post_config_generation;

@@ -104,15 +104,21 @@ impl WorldDump {
             match self.write(scene) {
                 Ok(()) => {
                     self.failure = None;
-                    eprintln!(
-                        "[dump] {} at t={now:.3}s (frame {}): {} entities",
+                    // The player's one log (#716), under `inspect`, which --quiet keeps
+                    let entities = self.snapshots.last().map_or(0, |s| s.entities.len());
+                    tracing::info!(
+                        target: "inspect",
+                        path = %self.path.display(),
+                        time = now,
+                        frame = self.frame,
+                        entities,
+                        "[dump] {} at t={now:.3}s (frame {}): {entities} entities",
                         self.path.display(),
                         self.frame,
-                        self.snapshots.last().map_or(0, |s| s.entities.len())
                     );
                 }
                 Err(why) => {
-                    tracing::warn!("--dump-world: {why}");
+                    tracing::warn!(target: "inspect", "--dump-world: {why}");
                     self.failure = Some(why);
                 }
             }

@@ -1,5 +1,6 @@
 //! CLI command implementations
 
+pub mod ai_costs;
 pub mod asset;
 pub mod asset_where;
 pub mod attach;
@@ -13,9 +14,11 @@ pub mod entity;
 pub mod env;
 pub mod examples;
 pub mod export;
+pub mod frame;
 pub mod frame_seq;
 pub mod gen;
 pub mod gen_ai;
+pub mod gen_catalog;
 pub mod gen_preview;
 pub mod gen_preview_common;
 pub mod gen_refine;
@@ -40,9 +43,11 @@ pub mod prefab;
 pub mod preview;
 pub mod query;
 pub mod render;
+pub mod render_args;
 mod render_frame_dump;
 pub mod render_goldens;
 pub mod render_plan;
+pub mod render_post;
 pub mod render_report;
 pub mod render_suite;
 pub mod render_watch;

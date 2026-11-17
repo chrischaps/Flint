@@ -162,6 +162,11 @@ pub mod codes {
     pub const BAD_INPUT_CONFIG: &str = "bad-input-config";
     /// A procgen spec a scene's model or texture is made from does not parse.
     pub const BAD_SPEC: &str = "bad-spec";
+    /// A procgen spec a scene names has a parameter its generator ignores
+    /// (a warning) or a value it can't use (an error): a wrong type, out of
+    /// range, not one of the choices, a required key missing (#718;
+    /// `flint_procgen::validate_params`, keyed by the parameter's path).
+    pub const SPEC_PARAM: &str = "spec-param";
     /// A `.spline.toml` a scene names does not parse, or a `spline_mesh`
     /// profile is no polygon (#750). Placed by line and column.
     pub const BAD_SPLINE: &str = "bad-spline";
@@ -369,6 +374,11 @@ pub mod codes {
             BAD_SPEC,
             Severity::Error,
             "a procgen spec a scene's model or texture is made from does not parse",
+        ),
+        (
+            SPEC_PARAM,
+            Severity::Error,
+            "a procgen spec a scene names has a value its generator can't use (an error) or a key it ignores (a warning)",
         ),
         (
             BAD_SPLINE,
@@ -962,7 +972,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 51);
+        assert_eq!(seen.len(), 52);
     }
 
     /// A problem in a scene-level table names the table as its header is

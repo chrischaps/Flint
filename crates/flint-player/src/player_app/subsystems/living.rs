@@ -86,7 +86,7 @@ pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     if let Some(line) =
         crate::player_app::missing_features::living_line(ctx.world, ctx.tables, grass)
     {
-        println!("{line}");
+        tracing::warn!(target: "load", "{line}");
     }
     None
 }

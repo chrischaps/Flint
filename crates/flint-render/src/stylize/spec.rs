@@ -131,6 +131,30 @@ impl StyleSpec {
     /// Write this spec into `config`: the style on (or off) with its
     /// settings, over whatever the scene said.
     pub fn apply(&self, config: &mut PostProcessConfig) {
+        self.apply_placement(config);
+        if self.enabled {
+            config.styles.set_enabled(&self.name, true);
+        } else {
+            // Off everywhere (#376): the table and every entity that
+            // would switch the style on for its own pixels, so a styled
+            // scene renders unstyled with the rest of its post kept
+            config.styles.set_off_everywhere(&self.name);
+        }
+        self.apply_values(config);
+    }
+
+    /// Write only the settings into `config`, leaving whether the style is
+    /// on as the scene or an earlier word left it: `flint render --set
+    /// <style>.<key>=v` (#708), as a scene's `[post_process.styles.<name>]`
+    /// key with no `enabled`.
+    pub fn apply_settings(&self, config: &mut PostProcessConfig) {
+        self.apply_placement(config);
+        self.apply_values(config);
+    }
+
+    /// Where the style draws: its order, blend, blend source, reveal and
+    /// whether it feeds bloom.
+    fn apply_placement(&self, config: &mut PostProcessConfig) {
         // Any style's place in its stage (#299) and whether it feeds bloom
         // (#300)
         for (key, value) in &self.settings {
@@ -159,15 +183,11 @@ impl StyleSpec {
         if let Some(feeds) = self.feeds_bloom {
             config.styles.set_feeds_bloom(&self.name, Some(feeds));
         }
+    }
+
+    /// The style's options, colours and numbers.
+    fn apply_values(&self, config: &mut PostProcessConfig) {
         let descriptor = find(&self.name).expect("checked by parse");
-        if self.enabled {
-            config.styles.set_enabled(&self.name, true);
-        } else {
-            // Off everywhere (#376): the table and every entity that
-            // would switch the style on for its own pixels, so a styled
-            // scene renders unstyled with the rest of its post kept
-            config.styles.set_off_everywhere(&self.name);
-        }
         for (key, value) in &self.settings {
             if key == "order"
                 || key == "blend"

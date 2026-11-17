@@ -25,6 +25,7 @@ TOOL_CRATES=(
     crates/flint-viewer
     crates/flint-asset-gen
     crates/flint-procgen-ai
+    crates/flint-ai-core
     tools/arch-analyzer
 )
 

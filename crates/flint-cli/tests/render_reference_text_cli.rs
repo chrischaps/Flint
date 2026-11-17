@@ -26,7 +26,9 @@ fn render(out: &Path, args: &[&str]) -> Output {
     std::process::Command::new(FLINT)
         .arg("render")
         .arg(scene())
-        .args(["--width", "320", "--height", "180", "--ascii", "-o"])
+        .args([
+            "--width", "320", "--height", "180", "--style", "ascii", "-o",
+        ])
         .arg(out)
         .args(args)
         .output()

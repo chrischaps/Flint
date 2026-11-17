@@ -8,14 +8,14 @@
 //! fed to `flint gen`) with no network and no API key.
 
 use flint_procgen::{
-    register_built_in_generators, Generator, GeneratorRegistry, OutputKind, ProcGenSpec,
-    SeedConfig, SeedMode, SeededRng, SpecMeta,
+    validate_params, Generator, GeneratorRegistry, OutputKind, ProcGenSpec, SeedConfig, SeedMode,
+    SeededRng, SpecMeta,
 };
 use serde_json::Value as Json;
 
 use crate::agent::{ProcGenAgent, SpecFeedback};
 use crate::error::{ProcGenAiError, Result};
-use crate::schema::{check_params, default_of, prop_type, repair_params, round3, NumBounds};
+use crate::schema::{default_of, prop_type, repair_params, round3, NumBounds};
 
 /// A mock AI agent for testing without network calls.
 ///
@@ -149,10 +149,7 @@ pub(crate) fn fnv1a(parts: &[&[u8]]) -> u64 {
 }
 
 pub(crate) fn registry() -> GeneratorRegistry {
-    let mut r = GeneratorRegistry::new();
-    register_built_in_generators(&mut r);
-    r.register(Box::new(flint_procgen::mock::MockGenerator));
-    r
+    GeneratorRegistry::with_built_ins()
 }
 
 /// The registered name for `generator`: exact, or with `_v1` appended
@@ -276,7 +273,7 @@ fn repaired(
     let generator = registry.get(&name)?;
     let schema = generator.param_schema();
     let mut fixed = spec.clone();
-    let mut notes: Vec<String> = check_params(&schema, &spec.params)
+    let mut notes: Vec<String> = validate_params(&schema, &spec.params)
         .iter()
         .map(ToString::to_string)
         .collect();
@@ -479,7 +476,7 @@ mod tests {
             let mut spec = MockAgent
                 .create_spec_from_prompt(prompt, generator)
                 .unwrap();
-            let issues = check_params(&schema_of(&spec.generator), &spec.params);
+            let issues = validate_params(&schema_of(&spec.generator), &spec.params);
             assert!(issues.is_empty(), "{prompt}: {issues:#?}");
             // Keep the texture small so the test stays quick in debug.
             if spec.generator == "texture_v1" {
@@ -575,6 +572,7 @@ mode = "random"
 [params]
 trunk_height = -2.0
 trunk_radius = 0.3
+branch_method = "space_colonization"
 crown_shape = "pyramid"
 "#,
         )
@@ -591,7 +589,7 @@ crown_shape = "pyramid"
         let revised = fb.revised_spec.expect("problems produce a revision");
         assert_eq!(revised.generator, "tree_v1");
         assert_eq!(revised.seed.mode, SeedMode::Fixed);
-        assert!(check_params(&schema_of("tree_v1"), &revised.params).is_empty());
+        assert!(validate_params(&schema_of("tree_v1"), &revised.params).is_empty());
         // The revision is itself clean apart from advice.
         let again = MockAgent.interpret_spec(&revised).unwrap();
         assert!(again.confidence > 0.8, "{:?}", again.suggestions);
@@ -617,7 +615,7 @@ crown_shape = "pyramid"
         assert_eq!(a, b);
         assert_ne!(a.params, spec.params, "refining changes something");
         assert_eq!(a.meta.version, "1.0.1");
-        assert!(check_params(&schema_of("tree_v1"), &a.params).is_empty());
+        assert!(validate_params(&schema_of("tree_v1"), &a.params).is_empty());
 
         let with_ref = MockAgent
             .refine_spec(&spec, Some(b"reference png bytes"))

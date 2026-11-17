@@ -11,17 +11,26 @@ use winit::keyboard::KeyCode;
 
 /// The player's actions, by the names `[debug_keys]` rebinds.
 const KEYS: &str = "keys";
+/// The action that shows the list, which the controls line names (#716)
+pub(super) const SHOW_KEYS_ACTION: &str = KEYS;
 const STATS: &str = "stats";
 #[cfg(feature = "debug-hud")]
 const PANELS: &str = "panels";
 #[cfg(feature = "debug-hud")]
 const RENDER_PANEL: &str = "render_panel";
 const FULLSCREEN: &str = "fullscreen";
+/// Capture the next frame for the frame debugger (#1086).
+pub(crate) const CAPTURE_FRAME: &str = "capture_frame";
 
 const SHOW_KEYS: DebugKey = DebugKey {
     action: KEYS,
     key: "F1",
     does: "Show or hide this list of debug keys",
+};
+const CAPTURE: DebugKey = DebugKey {
+    action: CAPTURE_FRAME,
+    key: "Shift+F2",
+    does: "Capture the next frame for the frame debugger (a .flintframe folder in captures/)",
 };
 const SHOW_FULLSCREEN: DebugKey = DebugKey {
     action: FULLSCREEN,
@@ -37,6 +46,7 @@ const PLAYER_KEYS: &[DebugKey] = &[
         key: "F2",
         does: "Stats: frame-time graph, hitches, render stats; again: graph alone; again: off",
     },
+    CAPTURE,
     DebugKey {
         action: PANELS,
         key: "F3",
@@ -57,6 +67,7 @@ const PLAYER_KEYS: &[DebugKey] = &[
         key: "F2",
         does: "Stats overlay",
     },
+    CAPTURE,
     SHOW_FULLSCREEN,
 ];
 
@@ -130,12 +141,12 @@ impl PlayerApp {
     }
 
     /// One of the player's own actions; `key` is the chord it is on.
-    #[cfg_attr(not(feature = "debug-hud"), allow(unused_variables))] // its notes are F3's and F4's
     fn player_debug_key(&mut self, action: &str, key: &str) {
         match action {
             KEYS => self.hud.key_table_open = !self.hud.key_table_open,
             // Off, the full overlay, the graph alone, off (#1078)
             STATS => self.set_stats_view(self.stats.view.next()),
+            CAPTURE_FRAME => self.ask_frame_capture(super::frame_capture::Trigger::Key, key),
             #[cfg(feature = "debug-hud")]
             PANELS => {
                 // The scene-component panels (grass, ocean, ...), not the
@@ -191,11 +202,11 @@ impl PlayerApp {
     pub(super) fn say_debug_key_config(&self) {
         let table = self.debug_key_table();
         for name in &table.unknown {
-            println!("[debug] [debug_keys] {name}: no debug key has this name (flint-player --list-keys lists them)");
+            tracing::warn!(target: "player", "[debug] [debug_keys] {name}: no debug key has this name (flint-player --list-keys lists them)");
         }
         for e in &table.entries {
             if let Standing::Clash(first) = e.standing {
-                println!(
+                tracing::warn!(target: "player",
                     "[debug] [debug_keys] {}: {} is `{first}`'s already, so it does nothing",
                     e.action,
                     e.key_label()
@@ -210,7 +221,7 @@ impl PlayerApp {
     pub(crate) fn list_debug_keys(&mut self) -> DebugKeyTable {
         self.refresh_project();
         if let Err(e) = self.configure_input_bindings() {
-            eprintln!("[debug] input config: {e:#}");
+            tracing::warn!(target: "input", "[debug] input config: {e:#}");
         }
         self.debug_key_table()
     }

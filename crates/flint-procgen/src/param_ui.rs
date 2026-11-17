@@ -4,7 +4,6 @@
 //! structured field descriptors (`ParamFieldSpec`) that a UI layer can consume
 //! directly — keeping JSON Schema interpretation out of the rendering code.
 
-use flint_core::toml_util::edit_distance;
 use serde_json::Value;
 
 /// Describes a single parameter field for UI rendering.
@@ -159,7 +158,7 @@ fn get_i64(prop: &Value, key: &str) -> Option<i64> {
 /// declared in the schema as `"x-when": { "pattern": ["voronoi_brick"] }`.
 ///
 /// JSON Schema ignores keywords it doesn't know, so validators still accept
-/// the schema; the UI hides the field and [`lint_params`] reports it when the
+/// the schema; the UI hides the field and [`crate::validate_params`] reports it when the
 /// condition is false.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParamCondition {
@@ -169,7 +168,7 @@ pub struct ParamCondition {
     pub any_of: Vec<String>,
 }
 
-fn parse_condition(prop: &Value) -> Option<ParamCondition> {
+pub(crate) fn parse_condition(prop: &Value) -> Option<ParamCondition> {
     let when = prop.get("x-when")?.as_object()?;
     let (key, values) = when.iter().next()?;
     let any_of = values
@@ -184,7 +183,7 @@ fn parse_condition(prop: &Value) -> Option<ParamCondition> {
 }
 
 /// The value a string field has in `params`, or its schema default.
-fn effective_string(
+pub(crate) fn effective_string(
     schema: &Value,
     params: &toml::map::Map<String, toml::Value>,
     key: &str,
@@ -211,226 +210,6 @@ impl ParamFieldSpec {
             }
         }
     }
-}
-
-/// Something in a spec's `[params]` that the generator will not read.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ParamIssue {
-    /// The key is not in the schema at all (usually a typo). `suggestion` is
-    /// the closest schema key, when one is close. `within` names the table
-    /// the key sits in (its schema's `title`, e.g. "brick_grid op") when that
-    /// isn't the generator's own params.
-    Unknown {
-        key: String,
-        suggestion: Option<String>,
-        within: Option<String>,
-    },
-    /// The key exists but only applies when `controller` is one of `needs`;
-    /// the spec has `controller = actual`, so the value is ignored.
-    Inapplicable {
-        key: String,
-        controller: String,
-        actual: String,
-        needs: Vec<String>,
-    },
-    /// The schema marks the key `"deprecated": true`: it is read (or once
-    /// was) but no longer does anything. `reason` is the key's description.
-    Deprecated { key: String, reason: Option<String> },
-}
-
-impl ParamIssue {
-    /// The params key the issue is about: a path such as `ops[2].colums`
-    /// when it sits inside a table or an array of them.
-    pub fn key(&self) -> &str {
-        match self {
-            Self::Unknown { key, .. }
-            | Self::Inapplicable { key, .. }
-            | Self::Deprecated { key, .. } => key,
-        }
-    }
-}
-
-impl std::fmt::Display for ParamIssue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unknown {
-                key,
-                suggestion,
-                within,
-            } => {
-                match within {
-                    Some(w) => write!(f, "`{key}` is not a parameter of the {w}")?,
-                    None => write!(f, "`{key}` is not a parameter of this generator")?,
-                }
-                match suggestion {
-                    Some(s) => write!(f, " (did you mean `{s}`?)"),
-                    None => Ok(()),
-                }
-            }
-            Self::Inapplicable {
-                key,
-                controller,
-                actual,
-                needs,
-            } => write!(
-                f,
-                "`{key}` is ignored: it only applies when {controller} is {}, and this spec has {controller} = \"{actual}\"",
-                needs
-                    .iter()
-                    .map(|n| format!("\"{n}\""))
-                    .collect::<Vec<_>>()
-                    .join(" or ")
-            ),
-            Self::Deprecated {
-                key,
-                reason: Some(r),
-            } => write!(f, "`{key}` is deprecated: {r}"),
-            Self::Deprecated { key, .. } => write!(f, "`{key}` is deprecated"),
-        }
-    }
-}
-
-/// Report every key in `params` that the generator described by `schema`
-/// will silently ignore: keys missing from the schema (when it sets
-/// `"additionalProperties": false`), keys whose `x-when` condition the
-/// spec doesn't meet, and keys the schema marks `"deprecated": true`.
-/// Returned in key order; empty means every key is read.
-///
-/// Tables inside the params are checked against their own schemas, the
-/// issue's key then being a path (`materials.shell.rougness`, `ops[2].colums`):
-/// - a property with `"properties"` is checked like the params themselves;
-/// - a table of named tables (`"additionalProperties": { ... }`) checks
-///   every entry against that schema;
-/// - an array checks each element against `"items"`, and when `items` is a
-///   `"oneOf"` with a `"discriminator": { "propertyName": "type" }`, against
-///   the branch whose `type` property has the element's value as `const`.
-pub fn lint_params(schema: &Value, params: &toml::Value) -> Vec<ParamIssue> {
-    let mut issues = Vec::new();
-    lint_value(schema, params, "", &mut issues);
-    issues
-}
-
-/// Lint `value` against `schema`, prefixing issue keys with `path`.
-fn lint_value(schema: &Value, value: &toml::Value, path: &str, issues: &mut Vec<ParamIssue>) {
-    match value {
-        toml::Value::Table(table) => {
-            if schema.get("properties").is_some() {
-                lint_table(schema, table, path, issues);
-            } else if let Some(entry) = schema.get("additionalProperties").filter(|e| e.is_object())
-            {
-                let mut names: Vec<&String> = table.keys().collect();
-                names.sort();
-                for name in names {
-                    lint_value(entry, &table[name.as_str()], &join(path, name), issues);
-                }
-            }
-        }
-        toml::Value::Array(items) => {
-            let Some(item_schema) = schema.get("items") else {
-                return;
-            };
-            for (i, item) in items.iter().enumerate() {
-                if let Some(branch) = discriminated_branch(item_schema, item) {
-                    lint_value(branch, item, &format!("{path}[{i}]"), issues);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-/// The schema an array element is checked against: `items` itself, or for a
-/// discriminated `oneOf` the branch matching the element's tag. `None` when
-/// no branch matches (the generator reports an unknown type itself).
-fn discriminated_branch<'a>(items: &'a Value, item: &toml::Value) -> Option<&'a Value> {
-    let Some(branches) = items.get("oneOf").and_then(|b| b.as_array()) else {
-        return Some(items);
-    };
-    let tag = items.get("discriminator")?.get("propertyName")?.as_str()?;
-    let wanted = item.get(tag)?.as_str()?;
-    branches.iter().find(|b| {
-        b.get("properties")
-            .and_then(|p| p.get(tag))
-            .and_then(|t| t.get("const"))
-            .and_then(|c| c.as_str())
-            == Some(wanted)
-    })
-}
-
-fn join(path: &str, key: &str) -> String {
-    if path.is_empty() {
-        key.to_string()
-    } else {
-        format!("{path}.{key}")
-    }
-}
-
-fn lint_table(
-    schema: &Value,
-    table: &toml::map::Map<String, toml::Value>,
-    path: &str,
-    issues: &mut Vec<ParamIssue>,
-) {
-    let properties = schema.get("properties").and_then(|p| p.as_object());
-    let closed = schema.get("additionalProperties") == Some(&Value::Bool(false));
-    let within = if path.is_empty() {
-        None
-    } else {
-        schema
-            .get("title")
-            .and_then(|t| t.as_str())
-            .map(str::to_string)
-    };
-
-    let mut keys: Vec<&String> = table.keys().collect();
-    keys.sort();
-    for key in keys {
-        match properties.and_then(|p| p.get(key.as_str())) {
-            None if closed => issues.push(ParamIssue::Unknown {
-                key: join(path, key),
-                suggestion: properties.and_then(|p| closest(key, p.keys())),
-                within: within.clone(),
-            }),
-            None => {}
-            Some(prop) => {
-                if prop.get("deprecated") == Some(&Value::Bool(true)) {
-                    issues.push(ParamIssue::Deprecated {
-                        key: join(path, key),
-                        reason: prop
-                            .get("description")
-                            .and_then(|d| d.as_str())
-                            .map(str::to_string),
-                    });
-                    continue;
-                }
-                if let Some(c) = parse_condition(prop) {
-                    let actual = effective_string(schema, table, &c.key).unwrap_or_default();
-                    if !c.any_of.contains(&actual) {
-                        issues.push(ParamIssue::Inapplicable {
-                            key: join(path, key),
-                            controller: c.key,
-                            actual,
-                            needs: c.any_of,
-                        });
-                        // Nothing inside an ignored key is read either.
-                        continue;
-                    }
-                }
-                lint_value(prop, &table[key.as_str()], &join(path, key), issues);
-            }
-        }
-    }
-}
-
-/// The candidate within edit distance 2 (or a third of the key's length,
-/// whichever is larger) of `key`, nearest first.
-fn closest<'a>(key: &str, candidates: impl Iterator<Item = &'a String>) -> Option<String> {
-    let limit = (key.chars().count() / 3).max(2);
-    candidates
-        .map(|c| (edit_distance(key, c), c))
-        .filter(|(d, _)| *d <= limit)
-        .min_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)))
-        .map(|(_, c)| c.clone())
 }
 
 // ─── Parameter reference ───────────────────────────────────────────────────
@@ -488,8 +267,60 @@ pub fn param_reference_markdown(schema: &Value) -> String {
     out
 }
 
+/// [`param_reference_markdown`] as plain text, for a terminal (`flint gen
+/// --describe`): the same groups in the same order, a line a key with its
+/// type and default, its description indented under it.
+pub fn param_reference_text(schema: &Value) -> String {
+    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
+        return String::new();
+    };
+    let plain = |s: String| s.replace('`', "").replace("\\|", "|");
+    let mut groups: std::collections::BTreeMap<String, Vec<(&String, &Value)>> = Default::default();
+    for (key, prop) in props {
+        let heading = match parse_condition(prop) {
+            None => String::new(),
+            Some(c) => format!(
+                "Only when {} is {}",
+                c.key,
+                c.any_of
+                    .iter()
+                    .map(|v| format!("\"{v}\""))
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            ),
+        };
+        groups.entry(heading).or_default().push((key, prop));
+    }
+    let width = props.keys().map(|k| k.chars().count()).max().unwrap_or(0);
+    let mut out = String::new();
+    for (heading, rows) in &groups {
+        if !heading.is_empty() {
+            out.push_str(&format!("\n{heading}:\n"));
+        }
+        for (key, prop) in rows {
+            let mut line = format!("  {key:<width$}  {}", plain(type_cell(prop)));
+            if let Some(d) = prop.get("default") {
+                line.push_str(&format!(", default {}", plain(default_cell(d))));
+            }
+            if prop.get("deprecated") == Some(&Value::Bool(true)) {
+                line.push_str(" (deprecated)");
+            }
+            out.push_str(line.trim_end());
+            out.push('\n');
+            if let Some(text) = prop.get("description").and_then(|d| d.as_str()) {
+                out.push_str(&format!("  {:width$}    {text}\n", ""));
+            }
+        }
+    }
+    out
+}
+
 /// "number ≥ 0", "integer 1–8", "`a` \| `b`", "hex colour" and so on.
 fn type_cell(prop: &Value) -> String {
+    // A pipeline op's `type`: the one value it may have
+    if let Some(c) = prop.get("const") {
+        return format!("`{c}`");
+    }
     let num = |k: &str| prop.get(k).and_then(|v| v.as_f64());
     let fmt = |v: f64| {
         if v.fract() == 0.0 {
@@ -826,7 +657,7 @@ mod tests {
         ));
     }
 
-    // ── x-when and lint_params ──────────────────────────────────────────────
+    // ── x-when ──────────────────────────────────────────────────────────────
 
     fn shape_schema() -> Value {
         json!({
@@ -867,57 +698,6 @@ mod tests {
         assert!(side.applies(&schema, square.as_table().unwrap()));
         assert!(!radius.applies(&schema, square.as_table().unwrap()));
         assert!(color.applies(&schema, square.as_table().unwrap()));
-    }
-
-    #[test]
-    fn lint_is_quiet_when_every_key_is_read() {
-        let p = params("shape = \"square\"\nside = 2.0\ncolor = \"red\"");
-        assert!(lint_params(&shape_schema(), &p).is_empty());
-    }
-
-    #[test]
-    fn lint_reports_keys_for_another_mode() {
-        let issues = lint_params(&shape_schema(), &params("side = 2.0"));
-        assert_eq!(
-            issues,
-            vec![ParamIssue::Inapplicable {
-                key: "side".into(),
-                controller: "shape".into(),
-                actual: "circle".into(),
-                needs: vec!["square".into()],
-            }]
-        );
-        assert_eq!(
-            issues[0].to_string(),
-            "`side` is ignored: it only applies when shape is \"square\", and this spec has shape = \"circle\""
-        );
-    }
-
-    #[test]
-    fn lint_reports_typos_with_a_suggestion() {
-        let issues = lint_params(&shape_schema(), &params("radus = 1.0\nwobble = 3"));
-        assert_eq!(
-            issues,
-            vec![
-                ParamIssue::Unknown {
-                    key: "radus".into(),
-                    suggestion: Some("radius".into()),
-                    within: None,
-                },
-                ParamIssue::Unknown {
-                    key: "wobble".into(),
-                    suggestion: None,
-                    within: None,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn lint_trusts_open_schemas_with_unknown_keys() {
-        let mut schema = shape_schema();
-        schema["additionalProperties"] = json!(true);
-        assert!(lint_params(&schema, &params("anything = 1")).is_empty());
     }
 
     // ── nested tables and arrays ────────────────────────────────────────────
@@ -966,41 +746,6 @@ mod tests {
                 }
             }
         })
-    }
-
-    #[test]
-    fn lint_follows_named_tables_and_tagged_arrays() {
-        let p = params(
-            r##"
-[materials.shell]
-rougness = 0.4
-[materials.leg]
-roughness = 0.6
-[[ops]]
-type = "grid"
-colums = 8
-[[ops.stops]]
-position = 0.0
-colour = "#fff"
-[[ops]]
-type = "open"
-anything = 1
-[[ops]]
-type = "no_such_op"
-whatever = 2
-"##,
-        );
-        let issues = lint_params(&nested_schema(), &p);
-        let shown: Vec<String> = issues.iter().map(|i| i.to_string()).collect();
-        assert_eq!(
-            shown,
-            [
-                "`materials.shell.rougness` is not a parameter of the material (did you mean `roughness`?)",
-                "`ops[0].colums` is not a parameter of the grid op (did you mean `columns`?)",
-                "`ops[0].stops[0].colour` is not a parameter of the stop",
-            ]
-        );
-        assert_eq!(issues[1].key(), "ops[0].colums");
     }
 
     #[test]

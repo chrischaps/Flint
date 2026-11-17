@@ -381,17 +381,18 @@ flint render scene.toml -o wireframe.png --debug-mode wireframe
 flint render scene.toml -o normals.png --debug-mode normals
 flint render scene.toml -o depth.png --debug-mode depth
 
-# Post-processing control
-flint render scene.toml -o bloom.png --bloom-intensity 0.08
+# Post-processing control: --set post.<key>=<value> sets one [post_process] key
+flint render --list-effects     # every key, its kind, default and range
+flint render scene.toml -o bloom.png --set post.bloom_intensity=0.08 --set post.bloom_enabled=true
 flint render scene.toml -o raw.png --no-postprocess
-flint render scene.toml -o dof.png --dof 0.6 --dof-focus 8 --dof-range 3
-flint render scene.toml -o graded.png --grade-lift 0.03,0.02,0.015 --grade-gain 1.04,1,0.94 --film-grain 0.03
-flint render scene.toml -o drained.png --desaturate 0.85
+flint render scene.toml -o dof.png --set post.dof_strength=0.6 --set post.dof_focus_distance=8 --set post.dof_focus_range=3
+flint render scene.toml -o graded.png --set post.grade_lift=0.03,0.02,0.015 --set post.grade_gain=1.04,1,0.94 --set post.film_grain=0.03
+flint render scene.toml -o drained.png --set post.desaturate=0.85
 
 # Anti-aliasing and lighting levers (both default off; ADR 0058 / 0048)
-flint render scene.toml -o smooth.png --msaa 4 --fxaa
+flint render scene.toml -o smooth.png --msaa 4 --set post.fxaa=true
 flint render scene.toml -o clay.png --oren-nayar 0.7 --sheen-strength 0.15 --sheen-color 1,0.9,0.8
 
 # Cheaper SSAO for quick iteration
-flint render scene.toml -o fast.png --ssao-samples 16
+flint render scene.toml -o fast.png --set post.ssao_samples=16
 ```

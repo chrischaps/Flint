@@ -132,7 +132,7 @@ impl Generator for TextureGenerator {
     fn param_schema(&self) -> serde_json::Value {
         use serde_json::{json, Value};
 
-        // `x-when` says which patterns read a key (see `param_ui::lint_params`):
+        // `x-when` says which patterns read a key (see `crate::validate_params`):
         // the editor hides the rest and `flint gen` warns about them.
         let only = |patterns: &[&str], mut prop: Value| {
             prop["x-when"] = json!({ "pattern": patterns });
@@ -845,7 +845,7 @@ type = "derive_normal"
                 }
                 let spec = ProcGenSpec::from_file(&path).unwrap();
                 let gen = reg.get(&spec.generator).unwrap();
-                for issue in crate::lint_params(&gen.param_schema(), &spec.params) {
+                for issue in crate::validate_params(&gen.param_schema(), &spec.params) {
                     problems.push(format!("{}: {issue}", path.display()));
                 }
                 checked += 1;

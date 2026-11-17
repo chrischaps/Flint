@@ -15,6 +15,40 @@ fn test_engine_creation() {
     assert!(engine.scripts.is_empty());
 }
 
+/// The player's controls line asks which actions a scene's scripts read
+/// (#716): a string literal anywhere counts, a comment or a name doesn't
+#[test]
+fn a_string_literal_is_found_in_a_script_and_a_comment_is_not() {
+    let engine = ScriptEngine::new();
+    let ast = engine
+        .compile(
+            r#"
+            // move_backward is the player's, not this script's
+            fn on_update() {
+                if is_action_pressed("move_left") { log("left"); }
+                let near = || action_value("jump");
+            }
+            fn steer() { "steer" }
+            fn move_right() { 1 }
+            let move_backward = 1;
+            let input = #{};
+            input.read("sprint");
+            "#,
+        )
+        .unwrap();
+    for (name, found) in [
+        ("move_left", true),
+        ("jump", true),
+        ("steer", true),
+        ("sprint", true),
+        ("move_backward", false),
+        ("move_right", false),
+        ("move", false),
+    ] {
+        assert_eq!(instance::names_string(&ast, name), found, "{name}");
+    }
+}
+
 #[test]
 fn test_compile_valid_script() {
     let engine = ScriptEngine::new();

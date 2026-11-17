@@ -1616,6 +1616,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "flint-ai-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "toml",
+ "ureq",
+]
+
+[[package]]
 name = "flint-android"
 version = "0.1.0"
 dependencies = [
@@ -1675,6 +1686,7 @@ name = "flint-asset-gen"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "flint-ai-core",
  "flint-asset",
  "flint-core",
  "flint-import",
@@ -1686,7 +1698,6 @@ dependencies = [
  "thiserror 2.0.18",
  "toml",
  "tracing",
- "ureq",
  "uuid",
 ]
 
@@ -1732,6 +1743,8 @@ dependencies = [
  "egui-snarl",
  "egui-wgpu",
  "egui-winit",
+ "exr",
+ "flint-ai-core",
  "flint-animation",
  "flint-asset",
  "flint-asset-gen",
@@ -1856,6 +1869,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -2001,13 +2015,13 @@ dependencies = [
 name = "flint-procgen-ai"
 version = "0.1.0"
 dependencies = [
+ "flint-ai-core",
  "flint-procgen",
  "image",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "toml",
- "ureq",
 ]
 
 [[package]]
@@ -2169,6 +2183,7 @@ dependencies = [
  "flint-scene",
  "flint-schema",
  "flint-wooze",
+ "image",
  "notify",
  "notify-debouncer-mini",
  "pollster",
@@ -5699,6 +5714,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-serde"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "704b1aeb7be0d0a84fc9828cae51dab5970fee5088f83d1dd7ee6f6246fc6ff1"
+dependencies = [
+ "serde",
+ "tracing-core",
+]
+
+[[package]]
 name = "tracing-subscriber"
 version = "0.3.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5708,12 +5733,15 @@ dependencies = [
  "nu-ansi-term",
  "once_cell",
  "regex-automata",
+ "serde",
+ "serde_json",
  "sharded-slab",
  "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
  "tracing-log",
+ "tracing-serde",
 ]
 
 [[package]]

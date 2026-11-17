@@ -80,6 +80,19 @@ pub fn load_scene_text(
     Ok((world, scene_file))
 }
 
+/// [`load_scene_text`] that hands back what it found and logs nothing: for
+/// text that is a world saved after its load (a frame capture's
+/// `replay/world.toml`, #1089), whose model parts name sub-meshes the
+/// renderer registered rather than files, so every part would be reported
+/// missing.
+pub fn load_scene_text_diagnosed(
+    content: &str,
+    path: &Path,
+    registry: &SchemaRegistry,
+) -> Result<(FlintWorld, SceneFile, Vec<Diagnostic>)> {
+    load_text_diagnosed(content, path, registry)
+}
+
 /// What [`load_scene_diagnosed`] and [`load_scene_text`] share: parse, expand
 /// prefabs, diagnose, build the world.
 ///

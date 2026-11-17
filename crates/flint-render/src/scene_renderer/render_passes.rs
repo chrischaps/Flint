@@ -109,7 +109,7 @@ fn shadow_caster<'a>(
     item: &'a DrawItem,
     terrain: &'a [crate::terrain_pipeline::TerrainDrawCall],
 ) -> Option<Caster<'a>> {
-    if item.lod_culled() {
+    if item.out_of_shadows() {
         return None;
     }
     match &item.draw {
@@ -950,7 +950,7 @@ impl SceneRenderer {
                 &self.grass.render_instance_bind_group,
                 &self.grass.draw_args_buffer,
             ) {
-                if self.grass.drawing {
+                if self.grass.drawing && !self.draws.grass_cut() {
                     let group = PassGroup::open(render_pass, "Grass");
                     // Bind group 0 (transform): the grass's own view uniforms,
                     // so grass on a game's ground draws with no terrain loaded
@@ -1007,7 +1007,8 @@ impl SceneRenderer {
                 render_pass
                     .set_index_buffer(sp.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.set_bind_group(0, &sp.uniform_bind_group, &[]);
-                for batch in &self.sprite2d_batches {
+                let drawn = self.draws.sprites_drawn();
+                for batch in self.sprite2d_batches.iter().take(drawn) {
                     render_pass.set_bind_group(1, &batch.instance_bind_group, &[]);
                     render_pass.set_bind_group(2, &batch.texture_bind_group, &[]);
                     render_pass.draw_indexed(0..6, 0, 0..batch.instance_count);
@@ -1116,23 +1117,33 @@ impl SceneRenderer {
 
     /// Terrain chunk `n`, unless the camera can't see it.
     fn terrain_chunk_in_view(&self, n: u32) -> Option<&crate::terrain_pipeline::TerrainDrawCall> {
-        let draw = self.terrain.draws.get(n as usize)?;
-        let hidden = self
-            .camera_frustum
-            .as_ref()
-            .is_some_and(|f| !f.aabb_visible(draw.aabb_min, draw.aabb_max));
-        (!hidden).then_some(draw)
+        chunk_in_view(&self.terrain.draws, self.camera_frustum.as_ref(), n)
     }
 
     /// Whether [`draw_main`](Self::draw_main) draws `item` (it passes over
     /// a terrain chunk out of view and a blended wireframe box), so a draw
     /// marker names only a draw.
     pub(super) fn main_pass_draws(&self, item: &DrawItem) -> bool {
-        match &item.draw {
-            Draw::Terrain(n) => self.terrain_chunk_in_view(*n).is_some(),
-            Draw::Static(d) => item.blend == Blend::Opaque || !d.is_wireframe,
-            Draw::Skinned(_) | Draw::Echo(_) | Draw::Billboard(_) | Draw::Particles(_) => true,
-        }
+        main_pass_draws(&self.terrain.draws, self.camera_frustum.as_ref(), item)
+    }
+
+    /// A replay's draw limit (#1089), once this camera's culls are made:
+    /// the scene pass's draws past it are set aside, counted as
+    /// `log_scene_draws` lists them. Nothing without one.
+    pub(super) fn cut_draws_to_limit(&mut self) {
+        let terrain = &self.terrain.draws;
+        let frustum = self.camera_frustum.as_ref();
+        let grass = self.grass.drawing && self.pipelines.grass.is_some();
+        let sprites = if self.pipelines.sprite2d.is_some() {
+            self.sprite2d_batches.len()
+        } else {
+            0
+        };
+        self.draws.cut_to_limit(
+            |item| main_pass_draws(terrain, frustum, item),
+            grass,
+            sprites,
+        );
     }
 
     /// The main pass's selector: one item, through the pipeline its kind,
@@ -1960,5 +1971,30 @@ fn slot_id<'a>(
         crate::stylize::Slot::Input => input,
         crate::stylize::Slot::Ping(n) => pings[n as usize & 1],
         crate::stylize::Slot::Final => last,
+    }
+}
+
+/// Terrain chunk `n` of `terrain`, unless `frustum` can't see it.
+fn chunk_in_view<'a>(
+    terrain: &'a [crate::terrain_pipeline::TerrainDrawCall],
+    frustum: Option<&crate::frustum::Frustum>,
+    n: u32,
+) -> Option<&'a crate::terrain_pipeline::TerrainDrawCall> {
+    let draw = terrain.get(n as usize)?;
+    let hidden = frustum.is_some_and(|f| !f.aabb_visible(draw.aabb_min, draw.aabb_max));
+    (!hidden).then_some(draw)
+}
+
+/// [`SceneRenderer::main_pass_draws`] from the fields it reads, so a walk
+/// that changes the draw list can ask it.
+fn main_pass_draws(
+    terrain: &[crate::terrain_pipeline::TerrainDrawCall],
+    frustum: Option<&crate::frustum::Frustum>,
+    item: &DrawItem,
+) -> bool {
+    match &item.draw {
+        Draw::Terrain(n) => chunk_in_view(terrain, frustum, *n).is_some(),
+        Draw::Static(d) => item.blend == Blend::Opaque || !d.is_wireframe,
+        Draw::Skinned(_) | Draw::Echo(_) | Draw::Billboard(_) | Draw::Particles(_) => true,
     }
 }

@@ -1,0 +1,21 @@
+# Written by scripts/clippy-conf.sh from the root clippy.toml (#761); edit
+# that file and rerun the script, never this one. This crate never runs in
+# the player and reads the disk directly, so it holds the root list's
+# every-crate group (the wgpu and egui seams), not its runtime group.
+disallowed-methods = [
+    # #944/#945: built-in WGSL goes through flint_render::TrustedShader, which
+    # is create_shader_module_trusted without loop bounding. User styles
+    # (stylize/custom.rs) keep the checked call.
+    { path = "wgpu::Device::create_shader_module", reason = "built-in WGSL: use flint_render::TrustedShader::create_trusted_shader_module; user style WGSL keeps the checked call (#944)" },
+    { path = "wgpu::Device::create_shader_module_trusted", reason = "built-in WGSL: use flint_render::TrustedShader::create_trusted_shader_module, the one place that picks the checks (#945)" },
+    { path = "wgpu::Device::create_shader_module_unchecked", reason = "built-in WGSL: use flint_render::TrustedShader::create_trusted_shader_module; bounds and division checks stay on (#945)" },
+    # #944: wgpu 29 changed what this returns; flint_render::AcquireFrame is the one place that knows.
+    { path = "wgpu::Surface::get_current_texture", reason = "take the frame with flint_render::AcquireFrame::acquire (#944)" },
+    # #944: egui 0.36 asserts when a FullOutput drops with texture updates in it.
+    # Tests run frames with flint_debug_ui::run_headless_frame; a real frame
+    # uploads its deltas, clears them, and allows this.
+    # #948: wgpu 30 waits without a limit unless asked; flint_render::wait_for_gpu
+    # gives every wait FLINT_GPU_WAIT_TIMEOUT, so a hung GPU on CI fails fast.
+    { path = "wgpu_types::PollType::wait_indefinitely", reason = "block on the GPU with flint_render::wait_for_gpu, which takes FLINT_GPU_WAIT_TIMEOUT (#948)" },
+    { path = "egui::Context::run_ui", reason = "a test's frame is flint_debug_ui::run_headless_frame; a host that uploads its texture updates allows this (#944)" },
+]

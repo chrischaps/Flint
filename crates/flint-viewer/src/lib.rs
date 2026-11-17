@@ -8,6 +8,7 @@
 
 pub mod app;
 pub mod edits;
+pub mod host;
 pub mod panels;
 pub mod picking;
 pub mod projection;

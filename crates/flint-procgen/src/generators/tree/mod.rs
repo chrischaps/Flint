@@ -904,7 +904,7 @@ impl Generator for TreeGenerator {
         use serde_json::{json, Value};
 
         // `x-when` says which branch method reads a key (see
-        // `param_ui::lint_params`): the editor hides the rest and `flint gen`
+        // `crate::validate_params`): the editor hides the rest and `flint gen`
         // warns about them. `tree_schema_says_which_method_reads_each_key`
         // holds the schema to it.
         let only = |method: &str, mut prop: Value| {
