@@ -1,3 +1,0 @@
-### F4 → Styles has a Blend slider for every style (#521)
-**What changed.** Each style's section in F4 → Styles (and the player's F3 Styles panel) now opens with a **Blend** row: a 0–1 slider for the table's `blend` key (#369), how much of the style shows over the frame it read. It has the ↺ reset (back to 1) and the dot that marks a value differing from the scene, like every other row, and Copy TOML and Commit to scene write it back (at 1 the table says nothing of it). Scripts were already able to pick a look, with `set_look(name)` and `set_look(name, seconds)` for a fade (#356, #496), so nothing else changed.
-**What to do.** Nothing. A scene's `blend` keys read as before.
