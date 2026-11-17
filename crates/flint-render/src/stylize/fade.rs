@@ -89,7 +89,7 @@ impl FadePass {
     /// Whether `descriptor`'s pass, just drawn, gets the cross-fade this
     /// frame: it reads the mask and doesn't blend itself, the mask is drawn
     /// and may hold a blend below 1, and some entity asks for the style.
-    pub fn applies(frame: &StyleFrame<'_>, descriptor: &'static StyleDescriptor) -> bool {
+    pub fn applies(frame: &StyleFrame<'_>, descriptor: &StyleDescriptor) -> bool {
         frame.mask_fades
             && frame.mask.is_some()
             && descriptor.framework_fades(frame.config, frame.style_ids)
@@ -101,7 +101,7 @@ impl FadePass {
     pub fn encode(
         &self,
         frame: &StyleFrame<'_>,
-        descriptor: &'static StyleDescriptor,
+        descriptor: &StyleDescriptor,
         encoder: &mut wgpu::CommandEncoder,
         input: &StyleInput<'_>,
         output: &wgpu::TextureView,
@@ -109,12 +109,11 @@ impl FadePass {
         let Some(mask) = frame.mask else {
             return;
         };
-        let registry = super::registry();
-        let Some(me) = registry.iter().position(|d| d.name == descriptor.name) else {
+        let Some(me) = frame.styles.index_of(descriptor.name) else {
             return;
         };
         let me = me as u32 + 1;
-        let table = owner_table(frame.config, frame.style_ids, registry);
+        let table = owner_table(frame.config, frame.style_ids, frame.styles);
         let owners_bind = {
             let mut owners = self.owners.lock().unwrap_or_else(|e| e.into_inner());
             if owners.capacity < table.len() {
@@ -238,7 +237,7 @@ fn owners_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
 pub(crate) fn owner_table(
     config: &crate::postprocess::PostProcessConfig,
     ids: &crate::style_mask::StyleIds,
-    registry: &[&'static StyleDescriptor],
+    registry: &super::StyleRegistry,
 ) -> Vec<u32> {
     let mut table = vec![0u32; ids.len() + 1];
     for (id, slot) in table.iter_mut().enumerate().skip(1) {
@@ -248,8 +247,8 @@ pub(crate) fn owner_table(
         if v.off {
             continue;
         }
-        if let Some(i) = registry.iter().position(|d| d.name == v.style) {
-            if !registry[i].draws_own_blend(config, Some(v)) {
+        if let Some(i) = registry.index_of(&v.style) {
+            if !registry.styles()[i].draws_own_blend(config, Some(v)) {
                 *slot = i as u32 + 1;
             }
         }
@@ -275,10 +274,10 @@ mod tests {
             ("pencil{off}".into(), off),
             ("nonesuch".into(), StyleVariant::plain("nonesuch")),
         ]);
-        let registry = super::super::registry();
+        let registry = crate::stylize::StyleRegistry::new();
         let index = |name: &str| registry.iter().position(|d| d.name == name).unwrap() as u32 + 1;
         let config = crate::postprocess::PostProcessConfig::default();
-        let table = owner_table(&config, &ids, registry);
+        let table = owner_table(&config, &ids, &registry);
         assert_eq!(table.len(), 5);
         assert_eq!(table[0], 0, "id 0 is unstyled");
         assert_eq!(table[ids.id("pencil").unwrap() as usize], index("pencil"));

@@ -172,6 +172,27 @@ impl SceneRenderer {
             Some((self.scene_dir.clone(), Arc::new(scope)));
     }
 
+    /// The styles this renderer draws with (#742): what its config's
+    /// `[post_process.styles]` names, the style mask's ids and F4 list.
+    pub fn styles(&self) -> &crate::stylize::StyleRegistry {
+        &self.styles
+    }
+
+    /// The registry to load into or hot-reload
+    /// ([`StyleRegistry::reload_changed_for`](crate::stylize::StyleRegistry::reload_changed_for)):
+    /// the next frame builds whatever changed.
+    pub fn styles_mut(&mut self) -> &mut crate::stylize::StyleRegistry {
+        &mut self.styles
+    }
+
+    /// Draw with `styles` from the next frame on: a host that keeps its own
+    /// registry (the player) hands it over after each change. A style it no
+    /// longer holds, or holds as another install, lets go of its pass at
+    /// the next frame.
+    pub fn set_styles(&mut self, styles: crate::stylize::StyleRegistry) {
+        self.styles = styles;
+    }
+
     /// The project and folder the styles' files are searched from: the
     /// scope the host set, else the project found from `scene_dir`, else
     /// (no scene) the working directory's.

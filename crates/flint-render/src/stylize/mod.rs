@@ -99,6 +99,7 @@ mod fade;
 pub mod images;
 pub mod kit;
 pub mod ownership;
+mod registry;
 pub mod reveal;
 mod spec;
 mod targets;
@@ -106,6 +107,7 @@ pub mod text;
 
 pub use ascii::{edge_view_thresholds, EDGE_VIEW_LEGEND};
 pub use edges::EDGE_FORMAT;
+pub use registry::{intern, intern_list, List, Style, StyleRegistry};
 pub use reveal::{RevealShape, StyleReveal};
 pub use spec::{
     apply_style_spec, apply_style_specs, check_style_specs, style_spec_help, StyleSpec,
@@ -244,7 +246,9 @@ pub struct StyleOption {
     pub default: &'static str,
     /// The values the F4 menu offers. Empty means any text (a file or set
     /// name). A style still gets whatever the scene says and decides what
-    /// a value outside the list means.
+    /// a value outside the list means. A user style's list is interned
+    /// ([`intern_list`]), so an option stays `Copy` and a game's `static`
+    /// can list its options inline.
     pub choices: &'static [&'static str],
     /// Choices found at run time (#322): the scene's own palettes or glyph
     /// sets, or the ramps of the font chosen. When set, its list replaces
@@ -461,17 +465,17 @@ impl StyleUi {
 /// with each `<base>_r/_g/_b` triple folded into a [`Color`](Self::Color)
 /// where its red channel stood.
 #[derive(Clone, Copy, Debug)]
-pub enum StyleControl {
-    Option(&'static StyleOption),
-    Param(&'static StyleParam),
+pub enum StyleControl<'a> {
+    Option(&'a StyleOption),
+    Param(&'a StyleParam),
     Color {
         /// The name before `_r` (`tint`), the key a scene writes.
         base: &'static str,
-        channels: [&'static StyleParam; 3],
+        channels: [&'a StyleParam; 3],
     },
 }
 
-impl StyleControl {
+impl StyleControl<'_> {
     /// The parameter, option or colour base this row edits.
     pub fn name(&self) -> &'static str {
         match self {
@@ -490,13 +494,13 @@ impl StyleControl {
 /// underneath, so a per-entity variant row, a uniform and `--style
 /// ascii:tint_g=0.5` see three numbers as they always did.
 #[derive(Clone, Copy, Debug)]
-pub struct StyleColor {
+pub struct StyleColor<'a> {
     /// The key a scene writes (`tint`).
     pub base: &'static str,
-    pub channels: [&'static StyleParam; 3],
+    pub channels: [&'a StyleParam; 3],
 }
 
-impl StyleColor {
+impl StyleColor<'_> {
     /// The colour the channels' defaults make.
     pub fn default_rgb(&self) -> [f32; 3] {
         self.channels.map(|c| c.default)
@@ -552,7 +556,10 @@ pub struct StyleDevice<'a> {
     pub device: &'a wgpu::Device,
     /// The style being built: lets one `create` serve many descriptors
     /// (user-authored styles, #274, all share [`custom`]'s).
-    pub descriptor: &'static StyleDescriptor,
+    pub descriptor: &'a StyleDescriptor,
+    /// The same style as the registry holds it, with what was loaded for a
+    /// user style.
+    pub style: &'a Style,
     /// The format the style's output is drawn in: `Rgba16Float` for an
     /// [`Hdr`](StyleStage::Hdr) style, the surface's for a
     /// [`Display`](StyleStage::Display) one.
@@ -613,6 +620,7 @@ impl std::fmt::Debug for MaskUse {
 /// Built with [`StyleDescriptor::new`] and its setters, never as a literal
 /// (#366); `non_exhaustive` holds other crates to that.
 #[non_exhaustive]
+#[derive(Clone)]
 pub struct StyleDescriptor {
     /// The name in `[post_process.styles.<name>]`; lowercase, no spaces.
     pub name: &'static str,
@@ -620,9 +628,15 @@ pub struct StyleDescriptor {
     pub label: &'static str,
     pub stage: StyleStage,
     /// Parameters and their defaults, read with [`StyleFrame::param`].
-    pub params: &'static [StyleParam],
+    pub params: List<StyleParam>,
     /// Named choices and their defaults, read with [`StyleFrame::option`].
-    pub options: &'static [StyleOption],
+    pub options: List<StyleOption>,
+    /// Which install of the style this is (#742): 0 for a built-in or a
+    /// game's style, a new number each time a user style's `.shader.toml`
+    /// is loaded or reloaded. A style is its name and generation: the built
+    /// passes, kept bind groups and pipelines of an older install are never
+    /// taken for this one's.
+    pub generation: u64,
     /// Whether the style reads the entity style mask (#263). While any
     /// such style is on and [`MaskUse::now`] holds, the renderer draws the
     /// mask each frame and hands it over as [`StyleFrame::mask`]; while
@@ -715,8 +729,9 @@ impl StyleDescriptor {
             name,
             label,
             stage,
-            params: &[],
-            options: &[],
+            params: List::EMPTY,
+            options: List::EMPTY,
+            generation: 0,
             uses_mask: MaskUse::Never,
             uses_albedo: MaskUse::Never,
             needs: &[],
@@ -732,13 +747,15 @@ impl StyleDescriptor {
 
     /// Its parameters ([`StyleParam::new`]).
     pub const fn params(mut self, params: &'static [StyleParam]) -> Self {
-        self.params = params;
+        // A `const fn` can't drop the list it replaces; the one `new` made
+        // is static, so forgetting it frees nothing
+        std::mem::forget(std::mem::replace(&mut self.params, List::Static(params)));
         self
     }
 
     /// Its named choices ([`StyleOption::new`]).
     pub const fn options(mut self, options: &'static [StyleOption]) -> Self {
-        self.options = options;
+        std::mem::forget(std::mem::replace(&mut self.options, List::Static(options)));
         self
     }
 
@@ -840,20 +857,6 @@ impl StyleDescriptor {
                 || (self.component.is_some() && ids.mentions(self.name)))
     }
 
-    /// The mask ids another running style owns this frame (#384), in id
-    /// order: ids whose variant names a registered style other than this
-    /// one that is on ([`is_on`](Self::is_on)), opt-outs aside. A style
-    /// that [`yields`](Self::yields) leaves their pixels as its input
-    /// had them.
-    pub fn foreign_ids(&self, config: &PostProcessConfig, ids: &StyleIds) -> Vec<u16> {
-        let table = owner_table(config, ids);
-        let me = registry_index(self).map(|i| i as u32);
-        (1..table.len())
-            .filter(|&id| table[id] != ownership::NONE && Some(table[id]) != me)
-            .map(|id| id as u16)
-            .collect()
-    }
-
     /// Whether the framework cross-fades this style's entities by their
     /// blend this frame (#396): it reads the mask and doesn't blend
     /// itself.
@@ -913,9 +916,9 @@ impl StyleDescriptor {
     /// [`StyleUi`], and a colour base's (`tint`) its red channel's. A
     /// colour's channels have none of their own (`tint_r` reads as
     /// "Tint r"), and a name that is no setting has none.
-    pub fn ui(&self, name: &str) -> Option<&'static StyleUi> {
-        let options: &'static [StyleOption] = self.options;
-        let params: &'static [StyleParam] = self.params;
+    pub fn ui(&self, name: &str) -> Option<&StyleUi> {
+        let options: &[StyleOption] = &self.options;
+        let params: &[StyleParam] = &self.params;
         if let Some(o) = options.iter().find(|o| o.name == name) {
             return Some(&o.ui);
         }
@@ -974,8 +977,8 @@ impl StyleDescriptor {
 
     /// The colour whose key is `base` (`tint`), if the style has its three
     /// channels.
-    pub fn color_setting(&self, base: &str) -> Option<StyleColor> {
-        let params: &'static [StyleParam] = self.params;
+    pub fn color_setting(&self, base: &str) -> Option<StyleColor<'_>> {
+        let params: &[StyleParam] = &self.params;
         let find = |c: &str| {
             let name = format!("{base}_{c}");
             params.iter().find(|p| p.name == name)
@@ -990,7 +993,7 @@ impl StyleDescriptor {
     }
 
     /// The style's colours (#315), in the order their red channels stand.
-    pub fn colors(&self) -> Vec<StyleColor> {
+    pub fn colors(&self) -> Vec<StyleColor<'_>> {
         self.params
             .iter()
             .filter_map(|p| p.name.strip_suffix("_r"))
@@ -999,7 +1002,7 @@ impl StyleDescriptor {
     }
 
     /// The colour a parameter is a channel of, if it is one.
-    pub fn color_of(&self, param: &str) -> Option<StyleColor> {
+    pub fn color_of(&self, param: &str) -> Option<StyleColor<'_>> {
         ["_r", "_g", "_b"]
             .iter()
             .find_map(|c| param.strip_suffix(c))
@@ -1020,7 +1023,7 @@ impl StyleDescriptor {
     /// into its one key (`tint`), for error messages.
     pub fn setting_keys(&self) -> Vec<&'static str> {
         let mut keys: Vec<&'static str> = self.options.iter().map(|o| o.name).collect();
-        for p in self.params {
+        for p in &self.params {
             match self.color_of(p.name) {
                 Some(c) if !keys.contains(&c.base) => keys.push(c.base),
                 Some(_) => {}
@@ -1045,9 +1048,9 @@ impl StyleDescriptor {
     }
 
     /// The rows of this style's F4 section, in drawing order.
-    pub fn controls(&self) -> Vec<StyleControl> {
+    pub fn controls(&self) -> Vec<StyleControl<'_>> {
         let mut rows: Vec<StyleControl> = self.options.iter().map(StyleControl::Option).collect();
-        for p in self.params {
+        for p in &self.params {
             match self.color_of(p.name) {
                 Some(c) if std::ptr::eq(c.channels[0], p) => rows.push(StyleControl::Color {
                     base: c.base,
@@ -1101,13 +1104,13 @@ pub fn style_toml(descriptor: &StyleDescriptor, config: &PostProcessConfig) -> S
     if let Some(setting) = config.styles.get(descriptor.name) {
         out.push_str(&setting.reveal.toml_lines());
     }
-    for o in descriptor.options {
+    for o in &descriptor.options {
         let value = descriptor.option(config, o.name);
         if value != o.default {
             out.push_str(&format!("{} = {:?}\n", o.name, value));
         }
     }
-    for p in descriptor.params {
+    for p in &descriptor.params {
         // A colour is one array key, where its red channel stands (#315)
         if let Some(c) = descriptor.color_of(p.name) {
             let value = descriptor.color(config, c.base);
@@ -1191,7 +1194,10 @@ pub struct StyleFrame<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
     pub config: &'a PostProcessConfig,
-    pub descriptor: &'static StyleDescriptor,
+    pub descriptor: &'a StyleDescriptor,
+    /// The registry the frame is drawn with (#742): what the style mask's
+    /// ids and the owner table (#384) name styles by.
+    pub styles: &'a StyleRegistry,
     /// The size of the input and output, in pixels.
     pub width: u32,
     pub height: u32,
@@ -1360,7 +1366,23 @@ impl StyleFrame<'_> {
         variant: u64,
         make: impl FnOnce() -> wgpu::BindGroup,
     ) -> Arc<wgpu::BindGroup> {
-        self.binds.get(name, variant, make)
+        self.binds.get(name, self.keyed(variant), make)
+    }
+
+    /// `variant` told apart by the style's install (#742): a user style
+    /// reloaded under its old names never binds the old install's groups.
+    /// A built-in's (generation 0) is `variant` itself.
+    fn keyed(&self, variant: u64) -> u64 {
+        match self.descriptor.generation {
+            0 => variant,
+            g => {
+                // splitmix64 of the pair: no install's keys meet another's
+                let mut z = variant ^ g.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+                z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+                z ^ (z >> 31)
+            }
+        }
     }
 
     /// A bind group over [`depth`](Self::depth): kept while the chain owns
@@ -1372,7 +1394,8 @@ impl StyleFrame<'_> {
         variant: u64,
         make: impl FnOnce() -> wgpu::BindGroup,
     ) -> Arc<wgpu::BindGroup> {
-        self.binds.get_over(self.depth_key, name, variant, make)
+        self.binds
+            .get_over(self.depth_key, name, self.keyed(variant), make)
     }
 
     /// True the first time it's asked about `name` while the chain lives:
@@ -1509,7 +1532,8 @@ impl StyleFrame<'_> {
     /// [`yields`](StyleDescriptor::yields) draws; a style reads this to
     /// skip work there (pencil's contours, ASCII's text grid).
     pub fn foreign_ids(&self) -> Vec<u16> {
-        self.descriptor.foreign_ids(self.config, self.style_ids)
+        self.styles
+            .foreign_ids(self.descriptor, self.config, self.style_ids)
     }
 
     /// The owner table the ownership pass reads after this style, or
@@ -1526,8 +1550,8 @@ impl StyleFrame<'_> {
         {
             return None;
         }
-        let me = registry_index(self.descriptor)? as u32;
-        let table = owner_table(self.config, self.style_ids);
+        let me = self.styles.index_of(self.descriptor.name)? as u32;
+        let table = self.styles.owner_table(self.config, self.style_ids);
         table
             .iter()
             .any(|&o| o != ownership::NONE && o != me)
@@ -2054,14 +2078,17 @@ impl StyleSettings {
     /// `#rrggbb` string (its channels may still be set one by one), and
     /// `feeds_bloom` (#300) true or false. Returns the settings and a
     /// warning for each name, key or value the registry doesn't know.
-    pub fn from_tables(tables: &BTreeMap<String, toml::Table>) -> (Self, Vec<String>) {
+    pub fn from_tables(
+        tables: &BTreeMap<String, toml::Table>,
+        styles: &StyleRegistry,
+    ) -> (Self, Vec<String>) {
         let mut settings = Self::default();
         let mut warnings = Vec::new();
         for (name, table) in tables {
-            let Some(descriptor) = find(name) else {
+            let Some(descriptor) = styles.find(name) else {
                 warnings.push(format!(
                     "unknown style '{name}' in [post_process.styles]; registered: {}",
-                    names().join(", ")
+                    styles.names().join(", ")
                 ));
                 continue;
             };
@@ -2203,18 +2230,28 @@ impl StyleSettings {
 // The set of built styles
 // ---------------------------------------------------------------------------
 
-/// The styles whose pipelines exist, by registry index. Lives on the post
-/// pipeline; nothing in it depends on the frame's size.
+/// One style's built pass in a [`StyleSet`].
+struct BuiltSlot {
+    /// The install it was built (or failed) from (#742): a user style whose
+    /// `.shader.toml` is edited is a new [`Style`] of the same name
+    /// ([`StyleRegistry::reload_changed_for`], #275), and a different
+    /// generation here throws the old pass away and builds again. Holding
+    /// the style keeps what the pass was built from alive while it is.
+    from: Style,
+    built: Option<Box<dyn StylePass>>,
+    /// Its creation panicked; never retried for this install.
+    failed: bool,
+    /// The shader files its build read from `FLINT_STYLE_SHADER_DIR`
+    /// (#418, [`dev_shader`]); empty when that's off. A slot whose file
+    /// moves is built again.
+    files: Vec<std::path::PathBuf>,
+}
+
+/// The styles whose pipelines exist, by name. Lives on the post pipeline;
+/// nothing in it depends on the frame's size.
 #[derive(Default)]
 pub struct StyleSet {
-    built: Vec<Option<Box<dyn StylePass>>>,
-    /// Styles whose creation panicked; never retried.
-    failed: Vec<bool>,
-    /// The address of the descriptor each slot was built (or failed) from.
-    /// A user style whose `.shader.toml` is edited gets a new descriptor at
-    /// the same registry index ([`custom::reload_changed`], #275): a
-    /// different address here throws the old pass away and builds again.
-    from: Vec<usize>,
+    slots: std::collections::HashMap<&'static str, BuiltSlot>,
     /// The shared edge pass (#301), built the first time a style needs it.
     edges: Option<edges::EdgePass>,
     /// The edge pass's creation panicked; the styles that need it draw
@@ -2236,22 +2273,13 @@ pub struct StyleSet {
     /// The ownership pass (#384), built with the first style.
     ownership: Option<ownership::OwnershipPass>,
     ownership_failed: bool,
-    /// The shader files each slot's build read from
-    /// `FLINT_STYLE_SHADER_DIR` (#418, [`dev_shader`]); empty when that's
-    /// off. A slot whose file moves is built again.
-    files: Vec<Vec<std::path::PathBuf>>,
-    /// The same for the shared passes (edges, cross-fade, ownership).
+    /// The shader files the shared passes (edges, cross-fade, ownership).
     shared_files: Vec<std::path::PathBuf>,
     /// Calls to [`ensure`](Self::ensure) since the files were last looked at.
     dev_polls: u32,
     /// Something was built again from changed files since
     /// [`take_rebuilt`](Self::take_rebuilt) last asked.
     rebuilt: bool,
-}
-
-/// A descriptor's identity, for [`StyleSet::from`].
-fn descriptor_id(d: &'static StyleDescriptor) -> usize {
-    d as *const StyleDescriptor as usize
 }
 
 impl StyleSet {
@@ -2270,23 +2298,26 @@ impl StyleSet {
         surface_format: wgpu::TextureFormat,
         config: &PostProcessConfig,
         ids: &StyleIds,
-    ) -> Vec<&'static StyleDescriptor> {
-        let registry = registry();
-        self.built.resize_with(registry.len(), || None);
-        self.failed.resize(registry.len(), false);
-        self.from.resize(registry.len(), 0);
-        self.files.resize_with(registry.len(), Vec::new);
+        styles: &StyleRegistry,
+    ) -> Vec<Style> {
+        // A style no longer registered (another scene's, an old install)
+        // lets go of its pass and of what it was built from
+        self.slots
+            .retain(|name, slot| styles.style(name).is_some_and(|s| s.same(&slot.from)));
         self.reload_changed_shaders();
         let mut failed = Vec::new();
-        for (i, descriptor) in registry.iter().enumerate() {
-            let id = descriptor_id(descriptor);
-            if self.from[i] != id {
-                // Replaced since it was built (or never built): start over
-                self.built[i] = None;
-                self.failed[i] = false;
-                self.from[i] = id;
-            }
-            if self.built[i].is_some() || self.failed[i] || !descriptor.is_on(config, ids) {
+        for style in styles.styles() {
+            let descriptor = style.descriptor();
+            let slot = self
+                .slots
+                .entry(descriptor.name)
+                .or_insert_with(|| BuiltSlot {
+                    from: style.clone(),
+                    built: None,
+                    failed: false,
+                    files: Vec::new(),
+                });
+            if slot.built.is_some() || slot.failed || !descriptor.is_on(config, ids) {
                 continue;
             }
             let format = match descriptor.stage {
@@ -2296,7 +2327,7 @@ impl StyleSet {
             // A frame note (#1077): a style switched on mid-game builds on
             // the frame that first draws it, and that frame says so
             let noted = || {
-                if is_native(descriptor.name) {
+                if !style.is_user() {
                     descriptor.name.to_string()
                 } else {
                     format!("{} (user style)", descriptor.name)
@@ -2308,14 +2339,15 @@ impl StyleSet {
                 || {
                     dev_shader::build(descriptor.name, || {
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            // One descriptor at one format builds the same
+                            // One install at one format builds the same
                             // layouts every time: what lets its pipelines be
                             // kept (#911)
-                            let scope = (descriptor.name, id, format);
+                            let scope = (descriptor.name, descriptor.generation, format);
                             crate::pipeline_cache::in_scope(scope, || {
                                 (descriptor.create)(&StyleDevice {
                                     device,
                                     descriptor,
+                                    style,
                                     format,
                                 })
                             })
@@ -2323,21 +2355,21 @@ impl StyleSet {
                     })
                 },
             );
-            self.files[i] = files;
+            slot.files = files;
             match made {
                 Ok(pass) => {
                     pass.set_text_capture(self.text_capture);
-                    self.built[i] = Some(pass);
+                    slot.built = Some(pass);
                 }
                 Err(_) => {
-                    self.failed[i] = true;
-                    failed.push(*descriptor);
+                    slot.failed = true;
+                    failed.push(style.clone());
                 }
             }
         }
         if self.ownership.is_none()
             && !self.ownership_failed
-            && self.built.iter().any(Option::is_some)
+            && self.slots.values().any(|s| s.built.is_some())
         {
             let (made, files) = dev_shader::build("ownership", || {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -2358,7 +2390,7 @@ impl StyleSet {
         }
         if self.edges.is_none()
             && !self.edges_failed
-            && registry
+            && styles
                 .iter()
                 .any(|d| d.needs_edges() && d.is_on(config, ids))
         {
@@ -2380,7 +2412,7 @@ impl StyleSet {
         }
         if self.fade.is_none()
             && !self.fade_failed
-            && registry
+            && styles
                 .iter()
                 .any(|d| d.is_on(config, ids) && d.framework_fades(config, ids))
         {
@@ -2421,11 +2453,11 @@ impl StyleSet {
             return;
         }
         let moved = |files: &[std::path::PathBuf]| files.iter().any(|f| changed.contains(f));
-        for (i, files) in self.files.iter_mut().enumerate() {
-            if moved(files) {
-                self.built[i] = None;
-                self.failed[i] = false;
-                files.clear();
+        for slot in self.slots.values_mut() {
+            if moved(&slot.files) {
+                slot.built = None;
+                slot.failed = false;
+                slot.files.clear();
             }
         }
         if moved(&self.shared_files) {
@@ -2473,7 +2505,7 @@ impl StyleSet {
     /// their own. Returns the texture for [`StyleFrame::edges`].
     pub(crate) fn encode_edges(
         &self,
-        styles: &[(&'static StyleDescriptor, &dyn StylePass)],
+        styles: &[(&StyleDescriptor, &dyn StylePass)],
         frame: &StyleFrame<'_>,
         encoder: &mut wgpu::CommandEncoder,
         scope: &mut Scope<'_>,
@@ -2506,7 +2538,7 @@ impl StyleSet {
     /// for every style built later.
     pub fn set_text_capture(&mut self, on: bool) {
         self.text_capture = on;
-        for pass in self.built.iter().flatten() {
+        for pass in self.slots.values().filter_map(|s| s.built.as_ref()) {
             pass.set_text_capture(on);
         }
     }
@@ -2514,17 +2546,21 @@ impl StyleSet {
     /// The glyph grid style `name` drew in the last frame encoded with text
     /// capture on, after its submission ([`StylePass::read_text`]).
     pub fn read_text(&self, name: &str, device: &wgpu::Device) -> Option<GlyphText> {
-        let i = registry().iter().position(|d| d.name == name)?;
-        self.built.get(i)?.as_deref()?.read_text(device)
+        self.slots.get(name)?.built.as_deref()?.read_text(device)
     }
 
     /// Whether style `name` is built.
     pub fn is_built(&self, name: &str) -> bool {
-        registry()
-            .iter()
-            .position(|d| d.name == name)
-            .and_then(|i| self.built.get(i))
-            .is_some_and(Option::is_some)
+        self.slots.get(name).is_some_and(|s| s.built.is_some())
+    }
+
+    /// Whether the pass built for style `name` is `style`'s install (#742),
+    /// for tests that a reload builds again.
+    pub fn built_from(&self, name: &str) -> Option<&Style> {
+        self.slots
+            .get(name)
+            .filter(|s| s.built.is_some())
+            .map(|s| &s.from)
     }
 
     /// The built styles of `stage` that are on this frame (by `config` or
@@ -2536,28 +2572,30 @@ impl StyleSet {
     /// stays built and [`is_on`](StyleDescriptor::is_on), so the mask,
     /// ownership (#384) and its GPU state are what they were at 0.01, and
     /// a fade out meets the plain frame with no pop.
-    pub fn active(
-        &self,
+    pub fn active<'s>(
+        &'s self,
         stage: StyleStage,
         config: &PostProcessConfig,
         ids: &StyleIds,
-    ) -> Vec<(&'static StyleDescriptor, &dyn StylePass)> {
+        styles: &'s StyleRegistry,
+    ) -> Vec<(&'s StyleDescriptor, &'s dyn StylePass)> {
         if !config.enabled {
             return Vec::new();
         }
-        let mut on: Vec<(f32, (&'static StyleDescriptor, &dyn StylePass))> = registry()
+        let mut on: Vec<(f32, (&StyleDescriptor, &dyn StylePass))> = styles
+            .styles()
             .iter()
             .enumerate()
-            .zip(&self.built)
-            .zip(&self.from)
-            // A pass built from a descriptor since replaced waits for ensure
-            .filter(|(((_, d), _), from)| **from == descriptor_id(d))
-            .filter(|(((_, d), _), _)| d.stage == stage && d.is_on(config, ids))
-            .filter(|(((_, d), _), _)| config.styles.shows_in(d.name, config))
-            .filter_map(|(((i, d), built), _)| {
-                built
-                    .as_deref()
-                    .map(|p| (chain_order(i, d, config), (*d, p)))
+            .filter(|(_, s)| s.stage == stage && s.is_on(config, ids))
+            .filter(|(_, s)| config.styles.shows_in(s.name, config))
+            .filter_map(|(i, s)| {
+                let slot = self.slots.get(s.name)?;
+                // A pass built from an install since replaced waits for ensure
+                if !slot.from.same(s) {
+                    return None;
+                }
+                let pass = slot.built.as_deref()?;
+                Some((chain_order(i, s, config), (s.descriptor(), pass)))
             })
             .collect();
         // Stable: equal orders keep registration order
@@ -2570,10 +2608,10 @@ impl StyleSet {
 /// `name` is given (the `style` debug view's `mask_view`, #334), so it
 /// reads the stage's original input rather than another style's output;
 /// without a name, the list as it is.
-pub fn solo<T: Copy>(
-    styles: Vec<(&'static StyleDescriptor, T)>,
+pub fn solo<'d, T: Copy>(
+    styles: Vec<(&'d StyleDescriptor, T)>,
     name: Option<&str>,
-) -> Vec<(&'static StyleDescriptor, T)> {
+) -> Vec<(&'d StyleDescriptor, T)> {
     match name {
         Some(name) => styles.into_iter().filter(|(d, _)| d.name == name).collect(),
         None => styles,
@@ -2589,23 +2627,6 @@ pub fn chain_order(index: usize, descriptor: &StyleDescriptor, config: &PostProc
         .order(descriptor.name)
         .or(descriptor.default_order)
         .unwrap_or(index as f32)
-}
-
-/// Every registered style of `stage`, in the order its chain would run
-/// them under `config` (on or not), with each one's [`chain_order`]. What
-/// the F4 menu lists; [`StyleSet::active`] keeps the ones that are on.
-pub fn stage_chain(
-    stage: StyleStage,
-    config: &PostProcessConfig,
-) -> Vec<(&'static StyleDescriptor, f32)> {
-    let mut chain: Vec<(&'static StyleDescriptor, f32)> = registry()
-        .iter()
-        .enumerate()
-        .filter(|(_, d)| d.stage == stage)
-        .map(|(i, d)| (*d, chain_order(i, d, config)))
-        .collect();
-    chain.sort_by(|a, b| a.1.total_cmp(&b.1));
-    chain
 }
 
 /// Which view each style of a stage reads and writes: `Input` is what the
@@ -2707,10 +2728,10 @@ pub(crate) type Scope<'s> = dyn FnMut(&'static str, &mut wgpu::CommandEncoder, &
 /// whose `blend` is under 1 (#369) has what it read drawn back over its
 /// result by `blender`, inside its own timing scope.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_stage(
-    styles: &[(&'static StyleDescriptor, &dyn StylePass)],
+pub(crate) fn run_stage<'a>(
+    styles: &[(&'a StyleDescriptor, &dyn StylePass)],
     steps: &[(Slot, Slot)],
-    frame: &mut StyleFrame<'_>,
+    frame: &mut StyleFrame<'a>,
     stage: StyleStage,
     encoder: &mut wgpu::CommandEncoder,
     input: StyleInput<'_>,
@@ -2839,211 +2860,27 @@ register_styles!(
     underwater
 );
 
-/// The built-ins followed by user styles registered at run time
-/// ([`custom`], #274). Append-only, so a style's index in it (which
-/// [`StyleSet`] keys its built passes by) never changes; each append leaks
-/// one small slice, once per style file loaded.
-static SNAPSHOT: std::sync::RwLock<&'static [&'static StyleDescriptor]> =
-    std::sync::RwLock::new(REGISTRY);
-
-/// The names of the styles a game binary registered in Rust ([`register`],
-/// #419), in the order it registered them.
-static GAME_STYLES: std::sync::RwLock<Vec<&'static str>> = std::sync::RwLock::new(Vec::new());
-
-/// Add a style written in Rust outside the engine: a game binary's own
-/// (#419). From then on it is a style like a built-in: F4 lists it, `--style
-/// <name>` and `[post_process.styles.<name>]` switch it on, `--list-styles`
-/// names it with `"source": "game"`, and the player draws it.
-///
-/// Build the descriptor as the engine's styles are, a `static` made with
-/// [`StyleDescriptor::new`] and its setters (they are `const`, so a field
-/// the engine adds later gets its default there and the game's code still
-/// builds, #366):
-///
-/// ```ignore
-/// static CYANOTYPE: StyleDescriptor =
-///     StyleDescriptor::new("cyanotype", "Cyanotype", StyleStage::Display, create)
-///         .params(&[StyleParam::new("exposure", 1.0, 0.25..=3.0)]);
-///
-/// flint_render::stylize::register(&CYANOTYPE)?;
-/// ```
-///
-/// Call it before the first scene is read: a `[post_process.styles]` table
-/// or a `--style` word naming a style the registry doesn't know yet is
-/// dropped with a warning. A game that embeds `PlayerApp` returns the
-/// descriptor from `PlayerExtension::styles` instead, and `add_extension`
-/// calls this.
-///
-/// The name must be lowercase letters, digits and `_`, and new: a built-in,
-/// a user style already loaded or another game style of that name is
-/// refused, as is a per-entity `component` another style already takes.
-/// Registering the same descriptor again (a second `PlayerApp` in one
-/// process) is accepted and changes nothing. The registry is one for the
-/// process and append-only, so a style stays registered once added.
-///
-/// A user `.shader.toml` style can't take a game style's name afterwards,
-/// and a hot reload never replaces one.
-pub fn register(descriptor: &'static StyleDescriptor) -> Result<(), String> {
-    let name = descriptor.name;
-    if !custom::is_identifier(name) {
-        return Err(format!(
-            "style name \"{name}\" must start with a lowercase letter and hold only \
-             lowercase letters, digits and _"
-        ));
-    }
-    // Held across the check and the append, so two threads registering one
-    // name can't both pass
-    let mut game = GAME_STYLES.write().unwrap_or_else(|e| e.into_inner());
-    if let Some(existing) = find(name) {
-        if std::ptr::eq(existing, descriptor) {
-            return Ok(());
-        }
-        let what = if is_builtin(name) {
-            "a built-in style"
-        } else if game.contains(&name) {
-            "a style the game has already registered"
-        } else {
-            "a user style already loaded (styles/*.shader.toml)"
-        };
-        return Err(format!(
-            "style \"{name}\" is {what}; pick another name. Registered: {}",
-            names().join(", ")
-        ));
-    }
-    if let Some(component) = descriptor.component {
-        if let Some(other) = registry().iter().find(|d| d.component == Some(component)) {
-            return Err(format!(
-                "style \"{name}\": component \"{component}\" is already style \"{}\"'s",
-                other.name
-            ));
-        }
-    }
-    register_runtime(descriptor);
-    game.push(name);
-    Ok(())
+/// The styles compiled into the engine, in their default chain order. A
+/// [`StyleRegistry`] starts from these; game and user styles are a
+/// registry's own (#742).
+pub fn builtins() -> &'static [&'static StyleDescriptor] {
+    REGISTRY
 }
 
-/// Whether `name` is a style a game registered in Rust ([`register`]).
-pub fn is_game_style(name: &str) -> bool {
-    GAME_STYLES
-        .read()
-        .unwrap_or_else(|e| e.into_inner())
-        .contains(&name)
-}
-
-/// Whether `name` is written in Rust: a built-in or a game's style, not a
-/// user `.shader.toml` one.
-pub fn is_native(name: &str) -> bool {
-    is_builtin(name) || is_game_style(name)
-}
-
-/// Append `descriptor` to the registry. Its name must be new (checked by
-/// the caller: [`register`], [`custom::load_dir`]).
-pub(crate) fn register_runtime(descriptor: &'static StyleDescriptor) {
-    let mut snapshot = SNAPSHOT.write().unwrap_or_else(|e| e.into_inner());
-    let mut all: Vec<&'static StyleDescriptor> = snapshot.to_vec();
-    all.push(descriptor);
-    *snapshot = Box::leak(all.into_boxed_slice());
-}
-
-/// Put `new` where the runtime style named `new.name` stands (an edited
-/// `.shader.toml`, #275), keeping its index; [`StyleSet`] sees a new
-/// descriptor there and builds it again. Returns false when no user style
-/// has that name (built-ins and game styles can't be replaced).
-pub(crate) fn replace_runtime(new: &'static StyleDescriptor) -> bool {
-    // Asked before the snapshot is locked: `register` takes the game list
-    // and then the snapshot, so the other order here could deadlock. A name
-    // is in the registry once, so a non-native match is the user style.
-    if is_native(new.name) {
-        return false;
-    }
-    let mut snapshot = SNAPSHOT.write().unwrap_or_else(|e| e.into_inner());
-    let Some(i) = snapshot.iter().position(|d| d.name == new.name) else {
-        return false;
-    };
-    let mut all: Vec<&'static StyleDescriptor> = snapshot.to_vec();
-    all[i] = new;
-    *snapshot = Box::leak(all.into_boxed_slice());
-    true
-}
-
-/// Every registered style, in chain order: the built-ins, then user
-/// styles in the order they were loaded.
-pub fn registry() -> &'static [&'static StyleDescriptor] {
-    *SNAPSHOT.read().unwrap_or_else(|e| e.into_inner())
+/// The built-in style called `name`.
+pub fn builtin(name: &str) -> Option<&'static StyleDescriptor> {
+    REGISTRY.iter().copied().find(|d| d.name == name)
 }
 
 /// Whether `name` is one of the styles compiled into the engine.
 pub fn is_builtin(name: &str) -> bool {
-    REGISTRY.iter().any(|d| d.name == name)
+    builtin(name).is_some()
 }
 
-/// Whether any style on this frame reads the style albedo (#869), so the
-/// renderer draws it after the scene pass.
-pub fn any_uses_albedo(config: &PostProcessConfig, ids: &StyleIds) -> bool {
-    config.enabled
-        && registry()
-            .iter()
-            .any(|d| d.is_on(config, ids) && d.uses_albedo.now(config, ids))
-}
-
-/// Whether any style on this frame reads the entity style mask: one
-/// asks for it, or one that [`yields`](StyleDescriptor::yields) is on
-/// while another running style owns an entity's pixels (#384).
-pub fn any_uses_mask(config: &PostProcessConfig, ids: &StyleIds) -> bool {
-    config.enabled
-        && registry().iter().any(|d| {
-            d.reads_mask(config, ids)
-                || (d.yields && d.is_on(config, ids) && !d.foreign_ids(config, ids).is_empty())
-        })
-}
-
-/// Which style owns each mask id this frame (#384), by registry index,
-/// [`ownership::NONE`] for none: the style its variant names, when that
-/// style is registered and on and the variant isn't an opt-out. A faded id
-/// (#400: its entities all at blend 0) keeps its style as owner though the
-/// style is off for it, so a whole-frame style leaves the prop as it came,
-/// as it did while the faded style still ran; a style off everywhere
-/// (#376) owns nothing, so its props are plain scene to every other
-/// style. Id 0 (unstyled) is always
-/// none; the table is [`ownership::MAX_IDS`] long.
-pub fn owner_table(config: &PostProcessConfig, ids: &StyleIds) -> Vec<u32> {
-    let registry = registry();
-    let mut table = vec![ownership::NONE; ownership::MAX_IDS];
-    for (id, _) in ids.iter() {
-        let Some(slot) = table.get_mut(id as usize) else {
-            continue;
-        };
-        let Some(v) = ids.variant(id) else {
-            continue;
-        };
-        if v.off {
-            continue;
-        }
-        if let Some(i) = registry.iter().position(|d| {
-            d.name == v.style
-                && !config.styles.is_off_everywhere(d.name)
-                && (ids.is_faded(id) || d.is_on(config, ids))
-        }) {
-            *slot = i as u32;
-        }
-    }
-    table
-}
-
-/// Where `d` stands in the [`registry`], by name.
-pub(crate) fn registry_index(d: &StyleDescriptor) -> Option<usize> {
-    registry().iter().position(|r| r.name == d.name)
-}
-
-/// The style called `name`.
-pub fn find(name: &str) -> Option<&'static StyleDescriptor> {
-    registry().iter().copied().find(|d| d.name == name)
-}
-
-/// The registered names, for messages.
-pub fn names() -> Vec<&'static str> {
-    registry().iter().map(|d| d.name).collect()
+/// Where the style called `name` stands in `styles`: an index into the
+/// owner table the ownership pass reads (#384).
+pub(crate) fn registry_index(styles: &StyleRegistry, d: &StyleDescriptor) -> Option<usize> {
+    styles.index_of(d.name)
 }
 
 #[cfg(test)]
@@ -3064,43 +2901,50 @@ mod tests {
     /// game's, and registering it again is a no-op.
     #[test]
     fn a_registered_game_style_is_a_style_like_a_builtin() {
-        register(&GAME_WASH).unwrap();
-        register(&GAME_WASH).expect("the same descriptor again changes nothing");
+        let mut styles = StyleRegistry::new();
+        styles.register(&GAME_WASH).unwrap();
+        styles
+            .register(&GAME_WASH)
+            .expect("the same descriptor again changes nothing");
         assert_eq!(
-            registry()
+            styles
                 .iter()
                 .filter(|d| d.name == "utest_game_wash")
                 .count(),
             1
         );
-        let at = registry_index(&GAME_WASH).unwrap();
+        let at = styles.index_of("utest_game_wash").unwrap();
         assert!(at >= REGISTRY.len(), "after the built-ins");
-        assert!(is_game_style("utest_game_wash") && is_native("utest_game_wash"));
+        assert!(styles.is_game_style("utest_game_wash") && styles.is_native("utest_game_wash"));
         assert!(!is_builtin("utest_game_wash"));
+        // Another registry knows nothing of it (#742)
+        assert!(StyleRegistry::new().find("utest_game_wash").is_none());
 
         let tables: BTreeMap<String, toml::Table> =
             toml::from_str("[utest_game_wash]\namount = 0.75\n").unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) = StyleSettings::from_tables(&tables, &styles);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.param("utest_game_wash", "amount"), Some(0.75));
 
         let mut config = PostProcessConfig::default();
-        let errors = apply_style_specs(&mut config, &["utest_game_wash:amount=0.2".into()]);
+        let errors =
+            apply_style_specs(&mut config, &["utest_game_wash:amount=0.2".into()], &styles);
         assert!(errors.is_empty(), "{errors:?}");
         assert!(config.styles.is_enabled("utest_game_wash"));
         assert_eq!(config.styles.param("utest_game_wash", "amount"), Some(0.2));
 
-        let listing = catalog::listing_in(&GAME_WASH, None);
+        let listing = catalog::listing_in(&styles, &GAME_WASH, None);
         assert_eq!(listing.source, "game");
     }
 
     #[test]
     fn register_refuses_taken_names_components_and_bad_names() {
+        let mut styles = StyleRegistry::new();
         static BUILTIN: StyleDescriptor =
             StyleDescriptor::new("ascii", "Mine", StyleStage::Display, never_built);
-        let e = register(&BUILTIN).unwrap_err();
+        let e = styles.register(&BUILTIN).unwrap_err();
         assert!(e.contains("is a built-in style"), "{e}");
-        assert_eq!(find("ascii").unwrap().label, "ASCII");
+        assert_eq!(styles.find("ascii").unwrap().label, "ASCII");
 
         static FIRST: StyleDescriptor = StyleDescriptor::new(
             "utest_game_twice",
@@ -3114,40 +2958,40 @@ mod tests {
             StyleStage::Display,
             never_built,
         );
-        register(&FIRST).unwrap();
-        let e = register(&SECOND).unwrap_err();
+        styles.register(&FIRST).unwrap();
+        let e = styles.register(&SECOND).unwrap_err();
         assert!(e.contains("already registered"), "{e}");
-        assert_eq!(find("utest_game_twice").unwrap().label, "First");
+        assert_eq!(styles.find("utest_game_twice").unwrap().label, "First");
 
         static TAKES_ASCIIS: StyleDescriptor =
             StyleDescriptor::new("utest_game_comp", "Comp", StyleStage::Display, never_built)
                 .component("ascii_style");
-        let e = register(&TAKES_ASCIIS).unwrap_err();
+        let e = styles.register(&TAKES_ASCIIS).unwrap_err();
         assert!(
             e.contains("\"ascii_style\" is already style \"ascii\"'s"),
             "{e}"
         );
-        assert!(find("utest_game_comp").is_none());
+        assert!(styles.find("utest_game_comp").is_none());
 
         for bad in ["", "Sepia", "9lives", "two words", "dash-ed"] {
-            // Leaked: a descriptor is 'static, and a refused one is never kept
+            // Leaked: a game's descriptor is 'static, and a refused one is
+            // never kept
             let d: &'static StyleDescriptor = Box::leak(Box::new(StyleDescriptor::new(
                 bad,
                 "Bad",
                 StyleStage::Display,
                 never_built,
             )));
-            let e = register(d).unwrap_err();
+            let e = styles.register(d).unwrap_err();
             assert!(e.contains("lowercase"), "{bad:?}: {e}");
         }
     }
-
     /// #365: ASCII's tint and palette settings say they're unused outside
     /// their colour modes, and background outside the grounds and the
     /// colour mode that read it.
     #[test]
     fn hints_say_when_a_setting_is_unused() {
-        let ascii = find("ascii").expect("ascii registered");
+        let ascii = builtin("ascii").expect("ascii registered");
         let mut pp = PostProcessConfig::default();
         pp.styles.set_enabled("ascii", true);
         // Default colour mode is source: neither tint nor palette is read
@@ -3220,7 +3064,7 @@ mod tests {
 
     #[test]
     fn registry_names_are_unique_and_lowercase() {
-        let names = names();
+        let names = StyleRegistry::new().names();
         for (i, a) in names.iter().enumerate() {
             assert!(a.chars().all(|c| c.is_ascii_lowercase() || c == '_'), "{a}");
             assert!(!names[i + 1..].contains(a), "{a} registered twice");
@@ -3230,8 +3074,8 @@ mod tests {
 
     #[test]
     fn param_defaults_sit_in_their_ranges() {
-        for d in registry() {
-            for p in d.params {
+        for d in builtins() {
+            for p in &d.params {
                 assert!(
                     p.min <= p.default && p.default <= p.max,
                     "{}.{}",
@@ -3244,7 +3088,7 @@ mod tests {
 
     #[test]
     fn settings_ui_is_where_the_menu_reads_it() {
-        for d in registry() {
+        for d in builtins() {
             // A colour's label lives on its red channel (#510): one on green
             // or blue would never be shown
             for c in d.colors() {
@@ -3282,7 +3126,7 @@ mod tests {
 
     #[test]
     fn controls_fold_rgb_triples_and_keep_every_setting() {
-        let ascii = find("ascii").unwrap();
+        let ascii = builtin("ascii").unwrap();
         let rows = ascii.controls();
         // Options first
         let first_param = rows
@@ -3310,7 +3154,7 @@ mod tests {
             ]
         );
         // Every param is reachable exactly once
-        for d in registry() {
+        for d in builtins() {
             let mut seen: Vec<&str> = Vec::new();
             for r in d.controls() {
                 match r {
@@ -3330,7 +3174,7 @@ mod tests {
 
     #[test]
     fn a_colour_is_one_key_in_a_scene() {
-        let ascii = find("ascii").unwrap();
+        let ascii = builtin("ascii").unwrap();
         let colors = ascii.colors();
         // The tint, and the edge ink's colour (#351)
         assert_eq!(colors.len(), 2);
@@ -3345,7 +3189,8 @@ mod tests {
 
         let read = |text: &str| {
             let tables: BTreeMap<String, toml::Table> = toml::from_str(text).unwrap();
-            let (styles, warnings) = StyleSettings::from_tables(&tables);
+            let (styles, warnings) =
+                StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
             let config = PostProcessConfig {
                 styles,
                 ..Default::default()
@@ -3389,7 +3234,7 @@ mod tests {
 
     #[test]
     fn labels_come_from_the_setting_or_the_name() {
-        let ascii = find("ascii").unwrap();
+        let ascii = builtin("ascii").unwrap();
         assert_eq!(ascii.label_for("cell"), "Cell size (pt)");
         assert!(ascii.is_integer("cell"));
         assert!(!ascii.is_integer("glow"));
@@ -3407,7 +3252,7 @@ mod tests {
 
     #[test]
     fn style_toml_writes_only_changes_and_reads_back() {
-        let ascii = find("ascii").unwrap();
+        let ascii = builtin("ascii").unwrap();
         let mut config = PostProcessConfig::default();
         config.styles.set_enabled("ascii", true);
         assert_eq!(style_toml(ascii, &config), "[post_process.styles.ascii]\n");
@@ -3429,13 +3274,14 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.clone(), v.as_table().unwrap().clone()))
             .collect();
-        let (read, warnings) = StyleSettings::from_tables(&tables);
+        let (read, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert!(warnings.is_empty(), "{warnings:?}");
         let back = PostProcessConfig {
             styles: read,
             ..Default::default()
         };
-        for p in ascii.params {
+        for p in &ascii.params {
             assert_eq!(
                 ascii.param(&back, p.name),
                 ascii.param(&config, p.name),
@@ -3443,7 +3289,7 @@ mod tests {
                 p.name
             );
         }
-        for o in ascii.options {
+        for o in &ascii.options {
             assert_eq!(
                 ascii.option(&back, o.name),
                 ascii.option(&config, o.name),
@@ -3486,7 +3332,7 @@ mod tests {
     fn solo_keeps_only_the_named_style() {
         // The display stage as a scene with ASCII and the mask view has it
         let display = |names: &[&str]| -> Vec<(&'static StyleDescriptor, ())> {
-            registry()
+            builtins()
                 .iter()
                 .filter(|d| names.contains(&d.name))
                 .map(|d| (*d, ()))
@@ -3508,7 +3354,8 @@ mod tests {
     #[test]
     fn order_keys_rearrange_a_stage_and_default_to_registration() {
         let names = |config: &PostProcessConfig| -> Vec<&str> {
-            stage_chain(StyleStage::Display, config)
+            StyleRegistry::new()
+                .stage_chain(StyleStage::Display, config)
                 .iter()
                 .map(|(d, _)| d.name)
                 .filter(|n| ["watercolor", "ascii", "pencil", "invert"].contains(n))
@@ -3519,14 +3366,15 @@ mod tests {
         assert_eq!(names(&config), ["watercolor", "ascii", "pencil", "invert"]);
         // ... but for a descriptor's own default place (#746: the reality
         // styles, registered last, run first)
-        let mut registered: Vec<&str> = registry()
+        let mut registered: Vec<&str> = builtins()
             .iter()
             .filter(|d| d.stage == StyleStage::Display && d.default_order.is_none())
             .map(|d| d.name)
             .collect();
         let placed = ["matrix", "blood", "drunk", "tron", "underwater"];
         registered.splice(0..0, placed);
-        let chain: Vec<&str> = stage_chain(StyleStage::Display, &config)
+        let chain: Vec<&str> = StyleRegistry::new()
+            .stage_chain(StyleStage::Display, &config)
             .iter()
             .map(|(d, _)| d.name)
             .collect();
@@ -3545,7 +3393,8 @@ mod tests {
             "#,
         )
         .unwrap();
-        let (styles, warnings) = StyleSettings::from_tables(&tables);
+        let (styles, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert_eq!(warnings, vec!["styles.invert.order must be a number"]);
         assert_eq!(styles.order("watercolor"), Some(10.0));
         config.styles = styles;
@@ -3565,7 +3414,7 @@ mod tests {
 
     #[test]
     fn style_toml_keeps_the_order() {
-        let watercolor = find("watercolor").unwrap();
+        let watercolor = builtin("watercolor").unwrap();
         let mut config = PostProcessConfig::default();
         config.styles.set_enabled("watercolor", true);
         config.styles.set_order("watercolor", Some(5.0));
@@ -3579,7 +3428,7 @@ mod tests {
 
     #[test]
     fn no_style_names_a_setting_after_a_reserved_key() {
-        for d in registry() {
+        for d in builtins() {
             for key in RESERVED_KEYS {
                 assert!(
                     d.params.iter().all(|p| p.name != key)
@@ -3674,7 +3523,8 @@ mod tests {
             "#,
         )
         .unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert!(settings.is_enabled("invert"));
         assert_eq!(settings.param("invert", "strength"), Some(0.5));
         assert_eq!(warnings.len(), 1);
@@ -3682,7 +3532,8 @@ mod tests {
 
         let tables: BTreeMap<String, toml::Table> =
             toml::from_str("[invert]\nenabled = false\nstrength = 1\nwobble = 3\n").unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert!(!settings.is_enabled("invert"));
         assert_eq!(
             settings.param("invert", "strength"),
@@ -3698,7 +3549,8 @@ mod tests {
         let tables: BTreeMap<String, toml::Table> =
             toml::from_str("[invert]\nstrength = 2\n[ascii]\ncell = 8\ntint = [0.3, 1.5, 0.4]\n")
                 .unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         // Kept as written, as a stray option is: F4 shows it
         assert_eq!(settings.param("invert", "strength"), Some(2.0));
         assert_eq!(settings.param("ascii", "tint_g"), Some(1.5));
@@ -3727,7 +3579,8 @@ mod tests {
             "[matrix]\nblend_source = \"tear\"\n[tron]\nblend_source = \"own\"\n[blood]\nblend_source = \"torn\"\n",
         )
         .unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert!(settings.follows_tear("matrix"));
         assert!(!settings.follows_tear("tron"));
         assert_eq!(
@@ -3750,19 +3603,36 @@ mod tests {
         );
         config.tear = 0.4;
         assert!(config.styles.shows_in("matrix", &config));
-        let matrix = find("matrix").unwrap();
+        let matrix = builtin("matrix").unwrap();
         assert!(style_toml(matrix, &config).contains("blend_source = \"tear\""));
         config.styles.reset("matrix");
         assert!(!config.styles.follows_tear("matrix"));
 
-        apply_style_spec(&mut config, "tron:blend_source=tear").unwrap();
+        apply_style_spec(
+            &mut config,
+            "tron:blend_source=tear",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert!(config.styles.follows_tear("tron") && config.styles.is_enabled("tron"));
-        assert!(apply_style_spec(&mut config, "tron:blend_source=half").is_err());
-        crate::post_style::set_post_style_param(&mut config, "tron", "blend_source", "own".into())
-            .unwrap();
+        assert!(apply_style_spec(
+            &mut config,
+            "tron:blend_source=half",
+            &crate::stylize::StyleRegistry::new()
+        )
+        .is_err());
+        crate::post_style::set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "tron",
+            "blend_source",
+            "own".into(),
+        )
+        .unwrap();
         assert!(!config.styles.follows_tear("tron"));
         assert!(crate::post_style::set_post_style_param(
             &mut config,
+            &crate::stylize::StyleRegistry::new(),
             "tron",
             "blend_source",
             1.0.into()
@@ -3775,7 +3645,8 @@ mod tests {
     #[test]
     fn the_reality_styles_run_first_of_the_display_chain() {
         let config = PostProcessConfig::default();
-        let chain: Vec<&str> = stage_chain(StyleStage::Display, &config)
+        let chain: Vec<&str> = StyleRegistry::new()
+            .stage_chain(StyleStage::Display, &config)
             .iter()
             .map(|(d, _)| d.name)
             .collect();
@@ -3784,7 +3655,7 @@ mod tests {
             ["matrix", "blood", "drunk", "tron", "underwater"]
         );
         for name in crate::render_mode::STYLES {
-            let d = find(name).unwrap();
+            let d = builtin(name).unwrap();
             assert_eq!(d.stage, StyleStage::Display, "{name}");
             assert!(
                 !d.yields,
@@ -3796,7 +3667,7 @@ mod tests {
 
     #[test]
     fn feeds_bloom_reads_from_the_table_for_hdr_styles_only() {
-        let kuwahara = find("kuwahara").unwrap();
+        let kuwahara = builtin("kuwahara").unwrap();
         // Kuwahara's default is unchanged: bloom reads the original scene
         assert!(!kuwahara.feeds_bloom);
         assert!(!kuwahara.feeds_bloom_in(&PostProcessConfig::default()));
@@ -3804,7 +3675,8 @@ mod tests {
             "[kuwahara]\nfeeds_bloom = true\n[ascii]\nfeeds_bloom = true\n[invert]\nfeeds_bloom = 1\n",
         )
         .unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         let config = PostProcessConfig {
             styles: settings.clone(),
             ..Default::default()
@@ -3818,7 +3690,7 @@ mod tests {
         );
         // ASCII draws after bloom: warned, ignored
         assert_eq!(settings.feeds_bloom("ascii"), None);
-        assert!(!find("ascii").unwrap().feeds_bloom_in(&config));
+        assert!(!builtin("ascii").unwrap().feeds_bloom_in(&config));
         assert!(warnings
             .iter()
             .any(|w| w.contains("ascii") && w.contains("display")));
@@ -3837,14 +3709,15 @@ mod tests {
         let tables: BTreeMap<String, toml::Table> =
             toml::from_str("[ascii]\ncell = 12\nramp = \"blocks\"\ncolor = \"tint\"\nfont = 3\n")
                 .unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert!(settings.is_enabled("ascii"));
         assert_eq!(settings.param("ascii", "cell"), Some(12.0));
         assert_eq!(settings.option("ascii", "ramp"), Some("blocks"));
         assert_eq!(settings.option("ascii", "color"), Some("tint"));
         assert_eq!(warnings, vec!["styles.ascii.font must be a string"]);
 
-        let ascii = find("ascii").unwrap();
+        let ascii = builtin("ascii").unwrap();
         let mut config = PostProcessConfig::default();
         assert_eq!(ascii.option(&config, "font"), "builtin");
         assert_eq!(ascii.option(&config, "color"), "source");
@@ -3855,7 +3728,8 @@ mod tests {
         // An unknown key names the options too
         let tables: BTreeMap<String, toml::Table> =
             toml::from_str("[ascii]\nglyphs = 1\n").unwrap();
-        let (_, warnings) = StyleSettings::from_tables(&tables);
+        let (_, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert!(warnings[0].contains("ramp"), "{warnings:?}");
     }
 
@@ -3865,7 +3739,8 @@ mod tests {
         // the list and the default it draws as, and is kept as written
         let tables: BTreeMap<String, toml::Table> =
             toml::from_str("[ascii]\ncolor = \"plaid\"\n").unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(
             warnings[0].contains("styles.ascii.color")
@@ -3877,7 +3752,7 @@ mod tests {
         assert_eq!(settings.option("ascii", "color"), Some("plaid"));
 
         // Every closed option of every built-in style warns the same way
-        for d in registry() {
+        for d in builtins() {
             for o in d.options.iter().filter(|o| o.closed()) {
                 assert!(
                     !o.choices.is_empty(),
@@ -3888,7 +3763,8 @@ mod tests {
                 assert!(o.choices.contains(&o.default), "{}.{}", d.name, o.name);
                 let toml = format!("[{}]\n{} = \"plaid\"\n", d.name, o.name);
                 let tables: BTreeMap<String, toml::Table> = toml::from_str(&toml).unwrap();
-                let (_, warnings) = StyleSettings::from_tables(&tables);
+                let (_, warnings) =
+                    StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
                 assert_eq!(warnings.len(), 1, "{}.{}: {warnings:?}", d.name, o.name);
             }
         }
@@ -3901,13 +3777,14 @@ mod tests {
              [pencil]\ndirection = \"tensor\"\n",
         )
         .unwrap();
-        let (_, warnings) = StyleSettings::from_tables(&tables);
+        let (_, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]
     fn descriptor_params_fall_back_to_defaults() {
-        let invert = find("invert").unwrap();
+        let invert = builtin("invert").unwrap();
         let mut config = PostProcessConfig::default();
         assert!(!invert.is_enabled(&config));
         assert_eq!(invert.param(&config, "strength"), 1.0);
@@ -3916,7 +3793,7 @@ mod tests {
         assert!(invert.is_enabled(&config));
         assert_eq!(invert.param(&config, "strength"), 0.25);
 
-        let kuwahara = find("kuwahara").unwrap();
+        let kuwahara = builtin("kuwahara").unwrap();
         assert!(!kuwahara.is_enabled(&config));
         assert_eq!(kuwahara.param(&config, "radius"), 4.0);
         config.styles.set_enabled("kuwahara", true);

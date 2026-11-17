@@ -162,6 +162,13 @@ pub struct HeadlessGame {
 }
 
 impl HeadlessGame {
+    /// The styles the capture draws with (#742), the registry its scene's
+    /// `[post_process]` was read against: what scripts' style commands
+    /// name. Set it before [`start_scripts`](Self::start_scripts).
+    pub fn set_styles(&mut self, styles: flint_render::stylize::StyleRegistry) {
+        self.core.styles = styles;
+    }
+
     /// The game of `world`, the scene at `scene_path` in `project`, with
     /// nothing started.
     pub fn new(world: FlintWorld, scene_path: &str, project: Project) -> Self {
@@ -313,7 +320,10 @@ impl HeadlessGame {
         self.authored = post.clone();
         let core = &mut self.core;
         core.script
-            .set_style_reader(std::sync::Arc::new(SceneStyles::new(post.clone())));
+            .set_style_reader(std::sync::Arc::new(SceneStyles::new(
+                post.clone(),
+                core.styles.clone(),
+            )));
         if let Some(timeline) = timeline {
             // The run's, as the player's feed is
             core.subsystems

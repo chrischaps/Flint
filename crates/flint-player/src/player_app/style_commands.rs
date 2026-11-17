@@ -18,6 +18,7 @@ use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_render::entity_style;
 use flint_render::post_style;
+use flint_render::stylize::StyleRegistry;
 use flint_render::PostProcessConfig;
 use flint_runtime::GameEvent;
 use flint_script::{EntityStyle, StyleReader};
@@ -91,25 +92,28 @@ fn changed(entity: EntityId, style: &str) -> GameEvent {
 /// ([`flint_render::SceneRenderer::post_config_generation`]).
 pub struct SceneStyles {
     config: PostProcessConfig,
+    /// The registry the frame is drawn with (#742).
+    styles: StyleRegistry,
 }
 
 impl SceneStyles {
-    /// A reader over `config`, the settings the frame is drawn with.
-    pub fn new(config: PostProcessConfig) -> Self {
-        Self { config }
+    /// A reader over `config`, the settings the frame is drawn with, and
+    /// `styles`, the registry it is drawn with.
+    pub fn new(config: PostProcessConfig, styles: StyleRegistry) -> Self {
+        Self { config, styles }
     }
 }
 
 impl StyleReader for SceneStyles {
     fn entity_style(&self, world: &FlintWorld, id: EntityId) -> Option<EntityStyle> {
-        entity_style::drawn_style(world, &self.config, id).map(|d| EntityStyle {
+        entity_style::drawn_style(world, &self.styles, &self.config, id).map(|d| EntityStyle {
             style: d.style,
             variant: d.variant,
         })
     }
 
     fn style_param(&self, world: &FlintWorld, id: EntityId, param: &str) -> Option<toml::Value> {
-        entity_style::style_setting(world, &self.config, id, param)
+        entity_style::style_setting(world, &self.styles, &self.config, id, param)
     }
 }
 
@@ -316,6 +320,7 @@ impl StyleTweens {
     pub fn tween_post(
         &mut self,
         config: &mut PostProcessConfig,
+        styles: &StyleRegistry,
         style: &str,
         param: &str,
         target: f64,
@@ -333,7 +338,7 @@ impl StyleTweens {
                 "tween_post_style_param: `{param}` can't ease to {target}"
             ));
         }
-        let from = match post_style::post_style_number(config, style, param) {
+        let from = match post_style::post_style_number(config, styles, style, param) {
             Ok(n) => f64::from(n),
             Err(e) => return StyleApplied::Failed(format!("tween_post_style_param: {e}")),
         };
@@ -341,6 +346,7 @@ impl StyleTweens {
         // here, from what setting it would do (on a copy)
         let note = match post_style::set_post_style_param(
             &mut config.clone(),
+            styles,
             style,
             param,
             target.into(),
@@ -365,7 +371,9 @@ impl StyleTweens {
         // Written once now, at its start: a reveal the style didn't have
         // is then 0, so the frame stays live until it moves
         let k = if seconds > 0.0 { 0.0 } else { 1.0 };
-        if let Err(e) = post_style::set_post_style_param(config, style, param, tween.value(k)) {
+        if let Err(e) =
+            post_style::set_post_style_param(config, styles, style, param, tween.value(k))
+        {
             return StyleApplied::Failed(format!("tween_post_style_param: {e}"));
         }
         if seconds.is_nan() || seconds <= 0.0 {
@@ -384,7 +392,12 @@ impl StyleTweens {
     /// Move every whole-frame style tween on by `dt` seconds of game time
     /// and write its value into `config` (#406). `false` in the second
     /// place: nothing was running, so `config` is as it was.
-    pub fn step_post(&mut self, config: &mut PostProcessConfig, dt: f64) -> (TweenStep, bool) {
+    pub fn step_post(
+        &mut self,
+        config: &mut PostProcessConfig,
+        styles: &StyleRegistry,
+        dt: f64,
+    ) -> (TweenStep, bool) {
         let mut out = TweenStep::default();
         if self.post.is_empty() {
             return (out, false);
@@ -397,7 +410,8 @@ impl StyleTweens {
             } else {
                 t.easing.apply(t.elapsed / t.seconds)
             };
-            if let Err(e) = post_style::set_post_style_param(config, &t.style, &t.param, t.value(k))
+            if let Err(e) =
+                post_style::set_post_style_param(config, styles, &t.style, &t.param, t.value(k))
             {
                 out.failures.push(format!("tween_post_style_param: {e}"));
                 return false;
@@ -415,10 +429,11 @@ impl StyleTweens {
     pub fn set_entity_style(
         &mut self,
         world: &mut FlintWorld,
+        styles: &StyleRegistry,
         entity: EntityId,
         style: &str,
     ) -> StyleApplied {
-        match entity_style::set_entity_style(world, entity, style) {
+        match entity_style::set_entity_style(world, styles, entity, style) {
             Ok(()) => StyleApplied::Done(Some(changed(entity, style))),
             Err(e) => StyleApplied::Failed(format!("set_entity_style: {e}")),
         }
@@ -429,12 +444,13 @@ impl StyleTweens {
     pub fn set_style_param(
         &mut self,
         world: &mut FlintWorld,
+        styles: &StyleRegistry,
         entity: EntityId,
         param: &str,
         value: toml::Value,
     ) -> StyleApplied {
         self.stop(entity, Some(param));
-        match entity_style::set_style_param(world, entity, param, value) {
+        match entity_style::set_style_param(world, styles, entity, param, value) {
             Ok(set) => match set.clamped {
                 None => StyleApplied::Done(None),
                 Some(note) => StyleApplied::Clamped(
@@ -448,9 +464,14 @@ impl StyleTweens {
 
     /// `clear_entity_style`: take the entity's own style off, and stop its
     /// tweens.
-    pub fn clear_entity_style(&mut self, world: &mut FlintWorld, entity: EntityId) -> StyleApplied {
+    pub fn clear_entity_style(
+        &mut self,
+        world: &mut FlintWorld,
+        styles: &StyleRegistry,
+        entity: EntityId,
+    ) -> StyleApplied {
         self.stop(entity, None);
-        let had = entity_style::clear_entity_style(world, entity);
+        let had = entity_style::clear_entity_style(world, styles, entity);
         StyleApplied::Done(had.then(|| changed(entity, "")))
     }
 
@@ -463,6 +484,7 @@ impl StyleTweens {
     pub fn tween(
         &mut self,
         world: &mut FlintWorld,
+        styles: &StyleRegistry,
         config: &PostProcessConfig,
         entity: EntityId,
         param: &str,
@@ -477,7 +499,7 @@ impl StyleTweens {
             ));
         };
         let id = entity;
-        let ends = match entity_style::tween_endpoints(world, id, param, target, config) {
+        let ends = match entity_style::tween_endpoints(world, styles, id, param, target, config) {
             Ok(ends) => ends,
             Err(e) => return StyleApplied::Failed(format!("tween_style_param: {e}")),
         };
@@ -503,7 +525,7 @@ impl StyleTweens {
         };
         if seconds.is_nan() || seconds <= 0.0 {
             // No time to ease over: there now, done now
-            return match entity_style::set_style_param(world, id, param, tween.value(1.0)) {
+            return match entity_style::set_style_param(world, styles, id, param, tween.value(1.0)) {
                 Ok(_) => applied(Some(tween_done(id, param))),
                 Err(e) => StyleApplied::Failed(format!("tween_style_param: {e}")),
             };
@@ -520,11 +542,11 @@ impl StyleTweens {
     /// Move every tween on by `dt` seconds of game time and write its
     /// value. A tween that reaches its target writes it exactly, ends and
     /// fires `style_tween_done`.
-    pub fn step(&mut self, world: &mut FlintWorld, dt: f64) -> TweenStep {
+    pub fn step(&mut self, world: &mut FlintWorld, styles: &StyleRegistry, dt: f64) -> TweenStep {
         let mut out = TweenStep::default();
         self.tweens.retain_mut(|t| {
             let id = t.entity;
-            if entity_style::entity_style(world, id) != Some(t.style) {
+            if entity_style::entity_style(world, styles, id) != Some(t.style) {
                 // Given another style (or none) since: nothing left to ease
                 return false;
             }
@@ -536,7 +558,7 @@ impl StyleTweens {
             } else {
                 t.easing.apply(t.elapsed / t.seconds)
             };
-            if let Err(e) = entity_style::set_style_param(world, id, &t.param, t.value(k)) {
+            if let Err(e) = entity_style::set_style_param(world, styles, id, &t.param, t.value(k)) {
                 out.failures.push(format!("tween_style_param: {e}"));
                 return false;
             }
@@ -562,8 +584,13 @@ fn post_changed(style: &str, config: &PostProcessConfig) -> GameEvent {
 /// `set_post_style` (#369): switch a whole-frame style on or off in
 /// `config` (the renderer's, to be handed back with
 /// `set_post_process_config`), firing `post_style_changed`.
-pub fn set_post_style(config: &mut PostProcessConfig, style: &str, enabled: bool) -> StyleApplied {
-    match post_style::set_post_style(config, style, enabled) {
+pub fn set_post_style(
+    config: &mut PostProcessConfig,
+    styles: &StyleRegistry,
+    style: &str,
+    enabled: bool,
+) -> StyleApplied {
+    match post_style::set_post_style(config, styles, style, enabled) {
         Ok(()) => StyleApplied::Done(Some(post_changed(style, config))),
         Err(e) => StyleApplied::Failed(format!("set_post_style: {e}")),
     }
@@ -573,11 +600,12 @@ pub fn set_post_style(config: &mut PostProcessConfig, style: &str, enabled: bool
 /// nothing (it may come every frame).
 pub fn set_post_style_param(
     config: &mut PostProcessConfig,
+    styles: &StyleRegistry,
     style: &str,
     param: &str,
     value: toml::Value,
 ) -> StyleApplied {
-    match post_style::set_post_style_param(config, style, param, value) {
+    match post_style::set_post_style_param(config, styles, style, param, value) {
         Ok(None) => StyleApplied::Done(None),
         Ok(Some(note)) => {
             StyleApplied::Clamped(None, format!("set_post_style_param: {style}.{note}"))
@@ -590,10 +618,11 @@ pub fn set_post_style_param(
 /// scene's own config, firing `post_style_changed`.
 pub fn reset_post_style(
     config: &mut PostProcessConfig,
+    styles: &StyleRegistry,
     authored: &PostProcessConfig,
     style: &str,
 ) -> StyleApplied {
-    match post_style::reset_post_style(config, authored, style) {
+    match post_style::reset_post_style(config, styles, authored, style) {
         Ok(()) => StyleApplied::Done(Some(post_changed(style, config))),
         Err(e) => StyleApplied::Failed(format!("reset_post_style: {e}")),
     }

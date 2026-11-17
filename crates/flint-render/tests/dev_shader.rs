@@ -11,7 +11,7 @@
 mod shared_gpu;
 
 use flint_ecs::FlintWorld;
-use flint_render::stylize::{dev_shader, registry};
+use flint_render::stylize::{builtins, dev_shader};
 use flint_render::{Camera, RendererConfig, SceneRenderer};
 use std::path::{Path, PathBuf};
 
@@ -182,14 +182,14 @@ fn a_built_in_styles_shader_reloads_from_the_folder() {
     let mut all =
         SceneRenderer::new_headless(device, queue, FORMAT, SIZE, SIZE, RendererConfig::default());
     let mut config = all.post_process_config().clone();
-    for d in registry() {
+    for d in builtins() {
         config.styles.set_enabled(d.name, true);
     }
     all.set_post_process_config(config);
     all.ensure_style_resources(device);
     frame.draw(&mut all, &world);
     assert_eq!(dev_shader::errors(), Vec::<(String, String)>::new());
-    for d in registry() {
+    for d in builtins() {
         assert!(
             all.post_process_config().styles.is_enabled(d.name),
             "{} failed to build from {}",

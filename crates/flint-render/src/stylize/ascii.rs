@@ -3976,7 +3976,7 @@ mod tests {
     fn every_offered_palette_is_built_in() {
         let palette = STYLE.options.iter().find(|o| o.name == "palette").unwrap();
         assert!(Palette::builtin(palette.default).is_some());
-        for choice in palette.choices {
+        for choice in &*palette.choices {
             assert!(Palette::builtin(choice).is_some(), "{choice}");
         }
     }
@@ -4097,7 +4097,7 @@ mod tests {
                     option: f,
                 };
                 let ramps = option("ramp").choices_in(&scope);
-                for r in option("ramp").choices {
+                for r in &*option("ramp").choices {
                     assert!(ramps.iter().any(|x| x == r), "{r} in {ramps:?}");
                 }
             }
@@ -4108,8 +4108,8 @@ mod tests {
     fn found_options_stay_open_to_the_command_line() {
         // `--style ascii:palette=tidepool` names a file the style resolves
         let mut config = crate::PostProcessConfig::default();
-        assert!(super::super::apply_style_spec(&mut config, "ascii:palette=tidepool").is_ok());
-        assert!(super::super::apply_style_spec(&mut config, "ascii:color=plaid").is_err());
+        assert!(super::super::apply_style_spec(&mut config, "ascii:palette=tidepool", &crate::stylize::StyleRegistry::new()).is_ok());
+        assert!(super::super::apply_style_spec(&mut config, "ascii:color=plaid", &crate::stylize::StyleRegistry::new()).is_err());
     }
 
     #[test]
@@ -4159,6 +4159,7 @@ mod tests {
             .find(|o| o.name == "ramp")
             .unwrap()
             .choices
+            .iter()
         {
             assert!(
                 set.ramp(choice).is_some(),
@@ -4246,7 +4247,7 @@ mod tests {
     #[test]
     fn silhouette_is_an_option_and_cell_share_a_param() {
         assert_eq!(option("silhouette").default, "pixel");
-        assert_eq!(option("silhouette").choices, SILHOUETTES);
+        assert_eq!(*option("silhouette").choices, *SILHOUETTES);
         let share = STYLE
             .params
             .iter()

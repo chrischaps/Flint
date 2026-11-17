@@ -163,6 +163,9 @@ impl PlayerApp {
             .unwrap_or_else(|| flint_render::SceneBinding::new(self.kept_asset_scope()))
             .with_archetypes(&schemas);
         let bound = renderer.bind_scene(device, queue, &self.core.world, &binding);
+        // The core's registry is the scene's (#742), and a game style an
+        // extension added since the binding was made is in it
+        renderer.set_styles(self.core.styles.clone());
 
         let config = build_model_load_config(
             &self.core.project,

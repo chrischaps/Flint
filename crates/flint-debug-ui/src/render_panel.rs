@@ -775,6 +775,7 @@ impl DebugPanel for RenderDebugPanel {
                 ctx.camera.fov,
             );
         }
+        self.styles_editor.set_styles(renderer.styles());
         self.set_style_ids(renderer.style_ids());
     }
 

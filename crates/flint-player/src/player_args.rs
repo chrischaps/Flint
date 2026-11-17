@@ -340,7 +340,7 @@ impl PlayerCli {
 /// through: it may be a user style the scene's `styles/` registers (#274),
 /// checked once those are loaded.
 fn parse_style_word(s: &str) -> Result<String, String> {
-    match flint_render::stylize::StyleSpec::parse(s) {
+    match flint_render::stylize::StyleSpec::parse(s, &flint_render::stylize::StyleRegistry::new()) {
         Ok(_) => Ok(s.to_string()),
         Err(e) if e.starts_with("unknown style") => Ok(s.to_string()),
         Err(e) => Err(e),
@@ -471,10 +471,13 @@ impl PlayerArgs {
         // --style words and --look, checked once the scene's own styles
         // are registered (a user style is known only then, #274) so a typo
         // stops here. They are loaded again, harmlessly, with the scene.
-        if !args.styles.is_empty() || args.look.is_some() {
-            crate::load_user_styles(&scene);
-        }
-        flint_render::stylize::check_style_specs(&args.styles).map_err(anyhow::Error::msg)?;
+        let styles = if !args.styles.is_empty() || args.look.is_some() {
+            crate::load_user_styles(&scene)
+        } else {
+            flint_render::stylize::StyleRegistry::new()
+        };
+        flint_render::stylize::check_style_specs(&args.styles, &styles)
+            .map_err(anyhow::Error::msg)?;
         if let Some(name) = &args.look {
             let look = flint_render::look::find(name, &scene)
                 .map_err(|e| anyhow::anyhow!("--look: {e}"))?;

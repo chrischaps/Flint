@@ -273,7 +273,8 @@ impl ReplayHost {
         let (registry, _) = crate::commands::common_args::load_schemas(Some(&scene_text), schemas)?;
         let binding = binding.with_archetypes(&registry);
         let (world, scene_file) = load_settled(&scene_text, &registry)?;
-        let config = post_process_config(&args, scene_file.post_process.as_ref())?;
+        let config =
+            post_process_config(&args, scene_file.post_process.as_ref(), binding.styles())?;
         let mut stage = Stage::load(
             &args,
             &ctx,

@@ -71,7 +71,7 @@ fn load_settled(
 /// `--list-styles [--json]`: the registry as text or JSON, with the user
 /// styles beside the scene when one is given.
 fn list_styles(args: &RenderArgs) -> Result<()> {
-    use flint_render::stylize::{catalog, custom};
+    use flint_render::stylize::{catalog, StyleRegistry};
     // The scene's user styles, and its palettes and fonts as choices (#322)
     // found from the scene's project by the one asset search (ADR 0114);
     // with no scene, from the working directory
@@ -79,15 +79,18 @@ fn list_styles(args: &RenderArgs) -> Result<()> {
         true => flint_core::project::AssetScope::for_dir(Path::new(".")),
         false => flint_core::project::AssetScope::for_scene(Path::new(&args.scene)),
     };
+    let mut styles = StyleRegistry::new();
     if !args.scene.is_empty() {
-        for message in custom::load_for(&assets) {
+        for message in styles.load_for(&assets) {
             eprintln!("warning: {message}");
         }
     }
     if crate::output::json() {
-        crate::output::document(&serde_json::to_value(catalog::catalog_in(&assets))?);
+        crate::output::document(&serde_json::to_value(catalog::catalog_in(
+            &styles, &assets,
+        ))?);
     } else {
-        print!("{}", catalog::catalog_text_in(&assets));
+        print!("{}", catalog::catalog_text_in(&styles, &assets));
     }
     Ok(())
 }
@@ -116,9 +119,19 @@ pub struct RenderHost {
     gpu: Option<String>,
     /// Devices made so far (one, unless a case asked for another GPU).
     pub devices_made: usize,
+    /// The styles the last render drew with (#742): each render has its
+    /// own, and `flint goldens` checks a case's user-style errors here.
+    styles: Option<flint_render::stylize::StyleRegistry>,
 }
 
 impl RenderHost {
+    /// Every user style error the last render met, as `flint render` warns
+    /// of them: a `.shader.toml` that didn't load, or a shader that didn't
+    /// build.
+    pub fn style_errors(&self) -> Vec<(String, String)> {
+        self.styles.as_ref().map_or_else(Vec::new, |s| s.errors())
+    }
+
     /// Let the device go; the next render makes a new one. For after a
     /// panic, when the device may be in no state to trust.
     pub fn drop_device(&mut self) {
@@ -277,11 +290,15 @@ pub(super) fn render(
     for message in binding.style_messages() {
         eprintln!("warning: {message}");
     }
+    // The registry this render draws with (#742), shared with the host for
+    // its errors: a build error lands in both
+    let styles = binding.styles().clone();
+    host.styles = Some(styles.clone());
     let assets = binding.assets().clone();
     args.style
-        .check()
+        .check(&styles)
         .map_err(|e| anyhow::anyhow!("--style: {e}"))?;
-    render_post::check(args)?;
+    render_post::check(args, &styles)?;
     render_post::warn_legacy(args);
     let look = args
         .look
@@ -348,16 +365,10 @@ pub(super) fn render(
     // Its archetypes' placeholder boxes, from the same schemas (#751)
     let binding = binding.with_archetypes(&registry);
 
-    // Load scene
-    let (mut world, mut scene_file) = load_settled(&args.scene, &registry)?;
-    // A user style an earlier render in this process loaded (a case before
-    // this one in `flint goldens`, #911) from a folder this scene can't
-    // see is left out, as when the scene renders alone (#426)
-    if let Some(post) = scene_file.post_process.as_mut() {
-        for warning in flint_render::stylize::custom::drop_unseen(&mut post.styles, &assets) {
-            eprintln!("warning: {warning}");
-        }
-    }
+    // Load scene. Its styles are its own registry's (#742), so a user style
+    // an earlier render in this process loaded (a case before this one in
+    // `flint goldens`, #911) from a folder this scene can't see is not one
+    let (mut world, scene_file) = load_settled(&args.scene, &registry)?;
     say!("Loaded scene: {}", scene_file.scene.name);
     say!("Entities: {}", world.entity_count());
     for binding in &meshes {
@@ -384,9 +395,9 @@ pub(super) fn render(
             Some(grid) => grid.cell_def(c, r, scene_pp, look.as_ref(), &args.scene)?,
             None => base_pp.clone(),
         };
-        let mut config = post_process_config(args, def.as_ref())?;
+        let mut config = post_process_config(args, def.as_ref(), &styles)?;
         for spec in grid.as_ref().map_or(Vec::new(), |g| g.cell_styles(c, r)) {
-            flint_render::stylize::apply_style_spec(&mut config, &spec)
+            flint_render::stylize::apply_style_spec(&mut config, &spec, &styles)
                 .map_err(|e| anyhow::anyhow!("--sweep: {e}"))?;
         }
         configs.push(config);
@@ -656,7 +667,7 @@ pub(super) fn render(
         let reference = reference.expect("clap requires --reference with --ai-refine");
         return refine_look(args, look, reference, &mut |table| {
             let def = super::look::overlay(scene_pp, table)?;
-            let config = post_process_config(args, Some(&def))?;
+            let config = post_process_config(args, Some(&def), renderer.styles())?;
             let scale = reads_glyphs.then(|| ink_scale(args, &config));
             let image = draw_frame(ctx, &mut renderer, &camera, Some(config), Some(&world))?;
             let ink = scale.and_then(|s| frame_ink(&renderer, ctx, &s));
@@ -889,7 +900,10 @@ pub(super) fn render(
     };
     draw_and_write(false)?;
     if let Some(watch) = watch {
-        watch.redraws(&assets, || draw_and_write(true))?;
+        // The renderer's user styles are shared with this copy, so a WGSL
+        // save it reloads is the pass's to see (#742)
+        let mut watched = styles.clone();
+        watch.redraws(&assets, &mut watched, || draw_and_write(true))?;
     }
     Ok(())
 }
@@ -1792,7 +1806,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
         let stage = &mut stages[0];
         return refine_look(args, look, reference, &mut |table| {
             let def = super::look::overlay(scene_pp, table)?;
-            let config = post_process_config(args, Some(&def))?;
+            let config = post_process_config(args, Some(&def), stage.renderer.styles())?;
             let scale = reads_glyphs.then(|| ink_scale(args, &config));
             let image = stage.redraw(args, ctx, t, frame_step, config)?;
             let ink = scale.and_then(|s| frame_ink(&stage.renderer, ctx, &s));
@@ -2880,7 +2894,7 @@ impl Stage {
             if let Some(cadence) = boil.on {
                 pp_config.boil_on = cadence.clamp(1, 3);
             }
-            render_post::apply_flags(args, &mut pp_config)?;
+            render_post::apply_flags(args, &mut pp_config, binding.styles())?;
         }
         // The shading boil's drawing (#214) comes from the field where the camera
         // is. --boil-time picks one and holds it, in one tick at the tempo of that
@@ -3094,7 +3108,7 @@ impl Stage {
                 Ok(def) => {
                     let boil = config.boil;
                     let styles = styled.then(|| config.styles.clone());
-                    config = post_process_config(args, Some(&def))?;
+                    config = post_process_config(args, Some(&def), self.renderer.styles())?;
                     // The shading boil's drawing is the clock's, not the look's
                     config.boil = boil;
                     if let Some(styles) = styles {
@@ -3112,6 +3126,7 @@ impl Stage {
                             before.clone(),
                             config,
                             *seconds as f32,
+                            self.renderer.styles(),
                         );
                         config = before;
                         self.look_fade = Some((fade, *at));

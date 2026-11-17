@@ -64,9 +64,15 @@ impl StyleMaskState {
 
     /// Ids for every styled entity: they say which styles are on for
     /// entities alone (#266) as well as what the mask holds (#263).
-    pub(crate) fn resolve(&mut self, world: &FlintWorld, config: &PostProcessConfig) {
+    pub(crate) fn resolve(
+        &mut self,
+        world: &FlintWorld,
+        styles: &crate::stylize::StyleRegistry,
+        config: &PostProcessConfig,
+    ) {
         crate::style_mask::resolve_blended(
             world,
+            styles,
             config,
             &mut self.ids,
             &mut self.by_entity,
@@ -384,7 +390,9 @@ impl SceneRenderer {
     /// up and a style that reads it is on (#263).
     pub(super) fn style_mask_wanted(&self) -> bool {
         self.postprocess_resources.is_some()
-            && crate::stylize::any_uses_mask(&self.postprocess_config, &self.style_mask.ids)
+            && self
+                .styles
+                .any_uses_mask(&self.postprocess_config, &self.style_mask.ids)
     }
 
     /// Log the style mask's styled draws (#1204): the same selector

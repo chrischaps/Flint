@@ -25,24 +25,27 @@ use std::path::{Path, PathBuf};
 /// `flint_player::post_process_config_from_def` path (flint-cli uses it).
 pub use flint_render::post_process_config_from_def;
 
-/// Register the user-authored styles (`styles/*.shader.toml`, ADR 0112)
-/// a scene at `scene_path` can see, before its `[post_process]` is read:
-/// a table naming a style the registry doesn't know is dropped with a
-/// warning. Styles already registered are kept, so a scene change only
-/// adds (#275).
-pub fn load_user_styles(scene_path: &str) {
+/// The built-in styles with the user-authored ones (`styles/*.shader.toml`,
+/// ADR 0112) a scene at `scene_path` can see (#742): the registry to read
+/// its `[post_process]` against, where a table naming a style it doesn't
+/// hold is dropped with a warning. What didn't load is warned about.
+pub fn load_user_styles(scene_path: &str) -> flint_render::stylize::StyleRegistry {
     load_user_styles_in(&flint_core::project::AssetScope::for_scene(Path::new(
         scene_path,
-    )));
+    )))
 }
 
 /// [`load_user_styles`] for a host that holds the scene's project: every
 /// `styles/*.shader.toml` the project's one asset search lists from
 /// `scope`, the nearest of a name winning (ADR 0114, #426).
-pub fn load_user_styles_in(scope: &flint_core::project::AssetScope) {
-    for message in flint_render::stylize::custom::load_for(scope) {
+pub fn load_user_styles_in(
+    scope: &flint_core::project::AssetScope,
+) -> flint_render::stylize::StyleRegistry {
+    let (styles, messages) = flint_render::stylize::StyleRegistry::new().for_scene(scope);
+    for message in messages {
         tracing::warn!("{message}");
     }
+    styles
 }
 
 /// A scene's `[post_process]` as the player draws it: the look the scene

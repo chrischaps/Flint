@@ -85,7 +85,8 @@ fn main() -> anyhow::Result<()> {
     // the registry when the renderer is made, and a `--style` word too.
     player.add_extension(Box::new(SunPrints));
     // So a typo in a word stops here, as it does in flint-player
-    flint_render::stylize::check_style_specs(&styles).map_err(anyhow::Error::msg)?;
+    flint_render::stylize::check_style_specs(&styles, &player.core.styles)
+        .map_err(anyhow::Error::msg)?;
     player.launch.style_specs = styles;
     if screenshot.is_some() {
         player.capture = CaptureConfig::new(screenshot, at, None, Some(at + 0.5));

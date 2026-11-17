@@ -718,13 +718,17 @@ impl PlayerApp {
             if FRAMES.fetch_add(1, Ordering::Relaxed) % 15 != 0 {
                 return;
             }
-            let reload =
-                flint_render::stylize::custom::reload_changed_for(&self.kept_asset_scope());
+            let scope = self.kept_asset_scope();
+            let reload = self.core.styles.reload_changed_for(&scope);
             for message in &reload.messages {
                 tracing::warn!("{message}");
             }
             if !reload.changed() {
                 return;
+            }
+            // The renderer draws the new installs from the next frame
+            if let Some(renderer) = &mut self.scene_renderer {
+                renderer.set_styles(self.core.styles.clone());
             }
             // What the scene authors, with --style over it, so a reloaded
             // style a word names keeps the word's settings (#328)
@@ -951,7 +955,7 @@ impl PlayerApp {
         // compile (#418): shown until they do
         #[cfg(feature = "debug-hud")]
         let style_errors = {
-            let mut errors = flint_render::stylize::custom::errors();
+            let mut errors = self.core.styles.errors();
             errors.extend(flint_render::stylize::dev_shader::errors());
             errors
         };
@@ -1059,7 +1063,12 @@ impl PlayerApp {
                     script_errors_unkept,
                     inset,
                 );
-                flint_debug_ui::paint_style_errors(ctx, &style_errors, inset + scripts);
+                flint_debug_ui::paint_style_errors(
+                    ctx,
+                    &style_errors,
+                    &self.core.styles,
+                    inset + scripts,
+                );
             }
         });
 

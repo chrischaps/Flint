@@ -208,7 +208,8 @@ pub fn viewer(
 
     let binding = scene_binding(scene_path);
     // A word may name one of the scene's styles, registered just now
-    flint_render::stylize::check_style_specs(&style.specs).map_err(anyhow::Error::msg)?;
+    flint_render::stylize::check_style_specs(&style.specs, binding.styles())
+        .map_err(anyhow::Error::msg)?;
     let (world, mut scene_file) = load_scene(scene_path, &registry)?;
     // Living props' tables: checked, and the preset [wooze] names filled in (#686)
     flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))?;
@@ -589,8 +590,9 @@ fn with_flags(
     mut config: PostProcessConfig,
     specs: &[String],
     motion_hold: Option<f32>,
+    styles: &flint_render::stylize::StyleRegistry,
 ) -> PostProcessConfig {
-    for e in flint_render::stylize::apply_style_specs(&mut config, specs) {
+    for e in flint_render::stylize::apply_style_specs(&mut config, specs, styles) {
         eprintln!("Warning: {e}");
     }
     if let Some(rate) = motion_hold {
@@ -619,8 +621,11 @@ fn with_look(
     }
 }
 
-fn authored_styles(def: Option<&PostProcessDef>) -> flint_render::stylize::StyleSettings {
-    def.map(|d| post_process_config_from_def(d).styles)
+fn authored_styles(
+    def: Option<&PostProcessDef>,
+    styles: &flint_render::stylize::StyleRegistry,
+) -> flint_render::stylize::StyleSettings {
+    def.map(|d| post_process_config_from_def(d, styles).styles)
         .unwrap_or_default()
 }
 
@@ -893,9 +898,10 @@ impl ViewerApp {
             let state = self.state.lock().unwrap();
             if let Some(def) = &state.scene_post {
                 scene_renderer.set_post_process_config(with_flags(
-                    post_process_config_from_def(def),
+                    post_process_config_from_def(def, scene_renderer.styles()),
                     &self.style_specs,
                     self.motion_hold,
+                    scene_renderer.styles(),
                 ));
                 eprintln!(
                     "Scene [post_process] applied (F4 > Authored post toggles scene/default)"
@@ -906,6 +912,7 @@ impl ViewerApp {
                     config,
                     &self.style_specs,
                     self.motion_hold,
+                    scene_renderer.styles(),
                 ));
             }
             if !self.style_specs.is_empty() {
@@ -915,8 +922,10 @@ impl ViewerApp {
                 eprintln!("--motion-hold applied: the whole frame drawn {rate} times a second");
             }
             // The F4 style editor marks edits against these (#268)
-            self.render_panel
-                .set_authored_styles(Some(authored_styles(state.scene_post.as_ref())));
+            self.render_panel.set_authored_styles(Some(authored_styles(
+                state.scene_post.as_ref(),
+                scene_renderer.styles(),
+            )));
             // ...and offers the scene's own palettes and glyph sets (#322)
             self.render_panel
                 .set_scene_dir(Some(scene_dir_of(&state.scene_path).to_path_buf()));
@@ -1237,11 +1246,14 @@ impl ViewerApp {
     /// enabled, else the viewer default) when F12 follow is switched off.
     fn restore_base_dof(&mut self) {
         let scene_post = self.state.lock().unwrap().scene_post.clone();
+        let Some(renderer) = self.scene_renderer.as_mut() else {
+            return;
+        };
         let base = match (&scene_post, self.scene_post_enabled) {
-            (Some(def), true) => Some(post_process_config_from_def(def)),
+            (Some(def), true) => Some(post_process_config_from_def(def, renderer.styles())),
             _ => self.default_post_config.clone(),
         };
-        let (Some(base), Some(renderer)) = (base, self.scene_renderer.as_mut()) else {
+        let Some(base) = base else {
             return;
         };
         let mut config = renderer.post_process_config().clone();
@@ -1263,9 +1275,10 @@ impl ViewerApp {
             None => println!("Scene has no [post_process] block — nothing to toggle"),
             Some(def) if !self.scene_post_enabled => {
                 renderer.set_post_process_config(with_flags(
-                    post_process_config_from_def(&def),
+                    post_process_config_from_def(&def, renderer.styles()),
                     &self.style_specs,
                     self.motion_hold,
+                    renderer.styles(),
                 ));
                 self.scene_post_enabled = true;
                 println!("Scene post-process: ON (authored)");
@@ -1276,6 +1289,7 @@ impl ViewerApp {
                         default.clone(),
                         &self.style_specs,
                         self.motion_hold,
+                        renderer.styles(),
                     ));
                 }
                 self.scene_post_enabled = false;
@@ -1344,13 +1358,17 @@ impl ViewerApp {
                 }) {
                     Some(Ok(def)) => {
                         renderer.set_post_process_config(with_flags(
-                            post_process_config_from_def(&def),
+                            post_process_config_from_def(&def, renderer.styles()),
                             &self.style_specs,
                             self.motion_hold,
+                            renderer.styles(),
                         ));
                         renderer.ensure_style_resources(&context.device);
                         renderer.ensure_fxaa_resources(&context.device);
-                        rp.set_authored_styles(Some(authored_styles(Some(&def))));
+                        rp.set_authored_styles(Some(authored_styles(
+                            Some(&def),
+                            renderer.styles(),
+                        )));
                         println!("Look: {}", rp.look.as_deref().unwrap_or("none"));
                         state.scene_post = Some(def);
                         self.scene_post_enabled = true;
@@ -1568,12 +1586,17 @@ impl ViewerApp {
         // User styles that don't compile (#275) or don't load (#425), and
         // built-in shaders read from FLINT_STYLE_SHADER_DIR that don't
         // compile (#418), shown until they do
-        let mut style_errors = flint_render::stylize::custom::errors();
+        let styles = self
+            .scene_renderer
+            .as_ref()
+            .map(|r| r.styles().clone())
+            .unwrap_or_default();
+        let mut style_errors = styles.errors();
         style_errors.extend(flint_render::stylize::dev_shader::errors());
 
         {
             let ctx = &ui.ctx().clone();
-            flint_debug_ui::paint_style_errors(ctx, &style_errors, 0.0);
+            flint_debug_ui::paint_style_errors(ctx, &style_errors, &styles, 0.0);
             if show_panels {
                 // Left side panel: scene tree
                 egui::Panel::left("scene_tree_panel")
@@ -2251,9 +2274,13 @@ impl ViewerApp {
         self.user_style_polls = self.user_style_polls.wrapping_add(1);
         if needs_reload || self.user_style_polls % 15 == 0 {
             // From the project the renderer was given at load, not found anew
-            let reload = match self.scene_renderer.as_ref().map(|r| r.asset_scope()) {
-                Some(scope) => flint_render::stylize::custom::reload_changed_for(&scope),
-                None => flint_render::stylize::custom::reload_changed(scene_dir_of(&scene_path)),
+            // into the registry the renderer draws with (#742)
+            let reload = match self.scene_renderer.as_mut() {
+                Some(renderer) => {
+                    let scope = renderer.asset_scope();
+                    renderer.styles_mut().reload_changed_for(&scope)
+                }
+                None => Default::default(),
             };
             for message in &reload.messages {
                 eprintln!("Warning: {message}");
@@ -2320,9 +2347,16 @@ impl ViewerApp {
                         // no longer follows on from the last one, #474), no
                         // bones or levers of the last load, and its terrain
                         // and grass, which may have changed or gone
-                        let binding = self.scene_binding.clone().unwrap_or_else(|| {
-                            SceneBinding::new((*renderer.asset_scope()).clone())
-                        });
+                        // over the styles it draws with now, so a reload
+                        // since the last load is kept and an unchanged
+                        // style keeps its pass (#742)
+                        let binding = match self.scene_binding.clone() {
+                            Some(binding) => binding.restyled(renderer.styles()),
+                            None => SceneBinding::over(
+                                (*renderer.asset_scope()).clone(),
+                                renderer.styles(),
+                            ),
+                        };
                         stage_scene(
                             renderer,
                             &context.device,
@@ -2357,14 +2391,17 @@ impl ViewerApp {
                             // --style keeps winning over the reloaded file (#328)
                             if let Some(def) = &state.scene_post {
                                 renderer.set_post_process_config(with_flags(
-                                    post_process_config_from_def(def),
+                                    post_process_config_from_def(def, renderer.styles()),
                                     &self.style_specs,
                                     self.motion_hold,
+                                    renderer.styles(),
                                 ));
                             }
                         }
-                        self.render_panel
-                            .set_authored_styles(Some(authored_styles(state.scene_post.as_ref())));
+                        self.render_panel.set_authored_styles(Some(authored_styles(
+                            state.scene_post.as_ref(),
+                            renderer.styles(),
+                        )));
                         self.render_panel
                             .set_scene_dir(Some(scene_dir_of(&state.scene_path).to_path_buf()));
                         // A look file may be new, changed or gone (#356)

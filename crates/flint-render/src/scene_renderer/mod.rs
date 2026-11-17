@@ -671,6 +671,11 @@ pub struct SceneRenderer {
     /// The project and folder styles search from, with the `scene_dir` it
     /// was made for: found once a scene, not once a lookup.
     asset_scope: std::sync::Mutex<Option<AssetScopeFor>>,
+    /// The styles this renderer draws with (#742): the built-ins until a
+    /// host binds a scene ([`bind_scene`](Self::bind_scene)) or hands it
+    /// one ([`set_styles`](Self::set_styles)). Its own, so another renderer
+    /// in the process can hold another `glow`.
+    styles: crate::stylize::StyleRegistry,
     /// Physical pixels per logical point of the window it draws into: the
     /// OS scale factor. Styles sized in points (ASCII cells, #265) scale by
     /// it. Hosts with a window set it; 1 headless.
@@ -852,6 +857,7 @@ impl SceneRenderer {
             bitmap_font_scope: None,
             scene_dir: None,
             asset_scope: std::sync::Mutex::new(None),
+            styles: crate::stylize::StyleRegistry::new(),
             pixels_per_point: 1.0,
             style_frame_serial: std::sync::atomic::AtomicU64::new(0),
             style_history_epoch: 0,
@@ -1267,7 +1273,8 @@ impl SceneRenderer {
         // Ids for every styled entity: they say which styles are on for
         // entities alone (#266) as well as what the mask holds (#263)
         if self.postprocess_resources.is_some() && self.postprocess_config.enabled {
-            self.style_mask.resolve(world, &self.postprocess_config);
+            self.style_mask
+                .resolve(world, &self.styles, &self.postprocess_config);
         } else {
             self.style_mask.clear();
         }

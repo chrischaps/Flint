@@ -637,7 +637,11 @@ fn parse_style(key: &str, style: &str, k: &str, values: &[String]) -> Result<Swe
     for value in values {
         // `StyleSpec` refuses a value past its param's range (#355), which
         // would draw the same column twice
-        match flint_render::stylize::StyleSpec::parse(&format!("{style}:{k}={value}")) {
+        let word = format!("{style}:{k}={value}");
+        match flint_render::stylize::StyleSpec::parse(
+            &word,
+            &flint_render::stylize::StyleRegistry::new(),
+        ) {
             Ok(_) => {}
             // Maybe a user style (#274), registered only once the scene's
             // folder is read; the column's apply checks it

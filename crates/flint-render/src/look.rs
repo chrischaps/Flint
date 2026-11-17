@@ -184,8 +184,17 @@ pub fn overlay(
     let def: PostProcessDef = toml::Value::Table(table)
         .try_into()
         .map_err(|e| format!("[post_process]: {e}"))?;
-    // The style tables are checked against the registry, as a scene's are.
-    let (_, warnings) = crate::stylize::StyleSettings::from_tables(&def.styles);
+    // A built-in style's table is checked as a scene's is. A look carries
+    // no registry: a table naming a game's or a user style is read, and
+    // warned about, against the registry of the scene it is laid on (#742)
+    let builtin: std::collections::BTreeMap<String, toml::Table> = def
+        .styles
+        .iter()
+        .filter(|(name, _)| crate::stylize::is_builtin(name))
+        .map(|(name, table)| (name.clone(), table.clone()))
+        .collect();
+    let (_, warnings) =
+        crate::stylize::StyleSettings::from_tables(&builtin, &crate::stylize::StyleRegistry::new());
     if let Some(first) = warnings.into_iter().next() {
         return Err(first);
     }
@@ -496,15 +505,30 @@ mod tests {
         assert!(err.contains("bloom_intensity"), "{err}");
     }
 
+    /// A look carries no registry (#742): a style it names that isn't
+    /// built in may be a user or game style of the scene it is laid on, so
+    /// the look reads, and the scene's registry says what it doesn't hold.
+    /// A built-in style's table is still checked when the look is read.
     #[test]
-    fn an_unknown_style_is_refused() {
-        let err = Look::parse(
+    fn a_style_the_engine_lacks_is_the_scenes_to_judge() {
+        let look = Look::parse(
             "t",
             "[post_process.styles.watercolour]\nenabled = true",
             "test",
         )
-        .unwrap_err();
-        assert!(err.contains("watercolour"), "{err}");
+        .unwrap();
+        let def = look.apply(None).unwrap();
+        let styles = crate::stylize::StyleRegistry::new();
+        let tables = def.style_tables();
+        let (_, warnings) = crate::stylize::StyleSettings::from_tables(&tables, &styles);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("unknown style 'watercolour'")),
+            "{warnings:?}"
+        );
+        let err = Look::parse("t", "[post_process.styles.ascii]\ncell = 400", "test").unwrap_err();
+        assert!(err.contains("cell=400"), "{err}");
     }
 
     #[test]

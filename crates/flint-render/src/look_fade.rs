@@ -54,6 +54,9 @@ pub const TOGGLE_STRENGTH: &[(&str, &str)] = &[
 pub struct LookFade {
     from: PostProcessConfig,
     to: PostProcessConfig,
+    /// The registry the two ends were read against: an unset parameter
+    /// fades from or to its style's default.
+    styles: stylize::StyleRegistry,
     seconds: f32,
     elapsed: f32,
 }
@@ -61,10 +64,16 @@ pub struct LookFade {
 impl LookFade {
     /// A fade from `from` (what the frame drew when it was asked) to `to`
     /// (what the new look resolves to) over `seconds`. Nothing has moved yet.
-    pub fn new(from: PostProcessConfig, to: PostProcessConfig, seconds: f32) -> Self {
+    pub fn new(
+        from: PostProcessConfig,
+        to: PostProcessConfig,
+        seconds: f32,
+        styles: &stylize::StyleRegistry,
+    ) -> Self {
         Self {
             from,
             to,
+            styles: styles.clone(),
             seconds: if seconds.is_finite() {
                 seconds.max(0.0)
             } else {
@@ -120,7 +129,7 @@ impl LookFade {
     /// Lay the fade at its progress over `config`: every field the two ends
     /// set differently takes its in-between value, and nothing else changes.
     pub fn apply(&self, config: &mut PostProcessConfig) {
-        lay_between(&self.from, &self.to, self.eased(), config);
+        lay_between(&self.from, &self.to, self.eased(), config, &self.styles);
     }
 }
 
@@ -132,6 +141,7 @@ pub fn lay_between(
     to: &PostProcessConfig,
     s: f32,
     config: &mut PostProcessConfig,
+    styles: &stylize::StyleRegistry,
 ) {
     let s = s.clamp(0.0, 1.0);
     let past_half = s >= 0.5;
@@ -174,7 +184,7 @@ pub fn lay_between(
             from.ground_fog_steps
         };
     }
-    lay_styles(&from.styles, &to.styles, s, &mut config.styles);
+    lay_styles(&from.styles, &to.styles, s, &mut config.styles, styles);
 }
 
 /// One effect's switch and strength: on at both ends, the strength lerps; on
@@ -216,7 +226,13 @@ fn lay_toggled(
 }
 
 /// Every style the two ends set differently.
-fn lay_styles(from: &StyleSettings, to: &StyleSettings, s: f32, config: &mut StyleSettings) {
+fn lay_styles(
+    from: &StyleSettings,
+    to: &StyleSettings,
+    s: f32,
+    config: &mut StyleSettings,
+    styles: &stylize::StyleRegistry,
+) {
     let mut names: Vec<&str> = from.iter().map(|(n, _)| n).collect();
     for (name, _) in to.iter() {
         if !names.contains(&name) {
@@ -227,12 +243,16 @@ fn lay_styles(from: &StyleSettings, to: &StyleSettings, s: f32, config: &mut Sty
         if from.same_style(name, to) {
             continue;
         }
-        config.put(name, style_between(name, from.get(name), to.get(name), s));
+        config.put(
+            name,
+            style_between(styles, name, from.get(name), to.get(name), s),
+        );
     }
 }
 
 /// Style `name`'s setting at `s` between `a` and `b` (either may be none).
 fn style_between(
+    styles: &stylize::StyleRegistry,
     name: &str,
     a: Option<&StyleSetting>,
     b: Option<&StyleSetting>,
@@ -254,7 +274,7 @@ fn style_between(
                 return Some(b.clone());
             }
             let mut mid = if s >= 0.5 { b.clone() } else { a.clone() };
-            let descriptor = stylize::find(name);
+            let descriptor = styles.find(name);
             let default = |key: &str| {
                 descriptor
                     .and_then(|d| d.params.iter().find(|p| p.name == key))
@@ -350,10 +370,22 @@ mod tests {
     fn the_ends_are_the_two_looks() {
         let (a, b) = looks();
         let mut at_start = a.clone();
-        lay_between(&a, &b, 0.0, &mut at_start);
+        lay_between(
+            &a,
+            &b,
+            0.0,
+            &mut at_start,
+            &crate::stylize::StyleRegistry::new(),
+        );
         assert!(same(&at_start, &a), "nothing moves at 0");
         let mut at_end = a.clone();
-        lay_between(&a, &b, 1.0, &mut at_end);
+        lay_between(
+            &a,
+            &b,
+            1.0,
+            &mut at_end,
+            &crate::stylize::StyleRegistry::new(),
+        );
         assert!(same(&at_end, &b), "the fade ends on the new look exactly");
     }
 
@@ -361,10 +393,22 @@ mod tests {
     fn numbers_lerp_and_whole_numbers_switch_at_the_midpoint() {
         let (a, b) = looks();
         let mut mid = a.clone();
-        lay_between(&a, &b, 0.25, &mut mid);
+        lay_between(
+            &a,
+            &b,
+            0.25,
+            &mut mid,
+            &crate::stylize::StyleRegistry::new(),
+        );
         assert!((mid.exposure - 1.25).abs() < 1e-6);
         assert_eq!(mid.ssao_samples, 16);
-        lay_between(&a, &b, 0.75, &mut mid);
+        lay_between(
+            &a,
+            &b,
+            0.75,
+            &mut mid,
+            &crate::stylize::StyleRegistry::new(),
+        );
         assert!((mid.exposure - 1.75).abs() < 1e-6);
         assert_eq!(mid.ssao_samples, 32);
     }
@@ -373,14 +417,26 @@ mod tests {
     fn an_effect_switched_on_ramps_its_strength_from_zero() {
         let (a, b) = looks();
         let mut mid = a.clone();
-        lay_between(&a, &b, 0.5, &mut mid);
+        lay_between(&a, &b, 0.5, &mut mid, &crate::stylize::StyleRegistry::new());
         assert!(mid.vignette_enabled, "on through the fade");
         assert!((mid.vignette_intensity - 0.2).abs() < 1e-6);
         let mut back = b.clone();
-        lay_between(&b, &a, 0.5, &mut back);
+        lay_between(
+            &b,
+            &a,
+            0.5,
+            &mut back,
+            &crate::stylize::StyleRegistry::new(),
+        );
         assert!(back.vignette_enabled);
         assert!((back.vignette_intensity - 0.2).abs() < 1e-6);
-        lay_between(&b, &a, 1.0, &mut back);
+        lay_between(
+            &b,
+            &a,
+            1.0,
+            &mut back,
+            &crate::stylize::StyleRegistry::new(),
+        );
         assert!(!back.vignette_enabled, "and off once it has faded out");
         assert_eq!(back.vignette_intensity, a.vignette_intensity);
     }
@@ -389,7 +445,13 @@ mod tests {
     fn a_style_in_one_look_fades_by_its_blend() {
         let (a, b) = looks();
         let mut mid = a.clone();
-        lay_between(&a, &b, 0.25, &mut mid);
+        lay_between(
+            &a,
+            &b,
+            0.25,
+            &mut mid,
+            &crate::stylize::StyleRegistry::new(),
+        );
         assert!(mid.styles.is_enabled("pencil"));
         assert!((mid.styles.blend("pencil") - 0.75).abs() < 1e-6);
         assert!(mid.styles.is_enabled("watercolor"));
@@ -407,17 +469,29 @@ mod tests {
         b.styles.set_param("pencil", "spacing", 9.0);
         b.styles.set_option("pencil", "direction", "tensor");
         b.styles.set_blend("pencil", Some(0.5));
-        let default = stylize::find("pencil")
+        let default = stylize::builtin("pencil")
             .and_then(|d| d.params.iter().find(|p| p.name == "spacing"))
             .map(|p| p.default)
             .unwrap();
         let mut mid = a.clone();
-        lay_between(&a, &b, 0.25, &mut mid);
+        lay_between(
+            &a,
+            &b,
+            0.25,
+            &mut mid,
+            &crate::stylize::StyleRegistry::new(),
+        );
         let want = default + (9.0 - default) * 0.25;
         assert!((mid.styles.param("pencil", "spacing").unwrap() - want).abs() < 1e-5);
         assert_eq!(mid.styles.option("pencil", "direction"), Some("screen"));
         assert!((mid.styles.blend("pencil") - 0.875).abs() < 1e-6);
-        lay_between(&a, &b, 0.75, &mut mid);
+        lay_between(
+            &a,
+            &b,
+            0.75,
+            &mut mid,
+            &crate::stylize::StyleRegistry::new(),
+        );
         assert_eq!(mid.styles.option("pencil", "direction"), Some("tensor"));
     }
 
@@ -428,7 +502,13 @@ mod tests {
         // A script's own value on a key both looks leave alone
         live.chromatic_aberration = 0.02;
         live.styles.set_enabled("invert", true);
-        lay_between(&a, &b, 0.5, &mut live);
+        lay_between(
+            &a,
+            &b,
+            0.5,
+            &mut live,
+            &crate::stylize::StyleRegistry::new(),
+        );
         assert_eq!(live.chromatic_aberration, 0.02);
         assert!(live.styles.is_enabled("invert"));
     }
@@ -436,7 +516,12 @@ mod tests {
     #[test]
     fn a_fade_steps_on_its_clock_and_eases() {
         let (a, b) = looks();
-        let mut fade = LookFade::new(a.clone(), b.clone(), 2.0);
+        let mut fade = LookFade::new(
+            a.clone(),
+            b.clone(),
+            2.0,
+            &crate::stylize::StyleRegistry::new(),
+        );
         assert_eq!(fade.eased(), 0.0);
         fade.step(1.0);
         assert!((fade.progress() - 0.5).abs() < 1e-6);
@@ -449,7 +534,10 @@ mod tests {
         let mut live = a.clone();
         fade.apply(&mut live);
         assert!(same(&live, &b));
-        assert!(LookFade::new(a, b, 0.0).done(), "no length is a cut");
+        assert!(
+            LookFade::new(a, b, 0.0, &crate::stylize::StyleRegistry::new()).done(),
+            "no length is a cut"
+        );
     }
 
     #[test]

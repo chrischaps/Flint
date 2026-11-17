@@ -658,10 +658,11 @@ fn pipeline_summary(kept: bool) -> String {
 /// The label of ASCII's glyph pipeline, the one the summary names.
 const ASCII_GLYPH_PIPELINE: &str = "ASCII Pipeline";
 
-/// Every loaded user style's error, a line each, as `flint render` warns
-/// of them: what an in-process case's `error` is checked against.
-fn user_style_errors() -> String {
-    flint_render::stylize::custom::errors()
+/// Every user style's error the last render on `host` met, a line each, as
+/// `flint render` warns of them: what an in-process case's `error` is
+/// checked against. Each render has a registry of its own (#742).
+fn user_style_errors(host: &super::render::RenderHost) -> String {
+    host.style_errors()
         .into_iter()
         .map(|(_, e)| e + "\n")
         .collect()
@@ -730,7 +731,7 @@ fn render_in_process(
         super::render::run_in(cli.args, host)
     }));
     match ran {
-        Ok(Ok(())) => Ok(Rendered::Done(user_style_errors())),
+        Ok(Ok(())) => Ok(Rendered::Done(user_style_errors(host))),
         Ok(Err(e)) => {
             let log = format!("{e:#}");
             Ok(if looks_like_no_gpu(&log) {
@@ -1652,10 +1653,7 @@ mod tests {
         let (_, manifest) = stylize_manifest();
         // Built-ins only: user styles (ADR 0112) that other tests in this
         // process registered aren't the engine's to golden (#417)
-        for d in flint_render::stylize::registry()
-            .iter()
-            .filter(|d| flint_render::stylize::is_builtin(d.name))
-        {
+        for d in flint_render::stylize::builtins().iter() {
             let reached = manifest.cases.iter().any(|c| {
                 c.args.windows(2).any(|w| {
                     (w[0] == "--style"
