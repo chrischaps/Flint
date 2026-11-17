@@ -26,11 +26,11 @@ concepts/terrain.md: register_static_trimesh
 concepts/touch-input.md: TouchStart TouchMove TouchEnd binding_value   # the touch pipeline diagram
 guides/android.md: AAssetDir_getNextFileName android_main resumed suspended
 guides/debug-panels.md: weight    # the DebugPanel trait's layout weight
-guides/player-extensions.md: Some bool color exists f32 fonts i64 is_available pressed raw remove_mesh root_ui set_ground str ui update upload_mesh_with vec3 vec4 view
+guides/player-extensions.md: Some bool color exists f32 fonts i64 is_available pressed raw remove_mesh root_ui set_ground str tables ui update upload_mesh_with vec3 vec4 view
 guides/upgrading-the-engine.md: get_current_texture show_animated
-guides/profiling.md: present set_gpu_timing
+guides/profiling.md: describe_frame present read set_gpu_timing take_frame_capture
 # Rust and WGSL: a stylize pass's context and shader helpers
-concepts/stylize-passes.md: bind color color_of color_setting depth_bind edges_bind first_write mask_bind option palette_ink palette_ink_lab param pub resize_postprocess sampled sampled_input srgb style_id target texel_size uniform
+concepts/stylize-passes.md: bind color color_of color_setting depth_bind edges_bind first_write mask_bind option palette_ink palette_ink_lab param pub resize_postprocess sampled sampled_input srgb style_id target texel_size ui uniform
 concepts/stylize-passes.md: flint_depth flint_edge flint_edges flint_hash flint_luma flint_mask_id flint_params_at flint_sample flint_style_blend flint_to_display flint_to_linear flint_view_depth flint_world_pos mix
 
 # Formulas and shader maths in prose
