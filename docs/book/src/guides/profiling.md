@@ -1,6 +1,6 @@
 # Profiling
 
-Two tools say where a frame's time goes. **GPU timing** shows how long the GPU spends on each phase of the frame, in the F2 overlay and in `RenderStats`. The **`profile` feature** sends the frame loop's CPU time to [Tracy](https://github.com/wolfpld/tracy), scope by scope. Both are off until asked for, and a build without the feature carries none of the profiler. For what a frame drew and with which GPU state, [capture it in RenderDoc or PIX](#capturing-a-frame-in-renderdoc), where Flint's frames are named part by part.
+Two tools say where a frame's time goes. **GPU timing** shows how long the GPU spends on each phase of the frame, in the F2 overlay and in `RenderStats`. The **`profile` feature** sends the frame loop's CPU time to [Tracy](https://github.com/wolfpld/tracy), scope by scope. Both are off until asked for, and a build without the feature carries none of the profiler. For what a frame drew and with which GPU state, [capture it in RenderDoc or PIX](#capturing-a-frame-in-renderdoc), where Flint's frames are named part by part. Below the scopes, [a sampling profiler](#when-scopes-arent-enough) sees what no scope covers: wgpu, the driver, Rapier, Rhai.
 
 ## GPU timing
 
@@ -517,7 +517,100 @@ flint-player levels/demo.scene.toml --frame-step 0.0166667 --input-script route.
 
 Startup hitches never count against `--max-hitches`. `--max-hitches-startup N` gives them a limit of their own. `--max-hitches-of player` counts only the engine's own work, and `--max-hitches-of elsewhere` only the time spent outside it. The failure line's worst hitch and causes are that class's too. A hitch fix is then provable: the same input script, fewer lines. `flint play` takes the same four flags. The gate reads the wall clock, so a machine busy with other work hitches too. Keep it out of CI, and gate `player` hitches when the machine is shared. Pass `--no-hot-reload` to a gated run as to any capture: in a debug build the reload poll can itself take 14 ms, which the log names as `reload poll`. A debug build's own spikes can still cross the 24 ms floor. `FLINT_HITCH_FLOOR_MS` raises it for a gate.
 
-**Look inside it.** The log says which phase and which script, and what the engine was doing. To see what happened inside a slow phase, build with the `profile` feature and open the frame in Tracy (above).
+**Look inside it.** The log says which phase and which script, and what the engine was doing. To see what happened inside a slow phase, build with the `profile` feature and open the frame in Tracy (above). To see inside a scope, sample it ([When scopes aren't enough](#when-scopes-arent-enough)).
+
+## When scopes aren't enough
+
+The overlay, the hitch log and Tracy see only what Flint timed: a phase, a scope, a script callback. When the slow part is inside one of those, in wgpu, the driver, Rapier, Rhai or a loop nobody scoped, a **sampling profiler** can see it. It stops the program thousands of times a second and records where each thread was. Flint doesn't ship one. It builds for the ones that already exist ([#1101](https://github.com/chrischaps/Flint/issues/1101)).
+
+### Which tool answers which question
+
+| The question | The tool |
+|---|---|
+| Was a frame slow, and which phase or script took the time? | the F2 graph, `--perf`, `--hitch-log` ([Finding a hitch](#finding-a-hitch)) |
+| Which scope inside that phase? | the `profile` feature and Tracy ([above](#the-profile-feature)) |
+| Which function inside that scope, in Flint or below it? | a sampling profiler (this section) |
+| What did the GPU draw, with what state, and for how long? | [GPU timing](#gpu-timing), the [frame debugger](frame-debugger.md), [RenderDoc or PIX](#capturing-a-frame-in-renderdoc) |
+
+Work down the table. Each step costs more to set up and tells you more about less.
+
+### The `profiling` build
+
+```sh
+cargo build --profile profiling -p flint-player
+```
+
+The profile (in the root `Cargo.toml`) is release's code with line tables in every crate, dependencies included. A plain release build already names each function that wasn't inlined: on Windows it writes a PDB, and on Linux it keeps the symbol table. But optimized Rust inlines most small functions into their callers, and without line tables they drop out of the stack. Sampling the same 100 ms script stall in both builds ([below](#lining-a-sample-up-with-a-hitch)):
+
+- each stack held about 45 frames in both builds;
+- release named 55 functions on an average stack and the profiling build 86: the 31 more were inlined into the frames around them;
+- 68% of the profiling build's frames named a file and line, against 5% of release's (only Windows' own);
+- across the stall's samples, the profiling build named 1306 distinct functions and release 434.
+
+It writes `target/profiling/`, beside `target/release/` and sharing nothing with it. A cold build took 3 min 46 s and 2.7 GB on a 24-thread machine. `flint-player.exe` is 73 MB of that and its PDB 187 MB (release's PDB is 30 MB). Delete `target/profiling` when you're done with it.
+
+**Frame pointers** are not a profile setting on stable Cargo, and none of the samplers here needs them. On Windows, every sampler walks the stack from the unwind tables every x64 binary carries: the screenshot below was taken without frame pointers. samply on Linux unwinds from `.eh_frame`, which Rust always emits. `perf record --call-graph fp` is the exception. For it, build on Linux with `RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling -p flint-player`. There `.cargo/config.toml` sets no flags for the variable to replace. Changing the variable rebuilds the whole profile.
+
+**A game binary** in its own workspace gets the profile only from its own root `Cargo.toml`. Cargo reads `[profile.*]` only from the root of the workspace it builds, as it does `[patch]` ([Upgrading the Engine](upgrading-the-engine.md#cargo)). Copy the three lines:
+
+```toml
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+```
+
+Then `cargo build --profile profiling` writes `target/profiling/<your-game>`.
+
+### On Windows
+
+Windows' samplers read the kernel's sampling events (ETW), and only an Administrator, or a service running as one, can start those. Each sampler finds `flint_player.pdb` beside the exe.
+
+- **Superluminal** (commercial, made for games): launch `target\profiling\flint-player.exe` from it, with the game's folder as the working directory and the scene as the argument. It shows each thread's waits beside its samples, which a CPU sampler alone can't ([below](#lining-a-sample-up-with-a-hitch)).
+- **samply** (free, `cargo install --locked samply`), from an Administrator terminal:
+
+  ```powershell
+  samply record target\profiling\flint-player.exe examples\hitch_metronome.scene.toml --exit-after 12 --hitch-log hitches.jsonl
+  ```
+
+  When the player exits, samply opens the profile in the [Firefox Profiler](https://profiler.firefox.com) in your browser and serves its symbols from your machine. Started from a terminal that isn't elevated, it printed nothing and waited.
+- **Without Administrator**, Visual Studio 2022's collector samples, because its service already runs elevated. Any edition works if its profiling tools are installed; replace `Community` in the path with yours. From the project's folder in PowerShell (the `/launchArgs` paths can't hold spaces):
+
+  ```powershell
+  $vsd = "C:\Program Files\Microsoft Visual Studio\2022\Community\Team Tools\DiagnosticsHub\Collector"
+  & "$vsd\VSDiagnostics.exe" start 7 "/launch:$PWD\target\profiling\flint-player.exe" "/launchArgs:$PWD\examples\hitch_metronome.scene.toml --exit-after 12 --hitch-log $PWD\hitches.jsonl" "/loadConfig:$vsd\AgentConfigs\CpuUsageHigh.json"
+  # when the player has exited:
+  & "$vsd\VSDiagnostics.exe" stop 7 "/output:$PWD\metronome.diagsession"
+  & "$vsd\VSDiagnostics.exe" expandDiagSession "$PWD\metronome.diagsession"
+  samply import --main-thread-only (Get-ChildItem metronome -Recurse -Filter *.etl).FullName
+  ```
+
+  `metronome.diagsession` opens in Visual Studio's CPU Usage view. `samply import` opens the trace inside it in the Firefox Profiler, as above, and writes the profile to `profile.json.gz` in the folder it runs in (`-o` names another file). WPA reads the trace too. The collector records every process on the machine, so pick `flint-player.exe`'s track. The Firefox Profiler's **Upload** button publishes a profile: don't upload one that carries your machine's process list.
+
+### On Linux
+
+samply records through perf events, which need `kernel.perf_event_paranoid` at 1 or lower (`sudo sysctl kernel.perf_event_paranoid=1`). samply tells you when it's higher.
+
+```sh
+cargo build --profile profiling -p flint-player
+samply record ./target/profiling/flint-player examples/hitch_metronome.scene.toml --exit-after 12 --hitch-log hitches.jsonl
+```
+
+`perf record --call-graph dwarf` and [Hotspot](https://github.com/KDAB/hotspot) read the same build.
+
+### Lining a sample up with a hitch
+
+The hitch log's `wall_time` counts from when the player began recording frames, as it starts up, before its window opens and the scene loads. A sampler's timeline counts from when the sampler began recording. The offset between the two changes from run to run. In the run below it was 5.06 s, which took in the collector's own start, the launch and the load. Once you place one hitch, the offset holds for the whole run:
+
+1. Run with `--hitch-log` under the sampler, as above.
+2. Find a hitch whose shape the sampler shows. A `player` hitch is a stretch of solid CPU on the main thread, as long as its `ms`. In `examples/hitch_metronome.scene.toml`, `stall.rhai` holds the frame for 100 ms of solid Rhai every 3 s of game time.
+3. Match the gaps. The log's three script hitches came at `wall_time` 6.122, 9.715 and 13.188 s, 3.59 and 3.47 s apart. The sampler's 100 ms stretches inside `flint_script` came at 11.18, 14.78 and 18.25 s, the same gaps apart. The offset is 11.18 − 6.122 = 5.06 s.
+4. Select from `wall_time` plus the offset, for `ms`: that is the frame. Here that's 11.18 to 11.28 s, the range in the screenshot.
+
+![The Firefox Profiler's flame graph of a 100 ms script hitch: under PlayerApp::tick and GameCore::run_scripts, ScriptEngine::call_updates runs Rhai's evaluator down to time_functions::elapsed](../images/samply-script-stall-flame-graph.png)
+
+*The 100 ms script hitch in the profiling build, sampled by Visual Studio's collector and opened with `samply import`. Under `PlayerApp::tick` and `GameCore::run_scripts`, `ScriptEngine::call_updates` runs the script through Rhai's evaluator down to `time_functions::elapsed`: `stall.rhai`'s busy wait, reading the clock. A flame graph's width is time spent, not order.*
+
+**An `elsewhere` hitch shows almost nothing.** A sampler records running threads, and a frame lost to `acquire` is a thread waiting. In the same run, a 515 ms acquire hitch held 5 samples. The question there is what the thread waited on, and that takes a context-switch trace: Superluminal records one by default, and WPA's **CPU Usage (Precise)** reads one from a WPR trace. The hitch log's `gpu_ms` already says whether the wait was for the GPU.
 
 ## Further Reading
 
