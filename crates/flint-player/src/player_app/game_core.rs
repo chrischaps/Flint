@@ -800,6 +800,7 @@ pub(crate) fn for_the_host(command: &ScriptCommand) -> bool {
         | C::PlaySoundAt { .. }
         | C::StopSound { .. }
         | C::SetSoundVolume { .. }
+        | C::SetBusVolume { .. }
         | C::Rumble { .. }
         | C::SetCameraCutDetection { .. }
         | C::SetLook { .. }

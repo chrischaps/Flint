@@ -254,12 +254,17 @@ impl MusicSubsystem {
         if self.session.is_some() || self.tried_with_device {
             return;
         }
-        let Some(manager) = audio.and_then(|a| a.manager_mut()) else {
+        let Some(audio) = audio else { return };
+        let stems = flint_music::session::FileStems::new(&self.base);
+        // Hosted on the engine's mixer (#730): not while silent (the web's
+        // Begin is still to come), and not in the browser's worklet.
+        let Ok(started) = audio
+            .host(|manager| SuiteSession::start(&self.manifest, manager, &stems, self.latency_ms))
+        else {
             return;
         };
         self.tried_with_device = true;
-        let stems = flint_music::session::FileStems::new(&self.base);
-        match SuiteSession::start(&self.manifest, manager, &stems, self.latency_ms) {
+        match started {
             Ok(mut session) => {
                 if let Some(events) = &self.events {
                     for ev in &events.events {

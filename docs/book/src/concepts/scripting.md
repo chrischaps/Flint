@@ -301,7 +301,7 @@ Audio functions produce deferred commands that the player processes after the sc
 | Function | Returns | Description |
 |---|---|---|
 | `play_sound(name: str)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound at full volume, not placed in the world. |
-| `play_sound(name: str, volume_or_opts: any)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound, not placed in the world: a volume (0..1), or a map of any of volume, pitch, looping (until `stop_sound`), bus (sfx or music). |
+| `play_sound(name: str, volume_or_opts: any)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound, not placed in the world: a volume (0..1), or a map of any of volume, pitch, looping (until `stop_sound`), bus (sfx, music or one the game declares). |
 | `play_sound(name: str, volume: num, pitch: num)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound at a volume and a pitch multiplier, not placed in the world. |
 | `play_sound_at(name: str, x: num, y: num, z: num, volume_or_opts: any)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound at a point: a volume, or a map of any of volume, pitch, looping, bus, `min_distance`, `max_distance`, rolloff. |
 | `play_sound_at(name: str, x: num, y: num, z: num, volume: num, pitch: num)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound at a point, at a volume and a pitch multiplier. |

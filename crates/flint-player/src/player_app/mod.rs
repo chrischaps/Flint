@@ -84,6 +84,8 @@ mod scene_entry;
 mod scene_entry_tests;
 pub(crate) mod scene_loading;
 mod schemas;
+#[cfg(test)]
+mod script_bus_tests;
 pub mod script_commands;
 #[cfg(feature = "debug-hud")]
 mod script_error_card;

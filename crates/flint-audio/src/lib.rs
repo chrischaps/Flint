@@ -11,6 +11,7 @@
 //! and `web` is the main-thread stream it falls back to. `page` suspends
 //! both while the page is hidden (#162).
 
+pub mod bus;
 pub mod clock;
 pub mod decode;
 pub mod engine;
@@ -26,8 +27,9 @@ pub mod web;
 #[cfg(target_arch = "wasm32")]
 pub mod worklet;
 
+pub use bus::{Bus, BusDecl, Buses};
 use engine::AudioEngine;
-pub use engine::{Bus, MixCounts};
+pub use engine::{MixCounts, Unhosted};
 use flint_core::{Result, Vec3};
 use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, RuntimeSystem};
@@ -175,7 +177,7 @@ impl AudioSystem {
                         }
                     } else if let Err(e) =
                         self.engine
-                            .play_non_spatial(&sound, volume, 1.0, false, Bus::Sfx)
+                            .play_non_spatial(&sound, volume, 1.0, false, Bus::SFX)
                     {
                         // One-shot non-spatial: handle not needed
                         tracing::warn!("{:?}", e);
