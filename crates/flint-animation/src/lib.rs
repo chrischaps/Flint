@@ -98,6 +98,7 @@ impl AnimationSystem {
     /// (ADR 0070). Call after scripts, physics and `update` have written their
     /// transforms and before the renderer reads them.
     pub fn run_ik(&mut self, world: &mut FlintWorld) {
+        flint_core::scope!("animation::ik");
         self.ik.run(world);
     }
 
@@ -421,28 +422,44 @@ impl RuntimeSystem for AnimationSystem {
     }
 
     fn update(&mut self, world: &mut FlintWorld, dt: f64) -> Result<()> {
+        flint_core::scope!("animation::update");
         // Tier 1: Property animation
-        self.sync.sync_from_world(world, &self.player);
-        self.sync.advance_and_write(world, &self.player, dt);
+        {
+            flint_core::scope!("animation::property");
+            self.sync.sync_from_world(world, &self.player);
+            self.sync.advance_and_write(world, &self.player, dt);
+        }
 
         // Sequences write animator fields; run them first so Tier 2 sees
         // the writes this frame.
-        self.sequence_sync.sync_from_world(world);
-        self.sequence_sync.advance(world, dt);
+        {
+            flint_core::scope!("animation::sequences");
+            self.sequence_sync.sync_from_world(world);
+            self.sequence_sync.advance(world, dt);
+        }
 
         // Tier 2: Skeletal animation
-        self.skeletal_sync.sync_from_world(world);
-        self.skeletal_sync.advance_and_compute(dt);
-        // Retire finished crossfades in the ECS, or they re-arm forever.
-        self.skeletal_sync.write_back(world);
+        {
+            flint_core::scope!("animation::skeletal");
+            self.skeletal_sync.sync_from_world(world);
+            self.skeletal_sync.advance_and_compute(dt);
+            // Retire finished crossfades in the ECS, or they re-arm forever.
+            self.skeletal_sync.write_back(world);
+        }
 
         // Tier 3: Node transform animation
-        self.node_sync.sync_from_world(world);
-        self.node_sync.advance_and_apply(world, dt);
+        {
+            flint_core::scope!("animation::node");
+            self.node_sync.sync_from_world(world);
+            self.node_sync.advance_and_apply(world, dt);
+        }
 
         // Tier 4: Sprite sheet animation
-        self.sprite_sync.sync_from_world(world);
-        self.sprite_sync.advance_and_write(world, dt);
+        {
+            flint_core::scope!("animation::sprite");
+            self.sprite_sync.sync_from_world(world);
+            self.sprite_sync.advance_and_write(world, dt);
+        }
 
         Ok(())
     }

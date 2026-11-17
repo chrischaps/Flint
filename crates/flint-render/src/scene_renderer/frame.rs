@@ -492,7 +492,10 @@ impl SceneRenderer {
         let wireframe_only = self.debug_state.mode == DebugMode::WireframeOnly;
 
         // Update light uniforms
-        self.lights.upload(queue, camera_pos);
+        {
+            flint_core::scope!("upload_lights");
+            self.lights.upload(queue, camera_pos);
+        }
 
         // Grass compute (ADR 0092): scatters this camera's blades, culled to
         // its view, and counts them into the indirect draw arguments. It goes
@@ -1039,6 +1042,7 @@ impl SceneRenderer {
     /// [`encode_gpu_timings`](Self::encode_gpu_timings) resolved them, the
     /// GPU timer's. Call once that frame is submitted.
     pub fn frame_submitted(&mut self) {
+        flint_core::scope!("frame_submitted");
         if std::mem::take(&mut self.grass.readback_due) {
             if let Some(readback) = &mut self.grass.count_readback {
                 readback.start_map();
@@ -1061,6 +1065,7 @@ impl SceneRenderer {
         if self.postprocess_resources.is_none() {
             return;
         }
+        flint_core::scope!("render_world_lines", self.world_lines.len());
         // Drawn into the surface, whatever the scene's render scale
         let viewport = [self.surface_size.0 as f32, self.surface_size.1 as f32];
         let format = self.surface_format;

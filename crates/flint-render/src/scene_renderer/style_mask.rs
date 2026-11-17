@@ -119,6 +119,7 @@ impl SceneRenderer {
         depth_view: &wgpu::TextureView,
         depth_key: crate::bind_cache::DepthKey,
     ) {
+        flint_core::scope!("encode_style_mask");
         self.style_mask.veiled = false;
         // A replay stepping the mask (#1204): its styled draws past the limit
         let (state, terrain, frustum) = (
@@ -304,6 +305,7 @@ impl SceneRenderer {
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
     ) {
+        flint_core::scope!("encode_style_albedo");
         let Some(resources) = &self.postprocess_resources else {
             return;
         };

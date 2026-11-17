@@ -92,6 +92,8 @@ mod scene_entry_tests;
 pub(crate) mod scene_loading;
 mod schemas;
 #[cfg(test)]
+mod scope_coverage_tests;
+#[cfg(test)]
 mod script_bus_tests;
 pub mod script_commands;
 #[cfg(feature = "debug-hud")]

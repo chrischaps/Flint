@@ -216,6 +216,7 @@ impl SceneRenderer {
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
     ) -> bool {
+        flint_core::scope!("encode_fog_veil");
         let Some(skinned) = &self.pipelines.skinned else {
             return false;
         };
