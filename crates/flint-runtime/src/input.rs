@@ -1435,7 +1435,10 @@ fn validate_binding(binding: &Binding, action_name: &str) -> Result<()> {
     Ok(())
 }
 
-fn binding_label(binding: &Binding) -> String {
+/// How a binding reads to a player: `W`, `LShift`, `Mouse1`, `Pad:South`,
+/// `Pad:LeftStickX-` (what `primary_binding_label` and the controls line
+/// say, #716)
+pub fn binding_label(binding: &Binding) -> String {
     match binding {
         Binding::Key { code, .. } => key_code_label(code),
         Binding::MouseButton { button } => match button.as_str() {

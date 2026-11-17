@@ -81,6 +81,10 @@ impl PlayerApp {
         self.start_scene_systems(entry)?;
         // The subsystems this scene uses, each told it is up
         self.subsystems_enter_scene();
+        // One line for what loaded and what went wrong, and one for the
+        // controls this scene binds (#716)
+        self.say_loaded();
+        self.say_controls();
 
         // On Android the cursor always counts as captured, so touch input
         // flows without a click-to-capture gate; elsewhere a first-person
@@ -172,7 +176,7 @@ impl PlayerApp {
             &self.core.project,
             &self.core.scene_path,
         ) {
-            println!("{line}");
+            tracing::warn!(target: "load", "{line}");
         }
         #[cfg(feature = "procgen")]
         super::procgen_assets::resolve_scene(

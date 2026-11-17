@@ -101,7 +101,7 @@ impl ReloadWorker {
                     }
                 }
             })
-            .map_err(|e| eprintln!("[script] couldn't start the reload worker: {e}"))
+            .map_err(|e| tracing::warn!(target: "script", "couldn't start the reload worker: {e}"))
             .ok()?;
         Some(Self { jobs, done })
     }

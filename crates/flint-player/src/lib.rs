@@ -5,6 +5,8 @@
 
 pub mod extension;
 pub mod hitch_args;
+// Everything the player says, through tracing, as text or JSON lines (#716)
+pub mod logging;
 #[cfg(feature = "music")]
 mod music;
 mod player_app;

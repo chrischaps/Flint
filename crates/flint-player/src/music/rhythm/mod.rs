@@ -94,8 +94,8 @@ impl RhythmSubsystem {
                 if let Some(pads) = pads {
                     pads.take();
                 }
-                println!(
-                    "[music] gamepad handed to capture thread \
+                tracing::info!(target: "music",
+                    "gamepad handed to capture thread \
                      (player polling suspended for the session)"
                 );
                 #[cfg(feature = "debug-hud")]
@@ -104,7 +104,7 @@ impl RhythmSubsystem {
                 }
             }
             Ok(None) => {}
-            Err(e) => eprintln!("[music] session failed to start: {e:#}"),
+            Err(e) => tracing::warn!(target: "music", "session failed to start: {e:#}"),
         }
     }
 
@@ -121,7 +121,7 @@ impl RhythmSubsystem {
         }
         script.set_module_state(ConductedSnapshot::default());
         script.set_music(MusicClock::default());
-        println!("[music] session ended — gamepad returned to player polling");
+        tracing::info!(target: "music", "session ended — gamepad returned to player polling");
     }
 
     /// The Music Guide (Backquote) and Manifest Map (Backslash), registered
@@ -137,7 +137,7 @@ impl RhythmSubsystem {
             .any(|p| p.name() == guide_panel::MUSIC_GUIDE_PANEL)
         {
             panels.push(Box::new(guide_panel::MusicGuidePanel::new()));
-            println!("[music] debug guide available — press ` (Backquote)");
+            tracing::info!(target: "music", "debug guide available — press ` (Backquote)");
         }
         if !panels
             .iter()
@@ -146,7 +146,7 @@ impl RhythmSubsystem {
             let mut panel = timeline_panel::ManifestMapPanel::new();
             panel.set_map(session.timeline_map());
             panels.push(Box::new(panel));
-            println!("[music] manifest map available — press \\ (Backslash)");
+            tracing::info!(target: "music", "manifest map available — press \\ (Backslash)");
         }
     }
 
@@ -195,7 +195,7 @@ impl RhythmSubsystem {
                     && p.name() != timeline_panel::MANIFEST_MAP_PANEL
             });
             if quit {
-                println!("[music] quit_on_finish — exiting player");
+                tracing::info!(target: "music", "quit_on_finish — exiting player");
                 if let Some(flag) = ctx.quit.as_deref_mut() {
                     *flag = true;
                 }
@@ -282,7 +282,7 @@ impl Subsystem for RhythmSubsystem {
             KeyCode::F9 => {
                 if let Some(session) = self.session.as_mut() {
                     session.debug_force_fail();
-                    println!("[music] DEBUG: full-fail forced — rewind incoming");
+                    tracing::info!(target: "music", "DEBUG: full-fail forced — rewind incoming");
                 } else {
                     ctx.note
                         .say("F9", "the music session has ended — nothing to fail");

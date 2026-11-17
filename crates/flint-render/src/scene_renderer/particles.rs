@@ -253,7 +253,7 @@ fn load_textures_found(
         match find(&tex_name) {
             Ok(path) => match renderer.load_texture_file(device, queue, &tex_name, &path) {
                 Ok(true) => {
-                    eprintln!("Loaded particle texture: {tex_name}");
+                    tracing::debug!(target: "load", kind = "texture", "Loaded particle texture: {tex_name}");
                     any_new = true;
                 }
                 Ok(false) => {} // already cached

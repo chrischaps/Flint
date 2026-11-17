@@ -320,6 +320,6 @@ impl SkyRenderer {
             texture_bind_group,
         });
 
-        println!("Loaded skybox: {} ({}x{})", path.display(), width, height);
+        tracing::debug!(target: "load", kind = "skybox", "Loaded skybox: {} ({}x{})", path.display(), width, height);
     }
 }

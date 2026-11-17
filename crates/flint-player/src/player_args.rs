@@ -246,6 +246,11 @@ pub struct PlayerArgs {
     /// non-zero past them) (#1079)
     #[command(flatten)]
     pub hitches: crate::HitchArgs,
+
+    /// `--log-format text|json` and `--quiet`: how and how much the player
+    /// says, which its binary's `main` hands `logging::init` (#716)
+    #[command(flatten)]
+    pub log: crate::logging::LogArgs,
 }
 
 /// `flint-player`'s command line: [`PlayerArgs`] and `--bundle`, the one
@@ -315,8 +320,9 @@ fn start(args: PlayerArgs, bundle: Option<&Path>) -> Result<()> {
     if args.list_gpus {
         let adapters = flint_render::list_adapters();
         if adapters.is_empty() {
-            eprintln!("No GPU adapters found: {}", flint_render::no_adapter_hint());
+            tracing::warn!(target: "player", "No GPU adapters found: {}", flint_render::no_adapter_hint());
         }
+        // The answer to --list-gpus: stdout, where a caller reads it
         for a in adapters {
             println!("{a}");
         }
@@ -332,18 +338,8 @@ fn start(args: PlayerArgs, bundle: Option<&Path>) -> Result<()> {
         late_bundles,
     } = args.prepare(bundle)?;
 
-    println!();
-    println!("Controls:");
-    println!("  WASD     - Move");
-    println!("  Mouse    - Look");
-    println!("  Space    - Jump");
-    println!("  Shift    - Sprint");
-    println!("  Escape   - Release cursor / Exit (the game's, if it binds Escape)");
-    println!("  F2       - Stats: frame-time graph, hitches, render stats; again: graph alone; again: off");
-    println!("  F3       - Scene debug panels");
-    println!("  F4       - Rendering & Effects menu");
-    println!("  F11      - Toggle fullscreen");
-
+    // The controls are said from the scene's own bindings once they are
+    // loaded (`PlayerApp::say_controls`, #716), not as a fixed banner here
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     if let Some((source, late)) = late_bundles {
@@ -398,10 +394,10 @@ impl PlayerArgs {
         };
         // TEMPORARY, for one release (ADR 0114 decision 3, #765)
         for warning in schema_dirs.dropped_warnings() {
-            eprintln!("{warning}");
+            tracing::warn!(target: "load", "{warning}");
         }
         if schema_dirs.dirs.is_empty() {
-            println!("Warning: No schemas directories found");
+            tracing::warn!(target: "load", "No schemas directories found");
         }
 
         // --style words and --look, checked once the scene's own styles
@@ -414,7 +410,7 @@ impl PlayerArgs {
         if let Some(name) = &args.look {
             let look = flint_render::look::find(name, &scene)
                 .map_err(|e| anyhow::anyhow!("--look: {e}"))?;
-            println!("Look: {} ({})", look.name, look.source);
+            tracing::info!(target: "player", "Look: {} ({})", look.name, look.source);
         }
         let render_scale = match &args.render_scale {
             Some(value) => Some(
@@ -453,8 +449,14 @@ impl PlayerArgs {
         // Living props' tables: checked, and the preset [wooze] names filled in (#686)
         #[cfg(feature = "living")]
         flint_procgen::settle_scene(&mut scene_file, scene_path).context("Failed to load scene")?;
-        println!("Loaded scene: {}", scene_file.scene.name);
-        println!("Entities: {}", world.entity_count());
+        // The scene's name and size are said with what it loaded, once it
+        // is up (`enter_scene`'s summary)
+        tracing::debug!(
+            target: "load",
+            "Parsed scene '{}': {} entities",
+            scene_file.scene.name,
+            world.entity_count()
+        );
 
         let mut app = PlayerApp::new(
             world,
@@ -511,7 +513,8 @@ impl PlayerArgs {
             #[cfg(feature = "living")]
             app.compare_living_at_start(&a, &b, args.split);
             #[cfg(not(feature = "living"))]
-            println!(
+            tracing::warn!(
+                target: "player",
                 "[living] --compare {a},{b}: this player is built without the `living` feature"
             );
         }
@@ -540,7 +543,8 @@ fn resolve_scene(scene: String) -> Result<String> {
     }
     let project = flint_core::project::Project::current()?;
     let default = flint_core::project::shown(&project.default_scene()?);
-    println!(
+    tracing::info!(
+        target: "player",
         "Opening the project's default scene: {} (`[project] scene` in {})",
         default,
         flint_core::project::shown(&project.manifest_path())
@@ -583,7 +587,8 @@ fn open_bundle(path: &Path, args: &mut PlayerArgs) -> Result<(vfs::MemorySource,
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let bundle = Bundle::parse(bytes).with_context(|| path.display().to_string())?;
     let manifest = &bundle.manifest;
-    println!(
+    tracing::info!(
+        target: "load",
         "Bundle {}: {} files, {:.2} MB",
         manifest.name,
         manifest.files.len(),
@@ -621,7 +626,8 @@ fn add_late_bundles_soon(mut source: vfs::MemorySource, paths: Vec<PathBuf>) {
             let bytes = std::fs::read(&path).map_err(|e| e.to_string());
             match bytes.and_then(|b| Bundle::parse(b).map_err(|e| e.to_string())) {
                 Ok(bundle) => {
-                    println!(
+                    tracing::info!(
+                        target: "load",
                         "Late bundle {}: {} files, {:.2} MB",
                         bundle.manifest.part,
                         bundle.manifest.files.len(),
@@ -629,7 +635,7 @@ fn add_late_bundles_soon(mut source: vfs::MemorySource, paths: Vec<PathBuf>) {
                     );
                     bundle.insert_into(&mut source);
                 }
-                Err(e) => eprintln!("Late bundle {}: {e}", path.display()),
+                Err(e) => tracing::warn!(target: "load", "Late bundle {}: {e}", path.display()),
             }
         }
         vfs::install(Arc::new(source));

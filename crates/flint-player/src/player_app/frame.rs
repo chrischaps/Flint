@@ -281,7 +281,12 @@ impl PlayerApp {
         let frames = self.capture.perf_frames;
         if frames > 0 {
             let avg_ms = self.capture.perf_time * 1000.0 / frames as f64;
-            eprintln!(
+            // The run's figures as fields too, for `--log-format json` (#716)
+            tracing::info!(
+                target: "report",
+                frames,
+                avg_ms = (avg_ms * 100.0).round() / 100.0,
+                fps = (10_000.0 / avg_ms).round() / 10.0,
                 "[perf] {frames} frames over {:.2} s after t={:.0}: avg {avg_ms:.2} ms/frame ({:.1} fps)",
                 self.capture.perf_time,
                 super::PERF_SKIP_SECS,
@@ -289,15 +294,15 @@ impl PlayerApp {
             );
             // How even they were: a mean hides bursts (#406).
             if let Some(dt) = self.capture.perf_pacing.dt() {
-                eprintln!("[perf] dt: {dt}");
+                tracing::info!(target: "report", "[perf] dt: {dt}");
             }
             if let Some(present) = self.capture.perf_pacing.present() {
-                eprintln!("[perf] present to present: {present}");
+                tracing::info!(target: "report", "[perf] present to present: {present}");
             }
             // The F2 overlay's main figures, averaged, so a capture
             // can compare draw counts and culling headlessly (H9).
             let avg = |sum: u64| sum as f64 / frames as f64;
-            eprintln!(
+            tracing::info!(target: "report",
                 "[perf] avg per frame: {:.0} draw calls ({:.0} entity draws, {:.0} culled, {:.0} of them by LOD), {:.0} triangles, {:.0} in shadows",
                 avg(self.capture.perf_draws),
                 avg(self.capture.perf_entity_draws),
@@ -315,7 +320,7 @@ impl PlayerApp {
                     .render_context
                     .as_ref()
                     .map(|c| c.present_mode_in_use());
-                eprintln!(
+                tracing::info!(target: "report",
                     "[perf] avg GPU {gpu_ms:.2} ms/frame over {gpu_frames} timed frames{}",
                     super::perf::gpu_vsync_note(present, gpu_ms as f32, avg_ms as f32)
                 );
@@ -327,15 +332,15 @@ impl PlayerApp {
         if self.stats.perf.recording() {
             self.stats.watch.finish();
             for line in self.stats.watch.report() {
-                eprintln!("{line}");
+                tracing::info!(target: "report", "{line}");
             }
         }
         for line in self.subsystem_report() {
-            eprintln!("{line}");
+            tracing::info!(target: "report", "{line}");
         }
         // Every script error of the run, each once with its count (#693)
         for line in self.core.script.errors().summary() {
-            eprintln!("{line}");
+            tracing::info!(target: "report", "{line}");
         }
     }
 

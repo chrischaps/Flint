@@ -178,9 +178,54 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 | `--motion-hold <rate>` | Motion on twos for the whole frame (#405): every entity's drawn position and pose, and the post time styles read, change only this many times a second (12 = on twos at 24 fps). Over every scene's `[post_process] motion_hold`, kept through transitions. See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
 | `--expression-timeline <file>` | Play expression states from a JSON timeline on the game clock, for scripts' `expression()` and `on_expression` (see [Expression API](../concepts/scripting.md#expression-api)) |
 | `--expression-listen <ip:port>` | Take expression states as newline-delimited JSON over TCP at a loopback address, e.g. `127.0.0.1:7777`. Off unless given |
+| `--log-format <text\|json>` | How the player writes what it says, to stderr: `text` (default) or `json`, one object a line with `timestamp`, `level`, `target`, `message` and the event's fields (#716) |
+| `--quiet` | Say only warnings, errors and what a flag asked for (`--perf`'s lines, the `--exit-after` report): no load summary, controls line or transitions |
 
 `--music-volume 0` is the quickest way to audition a scene's sound design
 without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).
+
+### What the player says
+
+Everything the player says goes through one log on stderr (#716); stdout is
+left for what a flag asks it to answer (`--list-gpus`). Each line has a
+target naming what it is about: `load`, `transition`, `perf` (the line
+`--perf` prints every 10 s), `report` (the exit report), `script`, `input`,
+`music` and `player` (debug keys, looks, bundles). A scene coming up says
+two lines, one for what it loaded and one for the controls it binds:
+
+```text
+INFO load: Loaded showcase_game/levels/tavern_hub.scene.toml: 36 entities, 1 model, 3 procgen assets, 15 scripts, 3 skeletal clips, 10 sounds in 7236 ms; no warnings
+INFO input: Controls: interact E, jump Space, move_backward S, move_forward W, move_left A, move_right D, pause Escape, sprint LShift | mouse look, F2 stats, F3 panels, F4 effects, F11 fullscreen
+```
+
+The `2d` template (`flint init x --template 2d`) has no character controller
+and moves with WASD from its script, so it says
+`Controls: move_backward S, move_forward W, move_left A, move_right D, toggle_help H | Esc cursor/exit, ...`.
+The summary counts the engine's own warnings and quotes the first three; a
+library's (the GPU driver's, a gamepad mapping) is shown as it happens and
+left out of the count.
+
+The controls are the bound actions the scene uses: those the game's input
+config (and `--input-config`) names, those a loaded script spells as a
+string (`is_action_pressed("move_left")`, `action == "jump"` in `on_action`,
+and `interact` for a script with `on_interact`), and the character
+controller's walk, jump and sprint when the scene has one. A built-in action
+nothing uses (`fire` in a racing game) is left out. It is said again after a
+transition that changes it. Each
+file a load reads is a `debug` line of target `load`, counted into the
+summary: `RUST_LOG=load=debug` lists them all again. `RUST_LOG` replaces the
+filter whole, under either format; the default is
+`warn,load=info,transition=info,perf=info,report=info,script=info,input=info,music=info,player=info`.
+An agent reading a run takes `--log-format json` and reads one object a line:
+
+```bash
+flint-player scenes/race.scene.toml --exit-after 5 --log-format json 2> run.jsonl
+```
+
+A game binary that embeds `PlayerApp` gets the same with
+`flint_player::logging::init(&LogArgs::default())`, or adds
+`flint_player::logging::tally_layer()` to a subscriber of its own for the
+summary's counts.
 
 The standalone `flint-player` binary is the same player: both flatten one
 set of flags (`flint_player::PlayerArgs`) and launch through one function
