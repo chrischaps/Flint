@@ -368,6 +368,15 @@ fn every_command_answers_with_one_json_document() {
         &dir,
         &["gen", &r("examples/fonts/brush.glyphs.toml"), "--dry-run"],
     );
+    let terrain = ok(
+        &dir,
+        &[
+            "gen",
+            &r("examples/rolling_meadow.terrain.toml"),
+            "--dry-run",
+        ],
+    );
+    assert_eq!(terrain["files"][1]["role"], "splat", "{terrain:#}");
     ok(
         &dir,
         &[

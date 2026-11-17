@@ -123,6 +123,17 @@ pub struct PlayerArgs {
     #[arg(long)]
     pub list_gpus: bool,
 
+    /// Print the debug keys (#717) and exit: each key, its action and
+    /// owner, what it does and when it is live, after the scene's input
+    /// layers (their `[debug_keys]` rebinds, and keys the game binds,
+    /// which go to the game). F1 shows the same in a running game
+    #[arg(long)]
+    pub list_keys: bool,
+
+    /// With --list-keys: the table as JSON
+    #[arg(long, requires = "list_keys")]
+    pub json: bool,
+
     /// `--width`/`--height`, `--position`, `--borderless`, `--always-on-top`
     /// and `--no-activate`: the window's size and place, its frame, whether
     /// it stays on top and whether it takes the keyboard (#611)
@@ -246,6 +257,12 @@ pub struct PlayerArgs {
     /// non-zero past them) (#1079)
     #[command(flatten)]
     pub hitches: crate::HitchArgs,
+
+    /// `--capture-frame-at SECS` (repeatable), `--capture-on-hitch[=N]` and
+    /// `--capture-dir DIR`: frames for the frame debugger, as
+    /// `.flintframe` folders (#1086). Shift+F2 captures one too
+    #[command(flatten)]
+    pub frame_captures: crate::FrameCaptureArgs,
 }
 
 /// `flint-player`'s command line: [`PlayerArgs`] and `--bundle`, the one
@@ -253,6 +270,7 @@ pub struct PlayerArgs {
 #[derive(clap::Parser, Clone, Debug)]
 #[command(name = "flint-player")]
 #[command(about = "Flint game player - run scenes with physics and first-person controls")]
+#[command(after_help = flint_core::env::help_section(&flint_core::env::PLAYER_GROUPS))]
 pub struct PlayerCli {
     /// Play a game bundle made by `flint bundle` (#98) instead of the disk.
     /// Every read goes to its files; the scene is the bundle's start scene,
@@ -327,6 +345,18 @@ fn start(args: PlayerArgs, bundle: Option<&Path>) -> Result<()> {
         flint_core::file_watch::disable();
     }
 
+    if args.list_keys {
+        let json = args.json;
+        let Prepared { mut app, .. } = args.prepare(bundle)?;
+        let table = app.list_debug_keys();
+        if json {
+            println!("{}", serde_json::to_string_pretty(&table)?);
+        } else {
+            print!("{}", table.text());
+        }
+        return Ok(());
+    }
+
     let Prepared {
         mut app,
         late_bundles,
@@ -339,10 +369,7 @@ fn start(args: PlayerArgs, bundle: Option<&Path>) -> Result<()> {
     println!("  Space    - Jump");
     println!("  Shift    - Sprint");
     println!("  Escape   - Release cursor / Exit (the game's, if it binds Escape)");
-    println!("  F2       - Stats: frame-time graph, hitches, render stats; again: graph alone; again: off");
-    println!("  F3       - Scene debug panels");
-    println!("  F4       - Rendering & Effects menu");
-    println!("  F11      - Toggle fullscreen");
+    println!("  F1       - Debug keys: the list of them, live (--list-keys prints it)");
 
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -454,8 +481,11 @@ impl PlayerArgs {
         // Living props' tables: checked, and the preset [wooze] names filled in (#686)
         #[cfg(feature = "living")]
         flint_procgen::settle_scene(&mut scene_file, scene_path).context("Failed to load scene")?;
-        println!("Loaded scene: {}", scene_file.scene.name);
-        println!("Entities: {}", world.entity_count());
+        // `--list-keys --json`'s stdout is the table alone
+        if !args.json {
+            println!("Loaded scene: {}", scene_file.scene.name);
+            println!("Entities: {}", world.entity_count());
+        }
 
         let mut app = PlayerApp::new(
             world,
@@ -492,6 +522,7 @@ impl PlayerArgs {
         launch.expression_feed = expression_feed;
         app.input.touch_controls_mut().set_mode(touch_mode);
         args.hitches.apply(&mut app)?;
+        args.frame_captures.apply(&mut app)?;
         // Skybox, ambient, shading levers, shadows, default lights, camera,
         // user styles and post from the scene file, as every host and
         // transition take them (#723)

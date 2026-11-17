@@ -108,6 +108,8 @@ fn summary(d: &FrameDescription, top: usize) -> Value {
         "captured_at": d.captured_at,
         "engine": d.engine,
         "scene": d.scene,
+        "trigger": d.trigger,
+        "notes": d.notes,
         "frame": {
             "index": f.index,
             "game_time": f.game_time,
@@ -125,8 +127,8 @@ fn summary(d: &FrameDescription, top: usize) -> Value {
         },
         "time": {
             "gpu_frame_ms": f.gpu_frame_ms,
-            "cpu_frame_ms": cpu_frame_ms,
-            "cpu_phases_ms": d.cpu.as_ref().map(|c| &c.phases_ms),
+            "cpu_frame_ms": d.cpu.as_ref().and_then(|c| c.frame.as_ref()).map(|f| f.ms).or(cpu_frame_ms),
+            "cpu_phases_ms": d.cpu.as_ref().and_then(|c| c.frame.as_ref()).map(|f| &f.phases_ms),
         },
         "draws": {
             "draw_calls": s.draw_calls,
@@ -200,8 +202,12 @@ fn summary_text(shown: &str, s: &Value) -> String {
         let path = scene["path"].as_str().unwrap_or("");
         let named = scene["name"]
             .as_str()
+            .filter(|n| !n.is_empty())
             .map_or(path.to_string(), |n| format!("{n}  ({path})"));
         line(&mut out, "Scene", named);
+    }
+    if let Some(why) = s["trigger"]["detail"].as_str().filter(|d| !d.is_empty()) {
+        line(&mut out, "Trigger", why.to_string());
     }
     let f = &s["frame"];
     let mut at = Vec::new();
@@ -335,6 +341,9 @@ fn summary_text(shown: &str, s: &Value) -> String {
         lights.push_str(" (the built-in pair: the scene has no usable light)");
     }
     line(&mut out, "Lights", lights);
+    for note in s["notes"].as_array().into_iter().flatten() {
+        line(&mut out, "Note", note.as_str().unwrap_or("").to_string());
+    }
     if let Some(top) = s["top_passes"].as_array().filter(|t| !t.is_empty()) {
         let _ = writeln!(out, "\nMost expensive passes (GPU ms):");
         let mut t = Table::new(&[">#", "pass", ">gpu ms", ">draws", ">triangles"]);
@@ -654,19 +663,35 @@ fn hitch(d: &FrameDescription) -> Value {
     match &d.cpu {
         Some(cpu) => json!({
             "hitch": cpu.hitch,
-            "phases_ms": cpu.phases_ms,
-            "notes": cpu.notes,
+            "frame": cpu.frame,
             "window": cpu.window,
+            "scripts_timed": cpu.scripts_timed,
+            "missing": cpu.missing,
         }),
         None => json!({
             "hitch": null,
             "window": [],
             "why": format!(
-                "no frame history: {} keeps none (the player's captures carry it, #1086)",
+                "no frame history: {} keeps none (the player's captures carry it)",
                 d.written_by.as_deref().unwrap_or("its writer")
             ),
         }),
     }
+}
+
+/// A frame note as one bracketed word or two (`[model load 12.0 ms]`).
+fn note_text(n: &Value) -> String {
+    let mut text = n["kind"].as_str().unwrap_or("").to_string();
+    if let Some(detail) = n["detail"].as_str().filter(|d| !d.is_empty()) {
+        if !text.is_empty() {
+            text.push_str(": ");
+        }
+        text.push_str(detail);
+    }
+    if let Some(ms) = n["ms"].as_f64() {
+        let _ = write!(text, " {ms:.1} ms");
+    }
+    format!("[{text}]")
 }
 
 fn hitch_text(h: &Value) -> String {
@@ -676,30 +701,35 @@ fn hitch_text(h: &Value) -> String {
     let mut out = String::new();
     match h["hitch"].as_object() {
         Some(hitch) => {
+            let v = |k: &str| hitch.get(k).unwrap_or(&Value::Null);
             let _ = writeln!(
                 out,
-                "Hitch: {}",
-                hitch.get("line").and_then(Value::as_str).unwrap_or("")
+                "Hitch: frame {}, {} ms against a median of {} ms ({}): {}",
+                v("frame"),
+                ms(v("ms")),
+                ms(v("median_ms")),
+                v("class").as_str().unwrap_or("?"),
+                v("cause").as_str().unwrap_or("?")
             );
-            let _ = writeln!(
-                out,
-                "  frame {}: {} ms against a median of {} ms; cause {}",
-                hitch.get("index").map_or("?".into(), Value::to_string),
-                ms(hitch.get("ms").unwrap_or(&Value::Null)),
-                ms(hitch.get("median_ms").unwrap_or(&Value::Null)),
-                hitch.get("cause").and_then(Value::as_str).unwrap_or("?")
-            );
-            let _ = writeln!(
-                out,
-                "  The capture is of the frame after it: a hitch is over when it is seen."
+            if let Some(phase) = v("phase").as_str() {
+                let _ = writeln!(out, "  grew most: {phase} ({} ms)", ms(v("phase_ms")));
+            }
+            if let Some(script) = v("script").as_str() {
+                let _ = writeln!(
+                    out,
+                    "  longest script: {script} ({} ms)",
+                    ms(v("script_ms"))
+                );
+            }
+            out.push_str(
+                "  The capture is of the frame after it: a hitch is over by the time it is seen.\n",
             );
         }
         None => out.push_str("Hitch: none asked for this capture\n"),
     }
-    if let Some(notes) = h["notes"].as_array().filter(|n| !n.is_empty()) {
-        for n in notes {
-            let _ = writeln!(out, "  note: {}", n.as_str().unwrap_or(""));
-        }
+    if let Some(missing) = h["missing"].as_str() {
+        let _ = writeln!(out, "  no window: {missing}");
+        return out;
     }
     let window = h["window"].as_array().cloned().unwrap_or_default();
     if window.is_empty() {
@@ -731,14 +761,7 @@ fn hitch_text(h: &Value) -> String {
             .as_object()
             .map(|p| p.iter().map(|(k, v)| format!("{k} {}", ms(v))).collect())
             .unwrap_or_default();
-        if let Some(notes) = f["notes"].as_array() {
-            detail.extend(
-                notes
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(|n| format!("[{n}]")),
-            );
-        }
+        detail.extend(f["notes"].as_array().into_iter().flatten().map(note_text));
         t.row(vec![
             f["index"].to_string(),
             f["game_time"]
@@ -746,7 +769,7 @@ fn hitch_text(h: &Value) -> String {
                 .map_or("-".into(), |t| format!("{t:.3}")),
             ms(&f["ms"]),
             ms(&f["gpu_ms"]),
-            f["physics_steps"].to_string(),
+            f["fixed_steps"].to_string(),
             mark,
             detail.join(", "),
         ]);
@@ -758,7 +781,9 @@ fn hitch_text(h: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flint_render::frame_capture::{CpuDescription, HistoryFrame, PassDescription};
+    use flint_render::frame_capture::{
+        CpuDescription, CpuFrame, CpuNote, HitchDescription, PassDescription,
+    };
 
     fn frame() -> FrameDescription {
         let mut d = FrameDescription::default();
@@ -855,24 +880,38 @@ mod tests {
         assert!(hitch_text(&hitch(&d)).contains("no frame history"));
         d.cpu = Some(CpuDescription {
             window: vec![
-                HistoryFrame {
+                CpuFrame {
                     index: 9,
                     ms: 48.0,
                     hitch: true,
+                    notes: vec![CpuNote {
+                        kind: "model load".into(),
+                        detail: "barrel".into(),
+                        ms: Some(31.0),
+                        depth: 0,
+                    }],
                     ..Default::default()
                 },
-                HistoryFrame {
+                CpuFrame {
                     index: 10,
                     ms: 17.0,
                     capturing: true,
-                    notes: vec!["model load".into()],
                     ..Default::default()
                 },
             ],
+            hitch: Some(HitchDescription {
+                frame: 9,
+                ms: 48.0,
+                median_ms: 16.7,
+                class: "player".into(),
+                cause: "model load".into(),
+                ..Default::default()
+            }),
             ..Default::default()
         });
         let text = hitch_text(&hitch(&d));
         assert!(text.contains("HITCH"), "{text}");
-        assert!(text.contains("[model load]"), "{text}");
+        assert!(text.contains("[model load: barrel 31.0 ms]"), "{text}");
+        assert!(text.contains("Hitch: frame 9, 48.000 ms"), "{text}");
     }
 }

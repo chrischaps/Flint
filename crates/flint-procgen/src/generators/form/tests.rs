@@ -74,7 +74,7 @@ fn digest_in_new_process() -> String {
 #[test]
 fn the_same_spec_and_seed_give_the_same_bits_across_runs() {
     let spec = example();
-    if std::env::var_os("FLINT_FORM_PRINT_DIGEST").is_some() {
+    if flint_core::env::FORM_PRINT_DIGEST.is_set() {
         println!("digest={:x}", digest(&spec));
         return;
     }

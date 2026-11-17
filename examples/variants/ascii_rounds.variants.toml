@@ -17,12 +17,12 @@ label = "smooth"
 
 [[variant]]
 label = "round 1: continuous ramp"
-flags = "--ascii --ascii-levels 0 --ascii-footprint 1 --ascii-no-edges"
+flags = "--style ascii:levels=0,footprint=1,edges=0"
 
 [[variant]]
 label = "round 2: banded tone"
-flags = "--ascii --ascii-levels 4 --ascii-footprint 2 --ascii-no-edges"
+flags = "--style ascii:levels=4,footprint=2,edges=0"
 
 [[variant]]
 label = "round 2: and edges"
-flags = "--ascii --ascii-levels 4 --ascii-footprint 2"
+flags = "--style ascii:levels=4,footprint=2"

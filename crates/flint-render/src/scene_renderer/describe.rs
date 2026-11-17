@@ -59,6 +59,7 @@ impl SceneRenderer {
             views,
             page,
             panels,
+            notes,
             ..
         } = log;
         let styles = views.last().map(|v| v.styles.clone()).unwrap_or_default();
@@ -122,6 +123,9 @@ impl SceneRenderer {
         };
         let mut described = FrameDescription {
             frame: fc::FrameInfo {
+                index: None,
+                game_time: None,
+                dt: None,
                 size: self.surface_size.into(),
                 scene_size: self.scene_size().into(),
                 render_scale: self.render_scale,
@@ -136,9 +140,7 @@ impl SceneRenderer {
                 styles,
                 gpu_frame_ms: None,
                 capturing: false,
-                ..Default::default()
             },
-            engine: Some(fc::EngineDescription::this_build()),
             stats,
             lights: fc::LightsDescription {
                 kept: kept
@@ -155,6 +157,7 @@ impl SceneRenderer {
             targets,
             passes,
             panels,
+            notes,
             ..Default::default()
         };
         name_images(&mut described);

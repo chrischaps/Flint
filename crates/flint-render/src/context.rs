@@ -150,13 +150,9 @@ impl RenderContext {
         // shown at each refresh (no tearing, no Fifo stall). On this Optimus
         // laptop Fifo has been seen pacing at ~7 Hz against a virtual
         // display; mailbox sidesteps it.
-        let present_mode = match std::env::var("FLINT_VSYNC")
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "0" | "off" | "immediate" => wgpu::PresentMode::AutoNoVsync,
-            "mailbox" => wgpu::PresentMode::Mailbox,
+        let present_mode = match flint_core::env::VSYNC.choice() {
+            Some("0" | "off" | "immediate") => wgpu::PresentMode::AutoNoVsync,
+            Some("mailbox") => wgpu::PresentMode::Mailbox,
             _ => wgpu::PresentMode::AutoVsync,
         };
         tracing::info!(
@@ -410,11 +406,7 @@ impl RenderContext {
 /// Frames the CPU may queue ahead of the display. `FLINT_FRAME_LATENCY`
 /// overrides the default of 2 (1 to 3).
 fn frame_latency() -> u32 {
-    std::env::var("FLINT_FRAME_LATENCY")
-        .ok()
-        .and_then(|v| v.trim().parse::<u32>().ok())
-        .map(|n| n.clamp(1, 3))
-        .unwrap_or(2)
+    flint_core::env::FRAME_LATENCY.u32().unwrap_or(2)
 }
 
 fn create_depth_texture(
@@ -434,7 +426,10 @@ fn create_depth_texture(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Depth32Float,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        // COPY_SRC: a frame capture reads it as its pass left it (#1086)
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     };
 

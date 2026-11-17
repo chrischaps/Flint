@@ -25,8 +25,8 @@ pub(super) struct Wanted<'a> {
 impl<'a> Wanted<'a> {
     pub fn of(args: &'a super::render::RenderArgs) -> Option<Self> {
         let wanted = Self {
-            dump: args.frame_dump.as_deref(),
-            capture: args.frame_capture.as_deref(),
+            dump: args.measure.frame_dump.as_deref(),
+            capture: args.measure.frame_capture.as_deref(),
         };
         (wanted.dump.is_some() || wanted.capture.is_some()).then_some(wanted)
     }
@@ -47,11 +47,19 @@ impl Origin<'_> {
             .as_deref()
             .and_then(|b| std::str::from_utf8(b).ok())
             .and_then(|text| text.parse::<toml::Table>().ok())
-            .and_then(|t| t.get("scene")?.get("name")?.as_str().map(String::from));
+            .and_then(|t| t.get("scene")?.get("name")?.as_str().map(String::from))
+            .unwrap_or_default();
         description.scene = Some(flint_render::frame_capture::SceneDescription {
             path: self.scene.replace('\\', "/"),
             name,
             sha256: bytes.map(|b| flint_core::ContentHash::from_bytes(&b).to_hex()),
+        });
+        // As the player writes it (#1086): the version, the commit left
+        // to a host that asks git
+        description.engine = Some(flint_render::frame_capture::EngineDescription {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            commit: None,
+            dirty: None,
         });
         description.frame.game_time = self.game_time;
         description.written_by = Some("flint render".into());

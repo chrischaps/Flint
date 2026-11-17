@@ -29,6 +29,7 @@ mod terrain;
 mod water;
 
 pub use binding::{BoundGrass, BoundScene, LoadedTerrain, SceneBinding};
+pub use capture::HeldFrameCapture;
 pub use describe::FrameHost;
 use draw_list::{Blend, Draw, DrawItem, DrawList, Layer, VertexStage};
 pub(crate) use fog_veil::FOG_VEIL_FORMAT;
@@ -177,20 +178,14 @@ impl LodSettings {
 
     /// The defaults, overridden by `FLINT_LOD_SCALE` and
     /// `FLINT_DRAW_DISTANCE_SCALE` when they hold a number.
+    /// A value under [`Self::MIN_SCALE`] warns (the table's minimum).
     pub fn from_env() -> Self {
-        let read = |key: &str| {
-            std::env::var(key)
-                .ok()
-                .and_then(|v| v.trim().parse::<f32>().ok())
-                .filter(|v| v.is_finite())
-                .map(|v| v.max(Self::MIN_SCALE))
-        };
         let mut s = Self::default();
-        if let Some(v) = read("FLINT_LOD_SCALE") {
-            s.lod_scale = v;
+        if let Some(v) = flint_core::env::LOD_SCALE.f32() {
+            s.lod_scale = v.max(Self::MIN_SCALE);
         }
-        if let Some(v) = read("FLINT_DRAW_DISTANCE_SCALE") {
-            s.draw_distance_scale = v;
+        if let Some(v) = flint_core::env::DRAW_DISTANCE_SCALE.f32() {
+            s.draw_distance_scale = v.max(Self::MIN_SCALE);
         }
         s
     }

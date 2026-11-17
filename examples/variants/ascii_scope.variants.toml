@@ -23,8 +23,8 @@ flags = ""
 
 [[variant]]
 label = "full screen"
-flags = "--ascii-scope screen"
+flags = "--style ascii:scope=screen"
 
 [[variant]]
 label = "per entity, object grid"
-flags = "--ascii-grid object"
+flags = "--style ascii:grid=object"

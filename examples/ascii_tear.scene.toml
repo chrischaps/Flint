@@ -11,7 +11,7 @@
 # style with the same key (`--style matrix:blend_source=tear`) would rain
 # code through the same holes, and the props would still turn in them.
 #
-#   flint render examples/ascii_tear.scene.toml --tear 0.5
+#   flint render examples/ascii_tear.scene.toml --set post.tear=0.5
 #
 # With no tear on (a tear of 0) a torn prop is at blend 0: its style is off,
 # pass and mask skipped. How a tear differs from a blend a script ramps:

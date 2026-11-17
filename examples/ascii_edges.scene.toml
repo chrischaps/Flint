@@ -2,7 +2,7 @@
 # with line glyphs along their edges.
 #
 #   cargo run --bin flint -- render examples/ascii_edges.scene.toml --output edges.png
-#   cargo run --bin flint -- render examples/ascii_edges.scene.toml --ascii-no-edges --output tone.png
+#   cargo run --bin flint -- render examples/ascii_edges.scene.toml --set ascii.edges=0 --output tone.png
 #
 # Luminance alone loses a silhouette wherever an object is as bright as
 # what's behind it; edges come from geometry instead (depth, normals

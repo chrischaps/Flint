@@ -7,6 +7,7 @@
 use anyhow::Result;
 
 #[derive(clap::Args)]
+#[command(after_help = flint_core::env::help_section(&flint_core::env::PLAYER_GROUPS))]
 pub struct PlayArgs {
     /// Every flag `flint-player` takes but `--bundle`
     #[command(flatten)]

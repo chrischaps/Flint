@@ -49,6 +49,19 @@ pub fn write_capture(
     description: &mut FrameDescription,
     frame: CapturedFrame,
 ) -> io::Result<WrittenCapture> {
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    write_capture_on(dir, description, frame, threads)
+}
+
+/// [`write_capture`] encoding on at most `threads` threads: a window's
+/// writer (#1086) leaves the frame thread its cores, so the game it
+/// captures doesn't stutter while the images encode.
+pub fn write_capture_on(
+    dir: &Path,
+    description: &mut FrameDescription,
+    frame: CapturedFrame,
+    threads: usize,
+) -> io::Result<WrittenCapture> {
     prepare_dir(dir)?;
     let started = Instant::now();
     let jobs: Vec<(PathBuf, &CapturedImage)> = description
@@ -57,9 +70,7 @@ pub fn write_capture(
         .filter_map(|d| Some((dir.join(&d.file), frame.image(d)?)))
         .collect();
     let next = AtomicUsize::new(0);
-    let threads = std::thread::available_parallelism()
-        .map_or(4, |n| n.get())
-        .min(jobs.len().max(1));
+    let threads = threads.max(1).min(jobs.len().max(1));
     let results: Vec<io::Result<u64>> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..threads)
             .map(|_| {

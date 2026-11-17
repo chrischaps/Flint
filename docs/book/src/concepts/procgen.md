@@ -143,7 +143,7 @@ from_max = 0.3
 interpolation = "smootherstep"
 ```
 
-The op set: `brick_grid`, `voronoi_grid`, `domain_warp`, `cell_height`, `cell_bulge`, `noise_layer`, `blend`, `mortar_groove`, `cell_color`, `mortar_color`, `derive_normal`, `cell_roughness`, `math`, `map_range`, `color_ramp`, `checker_texture`, `gradient_texture`, `wave_texture`, `white_noise`, `voronoi_texture`, `musgrave_texture`, `invert`, `brightness_contrast`, `hsv_adjust`, `gamma`, `clamp`, `blur`, `sharpen`, `edge_detect`, `edge_erode`. Each op has its own parameter schema; the texture pipeline editor exposes them all.
+The op set: `brick_grid`, `voronoi_grid`, `domain_warp`, `cell_height`, `cell_bulge`, `noise_layer`, `blend`, `mortar_groove`, `cell_color`, `mortar_color`, `derive_normal`, `cell_roughness`, `math`, `map_range`, `color_ramp`, `checker_texture`, `gradient_texture`, `wave_texture`, `white_noise`, `voronoi_texture`, `musgrave_texture`, `invert`, `brightness_contrast`, `hsv_adjust`, `gamma`, `clamp`, `blur`, `sharpen`, `edge_detect`, `edge_erode`. Each op is described once, by a descriptor beside its code that names its channels and every key's default, range and help line; the texture pipeline editor's panel and tooltips, `flint gen`'s typo warnings and the parser all read it, so a spec's wrong type, unknown choice (`mode = "addd"`) or out-of-range number (`columns = 0`) is an error naming `ops[i].key`. Every op's keys are in the [flint-procgen README's op catalog](https://github.com/chrischaps/flint/blob/main/crates/flint-procgen/README.md#texture-op-catalog).
 
 ### `creature_v1`
 

@@ -921,7 +921,20 @@ impl SceneRenderer {
         target_view: &wgpu::TextureView,
     ) {
         let timer = self.gpu_timer.take();
+        // A described or captured frame is the shown side's (#1086): the
+        // other side is neither logged nor read, only noted
+        let held = self.hold_frame_capture();
         self.encode_to(device, queue, encoder, depth_view, camera, target_view);
+        self.resume_frame_capture(held);
+        if let Some(log) = self.frame_log.as_deref_mut() {
+            let note = "a split view's other side (encode_again_to, the Living Props A/B \
+                        split #238) was drawn over part of the frame: the passes and images \
+                        are the shown side's"
+                .to_string();
+            if !log.notes.contains(&note) {
+                log.notes.push(note);
+            }
+        }
         self.gpu_timer = timer;
         // The other side's boil is drawn once (#739)
         self.again_boil = None;
