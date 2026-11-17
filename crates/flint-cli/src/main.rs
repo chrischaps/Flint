@@ -180,6 +180,10 @@ fn main() -> Result<()> {
     // The old names (`play-chart` is `music chart play`, #709;
     // `render-suite <x>.goldens.toml` is `goldens`, #327) still run
     let (args, moved) = legacy_names::route(std::env::args_os().collect());
+    // Before parsing: `<old name> --help` prints its help and exits there
+    if let Some(note) = moved {
+        eprintln!("{note}");
+    }
     let cli = Cli::parse_from(args);
     match &cli.command {
         // The player says what `flint-player` says, as its `--log-format`
@@ -201,9 +205,6 @@ fn main() -> Result<()> {
                 .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
                 .init();
         }
-    }
-    if let Some(note) = moved {
-        eprintln!("{note}");
     }
     if let Some(dir) = &cli.project {
         if !dir.is_dir() {
