@@ -415,8 +415,8 @@ vars! {
         "A frame is a hitch over this many times the rolling median frame time";
     HITCH_FLOOR_MS = "FLINT_HITCH_FLOOR_MS", Player,
         Kind::Number { min: 0.0, max: UNBOUNDED, whole: false },
-        default "8",
-        "...and at least this many milliseconds over it";
+        default "24",
+        "...and at least this many milliseconds over it, at any refresh rate";
     PERF_LOG = "FLINT_PERF_LOG", Player,
         Kind::Path,
         default "stderr only",

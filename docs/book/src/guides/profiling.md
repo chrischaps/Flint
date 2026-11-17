@@ -361,7 +361,18 @@ Switches: `FLINT_PACING=0` turns pacing off, `FLINT_FRAME_LATENCY=1..3` sets the
 
 A hitch is one frame, and an average hides it. The player keeps its last 600 frames whether or not `--perf` is on: each frame's phases, script times (when they're timed), the clock's raw and paced time, the time from one `present()` to the next, the physics steps that ran and the GPU time. Recording costs about 0.65 µs a frame in an optimized build and allocates nothing once the 600 slots are full.
 
-Each frame is judged as the next one begins. It is a hitch when its time is over both twice the median of the 120 frames before it and that median plus 8 ms. The factor alone would flag a 4 ms frame among 2 ms ones, and the floor alone a 60 ms frame among 50 ms ones. The time judged is the one the frame stood on screen. Under vsync pacing that is the paced time, so the 6, 6, 6, 45 ms bursts above count as one refresh each and are not hitches, while a real 100 ms stall paces to six refreshes and is one. Unpaced, it is the wall time. The first 30 frames of a run aren't judged. Under vsync each frame also counts the refreshes it ran past its one.
+Each frame is judged as the next one begins. It is a hitch when its time is over both twice the median of the 120 frames before it and that median plus 24 ms. The factor alone would flag a 4 ms frame among 2 ms ones, and the floor alone a 100 ms frame among 70 ms ones.
+
+The floor is a time, not a number of refreshes, because what a player sees is how long the picture held. On a 60 Hz display a frame one refresh late (16.7 ms) is no hitch and one two refreshes late (33.3 ms) is. 24 ms lies between them. A faster display has to hold the picture as long, not miss as many refreshes:
+
+| Display | Refresh | Shortest hitch |
+|---|---|---|
+| 60 Hz | 16.7 ms | 3 refreshes, 50 ms |
+| 120 Hz | 8.3 ms | 4 refreshes, 33.3 ms |
+| 144 Hz | 6.9 ms | 5 refreshes, 34.7 ms |
+| 240 Hz | 4.2 ms | 7 refreshes, 29.2 ms |
+
+A frame that stood three refreshes at 240 Hz (12.5 ms against a 4.2 ms median) is two missed refreshes that nobody sees. With the floor at 8 ms it counted as a hitch, and on a busy machine those frames were half of any count. The time judged is the one the frame stood on screen. Under vsync pacing that is the paced time, so the 6, 6, 6, 45 ms bursts above count as one refresh each and are not hitches, while a real 100 ms stall paces to six refreshes and is one. Unpaced, it is the wall time. The first 30 frames of a run aren't judged. Under vsync each frame also counts the refreshes it ran past its one.
 
 A hitch is the player's when the player's own work (every phase but `present`) grew by at least half the frame's excess over the median, and it names the phase that grew most and the slowest script callback. Otherwise the time went **elsewhere**: the compositor, the driver, the wait in `present`, the OS. The counts run over the session and over the frames kept: hitches, hitches a minute, the worst frame, the time since the last hitch and the longest stretch without one.
 
@@ -392,7 +403,7 @@ A note made inside another, such as a model inside a transition or a pipeline in
 
 A `clock stall` is the long frame itself, so it is kept on the hitch but is no cause. Notes are made only on the player's frame thread and only while the history records. Otherwise each call site costs a flag read, about 1 ns. Collecting a frame's notes costs 2 to 3 ns. The F2 graph and the hitch log are what show them.
 
-`FLINT_HITCH_FACTOR` (at least 1, default 2) and `FLINT_HITCH_FLOOR_MS` (default 8) change the thresholds.
+`FLINT_HITCH_FACTOR` (at least 1, default 2) and `FLINT_HITCH_FLOOR_MS` (default 24) change the thresholds.
 
 ### The frame-time graph
 
@@ -415,7 +426,7 @@ A bar is split into the frame's phases, grouped into six bands, bottom up:
 
 The colours are Okabe and Ito's palette, which stays distinguishable under the common colour-vision deficiencies. Vermillion is kept for hitches. The line across the graph is the display's refresh period, labelled in ms and fps, and the fainter one is twice that. The top of the graph eases to fit the tallest bar and falls back slowly once a spike has scrolled off. It never sits below about twice the budget, and it stops at 250 ms, so a scene load doesn't flatten everything for seconds.
 
-The graph is quiet when nothing is wrong. A bar within its refresh is drawn dim, a bar past it brightens as it gets later, and a hitch is drawn at full colour with a vermillion mark over it and a faint band behind it. Under the graph are the session's hitches, hitches a minute, the worst frame, and how long since the last hitch. The count turns vermillion for a couple of seconds after a hitch, then fades back to grey. The line below says what the last hitch was: `last 100 ms: stall.rhai:on_update took 100` when a script took it, `last 30 ms: render +14` for another phase of the player's work, and `last 13 ms: elsewhere, present 1` when it wasn't the player's. Scripts are timed while F2 is open, as under `--perf`, so a script hitch names its callback.
+The graph is quiet when nothing is wrong. A bar within its refresh is drawn dim, a bar past it brightens as it gets later, and a hitch is drawn at full colour with a vermillion mark over it and a faint band behind it. Under the graph are the session's hitches, hitches a minute, the worst frame, and how long since the last hitch. The count turns vermillion for a couple of seconds after a hitch, then fades back to grey. The line below says what the last hitch was: `last 100 ms: stall.rhai:on_update took 100` when a script took it, `last 30 ms: render +14` for another phase of the player's work, and `last 42 ms: elsewhere, present 1` when it wasn't the player's. Scripts are timed while F2 is open, as under `--perf`, so a script hitch names its callback.
 
 Press F2 again for the graph alone, in a corner, small enough to leave on while playing:
 
@@ -491,7 +502,7 @@ flint-player levels/demo.scene.toml --frame-step 0.0166667 --input-script route.
   --exit-after 30 --hitch-log hitches.jsonl --max-hitches 0
 ```
 
-Startup hitches never count against `--max-hitches`. `--max-hitches-startup N` gives them a limit of their own. `--max-hitches-of player` counts only the engine's own work, and `--max-hitches-of elsewhere` only the time spent outside it. A hitch fix is then provable: the same input script, fewer lines. `flint play` takes the same four flags. The gate reads the wall clock, so a machine busy with other work hitches too. Keep it out of CI, and gate `player` hitches when the machine is shared. Pass `--no-hot-reload` to a gated run as to any capture: in a debug build the reload poll can itself take 14 ms, which the log names as `reload poll`. At high refresh rates the 8 ms floor is small beside a debug build's own spikes, and `FLINT_HITCH_FLOOR_MS` raises it for a gate.
+Startup hitches never count against `--max-hitches`. `--max-hitches-startup N` gives them a limit of their own. `--max-hitches-of player` counts only the engine's own work, and `--max-hitches-of elsewhere` only the time spent outside it. A hitch fix is then provable: the same input script, fewer lines. `flint play` takes the same four flags. The gate reads the wall clock, so a machine busy with other work hitches too. Keep it out of CI, and gate `player` hitches when the machine is shared. Pass `--no-hot-reload` to a gated run as to any capture: in a debug build the reload poll can itself take 14 ms, which the log names as `reload poll`. A debug build's own spikes can still cross the 24 ms floor. `FLINT_HITCH_FLOOR_MS` raises it for a gate.
 
 **Look inside it.** The log says which phase and which script, and what the engine was doing. To see what happened inside a slow phase, build with the `profile` feature and open the frame in Tracy (above).
 
