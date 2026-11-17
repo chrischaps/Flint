@@ -59,6 +59,7 @@ impl ReloadWorker {
                 for job in job_rx {
                     let done = match job {
                         Job::Script { entity, path } => {
+                            flint_core::scope!("script::compile", path.as_path());
                             // Read once it holds still, so a file caught
                             // mid-write isn't compiled as a shorter script
                             let (ast, modified) = match file_watch::read_settled(&path) {
@@ -76,6 +77,7 @@ impl ReloadWorker {
                             }
                         }
                         Job::Lib { files } => {
+                            flint_core::scope!("script::compile_lib", files.len());
                             let compiled = files
                                 .into_iter()
                                 .map(|file| {

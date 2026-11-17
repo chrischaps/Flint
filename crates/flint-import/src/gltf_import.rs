@@ -70,6 +70,9 @@ enum Images {
 }
 
 fn decode_gltf(path: &Path, images: Images) -> Result<ImportResult> {
+    // A model's import, by file: the parse, its buffers and (unless
+    // skipped) the decode of its images (#1096)
+    flint_core::scope!("import_model", path);
     let (document, buffers, images) = import_via_vfs(path, images)
         .map_err(|e| FlintError::ImportError(format!("Failed to import glTF: {}", e)))?;
 

@@ -27,6 +27,8 @@ mod egui_input;
 mod event_bus_tests;
 mod events;
 pub mod expression_feed;
+#[cfg(feature = "debug-hud")]
+mod expression_panel;
 #[cfg(test)]
 mod extension_hooks_tests;
 #[cfg(test)]
@@ -91,6 +93,8 @@ mod scene_entry;
 mod scene_entry_tests;
 pub(crate) mod scene_loading;
 mod schemas;
+#[cfg(test)]
+mod scope_coverage_tests;
 #[cfg(test)]
 mod script_bus_tests;
 pub mod script_commands;

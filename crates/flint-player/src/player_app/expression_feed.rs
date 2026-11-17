@@ -162,6 +162,97 @@ impl ExpressionTimeline {
     pub fn is_finished(&self) -> bool {
         self.next >= self.events.len()
     }
+
+    /// How many events have played.
+    pub fn played(&self) -> usize {
+        self.next
+    }
+
+    /// When the next event plays, if any is left.
+    pub fn next_time(&self) -> Option<f64> {
+        self.events.get(self.next).map(|e| e.t)
+    }
+
+    /// Every event's time, in order.
+    pub fn times(&self) -> Vec<f64> {
+        self.events.iter().map(|e| e.t).collect()
+    }
+}
+
+/// Where a state came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    Timeline,
+    Socket,
+}
+
+impl Source {
+    pub fn label(self) -> &'static str {
+        match self {
+            Source::Timeline => "timeline",
+            Source::Socket => "socket",
+        }
+    }
+}
+
+/// What the socket has seen this run (the F3 Expression panel, #525).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SocketCounts {
+    pub addr: std::net::SocketAddr,
+    /// Connections open now.
+    pub connections: usize,
+    /// Lines that weren't a JSON object.
+    pub malformed: usize,
+    /// Lines longer than the socket takes.
+    pub oversize: usize,
+    /// States pushed out of the queue by newer ones, under a flood.
+    pub flooded: usize,
+}
+
+/// One state as the feed delivered it: when (game time and the feed's own
+/// frame count), from where, and the state as written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Arrival {
+    pub at: f64,
+    pub frame: u64,
+    pub source: Source,
+    pub state: serde_json::Map<String, Value>,
+}
+
+/// How many states the panel's strip shows, newest first.
+pub const RECENT: usize = 12;
+
+/// The last [`RECENT`] states the feed delivered, and how many in all.
+#[derive(Debug, Clone, Default)]
+pub struct FeedRecord {
+    /// Oldest first; the newest is the last.
+    recent: std::collections::VecDeque<Arrival>,
+    delivered: u64,
+}
+
+#[cfg_attr(not(feature = "debug-hud"), allow(dead_code))] // the panel's reads
+impl FeedRecord {
+    pub fn push(&mut self, arrival: Arrival) {
+        if self.recent.len() >= RECENT {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(arrival);
+        self.delivered += 1;
+    }
+
+    /// The state `expression()` holds once scripts have heard it.
+    pub fn latest(&self) -> Option<&Arrival> {
+        self.recent.back()
+    }
+
+    /// Newest first.
+    pub fn newest_first(&self) -> impl Iterator<Item = &Arrival> {
+        self.recent.iter().rev()
+    }
+
+    pub fn delivered(&self) -> u64 {
+        self.delivered
+    }
 }
 
 /// Parse one socket line into a state, or say why it was dropped.
@@ -208,6 +299,10 @@ mod listener {
         queue: Mutex<VecDeque<State>>,
         /// States pushed out by newer ones since the frame last looked.
         dropped: AtomicUsize,
+        /// What the run has dropped, by why (the F3 Expression panel, #525).
+        malformed: AtomicUsize,
+        oversize: AtomicUsize,
+        flooded: AtomicUsize,
         /// Set when the listener is dropped, so readers stop.
         closed: Arc<AtomicBool>,
     }
@@ -218,6 +313,7 @@ mod listener {
             if q.len() >= QUEUE_CAPACITY {
                 q.pop_front();
                 self.dropped.fetch_add(1, Ordering::Relaxed);
+                self.flooded.fetch_add(1, Ordering::Relaxed);
             }
             q.push_back(state);
         }
@@ -228,6 +324,8 @@ mod listener {
     pub struct ExpressionListener {
         shared: Arc<Shared>,
         addr: SocketAddr,
+        /// Connections open now, kept by the reader threads.
+        open: Arc<AtomicUsize>,
     }
 
     impl Drop for ExpressionListener {
@@ -245,19 +343,30 @@ mod listener {
             let addr = listener.local_addr()?;
             let shared = Arc::new(Shared::default());
             let for_readers = shared.clone();
-            loopback::accept_on_thread(
+            let open = loopback::accept_on_thread(
                 listener,
                 "expression-listen",
                 shared.closed.clone(),
                 move |stream, peer| read_lines(stream, &for_readers, peer),
             )?;
             tracing::info!(target: "expression", "listening on {addr}");
-            Ok(Self { shared, addr })
+            Ok(Self { shared, addr, open })
         }
 
         /// Where it's listening (the real port when bound to port 0).
         pub fn local_addr(&self) -> SocketAddr {
             self.addr
+        }
+
+        /// Connections open now and what the run has dropped.
+        pub fn counts(&self) -> SocketCounts {
+            SocketCounts {
+                addr: self.addr,
+                connections: self.open.load(Ordering::SeqCst),
+                malformed: self.shared.malformed.load(Ordering::Relaxed),
+                oversize: self.shared.oversize.load(Ordering::Relaxed),
+                flooded: self.shared.flooded.load(Ordering::Relaxed),
+            }
         }
 
         /// The states that have arrived, at most `max`, oldest first. Waits on
@@ -288,6 +397,7 @@ mod listener {
             match read_capped_line(&mut reader, &mut line) {
                 Ok(Line::Eof) => return,
                 Ok(Line::TooLong) => {
+                    shared.oversize.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(
                         target: "expression",
                         "dropped a line from {peer}: longer than {MAX_LINE_BYTES} bytes"
@@ -307,6 +417,7 @@ mod listener {
             match parse_line(text) {
                 Ok(state) => shared.push(state),
                 Err(why) => {
+                    shared.malformed.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(target: "expression", "dropped a line from {peer}: {why}");
                 }
             }
@@ -365,6 +476,10 @@ mod listener {
             // and nothing else trickles in
             std::thread::sleep(Duration::from_millis(50));
             assert!(listener.drain(MAX_PER_FRAME).is_empty());
+            // the panel's counts (#525): two that weren't objects, one too long
+            let counts = listener.counts();
+            assert_eq!((counts.malformed, counts.oversize), (2, 1), "{counts:?}");
+            assert_eq!(counts.flooded, 0);
         }
 
         #[test]
@@ -420,6 +535,7 @@ mod listener {
                 "the last word survives"
             );
             assert_eq!(got[0]["i"], 2000 - (QUEUE_CAPACITY as i64 - 1));
+            assert_eq!(listener.counts().flooded, 2001 - QUEUE_CAPACITY);
         }
 
         #[test]
@@ -433,6 +549,13 @@ mod listener {
             let mut from: Vec<&str> = got.iter().map(|m| m["from"].as_str().unwrap()).collect();
             from.sort();
             assert_eq!(from, ["a", "b"]);
+            assert_eq!(listener.counts().connections, 2, "both still open");
+            drop((a, b));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while listener.counts().connections > 0 && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert_eq!(listener.counts().connections, 0, "both closed");
         }
     }
 }
@@ -474,25 +597,34 @@ impl ExpressionFeed {
         Ok(Some(feed))
     }
 
-    /// The states due this frame at game time `now`: the timeline's first,
-    /// then whatever the socket has, at most [`MAX_PER_FRAME`]. Each is logged
-    /// at info under the `expression` target.
-    pub fn poll(&mut self, now: f64) -> Vec<Map> {
+    /// The states due this frame at game time `now`, each with its source:
+    /// the timeline's first, then whatever the socket has, at most
+    /// [`MAX_PER_FRAME`]. Each is logged at info under the `expression`
+    /// target.
+    pub fn poll(&mut self, now: f64) -> Vec<(Source, serde_json::Map<String, Value>)> {
         let mut out = Vec::new();
         if let Some(timeline) = &mut self.timeline {
             for event in timeline.due(now) {
                 log_state("timeline", now, &event.state);
-                out.push(json_to_map(&event.state));
+                out.push((Source::Timeline, event.state.clone()));
             }
         }
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(listener) = &self.listener {
             for state in listener.drain(MAX_PER_FRAME) {
                 log_state("socket", now, &state);
-                out.push(json_to_map(&state));
+                out.push((Source::Socket, state));
             }
         }
         out
+    }
+
+    /// The socket's counts, when there is one.
+    pub fn socket_counts(&self) -> Option<SocketCounts> {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.listener.as_ref().map(ExpressionListener::counts);
+        #[cfg(target_arch = "wasm32")]
+        None
     }
 }
 
@@ -509,14 +641,81 @@ fn log_state(source: &str, now: f64, state: &serde_json::Map<String, Value>) {
 /// timeline plays on the game clock and the socket stays open for the whole
 /// run. At [`Stage::Input`] it queues the states due by now for the scripts'
 /// update, which hears them before `on_update`.
+///
+/// It also keeps the last few states it delivered, which the F3 Expression
+/// panel shows (#525, debug-hud): the panel is added at the first frame and
+/// again after a scene's panels are dropped, and filled while it is open.
 pub(crate) struct ExpressionSubsystem {
     feed: ExpressionFeed,
+    record: FeedRecord,
+    /// Frames this subsystem has seen at [`Stage::Input`].
+    frames: u64,
 }
 
 impl ExpressionSubsystem {
     pub(crate) fn new(feed: ExpressionFeed) -> Self {
-        Self { feed }
+        Self {
+            feed,
+            record: FeedRecord::default(),
+            frames: 0,
+        }
     }
+
+    /// What the panel shows at game time `now`.
+    #[cfg_attr(not(feature = "debug-hud"), allow(dead_code))]
+    pub(crate) fn view(&self, now: f64) -> FeedView {
+        FeedView {
+            now,
+            frame: self.frames,
+            record: self.record.clone(),
+            timeline: self.feed.timeline.as_ref().map(|t| TimelineView {
+                played: t.played(),
+                len: t.len(),
+                next: t.next_time(),
+            }),
+            socket: self.feed.socket_counts(),
+        }
+    }
+
+    /// Add the panel when the player has none (the first frame, or after a
+    /// scene's panels went), and fill it while it's open.
+    #[cfg(feature = "debug-hud")]
+    fn feed_panel(&self, now: f64, panels: &mut Vec<Box<dyn flint_debug_ui::DebugPanel>>) {
+        use super::expression_panel::{ExpressionPanel, EXPRESSION_PANEL};
+        if !panels.iter().any(|p| p.as_any().is::<ExpressionPanel>()) {
+            let times = self.feed.timeline.as_ref().map(|t| t.times());
+            panels.push(Box::new(ExpressionPanel::new(times)));
+            tracing::debug!(target: "expression", "{EXPRESSION_PANEL} panel added (F3)");
+        }
+        let panel = panels
+            .iter_mut()
+            .find_map(|p| p.as_any_mut().downcast_mut::<ExpressionPanel>());
+        if let Some(panel) = panel.filter(|p| flint_debug_ui::DebugPanel::is_open(*p)) {
+            panel.set_view(self.view(now));
+        }
+    }
+}
+
+/// The feed as the panel shows it: a copy, taken once a frame while open.
+#[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "debug-hud"), allow(dead_code))]
+pub struct FeedView {
+    /// Game time now.
+    pub now: f64,
+    /// The feed's frame count now.
+    pub frame: u64,
+    pub record: FeedRecord,
+    pub timeline: Option<TimelineView>,
+    pub socket: Option<SocketCounts>,
+}
+
+/// Where a timeline stands.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TimelineView {
+    pub played: usize,
+    pub len: usize,
+    /// When the next event plays; `None` once all have.
+    pub next: Option<f64>,
 }
 
 impl Subsystem for ExpressionSubsystem {
@@ -532,11 +731,21 @@ impl Subsystem for ExpressionSubsystem {
         if stage != Stage::Input {
             return;
         }
+        self.frames += 1;
+        let now = ctx.clock.total_time;
         // The timeline on the game clock, then what the socket's reader
         // threads have parsed
-        for state in self.feed.poll(ctx.clock.total_time) {
-            ctx.script.queue_expression(state);
+        for (source, state) in self.feed.poll(now) {
+            ctx.script.queue_expression(json_to_map(&state));
+            self.record.push(Arrival {
+                at: now,
+                frame: self.frames,
+                source,
+                state,
+            });
         }
+        #[cfg(feature = "debug-hud")]
+        self.feed_panel(now, ctx.panels);
     }
 }
 

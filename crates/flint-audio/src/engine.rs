@@ -650,6 +650,7 @@ impl AudioEngine {
         if self.has_sound(name) {
             return Ok(());
         }
+        flint_core::scope!("audio::decode", path);
         // A whole sound decoded on the frame (#1077)
         let _note =
             flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::AudioDecode, || {
@@ -706,6 +707,7 @@ impl AudioEngine {
         }
         // The frame's share of the queue (#1077): budgeted, but on the frame
         let queued = self.decodes.len();
+        flint_core::scope!("audio::decode_queue", queued);
         let _note =
             flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::AudioDecode, || {
                 format!("queue, {queued} waiting")

@@ -13,6 +13,7 @@ pub use flint_pixels::{memoize_mip_chains, mip_chain};
 /// comes from the path's extension, as `image::open` does, falling back to
 /// sniffing the bytes when the extension names none.
 pub fn open_image(path: &Path) -> image::ImageResult<image::DynamicImage> {
+    flint_core::scope!("decode_image", path);
     let bytes = vfs::read(path).map_err(image::ImageError::IoError)?;
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes));
     match image::ImageFormat::from_path(path) {
@@ -232,6 +233,7 @@ impl TextureCache {
             return Ok(false);
         }
         // A texture decoded on first sight is a likely hitch (#1077)
+        flint_core::scope!("load_texture", name);
         let _note =
             flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::TextureLoad, || {
                 flint_core::project::shown(path)
@@ -250,11 +252,13 @@ impl TextureCache {
         };
 
         let (data, mip_level_count) = if mipmaps {
+            flint_core::scope!("mip_chain");
             mip_chain(&rgba, width, height, !is_data)
         } else {
             (rgba.into_raw(), 1)
         };
 
+        flint_core::scope!("upload_texture", data.len());
         let texture = device.create_texture_with_data(
             queue,
             &wgpu::TextureDescriptor {

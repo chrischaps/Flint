@@ -612,6 +612,16 @@ The feed logs each state it delivers at info under the `expression` target
 `log` lines). While the game state pauses scripts, states wait for them, up to
 256.
 
+To see them beside the picture instead, press F3: a player with a feed has an
+**Expression** panel ([Debug Panels](../guides/debug-panels.md#the-panel-roster)).
+It shows the latest state as a table, with its source and how long ago it
+arrived in game time ("arrived this frame" on the frame it was delivered), and
+the last 12 states, newest first, each with what changed from the one before
+(`certainty 0.50 to 0.20, tone neutral to grave`). For a timeline it adds the
+playhead, a ruler of every event and the next one's time; for the socket, the
+connections open and the lines dropped as malformed or oversize and the states
+dropped under a flood.
+
 ### Log API
 
 <!-- script-api:begin module:log -->

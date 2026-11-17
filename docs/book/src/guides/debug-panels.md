@@ -62,6 +62,7 @@ Scene-component panels are created **only when their driving component is presen
 | Living Props | `living_prop` | Every knob of a grove live, the warped clock as a curve, freeze and single-step, a pose overlay, picking a tree in the world to tune its species, and presets saved as TOML. [Below](#living-props-f3) |
 | Music Guide | active music session | Upcoming input windows and per-channel targets |
 | Manifest Map | active music session | Suite structure, playhead, this run's history |
+| Expression | an expression feed (`--expression-timeline`, `--expression-listen`) | Nothing to tune: what scripts hear. The latest `expression()` state as a table, its source and how long ago it arrived (game time), the last 12 states newest first with what changed in each, the timeline's playhead and next event, and the socket's connections and dropped lines. [Scripting](../concepts/scripting.md#expression-api) |
 
 Before #744 the engine also shipped five panels for one game's components (Float's day/time, weather, reality tears, visitor and dead calm). They are schema lines in that game now, and any game's controller gets the same with no Rust.
 

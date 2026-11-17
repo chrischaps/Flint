@@ -93,6 +93,8 @@ fn span(e: &Value) -> (f64, f64) {
 
 #[test]
 fn a_hitchs_trace_holds_the_stalled_frame_under_its_scripts_scope() {
+    // It records and ends frames: no other test may meanwhile
+    let _turn = super::trace::recorder_test_turn();
     let dir = std::env::temp_dir().join(format!("flint-trace-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let exit_file = dir.join("run.json");
@@ -107,6 +109,7 @@ fn a_hitchs_trace_holds_the_stalled_frame_under_its_scripts_scope() {
             frame(&mut app);
         }
         app.finish_traces();
+        flint_core::profile::set_recording(false);
         assert_eq!(app.trace_failure(), None);
     });
 

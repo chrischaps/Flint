@@ -162,6 +162,7 @@ impl AudioSystem {
         if !self.engine.is_available() {
             return;
         }
+        flint_core::scope!("audio::triggers", events.len());
         let commands = self.triggers.process_events(events, world);
 
         for cmd in commands {
@@ -219,6 +220,7 @@ impl RuntimeSystem for AudioSystem {
         if !self.engine.is_available() {
             return Ok(());
         }
+        flint_core::scope!("audio::update");
 
         // The browser's worklet failed after it started and the main thread
         // took over (#136): what played there is gone, so start it again.
@@ -232,21 +234,27 @@ impl RuntimeSystem for AudioSystem {
         }
 
         // Sync any new audio source entities
-        self.sync.sync_new_sources(world, &mut self.engine);
+        {
+            flint_core::scope!("audio::sync_sources", self.sync.spatial_track_count());
+            self.sync.sync_new_sources(world, &mut self.engine);
 
-        // Update spatial positions for moving sources
-        self.sync.update_positions(world);
+            // Update spatial positions for moving sources
+            self.sync.update_positions(world);
 
-        // Propagate per-frame pitch/volume changes from ECS to Kira handles
-        self.sync.update_parameters(world);
+            // Propagate per-frame pitch/volume changes from ECS to Kira handles
+            self.sync.update_parameters(world);
+        }
 
         // Pause loops nobody can hear: out of earshot, or at volume 0
         self.sync.cull_inaudible(self.engine.listener_position());
 
         // Steer placed sounds to the listener, once a frame (#138)
-        let ears = self.engine.ears();
-        self.sync.pan_sources(&ears);
-        self.engine.pan_oneshots();
+        {
+            flint_core::scope!("audio::pan");
+            let ears = self.engine.ears();
+            self.sync.pan_sources(&ears);
+            self.engine.pan_oneshots();
+        }
 
         // Reload trigger rules for any new entities
         self.triggers.load_rules(world);

@@ -703,7 +703,7 @@ pub(crate) fn hitch_description(h: &Hitch) -> HitchDescription {
             script.as_ref().map(|(n, _)| n.clone()),
             script.as_ref().map(|(_, ms)| *ms),
         ),
-        Cause::Elsewhere { .. } => (None, None, None, None),
+        Cause::Elsewhere { .. } | Cause::Tooling { .. } => (None, None, None, None),
     };
     HitchDescription {
         frame: h.index,
@@ -748,7 +748,8 @@ impl super::PlayerApp {
 
     /// In `tick`, once the clock and the hitch detector have run: the
     /// hitches it just found (`found`, the newest) for `--capture-on-hitch`,
-    /// past the start unless `on_hitch_startup`, and the
+    /// past the start unless `on_hitch_startup` and never the tools' own
+    /// (`Cause::Tooling`), and the
     /// `--capture-frame-at` times reached.
     pub(super) fn frame_capture_triggers(&mut self, found: usize) {
         let captures = &mut self.frame_captures;
@@ -757,6 +758,11 @@ impl super::PlayerApp {
             for h in hitches.iter().skip(hitches.len().saturating_sub(found)) {
                 if captures.on_hitch == 0 {
                     break;
+                }
+                // A screenshot's or the F2 overlay's own cost (#1129) is
+                // not the game's hitch: a capture of it shows nothing
+                if h.cause.is_tooling() {
+                    continue;
                 }
                 if !captures.on_hitch_startup && h.game_time < STARTUP_SECS {
                     if captures.passed_startup == 0 {

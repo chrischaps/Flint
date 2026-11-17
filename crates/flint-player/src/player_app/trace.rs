@@ -896,6 +896,15 @@ impl PlayerApp {
     }
 }
 
+/// One test at a time holds the recorder: recording on or off and the frame
+/// index (`finish_frame`) are the process's, so a test that turns either
+/// would move another's (`trace_tests`, `scope_coverage_tests`).
+#[cfg(test)]
+pub(crate) fn recorder_test_turn() -> std::sync::MutexGuard<'static, ()> {
+    static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    TURN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

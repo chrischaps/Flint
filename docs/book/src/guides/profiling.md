@@ -321,9 +321,18 @@ The browser's WebGPU makes each debug group a call of its own, so the web player
 
 Build the player with `--features profile` (a game binary passes it on: `profile = ["flint-player/profile"]`) and run [Tracy's viewer](https://github.com/wolfpld/tracy/releases) beside it. The viewer finds the game on this machine and shows each frame as a stack of scopes on a timeline ([ADR 0109](https://github.com/chrischaps/Flint/blob/main/docs/adr/0109-tracy-frame-profiler.md)):
 
-- `tick`, the game's step: `run_extension_pre_updates`, `publish_style_reader`, `tick_fixed_physics`, `sound`, `animate`, `tick_procgen`, `poll_user_styles`, and the renderer's `prepare` with `update_from_world` inside it;
-- `render`, the drawing: the renderer's `encode_to` with `render_shadow_pass`, `render_main_pass` and `render_postprocess` inside it, then `render_hud`;
+- `tick`, the game's step, with each [phase](#the-perf-line)'s systems beneath it ([#1096](https://github.com/chrischaps/Flint/issues/1096)):
+  - input: `poll_devices`, `frame_history`, `input_script`, `collect_game_events`, `advance_transition` (with `scene_transition`, by the scene it goes to, when one runs) and `run_extension_pre_updates`;
+  - scripts: `run_scripts` holds `publish_style_reader` and `script::update`, which holds `script::hot_reload_poll` (`script::poll_scripts`, `script::poll_ui`), `script::discover`, `script::events` and one scope a callback kind (`script::on_init`, `script::on_update`...), each with a `script::call` for each script it calls, named by its file;
+  - physics: `tick_fixed_physics`, with `physics::character` and a `physics::fixed_update` for each fixed step, holding `physics::sync_in`, `physics::step` (Rapier's, its detail the body count) and `physics::sync_out`;
+  - script UI: `dispatch_commands`, `call_draw_uis` (`script::on_draw_ui`) and `collect_script_ui` (`script::ui_layout`);
+  - anim/fx: `sound` (`audio::decode_queue`, `audio::triggers`, `audio::update` with `audio::sync_sources` and `audio::pan`), `animate` (`animation::update`, a scope for each of its tiers, `animation::sample_and_skin` inside `animation::skeletal`), `upload_bones` and `after_animation` (`publish_bone_probes`, `animation::ik`, `particles::sync`, `particles::simulate`);
+  - sync: `tick_procgen` (`procgen::queue`, `procgen::generate` by spec), `subsystems` by stage (living props' `living::tick` with `living::fill_rings`, then `living::blend_props` and `living::blend_echoes`), and `sync_renderer`: `poll_user_styles`, `particles::pack` and the renderer's `prepare` with `update_from_world` inside it, a scope a step of the extraction (`extract::entities` is the walk, with the entity count) and `particles::upload`;
+- `render`, the drawing: `sync_debug_panels`, `acquire` (the wait for the swapchain's image), the renderer's `encode_to` (`cull_lod`, `upload_lights`, `grass_compute`, `render_shadow_pass`, `cull_frustum`, `update_per_frame_uniforms` with `sort_blended` and `upload_transforms`, `render_main_pass`, `encode_fog_veil`, `encode_style_mask`, `encode_style_albedo`, `render_postprocess` with an `encode_part` for each effect and style part by its label, `render_world_lines`), then `render_hud` (`egui_run`, `egui_tessellate`, `egui_upload`, `egui_encode`), `submit`, `frame_submitted` and `present`;
+- whenever they happen, the loads, each named by its file or asset: `enter_scene`, `load_chunk`, `load_models`, `import_model`, `upload_model`, `load_texture` (`decode_image`, `mip_chain`, `upload_texture`), `script::compile`, `audio::decode`, `load_terrain` (`terrain::heightmap`, `terrain::generate`), and `build_pipeline` by its label;
 - wgpu's own scopes, from the same `profiling` crate.
+
+A loop gets one scope, never one an entity or a draw, and where it helps the count is its detail. In the Overgrown Ruins a frame holds about 110 scopes.
 
 Each `RedrawRequested` ends a frame for Tracy, so its frame graph is the player's.
 
@@ -331,7 +340,7 @@ The client listens on loopback only, so there's no firewall prompt, and it keeps
 
 ### One scope, two profilers
 
-The engine marks a scope with `flint_core::scope!` ([ADR 0128](https://github.com/chrischaps/Flint/blob/main/docs/adr/0128-one-scope-macro-two-sinks.md)). One line reaches Tracy, under the `profile` feature, and Flint's own recorder, a ring of the last few thousand scopes per thread that a run can save after a hitch has already happened. The recorder is compiled into every debug build and into a release build with the **`trace`** feature (`trace = ["flint-player/trace"]` in a game's binary); a default release build has none of it. Compiled in, it records nothing until something turns it on, and until then a scope costs about a nanosecond in release and 6 ns in a debug build. Recording, a scope costs about 40 ns in release.
+The engine marks a scope with `flint_core::scope!` ([ADR 0128](https://github.com/chrischaps/Flint/blob/main/docs/adr/0128-one-scope-macro-two-sinks.md)). One line reaches Tracy, under the `profile` feature, and Flint's own recorder, a ring of the last few thousand scopes per thread that a run can save after a hitch has already happened. The recorder is compiled into every debug build and into a release build with the **`trace`** feature (`trace = ["flint-player/trace"]` in a game's binary); a default release build has none of it. Compiled in, it records nothing until something turns it on, and until then a scope costs about a nanosecond in release and 6 ns in a debug build. Recording, a scope costs about 35 ns in release, and 55 ns with a file name as its detail (`cargo test -p flint-core --release --features trace --lib scope_cost -- --ignored --nocapture` measures it). At the Ruins' 110 scopes a frame that is about 5 µs.
 
 Three names sit close together, so to keep them apart:
 
@@ -358,7 +367,7 @@ fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
 }
 ```
 
-A text detail (`flint_core::scope!("load_level", path)`) is copied into the recording, so keep it to scopes that run rarely, not to loops. A game's older `profiling::scope!` and `#[profiling::function]` still reach Tracy, but not the recorder.
+A text detail (`flint_core::scope!("load_level", path)`, a `&str`, a `String` or a `&Path`) is copied into the recording, so keep it to scopes that run rarely, not to loops. A `&Path` is turned into text only while the scope records. A game's older `profiling::scope!` and `#[profiling::function]` still reach Tracy, but not the recorder.
 
 ### Recording a trace
 
@@ -382,7 +391,7 @@ Open the file in [Perfetto](https://ui.perfetto.dev) (Open trace file) or `chrom
 
 | Track | What it holds |
 |---|---|
-| a thread (`main`, ...) | every `flint_core::scope!` that closed on it, nested, each with its `frame`, `depth` and detail. Each script callback is a scope of its own while recording, named as `--perf` names its time (`scripts/stall.rhai:on_update`) |
+| a thread (`main`, ...) | every `flint_core::scope!` that closed on it, nested, each with its `frame`, `depth` and detail. Each script callback is a scope of its own while recording, named as `--perf` names its time (`scripts/stall.rhai:on_update`), inside the `script::call` that carries its file as detail |
 | `frames` | each frame, from one `RedrawRequested` to the next, with its `ms` |
 | `phases` | the player's ten phases (`input`, `scripts`, `physics`, ..., `acquire`, `present`) between their marks |
 | `gpu` | each pass the GPU timer measured. The GPU's clock isn't the CPU's, so a frame's passes are laid from its render phase's start, with the GPU's own durations |
@@ -460,6 +469,10 @@ A note made inside another, such as a model inside a transition or a pipeline in
 | `surface reconfigure` | the window's swapchain made again (a resize) |
 | `physics steps` | a frame that ran more than one fixed step |
 | `clock stall` | a frame over 250 ms, which pacing passed through as it was |
+| `screenshot` | a `--screenshot` frame read back and written as a PNG, by its file |
+| `stats overlay` | the HUD pass of the first frame F2 shows a view on (`opened`, `opened (graph)`) |
+
+The last two are the player's own tools at work. A hitch they account for (their times cover at least half its excess) is the tools' cost, not the game's. It is classed **`tooling`**, named by the tool (`screenshot shots/look_0003.png, 92.5 ms`, `stats overlay opened, 12.0 ms`) and counted apart from the game's hitches: the graph's counters, the perf line, the exit report's counts and every `--max-hitches` gate leave it out, and `--capture-on-hitch` doesn't capture it. A screenshot's read-back and write land in `present`, so before #1129 every `--screenshot-every` frame read as a 60 to 200 ms hitch `elsewhere, present`, which an agent validating with screenshots and the hitch log would take for the compositor.
 
 A `clock stall` is the long frame itself, so it is kept on the hitch but is no cause. Neither is `physics steps`: extra fixed steps are the clock paying back the game time a long frame before owed, and their own cost is the `physics` phase's, which the hitch names by phase.
 
@@ -496,7 +509,7 @@ A bar is split into the frame's phases, grouped into six bands, bottom up:
 
 The colours are Okabe and Ito's palette, which stays distinguishable under the common colour-vision deficiencies. Vermillion is kept for hitches. The line across the graph is the display's refresh period, labelled in ms and fps, and the fainter one is twice that. The top of the graph eases to fit the tallest bar and falls back slowly once a spike has scrolled off. It never sits below about twice the budget, and it stops at 250 ms, so a scene load doesn't flatten everything for seconds.
 
-The graph is quiet when nothing is wrong. A bar within its refresh is drawn dim, a bar past it brightens as it gets later, and a hitch is drawn at full colour with a vermillion mark over it and a faint band behind it. Under the graph are the session's hitches, hitches a minute, the worst frame, and how long since the last hitch. The count turns vermillion for a couple of seconds after a hitch, then fades back to grey. The line below says what the last hitch was, in the same words as the hitch log, the exit report and `--perf` (see [Finding a hitch](#finding-a-hitch)): `last 269 ms: style build ascii, 255.2 ms` when the engine noted what it was doing, `last 117 ms: script stall.rhai:on_update 100.0 ms` when a script took it, `last 30 ms: render +14.0 ms` for another phase of the player's work, and `last 42 ms: elsewhere, present 1.0 ms` (or `acquire`, whichever wait was longer) when it wasn't the player's. Scripts are timed while F2 is open, as under `--perf`, so a script hitch names its callback.
+The graph is quiet when nothing is wrong. A bar within its refresh is drawn dim, a bar past it brightens as it gets later, and a hitch is drawn at full colour with a vermillion mark over it and a faint band behind it. Under the graph are the session's hitches, hitches a minute, the worst frame, and how long since the last hitch. The count turns vermillion for a couple of seconds after a hitch, then fades back to grey. The line below says what the last hitch was, in the same words as the hitch log, the exit report and `--perf` (see [Finding a hitch](#finding-a-hitch)): `last 269 ms: style build ascii, 255.2 ms` when the engine noted what it was doing, `last 117 ms: script stall.rhai:on_update 100.0 ms` when a script took it, `last 30 ms: render +14.0 ms` for another phase of the player's work, and `last 42 ms: elsewhere, present 1.0 ms` (or `acquire`, whichever wait was longer) when it wasn't the player's. A hitch of the player's own tools reads `last 113 ms: screenshot shot_0001.png, 107.7 ms, not counted`: its bar has no mark, and the counters above it leave it out. Scripts are timed while F2 is open, as under `--perf`, so a script hitch names its callback.
 
 Press F2 again for the graph alone, in a corner, small enough to leave on while playing:
 
@@ -516,7 +529,7 @@ The overlay draws every bar into one mesh, which it keeps and refills from frame
 | the graph alone | 0.54–0.61 ms | 2.07–2.15 ms |
 | the full overlay | 0.56–0.63 ms | 2.89–2.94 ms |
 
-The full overlay's figures include the rendering stats rows. While the graph shows, the history keeps at least four and a half seconds of frames, which at 240 Hz is more than its 600.
+The full overlay's figures include the rendering stats rows. Its first frame costs more, since its text at five sizes is laid out and each glyph drawn once: in a debug build 12 ms on the looks tour and 8 to 44 ms on the metronome, 3.6 ms for the graph alone. That is a debug build with egui's text stack optimized (the root `Cargo.toml`, #1129). Unoptimized it was 108 to 121 ms, a hitch on the graph it had just opened. A first frame that still crosses the threshold is a `tooling` hitch, not the game's. While the graph shows, the history keeps at least four and a half seconds of frames, which at 240 Hz is more than its 600.
 
 The history is flint-player's `frame-history` Cargo feature, on by default. A shipped game that wants none of it builds flint-player without it (`default-features = false` and the features it does want). The player then records frames only while `--perf` is on, as it did before, and each call the frame makes costs a branch (measured at nothing beside the `Instant::now` the player takes anyway). `FLINT_FRAME_HISTORY=0` turns the history off in a build that has it, and `FLINT_FRAME_HISTORY=1` turns it on in one that doesn't. `--hitch-log` and `--max-hitches` (next section) turn it on whatever the build says.
 
@@ -541,7 +554,7 @@ The perf line's count includes the start's hitches; the exit report below sets t
 | `wall_time` | when it began, seconds since recording began |
 | `ms`, `judged_ms`, `median_ms` | its wall time, the time it was judged by (paced under vsync) and the median it stood out from |
 | `missed_refreshes` | under vsync, the refreshes it ran past its one; `null` without vsync |
-| `class` | `player` or `elsewhere` |
+| `class` | `player`, `elsewhere`, or `tooling` (the player's own screenshot or F2 overlay; see the notes above) |
 | `startup` | it came in the first two seconds of game time |
 | `player_ms` | the player's own work in it, every phase but `acquire` and `present` |
 | `phase`, `phase_ms` | the phase that grew most, and by how much (`player` only) |
@@ -564,7 +577,11 @@ That is a script that stalls 150 ms at t = 1, 3, 4 and 5 s, on a 240 Hz display 
 [perf] hitch log: hitches.jsonl (4 lines)
 ```
 
-Hitches in the first two seconds of game time (loading's last uploads, the first pipeline compiles) are counted apart as **startup**. They're the same two seconds the `[perf]` averages leave out.
+Hitches in the first two seconds of game time (loading's last uploads, the first pipeline compiles) are counted apart as **startup**. They're the same two seconds the `[perf]` averages leave out. The tools' own hitches get a line of their own when there were any, start or not:
+
+```text
+[perf] tooling hitches (screenshots, the F2 overlay; never gated): 4, worst 219.8 ms at t=9.62 s (screenshot shots/look_0003.png, 192.4 ms); causes: 4 screenshot
+```
 
 **Gate it.** `--max-hitches N` makes the run exit non-zero when it had more than N hitches after the start, the way `--strict-scripts` does for script errors, so a scripted run can fail:
 
@@ -573,7 +590,7 @@ flint-player levels/demo.scene.toml --frame-step 0.0166667 --input-script route.
   --exit-after 30 --hitch-log hitches.jsonl --max-hitches 0
 ```
 
-Startup hitches never count against `--max-hitches`. `--max-hitches-startup N` gives them a limit of their own. `--max-hitches-of player` counts only the engine's own work, and `--max-hitches-of elsewhere` only the time spent outside it. The failure line's worst hitch and causes are that class's too. A hitch fix is then provable: the same input script, fewer lines. `flint play` takes the same four flags. The gate reads the wall clock, so a machine busy with other work hitches too. Keep it out of CI, and gate `player` hitches when the machine is shared. Pass `--no-hot-reload` to a gated run as to any capture: in a debug build the reload poll can itself take 14 ms, which the log names as `reload poll`. A debug build's own spikes can still cross the 24 ms floor. `FLINT_HITCH_FLOOR_MS` raises it for a gate.
+Startup hitches never count against `--max-hitches`, and `tooling` hitches count against no gate, so a run validated with `--screenshot-every` isn't failed by its own screenshots. `--max-hitches-startup N` gives them a limit of their own. `--max-hitches-of player` counts only the engine's own work, and `--max-hitches-of elsewhere` only the time spent outside it. The failure line's worst hitch and causes are that class's too. A hitch fix is then provable: the same input script, fewer lines. `flint play` takes the same four flags. The gate reads the wall clock, so a machine busy with other work hitches too. Keep it out of CI, and gate `player` hitches when the machine is shared. Pass `--no-hot-reload` to a gated run as to any capture: in a debug build the reload poll can itself take 14 ms, which the log names as `reload poll`. A debug build's own spikes can still cross the 24 ms floor. `FLINT_HITCH_FLOOR_MS` raises it for a gate.
 
 **Look inside it.** The log says which phase and which script, and what the engine was doing. To see what happened inside a slow phase, build with the `profile` feature and open the frame in Tracy (above). To see inside a scope, sample it ([When scopes aren't enough](#when-scopes-arent-enough)).
 

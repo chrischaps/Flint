@@ -43,12 +43,18 @@ impl ScriptEngine {
         if !self.enter(entity) {
             return true;
         }
-        let began = self.times.is_some().then(web_time::Instant::now);
         let script = self.scripts.get_mut(&entity).unwrap();
-        // The callback as a scope of the recorder's, named as its time is
-        // (#1097); nothing unless it records
-        let _scope = flint_core::profile::recording()
-            .then(|| flint_core::profile::Scope::enter(script.trace_site(callback)));
+        // The callback's own site, `<source>:<callback>` (#1097), found
+        // before the borrow `script::call`'s detail holds; nothing unless
+        // the recorder records
+        let named = flint_core::profile::recording().then(|| script.trace_site(callback));
+        // Each script's call, by file: one a script a callback, never one
+        // per function the script calls (#1096)
+        flint_core::scope!("script::call", script.file.as_str());
+        // ... and inside it the callback by name, as its time is named,
+        // so a trace reads `stall.rhai:on_update` under `script::call`
+        let _named = named.map(flint_core::profile::Scope::enter);
+        let began = self.times.is_some().then(web_time::Instant::now);
         let result =
             self.engine
                 .call_fn::<rhai::Dynamic>(&mut script.scope, &script.calls, callback, args);
@@ -73,6 +79,7 @@ impl ScriptEngine {
 
     /// Call on_init() for all scripts that haven't been initialized yet
     pub fn call_inits(&mut self, world: &mut FlintWorld) {
+        flint_core::scope!("script::on_init");
         let _world_scope = self.lend(world);
         let entity_ids = self.in_order(|s| s.defines(Callback::Init) && !s.init_called);
         self.init(&entity_ids);
@@ -80,6 +87,7 @@ impl ScriptEngine {
 
     /// Call on_init() for specific entities (chunk loading)
     pub fn call_inits_for(&mut self, world: &mut FlintWorld, entity_ids: &[EntityId]) {
+        flint_core::scope!("script::on_init");
         let _world_scope = self.lend(world);
         self.init(entity_ids);
     }
@@ -99,6 +107,7 @@ impl ScriptEngine {
 
     /// Call on_update() for all scripts
     pub fn call_updates(&mut self, world: &mut FlintWorld) {
+        flint_core::scope!("script::on_update");
         let _world_scope = self.lend(world);
 
         for entity_id in self.in_order(|s| s.defines(Callback::Update)) {
@@ -112,6 +121,7 @@ impl ScriptEngine {
     /// `on_ui(element_id, event)` on the script that loaded each document,
     /// before any `on_draw_ui`.
     pub fn call_draw_uis(&mut self, world: &mut FlintWorld) {
+        flint_core::scope!("script::on_draw_ui");
         let _world_scope = self.lend(world);
 
         self.route_ui();
@@ -159,6 +169,7 @@ impl ScriptEngine {
         if events.is_empty() {
             return;
         }
+        flint_core::scope!("script::events", events.len());
 
         let _world_scope = self.lend(world);
 
@@ -238,6 +249,7 @@ impl ScriptEngine {
         if states.is_empty() {
             return;
         }
+        flint_core::scope!("script::on_expression", states.len());
         let _world_scope = self.lend(world);
         let entity_ids = self.in_order(|s| s.defines(Callback::Expression));
 
@@ -294,6 +306,7 @@ impl ScriptEngine {
         if entity_ids.is_empty() {
             return;
         }
+        flint_core::scope!("script::on_persist_migrate");
         let _world_scope = self.lend(world);
         for entity_id in entity_ids {
             self.call(entity_id, cb::ON_PERSIST_MIGRATE, (from,));
@@ -315,6 +328,7 @@ impl ScriptEngine {
 
     /// Call on_scene_exit() for all scripts that define it
     pub fn call_scene_exits(&mut self, world: &mut FlintWorld) {
+        flint_core::scope!("script::on_scene_exit");
         let _world_scope = self.lend(world);
 
         for entity_id in self.in_order(|s| s.defines(Callback::SceneExit)) {
@@ -324,6 +338,7 @@ impl ScriptEngine {
 
     /// Call on_scene_enter() for all scripts that define it
     pub fn call_scene_enters(&mut self, world: &mut FlintWorld) {
+        flint_core::scope!("script::on_scene_enter");
         let _world_scope = self.lend(world);
 
         for entity_id in self.in_order(|s| s.defines(Callback::SceneEnter)) {
@@ -342,6 +357,7 @@ impl ScriptEngine {
             return;
         }
 
+        flint_core::scope!("script::on_sequence_cue", cues.len());
         let _world_scope = self.lend(world);
 
         for cue in cues {
@@ -365,6 +381,7 @@ impl ScriptEngine {
             return;
         }
 
+        flint_core::scope!("script::on_animation_end", events.len());
         let _world_scope = self.lend(world);
 
         for event in events {
