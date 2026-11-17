@@ -115,7 +115,7 @@ struct LogLine {
     class: &'static str,
     /// In the first [`STARTUP_SECS`] of game time.
     startup: bool,
-    /// The player's work in it (every phase but present).
+    /// The player's work in it (every phase but acquire and present).
     player_ms: f64,
     /// The player's phase that grew most, and by how much; `null` for
     /// `elsewhere`.
@@ -124,8 +124,14 @@ struct LogLine {
     /// The script callback that took longest in it, when scripts were timed.
     script: Option<String>,
     script_ms: Option<f64>,
-    /// For `elsewhere`: the present phase's share.
+    /// For `elsewhere`: the swapchain's two waits, for an image (#1123)
+    /// and handing it back.
+    acquire_ms: Option<f64>,
     present_ms: Option<f64>,
+    /// The GPU's busy time read back in it (a frame or two old), beside
+    /// the waits: a long acquire with a long GPU frame waited on the GPU,
+    /// one without on the compositor. `null` while the GPU isn't timed.
+    gpu_ms: Option<f64>,
     /// [`Hitch::cause_line`].
     cause: String,
     /// What the engine did in it and the frame before (#1077).
@@ -155,7 +161,7 @@ fn r3(x: f64) -> f64 {
 
 impl LogLine {
     fn of(h: &Hitch, startup: bool, history: &FrameHistory) -> Self {
-        let (phase, phase_ms, script, script_ms, present_ms) = match &h.cause {
+        let (phase, phase_ms, script, script_ms, waits) = match &h.cause {
             Cause::Player {
                 phase,
                 phase_ms,
@@ -167,7 +173,16 @@ impl LogLine {
                 script.as_ref().map(|(_, ms)| r2(*ms)),
                 None,
             ),
-            Cause::Elsewhere { present_ms } => (None, None, None, None, Some(r2(*present_ms))),
+            Cause::Elsewhere {
+                acquire_ms,
+                present_ms,
+            } => (
+                None,
+                None,
+                None,
+                None,
+                Some((r2(*acquire_ms), r2(*present_ms))),
+            ),
         };
         let frames = history.frames();
         let mut before: Vec<f64> = frames
@@ -199,7 +214,9 @@ impl LogLine {
             phase_ms,
             script,
             script_ms,
-            present_ms,
+            acquire_ms: waits.map(|w| w.0),
+            present_ms: waits.map(|w| w.1),
+            gpu_ms: h.gpu_ms.map(r2),
             cause: h.cause_line(),
             notes: h
                 .notes
@@ -661,6 +678,100 @@ mod tests {
         // The keys in the order the struct gives them
         let text = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
         assert!(text.starts_with("{\"frame\":150,\"game_time\":"), "{text}");
+    }
+
+    /// #1123: a frame that waits on the swapchain for its image is the
+    /// compositor's, not the renderer's. Frames go through the player's own
+    /// calls on the wall clock, the acquire through `PerfRecorder::acquire`
+    /// on a surface that stalls once (#1080's machine waited 515 ms in
+    /// `get_current_texture`; here 120).
+    #[test]
+    fn a_frame_whose_acquire_stalls_is_elsewhere_with_its_wait_on_the_line() {
+        use super::super::perf::PerfRecorder;
+        use flint_render::{AcquireFrame, SurfaceError};
+        use std::cell::Cell;
+
+        /// A swapchain with no images: each acquire waits as told, then
+        /// times out (a real surface can't be faked into giving one).
+        struct Stalls(Cell<Duration>);
+        impl AcquireFrame for Stalls {
+            fn acquire(&self) -> Result<wgpu::SurfaceTexture, SurfaceError> {
+                std::thread::sleep(self.0.take());
+                Err(SurfaceError::Timeout)
+            }
+        }
+
+        const STALL_MS: f64 = 120.0;
+        let log = Shared::default();
+        let mut perf = PerfRecorder::recording_always(true);
+        // A floor well over a busy test machine's own hiccups
+        let mut detector = HitchDetector::new(super::super::hitch::HitchThresholds {
+            factor: 2.0,
+            floor_ms: 40.0,
+        });
+        let mut watch = HitchWatch::default();
+        watch.log_to("mem".into(), Box::new(log.clone()));
+        let surface = Stalls(Cell::new(Duration::ZERO));
+        let mut game = 3.0;
+        let mut frame = |stall: f64, gpu: Option<f32>| {
+            // `tick`: the frame begins, and the clock measures the last
+            perf.begin_frame();
+            let last_ms = perf.frames().back().map_or(0.0, |f| f.ms);
+            perf.clock_ticked(ClockSample {
+                raw_ms: last_ms,
+                dt_ms: last_ms,
+                paced_ms: None,
+                vsync_ms: None,
+            });
+            game += HZ60 / 1000.0;
+            perf.game_time(game);
+            let found = detector.observe(&perf);
+            watch.observe(found, &detector, &perf);
+            for phase in [Phase::Input, Phase::Scripts, Phase::Sync] {
+                perf.mark(phase);
+            }
+            // `render`
+            surface.0.set(Duration::from_secs_f64(stall / 1000.0));
+            assert_eq!(perf.acquire(&surface).err(), Some(SurfaceError::Timeout));
+            perf.mark(Phase::Render);
+            perf.gpu_ms(gpu);
+            perf.mark(Phase::Hud);
+            perf.presented_at(Instant::now());
+            perf.mark(Phase::Present);
+        };
+        for _ in 0..60 {
+            frame(0.0, Some(1.5));
+        }
+        frame(STALL_MS, Some(1.5));
+        // Its line waits for the frames after it; the next frame's start
+        // closes the stalled one
+        for _ in 0..=AROUND + 1 {
+            frame(0.0, Some(1.5));
+        }
+        let lines = log.lines();
+        let l = lines
+            .iter()
+            .find(|l| l["acquire_ms"].as_f64().is_some_and(|ms| ms >= STALL_MS))
+            .unwrap_or_else(|| panic!("no line for the stalled acquire: {lines:?}"));
+        assert_eq!(l["class"], "elsewhere", "{l}");
+        assert_eq!(l["phase"], serde_json::Value::Null);
+        assert!(l["player_ms"].as_f64().unwrap() < 40.0, "{l}");
+        assert!(l["present_ms"].as_f64().is_some(), "{l}");
+        assert_eq!(l["gpu_ms"], 1.5);
+        assert!(
+            l["cause"]
+                .as_str()
+                .unwrap()
+                .starts_with("elsewhere, acquire 1"),
+            "{l}"
+        );
+        // Beside each other on the line, in that order
+        let text = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+        let at = |key: &str| text.find(key).unwrap();
+        assert!(at("\"acquire_ms\"") < at("\"present_ms\""));
+        assert!(at("\"present_ms\"") < at("\"gpu_ms\""));
+        assert_eq!(watch.run.elsewhere, 1, "{lines:?}");
+        assert_eq!(watch.run.player, 0, "{lines:?}");
     }
 
     #[test]
