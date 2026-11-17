@@ -5,8 +5,11 @@
 //! folder and nothing else, no scene, no schemas) and shows it: the passes
 //! as a tree, each pass's image with zoom, a pixel readout, channel and
 //! exposure, an A/B wipe; the pass's draws as a table; the CPU and GPU
-//! times and the frame history along the bottom. Read-only: it shows what
-//! was captured. Stepping draw by draw is the replay's (#1089).
+//! times and the frame history along the bottom. It shows what was
+//! captured until R asks for a replay (#1089, `replay.rs`): then the scene
+//! loads on a worker thread and each change of the replay's controls (the
+//! scene pass's draw limit, hidden entities, passes off) draws the frame
+//! again and shows it in the capture's place.
 //!
 //! - `model.rs`: the passes, draws and images as rows; stepping, finding
 //!   an entity, the table's filter and sort. No egui.
@@ -14,12 +17,14 @@
 //! - `loader.rs`: images read on worker threads, kept a while.
 //! - `viewer.rs` + `viewer.wgsl`: the image pane, drawn on the GPU through
 //!   an egui-wgpu paint callback.
+//! - `replay.rs`: the replay's worker thread and what it has drawn.
 //! - `ui.rs`: the window laid out.
 //! - `host.rs`: a winit window, or one frame into a PNG (`--screenshot`).
 
 mod host;
 mod loader;
 mod model;
+mod replay;
 mod timing;
 mod ui;
 mod viewer;
@@ -59,6 +64,28 @@ pub struct OpenArgs {
     /// A screenshot's pixels per point (2 for a high-DPI picture)
     #[arg(long, default_value_t = 1.0, value_name = "X")]
     pub scale: f32,
+    /// Draw the frame again from its replay inputs as it opens (#1089;
+    /// R in the window)
+    #[arg(long)]
+    pub replay: bool,
+    /// Replay it without this entity (repeatable; implies --replay)
+    #[arg(long, value_name = "NAME")]
+    pub hide: Vec<String>,
+    /// Replay it with the scene pass stopped after N draws (implies --replay)
+    #[arg(long, value_name = "N")]
+    pub draws: Option<usize>,
+    /// Replay it without this pass (repeatable; implies --replay)
+    #[arg(long, value_name = "PASS")]
+    pub skip: Vec<String>,
+    /// Replay it with this entity's pixels outlined (implies --replay)
+    #[arg(long, value_name = "NAME")]
+    pub outline: Option<String>,
+    /// The replay's scene, when it isn't where the capture says
+    #[arg(long, value_name = "FILE")]
+    pub scene: Option<PathBuf>,
+    /// Schema directories for the replay's load
+    #[arg(long, value_name = "DIR")]
+    pub schemas: Vec<String>,
     /// A screenshot's pointer, in points (`900,420`): what the readout
     /// reads
     #[arg(long, value_name = "X,Y", value_parser = parse_point, hide = true)]
@@ -99,6 +126,19 @@ pub fn run(args: OpenArgs) -> Result<()> {
             WipeWith::Previous => viewer::Wipe::Previous,
             WipeWith::Final => viewer::Wipe::Final,
         }),
+        replay: (args.replay
+            || !args.hide.is_empty()
+            || args.draws.is_some()
+            || !args.skip.is_empty()
+            || args.outline.is_some())
+        .then(|| crate::commands::render::replay_host::Controls {
+            hidden: args.hide.clone(),
+            scene_draws: args.draws,
+            skip: args.skip.clone(),
+            outline: args.outline.clone(),
+        }),
+        scene: args.scene.clone(),
+        schemas: args.schemas.clone(),
     };
     if let Some(name) = &args.pass {
         let model = model::Model::new(&capture.description);

@@ -13,17 +13,21 @@
 //! flint frame diff <a> <b> [--out dir]
 //! flint frame image <capture> <pass> -o out.png [--target id] [--raw] | --all -o dir
 //! flint frame open <capture> [--pass name] [--entity name] [--screenshot out.png]
+//! flint frame replay <capture> [--hide name] [--draws N] [--skip pass] [--out dir]
 //! ```
 //!
 //! Every view answers the global `--json` with one document carrying the
 //! numbers its text shows. `open` is a window (#1088, `open/`), and answers
-//! `--json` only with `--screenshot`.
+//! `--json` only with `--screenshot`. `replay` (#1089) is the one view that
+//! needs more than the folder: the scene, its assets and a GPU, to draw the
+//! frame again.
 
 mod diff;
 pub(crate) mod display;
 mod image_out;
 pub mod open;
 pub(crate) mod read;
+pub(crate) mod replay;
 mod show;
 mod table;
 
@@ -53,6 +57,10 @@ pub enum FrameCommands {
     /// (zoom, pixel readout, channels, exposure, A/B wipe), its draws, and
     /// the frame's CPU and GPU times
     Open(open::OpenArgs),
+    /// Draw the captured frame again from its replay inputs, whole or with
+    /// entities hidden, the scene pass stopped after N draws, or passes
+    /// off; written as a capture, and compared with the captured image
+    Replay(replay::ReplayArgs),
 }
 
 #[derive(Args)]
@@ -149,6 +157,7 @@ pub fn run(args: FrameArgs) -> Result<()> {
         FrameCommands::Diff(args) => diff::run(args),
         FrameCommands::Image(args) => image_out::run(args),
         FrameCommands::Open(args) => open::run(args),
+        FrameCommands::Replay(args) => replay::run(args),
     }
 }
 

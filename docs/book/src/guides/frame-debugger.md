@@ -16,7 +16,7 @@ flint frame open captures/hitch_metronome-t3.101.flintframe --pass Scene --entit
 
 The window reads only the folder, the way `flint frame show` does: no scene, no schemas. A capture from another machine, an older engine or an issue opens the same. A `--frame-dump` file opens too, as passes and draws with no images. It opens on the finished frame. `--pass <name>` opens on a pass instead (`Bloom (2)` is the second bloom), `--target <id>` on one of its images, `--entity <name>` with an entity selected (any part of its name finds it), and `--wipe previous` or `--wipe final` with a wipe already drawn.
 
-It is read-only. It shows what the frame did, as captured. Stepping a frame draw by draw, and turning passes off, is the replay's job (#1089).
+On its own it shows what the frame did, as captured. A capture that holds its replay inputs can also be drawn again, step by step and with parts left out ([Replaying a frame](#replaying-a-frame)); that needs the scene, its assets and a GPU.
 
 ## The window
 
@@ -68,6 +68,35 @@ Keys go to the window when no text field has focus, so they don't fire while you
 
 ![The ASCII pass on the right of a wipe line, the composite it drew over on the left; the barrel's glyphs end at the line](../images/frame-debugger-wipe.jpg)
 
+## Replaying a frame
+
+The pass images say where a problem enters the frame. Finding the draw that causes it means watching the pass build one draw at a time, and asking what the frame would look like without an entity or a pass. That means drawing the frame again. Every capture `flint render --frame-capture` and the player write holds what it takes, in `replay/`: the world as it stood, the frame's inputs, the camera, the bone palettes read back from the GPU, the particles, and each asset by its SHA-256.
+
+![The frame debugger replaying the woozy grove with its scene pass stopped at draw 193 of 808: every trunk and canopy drawn and none of their echoes yet, the Replay strip above the draws with its slider, its pass switches and a hidden-entity list](../images/frame-debugger-replay.jpg)
+
+Press **R** (or **Draw this frame again** above the draws) and the window loads the capture's scene on a worker thread, draws the frame again and shows the replay in its place, with the comparison under the strip's title: the final image and the scene pass's HDR image each `byte-identical`, or `differs in N of M pixels`. Then:
+
+- **The scene draws slider** stops the scene pass after its first N draws, counted as the draws table lists them, and selects the Scene pass so its image builds as you drag. **[** and **]** step one draw. The line under it names the last draw. At N = all it is the captured frame, which is how you know the steps before it are the captured frame's own. The sky, water and grid aren't draws and always draw.
+- **Passes** lists what can be switched off: the shadows, SSAO, volumetric light, bloom, FXAA, the fog veil and each style that ran. Off, each draws the frame as that switch would (`bloom_enabled = false`, a style off).
+- **Hidden** lists entities drawn in no pass, their shadows included. **H**, or the strip's **hide** button, hides the selected entity; its chip shows it again. In the draws table, with **culled** on, a hidden draw is `hidden` and a draw past the slider `past the draw limit`.
+- **Outlined** marks one entity's pixels with the selection outline, through whatever is in front of it. **O**, or the strip's **outline** button, outlines the selected entity; its chip takes it off.
+- **replayed / captured** switches between the replay and the capture (R does too). The bottom bars are the shown frame's: each replay carries its own GPU times, so hiding an entity shows what it cost.
+
+Each change draws the frame again in a fraction of a second once the scene is loaded (a grove of 38 living trees loads in about 14 s in a debug build, the tavern in 2). From the command line the same replay is `flint frame replay`, which writes the replayed frame as a capture of its own, so `show`, `diff` and `open` read it too:
+
+```bash
+flint render examples/woozy_grove_grass.scene.toml --time 3 --frame-capture grove.flintframe
+flint frame replay grove.flintframe                          # byte-identical, or how many pixels differ, and why
+flint frame replay grove.flintframe --draws 193 --out grove-193.flintframe
+flint frame replay grove.flintframe --hide oak_03 --skip Bloom --out without.flintframe
+flint frame diff grove.flintframe without.flintframe         # what the oak cost, pass by pass
+flint frame open grove.flintframe --draws 193 --screenshot step.png
+```
+
+**How it replays** (ADR 0126 decision 4): the authored scene is loaded the way `flint render` loads it (models, splines, living props, terrain and grass), the captured world is laid over it by entity name, and no game step runs: no scripts, physics, animation or particle simulation. Then the renderer's own state goes back (bone, shadow and echo palettes, part tints, motion holds, the selection), with the camera, the drawn post-process config, the quality and the frame's inputs. A capture the player wrote has its scene's procgen assets resolved as the player resolves them (a render resolves them only for living props), and its final image is compared at the renderer's last pass, since the HUD's `UI` pass is the player's and a replay doesn't draw it. Measured exact: the tavern captured by `flint render` and by the running player at t = 1 s (scripts' torches, particles, an animated patron, a procgen floor), the woozy grove (living trees with echoes, compute grass, shallow wooze), and the fixture scenes. Hiding the lantern of `two_crates` draws every pass image as the same scene written without the lantern does.
+
+**What it can't match**, and says so: ASCII's temporal history and a user style's history targets are drawn fresh (#1136); a game's runtime meshes, grass mask repaints and terrain edits aren't captured. The capture lists these under `replay` in its header, and a replay that differs names them. Each asset is checked against its hash: one that moved, changed or is gone is named (`model card is missing (was models/card.glb)`) and drawn as the load draws any missing asset, and the frame still replays. A capture from another engine commit replays too, and the comparison says whether this engine draws it the same. A capture with no `replay/` (the frozen fixtures, older writers) opens in every static view and is refused by replay, saying so.
+
 ## For agents: `--screenshot`
 
 An agent can't look at a window, so `--screenshot <png>` draws one frame of it into a PNG and exits, with no window opened. It waits for every image it shows to be read first. With `--json` it answers `{"written": [path]}`:
@@ -77,7 +106,7 @@ flint frame open props.flintframe --pass Scene --entity barrel --screenshot scen
 flint frame open props.flintframe --pass ASCII --wipe previous --screenshot wipe.png --width 1920 --height 1080 --scale 1.5
 ```
 
-`--width` and `--height` are the picture's pixels, and `--scale` its pixels per point. The pictures on this page were made this way. For numbers rather than pictures, `flint frame show` prints the same capture as text or JSON, and `flint frame image` copies a pass's image out as a PNG ([The `frame` Command](../cli-reference/overview.md#the-frame-command)).
+`--width` and `--height` are the picture's pixels, and `--scale` its pixels per point. `--replay`, `--draws N`, `--hide NAME`, `--skip PASS` and `--outline NAME` replay the frame before the picture is drawn, so a step of the replay can be looked at the same way. The pictures on this page were made this way. For numbers rather than pictures, `flint frame show` prints the same capture as text or JSON, and `flint frame image` copies a pass's image out as a PNG ([The `frame` Command](../cli-reference/overview.md#the-frame-command)).
 
 ## How it is built
 

@@ -433,6 +433,126 @@ impl FrameInputsState {
     }
 }
 
+/// [`FrameInputsState`] made into what [`FrameInputs`](crate::FrameInputs)
+/// borrows (#1089): its entities found by name in a replay's world. Take
+/// the frame's inputs with [`inputs`](Self::inputs).
+pub struct OwnedFrameInputs {
+    pub state: FrameInputsState,
+    pub shallow_wooze: Vec<(flint_core::EntityId, crate::ShallowWoozeDraw)>,
+    pub world_lines: Vec<flint_core::world_line::WorldLine>,
+    pub grass_benders: Vec<crate::GrassEntityPosition>,
+    pub contact_velocities: Vec<(flint_core::EntityId, [f32; 3])>,
+    /// The names the replay's world has no entity of.
+    pub unknown: Vec<String>,
+}
+
+impl OwnedFrameInputs {
+    /// The frame's inputs, particles none (a replay uploads its own).
+    pub fn inputs(&self) -> crate::FrameInputs<'_> {
+        let s = &self.state;
+        crate::FrameInputs {
+            time: s.time,
+            dt: s.dt,
+            look_time: s.look_time,
+            grass_time: s.grass_time,
+            grass_wooze: s.grass_wooze.as_ref().map(WoozeDrawState::draw),
+            shallow_wooze: &self.shallow_wooze,
+            boil: flint_wooze::BoilFrame {
+                seed: s.boil_seed,
+                amount: s.boil_amount,
+                step: s.boil_step,
+            },
+            pixels_per_point: s.pixels_per_point,
+            view_2d: crate::View2d {
+                camera_offset: s.view_2d_offset,
+                ortho_height: s.view_2d_ortho_height,
+                aspect_ratio: s.view_2d_aspect_ratio,
+            },
+            particles: None,
+            world_lines: &self.world_lines,
+            grass_benders: &self.grass_benders,
+            contact_velocities: &self.contact_velocities,
+            ocean_tint: s
+                .ocean_tint
+                .as_ref()
+                .map(|t| crate::ocean_pipeline::OceanTint {
+                    amount: t.amount,
+                    deep: t.deep,
+                    shallow: t.shallow,
+                    sss: t.sss,
+                    foam: t.foam,
+                    sky: t.sky,
+                    ramp_steps: t.ramp_steps,
+                    band_wobble: t.band_wobble,
+                    pools: t.pools,
+                    keep_light: t.keep_light,
+                    below: t.below,
+                }),
+            draw_controls: None,
+        }
+    }
+}
+
+impl WoozeDrawState {
+    fn draw(&self) -> crate::ShallowWoozeDraw {
+        crate::ShallowWoozeDraw {
+            amplitude: self.amplitude,
+            wavelength: self.wavelength,
+            index: self.index,
+            weight: self.weight,
+        }
+    }
+}
+
+impl FrameInputsState {
+    /// The inputs again, for `world` (#1089): the reverse of
+    /// [`of`](Self::of), entities by name.
+    pub fn owned(&self, world: &FlintWorld) -> OwnedFrameInputs {
+        let mut unknown = Vec::new();
+        let mut id = |name: &str| {
+            let id = world.get_id(name);
+            if id.is_none() {
+                unknown.push(name.to_string());
+            }
+            id
+        };
+        let shallow_wooze = self
+            .shallow_wooze
+            .iter()
+            .filter_map(|d| Some((id(d.entity.as_deref()?)?, d.draw())))
+            .collect();
+        let contact_velocities = self
+            .contact_velocities
+            .iter()
+            .filter_map(|(name, v)| Some((id(name)?, *v)))
+            .collect();
+        OwnedFrameInputs {
+            state: self.clone(),
+            shallow_wooze,
+            world_lines: self
+                .world_lines
+                .iter()
+                .map(|l| flint_core::world_line::WorldLine {
+                    a: l.a,
+                    b: l.b,
+                    color: l.color,
+                    thickness: l.thickness,
+                })
+                .collect(),
+            grass_benders: self
+                .grass_benders
+                .iter()
+                .map(|&position| crate::GrassEntityPosition {
+                    position,
+                    _pad: 0.0,
+                })
+                .collect(),
+            contact_velocities,
+            unknown,
+        }
+    }
+}
+
 /// Every [`Camera`](crate::Camera) field: `inputs.json`'s `camera` table.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -477,6 +597,75 @@ impl CameraState {
             ortho_height: c.ortho_height,
             ndc_offset: c.ndc_offset,
         }
+    }
+}
+
+impl CameraState {
+    /// The camera again (#1089).
+    pub fn camera(&self) -> crate::Camera {
+        let v = |a: [f32; 3]| flint_core::Vec3::new(a[0], a[1], a[2]);
+        crate::Camera {
+            position: v(self.position),
+            target: v(self.target),
+            up: v(self.up),
+            fov: self.fov,
+            near: self.near,
+            far: self.far,
+            aspect: self.aspect,
+            distance: self.distance,
+            yaw: self.yaw,
+            pitch: self.pitch,
+            mode: match self.mode.as_str() {
+                "first_person" => crate::CameraMode::FirstPerson,
+                _ => crate::CameraMode::Orbit,
+            },
+            orthographic: self.orthographic,
+            ortho_height: self.ortho_height,
+            ndc_offset: self.ndc_offset,
+        }
+    }
+}
+
+/// `particles.bin` read back (#1089): its instances, and each emitter's
+/// draw as the renderer uploads it.
+pub struct ReplayParticles {
+    pub instances: Vec<flint_particles::ParticleInstance>,
+    pub emitters: Vec<EmitterDraw>,
+}
+
+impl ReplayParticles {
+    /// The stream `bytes` (as `particles.bin` holds it) and the draws
+    /// `emitters` index into it. An emitter past the stream's end is left
+    /// out.
+    pub fn read(bytes: &[u8], emitters: &[EmitterDraw]) -> Self {
+        let size = std::mem::size_of::<flint_particles::ParticleInstance>();
+        let whole = bytes.len() / size * size;
+        Self {
+            instances: bytemuck::pod_collect_to_vec(&bytes[..whole]),
+            emitters: emitters.to_vec(),
+        }
+    }
+
+    /// What [`SceneRenderer::update_particles`](crate::SceneRenderer::update_particles) takes.
+    pub fn draws(&self) -> Vec<crate::ParticleDrawData<'_>> {
+        use flint_particles::ParticleBlendMode as B;
+        self.emitters
+            .iter()
+            .filter_map(|e| {
+                let (first, count) = (e.first as usize, e.count as usize);
+                Some(crate::ParticleDrawData {
+                    instances: self.instances.get(first..first + count)?,
+                    texture: &e.texture,
+                    blend: match e.blend.as_str() {
+                        "Additive" => B::Additive,
+                        "Premultiplied" => B::Premultiplied,
+                        "Multiply" => B::Multiply,
+                        _ => B::Alpha,
+                    },
+                    sort_key: e.sort_key,
+                })
+            })
+            .collect()
     }
 }
 
@@ -558,6 +747,123 @@ pub struct ReplayInputs {
     pub renderer: ReplayRenderer,
     /// The particle draws of `particles.bin`.
     pub particles: Vec<EmitterDraw>,
+}
+
+/// What a replay of this frame draws fresh rather than as captured
+/// (ADR 0126 decision 4's list), a line each: the manifest's
+/// `replay.fresh_only`, and the reason a replay names when its image
+/// differs.
+pub fn fresh_only(renderer: &crate::SceneRenderer, world: &FlintWorld) -> Vec<String> {
+    let mut out = Vec::new();
+    let config = renderer.effective_post_process_config();
+    for (name, style) in config.styles.iter() {
+        if !style.enabled {
+            continue;
+        }
+        if name == "ascii" {
+            out.push("ascii: temporal history (#1136)".to_string());
+        } else if crate::stylize::custom::is_user_style(name) {
+            out.push(format!(
+                "{name}: a user style's history targets, if it keeps any"
+            ));
+        }
+        if !style.reveal.is_empty() {
+            out.push(format!("{name}: its reveal region (recorded as text only)"));
+        }
+    }
+    let runtime: Vec<String> = world
+        .entities_with_component(flint_core::components::MODEL)
+        .iter()
+        .copied()
+        .filter(|&id| {
+            world
+                .view(id, flint_core::components::MODEL)
+                .opt_bool("runtime")
+                .unwrap_or(false)
+        })
+        .map(|id| entity_name(world, id))
+        .collect();
+    if !runtime.is_empty() {
+        out.push(format!("runtime meshes: {}", runtime.join(", ")));
+    }
+    if renderer.grass_config().is_some() {
+        out.push("grass: mask repaints since load (update_grass_mask)".into());
+    }
+    if !world
+        .entities_with_component(flint_core::components::TERRAIN)
+        .is_empty()
+    {
+        out.push("terrain: runtime edits since load".into());
+    }
+    out
+}
+
+/// Each model and texture `world` names, `(kind, name)`, once each, sorted:
+/// what a capture hashes. A model's split part (`bench/bench`) is its file's.
+pub fn assets_named(world: &FlintWorld) -> Vec<(&'static str, String)> {
+    use flint_core::components as comp;
+    let mut out: Vec<(&'static str, String)> = Vec::new();
+    for info in world.all_entities() {
+        if let Some(asset) = world.view(info.id, comp::MODEL).opt_str("asset") {
+            let file = asset.split('/').next().unwrap_or(asset).to_string();
+            if !out.iter().any(|(k, n)| *k == "model" && *n == file) {
+                out.push(("model", file));
+            }
+        }
+        if let Some(texture) = world.view(info.id, comp::MATERIAL).opt_str("texture") {
+            if !out.iter().any(|(k, n)| *k == "texture" && n == texture) {
+                out.push(("texture", texture.to_string()));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Each of `names` found by `config`'s search, read and hashed: the
+/// manifest's `replay.assets`. One the search doesn't find is left out (the
+/// load drew it as missing too).
+pub fn hash_assets(
+    names: Vec<(&'static str, String)>,
+    config: &crate::model_loader::ModelLoadConfig,
+) -> Vec<crate::frame_capture::AssetDescription> {
+    let mut found = Vec::new();
+    for (kind, name) in names {
+        let Ok(path) = resolve_asset(config, kind, &name) else {
+            continue;
+        };
+        let (sha256, bytes) = hash_file(&path).map_or((None, 0), |(h, n)| (Some(h), n));
+        found.push(crate::frame_capture::AssetDescription {
+            kind: kind.to_string(),
+            name,
+            path: flint_core::project::shown(&path),
+            sha256,
+            bytes,
+        });
+    }
+    found
+}
+
+/// Where `config`'s search finds a `kind` (`model` or `texture`) named `name`.
+pub fn resolve_asset(
+    config: &crate::model_loader::ModelLoadConfig,
+    kind: &str,
+    name: &str,
+) -> Result<std::path::PathBuf, flint_core::project::NotFound> {
+    match kind {
+        "model" => crate::model_loader::resolve_model_path(config, name),
+        _ => crate::model_loader::resolve_texture_path(config, name),
+    }
+}
+
+/// A file's SHA-256 (hex) and length, when it reads.
+pub fn hash_file(path: &std::path::Path) -> Option<(String, u64)> {
+    flint_core::vfs::read(path).ok().map(|b| {
+        (
+            flint_core::ContentHash::from_bytes(&b).to_hex(),
+            b.len() as u64,
+        )
+    })
 }
 
 /// An entity's name, or `#<id>` for one without (a capture names by name).

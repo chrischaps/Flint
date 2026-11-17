@@ -265,15 +265,28 @@ impl SceneRenderer {
             }
             // What the main pass draws between the list's layers
             match layer {
-                Layer::Terrain if self.grass.drawing && self.pipelines.grass.is_some() => pass
-                    .draws
-                    .push(self.extra_draw("Grass", "grass", self.grass.instance_count)),
+                Layer::Terrain if self.grass.drawing && self.pipelines.grass.is_some() => {
+                    let grass = self.extra_draw("Grass", "grass", self.grass.instance_count);
+                    if self.draws.grass_cut() {
+                        let mut grass = grass;
+                        grass.draw.culled = Some("past the draw limit".into());
+                        pass.culled.push(grass);
+                    } else {
+                        pass.draws.push(grass);
+                    }
+                }
                 Layer::Billboard if self.pipelines.sprite2d.is_some() => {
-                    for batch in &self.sprite2d_batches {
+                    let drawn = self.draws.sprites_drawn();
+                    for (i, batch) in self.sprite2d_batches.iter().enumerate() {
                         let mut d =
                             self.extra_draw("Sprite batch", "sprite2d", batch.instance_count);
                         d.draw.triangles = batch.instance_count * 2;
-                        pass.draws.push(d);
+                        if i < drawn {
+                            pass.draws.push(d);
+                        } else {
+                            d.draw.culled = Some("past the draw limit".into());
+                            pass.culled.push(d);
+                        }
                     }
                 }
                 Layer::Terrain
@@ -315,6 +328,9 @@ impl SceneRenderer {
     fn cull_reason(&self, item: &DrawItem, eye: [f32; 3]) -> Option<&'static str> {
         if item.drawn() {
             return None;
+        }
+        if let Some(why) = item.replay_cull() {
+            return Some(why);
         }
         if !item.lod_culled() {
             return Some("frustum");
