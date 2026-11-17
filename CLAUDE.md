@@ -65,6 +65,7 @@ Flint uses an **edit -> validate -> play** loop:
    flint gen specs/oak_tree.procgen.toml -o tree.glb
    flint gen specs/stone_wall.procgen.toml -o wall.png
    flint gen specs/oak_tree.procgen.toml --dry-run
+   flint gen examples/rolling_meadow.terrain.toml -o terrain/   # heightmap + splat PNGs, no window
    ```
    More, and the goldens: `crates/flint-cli/CLAUDE.md`.
 

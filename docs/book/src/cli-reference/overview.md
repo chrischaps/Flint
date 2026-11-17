@@ -195,6 +195,8 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 | `--sfx-volume <f32>` | Initial gain for the `sfx` mixer bus |
 | `--gpu <name>` | GPU adapter to use (case-insensitive substring, e.g. `NVIDIA`). See [GPU Selection](#gpu-selection) |
 | `--list-gpus` | Print available GPU adapters and exit |
+| `--list-keys` | Print the debug keys after the scene's input layers (each key, action, owner, what it does, when it acts, and any the game's bindings take) and exit. F1 shows the same in a running game ([Debug Keys](../concepts/physics-and-runtime.md#debug-keys)) |
+| `--json` | With `--list-keys`: the table as JSON, for agents |
 | `--style <name[:k=v,...]>` | Turn a registered style on over the scene's post-processing, as `flint render --style` does: `ascii`, `ascii:cell=12,ramp=blocks`, `ascii:off` (off everywhere, entities' own included, #376). Repeatable; a later word wins. Written over every scene again after a transition, so it survives them (#328) |
 | `--style-time <s>` | Hold the post time animated styles see (shared with the ocean, grain, the tear and the reality styles) at this many seconds |
 | `--motion-hold <rate>` | Motion on twos for the whole frame (#405): every entity's drawn position and pose, and the post time styles read, change only this many times a second (12 = on twos at 24 fps). Over every scene's `[post_process] motion_hold`, kept through transitions. See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
@@ -353,15 +355,14 @@ These are the built-in defaults. Games can override any binding via input config
 | R | Reload |
 | 1 / 2 | Select weapon slot |
 | Escape | Release cursor / Exit (the game's own key when its input config binds it, see [Escape](../concepts/physics-and-runtime.md#escape)) |
+| F1 | Show the debug keys: every one, its action and whether it acts in this scene |
 | F2 | Toggle the render stats overlay (FPS, frame time, draw stats) |
 | F3 | Toggle the scene debug panels (see below); leaves the Rendering & Effects panel alone |
 | F4 | Toggle the **Rendering & Effects** menu: every render and post-processing control, including debug shading mode, shadows, and the lighting levers |
-| F9 | Force a music-session full-fail (debug builds only, needs a running session) |
-| `` ` `` | Toggle the Music Guide overlay (debug builds only) |
-| `\` | Toggle the Manifest Map timeline strip (debug builds only) |
 | F11 | Toggle fullscreen |
+| F5-F9, `` ` ``, `\` | Living props' and a charted music session's keys, only in a scene that has them; anywhere else they are the game's |
 
-The per-effect F-keys of earlier releases (F1 debug mode, F4 shadows, F5 bloom, F6 post-processing and so on) are gone; all of those toggles and their parameters live in the F4 menu (see [Post-Processing: The Rendering & Effects menu](../concepts/post-processing.md#the-rendering--effects-menu-f4)). F9, `` ` `` and `\` exist only when the player is built with the default `debug-hud` feature.
+These are the debug keys' defaults. An input config's `[debug_keys]` moves, unbinds or turns them off, a key the game binds is the game's, and `--list-keys` prints the table ([Debug Keys](../concepts/physics-and-runtime.md#debug-keys); the full list is on [Debug Panels](../guides/debug-panels.md#keys)). The per-effect F-keys of earlier releases (F1 debug mode, F4 shadows, F5 bloom, F6 post-processing and so on) are gone; all of those toggles and their parameters live in the F4 menu (see [Post-Processing: The Rendering & Effects menu](../concepts/post-processing.md#the-rendering--effects-menu-f4)). F3, F4, F8, F9, `` ` `` and `\` exist only when the player is built with the default `debug-hud` feature.
 
 Gamepad controllers are also supported when connected. Bindings for gamepad buttons and axes can be configured in input config TOML files.
 
@@ -792,6 +793,8 @@ flint gen specs/oak_tree.procgen.toml --batch 10 --seed-start 0
 ```
 
 `flint gen` also previews a glyph set: `flint gen fonts/terminal.glyphs.toml -o sheet.png` writes the atlas, each ramp's ink and a specimen as one sheet, and `-o out/` writes the pieces as well. See [Glyph Atlas](../concepts/glyph-atlas.md#looking-at-a-set).
+
+It also bakes a terrain spec, with no window: `flint gen examples/rolling_meadow.terrain.toml -o terrain/meadow.png` writes the 16-bit heightmap there and `terrain/meadow_splat.png` beside it, the bytes the terrain editor's Ctrl+E export writes; `-o terrain/` names them after the spec's `[meta] name`. A terrain spec takes `-o`, `--seed`, `--strict` (a key nothing reads is then an error, not a warning) and `--dry-run`, and refuses the procgen-only flags. See [Terrain](../concepts/terrain.md#generating-terrain-from-a-spec).
 
 | Flag | Default | Description |
 |------|---------|-------------|

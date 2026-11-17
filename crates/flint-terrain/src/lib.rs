@@ -4,6 +4,7 @@
 //! for physics collision. Does not depend on flint-render — outputs raw
 //! vertex data (positions, normals, UVs, indices) for the renderer to consume.
 
+pub mod bake;
 pub mod brush;
 pub mod chunk;
 pub mod grass_config;
@@ -14,6 +15,7 @@ pub mod spec;
 pub mod splatgen;
 pub mod terrain;
 
+pub use bake::{bake, encode_heightmap_png, encode_splat_png, TerrainMaps};
 pub use brush::{
     apply_height_brush, apply_splat_brush, ray_heightmap_intersect, BrushParams, HeightBrushMode,
     SplatBrushMode,
@@ -23,7 +25,7 @@ pub use grass_config::GrassConfig;
 pub use ground::GroundField;
 pub use heightmap::Heightmap;
 pub use procgen::generate_heightmap;
-pub use spec::TerrainSpec;
+pub use spec::{SpecIssue, TerrainSpec};
 pub use splatgen::generate_splat_map;
 pub use terrain::{Terrain, TerrainConfig};
 

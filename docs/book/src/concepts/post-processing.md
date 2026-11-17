@@ -524,7 +524,7 @@ When the post-processing pipeline is active, the engine sets `enable_tonemapping
 
 1. **Radial blur** --- 8-tap gather from the HDR source, edges only
 2. **Depth of field** --- CoC-weighted disc gather from the same source
-3. **Chromatic aberration** --- radial red/blue channel split
+3. **Chromatic aberration** --- radial red/blue channel split. Red and blue are read through the same radial blur and depth of field as green, at their offsets, so the split never separates a blurred channel from a sharp one (an emissive edge out of focus stays its own colour, #1156). With neither blur on it is two plain reads; with depth of field on it is the gather three times
 4. **SSAO** --- multiplies by the AO texture
 5. **Volumetric** --- adds the god-ray texture
 6. **Bloom** --- adds the bloom texture at `bloom_intensity`
