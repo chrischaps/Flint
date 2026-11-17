@@ -144,7 +144,8 @@ fn a_stalling_script_leaves_a_line_per_stall_and_fails_the_gate() {
         // enough can add a hitch of its own past the 60 ms floor
         let watch = &app.stats.watch;
         let stall = |t: &super::hitch_watch::Tally| {
-            t.causes
+            t.all
+                .causes
                 .iter()
                 .find(|(k, _)| k == "script stall.rhai:on_update")
                 .map_or(0, |(_, n)| *n)
@@ -154,7 +155,7 @@ fn a_stalling_script_leaves_a_line_per_stall_and_fails_the_gate() {
         let (run, start) = (watch.run.clone(), watch.startup.clone());
         let report = watch.report();
         assert!(
-            report[0].starts_with(&format!("[perf] hitches: {} (", run.hitches)),
+            report[0].starts_with(&format!("[perf] hitches: {} (", run.all.hitches)),
             "{report:?}"
         );
         assert!(
@@ -164,7 +165,7 @@ fn a_stalling_script_leaves_a_line_per_stall_and_fails_the_gate() {
         assert!(
             report[1].starts_with(&format!(
                 "[perf] startup hitches (before t=2 s, not gated): {},",
-                start.hitches
+                start.all.hitches
             )),
             "{report:?}"
         );
@@ -177,20 +178,20 @@ fn a_stalling_script_leaves_a_line_per_stall_and_fails_the_gate() {
         assert!(
             why.starts_with(&format!(
                 "{} hitches after the first 2 s, over --max-hitches 0",
-                run.hitches
+                run.all.hitches
             )),
             "{why}"
         );
         // As many as there were is not over; the start's stall isn't held
         // against it
         app.gate_hitches(HitchGate {
-            max: Some(run.hitches),
+            max: Some(run.all.hitches),
             ..Default::default()
         });
         assert_eq!(app.run_failure(), None);
         // Unless asked
         app.gate_hitches(HitchGate {
-            max: Some(run.hitches),
+            max: Some(run.all.hitches),
             max_startup: Some(0),
             of: HitchClass::All,
         });
@@ -200,7 +201,7 @@ fn a_stalling_script_leaves_a_line_per_stall_and_fails_the_gate() {
             .contains("--max-hitches-startup 0"));
         // The player's: the stalls are, so a gate on them fails
         app.gate_hitches(HitchGate {
-            max: Some(run.player - 1),
+            max: Some(run.player.hitches - 1),
             max_startup: None,
             of: HitchClass::Player,
         });
@@ -323,7 +324,8 @@ fn a_slow_transition_is_named_as_its_hitchs_cause() {
         assert!(entered[0]["ms"].as_f64().unwrap() >= 150.0, "{text}");
         let run = &app.stats.watch.run;
         assert!(
-            run.causes
+            run.all
+                .causes
                 .iter()
                 .any(|(k, n)| k == "scene transition" && *n == 1),
             "{run:?}"

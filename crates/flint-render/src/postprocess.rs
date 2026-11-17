@@ -23,11 +23,13 @@ pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// exactly where the composite tears. Prepended to each: WGSL has no include.
 pub const TEAR_MASK_WGSL: &str = include_str!("tear_mask.wgsl");
 
-/// The composite's source: [`TEAR_MASK_WGSL`], then `composite_shader.wgsl`,
-/// with the fog veil's path (#513) folded out.
+/// The composite's source: [`TEAR_MASK_WGSL`], the tonemap curve every lit
+/// shader shares (`tonemap.wgsl`, #738), then `composite_shader.wgsl`, with
+/// the fog veil's path (#513) folded out.
 pub const COMPOSITE_WGSL: &str = concat!(
     "const FOG_VEILED: bool = false;\n",
     include_str!("tear_mask.wgsl"),
+    include_str!("tonemap.wgsl"),
     include_str!("composite_shader.wgsl")
 );
 
@@ -38,6 +40,7 @@ pub const COMPOSITE_WGSL: &str = concat!(
 pub const COMPOSITE_VEILED_WGSL: &str = concat!(
     "const FOG_VEILED: bool = true;\n",
     include_str!("tear_mask.wgsl"),
+    include_str!("tonemap.wgsl"),
     include_str!("composite_shader.wgsl")
 );
 
@@ -1398,7 +1401,7 @@ impl PostProcessPipeline {
         // --- Volumetric (god rays) pipelines ---
         let volumetric_shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Volumetric Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("volumetric_shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::VOLUMETRIC.into()),
         });
 
         // Volumetric Group 0: VolumetricUniforms
@@ -1441,14 +1444,16 @@ impl PostProcessPipeline {
                 ],
             });
 
-        // Volumetric Group 2: shadow maps + comparison sampler + ShadowUniforms + LightUniforms
+        // Volumetric Group 2: the scene's light group in its slots
+        // (light_bindings.wgsl, #738): LightUniforms, shadow maps,
+        // comparison sampler, ShadowUniforms
         let volumetric_shadow_bgl =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Volumetric Shadow BGL"),
                 entries: &[
-                    // binding 0: shadow_maps (depth texture array)
+                    // binding 1: shadow_maps (depth texture array)
                     wgpu::BindGroupLayoutEntry {
-                        binding: 0,
+                        binding: 1,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Depth,
@@ -1457,16 +1462,16 @@ impl PostProcessPipeline {
                         },
                         count: None,
                     },
-                    // binding 1: shadow comparison sampler
+                    // binding 2: shadow comparison sampler
                     wgpu::BindGroupLayoutEntry {
-                        binding: 1,
+                        binding: 2,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                         count: None,
                     },
-                    // binding 2: ShadowUniforms (cascade matrices + splits)
+                    // binding 3: ShadowUniforms (cascade matrices + splits)
                     wgpu::BindGroupLayoutEntry {
-                        binding: 2,
+                        binding: 3,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
@@ -1475,9 +1480,9 @@ impl PostProcessPipeline {
                         },
                         count: None,
                     },
-                    // binding 3: LightUniforms
+                    // binding 0: LightUniforms
                     wgpu::BindGroupLayoutEntry {
-                        binding: 3,
+                        binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
@@ -2174,19 +2179,19 @@ impl PostProcessPipeline {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(shadow.view),
+                        resource: shadow.lights.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(shadow.sampler),
+                        resource: wgpu::BindingResource::TextureView(shadow.view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: shadow.uniforms.as_entire_binding(),
+                        resource: wgpu::BindingResource::Sampler(shadow.sampler),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
-                        resource: shadow.lights.as_entire_binding(),
+                        resource: shadow.uniforms.as_entire_binding(),
                     },
                 ],
             })

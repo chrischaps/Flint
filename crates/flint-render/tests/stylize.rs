@@ -3417,6 +3417,191 @@ fn five_hundred_anchored_props_each_draw_on_their_own_grid() {
     assert_eq!(held(&gpu), objects, "the variant table allocated a frame");
 }
 
+/// #740: 300 props, each a variant of its own, under each per-entity style
+/// (pencil and ASCII on object grids, watercolor and a user style with a
+/// setting a prop): every prop is drawn in its style, and a whole-frame
+/// style running beside it leaves every prop to it (#384's ownership).
+/// Before the shared table, pencil drew 63 of them, watercolor and user
+/// styles 15, and ownership stopped at mask id 255, all without a word.
+#[test]
+fn three_hundred_props_each_keep_their_variant_and_their_owner() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let hologram = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/scenes/styles/hologram.shader.toml");
+    let mut messages = Vec::new();
+    let mut registry = flint_render::stylize::StyleRegistry::new();
+    registry.load_file(&hologram, &mut messages).unwrap();
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let (cols, rows) = (20, 15);
+    let (s, t) = (std::f64::consts::FRAC_1_SQRT_2, 6f64.sqrt().recip());
+    let (u, v) = ([s, -s, 0.0], [t, t, -2.0 * t]);
+    // (style, component, what makes each prop's variant its own)
+    let styles: [(&str, &str, fn(usize) -> (&'static str, toml::Value)); 4] = [
+        ("pencil", "pencil_style", |_| ("grid", "object".into())),
+        ("ascii", "ascii_style", |_| ("grid", "object".into())),
+        ("watercolor", "watercolor_style", |i| {
+            ("grain", (0.2 + i as f64 * 0.002).into())
+        }),
+        ("hologram", "hologram_style", |i| {
+            ("glow", (0.3 + i as f64 * 0.004).into())
+        }),
+    ];
+    let mut failures = Vec::new();
+    for (style, component, own) in styles {
+        let mut world = FlintWorld::new();
+        let mut props = Vec::new();
+        for i in 0..cols * rows {
+            let e = world.spawn(format!("prop{i:03}")).unwrap();
+            let (a, b) = (
+                (i % cols) as f64 - cols as f64 / 2.0,
+                (i / cols) as f64 - rows as f64 / 2.0,
+            );
+            let at: [f64; 3] = std::array::from_fn(|k| (a * u[k] + b * v[k]) * 0.7);
+            let mut transform = toml::Table::new();
+            transform.insert("position".into(), vec3(at));
+            transform.insert("rotation".into(), vec3([20.0, 35.0, 0.0]));
+            world
+                .set_component(e, "transform", transform.into())
+                .unwrap();
+            let mut bounds = toml::Table::new();
+            bounds.insert("min".into(), vec3([-0.28; 3]));
+            bounds.insert("max".into(), vec3([0.28; 3]));
+            world.set_component(e, "bounds", bounds.into()).unwrap();
+            props.push(e);
+        }
+        let mut renderer = SceneRenderer::new_headless(
+            gpu.device,
+            gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        renderer.set_styles(registry.clone());
+        let empty = gpu.frame(&mut renderer, &FlintWorld::new());
+        let plain = gpu.frame(&mut renderer, &world);
+        for (i, &e) in props.iter().enumerate() {
+            let (key, value) = own(i);
+            let mut table = toml::Table::new();
+            table.insert(key.into(), value);
+            world.set_component(e, component, table.into()).unwrap();
+        }
+        let styled = gpu.frame(&mut renderer, &world);
+        let ids = renderer.style_ids();
+        let variants = ids.variants_of(style).count();
+        let top = ids.variants_of(style).map(|(id, _)| id).max().unwrap_or(0);
+        assert_eq!(variants, props.len(), "{style}: a prop shares a variant");
+        assert!(top > 256, "{style}: ids stop at {top}");
+        // The same props under a whole-frame style too: invert, which
+        // yields to the props' style whichever runs first
+        let mut config = renderer.post_process_config().clone();
+        config.styles.set_enabled("invert", true);
+        renderer.set_post_process_config(config);
+        renderer.ensure_style_resources(gpu.device);
+        let owned = gpu.frame(&mut renderer, &world);
+
+        let px = |f: &[u8], i: usize| [f[i * 4], f[i * 4 + 1], f[i * 4 + 2]];
+        let near = |a: [u8; 3], b: [u8; 3], by: u8| (0..3).all(|k| a[k].abs_diff(b[k]) <= by);
+        let n = (SIZE * SIZE) as usize;
+        let covered: Vec<usize> = (0..n)
+            .filter(|&i| !near(px(&plain, i), px(&empty, i), 16))
+            .collect();
+        assert!(covered.len() > n / 4, "{style}: the props cover too little");
+        let drawn_plain = covered
+            .iter()
+            .filter(|&&i| px(&styled, i) == px(&plain, i))
+            .count();
+        let inverted = covered
+            .iter()
+            .filter(|&&i| !near(px(&owned, i), px(&styled, i), 24))
+            .count();
+        eprintln!(
+            "{style}: {variants} variants up to id {top}; of {} prop pixels {drawn_plain} \
+             drew plain, {inverted} were inverted",
+            covered.len()
+        );
+        // A pixel can land on its shading's colour here and there; a prop
+        // left out of the table, or out of the owner table, loses them all
+        if drawn_plain * 25 >= covered.len() {
+            failures.push(format!(
+                "{style}: {drawn_plain} of {} prop pixels drew plain",
+                covered.len()
+            ));
+        }
+        if inverted * 25 >= covered.len() {
+            failures.push(format!(
+                "{style}: the whole-frame style drew over {inverted} of {} prop pixels",
+                covered.len()
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// #740: a cap that remains says what it leaves out, once, naming the
+/// first entity past it. Ten ASCII props each dissolve and snap to whole
+/// cells of a grid of their own; a frame ranks eight dissolves and snaps
+/// to eight grids, so `prop008` is the first each leaves out.
+#[test]
+fn a_cap_names_the_first_entity_it_leaves_out() {
+    // Alone: the drop list is the process's, and a scene binding clears it
+    let Some(gpu) = gpu_alone() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    use flint_render::stylize::variant_table::{dropped, forget_dropped};
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut world = FlintWorld::new();
+    for i in 0..10 {
+        let e = world.spawn(format!("prop{i:03}")).unwrap();
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3([i as f64 * 0.5 - 2.5, 0.5, 0.0]));
+        world
+            .set_component(e, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-0.2; 3]));
+        bounds.insert("max".into(), vec3([0.2; 3]));
+        world.set_component(e, "bounds", bounds.into()).unwrap();
+        let ascii: toml::Table = toml::from_str(
+            "grid = \"object\"\ntransition = \"dissolve\"\nsilhouette = \"cell\"\nblend = 0.5",
+        )
+        .unwrap();
+        world.set_component(e, "ascii_style", ascii.into()).unwrap();
+    }
+    let mut renderer = SceneRenderer::new_headless(
+        gpu.device,
+        gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    forget_dropped();
+    gpu.frame(&mut renderer, &world);
+    gpu.frame(&mut renderer, &world);
+    let ascii: Vec<_> = dropped()
+        .into_iter()
+        .filter(|d| d.style == "ascii")
+        .collect();
+    for d in &ascii {
+        eprintln!("{}", d.message());
+    }
+    let cap = |name: &str| ascii.iter().find(|d| d.cap == name);
+    let bands = cap("dissolve bands").expect("the ninth dissolve is said");
+    assert_eq!((bands.limit, bands.entity.as_str()), (8, "prop008"));
+    let grids = cap("snap grids").expect("the ninth grid is said");
+    assert_eq!((grids.limit, grids.entity.as_str()), (8, "prop008"));
+    assert_eq!(
+        ascii.len(),
+        2,
+        "once a cap, a second frame adds nothing: {ascii:#?}"
+    );
+}
+
 /// #342: ASCII's `smoothing` is per 60 Hz frame, so a step in the cells'
 /// colour settles in the same game time at 30 Hz and at 120 Hz (four
 /// times as many frames), within a 30 Hz frame. Under the old per-frame

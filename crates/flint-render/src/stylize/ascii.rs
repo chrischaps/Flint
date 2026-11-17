@@ -151,6 +151,7 @@
 //! to the pixel keeps its own pixels inside a snapped neighbour's cell.
 
 use super::kit;
+use super::variant_table::{report_drop, storage_entry, VariantTable};
 use super::text::{self, GlyphCell, GlyphText};
 use super::{
     choices_with, ChoiceScope, MaskUse, StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleOption, StyleParam, StylePass, StyleStage, StyleTexture,
@@ -761,7 +762,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         uniform_bgl,
         table_bgl,
         edge_bgl,
-        table: Mutex::new(None),
+        table: Mutex::new(VariantTable::new(device, "ASCII", std::mem::size_of::<VariantUniform>())),
         input_bgl,
         cells_bgl,
         history_bgl,
@@ -1083,79 +1084,6 @@ const EDGE_SLOT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 /// side (`THIN_PAD` in ascii_edge_slot.wgsl).
 const EDGE_THIN_PAD: u32 = 1;
 
-/// How many entries a variant table buffer holds to fit `needed`: what it
-/// holds already when that's enough, else the next power of two (#336).
-fn table_capacity(capacity: usize, needed: usize) -> usize {
-    if needed <= capacity {
-        capacity
-    } else {
-        needed.next_power_of_two().max(MIN_TABLE)
-    }
-}
-
-/// The variant table (#336): every variant's row and every mask id's slot,
-/// in storage buffers that grow with the frame and never shrink.
-/// `generation` keys the bind groups over them.
-struct VariantTable {
-    rows: wgpu::Buffer,
-    slots: wgpu::Buffer,
-    row_capacity: usize,
-    slot_capacity: usize,
-    generation: u64,
-}
-
-impl VariantTable {
-    fn storage(device: &wgpu::Device, label: &str, bytes: usize) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size: bytes as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
-    }
-
-    /// `slot`'s table, remade bigger when `rows` or `slots` don't fit.
-    fn ensure<'s>(
-        slot: &'s mut Option<VariantTable>,
-        device: &wgpu::Device,
-        rows: usize,
-        slots: usize,
-    ) -> &'s VariantTable {
-        let (have_rows, have_slots, generation) = slot.as_ref().map_or((0, 0, 0), |t| {
-            (t.row_capacity, t.slot_capacity, t.generation + 1)
-        });
-        let row_capacity = table_capacity(have_rows, rows);
-        let slot_capacity = table_capacity(have_slots, slots);
-        if slot.is_none() || row_capacity != have_rows || slot_capacity != have_slots {
-            *slot = Some(VariantTable {
-                rows: Self::storage(
-                    device,
-                    "ASCII Variant Rows",
-                    row_capacity * std::mem::size_of::<VariantUniform>(),
-                ),
-                slots: Self::storage(device, "ASCII Variant Slots", slot_capacity * 4),
-                row_capacity,
-                slot_capacity,
-                generation,
-            });
-        }
-        slot.as_ref().expect("made above")
-    }
-}
-
-/// A read-only fragment storage buffer at `binding`.
-fn storage_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: true },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    }
-}
 
 /// A fragment uniform buffer at binding 0.
 fn uniform_entry() -> wgpu::BindGroupLayoutEntry {
@@ -1546,10 +1474,6 @@ pub const TRANSITIONS: &[&str] = &["fade", "dissolve"];
 /// texture width (a column a variant), well inside every backend's limit.
 pub const MAX_VARIANTS: usize = 4096;
 
-/// Rows (and mask id slots) the variant table's buffers start with; they
-/// grow to the next power of two when a frame needs more (#336).
-const MIN_TABLE: usize = 64;
-
 /// A variant's flag: leave its pixels as they are.
 const PASS_THROUGH: u32 = 1;
 
@@ -1590,6 +1514,61 @@ fn snap_grids(rows: &[VariantUniform]) -> Vec<[f32; 4]> {
         grids.push(grid);
     }
     grids
+}
+
+/// Say once (#740) when a variant wanted a snap grid or a dissolve band and
+/// the frame had none left, naming the first such variant's entity.
+fn report_left_out(
+    frame: &StyleFrame<'_>,
+    rows: &[VariantUniform],
+    slots: &[u32],
+    snapping: &[[f32; 4]],
+    bands: usize,
+) {
+    let entity = |slot: usize| {
+        slots
+            .iter()
+            .position(|&s| s as usize == slot)
+            .and_then(|id| frame.style_ids.entity(id as u16))
+            .unwrap_or("?")
+            .to_string()
+    };
+    let drawn = |row: &VariantUniform, flag: u32| row.flags & (flag | PASS_THROUGH) == flag;
+    let unsnapped = rows.iter().enumerate().skip(1).find(|(_, row)| {
+        let grid = [row.cell[0], row.cell[1], row.origin[0], row.origin[1]];
+        drawn(row, SNAP)
+            && !snapping
+                .iter()
+                .any(|g| g.map(f32::to_bits) == grid.map(f32::to_bits))
+    });
+    if let Some((slot, _)) = unsnapped {
+        report_drop(
+            "ascii",
+            "snap grids",
+            MAX_SNAP_GRIDS,
+            &entity(slot),
+            "cut to whole cells of its own only: it fills no scene cells",
+        );
+    }
+    let unranked = rows
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find(|(_, row)| drawn(row, DISSOLVE) && row.dissolve_row == 0);
+    if let Some((slot, _)) = unranked {
+        let (cap, limit) = if bands == MAX_DISSOLVE {
+            ("dissolve bands", MAX_DISSOLVE)
+        } else {
+            ("rows of dissolve state", MAX_BAND_TEXELS as usize)
+        };
+        report_drop(
+            "ascii",
+            cap,
+            limit,
+            &entity(slot),
+            "dissolved in its cells' unranked order",
+        );
+    }
 }
 
 /// What the edge passes must draw for the glyph pass inside a rect (#385).
@@ -1898,9 +1877,6 @@ struct Fonts {
     stack: Option<LoadedStack>,
     /// The last (font, ramp) a warning was given for, so it's said once.
     warned: Option<(String, String)>,
-    /// Per-entity warnings already given (too many variants or fonts, a
-    /// ramp or palette that doesn't fit), so each is said once.
-    warned_variants: std::collections::HashSet<String>,
     /// Frames drawn since the caches last looked at the disk (#323).
     since_poll: u32,
 }
@@ -1934,7 +1910,8 @@ struct Ascii {
     /// The uniform and the variant table (#336), and the edge pass's.
     table_bgl: wgpu::BindGroupLayout,
     edge_bgl: wgpu::BindGroupLayout,
-    table: Mutex<Option<VariantTable>>,
+    /// The variant table (#336, the framework's since #740).
+    table: Mutex<VariantTable>,
     input_bgl: wgpu::BindGroupLayout,
     cells_bgl: wgpu::BindGroupLayout,
     history_bgl: wgpu::BindGroupLayout,
@@ -2446,19 +2423,12 @@ impl Ascii {
         &self,
         frame: &StyleFrame<'_>,
         rows: &[VariantUniform],
-        slots: &mut Vec<u32>,
+        slots: &[u32],
     ) -> (Arc<wgpu::BindGroup>, Arc<wgpu::BindGroup>, u32) {
-        let mut table_slot = self.table.lock().unwrap_or_else(|e| e.into_inner());
-        let table = VariantTable::ensure(&mut table_slot, frame.device, rows.len(), slots.len());
+        let mut table = self.table.lock().unwrap_or_else(|e| e.into_inner());
         // Every slot is written, so an id a past frame held reads 0 again
-        slots.resize(table.slot_capacity, 0);
-        frame
-            .queue
-            .write_buffer(&table.rows, 0, bytemuck::cast_slice(rows));
-        frame
-            .queue
-            .write_buffer(&table.slots, 0, bytemuck::cast_slice(slots));
-        let main = frame.bind("ASCII Table BG", table.generation, || {
+        table.upload(frame.device, frame.queue, rows, slots);
+        let main = frame.bind("ASCII Table BG", table.generation(), || {
             frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("ASCII Table BG"),
                 layout: &self.table_bgl,
@@ -2469,16 +2439,16 @@ impl Ascii {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: table.rows.as_entire_binding(),
+                        resource: table.rows().as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: table.slots.as_entire_binding(),
+                        resource: table.slots().as_entire_binding(),
                     },
                 ],
             })
         });
-        let edge = frame.bind("ASCII Edge Table BG", table.generation, || {
+        let edge = frame.bind("ASCII Edge Table BG", table.generation(), || {
             frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("ASCII Edge Table BG"),
                 layout: &self.edge_bgl,
@@ -2489,12 +2459,12 @@ impl Ascii {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: table.slots.as_entire_binding(),
+                        resource: table.slots().as_entire_binding(),
                     },
                 ],
             })
         });
-        let width = table.row_capacity.min(MAX_VARIANTS) as u32;
+        let width = table.row_capacity().min(MAX_VARIANTS) as u32;
         (main, edge, width)
     }
 
@@ -2539,20 +2509,16 @@ impl Ascii {
             )
         };
         for (id, v) in frame.variants() {
-            let warn_once = |fonts: &mut Fonts, key: String, text: String| {
-                if fonts.warned_variants.insert(key) {
-                    tracing::warn!("ascii: {text}");
-                }
+            // What a cap leaves out is said once, naming the entity (#740)
+            let entity = frame.style_ids.entity(id).unwrap_or("?");
+            let dropped = |cap: &str, limit: usize, instead: &str| {
+                report_drop("ascii", cap, limit, entity, instead);
             };
             if rows.len() == MAX_VARIANTS {
-                warn_once(
-                    fonts,
-                    "overflow".into(),
-                    format!(
-                        "more per-entity variants than the {} one frame holds; the rest \
-                         are drawn like the whole frame",
-                        MAX_VARIANTS - 1
-                    ),
+                dropped(
+                    "per-entity variants",
+                    MAX_VARIANTS - 1,
+                    "drawn like the whole frame",
                 );
                 continue;
             }
@@ -2572,13 +2538,12 @@ impl Ascii {
                         .map(|(ramp, edges)| (set.atlas().cell_size(), ramp, edges))
                 });
                 if placed.is_none() {
-                    warn_once(
-                        fonts,
-                        format!("font {font_name}"),
-                        format!(
-                            "font `{font_name}` doesn't fit beside the others ({MAX_FONTS} \
-                             fonts, {MAX_STACK_TEXELS} atlas rows, {MAX_RAMP} ramp steps in \
-                             all); drawn in `{}`",
+                    dropped(
+                        "fonts",
+                        MAX_FONTS,
+                        &format!(
+                            "drawn in `{}`, not `{font_name}` (the frame's fonts also share \
+                             {MAX_STACK_TEXELS} atlas rows and {MAX_RAMP} ramp steps)",
                             base.name()
                         ),
                     );
@@ -2589,14 +2554,10 @@ impl Ascii {
                 Some(placed) => placed,
                 None => {
                     let ramp = ramps.place(0, &base, &option("ramp")).unwrap_or_else(|| {
-                        warn_once(
-                            fonts,
-                            format!("ramp {}", option("ramp")),
-                            format!(
-                                "ramp `{}` doesn't fit beside the others ({MAX_RAMP} steps in \
-                                 all); using the scene's",
-                                option("ramp")
-                            ),
+                        dropped(
+                            "ramp steps",
+                            MAX_RAMP,
+                            &format!("drawn with the scene's ramp, not `{}`", option("ramp")),
                         );
                         base_ramp
                     });
@@ -2606,14 +2567,10 @@ impl Ascii {
             let palette = match palette_for(fonts, &option("color"), &option("palette")) {
                 None => PalettePlace::default(),
                 Some(p) => palettes.place(&p).unwrap_or_else(|| {
-                    warn_once(
-                        fonts,
-                        format!("palette {}", p.name()),
-                        format!(
-                            "palette `{}` doesn't fit beside the others ({MAX_COLORS} inks \
-                             in all); using the scene's",
-                            p.name()
-                        ),
+                    dropped(
+                        "palette inks",
+                        MAX_COLORS,
+                        &format!("drawn in the scene's palette, not `{}`", p.name()),
                     );
                     palettes
                         .placed
@@ -3067,7 +3024,6 @@ impl Ascii {
                     }
                 );
                 fonts.warned = None;
-                fonts.warned_variants.clear();
             }
         }
     }
@@ -3167,7 +3123,7 @@ impl StylePass for Ascii {
         let mut palettes = Palettes::default();
         let _ = palettes.place(&palette);
         let mut in_use = FontsInUse::new(set.clone());
-        let (mut variants, mut slots) = self.variant_table(
+        let (mut variants, slots) = self.variant_table(
             frame,
             &mut fonts,
             &mut in_use,
@@ -3190,6 +3146,7 @@ impl StylePass for Ascii {
         let snapping = snap_grids(&variants);
         // Each dissolving variant's band of cells (#398)
         let dissolving = assign_dissolve(&mut variants, size);
+        report_left_out(frame, &variants, &slots, &snapping, dissolving.len());
         // Per entity, only the entities' cells change (#385): the glyph
         // pass runs inside their rect grown by two of the largest cell in
         // play, which holds a whole cell (a snapped silhouette) around
@@ -3242,7 +3199,7 @@ impl StylePass for Ascii {
             &self.cells_bgl,
         );
         // The variant table (#336), written before any pass reads it
-        let (uniform, edge_table, stats_width) = self.upload_table(frame, &variants, &mut slots);
+        let (uniform, edge_table, stats_width) = self.upload_table(frame, &variants, &slots);
         // The edge debug view (#349) runs the edge passes even with the
         // glyphs' edges off, and draws them in place of the glyphs
         let edge_view = frame.debug_mode == crate::DebugMode::StyleEdges;
@@ -3856,12 +3813,11 @@ mod tests {
 
     #[test]
     fn the_variant_table_grows_to_the_next_power_of_two_and_keeps_it() {
-        // Starts at MIN_TABLE, doubles past it, never shrinks (#336)
-        assert_eq!(table_capacity(0, 1), MIN_TABLE);
-        assert_eq!(table_capacity(MIN_TABLE, MIN_TABLE), MIN_TABLE);
-        assert_eq!(table_capacity(MIN_TABLE, 501), 512);
-        assert_eq!(table_capacity(512, 3), 512);
-        assert_eq!(table_capacity(512, 513), 1024);
+        // Starts at MIN_ENTRIES, doubles past it, never shrinks (#336)
+        use super::super::variant_table::{grown_capacity, MIN_ENTRIES};
+        assert_eq!(grown_capacity(MIN_ENTRIES, 501), 512);
+        assert_eq!(grown_capacity(512, 3), 512);
+        assert_eq!(grown_capacity(512, 513), 1024);
         // The tone statistics' column a row stays inside every backend
         assert!(MAX_VARIANTS <= 8192 && MAX_VARIANTS.is_power_of_two());
     }

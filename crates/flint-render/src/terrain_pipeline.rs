@@ -48,7 +48,7 @@ impl TerrainPipeline {
     ) -> Self {
         let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Terrain Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("terrain_shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::TERRAIN.into()),
         });
 
         // Bind group 1: terrain material (uniforms + splat + 4 layers)

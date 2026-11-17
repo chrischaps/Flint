@@ -62,7 +62,7 @@
 //! sampler; with none named the procedural paper and dashes draw exactly
 //! as before. One paper and one strip a frame: the scene table's, else the
 //! first entity's that names one; a row naming another draws procedurally
-//! (warned once).
+//! (warned once, naming its entity, #740).
 //!
 //! ## Tone from the light (#869)
 //!
@@ -102,6 +102,7 @@
 
 use super::images::{ImageSlot, ImageUse, StyleImage};
 use super::kit;
+use super::variant_table::{report_drop, storage_entry, VariantTable};
 use super::{
     StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleOption, StyleParam,
     StylePass, StyleStage,
@@ -126,12 +127,6 @@ pub const TONES: &[&str] = &["picture", "light"];
 /// How a blend below 1 shows the drawing (#879): a cross-fade of every
 /// pixel, or drawn on, outlines first, then hatching, then the paper.
 pub const TRANSITIONS: &[&str] = &["fade", "draw"];
-
-/// Rows one frame's variant table holds, the whole frame's included.
-pub const MAX_VARIANTS: usize = 64;
-
-/// Mask ids the table covers.
-pub const MAX_IDS: usize = 256;
 
 /// The scratch target pass 1 writes: tone, contour, flow.
 pub const PREP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -343,7 +338,24 @@ fn reads_albedo(
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     let device = d.device;
-    let uniform_bgl = kit::uniform_layout(device, "Pencil Uniform BGL");
+    // The uniform, then the variant table's rows and slots (#740)
+    let uniform_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Pencil Uniform BGL"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            storage_entry(1),
+            storage_entry(2),
+        ],
+    });
     let input_bgl = kit::sampled_layout(device, "Pencil Input BGL");
     let prep_bgl = prep_layout(device);
     let geometry_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -453,11 +465,14 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         _no_albedo: no_albedo,
         no_albedo_view,
         blit,
-        warned: Mutex::new(false),
+        table: Mutex::new(VariantTable::new(
+            device,
+            "Pencil",
+            std::mem::size_of::<PencilRow>(),
+        )),
         images: Mutex::new(Images {
             paper: ImageSlot::new(ImageUse::Paper, "pencil paper"),
             stroke: ImageSlot::new(ImageUse::Stroke, "pencil stroke"),
-            warned: false,
         }),
     })
 }
@@ -549,8 +564,6 @@ pub struct PencilRow {
 struct Images {
     paper: ImageSlot,
     stroke: ImageSlot,
-    /// Whether the two-images-in-one-frame warning has been given.
-    warned: bool,
 }
 
 #[repr(C)]
@@ -567,8 +580,6 @@ struct PencilUniforms {
     _pad1: f32,
     info: [u32; 4],
     img: [f32; 4],
-    rows: [PencilRow; MAX_VARIANTS],
-    slots: [[u32; 4]; MAX_IDS / 4],
 }
 
 /// A row's flag: leave its pixels as they are.
@@ -580,7 +591,8 @@ const WORLD_GRID: f32 = 2.0;
 
 /// The slot of a mask id another registered style owns: its pixels are
 /// that style's (an ASCII prop in a pencil frame), so pencil leaves them.
-pub const FOREIGN: u32 = 255;
+/// No row's index: the table grows past 255 rows (#740).
+pub const FOREIGN: u32 = u32::MAX;
 
 /// The camera's forward axis from its inverse view-projection: from the
 /// centre of the near plane to the centre of the far one.
@@ -707,17 +719,21 @@ pub fn row(
 /// when it names one, else the first row's that does. A row naming
 /// another loses its flag and draws procedurally. Returns the name and
 /// whether any row was refused so.
-pub fn choose_image(names: &[String], rows: &mut [PencilRow], lane: usize) -> (String, bool) {
+pub fn choose_image(
+    names: &[String],
+    rows: &mut [PencilRow],
+    lane: usize,
+) -> (String, Option<usize>) {
     let chosen = names
         .iter()
         .find(|n| names_image(n))
         .cloned()
         .unwrap_or_default();
-    let mut refused = false;
-    for (name, row) in names.iter().zip(rows.iter_mut()) {
+    let mut refused = None;
+    for (i, (name, row)) in names.iter().zip(rows.iter_mut()).enumerate() {
         if row.v[7][lane] > 0.5 && *name != chosen {
             row.v[7][lane] = 0.0;
-            refused = true;
+            refused = refused.or(Some(i));
         }
     }
     (chosen, refused)
@@ -771,8 +787,8 @@ struct Pencil {
     no_albedo_view: wgpu::TextureView,
     /// The input through, outside the styled entities' rect (#385).
     blit: kit::Blit,
-    /// Whether the too-many-variants warning has been given.
-    warned: Mutex<bool>,
+    /// The variant table (#740): grows with the frame.
+    table: Mutex<VariantTable>,
     images: Mutex<Images>,
 }
 
@@ -828,13 +844,10 @@ impl Pencil {
     }
 
     /// Row 0 (the whole frame's) and a row for each per-entity variant,
-    /// with the row of every mask id.
-    /// Each row's image names (paper, stroke) come back beside it.
-    #[allow(clippy::type_complexity)]
-    fn variant_table(
-        &self,
-        frame: &StyleFrame<'_>,
-    ) -> (Vec<PencilRow>, [u32; MAX_IDS], Vec<[String; 2]>) {
+    /// with the row of every mask id (#740: every variant gets one).
+    /// Each row's image names (paper, stroke) and mask id come back
+    /// beside it.
+    fn variant_table(&self, frame: &StyleFrame<'_>) -> Table {
         let whole = row(
             &|n| frame.param(n),
             &|n| frame.option(n).to_string(),
@@ -845,34 +858,22 @@ impl Pencil {
         let mut rows = vec![whole];
         let image_names = |o: &dyn Fn(&str) -> String| [o("paper_image"), o("stroke_image")];
         let mut names = vec![image_names(&|n| frame.option(n).to_string())];
-        let mut slots = [0u32; MAX_IDS];
+        let mut ids = vec![0u16];
+        let mut slots = vec![0u32; frame.style_ids.len() + 1];
         // Ids another running style draws are that style's pixels (#384:
         // the framework puts the input back there too; the slot keeps
         // pencil's contours and hatching from reading them as its own)
         for id in frame.foreign_ids() {
-            if (id as usize) < MAX_IDS {
-                slots[id as usize] = FOREIGN;
-            }
+            slots[id as usize] = FOREIGN;
         }
         for (id, v) in frame.variants() {
-            if rows.len() == MAX_VARIANTS || id as usize >= MAX_IDS {
-                let mut warned = self.warned.lock().unwrap_or_else(|e| e.into_inner());
-                if !*warned {
-                    tracing::warn!(
-                        "pencil: more per-entity variants than the {} (or ids past {MAX_IDS}) \
-                         one frame holds; the rest are drawn like the whole frame",
-                        MAX_VARIANTS - 1
-                    );
-                    *warned = true;
-                }
-                continue;
-            }
             let origin = v
                 .anchor
                 .and_then(|a| frame.project(a))
                 .map_or([0.0, 0.0], |at| [at[0].round(), at[1].round()]);
             let flags = if v.off { PASS_THROUGH } else { 0.0 };
             slots[id as usize] = rows.len() as u32;
+            ids.push(id);
             names.push(image_names(&|n| frame.variant_option(v, n).to_string()));
             rows.push(row(
                 &|n| frame.variant_param(v, n),
@@ -882,7 +883,12 @@ impl Pencil {
                 flags,
             ));
         }
-        (rows, slots, names)
+        Table {
+            rows,
+            slots,
+            names,
+            ids,
+        }
     }
 
     /// The frame's paper and stroke images, clearing the flag of any row
@@ -890,9 +896,9 @@ impl Pencil {
     fn images(
         &self,
         frame: &StyleFrame<'_>,
-        rows: &mut [PencilRow],
-        names: &[[String; 2]],
+        table: &mut Table,
     ) -> (Arc<StyleImage>, Arc<StyleImage>) {
+        let (rows, names) = (&mut table.rows, &table.names);
         let papers: Vec<String> = names.iter().map(|n| n[0].clone()).collect();
         let strokes: Vec<String> = names.iter().map(|n| n[1].clone()).collect();
         let (paper_name, refused_paper) = choose_image(&papers, rows, 2);
@@ -900,12 +906,21 @@ impl Pencil {
         let search = frame.assets;
         let poll = frame.frame.is_multiple_of(15);
         let mut images = self.images.lock().unwrap_or_else(|e| e.into_inner());
-        if (refused_paper || refused_stroke) && !images.warned {
-            tracing::warn!(
-                "pencil: one paper and one stroke image a frame (\"{paper_name}\", \
-                 \"{stroke_name}\"); entities naming others draw procedurally"
-            );
-            images.warned = true;
+        // One of each a frame: the first entity naming another is said (#740)
+        for (refused, kind, chosen) in [
+            (refused_paper, "paper images", &paper_name),
+            (refused_stroke, "stroke images", &stroke_name),
+        ] {
+            if let Some(row) = refused {
+                let entity = frame.style_ids.entity(table.ids[row]).unwrap_or("?");
+                report_drop(
+                    "pencil",
+                    kind,
+                    1,
+                    entity,
+                    &format!("drawn procedurally (the frame's is \"{chosen}\")"),
+                );
+            }
         }
         let paper = images
             .paper
@@ -925,6 +940,45 @@ impl Pencil {
     }
 }
 
+/// One frame's variant table, built by [`Pencil::variant_table`].
+struct Table {
+    rows: Vec<PencilRow>,
+    /// Each mask id's row, [`FOREIGN`] for another style's.
+    slots: Vec<u32>,
+    /// Each row's (paper, stroke) image names.
+    names: Vec<[String; 2]>,
+    /// Each row's mask id (row 0's is 0).
+    ids: Vec<u16>,
+}
+
+impl Pencil {
+    /// Group 0: the uniform and this frame's variant table, written first.
+    fn uniform_bind(
+        &self,
+        frame: &StyleFrame<'_>,
+        rows: &[PencilRow],
+        slots: &[u32],
+    ) -> Arc<wgpu::BindGroup> {
+        let mut table = self.table.lock().unwrap_or_else(|e| e.into_inner());
+        table.upload(frame.device, frame.queue, rows, slots);
+        let [rows, slots] = table.entries(1);
+        frame.bind("Pencil Uniform BG", table.generation(), || {
+            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Pencil Uniform BG"),
+                layout: &self.uniform_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.uniforms.as_entire_binding(),
+                    },
+                    rows,
+                    slots,
+                ],
+            })
+        })
+    }
+}
+
 impl StylePass for Pencil {
     fn encode(
         &self,
@@ -933,10 +987,11 @@ impl StylePass for Pencil {
         input: &StyleInput<'_>,
         output: &wgpu::TextureView,
     ) {
-        let (mut rows, slots, names) = self.variant_table(frame);
-        let (paper, stroke) = self.images(frame, &mut rows, &names);
+        let mut table = self.variant_table(frame);
+        let (paper, stroke) = self.images(frame, &mut table);
+        let Table { rows, slots, .. } = table;
         let with_mask = (rows.len() > 1 || slots.contains(&FOREIGN)) && frame.mask.is_some();
-        let mut uniforms = PencilUniforms {
+        let uniforms = PencilUniforms {
             inv_view_proj: frame.camera.inv_view_proj,
             camera_pos: frame.camera.position,
             pixels_per_point: if frame.pixels_per_point.is_finite() && frame.pixels_per_point > 0.0
@@ -957,18 +1012,11 @@ impl StylePass for Pencil {
                 0,
             ],
             img: paper.stats.paper_and(stroke.stats),
-            rows: [PencilRow::zeroed(); MAX_VARIANTS],
-            slots: [[0; 4]; MAX_IDS / 4],
         };
-        uniforms.rows[..rows.len()].copy_from_slice(&rows);
-        for (i, slot) in slots.iter().enumerate() {
-            uniforms.slots[i / 4][i % 4] = *slot;
-        }
         frame
             .queue
             .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
-
-        let uniform = frame.uniform("Pencil Uniform BG", &self.uniform_bgl, &self.uniforms);
+        let uniform = self.uniform_bind(frame, &rows, &slots);
         let input_bind = frame.sampled_input("Pencil Input BG", &self.input_bgl, input);
         let geometry = self.geometry_bind(frame, with_mask, &paper, &stroke);
         let prep = frame.target("pencil.prep", PREP_FORMAT);
@@ -1113,7 +1161,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<PencilRow>(), 160);
         assert_eq!(
             std::mem::size_of::<PencilUniforms>(),
-            64 + 16 + 16 + 16 + 16 + 16 + MAX_VARIANTS * 160 + MAX_IDS * 4
+            64 + 16 + 16 + 16 + 16 + 16
         );
     }
 
@@ -1470,7 +1518,7 @@ mod tests {
             chosen, "cold_press",
             "the scene names none: the first entity's"
         );
-        assert!(refused);
+        assert_eq!(refused, Some(2), "the first row naming another paper");
         assert_eq!(
             rows.iter().map(|r| r.v[7][2]).collect::<Vec<_>>(),
             vec![0.0, 1.0, 0.0],

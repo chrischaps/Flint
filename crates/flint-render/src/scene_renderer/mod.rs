@@ -1245,8 +1245,8 @@ impl SceneRenderer {
     // ── Slim update_from_world: dispatch loop calling extraction helpers ──
 
     /// Update meshes from the world state
-    #[profiling::function]
     pub(crate) fn update_from_world(&mut self, world: &FlintWorld, device: &wgpu::Device) {
+        flint_core::scope!("update_from_world");
         if self.device_lost {
             return;
         }

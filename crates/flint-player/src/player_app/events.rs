@@ -577,8 +577,8 @@ impl ApplicationHandler for PlayerApp {
                 self.render();
                 #[cfg(target_arch = "wasm32")]
                 self.web_frame_end();
-                // The frame's end, for the profiler (ADR 0109).
-                profiling::finish_frame!();
+                // The frame's end, for both profilers (ADRs 0109, 0128).
+                flint_core::profile::finish_frame();
                 if self.outcome.exit_requested {
                     event_loop.exit();
                 }

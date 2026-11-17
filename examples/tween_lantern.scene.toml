@@ -1,0 +1,135 @@
+# Lamplighting (#734): one script call eases any number a component holds.
+#
+# At dusk the lantern on the crate is a cold ember. Its script lights it with
+# tween(entity, "component.field", target, seconds[, easing]): the point
+# light's intensity and colour, the glass's emissive glow and the lantern's
+# turn, four fields of three components, none of them a style setting. When
+# the light arrives the engine fires `tween_done`, and the script starts the
+# next tween from it, so the flame breathes for as long as the scene runs.
+#
+# On game time, so a capture is the same every run:
+#
+#   flint render examples/tween_lantern.scene.toml --scripts --time 0 --no-grid -o dusk.png
+#   flint render examples/tween_lantern.scene.toml --scripts --time 3 --no-grid -o lit.png
+#   flint play examples/tween_lantern.scene.toml
+
+[scene]
+name = "Tween Lantern"
+description = "A lantern lit at dusk by script tweens of a light, a material and a transform"
+
+[environment]
+ambient_sky = [0.035, 0.045, 0.08]
+ambient_ground = [0.012, 0.012, 0.016]
+
+[camera]
+position = [1.6, 1.9, 4.2]
+target = [0.0, 0.85, 0.0]
+fov = 42.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.06
+vignette_enabled = true
+vignette_intensity = 0.35
+
+# --- the room ---------------------------------------------------------------
+
+[entities.floor.transform]
+position = [0.0, -0.1, 0.0]
+
+[entities.floor.bounds]
+min = [-8.0, 0.0, -4.0]
+max = [8.0, 0.1, 6.0]
+
+[entities.floor.material]
+color = [0.3, 0.26, 0.22, 1.0]
+roughness = 0.95
+
+[entities.wall.transform]
+position = [0.0, 0.0, -1.6]
+
+[entities.wall.bounds]
+min = [-8.0, 0.0, -0.1]
+max = [8.0, 5.0, 0.0]
+
+[entities.wall.material]
+color = [0.34, 0.32, 0.36, 1.0]
+roughness = 1.0
+
+[entities.crate.transform]
+position = [0.0, 0.0, 0.0]
+rotation = [0.0, 18.0, 0.0]
+
+[entities.crate.bounds]
+min = [-0.45, 0.0, -0.45]
+max = [0.45, 0.8, 0.45]
+
+[entities.crate.material]
+color = [0.5, 0.34, 0.2, 1.0]
+roughness = 0.85
+
+# --- the lantern ------------------------------------------------------------
+
+# Its frame turns a little toward the room as it is lit: a vector tween
+[entities.lantern.transform]
+position = [0.0, 0.8, 0.0]
+rotation = [0.0, -40.0, 0.0]
+
+[entities.lantern.bounds]
+min = [-0.15, 0.0, -0.15]
+max = [0.15, 0.04, 0.15]
+
+[entities.lantern.material]
+color = [0.12, 0.11, 0.1, 1.0]
+metallic = 0.8
+roughness = 0.4
+
+[entities.lantern_top]
+parent = "lantern"
+
+[entities.lantern_top.transform]
+position = [0.0, 0.42, 0.0]
+
+[entities.lantern_top.bounds]
+min = [-0.17, 0.0, -0.17]
+max = [0.17, 0.05, 0.17]
+
+[entities.lantern_top.material]
+color = [0.12, 0.11, 0.1, 1.0]
+metallic = 0.8
+roughness = 0.4
+
+# The glass: an ember now, a flame once lit (material.emissive)
+[entities.glass]
+parent = "lantern"
+
+[entities.glass.transform]
+position = [0.0, 0.04, 0.0]
+
+[entities.glass.bounds]
+min = [-0.11, 0.0, -0.11]
+max = [0.11, 0.38, 0.11]
+
+[entities.glass.material]
+color = [1.0, 0.85, 0.6, 1.0]
+roughness = 0.2
+emissive = [0.25, 0.08, 0.02]
+
+# The flame's light: dim and cold until the script lights it
+[entities.flame]
+parent = "lantern"
+
+[entities.flame.transform]
+position = [0.0, 0.25, 0.0]
+
+[entities.flame.light]
+type = "point"
+color = [0.55, 0.6, 1.0]
+intensity = 0.4
+range = 9.0
+source_radius = 0.08
+
+# --- the lamplighter ----------------------------------------------------------
+
+[entities.lamplighter.script]
+source = "tween_lantern.rhai"

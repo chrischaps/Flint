@@ -515,7 +515,7 @@ impl OceanPipeline {
     ) -> Self {
         let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Ocean Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("ocean_shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::OCEAN.into()),
         });
 
         // Group 1: the ocean's uniforms (0) and a body's look (1, ADR 0094;
@@ -726,7 +726,7 @@ mod tests {
     /// one side alone fails (#749 rebuilt the contact block).
     #[test]
     fn uniform_offsets_match_the_shader() {
-        let module = naga::front::wgsl::parse_str(include_str!("ocean_shader.wgsl")).unwrap();
+        let module = naga::front::wgsl::parse_str(crate::wgsl_sources::OCEAN).unwrap();
         let (span, members) = module
             .types
             .iter()

@@ -104,6 +104,7 @@ pub mod reveal;
 mod spec;
 mod targets;
 pub mod text;
+pub mod variant_table;
 
 pub use ascii::{edge_view_thresholds, EDGE_VIEW_LEGEND};
 pub use edges::EDGE_FORMAT;

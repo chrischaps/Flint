@@ -87,59 +87,10 @@ impl<const N: usize> fmt::Debug for FieldKeys<N> {
 /// A value on its way from one number to another, so that a sample is a pure
 /// function of time however a script has moved things. It eases in and out (a
 /// smoothstep), and a new heading starts from wherever it stands, so a change
-/// of mind never jumps. Living Props' knobs ease on it too (#514).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Ramp {
-    from: f32,
-    to: f32,
-    start: f64,
-    seconds: f64,
-}
-
-impl Ramp {
-    /// A value that stays where it is.
-    pub fn constant(value: f32) -> Self {
-        Self {
-            from: value,
-            to: value,
-            start: 0.0,
-            seconds: 0.0,
-        }
-    }
-
-    /// Where it stands at `time`.
-    pub fn at(&self, time: f64) -> f32 {
-        if self.arrived(time) {
-            return self.to;
-        }
-        let x = ((time - self.start) / self.seconds).max(0.0) as f32;
-        self.from + (self.to - self.from) * (x * x * (3.0 - 2.0 * x))
-    }
-
-    /// Where it's heading: where it ends, or where it is once it's there.
-    pub fn target(&self) -> f32 {
-        self.to
-    }
-
-    /// Whether it stands at its target by `time`, for good.
-    pub fn arrived(&self, time: f64) -> bool {
-        self.seconds <= 0.0 || time >= self.start + self.seconds
-    }
-
-    /// Head for `to` from wherever this stands at `time`, over `seconds`.
-    pub fn head_for(&mut self, to: f32, time: f64, seconds: f64) {
-        *self = Self {
-            from: self.at(time),
-            to,
-            start: time,
-            seconds: if seconds.is_finite() {
-                seconds.max(0.0)
-            } else {
-                0.0
-            },
-        };
-    }
-}
+/// of mind never jumps. It is the engine's one ramp (#734,
+/// [`crate::tween::Ramp`]), over `f32`; Living Props' knobs ease on it too
+/// (#514).
+pub use crate::tween::Ramp;
 
 /// What a zone covers.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -240,7 +191,7 @@ impl<const N: usize> ParamField<N> {
     /// Where each global value is heading: the end of the ramp `set_global`
     /// started, or the value itself when none is running.
     pub fn global_target(&self) -> [f32; N] {
-        self.base.map(|ramp| ramp.target())
+        self.base.map(|ramp| *ramp.target())
     }
 
     /// Every value at `position` and `time`, in whichever clock the caller
@@ -426,9 +377,8 @@ impl<const N: usize> ParamField<N> {
 
     /// Drop the zones that have finished fading out.
     fn settle(&mut self, time: f64) {
-        self.zones.retain(|zone| {
-            zone.strength.to > 0.0 || time < zone.strength.start + zone.strength.seconds
-        });
+        self.zones
+            .retain(|zone| *zone.strength.target() > 0.0 || !zone.strength.arrived(time));
     }
 }
 

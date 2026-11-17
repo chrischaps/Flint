@@ -285,7 +285,6 @@ impl SceneRenderer {
 
     /// Render depth from light perspective for cascaded shadow mapping, and
     /// from the casting spot's for its layer (#504).
-    #[profiling::function]
     pub(super) fn render_shadow_pass(
         &mut self,
         device: &wgpu::Device,
@@ -295,6 +294,7 @@ impl SceneRenderer {
         camera_pos: [f32; 3],
         log: Option<&mut crate::frame_capture::FrameLog>,
     ) {
+        flint_core::scope!("render_shadow_pass");
         // The frame's description (#1084): the pass `encode_to` opened
         let mut logged = log.and_then(|l| l.named("Shadows"));
         // Off, forbidden by the scene, or no sun that gives any light (#627)
@@ -778,7 +778,6 @@ impl SceneRenderer {
     }
 
     /// Execute the main render pass: skybox → terrain → entities → grid → sprites → particles → debug.
-    #[profiling::function]
     pub(super) fn render_main_pass<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
@@ -787,6 +786,7 @@ impl SceneRenderer {
         camera: &Camera,
         phase: RenderPhase,
     ) {
+        flint_core::scope!("render_main_pass");
         // Bind lights once for the entire pass (group 2 is shared)
         render_pass.set_bind_group(2, &self.lights.bind_group, &[]);
 
@@ -1407,7 +1407,6 @@ impl SceneRenderer {
     }
 
     /// Run post-processing: SSAO, bloom, composite HDR → sRGB.
-    #[profiling::function]
     /// `depth_key`: who vouches for `depth_view` (the HDR chain for the
     /// scaled scene's own, the caller's id for theirs), so bind groups over
     /// it can be kept (#139, #379).
@@ -1423,6 +1422,7 @@ impl SceneRenderer {
         camera: &Camera,
         scopes: &mut crate::frame_capture::FrameScopes,
     ) {
+        flint_core::scope!("render_postprocess");
         let pp = match &self.postprocess_pipeline {
             Some(pp) => pp,
             None => return,

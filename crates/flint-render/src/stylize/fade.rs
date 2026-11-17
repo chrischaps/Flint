@@ -20,6 +20,7 @@
 //! the HDR stage, in display values on a plain one. ASCII mixes in display
 //! values itself and opts out.
 
+use super::variant_table::{storage_entry, GrowingStorage};
 use super::{StyleDescriptor, StyleFrame, StyleInput};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,22 +33,14 @@ const OWNERS_BG: &str = "style fade owners BG";
 const INPUT_BG: &str = "style fade input BG";
 const MASK_BG: &str = "style fade mask BG";
 
-/// The owner table's buffer, grown when a frame has more ids than it holds.
-struct Owners {
-    buffer: wgpu::Buffer,
-    /// How many `u32`s it holds.
-    capacity: usize,
-    /// Bumped on each growth, keying the bind group over it.
-    generation: u64,
-}
-
 pub(crate) struct FadePass {
     module: super::kit::Shader,
     owners_bgl: wgpu::BindGroupLayout,
     input_bgl: wgpu::BindGroupLayout,
     mask_bgl: wgpu::BindGroupLayout,
     pipelines: Mutex<HashMap<wgpu::TextureFormat, Arc<wgpu::RenderPipeline>>>,
-    owners: Mutex<Owners>,
+    /// Each mask id's owner (#740: the framework's growing table).
+    owners: Mutex<GrowingStorage>,
     runs: AtomicU64,
 }
 
@@ -55,16 +48,7 @@ impl FadePass {
     pub fn new(device: &wgpu::Device) -> Self {
         let owners_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Style Fade Owners BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
+            entries: &[storage_entry(0)],
         });
         Self {
             module: super::kit::shader(device, "Style Fade Shader", super::kit::wgsl!("fade.wgsl")),
@@ -72,11 +56,7 @@ impl FadePass {
             mask_bgl: super::kit::mask_layout(device, "Style Fade Mask BGL"),
             owners_bgl,
             pipelines: Mutex::new(HashMap::new()),
-            owners: Mutex::new(Owners {
-                buffer: owners_buffer(device, 64),
-                capacity: 64,
-                generation: 0,
-            }),
+            owners: Mutex::new(GrowingStorage::new(device, "Style Fade Owners", 4)),
             runs: AtomicU64::new(0),
         }
     }
@@ -116,17 +96,9 @@ impl FadePass {
         let table = owner_table(frame.config, frame.style_ids, frame.styles);
         let owners_bind = {
             let mut owners = self.owners.lock().unwrap_or_else(|e| e.into_inner());
-            if owners.capacity < table.len() {
-                let capacity = table.len().next_power_of_two();
-                owners.buffer = owners_buffer(frame.device, capacity);
-                owners.capacity = capacity;
-                owners.generation += 1;
-            }
-            frame
-                .queue
-                .write_buffer(&owners.buffer, 0, bytemuck::cast_slice(&table));
-            let buffer = &owners.buffer;
-            frame.bind(OWNERS_BG, owners.generation, || {
+            owners.write_words(frame.device, frame.queue, &table, 0);
+            let buffer = owners.buffer();
+            frame.bind(OWNERS_BG, owners.generation(), || {
                 frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some(OWNERS_BG),
                     layout: &self.owners_bgl,
@@ -218,15 +190,6 @@ impl FadePass {
             })
             .clone()
     }
-}
-
-fn owners_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Style Fade Owners"),
-        size: (capacity * std::mem::size_of::<u32>()) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
 }
 
 /// Each mask id's owner, indexed by id: the registry index + 1 of the

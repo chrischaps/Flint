@@ -2234,6 +2234,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                 .iter()
                 .map(render_report::ScriptErrorReport::from)
                 .collect(),
+            style_drops: flint_render::stylize::variant_table::dropped(),
         };
         let json = serde_json::to_string(&report).context("serialising the render report")?;
         crate::output::document_text(&json);

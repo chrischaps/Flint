@@ -42,6 +42,13 @@ Not recorded in the surviving text.
 - Under the feature on Windows, Tracy prints `SymInitialize FAILED with code
   87` once at start in some processes (test harnesses). Profiling still
   works.
+- Since then: [ADR 0128](0128-one-scope-macro-two-sinks.md) (#1095) made
+  `flint_core::scope!` the engine's scope, which reaches Tracy through
+  `profiling::scope!` exactly as here and Flint's own recorder beside it. The
+  sixteen `#[profiling::function]` attributes are `scope!` lines named by
+  their function, `finish_frame!` is `flint_core::profile::finish_frame()`,
+  and flint-render no longer depends on `profiling`. The `profile` feature is
+  unchanged.
 
 ## Sources
 

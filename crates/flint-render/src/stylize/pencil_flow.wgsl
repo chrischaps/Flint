@@ -34,7 +34,7 @@ const FLAT_WEIGHT: f32 = 0.3;
 // The pixel's row, or -1 when it isn't drawn with tensor flow
 fn tensor_slot(uv: vec2<f32>) -> i32 {
     let slot = slot_of(mask_id(mask_px(uv)));
-    if passes_through(slot) || u32(u.rows[slot].e.w + 0.5) != 2u {
+    if passes_through(slot) || u32(pencil_rows[slot].e.w + 0.5) != 2u {
         return -1;
     }
     return i32(slot);
@@ -42,7 +42,7 @@ fn tensor_slot(uv: vec2<f32>) -> i32 {
 
 // The blur's reach in pixels: three of the row's stroke spacings
 fn reach_px(slot: i32) -> f32 {
-    return u.rows[slot].a.x * u.pixels_per_point * 3.0;
+    return pencil_rows[slot].a.x * u.pixels_per_point * 3.0;
 }
 
 fn blur(uv: vec2<f32>, axis: vec2<f32>, slot: i32, weigh: bool) -> vec2<f32> {

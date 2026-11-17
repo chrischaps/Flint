@@ -749,9 +749,7 @@ position = [0, 0, 0]
 /// the passes; `create` is never called.
 mod game_styles {
     use super::*;
-    use flint_render::stylize::{
-        self, StyleDescriptor, StyleDevice, StyleParam, StylePass, StyleStage,
-    };
+    use flint_render::stylize::{StyleDescriptor, StyleDevice, StyleParam, StylePass, StyleStage};
 
     fn never_built(_: &StyleDevice) -> Box<dyn StylePass> {
         unreachable!("a headless test builds no style")

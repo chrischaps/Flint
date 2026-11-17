@@ -305,8 +305,8 @@ mod tests {
     #[test]
     fn a_woozy_vertex_stage_hands_over_what_its_plain_twin_does() {
         let woozy = validated(VERTEX_SOURCE, "wooze_vertex.wgsl");
-        let plain = naga::front::wgsl::parse_str(include_str!("shader.wgsl")).unwrap();
-        let skinned = naga::front::wgsl::parse_str(include_str!("skinned_shader.wgsl")).unwrap();
+        let plain = naga::front::wgsl::parse_str(crate::wgsl_sources::SCENE).unwrap();
+        let skinned = naga::front::wgsl::parse_str(crate::wgsl_sources::SKINNED).unwrap();
         assert_eq!(
             entry_stage_io(&woozy, "vs_wooze"),
             entry_stage_io(&plain, "vs_main")

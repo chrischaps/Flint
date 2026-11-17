@@ -660,7 +660,7 @@ It covers the entity and everything below it, so a bench built from boards, or a
 
 **In step.** The clock counts beats the way a prop's does, from the same field on the same `dt`, so a bench keeps the tempo of the tree beside it through any change of step, and takes a new amplitude on its next beat without a pop. It has no phase offset of its own, unlike a prop. Two meshes in the same place are on the same target with the same weight, and the noise is a function of world position, so they're displaced by one continuous field: what touches stays touching, if they share a wavelength. Each target is the noise from somewhere else in its domain, so holding and gliding between them is the blend a prop does between poses.
 
-**Shadows.** The shadow pass displaces by the same function on the same numbers, so a shadow stays attached. A draw's frustum bounds grow by its amplitude.
+**Shadows.** The shadow pass displaces by the same function on the same numbers, so a shadow stays attached. A draw's frustum bounds grow by its amplitude. So does the [style mask](stylize-passes.md#the-entity-style-mask) (#737): a styled woozy mesh is masked where it was drawn, glyphs and all, not at its rest pose.
 
 **What it costs.** Nothing, in a scene that doesn't use it. Woozy draws have their own vertex stages (`wooze_vertex.wgsl`, `wooze_shadow_shader.wgsl`) paired with the fragment stages already compiled, and those pipelines aren't built until the first woozy draw exists. Ordinary draws run today's shaders with no new uniform or branch: the drift rides in padding each draw's uniform slot already had. On a 270-entity scene, 268 of them woozy, it adds about 0.6 ms a frame.
 

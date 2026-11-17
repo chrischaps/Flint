@@ -45,12 +45,13 @@ struct PencilUniforms {
     info: vec4<u32>,
     // The images' measures (#390): paper mean and spread of luma, stroke ink
     img: vec4<f32>,
-    rows: array<PencilRow, 64>,
-    // The row of each mask id, four ids a vec4
-    slots: array<vec4<u32>, 64>,
 };
 
 @group(0) @binding(0) var<uniform> u: PencilUniforms;
+// The variant table (#740, the framework's): a row a variant, and the row
+// of each mask id, as long as the frame needs
+@group(0) @binding(1) var<storage, read> pencil_rows: array<PencilRow>;
+@group(0) @binding(2) var<storage, read> pencil_slots: array<u32>;
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -151,17 +152,17 @@ fn mask_px(uv: vec2<f32>) -> vec2<i32> {
 }
 
 fn slot_of(id: u32) -> u32 {
-    if u.info.z == 0u || id >= 256u {
+    if u.info.z == 0u || id >= arrayLength(&pencil_slots) {
         return 0u;
     }
-    return u.slots[id / 4u][id % 4u];
+    return pencil_slots[id];
 }
 
 // Whether the pixel in this row is left as it is: an opt-out variant, or
 // slot 0 when the scene's table doesn't cover the whole frame
 // A mask id another style owns (an ASCII prop in a pencil frame) gets this
 // slot: its pixels are that style's, so they pass through
-const FOREIGN: u32 = 255u;
+const FOREIGN: u32 = 0xffffffffu;
 
 fn passes_through(slot: u32) -> bool {
     if slot == FOREIGN {
@@ -170,7 +171,7 @@ fn passes_through(slot: u32) -> bool {
     if slot == 0u {
         return u.info.y == 1u;
     }
-    return (u32(u.rows[slot].g.z + 0.5) & 1u) != 0u;
+    return (u32(pencil_rows[slot].g.z + 0.5) & 1u) != 0u;
 }
 
 // Whether the row's hatching is laid on the world's surfaces (#389)
