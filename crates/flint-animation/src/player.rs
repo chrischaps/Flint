@@ -1,8 +1,9 @@
 //! Animation clip registry and per-entity playback state
 
 use crate::clip::{AnimationClip, AnimationEvent};
+use crate::playback_state::{Advanced, ClipPlaybackState};
 use crate::sampler::sample_track;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Clip registry — holds all loaded animation clips by name.
 #[derive(Default)]
@@ -38,41 +39,6 @@ impl AnimationPlayer {
     }
 }
 
-/// Per-entity playback state for one animation clip.
-#[derive(Debug, Clone)]
-pub struct PlaybackState {
-    /// Name of the clip being played
-    pub clip_name: String,
-    /// Current playback time in seconds
-    pub time: f64,
-    /// Playback speed multiplier (1.0 = normal, negative = reverse)
-    pub speed: f64,
-    /// Whether the clip loops
-    pub looping: bool,
-    /// Whether the clip is currently playing
-    pub playing: bool,
-    /// Set of event times already fired this loop (prevents re-firing)
-    fired_events: HashSet<u64>,
-}
-
-impl PlaybackState {
-    pub fn new(clip_name: String, speed: f64, looping: bool, playing: bool) -> Self {
-        Self {
-            clip_name,
-            time: 0.0,
-            speed,
-            looping,
-            playing,
-            fired_events: HashSet::new(),
-        }
-    }
-
-    /// Clear fired event tracking so events can fire again on replay.
-    pub fn clear_fired_events(&mut self) {
-        self.fired_events.clear();
-    }
-}
-
 /// Result of advancing a playback: sampled values per track + fired events.
 pub struct AdvanceResult {
     /// One sampled [f32; 3] per track in the clip
@@ -84,8 +50,12 @@ pub struct AdvanceResult {
 /// Advance a playback state by `dt` seconds, returning sampled values and events.
 ///
 /// Returns `None` if the clip isn't found or playback is stopped.
-pub fn advance(state: &mut PlaybackState, clip: &AnimationClip, dt: f64) -> Option<AdvanceResult> {
-    if !state.playing {
+pub fn advance(
+    state: &mut ClipPlaybackState,
+    clip: &AnimationClip,
+    dt: f64,
+) -> Option<AdvanceResult> {
+    if state.advance_time(clip.duration, dt) == Advanced::Held {
         // Still sample at current time so static poses work
         let samples: Vec<[f32; 3]> = clip
             .tracks
@@ -96,28 +66,6 @@ pub fn advance(state: &mut PlaybackState, clip: &AnimationClip, dt: f64) -> Opti
             samples,
             events: vec![],
         });
-    }
-
-    // Advance time
-    state.time += dt * state.speed;
-
-    // Handle looping / clamping
-    if state.looping {
-        if clip.duration > 0.0 {
-            if state.time >= clip.duration {
-                state.time %= clip.duration;
-                state.fired_events.clear(); // reset events for new loop
-            } else if state.time < 0.0 {
-                state.time = clip.duration - (-state.time % clip.duration);
-                state.fired_events.clear();
-            }
-        }
-    } else if state.time >= clip.duration {
-        state.time = clip.duration;
-        state.playing = false;
-    } else if state.time < 0.0 {
-        state.time = 0.0;
-        state.playing = false;
     }
 
     // Sample all tracks
@@ -178,7 +126,7 @@ mod tests {
     #[test]
     fn advance_samples_at_current_time() {
         let clip = simple_clip();
-        let mut state = PlaybackState::new("test_bob".into(), 1.0, false, true);
+        let mut state = ClipPlaybackState::new("test_bob".into(), 1.0, false, true);
         let result = advance(&mut state, &clip, 1.0).unwrap();
         // After 1.0s of a 2.0s linear track: halfway
         assert!((result.samples[0][1] - 2.0).abs() < 1e-4);
@@ -187,7 +135,7 @@ mod tests {
     #[test]
     fn advance_fires_event_once() {
         let clip = simple_clip();
-        let mut state = PlaybackState::new("test_bob".into(), 1.0, false, true);
+        let mut state = ClipPlaybackState::new("test_bob".into(), 1.0, false, true);
         let r1 = advance(&mut state, &clip, 1.5).unwrap();
         assert_eq!(r1.events.len(), 1);
         assert_eq!(r1.events[0].event_name, "halfway");
@@ -199,7 +147,7 @@ mod tests {
     #[test]
     fn advance_loops_and_resets_events() {
         let clip = simple_clip();
-        let mut state = PlaybackState::new("test_bob".into(), 1.0, true, true);
+        let mut state = ClipPlaybackState::new("test_bob".into(), 1.0, true, true);
         // Advance past the end to trigger a loop
         let _ = advance(&mut state, &clip, 1.5);
         let _ = advance(&mut state, &clip, 1.0); // wraps around
@@ -210,7 +158,7 @@ mod tests {
     #[test]
     fn advance_stops_at_end_when_not_looping() {
         let clip = simple_clip();
-        let mut state = PlaybackState::new("test_bob".into(), 1.0, false, true);
+        let mut state = ClipPlaybackState::new("test_bob".into(), 1.0, false, true);
         let _ = advance(&mut state, &clip, 3.0); // overshoot
         assert_eq!(state.time, 2.0);
         assert!(!state.playing);
@@ -219,7 +167,7 @@ mod tests {
     #[test]
     fn paused_still_samples() {
         let clip = simple_clip();
-        let mut state = PlaybackState::new("test_bob".into(), 1.0, false, false);
+        let mut state = ClipPlaybackState::new("test_bob".into(), 1.0, false, false);
         state.time = 1.0; // manually set to midpoint
         let result = advance(&mut state, &clip, 1.0).unwrap();
         // Time should NOT advance (paused)

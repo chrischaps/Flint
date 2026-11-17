@@ -427,7 +427,11 @@ drift. `flint render` runs the pass once before its frame.
 
 ## Animator Schema
 
-The `animator` component controls playback for both tiers:
+The `animator` component controls playback for every kind of clip, and each
+kind follows it by the same rules: a property clip, a node clip and a skinned
+clip all cut to a new `clip`, pause and resume on `playing`, replay a finished
+one-shot and keep an `autoplay` going. (`blend_target` and `layers` are
+composed only on skinned models.)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|

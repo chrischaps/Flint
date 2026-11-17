@@ -6,6 +6,7 @@
 //! 3. `flint preview model.glb --render out.png` — headless render to PNG
 
 use anyhow::{Context, Result};
+use flint_animation::animator::{self, Animator};
 use flint_animation::node_clip::NodeClip;
 use flint_animation::skeletal_clip::SkeletalClip;
 use flint_animation::skeleton::Skeleton;
@@ -317,11 +318,7 @@ fn parse_layer_spec(spec: &str) -> AnimLayer {
 /// Write a layer list to the preview entity's animator component.
 fn write_layers_to_world(world: &mut FlintWorld, entity_id: EntityId, layers: &[AnimLayer]) {
     if let Some(mut components) = world.get_components_mut(entity_id) {
-        components.set_field(
-            comp::ANIMATOR,
-            "layers",
-            toml::Value::Array(layers.iter().map(AnimLayer::to_toml).collect()),
-        );
+        animator::write(&mut components).layers(layers);
     }
 }
 
@@ -536,14 +533,7 @@ fn create_model_world(
     let _ = world.set_component(entity_id, comp::MODEL, model);
 
     // Animator component — enables animated model expansion and skeletal sync discovery
-    let animator = toml::Value::Table({
-        let mut a = toml::map::Map::new();
-        a.insert("clip".to_string(), toml::Value::String(String::new()));
-        a.insert("playing".to_string(), toml::Value::Boolean(true));
-        a.insert("loop".to_string(), toml::Value::Boolean(true));
-        a.insert("speed".to_string(), toml::Value::Float(anim_speed as f64));
-        a
-    });
+    let animator = animator::component("", true, true, anim_speed as f64);
     let _ = world.set_component(entity_id, comp::ANIMATOR, animator);
 
     (world, asset_name, entity_id)
@@ -731,17 +721,10 @@ fn register_animation_data(
 
     // Set the clip on the animator component so sync_from_world picks it up
     if let Some(mut components) = world.get_components_mut(entity_id) {
-        components.set_field(
-            comp::ANIMATOR,
-            "clip",
-            toml::Value::String(clip_name.clone()),
-        );
-        components.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(true));
-        components.set_field(
-            comp::ANIMATOR,
-            "speed",
-            toml::Value::Float(anim_speed as f64),
-        );
+        animator::write(&mut components)
+            .clip(clip_name)
+            .playing(true)
+            .speed(anim_speed as f64);
     }
 
     // Initial layers from --layer specs
@@ -1404,6 +1387,23 @@ impl PreviewApp {
         crate::output::say!("Reloaded: {}", model_display);
     }
 
+    /// Set the previewed animator's speed from what it is now (the speed keys).
+    fn change_anim_speed(&mut self, change: impl FnOnce(f64) -> f64) {
+        if self.anim_info.is_none() {
+            return;
+        }
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let Some(eid) = state.entity_id else {
+            return;
+        };
+        let speed = change(Animator::of(&state.world, eid).speed);
+        if let Some(mut components) = state.world.get_components_mut(eid) {
+            animator::write(&mut components).speed(speed);
+        }
+    }
+
     /// Switch to a different animation clip by index
     fn switch_clip(&mut self, new_index: usize) {
         let info = match &mut self.anim_info {
@@ -1424,12 +1424,9 @@ impl PreviewApp {
         if let Ok(mut state) = self.state.lock() {
             if let Some(eid) = state.entity_id {
                 if let Some(mut components) = state.world.get_components_mut(eid) {
-                    components.set_field(
-                        comp::ANIMATOR,
-                        "clip",
-                        toml::Value::String(clip_name.clone()),
-                    );
-                    components.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(true));
+                    animator::write(&mut components)
+                        .clip(&clip_name)
+                        .playing(true);
                 }
 
                 // Reset skeletal playback state so it re-syncs with the new clip
@@ -1469,17 +1466,7 @@ impl PreviewApp {
                 .state
                 .lock()
                 .ok()
-                .and_then(|s| {
-                    s.entity_id.and_then(|eid| {
-                        s.world.get_components(eid).and_then(|c| {
-                            c.get(comp::ANIMATOR).and_then(|a| {
-                                a.get("speed").and_then(|v| {
-                                    v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
-                                })
-                            })
-                        })
-                    })
-                })
+                .and_then(|s| s.entity_id.map(|eid| Animator::of(&s.world, eid).speed))
                 .unwrap_or(1.0);
 
             let mut title = format!(
@@ -2711,11 +2698,7 @@ impl PreviewApp {
             if let Ok(mut state) = self.state.lock() {
                 if let Some(eid) = state.entity_id {
                     if let Some(mut components) = state.world.get_components_mut(eid) {
-                        components.set_field(
-                            comp::ANIMATOR,
-                            "playing",
-                            toml::Value::Boolean(!paused),
-                        );
+                        animator::write(&mut components).playing(!paused);
                     }
                 }
             }
@@ -2733,7 +2716,7 @@ impl PreviewApp {
             if let Ok(mut state) = self.state.lock() {
                 if let Some(eid) = state.entity_id {
                     if let Some(mut components) = state.world.get_components_mut(eid) {
-                        components.set_field(comp::ANIMATOR, "speed", toml::Value::Float(spd));
+                        animator::write(&mut components).speed(spd);
                     }
                 }
             }
@@ -2819,7 +2802,7 @@ impl PreviewApp {
                         self.anim_paused = false;
                         if let Ok(mut state) = self.state.lock() {
                             if let Some(mut c) = state.world.get_components_mut(eid) {
-                                c.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(true));
+                                animator::write(&mut c).playing(true);
                             }
                         }
                     }
@@ -3076,11 +3059,7 @@ impl Editor for PreviewApp {
                                     if let Some(mut components) =
                                         state.world.get_components_mut(eid)
                                     {
-                                        components.set_field(
-                                            comp::ANIMATOR,
-                                            "playing",
-                                            toml::Value::Boolean(!self.anim_paused),
-                                        );
+                                        animator::write(&mut components).playing(!self.anim_paused);
                                     }
                                 }
                             }
@@ -3115,82 +3094,14 @@ impl Editor for PreviewApp {
                             self.switch_clip(prev);
                         }
                     }
+                    // Speed ×1.5, ÷1.5, back to 1
                     PhysicalKey::Code(KeyCode::Equal) => {
-                        // Increase speed (×1.5)
-                        if self.anim_info.is_some() {
-                            if let Ok(mut state) = self.state.lock() {
-                                if let Some(eid) = state.entity_id {
-                                    if let Some(mut components) =
-                                        state.world.get_components_mut(eid)
-                                    {
-                                        let current = components
-                                            .get(comp::ANIMATOR)
-                                            .and_then(|a| {
-                                                a.get("speed").and_then(|v| {
-                                                    v.as_float().or_else(|| {
-                                                        v.as_integer().map(|i| i as f64)
-                                                    })
-                                                })
-                                            })
-                                            .unwrap_or(1.0);
-                                        let new_speed = (current * 1.5).min(10.0);
-                                        components.set_field(
-                                            comp::ANIMATOR,
-                                            "speed",
-                                            toml::Value::Float(new_speed),
-                                        );
-                                    }
-                                }
-                            }
-                        }
+                        self.change_anim_speed(|s| (s * 1.5).min(10.0))
                     }
                     PhysicalKey::Code(KeyCode::Minus) => {
-                        // Decrease speed (÷1.5)
-                        if self.anim_info.is_some() {
-                            if let Ok(mut state) = self.state.lock() {
-                                if let Some(eid) = state.entity_id {
-                                    if let Some(mut components) =
-                                        state.world.get_components_mut(eid)
-                                    {
-                                        let current = components
-                                            .get(comp::ANIMATOR)
-                                            .and_then(|a| {
-                                                a.get("speed").and_then(|v| {
-                                                    v.as_float().or_else(|| {
-                                                        v.as_integer().map(|i| i as f64)
-                                                    })
-                                                })
-                                            })
-                                            .unwrap_or(1.0);
-                                        let new_speed = (current / 1.5).max(0.1);
-                                        components.set_field(
-                                            comp::ANIMATOR,
-                                            "speed",
-                                            toml::Value::Float(new_speed),
-                                        );
-                                    }
-                                }
-                            }
-                        }
+                        self.change_anim_speed(|s| (s / 1.5).max(0.1))
                     }
-                    PhysicalKey::Code(KeyCode::Digit0) => {
-                        // Reset speed to 1.0
-                        if self.anim_info.is_some() {
-                            if let Ok(mut state) = self.state.lock() {
-                                if let Some(eid) = state.entity_id {
-                                    if let Some(mut components) =
-                                        state.world.get_components_mut(eid)
-                                    {
-                                        components.set_field(
-                                            comp::ANIMATOR,
-                                            "speed",
-                                            toml::Value::Float(1.0),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    PhysicalKey::Code(KeyCode::Digit0) => self.change_anim_speed(|_| 1.0),
                     _ => return Flow::Pass,
                 }
                 Flow::Handled
