@@ -1472,11 +1472,15 @@ fn bind_key(parts: &[u64]) -> u64 {
 }
 
 /// The variant cell state's size for `bands`: a texel a cell across the
-/// widest band, every band's rows stacked.
-fn band_texture_size(bands: &[Band]) -> [u32; 2] {
+/// widest band, every band's rows stacked, and never less than `held` (the
+/// size it has). A script tweening a per-entity `cell` changes its band's
+/// grid every few frames; remade at each size, the textures and the entity
+/// bind group keyed by their generation piled up in the bind cache.
+fn band_texture_size(bands: &[Band], held: Option<[u32; 2]>) -> [u32; 2] {
     let wide = bands.iter().map(|b| b.cols).max().unwrap_or(0);
     let tall = bands.last().map_or(0, |b| b.row + b.rows);
-    [wide.max(1), tall.max(1)]
+    let [w, h] = held.unwrap_or([1, 1]);
+    [wide.max(w).max(1), tall.max(h).max(1)]
 }
 
 /// The texels of band `b` in the variant cell state whose cells' lattice
@@ -3443,7 +3447,7 @@ impl StylePass for Ascii {
         // once a cell rather than in each of its pixels
         let mut variant_cells_slot = self.variant_cells.lock().unwrap_or_else(|e| e.into_inner());
         let [first_slot, second_slot] = &mut *variant_cells_slot;
-        let band_size = band_texture_size(&bands);
+        let band_size = band_texture_size(&bands, first_slot.as_ref().map(|o| o.size));
         let variant_cells = [
             Owned::ensure(
                 first_slot,
@@ -4383,11 +4387,14 @@ mod tests {
         assert_eq!(cells, [0, 1, 1, grid[1] + 1, 0, 2 * grid[1] + 1, 0]);
         let wide = cell_grid(size, [12.0; 2], [3.0, 5.0]);
         assert_eq!(
-            band_texture_size(&bands),
+            band_texture_size(&bands, None),
             [grid[0].max(wide[0]), 2 * grid[1] + wide[1]]
         );
         // With no bands the texture is a stand-in texel
-        assert_eq!(band_texture_size(&[]), [1, 1]);
+        assert_eq!(band_texture_size(&[], None), [1, 1]);
+        // A smaller grid, or none, keeps the textures it has
+        assert_eq!(band_texture_size(&bands[..1], Some([400, 300])), [400, 300]);
+        assert_eq!(band_texture_size(&[], Some([90, 46])), [90, 46]);
     }
 
     #[test]
@@ -4492,7 +4499,7 @@ mod tests {
             tall.push(variant_row(2.0, [0.0, 0.0], footprint as f32, 0));
         }
         let bands = assign_bands(&mut tall, [3840, 2160], MIN_BAND_FOOTPRINT);
-        let [w, h] = band_texture_size(&bands);
+        let [w, h] = band_texture_size(&bands, None);
         assert!(w <= MAX_BAND_TEXELS && h <= MAX_BAND_TEXELS);
         assert_eq!(bands.len(), MAX_BANDS - 1);
         assert_eq!(tall[MAX_BANDS].cell_row, 0);
