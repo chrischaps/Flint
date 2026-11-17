@@ -316,6 +316,7 @@ pub fn load_models_from_world(
     queue: &wgpu::Queue,
     config: &ModelLoadConfig,
 ) -> ModelLoadResult {
+    flint_core::scope!("load_models");
     let mut result = ModelLoadResult {
         models: Vec::new(),
         skinned_entities: HashMap::new(),

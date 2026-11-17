@@ -592,6 +592,7 @@ impl ParticleSync {
     /// components. Creates instances for new entities, re-resolves configs
     /// whose TOML changed, updates transforms, and drops despawned entities.
     pub fn sync_from_world(&mut self, world: &FlintWorld) {
+        flint_core::scope!("particles::sync");
         let mut seen: HashSet<EntityId> = HashSet::new();
 
         // Inline emitters.
@@ -758,6 +759,7 @@ impl ParticleSync {
 
     /// Run particle simulation for all instances
     pub fn update(&mut self, dt: f32) {
+        flint_core::scope!("particles::simulate", self.instance_count());
         self.time += dt;
         let total: usize = self.total_alive();
         let mut budget_left = self.budget.saturating_sub(total);
@@ -780,6 +782,7 @@ impl ParticleSync {
     /// Pack alive particles into the instance buffer for GPU upload.
     /// `camera_pos` enables back-to-front sorting; call after `update()`.
     pub fn pack_instances(&mut self, camera_pos: Option<[f32; 3]>) {
+        flint_core::scope!("particles::pack", self.instance_count());
         self.instance_buffer.clear();
         self.ranges.clear();
 

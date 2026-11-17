@@ -783,6 +783,9 @@ impl FrameScopes {
         encoder: &mut wgpu::CommandEncoder,
         run: &mut dyn FnMut(&mut wgpu::CommandEncoder),
     ) {
+        // The CPU's side of each post effect and style part, by its label:
+        // a dozen a frame at most (#1096)
+        flint_core::scope!("encode_part", label);
         let scope = self.begin(encoder, label);
         run(encoder);
         self.end(encoder, scope);

@@ -533,6 +533,7 @@ impl PhysicsSystem {
     /// player's fixed loop; look and jump presses come from
     /// `character_frame_input`)
     pub fn update_character(&mut self, input: &InputState, world: &mut FlintWorld, dt: f64) {
+        flint_core::scope!("physics::character");
         self.character.update(
             input,
             world,
@@ -548,6 +549,7 @@ impl PhysicsSystem {
     /// Read the scene's bodies, colliders and joints, and find the player
     /// entity, when a scene is entered.
     pub fn initialize(&mut self, world: &mut FlintWorld) -> Result<()> {
+        flint_core::scope!("physics::initialize");
         // Initial sync of all entities with physics components, then joints
         self.sync.sync_to_rapier(world, &mut self.physics_world);
         self.sync.sync_joints(world, &mut self.physics_world);
@@ -576,30 +578,37 @@ impl PhysicsSystem {
         dt: f64,
         events: &mut EventBus,
     ) -> Result<()> {
-        // Sync any new entities to Rapier, then any joints whose bodies now exist
-        self.sync.sync_to_rapier(world, &mut self.physics_world);
-        self.sync.sync_joints(world, &mut self.physics_world);
+        flint_core::scope!("physics::fixed_update");
+        {
+            flint_core::scope!("physics::sync_in");
+            // Sync any new entities to Rapier, then any joints whose bodies now exist
+            self.sync.sync_to_rapier(world, &mut self.physics_world);
+            self.sync.sync_joints(world, &mut self.physics_world);
 
-        // Update kinematic bodies from ECS transforms (e.g., animated doors),
-        // moving them an even share of the frame's motion per step
-        self.sync.update_kinematic_bodies(
-            world,
-            &mut self.physics_world,
-            self.step_in_frame,
-            self.frame_span,
-        );
-        self.step_in_frame += 1;
+            // Update kinematic bodies from ECS transforms (e.g., animated doors),
+            // moving them an even share of the frame's motion per step
+            self.sync.update_kinematic_bodies(
+                world,
+                &mut self.physics_world,
+                self.step_in_frame,
+                self.frame_span,
+            );
+            self.step_in_frame += 1;
 
-        // Update sensor flags (e.g., dead enemies become non-solid)
-        self.sync
-            .update_sensor_flags(world, &mut self.physics_world);
+            // Update sensor flags (e.g., dead enemies become non-solid)
+            self.sync
+                .update_sensor_flags(world, &mut self.physics_world);
 
-        // Push script-written joint targets / limits into Rapier
-        self.sync
-            .update_joint_targets(world, &mut self.physics_world);
+            // Push script-written joint targets / limits into Rapier
+            self.sync
+                .update_joint_targets(world, &mut self.physics_world);
+        }
 
         // Step physics
-        self.physics_world.step(dt as f32);
+        {
+            flint_core::scope!("physics::step", self.physics_world.rigid_body_set.len());
+            self.physics_world.step(dt as f32);
+        }
 
         // This step's collisions and triggers, onto the caller's bus
         for event in self.physics_world.drain_collision_events() {
@@ -652,6 +661,7 @@ impl PhysicsSystem {
         }
 
         // Sync transforms back from Rapier for dynamic bodies
+        flint_core::scope!("physics::sync_out");
         self.sync
             .project_kinematic_joints(&mut self.physics_world, dt as f32);
         self.sync.sync_from_rapier(world, &self.physics_world);
