@@ -38,18 +38,6 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return out;
 }
 
-fn to_display(c: vec3<f32>) -> vec3<f32> {
-    let lo = c * 12.92;
-    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, c <= vec3<f32>(0.0031308));
-}
-
-fn to_linear(c: vec3<f32>) -> vec3<f32> {
-    let lo = c / 12.92;
-    let hi = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, c <= vec3<f32>(0.04045));
-}
-
 // A hue for an orientation: the doubled angle, so d and -d agree.
 // Branchless (the usual hsv-to-rgb ramp): the six-case `switch` this was
 // compiled wrong under DX12's FXC, which zeroed the red channel of pixels
@@ -66,8 +54,8 @@ fn orientation_color(d: vec2<f32>) -> vec3<f32> {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let src = textureSample(input_texture, input_sampler, in.uv);
     let rgb = clamp(src.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    let shown = select(rgb, to_display(rgb), params.srgb > 0.5);
-    let luma = dot(shown, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let shown = select(rgb, flint_to_display(rgb), params.srgb > 0.5);
+    let luma = flint_luma(shown);
     var out = vec3<f32>(luma * params.dim);
 
     let size = vec2<i32>(textureDimensions(edges));
@@ -86,6 +74,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         out = mix(out, hue, s * s * params.ghost);
     }
 
-    let encoded = select(out, to_linear(out), params.srgb > 0.5);
+    let encoded = select(out, flint_to_linear(out), params.srgb > 0.5);
     return vec4<f32>(encoded, src.a);
 }

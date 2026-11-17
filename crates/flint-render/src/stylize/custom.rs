@@ -1033,7 +1033,8 @@ impl Composed {
     }
 }
 
-const PRELUDE_FRAME: &str = r#"// ---- Flint style prelude (generated; ADR 0112) ----
+const PRELUDE_FRAME: &str = concat!(
+    r#"// ---- Flint style prelude (generated; ADR 0112) ----
 struct FlintFrame {
     inv_view_proj: mat4x4<f32>,
     resolution: vec2<f32>,
@@ -1069,29 +1070,18 @@ struct StylePixel {
 @group(1) @binding(0) var flint_input: texture_2d<f32>;
 @group(1) @binding(1) var flint_sampler: sampler;
 
-fn flint_to_display(c: vec3<f32>) -> vec3<f32> {
-    let lo = c * 12.92;
-    let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, c <= vec3<f32>(0.0031308));
-}
-
-fn flint_to_linear(c: vec3<f32>) -> vec3<f32> {
-    let lo = c / 12.92;
-    let hi = pow((max(c, vec3<f32>(0.0)) + 0.055) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, c <= vec3<f32>(0.04045));
-}
-
-fn flint_luma(c: vec3<f32>) -> f32 {
-    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
-}
-
+"#,
+    // The helpers built-in styles include too (#743): one text for both
+    include_str!("prelude_core.wgsl"),
+    r#"
 // A cheap, stable hash of a cell: 0..1
 fn flint_hash(p: vec2<f32>) -> f32 {
     let q = fract(p * vec2<f32>(123.34, 456.21));
     let r = q + dot(q, q + 45.32);
     return fract(r.x * r.y);
 }
-"#;
+"#
+);
 
 fn prelude_sample(stage: StyleStage) -> String {
     let display = stage == StyleStage::Display;
@@ -1133,9 +1123,7 @@ fn flint_view_depth(uv: vec2<f32>) -> f32 {
 
 // The world position the pixel at uv shows
 fn flint_world_pos(uv: vec2<f32>) -> vec3<f32> {
-    let ndc = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, flint_depth(uv), 1.0);
-    let w = flint.inv_view_proj * ndc;
-    return w.xyz / w.w;
+    return flint_unproject(flint.inv_view_proj, uv, flint_depth(uv));
 }
 "#;
 

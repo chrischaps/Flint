@@ -20,7 +20,7 @@
 
 fn luma_at(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(u.size);
-    return luma(shown(textureLoad(input_texture, clamp(p, vec2<i32>(0), size - 1), 0).rgb));
+    return flint_luma(shown(textureLoad(input_texture, clamp(p, vec2<i32>(0), size - 1), 0).rgb));
 }
 
 // The light at a pixel (#869): the picture's luminance over its paint's,
@@ -37,7 +37,7 @@ fn light_luma(uv: vec2<f32>, picture: f32) -> f32 {
     if a.a <= 0.0 {
         return picture;
     }
-    let paint = luma(to_display(a.rgb / a.a));
+    let paint = flint_luma(flint_to_display(a.rgb / a.a));
     let lit = picture / max(paint, 1e-3);
     return mix(picture, lit, a.a * smoothstep(0.02, 0.08, paint));
 }

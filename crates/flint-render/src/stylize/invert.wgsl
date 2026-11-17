@@ -27,24 +27,12 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return out;
 }
 
-fn to_display(c: vec3<f32>) -> vec3<f32> {
-    let lo = c * 12.92;
-    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, c <= vec3<f32>(0.0031308));
-}
-
-fn to_linear(c: vec3<f32>) -> vec3<f32> {
-    let lo = c / 12.92;
-    let hi = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, c <= vec3<f32>(0.04045));
-}
-
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let src = textureSample(input_texture, input_sampler, in.uv);
     let rgb = clamp(src.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    let shown = select(rgb, to_display(rgb), params.srgb > 0.5);
+    let shown = select(rgb, flint_to_display(rgb), params.srgb > 0.5);
     let inverted = mix(shown, vec3<f32>(1.0) - shown, params.strength);
-    let out = select(inverted, to_linear(inverted), params.srgb > 0.5);
+    let out = select(inverted, flint_to_linear(inverted), params.srgb > 0.5);
     return vec4<f32>(out, src.a);
 }

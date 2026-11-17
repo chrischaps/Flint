@@ -80,6 +80,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
 
 /// The style's shader: its own code, then the shared matcher.
 pub const SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "palette.wgsl",
     "../palette.wgsl"
 );

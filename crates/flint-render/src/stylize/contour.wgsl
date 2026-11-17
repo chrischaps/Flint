@@ -100,7 +100,7 @@ fn inverse_depth(uv: vec2<f32>) -> f32 {
 // Luminance squeezed into 0..1, so a bright sky doesn't outweigh everything.
 fn tone(uv: vec2<f32>) -> f32 {
     let c = textureSampleLevel(scene_texture, scene_sampler, uv, 0.0).rgb;
-    let l = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let l = flint_luma(c);
     return l / (1.0 + l);
 }
 

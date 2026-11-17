@@ -94,16 +94,10 @@ struct CellUniforms {
 // Last frame's edge cells (#477), read only with `u.history`
 @group(3) @binding(0) var past_cells: texture_2d<f32>;
 
-fn to_display(c: vec3<f32>) -> vec3<f32> {
-    let lo = c * 12.92;
-    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, c <= vec3<f32>(0.0031308));
-}
-
 // The picture at output pixel `p` in display values, 0..1
 fn shown(p: vec2<i32>) -> vec3<f32> {
     let c = clamp(textureLoad(picture, p, 0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    return select(c, to_display(c), u.srgb == 1u);
+    return select(c, flint_to_display(c), u.srgb == 1u);
 }
 
 // A colour sum's hue at full value, packed 7 bits a channel

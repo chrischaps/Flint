@@ -147,7 +147,7 @@ fn strip(x: f32, off: f32, band: f32, len_px: f32, row: PencilRow, hs: vec3<f32>
     let lo = vec2<f32>(0.0, f32(pick) * rh);
     let hi = vec2<f32>(dims.x, f32(pick + 1u) * rh);
     let c = img_read(stroke_tex, vec2<f32>(x * dims.x, (f32(pick) + v) * rh), lod, false, lo, hi);
-    let ink = c.a * (1.0 - luma(c.rgb)) / max(u.img.z, 0.02);
+    let ink = c.a * (1.0 - flint_luma(c.rgb)) / max(u.img.z, 0.02);
     return clamp(ink, 0.0, 1.0) * (0.75 + 0.25 * hs.y);
 }
 
@@ -573,6 +573,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     let lead = mix(row.f.xyz, row.f.xyz * 0.5 + scene * 0.35, row.d.z * 0.5);
     let out = mix(ground, lead, clamp(ink, 0.0, 1.0));
-    let encoded = select(out, to_linear(out), u.srgb > 0.5);
+    let encoded = select(out, flint_to_linear(out), u.srgb > 0.5);
     return vec4<f32>(encoded, src.a);
 }

@@ -78,22 +78,6 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return out;
 }
 
-fn to_display(c: vec3<f32>) -> vec3<f32> {
-    let lo = c * 12.92;
-    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, c <= vec3<f32>(0.0031308));
-}
-
-fn to_linear(c: vec3<f32>) -> vec3<f32> {
-    let lo = c / 12.92;
-    let hi = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, c <= vec3<f32>(0.04045));
-}
-
-fn luma(c: vec3<f32>) -> f32 {
-    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
-}
-
 // --- noise: integer-hashed value noise, the same on every run and GPU ---
 
 fn hash(p: vec2<i32>) -> f32 {
@@ -173,7 +157,7 @@ fn painted(slot: u32) -> bool {
 fn sample_display(t: texture_2d<f32>, s: sampler, uv: vec2<f32>) -> vec4<f32> {
     let c = textureSampleLevel(t, s, uv, 0.0);
     let rgb = clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    return vec4<f32>(select(rgb, to_display(rgb), params.srgb == 1u), c.a);
+    return vec4<f32>(select(rgb, flint_to_display(rgb), params.srgb == 1u), c.a);
 }
 
 @fragment
@@ -210,17 +194,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Steps are even in the square root of the tone, so the darks get
         // as many glazes as the lights instead of one hard jump, and no
         // step moves a colour by more than a glaze's worth
-        let lw = max(luma(wash), 1e-3);
+        let lw = max(flint_luma(wash), 1e-3);
         let sw = sqrt(lw);
         let q = sw * r.layers;
         let ss = (floor(q) + smoothstep(0.2, 0.8, fract(q))) / r.layers;
         let ratio = clamp(ss * ss / lw, 0.8, 1.2);
         base = clamp(base * ratio, vec3<f32>(0.0), vec3<f32>(1.0));
         let o = 1.5 * to_uv;
-        let qx = luma(sample_display(wash_texture, wash_sampler, wuv + vec2<f32>(o.x, 0.0)).rgb)
-            - luma(sample_display(wash_texture, wash_sampler, wuv - vec2<f32>(o.x, 0.0)).rgb);
-        let qy = luma(sample_display(wash_texture, wash_sampler, wuv + vec2<f32>(0.0, o.y)).rgb)
-            - luma(sample_display(wash_texture, wash_sampler, wuv - vec2<f32>(0.0, o.y)).rgb);
+        let qx = flint_luma(sample_display(wash_texture, wash_sampler, wuv + vec2<f32>(o.x, 0.0)).rgb)
+            - flint_luma(sample_display(wash_texture, wash_sampler, wuv - vec2<f32>(o.x, 0.0)).rgb);
+        let qy = flint_luma(sample_display(wash_texture, wash_sampler, wuv + vec2<f32>(0.0, o.y)).rgb)
+            - flint_luma(sample_display(wash_texture, wash_sampler, wuv - vec2<f32>(0.0, o.y)).rgb);
         // q per point (d sqrt(l) = dl / 2 sqrt(l)), so the distance to the
         // step is in points
         let slope = length(vec2<f32>(qx, qy)) * r.layers / (6.0 * sw);
@@ -252,7 +236,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         h = img_paper_height(c, params.paper_stats.x, params.paper_stats.y);
         tint = img_paper_tint(c);
     }
-    let load = 1.0 - luma(base);
+    let load = 1.0 - flint_luma(base);
     var d = r.pigment;
     // Pooling deepens a dark colour fastest under C^d, so it fades with the
     // load: a pale wash gets a crisp rim, a near-black one no inky outline
@@ -270,5 +254,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // The paper: its colour, and its relief catching light
     let relief = 1.0 - r.grain * (0.5 - h) * 0.3;
     let out = clamp(pigment * r.paper * tint * relief, vec3<f32>(0.0), vec3<f32>(1.0));
-    return vec4<f32>(select(out, to_linear(out), params.srgb == 1u), src.a);
+    return vec4<f32>(select(out, flint_to_linear(out), params.srgb == 1u), src.a);
 }

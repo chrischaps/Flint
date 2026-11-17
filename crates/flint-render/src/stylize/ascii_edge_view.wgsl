@@ -73,18 +73,6 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return out;
 }
 
-fn to_display(c: vec3<f32>) -> vec3<f32> {
-    let lo = c * 12.92;
-    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, c <= vec3<f32>(0.0031308));
-}
-
-fn to_linear(c: vec3<f32>) -> vec3<f32> {
-    let lo = c / 12.92;
-    let hi = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, c <= vec3<f32>(0.04045));
-}
-
 // 3x5 digits, bit (row * 3 + column) set where the digit inks
 fn digit_on(d: u32, x: i32, y: i32) -> bool {
     var glyphs = array<u32, 10>(31599u, 29850u, 29671u, 31207u, 18925u, 31183u, 31695u, 9383u, 31727u, 31215u);
@@ -128,8 +116,8 @@ fn glyph_direction(slot: u32) -> vec2<f32> {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let src = textureSample(input_texture, input_sampler, in.uv);
     let rgb = clamp(src.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    let shown = select(rgb, to_display(rgb), u.srgb > 0.5);
-    let luma = dot(shown, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let shown = select(rgb, flint_to_display(rgb), u.srgb > 0.5);
+    let luma = flint_luma(shown);
     var out = vec3<f32>(luma * u.dim);
 
     let p = in.position.xy;
@@ -221,6 +209,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    let encoded = select(out, to_linear(out), u.srgb > 0.5);
+    let encoded = select(out, flint_to_linear(out), u.srgb > 0.5);
     return vec4<f32>(encoded, src.a);
 }

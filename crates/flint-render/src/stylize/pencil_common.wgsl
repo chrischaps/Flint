@@ -66,26 +66,10 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
     return out;
 }
 
-fn to_display(c: vec3<f32>) -> vec3<f32> {
-    let lo = c * 12.92;
-    let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, c <= vec3<f32>(0.0031308));
-}
-
-fn to_linear(c: vec3<f32>) -> vec3<f32> {
-    let lo = c / 12.92;
-    let hi = pow((max(c, vec3<f32>(0.0)) + 0.055) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, c <= vec3<f32>(0.04045));
-}
-
 // The picture's colour as the eye sees it (sRGB targets sample linear)
 fn shown(c: vec3<f32>) -> vec3<f32> {
     let x = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
-    return select(x, to_display(x), u.srgb > 0.5);
-}
-
-fn luma(c: vec3<f32>) -> f32 {
-    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+    return select(x, flint_to_display(x), u.srgb > 0.5);
 }
 
 // --- hashes ----------------------------------------------------------------
@@ -187,11 +171,8 @@ fn depth_size() -> vec2<i32> {
 fn world_at(q: vec2<i32>) -> vec3<f32> {
     let size = depth_size();
     let p = clamp(q, vec2<i32>(0), size - 1);
-    let d = textureLoad(scene_depth, p, 0);
     let uv = (vec2<f32>(p) + 0.5) / vec2<f32>(size);
-    let ndc = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
-    let w = u.inv_view_proj * ndc;
-    return w.xyz / w.w;
+    return flint_unproject(u.inv_view_proj, uv, textureLoad(scene_depth, p, 0));
 }
 
 // The world position under an exact uv (not a texel centre), from the
@@ -200,9 +181,7 @@ fn world_uv(uv: vec2<f32>) -> vec4<f32> {
     let size = depth_size();
     let q = clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - 1);
     let d = textureLoad(scene_depth, q, 0);
-    let ndc = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
-    let w = u.inv_view_proj * ndc;
-    return vec4<f32>(w.xyz / w.w, select(1.0, 0.0, d >= 1.0));
+    return vec4<f32>(flint_unproject(u.inv_view_proj, uv, d), select(1.0, 0.0, d >= 1.0));
 }
 
 // A unit normal folded into two numbers (octahedral), and back

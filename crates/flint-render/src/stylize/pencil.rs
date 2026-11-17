@@ -477,10 +477,12 @@ pub(super) fn image_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 }
 
 const PREP_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "pencil_common.wgsl",
     "pencil_prep.wgsl"
 );
 const DRAW_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "pencil_fade.wgsl",
     "pencil_common.wgsl",
     "style_image.wgsl",
@@ -491,12 +493,14 @@ const DRAW_SHADER: kit::Wgsl = kit::wgsl!(
 /// path in the same function moved pencil-full's pixels by a level, the
 /// driver reassociating the strokes' products round it).
 const DRAW_ON_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "pencil_draw_on.wgsl",
     "pencil_common.wgsl",
     "style_image.wgsl",
     "pencil.wgsl"
 );
 const FLOW_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "pencil_common.wgsl",
     "pencil_flow.wgsl"
 );

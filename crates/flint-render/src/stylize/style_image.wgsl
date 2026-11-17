@@ -38,13 +38,13 @@ fn img_read(t: texture_2d<f32>, p: vec2<f32>, lod: f32, wrap: bool, lo0: vec2<f3
 // against the image's own mean and spread: any scan comes out at the same
 // strength, and the style's grain alone says how much of it shows.
 fn img_paper_height(c: vec4<f32>, mean: f32, spread: f32) -> f32 {
-    let l = dot(c.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let l = flint_luma(c.rgb);
     return clamp(0.5 + 0.2 * (l - mean) / max(spread, 1e-3), 0.0, 1.0);
 }
 
 // A paper's hue, at the brightness of its mean: the scan's tint without
 // its shading (the height carries that).
 fn img_paper_tint(c: vec4<f32>) -> vec3<f32> {
-    let l = max(dot(c.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.02);
+    let l = max(flint_luma(c.rgb), 0.02);
     return clamp(c.rgb / l, vec3<f32>(0.0), vec3<f32>(1.5));
 }

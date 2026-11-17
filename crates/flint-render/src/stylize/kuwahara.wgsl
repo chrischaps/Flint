@@ -47,10 +47,6 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 const PI: f32 = 3.14159265359;
 const NUM_SECTORS: u32 = 8u;
 
-fn luminance(c: vec3<f32>) -> f32 {
-    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
-}
-
 // Noise features per screen height, for the paint's boil (#214). The same at any
 // resolution, and about the size of a brush mark at the default radius.
 const BOIL_CELLS: f32 = 18.0;
