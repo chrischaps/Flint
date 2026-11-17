@@ -284,8 +284,11 @@ fn a_sequence_case_fails_when_the_history_stops_holding() {
 /// now their pipelines, but no case sees what an earlier one left. Here the
 /// first case loads a user style from its own folder; the second names the
 /// same style from a folder that has none, and must draw as it would alone,
-/// without it (#426), not with the style the first case registered. The
-/// second case's reference is its scene with the style switched off.
+/// without it (#426), not with the style the first case registered. Its
+/// golden is blessed from a run of that case alone, then both run in one
+/// process and it must equal that byte for byte. (Its reference was once
+/// its scene under `--style template:off`, which a scene that can't see
+/// the style now refuses, since each scene has its own registry, #742.)
 #[test]
 fn a_case_cannot_see_a_user_style_an_earlier_case_loaded() {
     let root = std::env::temp_dir().join(format!("flint-911-isolation-{}", std::process::id()));
@@ -306,27 +309,36 @@ fn a_case_cannot_see_a_user_style_an_earlier_case_loaded() {
         "[suite]\nname = \"isolation\"\nroot = \".\"\nwidth = 64\nheight = 48\n\n\
          [[case]]\nname = \"sees-its-style\"\nscene = \"a/seen.scene.toml\"\nmatches = []\n\n\
          [[case]]\nname = \"cannot-see-the-last-cases-style\"\n\
-         scene = \"b/unseen.scene.toml\"\nmatches = [\"--style\", \"template:off\"]\n",
+         scene = \"b/unseen.scene.toml\"\n",
     )
     .unwrap();
-    let run = Command::new(FLINT)
-        .arg("goldens")
-        .arg(root.join("isolation.goldens.toml"))
-        .arg("--out-dir")
-        .arg(root.join("out"))
-        .output()
-        .expect("run flint");
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&run.stdout),
-        String::from_utf8_lossy(&run.stderr)
-    );
+    let goldens = |extra: &[&str]| {
+        let run = Command::new(FLINT)
+            .arg("goldens")
+            .arg(root.join("isolation.goldens.toml"))
+            .arg("--out-dir")
+            .arg(root.join("out"))
+            .args(extra)
+            .output()
+            .expect("run flint");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        (run.status.success(), text)
+    };
+    // The second case alone, in a process that never saw the style
+    let (blessed, text) = goldens(&["--case", "cannot-see-the-last-cases-style", "--bless"]);
     if !text.contains("no GPU adapter") {
-        assert!(run.status.success(), "{text}");
+        assert!(blessed, "{text}");
+        let (passed, text) = goldens(&[]);
+        assert!(passed, "{text}");
         assert!(
             text.contains("PASS  cannot-see-the-last-cases-style"),
             "{text}"
         );
+        assert!(text.contains("drift: none"), "{text}");
     }
     let _ = std::fs::remove_dir_all(&root);
 }

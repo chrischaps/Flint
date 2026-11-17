@@ -231,7 +231,7 @@ The filter's textures and pipelines are allocated the first time it is enabled, 
 
 The contour style draws ink lines in screen space. It finds silhouettes as breaks in depth, and the edges between fills as breaks in luminance. It's one full-screen draw, so its cost doesn't grow with the scene. It's an HDR-stage [style](stylize-passes.md) registered after every other built-in, so it runs after the Kuwahara filter: paint sits under the ink and never smears it. A table's `order` can move it, and a [user style](stylize-passes.md#user-authored-styles) at the HDR stage comes after it unless its `order` says otherwise.
 
-Depth is read as the second difference of 1 / distance, which is zero on any flat surface however steep the view, so a floor seen at a grazing angle draws no lines.
+Its silhouettes are the [shared edges](stylize-passes.md#shared-edges)' depth steps (#743; until then its own second difference of 1 / distance), which leave out a plane however steep the view, so a floor seen at a grazing angle draws no lines. `width` is how far it looks for the strongest step, and `threshold` is against the step's share of the distance. With contour the only style reading them, the shared pass draws the steps alone.
 
 ```toml
 [post_process.styles.contour]

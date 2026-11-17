@@ -21,7 +21,7 @@
 use super::render::{RenderArgs, RenderHost};
 use anyhow::{Context, Result};
 use flint_core::project::AssetScope;
-use flint_render::stylize::custom;
+use flint_render::stylize::{custom, StyleRegistry};
 use flint_viewer::watch::StyleSources;
 use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, Debouncer};
@@ -42,7 +42,7 @@ pub fn run(args: RenderArgs) -> Result<()> {
     loop {
         watch.begin(cause.take(), false);
         let result = super::render::render(&args, &mut host, Some(&mut watch));
-        watch.finish(&result);
+        watch.finish(&result, host.style_errors());
         if result.is_err() {
             // A GPU that may be in no state to trust is made again
             host.drop_device();
@@ -192,7 +192,7 @@ impl Watch {
 
     /// The render's line, once: its number, time and cause, then every
     /// user style's error as it stands.
-    fn finish(&mut self, result: &Result<()>) {
+    fn finish(&mut self, result: &Result<()>, style_errors: Vec<(String, String)>) {
         let Some(pending) = self.pending.take() else {
             return;
         };
@@ -217,7 +217,7 @@ impl Watch {
                 self.renders
             ),
         }
-        let mut errors = custom::errors();
+        let mut errors = style_errors;
         errors.extend(flint_render::stylize::dev_shader::errors());
         for (style, message) in errors {
             println!("  style '{style}': {}", message.replace('\n', "\n    "));
@@ -231,9 +231,10 @@ impl Watch {
     pub(super) fn redraws(
         &mut self,
         assets: &AssetScope,
+        styles: &mut StyleRegistry,
         mut draw: impl FnMut() -> Result<()>,
     ) -> Result<()> {
-        self.finish(&Ok(()));
+        self.finish(&Ok(()), styles.errors());
         loop {
             let paths = match self.next()? {
                 Change::Scene(paths) => {
@@ -245,7 +246,7 @@ impl Watch {
             self.begin(Some(paths.clone()), true);
             // A description read again may bring new parameters, which the
             // scene's tables were checked against: those load it again
-            let reload = custom::reload_changed_for(assets);
+            let reload = styles.reload_changed_for(assets);
             for message in &reload.messages {
                 eprintln!("warning: {message}");
             }
@@ -256,7 +257,7 @@ impl Watch {
             }
             custom::poll_files_now();
             let result = draw();
-            self.finish(&result);
+            self.finish(&result, styles.errors());
         }
     }
 

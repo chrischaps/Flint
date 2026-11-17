@@ -293,6 +293,101 @@ fn a_style_sweep_reports_and_animates_as_a_wooze_one_does() {
     assert_eq!(frames[0].buffer().width(), sheet_width(2, 64));
 }
 
+/// Where `cell` sits in `sheet`, pixel for pixel: its top-left corner, or
+/// `None` when no region of the sheet is that image.
+fn find_cell(sheet: &image::RgbImage, cell: &image::RgbImage) -> Option<(u32, u32)> {
+    let (w, h) = cell.dimensions();
+    (0..=sheet.height().saturating_sub(h))
+        .flat_map(|y| (0..=sheet.width().saturating_sub(w)).map(move |x| (x, y)))
+        .find(|&(x, y)| {
+            (0..h).all(|cy| {
+                (0..w).all(|cx| sheet.get_pixel(x + cx, y + cy) == cell.get_pixel(cx, cy))
+            })
+        })
+}
+
+/// #531's done-when: one command draws a labelled spread comparison whose
+/// columns are, pixel for pixel, renders of the scene with those `[living]
+/// echoes`. The scene copies sit beside the original, so they find its spec.
+#[test]
+fn an_echoes_sweep_draws_what_scenes_with_those_echoes_draw() {
+    let dir = project("echoes_sweep");
+    let spreads = ["0", "0.9", "1.8"];
+    let o = render(
+        &dir,
+        "sweep.png",
+        &[
+            "--time",
+            "1.3",
+            "--sweep",
+            "living.echoes.spread=0,0.9,1.8",
+            "--report",
+            "json",
+        ],
+    );
+    if no_gpu(&o) {
+        return;
+    }
+    ok(&o);
+    let report: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(report["sweep"], "living.echoes.spread");
+    let sheet = image::open(dir.join("sweep.png")).unwrap().into_rgb8();
+    assert_eq!(sheet.width(), sheet_width(3, 64));
+    assert!(
+        !stderr(&o).contains("pixel-identical"),
+        "the spread showed nothing: {}",
+        stderr(&o)
+    );
+
+    let mut corners = Vec::new();
+    for (i, spread) in spreads.iter().enumerate() {
+        // The scene with the column's spread in its own [living] table
+        let scene = SCENE.replace(
+            "[camera]",
+            &format!("[living]\nechoes = {{ spread = {spread} }}\n\n[camera]"),
+        );
+        let name = format!("spread_{i}.scene.toml");
+        std::fs::write(dir.join(&name), scene).unwrap();
+        let alone = std::process::Command::new(FLINT)
+            .arg("render")
+            .arg(dir.join(&name))
+            .arg("--schemas")
+            .arg(schemas())
+            .args(["--width", "64", "--height", "48", "--time", "1.3", "-o"])
+            .arg(dir.join(format!("spread_{i}.png")))
+            .output()
+            .expect("run flint");
+        ok(&alone);
+        let cell = image::open(dir.join(format!("spread_{i}.png")))
+            .unwrap()
+            .into_rgb8();
+        let at = find_cell(&sheet, &cell)
+            .unwrap_or_else(|| panic!("spread {spread}: no cell of the sheet is its render"));
+        corners.push(at);
+    }
+    // Each in its own column, left to right, on one row
+    assert!(
+        corners
+            .windows(2)
+            .all(|p| p[0].0 < p[1].0 && p[0].1 == p[1].1),
+        "{corners:?}"
+    );
+    let first = image::open(dir.join("spread_0.png")).unwrap();
+    let last = image::open(dir.join("spread_2.png")).unwrap();
+    assert_ne!(first, last, "spread 0 and 1.8 drew the same");
+}
+
+/// An echoes sweep in a scene with nothing to echo is refused before a GPU wakes.
+#[test]
+fn an_echoes_sweep_needs_living_props() {
+    let dir = project("echoes_none");
+    let bare = "[scene]\nname = \"Bare\"\n[entities.sun.light]\ntype = \"directional\"\n";
+    std::fs::write(dir.join("grove.scene.toml"), bare).unwrap();
+    let o = render(&dir, "a.png", &["--sweep", "living.echoes.count=0,4"]);
+    assert!(!o.status.success());
+    assert!(stderr(&o).contains("no living props"), "{}", stderr(&o));
+}
+
 /// style_sheet's width for `columns` cells `cell` wide: each cell framed by a
 /// pixel a side, 16 between them, 24 at each edge.
 fn sheet_width(columns: u32, cell: u32) -> u32 {

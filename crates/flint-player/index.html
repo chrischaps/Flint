@@ -201,6 +201,8 @@
         text-transform: uppercase; color: #0d1229; background: rgba(255, 250, 242, 0.88);
       }
       #perf button[data-done] { background: rgba(176, 236, 196, 0.92); }
+      /* Save trace (#1097) only where the build records scopes */
+      #perf:not([data-trace]) #perf-trace { display: none; }
       html[data-door] #perf { display: none; }
 
       /* Embed mode (?embed=1, #103): an iframe gets the world and its
@@ -404,6 +406,7 @@
     <aside id="perf" hidden>
       <pre id="perf-text"></pre>
       <button id="perf-copy" type="button">Copy line</button>
+      <button id="perf-trace" type="button">Save trace</button>
     </aside>
     <script>
       // The perf readout's Copy (#120): the player keeps the line in
@@ -423,6 +426,19 @@
         button.dataset.done = "";
         setTimeout(() => {
           button.textContent = "Copy line";
+          delete button.dataset.done;
+        }, 1600);
+      });
+
+      // Save trace (#1097): the player sees the mark at its next frame and
+      // offers the scope recorder's last seconds as a download.
+      document.getElementById("perf-trace").addEventListener("click", (e) => {
+        const button = e.currentTarget;
+        document.getElementById("perf").setAttribute("data-trace-wanted", "");
+        button.textContent = "Saving";
+        button.dataset.done = "";
+        setTimeout(() => {
+          button.textContent = "Save trace";
           delete button.dataset.done;
         }, 1600);
       });

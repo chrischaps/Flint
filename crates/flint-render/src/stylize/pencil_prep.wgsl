@@ -20,7 +20,7 @@
 
 fn luma_at(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(u.size);
-    return luma(shown(textureLoad(input_texture, clamp(p, vec2<i32>(0), size - 1), 0).rgb));
+    return flint_luma(shown(textureLoad(input_texture, clamp(p, vec2<i32>(0), size - 1), 0).rgb));
 }
 
 // The light at a pixel (#869): the picture's luminance over its paint's,
@@ -37,7 +37,7 @@ fn light_luma(uv: vec2<f32>, picture: f32) -> f32 {
     if a.a <= 0.0 {
         return picture;
     }
-    let paint = luma(to_display(a.rgb / a.a));
+    let paint = flint_luma(flint_to_display(a.rgb / a.a));
     let lit = picture / max(paint, 1e-3);
     return mix(picture, lit, a.a * smoothstep(0.02, 0.08, paint));
 }
@@ -95,39 +95,29 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         tone = 1.0;
     }
 
-    // World positions round the pixel, in depth texels
+    // World positions round the pixel, in depth texels: the stroke flow,
+    // the world grid's normal and `grazing` read them
     let c = world_at(q);
     let l1 = world_at(q + vec2<i32>(-1, 0));
     let r1 = world_at(q + vec2<i32>(1, 0));
     let u1 = world_at(q + vec2<i32>(0, -1));
     let d1 = world_at(q + vec2<i32>(0, 1));
-    let l2 = world_at(q + vec2<i32>(-2, 0));
-    let r2 = world_at(q + vec2<i32>(2, 0));
-    let u2 = world_at(q + vec2<i32>(0, -2));
-    let d2 = world_at(q + vec2<i32>(0, 2));
-    let lu = world_at(q + vec2<i32>(-1, -1));
-    let ru = world_at(q + vec2<i32>(1, -1));
-    let ld = world_at(q + vec2<i32>(-1, 1));
-    let rd = world_at(q + vec2<i32>(1, 1));
-
     let cam = u.camera_pos;
-    let dc = max(distance(c, cam), 1e-4);
-    let dl = distance(l1, cam);
-    let dr = distance(r1, cam);
-    let du = distance(u1, cam);
-    let dd = distance(d1, cam);
 
-    // Depth: a neighbour further away by a share of this pixel's distance,
-    // so the line sits on the near side of a step and far edges count as
-    // much as near ones
-    let gap = max(max(dl, dr), max(du, dd)) - dc;
-    var depth_edge = smoothstep(0.02, 0.06, gap / dc * row.c.x);
+    // The contour's geometry is the shared edges' (#743): the edge pass
+    // finds depth steps on their near side (not where a plane is only seen
+    // edge-on) and creases, once a frame for every style; here they are
+    // read back as a step (a share of the pixel's distance) and a turn
+    // (1 - cos of the fold), the measures `depth` and `crease` scale
+    let e = textureLoad(edge_tex, clamp(q, vec2<i32>(0), depth_size() - 1), 0);
+    var depth_edge = smoothstep(0.02, 0.06, flint_edge_step(e, u.edge.x) * row.c.x);
 
     // Grazing planes (#404): a floor seen edge-on steps in distance from
     // row to row as much as a silhouette does, and drew a black band along
     // the horizon. 1/z is affine across a plane, so its second difference
     // is 0 on one and large where the neighbours lie on another surface;
-    // `grazing` keeps a depth step only where that says it is one
+    // `grazing` keeps a depth step only where that says it is one, by its
+    // own measure, on top of the edge pass's
     let grazing = row.i.x;
     if grazing > 0.0 {
         let iz = 1.0 / max(dot(c - cam, u.forward), 1e-4);
@@ -140,19 +130,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         depth_edge *= mix(1.0, stepped, grazing);
     }
 
-    // Creases: the normal turns between this pixel and a neighbour. Within
-    // two texels of the frame's edge the neighbours' normals are built from
-    // clamped positions, and drew a line round the whole frame in every
-    // pencil look; no crease is drawn there (#404)
+    // Creases: where the surface folds. The edge pass draws none within two
+    // texels of the frame's edge (#404's line round the frame)
     let nc = normal_from(c, l1, r1, u1, d1);
-    let nl = normal_from(l1, l2, c, lu, ld);
-    let nr = normal_from(r1, c, r2, ru, rd);
-    let nu = normal_from(u1, lu, ru, u2, c);
-    let nd = normal_from(d1, ld, rd, c, d2);
-    let turn = 1.0 - min(min(dot(nc, nl), dot(nc, nr)), min(dot(nc, nu), dot(nc, nd)));
-    let last = depth_size() - 1;
-    let near_border = q.x < 2 || q.y < 2 || q.x > last.x - 2 || q.y > last.y - 2;
-    let crease_edge = select(smoothstep(0.08, 0.25, turn * row.c.y), 0.0, near_border);
+    let crease_edge = smoothstep(0.08, 0.25, flint_edge_turn(e, u.edge.y) * row.c.y);
 
     // A styled entity's outline: the mask's id changes, drawn on the styled
     // side (the whole frame's settings draw every side)

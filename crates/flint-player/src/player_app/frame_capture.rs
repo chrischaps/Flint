@@ -176,6 +176,11 @@ pub(crate) struct FrameCaptures {
     said: Vec<String>,
     /// The armed frame turned the GPU timer on.
     armed_timing: bool,
+    /// The player records scopes (#1097): a capture handed to its writer
+    /// names `trace.json` in its manifest, and its folder waits in
+    /// `handed` for the player to write the trace into.
+    pub(crate) with_trace: bool,
+    pub(crate) handed: Vec<PathBuf>,
     /// The armed frame's bone palettes and renderer state, recorded last
     /// in its encoder.
     #[cfg(not(target_arch = "wasm32"))]
@@ -523,6 +528,10 @@ impl FrameCaptures {
             job.description.frame.index,
             scripts_timed,
         ));
+        if self.with_trace {
+            job.description.trace = Some("trace.json".into());
+            self.handed.push(job.dir.clone());
+        }
         let job = flight.job;
         self.writers.push(std::thread::spawn(move || write(job)));
         // The hand-off is this frame's work too
@@ -832,6 +841,7 @@ impl super::PlayerApp {
                 timed,
             );
         }
+        self.traces_into_captures();
         for line in self.frame_captures.take_said() {
             tracing::info!(target: "player", "[capture] {line}");
         }
@@ -955,7 +965,7 @@ pub fn git_state(root: &Path) -> (Option<String>, Option<bool>) {
 
 /// Now, UTC, as RFC 3339 to the second.
 #[cfg(not(target_arch = "wasm32"))]
-fn utc_now() -> String {
+pub(crate) fn utc_now() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());

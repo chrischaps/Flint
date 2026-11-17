@@ -206,7 +206,13 @@ fn a_bound_scene_draws_its_terrain_masked_and_the_next_forgets_it() {
     assert_eq!(terrain.heightmap_size, (257, 257));
     let plain = gpu.frame(&mut renderer, &world, &FrameInputs::default());
 
-    set_entity_style(&mut world, ground, "ascii").unwrap();
+    set_entity_style(
+        &mut world,
+        &flint_render::stylize::StyleRegistry::new(),
+        ground,
+        "ascii",
+    )
+    .unwrap();
     let styled = gpu.frame(&mut renderer, &world, &FrameInputs::default());
     // The bottom rows are all ground: glyphs there, since the binding named
     // the terrain's entity for the mask

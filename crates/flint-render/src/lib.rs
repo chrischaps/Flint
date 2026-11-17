@@ -80,7 +80,9 @@ pub use glyph_atlas::{
 };
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
 pub use gpu_select::{list_adapters, no_adapter_hint, set_gpu_override};
-pub use gpu_timer::{GpuPassTime, GpuScope, GpuSpread, GpuTimer, GpuTimings, PassSpread};
+pub use gpu_timer::{
+    GpuPassTime, GpuScope, GpuSpread, GpuTimer, GpuTimings, PassSpread, TracedGpuFrame, TracedPass,
+};
 pub use gpu_wait::{gpu_wait_timeout, wait_for_gpu};
 pub use grass_pipeline::{GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu};
 pub use ground_fog::GroundFog;
@@ -170,9 +172,17 @@ mod tests {
     /// Both of the shading boil's passes, on the validator the player's GPU runs.
     #[test]
     fn shading_boil_shaders_validate() {
+        // With the helpers they're built with (#743)
         for source in [
-            include_str!("stylize/contour.wgsl"),
-            include_str!("stylize/kuwahara.wgsl"),
+            concat!(
+                include_str!("stylize/prelude_core.wgsl"),
+                include_str!("stylize/edges_read.wgsl"),
+                include_str!("stylize/contour.wgsl")
+            ),
+            concat!(
+                include_str!("stylize/prelude_core.wgsl"),
+                include_str!("stylize/kuwahara.wgsl")
+            ),
         ] {
             let module = naga::front::wgsl::parse_str(source).expect("failed to parse");
             naga::valid::Validator::new(

@@ -196,6 +196,10 @@ pub struct LivingDef {
     /// the body fades where it turns away from the eye. 0 is a hard edge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub softness: Option<f32>,
+    /// How fast every prop's boil ticks (#529), times each spec's `jitter.step`
+    /// pace, 0 (held) to 8: 2 is twice as fast, 0.5 half.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jitter_rate: Option<f32>,
     /// Faint time-offset copies of every prop. Fields left unset are each spec's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub echoes: Option<LivingEchoesDef>,
@@ -234,6 +238,9 @@ pub struct LivingSpeciesDef {
     /// How soft its silhouette is, 0 to 1 (#582).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub softness: Option<f32>,
+    /// How fast its boil ticks, times its spec's pace (#529).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jitter_rate: Option<f32>,
     /// Its echoes, a field at a time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub echoes: Option<LivingEchoesDef>,

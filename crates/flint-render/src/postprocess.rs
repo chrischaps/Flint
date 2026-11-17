@@ -180,7 +180,8 @@ impl PostProcessConfig {
     /// The shading boil's two amounts (#214): Kuwahara's paint and the
     /// contour's ink, each its style's `boil` parameter (#599).
     pub fn boil_amounts(&self) -> (f32, f32) {
-        let boil = |style: &str| crate::stylize::find(style).map_or(0.0, |d| d.param(self, "boil"));
+        let boil =
+            |style: &str| crate::stylize::builtin(style).map_or(0.0, |d| d.param(self, "boil"));
         (boil("kuwahara"), boil("contour"))
     }
 
@@ -204,13 +205,19 @@ impl PostProcessConfig {
 /// (#741), so a new key can't be forgotten here.
 /// Lives here (not in the player) so every front end that renders a scene —
 /// player, CLI render, viewer — applies the authored `[post_process]` block
-/// through one function.
-pub fn post_process_config_from_def(pp_def: &flint_scene::PostProcessDef) -> PostProcessConfig {
+/// through one function. The style tables are read against `styles`, the
+/// registry the scene is drawn with (#742): a table naming a style it
+/// doesn't hold is dropped with a warning.
+pub fn post_process_config_from_def(
+    pp_def: &flint_scene::PostProcessDef,
+    styles: &crate::stylize::StyleRegistry,
+) -> PostProcessConfig {
     let mut config = PostProcessConfig::default();
     config.copy_params(pp_def);
     // The old `kuwahara_*` (#298) and `contour_*` (#599) keys arrive folded
     // into their styles' tables
-    let (styles, warnings) = crate::stylize::StyleSettings::from_tables(&pp_def.style_tables());
+    let (styles, warnings) =
+        crate::stylize::StyleSettings::from_tables(&pp_def.style_tables(), styles);
     for warning in warnings {
         tracing::warn!("{warning}");
     }
@@ -2904,7 +2911,7 @@ mod tests {
             };
             def.param_mut(p.key).unwrap().set(&changed).unwrap();
         }
-        config = post_process_config_from_def(&def);
+        config = post_process_config_from_def(&def, &crate::stylize::StyleRegistry::new());
         for p in post_effects::params() {
             assert_eq!(config.param(p.key), def.param(p.key), "{} copied", p.key);
             assert_ne!(config.param(p.key), Some(p.default), "{} changed", p.key);
@@ -2918,10 +2925,13 @@ mod tests {
             toml::from_str("kuwahara_enabled = true\nkuwahara_radius = 4").unwrap();
         let table: flint_scene::PostProcessDef =
             toml::from_str("[styles.kuwahara]\nradius = 4").unwrap();
-        let old = post_process_config_from_def(&old);
+        let old = post_process_config_from_def(&old, &crate::stylize::StyleRegistry::new());
         assert!(old.styles.is_enabled("kuwahara"));
         assert_eq!(old.styles.param("kuwahara", "radius"), Some(4.0));
-        assert_eq!(old.styles, post_process_config_from_def(&table).styles);
+        assert_eq!(
+            old.styles,
+            post_process_config_from_def(&table, &crate::stylize::StyleRegistry::new()).styles
+        );
     }
 
     /// The Rust uniform struct must byte-match the WGSL PostProcessUniforms

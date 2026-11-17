@@ -21,7 +21,7 @@
 use super::render::RenderArgs;
 use crate::commands::common_args::{parse_vec3, parse_vec4};
 use anyhow::Result;
-use flint_render::stylize::StyleSpec;
+use flint_render::stylize::{StyleRegistry, StyleSpec};
 use flint_render::PostProcessConfig;
 use flint_schema::post_effects::{self, PostParam};
 
@@ -68,9 +68,9 @@ impl Set {
 
     /// Check a style key against the registry, user styles included: call
     /// it once the scene's folder has registered them.
-    pub fn check(&self) -> Result<(), String> {
+    pub fn check(&self, styles: &StyleRegistry) -> Result<(), String> {
         match self.style_word() {
-            Some(word) => StyleSpec::parse(&word)
+            Some(word) => StyleSpec::parse(&word, styles)
                 .map(drop)
                 .map_err(|e| format!("{}: {e}", self.at())),
             None => Ok(()),
@@ -79,7 +79,7 @@ impl Set {
 
     /// Write the value into `config`. A post value past what its effect is
     /// tuned for still draws, and says so, as the scene's would.
-    pub fn apply(&self, config: &mut PostProcessConfig) -> Result<()> {
+    pub fn apply(&self, config: &mut PostProcessConfig, styles: &StyleRegistry) -> Result<()> {
         match &self.key {
             SetKey::Post(key) => {
                 let value = super::sweep::parse_value(&self.value);
@@ -94,9 +94,9 @@ impl Set {
             }
             SetKey::Style { .. } => {
                 let word = self.style_word().expect("a style key");
-                StyleSpec::parse(&word)
+                StyleSpec::parse(&word, styles)
                     .map_err(|e| anyhow::anyhow!("{}: {e}", self.at()))?
-                    .apply_settings(config);
+                    .apply_settings(config, styles);
             }
         }
         Ok(())
@@ -365,10 +365,12 @@ impl Word {
         }
     }
 
-    fn apply(&self, config: &mut PostProcessConfig) -> Result<()> {
+    fn apply(&self, config: &mut PostProcessConfig, styles: &StyleRegistry) -> Result<()> {
         match self {
-            Word::Set(text) => parse_set(text).map_err(anyhow::Error::msg)?.apply(config),
-            Word::Style(word) => flint_render::stylize::apply_style_spec(config, word)
+            Word::Set(text) => parse_set(text)
+                .map_err(anyhow::Error::msg)?
+                .apply(config, styles),
+            Word::Style(word) => flint_render::stylize::apply_style_spec(config, word, styles)
                 .map_err(|e| anyhow::anyhow!("--style {word}: {e}")),
         }
     }
@@ -719,9 +721,9 @@ pub fn warn_legacy(args: &RenderArgs) {
 /// Check every `--set` style key (after the scene's user styles are
 /// registered), and refuse a `--set` of a key a `--sweep` turns: one of the
 /// two would be lost.
-pub fn check(args: &RenderArgs) -> Result<()> {
+pub fn check(args: &RenderArgs, styles: &StyleRegistry) -> Result<()> {
     for s in &args.set {
-        s.check().map_err(anyhow::Error::msg)?;
+        s.check(styles).map_err(anyhow::Error::msg)?;
         if let Some(sweep) = args.sweeps.sweep.iter().find(|w| w.name() == s.name()) {
             anyhow::bail!(
                 "--set {} and --sweep {}: the sweep turns that key, so drop the --set",
@@ -758,19 +760,23 @@ pub fn legacy_render_mode(args: &RenderArgs) -> Option<flint_render::render_mode
 /// The command line's post words over `config`: the old flags (and the
 /// render mode between them), then `--set`. The stage path lays them again
 /// over a sweep column's preset, whose `[boil]` they win over.
-pub fn apply_flags(args: &RenderArgs, config: &mut PostProcessConfig) -> Result<()> {
+pub fn apply_flags(
+    args: &RenderArgs,
+    config: &mut PostProcessConfig,
+    styles: &StyleRegistry,
+) -> Result<()> {
     let (early, late) = legacy_flags(&args.legacy);
     for word in early.iter().flat_map(|f| &f.words) {
-        word.apply(config)?;
+        word.apply(config, styles)?;
     }
     if let Some(mode) = legacy_render_mode(args) {
         mode.apply(config);
     }
     for word in late.iter().flat_map(|f| &f.words) {
-        word.apply(config)?;
+        word.apply(config, styles)?;
     }
     for s in &args.set {
-        s.apply(config)?;
+        s.apply(config, styles)?;
     }
     Ok(())
 }
@@ -780,17 +786,18 @@ pub fn apply_flags(args: &RenderArgs, config: &mut PostProcessConfig) -> Result<
 pub fn post_process_config(
     args: &RenderArgs,
     def: Option<&flint_scene::PostProcessDef>,
+    styles: &StyleRegistry,
 ) -> Result<PostProcessConfig> {
     let mut config = match def {
-        Some(def) => flint_player::post_process_config_from_def(def),
+        Some(def) => flint_player::post_process_config_from_def(def, styles),
         None => PostProcessConfig::default(),
     };
     if args.no_postprocess {
         config.enabled = false;
     }
-    apply_flags(args, &mut config)?;
+    apply_flags(args, &mut config, styles)?;
     // `--style name[:k=v,...]` (#271) last: an explicit word wins
-    args.style.apply(&mut config);
+    args.style.apply(&mut config, styles);
     Ok(config)
 }
 
@@ -816,7 +823,15 @@ mod tests {
     }
 
     fn config(line: &str) -> String {
-        format!("{:?}", post_process_config(&args(line), None).unwrap())
+        format!(
+            "{:?}",
+            post_process_config(
+                &args(line),
+                None,
+                &flint_render::stylize::StyleRegistry::new()
+            )
+            .unwrap()
+        )
     }
 
     /// Every old flag beside its new spelling (#708's done-when): each pair
@@ -996,7 +1011,14 @@ mod tests {
     /// palette's, --style over all of them.
     #[test]
     fn the_old_flags_keep_their_order() {
-        let c = |line| post_process_config(&args(line), None).unwrap();
+        let c = |line| {
+            post_process_config(
+                &args(line),
+                None,
+                &flint_render::stylize::StyleRegistry::new(),
+            )
+            .unwrap()
+        };
         assert_eq!(c("--tear 0.3 --render-mode 1 --mode-mix 0.5").tear, 0.5);
         assert_eq!(
             config("--ascii-edges 1 --ascii-no-edges"),
@@ -1047,16 +1069,36 @@ mod tests {
         assert!(e.contains("--style ascii"), "{e}");
         // A style key waits for the registry: a user style may be named
         let s = parse_set("my_style.glow=2").unwrap();
-        assert!(s.check().is_err(), "an unknown style fails its check");
-        assert!(parse_set("ascii.cel=3").unwrap().check().is_err());
-        assert!(parse_set("ascii.cell=12").unwrap().check().is_ok());
+        assert!(
+            s.check(&flint_render::stylize::StyleRegistry::new())
+                .is_err(),
+            "an unknown style fails its check"
+        );
+        assert!(parse_set("ascii.cel=3")
+            .unwrap()
+            .check(&flint_render::stylize::StyleRegistry::new())
+            .is_err());
+        assert!(parse_set("ascii.cell=12")
+            .unwrap()
+            .check(&flint_render::stylize::StyleRegistry::new())
+            .is_ok());
     }
 
     #[test]
     fn a_style_key_tunes_without_turning_the_style_on() {
-        let c = post_process_config(&args("--set ascii.cell=12"), None).unwrap();
+        let c = post_process_config(
+            &args("--set ascii.cell=12"),
+            None,
+            &flint_render::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert!(!c.styles.is_enabled("ascii"));
-        let on = post_process_config(&args("--set ascii.cell=12 --style ascii"), None).unwrap();
+        let on = post_process_config(
+            &args("--set ascii.cell=12 --style ascii"),
+            None,
+            &flint_render::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert!(on.styles.is_enabled("ascii"));
         assert_eq!(
             format!("{on:?}"),
@@ -1085,8 +1127,16 @@ mod tests {
 
     #[test]
     fn a_set_of_a_swept_key_is_refused() {
-        let e = check(&args("--set post.exposure=2 --sweep post.exposure=1,2")).unwrap_err();
+        let e = check(
+            &args("--set post.exposure=2 --sweep post.exposure=1,2"),
+            &flint_render::stylize::StyleRegistry::new(),
+        )
+        .unwrap_err();
         assert!(e.to_string().contains("drop the --set"), "{e}");
-        assert!(check(&args("--set post.exposure=2 --sweep post.desaturate=0,1")).is_ok());
+        assert!(check(
+            &args("--set post.exposure=2 --sweep post.desaturate=0,1"),
+            &flint_render::stylize::StyleRegistry::new()
+        )
+        .is_ok());
     }
 }

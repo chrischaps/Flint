@@ -762,7 +762,7 @@ pub fn fresh_only(renderer: &crate::SceneRenderer, world: &FlintWorld) -> Vec<St
         }
         if name == "ascii" {
             out.push("ascii: temporal history (#1136)".to_string());
-        } else if crate::stylize::custom::is_user_style(name) {
+        } else if renderer.styles().is_user_style(name) {
             out.push(format!(
                 "{name}: a user style's history targets, if it keeps any"
             ));

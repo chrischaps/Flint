@@ -340,6 +340,24 @@ fn every_command_answers_with_one_json_document() {
         .unwrap()
         .contains("no replay inputs"));
 
+    // flint profile: the hand-made traces (#1098), read anywhere
+    let stall = r("tests/fixtures/traces/stall.trace.json");
+    let calm = r("tests/fixtures/traces/calm.trace.json");
+    run("profile top");
+    assert_eq!(ok(&dir, &["profile", "top", &stall])["range"]["frames"], 16);
+    run("profile frame");
+    assert_eq!(
+        ok(&dir, &["profile", "frame", &stall, "hitch"])["frame"],
+        113
+    );
+    run("profile explain");
+    assert_eq!(
+        ok(&dir, &["profile", "explain", &stall])["culprit"]["scope"],
+        "stall.rhai:on_update"
+    );
+    run("profile diff");
+    assert!(ok(&dir, &["profile", "diff", &calm, &stall])["scopes"].is_array());
+
     run("style new");
     assert_eq!(
         ok(&dir, &["style", "new", "glow", "--dir", "styles"])["name"],

@@ -348,6 +348,16 @@ flint render examples/living_props.scene.toml --time 3.5 --sweep wooze.glide=0,0
 
 It takes `wooze.amplitude`, `wooze.step`, `wooze.glide`, `wooze.jitter` and `wooze.preset` (`wooze.preset=boil,morph,calm`). Each column is a whole run of its own from time 0, since a prop's state at a moment depends on what the knob was all the way there. `--width` and `--height` are each column's size, 640 x 360 by default, as for every sweep.
 
+Echoes, the other knob a living prop is tuned by eye with, sweep the same way (#531). `living.echoes.spread`, `living.echoes.alpha` and `living.echoes.count` write the column's value into that column's own copy of the scene's `[living] echoes` table before anything reads it, so each column is exactly what a scene with that table draws, pixel for pixel. The scene's other `[living]` values stay, and a species' own `echoes` still beats the scene's, as it would in the file:
+
+```bash
+flint render examples/living_ease.scene.toml --time 1.5 --sweep living.echoes.spread=0,0.9,1.8 -o spread.png
+```
+
+![The held flame at 1.5 s with its echoes at spread 0, 0.9 and 1.8, as labelled columns](../images/render-sweep-echoes-spread.png)
+
+Each value is checked as a spec's echoes are before anything loads: `count` a whole number up to 16, `spread` from 0 to 1.82 steps (where an echo has faded to nothing), `alpha` from 0 to 1. A scene with no living props is refused, since its columns could only be the same picture. An echoes sweep doesn't make the render a moment of the game the way a wooze sweep does (the editor's grid stays unless `--no-grid`), so a column matches a plain render of the scene copy with the same flags. Two keys make a grid as usual: `--sweep living.echoes.spread=0,0.9,1.8 --sweep living.echoes.alpha=0.12,0.35`.
+
 A render with clocks (a `--time`, a wooze key, `--scripts`, `--report json`, or a scene with living props or a `[wooze]` table) draws a world and renderer a column like this whatever its key, so `--sweep ascii.cell=6,8 --time 0..1 -o cells.gif` animates a style sweep and `--report json` gives each of its captures a `column`. They take what a still render takes, cell for cell (#596):
 
 - Two `--sweep` flags make a grid, a world and renderer a cell, the first key across and the second down: `--time 3.5 --sweep wooze.glide=0,0.5,1 --sweep wooze.step=0.25,0.5,1` judges the two knobs together on one sheet, with the moment top right. A cell that turns two wooze knobs takes both, and a preset file's knobs go under the other key's, so a `wooze.glide` row turns the glide a preset column set. `--report json` gives each capture a `row` as well as a `column`.

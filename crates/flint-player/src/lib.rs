@@ -13,6 +13,8 @@ mod music;
 mod player_app;
 // The desktop launch, shared by `flint play` and `flint-player` (#705)
 pub mod player_args;
+// The scope recorder's flags (#1097)
+pub mod trace_args;
 pub mod user_files;
 pub mod window_args;
 
@@ -72,6 +74,7 @@ pub use player_app::style_commands::{
     StyleTweens, TweenStep, LOOK_FADED, POST_STYLE_CHANGED, POST_STYLE_TWEEN_DONE, STYLE_CHANGED,
     STYLE_TWEEN_DONE,
 };
+pub use player_app::trace::TraceSetup;
 #[cfg(target_arch = "wasm32")]
 pub use player_app::web_pacing::coarse_pointer as web_coarse_pointer;
 #[cfg(target_arch = "wasm32")]
@@ -84,6 +87,7 @@ pub use player_app::ProcGenMode;
 pub use player_app::StatsView;
 pub use player_app::{CaptureConfig, GameCore, LaunchOptions, PlayerApp, SceneSettings};
 pub use player_args::{launch, launch_bundle, PlayerArgs, PlayerCli, Prepared};
+pub use trace_args::TraceArgs;
 pub use window_args::WindowArgs;
 
 /// A script system with the player's whole API: flint-script's core and

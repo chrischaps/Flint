@@ -63,6 +63,11 @@ pub struct GameCore {
     /// policy name (`subsystem::state_machine`, #727).
     pub(crate) state_machine: GameStateMachine,
     pub(crate) store: PersistentStore,
+    /// The styles the scene is drawn with (#742): the built-ins, the
+    /// game's (`PlayerExtension::styles`, #419) and the user styles the
+    /// scene can see. The core's own, so a headless run has them too; the
+    /// renderer is handed a copy at each scene's bind and after a reload.
+    pub styles: flint_render::stylize::StyleRegistry,
     /// Entity style tweens (#370), stepped with game time.
     pub(crate) style_tweens: super::style_commands::StyleTweens,
     /// Scripts' `tween`s of component fields (#734), stepped with them.
@@ -108,6 +113,7 @@ impl GameCore {
             script: crate::script_system(),
             state_machine: super::subsystem::state_machine(),
             store: PersistentStore::new(),
+            styles: Default::default(),
             style_tweens: Default::default(),
             field_tweens: Default::default(),
             style_reader_generation: None,
@@ -492,7 +498,7 @@ impl GameCore {
             self.style_reader_generation = Some(generation);
             let config = renderer.effective_post_process_config().clone();
             self.script.set_style_reader(std::sync::Arc::new(
-                super::style_commands::SceneStyles::new(config),
+                super::style_commands::SceneStyles::new(config, renderer.styles().clone()),
             ));
         }
     }
@@ -584,7 +590,7 @@ impl GameCore {
         if self.state_machine.active_config().runs(SCRIPTS) {
             flint_core::scope!("step_style_tweens");
             let dt = self.clock.delta_time;
-            let step = self.style_tweens.step(&mut self.world, dt);
+            let step = self.style_tweens.step(&mut self.world, &self.styles, dt);
             for event in step.events {
                 self.events.push(event);
             }
@@ -613,9 +619,9 @@ impl GameCore {
             return;
         }
         let mut config = renderer.post_process_config().clone();
-        let (step, moved) = self
-            .style_tweens
-            .step_post(&mut config, self.clock.delta_time);
+        let (step, moved) =
+            self.style_tweens
+                .step_post(&mut config, &self.styles, self.clock.delta_time);
         if moved {
             renderer.set_post_process_config(config);
         }
@@ -860,13 +866,16 @@ fn style_applied(core: &mut GameCore, applied: StyleApplied) {
 fn edit_post_styles(
     core: &mut GameCore,
     renderer: Option<&mut SceneRenderer>,
-    edit: impl FnOnce(&mut flint_render::PostProcessConfig) -> StyleApplied,
+    edit: impl FnOnce(
+        &mut flint_render::PostProcessConfig,
+        &flint_render::stylize::StyleRegistry,
+    ) -> StyleApplied,
 ) {
     let Some(renderer) = renderer else {
         return;
     };
     let mut config = renderer.post_process_config().clone();
-    let applied = edit(&mut config);
+    let applied = edit(&mut config, &core.styles);
     if applied.applied() {
         renderer.set_post_process_config(config);
     }
@@ -883,8 +892,8 @@ pub(crate) fn reset_post_style(
 ) {
     // The scene's values win over a tween's (#406)
     core.style_tweens.stop_post(style, None);
-    edit_post_styles(core, renderer, |config| {
-        super::style_commands::reset_post_style(config, authored, style)
+    edit_post_styles(core, renderer, |config, styles| {
+        super::style_commands::reset_post_style(config, styles, authored, style)
     });
 }
 
@@ -929,7 +938,10 @@ impl CoreCommands<'_> {
     /// Without a renderer there is no frame to style.
     fn edit_post_styles(
         &mut self,
-        edit: impl FnOnce(&mut flint_render::PostProcessConfig) -> StyleApplied,
+        edit: impl FnOnce(
+            &mut flint_render::PostProcessConfig,
+            &flint_render::stylize::StyleRegistry,
+        ) -> StyleApplied,
     ) {
         edit_post_styles(self.core, self.renderer.as_deref_mut(), edit);
     }
@@ -1007,17 +1019,17 @@ impl ScriptHost for CoreCommands<'_> {
 
     fn set_entity_style(&mut self, entity: EntityId, style: String) {
         let core = &mut *self.core;
-        let applied = core
-            .style_tweens
-            .set_entity_style(&mut core.world, entity, &style);
+        let applied =
+            core.style_tweens
+                .set_entity_style(&mut core.world, &core.styles, entity, &style);
         self.style_applied(applied);
     }
 
     fn set_style_param(&mut self, entity: EntityId, param: String, value: toml::Value) {
         let core = &mut *self.core;
-        let applied = core
-            .style_tweens
-            .set_style_param(&mut core.world, entity, &param, value);
+        let applied =
+            core.style_tweens
+                .set_style_param(&mut core.world, &core.styles, entity, &param, value);
         self.style_applied(applied);
     }
 
@@ -1043,6 +1055,7 @@ impl ScriptHost for CoreCommands<'_> {
             let core = &mut *self.core;
             core.style_tweens.tween(
                 &mut core.world,
+                &core.styles,
                 config,
                 entity,
                 &param,
@@ -1077,21 +1090,21 @@ impl ScriptHost for CoreCommands<'_> {
         let core = &mut *self.core;
         let applied = core
             .style_tweens
-            .clear_entity_style(&mut core.world, entity);
+            .clear_entity_style(&mut core.world, &core.styles, entity);
         self.style_applied(applied);
     }
 
     fn set_post_style(&mut self, style: String, enabled: bool) {
-        self.edit_post_styles(|config| {
-            super::style_commands::set_post_style(config, &style, enabled)
+        self.edit_post_styles(|config, styles| {
+            super::style_commands::set_post_style(config, styles, &style, enabled)
         });
     }
 
     fn set_post_style_param(&mut self, style: String, param: String, value: toml::Value) {
         // The script took over from a tween of it (#406)
         self.core.style_tweens.stop_post(&style, Some(&param));
-        self.edit_post_styles(|config| {
-            super::style_commands::set_post_style_param(config, &style, &param, value)
+        self.edit_post_styles(|config, styles| {
+            super::style_commands::set_post_style_param(config, styles, &style, &param, value)
         });
     }
 
@@ -1109,7 +1122,15 @@ impl ScriptHost for CoreCommands<'_> {
             return;
         };
         let mut config = renderer.post_process_config().clone();
-        let applied = tweens.tween_post(&mut config, &style, &param, target, seconds, &easing);
+        let applied = tweens.tween_post(
+            &mut config,
+            &core.styles,
+            &style,
+            &param,
+            target,
+            seconds,
+            &easing,
+        );
         if applied.applied() {
             renderer.set_post_process_config(config);
         }

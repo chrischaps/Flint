@@ -256,6 +256,7 @@ impl LivingDef {
             echoes: echoes_over(self.echoes, under.echoes),
             variance: variance_over(self.variance, under.variance),
             softness: self.softness.or(under.softness),
+            jitter_rate: self.jitter_rate.or(under.jitter_rate),
             species,
         }
     }
@@ -273,6 +274,7 @@ impl LivingSpeciesDef {
             echoes: echoes_over(self.echoes, under.echoes),
             variance: variance_over(self.variance, under.variance),
             softness: self.softness.or(under.softness),
+            jitter_rate: self.jitter_rate.or(under.jitter_rate),
         }
     }
 
@@ -302,17 +304,20 @@ impl LivingSpeciesDef {
             self.echoes,
             self.variance,
             self.softness,
+            self.jitter_rate,
         ));
         problems
     }
 }
 
-/// Stagger, echoes, variance and softness, wherever a table holds them.
+/// Stagger, echoes, variance, softness and the jitter rate, wherever a table
+/// holds them.
 fn props_problems(
     stagger: Option<&str>,
     echoes: Option<LivingEchoesDef>,
     variance: Option<LivingVarianceDef>,
     softness: Option<f32>,
+    jitter_rate: Option<f32>,
 ) -> Vec<String> {
     let mut problems = Vec::new();
     if let Some(name) = stagger {
@@ -337,6 +342,12 @@ fn props_problems(
         unit("variance.steady", variance.steady);
     }
     unit("softness", softness);
+    if let Some(rate) = jitter_rate {
+        let max = crate::JITTER_RATE_MAX;
+        if !(0.0..=max).contains(&rate) {
+            problems.push(format!("jitter_rate = {rate} must be in [0.0, {max:?}]"));
+        }
+    }
     problems
 }
 
@@ -354,6 +365,7 @@ impl WoozePreset {
             self.living.echoes,
             self.living.variance,
             self.living.softness,
+            self.living.jitter_rate,
         );
         for (name, species) in &self.living.species {
             for problem in species.problems() {
@@ -399,6 +411,7 @@ impl WoozePreset {
         line(&mut out, "shadows", self.living.shadows.as_deref());
         line(&mut out, "stagger", self.living.stagger.as_deref());
         line(&mut out, "softness", self.living.softness);
+        line(&mut out, "jitter_rate", self.living.jitter_rate);
         if let Some(echoes) = self.living.echoes {
             let table = inline(&[
                 ("count", echoes.count.map(|count| count.to_string())),
@@ -430,6 +443,7 @@ impl WoozePreset {
             line(&mut out, "jitter", species.jitter);
             line(&mut out, "stagger", species.stagger.as_deref());
             line(&mut out, "softness", species.softness);
+            line(&mut out, "jitter_rate", species.jitter_rate);
             if let Some(echoes) = species.echoes {
                 let table = inline(&[
                     ("count", echoes.count.map(|count| count.to_string())),
@@ -649,12 +663,14 @@ mod preset_tests {
                     keep_size: Some(false),
                 }),
                 softness: Some(0.35),
+                jitter_rate: Some(1.0 / 3.0 + 1.0),
                 species: [(
                     "grove_thorn".to_string(),
                     LivingSpeciesDef {
                         step: Some(0.1 + 0.15),
                         stagger: Some("none".into()),
                         softness: Some(0.7),
+                        jitter_rate: Some(0.5),
                         echoes: Some(LivingEchoesDef {
                             count: Some(1),
                             ..Default::default()

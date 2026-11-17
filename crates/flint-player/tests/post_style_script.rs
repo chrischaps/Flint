@@ -22,15 +22,31 @@ struct PostStyles<'a> {
 
 impl ScriptHost for PostStyles<'_> {
     fn set_post_style(&mut self, style: String, enabled: bool) {
-        let r = set_post_style(self.config, &style, enabled);
+        let r = set_post_style(
+            self.config,
+            &flint_render::stylize::StyleRegistry::new(),
+            &style,
+            enabled,
+        );
         self.out.push(r);
     }
     fn set_post_style_param(&mut self, style: String, param: String, value: toml::Value) {
-        let r = set_post_style_param(self.config, &style, &param, value);
+        let r = set_post_style_param(
+            self.config,
+            &flint_render::stylize::StyleRegistry::new(),
+            &style,
+            &param,
+            value,
+        );
         self.out.push(r);
     }
     fn reset_post_style(&mut self, style: String) {
-        let r = reset_post_style(self.config, self.authored, &style);
+        let r = reset_post_style(
+            self.config,
+            &flint_render::stylize::StyleRegistry::new(),
+            self.authored,
+            &style,
+        );
         self.out.push(r);
     }
 }
@@ -114,8 +130,8 @@ fn a_script_sets_fades_and_clears_a_whole_frame_style() {
     authored.styles.set_enabled("invert", true);
     authored.styles.set_param("invert", "strength", 0.3);
     let mut config = authored.clone();
-    let kuwahara = stylize::find("kuwahara").unwrap();
-    let invert = stylize::find("invert").unwrap();
+    let kuwahara = stylize::builtin("kuwahara").unwrap();
+    let invert = stylize::builtin("invert").unwrap();
 
     let (events, failures) = frame(&mut engine, &mut world, &mut config, &authored);
     assert!(failures.is_empty(), "{failures:?}");

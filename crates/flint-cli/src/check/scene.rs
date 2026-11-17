@@ -93,8 +93,9 @@ fn cannot_load(diagnostics: &[Diagnostic]) -> bool {
 /// for what they share.
 #[derive(Default)]
 pub struct Memo {
-    /// Scene directories whose user styles have been loaded and reported.
-    style_dirs: BTreeSet<PathBuf>,
+    /// Each scene directory's styles (#742: its own registry, the
+    /// built-ins and the user styles it sees), loaded and reported once.
+    style_dirs: BTreeMap<PathBuf, flint_render::stylize::StyleRegistry>,
     /// The asset catalog of each project root: asked before the files for a
     /// model or a texture, as the player asks, and as `diagnose` does.
     catalogs: BTreeMap<PathBuf, Option<HeldAssets>>,
@@ -569,21 +570,27 @@ fn styles(
     memo: &mut Memo,
     found: &mut Vec<Diagnostic>,
 ) {
-    // The styles are registered either way: the tables below are read
-    // against them. They are reported once a directory.
-    let messages = flint_render::stylize::custom::load_dir(scene_dir);
-    if memo.style_dirs.insert(scene_dir.to_path_buf()) {
-        found.extend(messages.iter().map(|m| user_style_diagnostic(m, scene_dir)));
-    }
-    user_style_ranges(scene, file, found);
+    // The styles are loaded either way: the tables below are read against
+    // them. They are reported once a directory. Each directory's are its
+    // own (#742), so a style an earlier scene of the run loaded from a
+    // folder this one can't see is as unknown to it as when it is checked
+    // alone (#426)
+    let styles = match memo.style_dirs.get(scene_dir) {
+        Some(styles) => styles.clone(),
+        None => {
+            let scope = flint_core::project::AssetScope::for_dir(scene_dir);
+            let (styles, messages) = flint_render::stylize::StyleRegistry::new().for_scene(&scope);
+            found.extend(messages.iter().map(|m| user_style_diagnostic(m, scene_dir)));
+            memo.style_dirs
+                .insert(scene_dir.to_path_buf(), styles.clone());
+            styles
+        }
+    };
+    user_style_ranges(scene, file, found, &styles);
     let Some(mut post) = file.post_process.clone() else {
         return;
     };
-    // A style an earlier scene of the run loaded, from a folder this one
-    // can't see, is as unknown to it as when it is checked alone (#426)
-    let scope = flint_core::project::AssetScope::for_dir(scene_dir);
-    let mut unseen = flint_render::stylize::custom::drop_unseen(&mut post.styles, &scope);
-    unseen.extend(flint_render::stylize::StyleSettings::from_tables(&post.style_tables()).1);
+    let unseen = flint_render::stylize::StyleSettings::from_tables(&post.style_tables(), &styles).1;
     for warning in unseen {
         found.push(
             Diagnostic::warning(codes::BAD_STYLE_SETTING, warning)
@@ -617,15 +624,20 @@ fn styles(
 /// fields carry them, so `diagnose` says `ascii_style { cell = 400 }` is out
 /// of range; a user style's is declared open, since it loads at run time,
 /// and this says it in the same words, as an error as that one is.
-fn user_style_ranges(scene: &Path, file: &SceneFile, found: &mut Vec<Diagnostic>) {
+fn user_style_ranges(
+    scene: &Path,
+    file: &SceneFile,
+    found: &mut Vec<Diagnostic>,
+    styles: &flint_render::stylize::StyleRegistry,
+) {
     let mut entities: Vec<_> = file.entities.iter().collect();
     entities.sort_unstable_by_key(|(name, _)| *name);
     for (name, entity) in entities {
-        for d in flint_render::stylize::registry() {
+        for d in styles.iter() {
             let Some(component) = d.component else {
                 continue;
             };
-            if !flint_render::stylize::custom::is_user_style(d.name) {
+            if !styles.is_user_style(d.name) {
                 continue;
             }
             let Some(table) = entity.components.get(component).and_then(|c| c.as_table()) else {

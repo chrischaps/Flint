@@ -176,6 +176,7 @@ impl DebugPanel for StylesDebugPanel {
         } else {
             std::mem::take(&mut self.entities)
         };
+        self.editor.set_styles(ctx.renderer.styles());
         self.refresh(ctx.renderer.post_process_config(), entities);
     }
 

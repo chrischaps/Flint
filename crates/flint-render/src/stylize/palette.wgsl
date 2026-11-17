@@ -32,18 +32,6 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
 }
 
-fn to_display(c: vec3<f32>) -> vec3<f32> {
-    let lo = c * 12.92;
-    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, c <= vec3<f32>(0.0031308));
-}
-
-fn to_linear(c: vec3<f32>) -> vec3<f32> {
-    let lo = c / 12.92;
-    let hi = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, c <= vec3<f32>(0.04045));
-}
-
 fn palette_ink(i: u32) -> vec3<f32> {
     return u.inks[i].rgb;
 }
@@ -79,7 +67,7 @@ fn block_color(cell: vec2<i32>) -> vec3<f32> {
         c /= f32(n * n);
     }
     c = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
-    return select(c, to_display(c), u.srgb == 1u);
+    return select(c, flint_to_display(c), u.srgb == 1u);
 }
 
 @fragment
@@ -92,11 +80,11 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if u.matching == 1u {
         // A ladder: the luminance's rung, moved up to half a rung either
         // way by the dither (Palette::quantize)
-        let t = clamp(dot(col, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
+        let t = clamp(flint_luma(col), 0.0, 1.0);
         let td = clamp(t + (pal_bayer(cell) - 0.5) * u.dither / f32(n), 0.0, 1.0);
         ink = palette_ink(min(u32(td * f32(n)), n - 1u));
     } else {
         ink = pal_pick(0u, n, col, u.chroma, u.dither, cell);
     }
-    return vec4<f32>(select(ink, to_linear(ink), u.srgb == 1u), 1.0);
+    return vec4<f32>(select(ink, flint_to_linear(ink), u.srgb == 1u), 1.0);
 }

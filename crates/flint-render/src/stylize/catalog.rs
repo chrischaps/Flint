@@ -5,7 +5,7 @@
 //! once [`custom::load_dir`](super::custom::load_dir) has run) appears with
 //! no change here.
 
-use super::{is_builtin, is_game_style, registry, ChoiceScope, StyleDescriptor, StyleStage};
+use super::{is_builtin, ChoiceScope, StyleDescriptor, StyleRegistry, StyleStage};
 use flint_core::project::AssetScope;
 use serde::Serialize;
 use std::path::Path;
@@ -85,34 +85,38 @@ pub struct OptionListing {
 }
 
 /// Every registered style, in registration order.
-pub fn catalog() -> Vec<StyleListing> {
-    catalog_for(None)
+pub fn catalog(styles: &StyleRegistry) -> Vec<StyleListing> {
+    catalog_for(styles, None)
 }
 
 /// [`catalog`] with the choices a scene in `scene_dir` can see (its
 /// palettes and glyph sets, #322), by its project's search; with no scene,
 /// the working directory's, as a renderer with no scene searches.
-pub fn catalog_for(scene_dir: Option<&Path>) -> Vec<StyleListing> {
+pub fn catalog_for(styles: &StyleRegistry, scene_dir: Option<&Path>) -> Vec<StyleListing> {
     let assets = AssetScope::for_dir(scene_dir.unwrap_or(Path::new(".")));
-    catalog_in(&assets)
+    catalog_in(styles, &assets)
 }
 
 /// [`catalog`] with the choices found from `assets`, for a host that holds
 /// the scene's project.
-pub fn catalog_in(assets: &AssetScope) -> Vec<StyleListing> {
-    registry()
+pub fn catalog_in(styles: &StyleRegistry, assets: &AssetScope) -> Vec<StyleListing> {
+    styles
         .iter()
-        .map(|d| listing_in(d, Some(assets)))
+        .map(|d| listing_in(styles, d, Some(assets)))
         .collect()
 }
 
-/// One style's listing.
-pub fn listing(d: &StyleDescriptor) -> StyleListing {
-    listing_in(d, None)
+/// One style's listing; `styles` says whether it is a game's.
+pub fn listing(styles: &StyleRegistry, d: &StyleDescriptor) -> StyleListing {
+    listing_in(styles, d, None)
 }
 
 /// One style's listing, its found choices searched for from `assets`.
-pub fn listing_in(d: &StyleDescriptor, assets: Option<&AssetScope>) -> StyleListing {
+pub fn listing_in(
+    styles: &StyleRegistry,
+    d: &StyleDescriptor,
+    assets: Option<&AssetScope>,
+) -> StyleListing {
     let scope = ChoiceScope::defaults(assets);
     let help = |name: &str| d.help_for(name).to_string();
     StyleListing {
@@ -124,7 +128,7 @@ pub fn listing_in(d: &StyleDescriptor, assets: Option<&AssetScope>) -> StyleList
         },
         source: if is_builtin(d.name) {
             "builtin"
-        } else if is_game_style(d.name) {
+        } else if styles.is_game_style(d.name) {
             "game"
         } else {
             "user"
@@ -175,18 +179,18 @@ pub fn listing_in(d: &StyleDescriptor, assets: Option<&AssetScope>) -> StyleList
 }
 
 /// [`catalog`] for a terminal: one block per style.
-pub fn catalog_text() -> String {
-    catalog_text_for(None)
+pub fn catalog_text(styles: &StyleRegistry) -> String {
+    catalog_text_for(styles, None)
 }
 
 /// [`catalog_for`] for a terminal.
-pub fn catalog_text_for(scene_dir: Option<&Path>) -> String {
-    catalog_text_of(catalog_for(scene_dir))
+pub fn catalog_text_for(styles: &StyleRegistry, scene_dir: Option<&Path>) -> String {
+    catalog_text_of(catalog_for(styles, scene_dir))
 }
 
 /// [`catalog_in`] for a terminal.
-pub fn catalog_text_in(assets: &AssetScope) -> String {
-    catalog_text_of(catalog_in(assets))
+pub fn catalog_text_in(styles: &StyleRegistry, assets: &AssetScope) -> String {
+    catalog_text_of(catalog_in(styles, assets))
 }
 
 fn catalog_text_of(listings: Vec<StyleListing>) -> String {
@@ -284,10 +288,11 @@ fn num(n: f32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stylize::builtins;
 
     #[test]
     fn lists_kuwahara_and_invert_with_stages_and_ranges() {
-        let all = catalog();
+        let all = catalog(&crate::stylize::StyleRegistry::new());
         let kuwahara = all.iter().find(|s| s.name == "kuwahara").unwrap();
         assert_eq!(kuwahara.stage, "hdr");
         let radius = kuwahara.params.iter().find(|p| p.name == "radius").unwrap();
@@ -304,35 +309,35 @@ mod tests {
 
     #[test]
     fn json_parses_and_lists_every_style() {
-        // Tests beside this one register styles (user styles, #419's game
-        // styles), so the registry may grow while the catalog is made
-        let before = registry().len();
-        let json = serde_json::to_string(&catalog()).unwrap();
-        let after = registry().len();
+        // The registry is this test's own (#742): nothing beside it adds
+        let json = serde_json::to_string(&catalog(&crate::stylize::StyleRegistry::new())).unwrap();
         let back: serde_json::Value = serde_json::from_str(&json).unwrap();
-        let listed = back.as_array().unwrap().len();
-        assert!(
-            (before..=after).contains(&listed),
-            "{listed} of {before}..{after}"
-        );
+        assert_eq!(back.as_array().unwrap().len(), builtins().len());
     }
 
     #[test]
     fn kuwahara_lists_the_keys_style_takes() {
         // Every listed key is one `--style kuwahara:` accepts
-        let kuwahara = catalog()
+        let kuwahara = catalog(&crate::stylize::StyleRegistry::new())
             .into_iter()
             .find(|s| s.name == "kuwahara")
             .unwrap();
         for p in &kuwahara.params {
             let spec = format!("kuwahara:{}={}", p.name, p.default);
-            assert!(super::super::StyleSpec::parse(&spec).is_ok(), "{spec}");
+            assert!(
+                super::super::StyleSpec::parse(&spec, &crate::stylize::StyleRegistry::new())
+                    .is_ok(),
+                "{spec}"
+            );
         }
     }
 
     #[test]
     fn a_colour_is_listed_once_by_its_key() {
-        let ascii = listing(super::super::find("ascii").unwrap());
+        let ascii = listing(
+            &crate::stylize::StyleRegistry::new(),
+            super::super::builtin("ascii").unwrap(),
+        );
         // The tint, and the edge ink's colour (#351)
         assert_eq!(ascii.colors.len(), 2);
         assert_eq!(ascii.colors[1].key, "edge_color");
@@ -345,16 +350,15 @@ mod tests {
         );
         let g = ascii.params.iter().find(|p| p.name == "tint_g").unwrap();
         assert_eq!(g.color.as_deref(), Some("tint"));
-        let text = catalog_text();
+        let text = catalog_text(&crate::stylize::StyleRegistry::new());
         assert!(text.contains("[0.35, 1, 0.45]  colour"), "{text}");
         assert!(!text.contains("  tint_r "), "{text}");
     }
 
     #[test]
     fn text_names_every_style() {
-        // The registry as it was first: tests beside this one add to it
-        let registered = registry();
-        let text = catalog_text();
+        let registered = builtins();
+        let text = catalog_text(&crate::stylize::StyleRegistry::new());
         for d in registered {
             assert!(text.contains(&format!("{} (", d.name)), "{}", d.name);
         }

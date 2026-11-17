@@ -36,18 +36,6 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return out;
 }
 
-fn to_display(c: vec3<f32>) -> vec3<f32> {
-    let lo = c * 12.92;
-    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, c <= vec3<f32>(0.0031308));
-}
-
-fn to_linear(c: vec3<f32>) -> vec3<f32> {
-    let lo = c / 12.92;
-    let hi = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, c <= vec3<f32>(0.04045));
-}
-
 // Must match style_mask::debug_color
 fn id_color(id: u32) -> vec3<f32> {
     let h = fract(f32(id) * 0.618034) * 6.0;
@@ -72,8 +60,8 @@ fn mask_at(p: vec2<i32>, size: vec2<i32>) -> u32 {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let src = textureSample(input_texture, input_sampler, in.uv);
     let rgb = clamp(src.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    let shown = select(rgb, to_display(rgb), params.srgb > 0.5);
-    let luma = dot(shown, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let shown = select(rgb, flint_to_display(rgb), params.srgb > 0.5);
+    let luma = flint_luma(shown);
 
     let size = vec2<i32>(textureDimensions(style_mask));
     let p = vec2<i32>(in.uv * vec2<f32>(size));
@@ -107,6 +95,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    let encoded = select(out, to_linear(out), params.srgb > 0.5);
+    let encoded = select(out, flint_to_linear(out), params.srgb > 0.5);
     return vec4<f32>(encoded, src.a);
 }

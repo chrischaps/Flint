@@ -900,7 +900,9 @@ impl SceneRenderer {
         // The style albedo (#869): the opaque meshes' own colour, while a
         // style divides the picture by it
         if has_postprocess
-            && crate::stylize::any_uses_albedo(&self.postprocess_config, &self.style_mask.ids)
+            && self
+                .styles
+                .any_uses_albedo(&self.postprocess_config, &self.style_mask.ids)
         {
             let scope = scopes.begin(encoder, "Style albedo");
             self.encode_style_albedo(device, encoder, depth_view);

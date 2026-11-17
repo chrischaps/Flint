@@ -103,7 +103,7 @@ impl LivingProps {
             return blend;
         };
         let (skeleton, rig) = (&built.skeleton, &built.rig);
-        let t = self.time + prop.jitter_ahead;
+        let t = prop.jitter_now();
         let jitter = prop.jitter.scaled(prop.wooze.jitter);
 
         let moved = blend_bones(
@@ -196,7 +196,7 @@ impl LivingProps {
         let (Some(ring), Some(built)) = (&prop.ring, &self.lineages[prop.lineage].built) else {
             return None;
         };
-        let t = prop.echo_jitter_time(echo, self.time + prop.jitter_ahead);
+        let t = prop.echo_jitter_time(echo, prop.jitter_now());
         let beats = prop.echo_beats(echo);
         let jitter = prop.jitter.scaled(prop.wooze.jitter);
         let copy = prop.echoes[echo].copy;

@@ -1,9 +1,12 @@
 //! The scene a renderer draws (ADR 0118 decision 5, #739): what a host binds
 //! once, when a scene loads, so that no host can skip a step of it.
 //!
-//! - [`SceneBinding::new`] registers the user styles the scene can see, so a
-//!   host makes one before it reads the scene's `[post_process]` (a table
-//!   naming a style the registry doesn't know is dropped).
+//! - [`SceneBinding::new`] (or [`SceneBinding::over`] a host's own registry)
+//!   makes the [`StyleRegistry`] the scene is drawn with: the built-ins, a
+//!   game's styles, and the user styles the scene can see (#742). A host
+//!   makes one before it reads the scene's `[post_process]`, against
+//!   [`SceneBinding::styles`] (a table naming a style it doesn't hold is
+//!   dropped), and `bind_scene` hands it to the renderer.
 //! - [`SceneRenderer::bind_scene`] gives the renderer the scene's project and
 //!   folder, forgets everything per entity and per scene the last one left
 //!   (style history, bone buffers and holds, the `[environment]` levers, the
@@ -15,6 +18,7 @@
 //! `frame.rs`.
 
 use super::SceneRenderer;
+use crate::stylize::StyleRegistry;
 use flint_core::components as comp;
 use flint_core::project::{AssetScope, Project};
 use flint_core::{EntityId, Transform, Vec3};
@@ -29,6 +33,8 @@ use std::path::Path;
 #[derive(Clone, Debug)]
 pub struct SceneBinding {
     assets: AssetScope,
+    /// The styles the scene is drawn with (#742).
+    styles: StyleRegistry,
     style_messages: Vec<String>,
     /// The scene's `[environment]`, whose lighting levers `bind_scene` sets.
     environment: Option<flint_scene::EnvironmentDef>,
@@ -38,15 +44,24 @@ pub struct SceneBinding {
 }
 
 impl SceneBinding {
-    /// The scene whose project and folder `assets` names. Registers every
-    /// `styles/*.shader.toml` the project's search lists from there (ADR
-    /// 0112, 0114), the nearest of a name winning; styles registered before
-    /// are kept, so a scene change only adds (#275). What went wrong is in
+    /// The scene whose project and folder `assets` names, drawn with the
+    /// built-in styles and every `styles/*.shader.toml` the project's
+    /// search lists from there (ADR 0112, 0114), the nearest of a name
+    /// winning. What went wrong is in
     /// [`style_messages`](Self::style_messages), for the host to say.
     pub fn new(assets: AssetScope) -> Self {
-        let style_messages = crate::stylize::custom::load_for(&assets);
+        Self::over(assets, &StyleRegistry::new())
+    }
+
+    /// [`new`](Self::new) over `base`, a host's registry (#742): its
+    /// built-ins and game styles (#419), with this scene's user styles in
+    /// place of any `base` held. A style `base` loaded from the same
+    /// unchanged file is shared, so its built pass is kept.
+    pub fn over(assets: AssetScope, base: &StyleRegistry) -> Self {
+        let (styles, style_messages) = base.for_scene(&assets);
         Self {
             assets,
+            styles,
             style_messages,
             environment: None,
             archetype_visuals: HashMap::new(),
@@ -89,6 +104,22 @@ impl SceneBinding {
     /// What registering the scene's user styles had to say: one line each.
     pub fn style_messages(&self) -> &[String] {
         &self.style_messages
+    }
+
+    /// The same scene over `base` (#742): its user styles loaded again
+    /// against `base` (one unchanged since is shared), so a host that binds
+    /// a scene again after a hot reload keeps what the reload brought.
+    pub fn restyled(mut self, base: &StyleRegistry) -> Self {
+        let (styles, messages) = base.for_scene(&self.assets);
+        self.styles = styles;
+        self.style_messages = messages;
+        self
+    }
+
+    /// The registry the scene is drawn with: read its `[post_process]`
+    /// against this (`post_process_config_from_def`).
+    pub fn styles(&self) -> &StyleRegistry {
+        &self.styles
     }
 }
 
@@ -155,9 +186,10 @@ impl SceneRenderer {
     ) -> BoundScene {
         flint_core::scope!("bind_scene");
         self.set_asset_scope(binding.assets.clone());
+        self.styles = binding.styles.clone();
         // A user style's component has no schema ranges for the loader to
         // check, so its out-of-range fields are said here (#492)
-        for warning in crate::style_mask::user_style_range_warnings(world) {
+        for warning in crate::style_mask::user_style_range_warnings(world, &self.styles) {
             tracing::warn!("{warning}");
         }
         self.reset_style_history();

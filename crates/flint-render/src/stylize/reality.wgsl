@@ -49,22 +49,6 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return out;
 }
 
-fn to_display(c: vec3<f32>) -> vec3<f32> {
-    let lo = c * 12.92;
-    let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, c <= vec3<f32>(0.0031308));
-}
-
-fn to_linear(c: vec3<f32>) -> vec3<f32> {
-    let lo = c / 12.92;
-    let hi = pow((max(c, vec3<f32>(0.0)) + 0.055) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, c <= vec3<f32>(0.04045));
-}
-
-fn luma(c: vec3<f32>) -> f32 {
-    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
-}
-
 // The composite's vignette at `uv`: what it multiplied the colour by.
 fn vignette_at(uv: vec2<f32>) -> f32 {
     if (r.vignette <= 0.0) {
@@ -77,7 +61,7 @@ fn vignette_at(uv: vec2<f32>) -> f32 {
 // The picture's linear colour at `uv`, as the input holds it.
 fn sample_linear(uv: vec2<f32>) -> vec3<f32> {
     let c = textureSampleLevel(input_texture, input_sampler, uv, 0.0).rgb;
-    return select(to_linear(c), c, r.srgb > 0.5);
+    return select(flint_to_linear(c), c, r.srgb > 0.5);
 }
 
 // The picture at `uv` as the composite had it before its vignette.
@@ -89,7 +73,7 @@ fn picture(uv: vec2<f32>) -> vec3<f32> {
 // then encoded for a target that isn't sRGB.
 fn shown(c: vec3<f32>, uv: vec2<f32>) -> vec4<f32> {
     let v = c * vignette_at(uv);
-    return vec4<f32>(select(to_display(v), v, r.srgb > 0.5), 1.0);
+    return vec4<f32>(select(flint_to_display(v), v, r.srgb > 0.5), 1.0);
 }
 
 // The scene's depth at `uv` (0 near, 1 far; the sky is 1).
@@ -108,7 +92,5 @@ fn linear_depth(depth: f32) -> f32 {
 
 // World position from a uv and its depth.
 fn world_pos_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
-    let clip = vec4<f32>(uv.x * 2.0 - 1.0, -(uv.y * 2.0 - 1.0), depth, 1.0);
-    let world = r.inv_view_proj * clip;
-    return world.xyz / world.w;
+    return flint_unproject(r.inv_view_proj, uv, depth);
 }

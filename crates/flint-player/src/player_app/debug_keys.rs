@@ -21,6 +21,8 @@ const RENDER_PANEL: &str = "render_panel";
 const FULLSCREEN: &str = "fullscreen";
 /// Capture the next frame for the frame debugger (#1086).
 pub(crate) const CAPTURE_FRAME: &str = "capture_frame";
+/// Save the scope recorder's last seconds as a trace (#1097).
+pub(crate) const SAVE_TRACE: &str = "save_trace";
 
 const SHOW_KEYS: DebugKey = DebugKey {
     action: KEYS,
@@ -31,6 +33,12 @@ const CAPTURE: DebugKey = DebugKey {
     action: CAPTURE_FRAME,
     key: "Shift+F2",
     does: "Capture the next frame for the frame debugger (a .flintframe folder in captures/)",
+};
+const TRACE: DebugKey = DebugKey {
+    action: SAVE_TRACE,
+    key: "Shift+F3",
+    does:
+        "Save the last seconds of the engine's scopes as a trace (traces/); starts recording if off",
 };
 const SHOW_FULLSCREEN: DebugKey = DebugKey {
     action: FULLSCREEN,
@@ -47,6 +55,7 @@ const PLAYER_KEYS: &[DebugKey] = &[
         does: "Stats: frame-time graph, hitches, render stats; again: graph alone; again: off",
     },
     CAPTURE,
+    TRACE,
     DebugKey {
         action: PANELS,
         key: "F3",
@@ -68,6 +77,7 @@ const PLAYER_KEYS: &[DebugKey] = &[
         does: "Stats overlay",
     },
     CAPTURE,
+    TRACE,
     SHOW_FULLSCREEN,
 ];
 
@@ -147,6 +157,7 @@ impl PlayerApp {
             // Off, the full overlay, the graph alone, off (#1078)
             STATS => self.set_stats_view(self.stats.view.next()),
             CAPTURE_FRAME => self.ask_frame_capture(super::frame_capture::Trigger::Key, key),
+            SAVE_TRACE => self.ask_trace(key),
             #[cfg(feature = "debug-hud")]
             PANELS => {
                 // The scene-component panels (grass, ocean, ...), not the

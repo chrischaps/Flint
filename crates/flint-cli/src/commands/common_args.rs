@@ -44,21 +44,25 @@ pub struct StyleArgs {
 }
 
 impl StyleArgs {
-    /// Check every `--style` word against the registry. The value parser
-    /// lets an unknown name through, since a user-authored style (#274) is
-    /// registered only once the scene's folder is known; call this after
-    /// `stylize::custom::load_dir`.
-    pub fn check(&self) -> Result<(), String> {
+    /// Check every `--style` word against `styles`. The value parser lets
+    /// an unknown name through, since a user-authored style (#274) is known
+    /// only once the scene's folder is: call this with the scene's registry
+    /// (`SceneBinding::styles`).
+    pub fn check(&self, styles: &flint_render::stylize::StyleRegistry) -> Result<(), String> {
         for spec in &self.styles {
-            flint_render::stylize::StyleSpec::parse(spec)?;
+            flint_render::stylize::StyleSpec::parse(spec, styles)?;
         }
         Ok(())
     }
 
     /// Write every `--style` word into `config`, in order.
-    pub fn apply(&self, config: &mut flint_render::PostProcessConfig) {
+    pub fn apply(
+        &self,
+        config: &mut flint_render::PostProcessConfig,
+        styles: &flint_render::stylize::StyleRegistry,
+    ) {
         for spec in &self.styles {
-            if let Err(e) = flint_render::stylize::apply_style_spec(config, spec) {
+            if let Err(e) = flint_render::stylize::apply_style_spec(config, spec, styles) {
                 eprintln!("warning: --style {spec}: {e}");
             }
         }
@@ -75,7 +79,7 @@ impl StyleArgs {
     ) {
         if !self.styles.is_empty() {
             let mut config = renderer.post_process_config().clone();
-            self.apply(&mut config);
+            self.apply(&mut config, renderer.styles());
             renderer.set_post_process_config(config);
             renderer.ensure_style_resources(device);
         }
@@ -89,7 +93,7 @@ impl StyleArgs {
 }
 
 fn parse_style_spec(s: &str) -> Result<String, String> {
-    match flint_render::stylize::StyleSpec::parse(s) {
+    match flint_render::stylize::StyleSpec::parse(s, &flint_render::stylize::StyleRegistry::new()) {
         Ok(_) => Ok(s.to_string()),
         // Maybe a user style the scene's styles/ folder registers (#274):
         // StyleArgs::check decides once it is loaded
