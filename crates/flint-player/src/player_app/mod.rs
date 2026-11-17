@@ -7,6 +7,9 @@ mod alloc_count;
 #[cfg(test)]
 mod asset_search_tests;
 mod camera_cut;
+#[cfg(test)]
+mod collider_mesh_tests;
+mod collider_meshes;
 // The load summary and controls line a scene says when it comes up (#716)
 #[cfg(test)]
 mod capture_gate_tests;
@@ -40,6 +43,8 @@ pub mod frame_rate;
 pub mod game_core;
 pub mod headless_animation;
 pub mod headless_game;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod headless_hud;
 mod hitch;
 #[cfg(test)]
 mod hitch_log_tests;

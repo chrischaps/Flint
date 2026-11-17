@@ -8,7 +8,6 @@ use super::hud_render::render_draw_commands;
 use super::subsystem::{EncodeCtx, FrameCtx};
 use super::PlayerApp;
 use super::TransitionPhase;
-use flint_render::AcquireFrame;
 use flint_render::{FrameInputs, GrassEntityPosition, View2d};
 use flint_runtime::state::AUDIO;
 use flint_runtime::{RuntimeSystem, StateConfig};
@@ -73,7 +72,10 @@ impl PlayerApp {
             return;
         };
 
-        let output = match context.surface.acquire() {
+        // The wait for the image is the swapchain's, not the renderer's
+        // (#1123): a compositor stall reads as `elsewhere`. A field borrow,
+        // as below: `context` is held.
+        let output = match self.stats.perf.acquire(&context.surface) {
             Ok(output) => output,
             Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => {
                 return;

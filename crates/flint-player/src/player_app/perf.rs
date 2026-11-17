@@ -34,6 +34,10 @@ pub(crate) enum Phase {
     AnimFx,
     /// Procgen, the renderer's sync with the world, late audio
     Sync,
+    /// The wait for the next swapchain image (`AcquireFrame::acquire`):
+    /// the presentation engine's, the compositor's or the GPU's time, not
+    /// the player's (#1123). A full swapchain waits here for a free image.
+    Acquire,
     /// The renderer: draw lists, encoding and submission
     Render,
     /// The egui pass over the frame
@@ -43,13 +47,14 @@ pub(crate) enum Phase {
 }
 
 impl Phase {
-    pub(crate) const ALL: [Phase; 9] = [
+    pub(crate) const ALL: [Phase; 10] = [
         Phase::Input,
         Phase::Scripts,
         Phase::Physics,
         Phase::ScriptUi,
         Phase::AnimFx,
         Phase::Sync,
+        Phase::Acquire,
         Phase::Render,
         Phase::Hud,
         Phase::Present,
@@ -64,10 +69,18 @@ impl Phase {
             Phase::ScriptUi => "script ui",
             Phase::AnimFx => "anim/fx",
             Phase::Sync => "sync",
+            Phase::Acquire => "acquire",
             Phase::Render => "render",
             Phase::Hud => "hud",
             Phase::Present => "present",
         }
+    }
+
+    /// A wait on the swapchain rather than the player's own work: the
+    /// acquire and the present. `Frame::player_ms` leaves them out, and a
+    /// hitch they hold the excess of is `elsewhere` (#1123).
+    pub(crate) fn is_wait(self) -> bool {
+        matches!(self, Phase::Acquire | Phase::Present)
     }
 }
 
@@ -102,8 +115,9 @@ pub(crate) struct PerfSummary {
     pub phases: Vec<PhaseTime>,
     /// The mean frame's work in every phase together, ms.
     pub cpu_mean: f32,
-    /// What the worst frame's phases added up to: whether the longest
-    /// frames were the player's own work or time spent elsewhere.
+    /// What the worst frame's own work added up to (its phases but the
+    /// swapchain's waits, `Frame::player_ms`): whether the longest frames
+    /// were the player's own work or time spent elsewhere.
     pub worst_frame: f32,
     pub worst_frame_cpu: f32,
     /// The script callbacks with the worst single frame, worst first.
@@ -213,6 +227,21 @@ impl PerfRecorder {
         }
     }
 
+    /// The frame's swapchain image, its wait timed as [`Phase::Acquire`]
+    /// (#1123). What the frame did before it since the last mark (a look's
+    /// fade, the render scale) is the renderer's, so `Render` is marked
+    /// first; the encoding after it adds to `Render` at its own mark. A
+    /// failed acquire (a timeout after its wait) is timed the same.
+    pub(crate) fn acquire<S: flint_render::AcquireFrame + ?Sized>(
+        &mut self,
+        surface: &S,
+    ) -> Result<wgpu::SurfaceTexture, flint_render::SurfaceError> {
+        self.mark(Phase::Render);
+        let frame = surface.acquire();
+        self.mark(Phase::Acquire);
+        frame
+    }
+
     /// The fixed physics steps that ran this frame.
     pub(crate) fn fixed_steps(&mut self, steps: u32) {
         if self.recording() {
@@ -288,7 +317,7 @@ impl PerfRecorder {
             cpu_mean: phases.iter().map(|p| p.mean).sum(),
             phases,
             worst_frame: worst.ms,
-            worst_frame_cpu: worst.phases.iter().sum(),
+            worst_frame_cpu: worst.player_ms(),
             scripts,
         })
     }

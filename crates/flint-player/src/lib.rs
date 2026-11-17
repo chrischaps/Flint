@@ -42,6 +42,8 @@ pub use player_app::headless_animation::HeadlessAnimation;
 pub use player_app::headless_game::{
     apply_look, HeadlessGame, LookRequest, ScriptLook, Skipped, PRESENTATION_ONLY, SCRIPT_SEED,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use player_app::headless_hud::HeadlessHud;
 pub use player_app::input_checks::CheckOutcome;
 pub use player_app::input_script::{Applied, InputScript, PointerEvent, ScriptEvent};
 #[cfg(not(target_arch = "wasm32"))]

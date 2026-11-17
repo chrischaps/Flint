@@ -116,12 +116,13 @@ pub(crate) struct Frame {
 }
 
 impl Frame {
-    /// The player's own work in the frame: every phase but `Present`,
-    /// whose wait is the swapchain's, the driver's and the compositor's.
+    /// The player's own work in the frame: every phase but `Acquire` and
+    /// `Present`, whose waits are the swapchain's, the driver's and the
+    /// compositor's (#1123).
     pub(crate) fn player_ms(&self) -> f32 {
         Phase::ALL
             .iter()
-            .filter(|&&p| p != Phase::Present)
+            .filter(|p| !p.is_wait())
             .map(|&p| self.phases[p as usize])
             .sum()
     }

@@ -101,7 +101,7 @@ impl super::PlayerApp {
 #[cfg(feature = "debug-hud")]
 mod graph {
     use super::super::frame_history::{Frame, FrameHistory};
-    use super::super::hitch::{Cause, Hitch, HitchDetector};
+    use super::super::hitch::{Hitch, HitchDetector};
     use super::super::perf::Phase;
     use flint_debug_ui::widgets::{Band, FrameGraph, GraphFrame, HitchCounters, BANDS};
     use std::fmt::Write as _;
@@ -121,6 +121,8 @@ mod graph {
             Phase::Input | Phase::AnimFx => Band::Other,
             Phase::Sync | Phase::Render => Band::Render,
             Phase::Hud | Phase::Present => Band::HudPresent,
+            // The wait for a swapchain image isn't the player's (#1123)
+            Phase::Acquire => Band::Elsewhere,
         }
     }
 
@@ -137,7 +139,8 @@ mod graph {
             phases += ms;
         }
         let ms = frame.judged_ms();
-        bands[Band::Elsewhere as usize] = (ms - phases).max(0.0);
+        // What no phase accounts for is elsewhere too, beside the acquire
+        bands[Band::Elsewhere as usize] += (ms - phases).max(0.0);
         GraphFrame {
             at: frame.at,
             wall_ms: frame.ms,
@@ -206,25 +209,15 @@ mod graph {
         }
     }
 
-    /// The last hitch in one line, its time first, then whose it was:
-    /// `last 117 ms: stall.rhai:on_update took 100`, `last 30 ms: render
-    /// +14` or `last 13 ms: elsewhere, present 1`.
+    /// The last hitch in one line, its time first, then what it was in
+    /// the words of [`Hitch::cause_line`], as the hitch log, the exit
+    /// report and `--perf` say it (#1128): `last 165 ms: style build
+    /// ascii, 154.2 ms`, `last 117 ms: script stall.rhai:on_update 100.0
+    /// ms`, `last 30 ms: render +14.0 ms` or `last 13 ms: elsewhere,
+    /// present 1.0 ms` (or `acquire`, the longer wait, #1123). Written once a hitch, so its allocations are not
+    /// a frame's.
     pub(crate) fn write_cause(out: &mut String, h: &Hitch) {
-        let _ = write!(out, "last {:.0} ms: ", h.judged_ms);
-        let _ = match &h.cause {
-            // A script's hitch names the script; any other, the phase
-            Cause::Player {
-                phase,
-                phase_ms,
-                script,
-            } => match script.as_ref().filter(|_| *phase == Phase::Scripts) {
-                Some((name, ms)) => write!(out, "{name} took {ms:.0}"),
-                None => write!(out, "{} +{:.0}", phase.label(), phase_ms),
-            },
-            Cause::Elsewhere { present_ms } => {
-                write!(out, "elsewhere, present {present_ms:.0}")
-            }
-        };
+        let _ = write!(out, "last {:.0} ms: {}", h.judged_ms, h.cause_line());
     }
 }
 #[cfg(test)]
@@ -265,9 +258,10 @@ mod tests {
     #[cfg(feature = "debug-hud")]
     mod graph {
         use super::super::super::frame_history::{ClockSample, Frame, FrameHistory};
-        use super::super::super::hitch::{Cause, Hitch, HitchDetector};
+        use super::super::super::hitch::{Cause, Hitch, HitchDetector, HitchNote};
         use super::super::super::perf::Phase;
         use super::super::graph::*;
+        use flint_core::frame_notes::{FrameNote, NoteKind};
         use flint_debug_ui::widgets::Band;
         use std::time::Duration;
 
@@ -358,7 +352,7 @@ mod tests {
             assert_eq!(c.hitches, 4);
             let last = c.last.unwrap();
             assert!(
-                last == "last 117 ms: stall.rhai:on_update took 100",
+                last == "last 117 ms: script stall.rhai:on_update 100.0 ms",
                 "{last}"
             );
         }
@@ -377,25 +371,134 @@ mod tests {
             assert_eq!(g.counters(&d).last.unwrap().as_ptr(), line);
         }
 
+        fn hitch(judged_ms: f32, cause: Cause, notes: Vec<HitchNote>) -> Hitch {
+            Hitch {
+                index: 3,
+                at: 1.0,
+                game_time: 1.0,
+                ms: judged_ms,
+                judged_ms,
+                median_ms: 16.7,
+                player_ms: 4.0,
+                gpu_ms: None,
+                refreshes: Some(3),
+                cause,
+                notes,
+            }
+        }
+
+        fn player(phase: Phase, phase_ms: f32, script: Option<(&str, f32)>) -> Cause {
+            Cause::Player {
+                phase,
+                phase_ms,
+                script: script.map(|(name, ms)| (name.to_string(), ms)),
+            }
+        }
+
+        /// The overlay says what the hitch log, the exit report and
+        /// `--perf` say (#1128): the line is the hitch's time, then
+        /// `Hitch::cause_line` word for word.
         #[test]
-        fn a_hitch_elsewhere_says_so() {
-            let mut out = String::new();
-            write_cause(
-                &mut out,
-                &Hitch {
-                    index: 3,
-                    at: 1.0,
-                    game_time: 1.0,
-                    ms: 50.0,
-                    judged_ms: 50.0,
-                    median_ms: 16.7,
-                    player_ms: 4.0,
-                    refreshes: Some(3),
-                    cause: Cause::Elsewhere { present_ms: 44.0 },
-                    notes: Vec::new(),
-                },
-            );
-            assert_eq!(out, "last 50 ms: elsewhere, present 44");
+        fn the_overlay_names_the_cause_the_hitch_log_names() {
+            let cases = [
+                // ASCII's first use on the looks tour: its pipelines build
+                // inside `on_draw_ui`, so the script-UI phase grew. The
+                // overlay used to say `script ui +156`.
+                (
+                    hitch(
+                        165.6,
+                        player(
+                            Phase::ScriptUi,
+                            156.0,
+                            Some(("looks_tour.rhai:on_draw_ui", 1.2)),
+                        ),
+                        vec![HitchNote {
+                            note: FrameNote::new(NoteKind::StyleBuild, "ascii", Some(154.2)),
+                            frame_before: false,
+                        }],
+                    ),
+                    "last 166 ms: style build ascii, 154.2 ms",
+                ),
+                // A script's own stall names the callback.
+                (
+                    hitch(
+                        117.0,
+                        player(Phase::Scripts, 98.0, Some(("stall.rhai:on_update", 100.0))),
+                        vec![],
+                    ),
+                    "last 117 ms: script stall.rhai:on_update 100.0 ms",
+                ),
+                // A slow `on_draw_ui` is blamed too, as the log blames it:
+                // the overlay used to name only a `scripts`-phase script.
+                (
+                    hitch(
+                        60.0,
+                        player(Phase::ScriptUi, 42.0, Some(("hud.rhai:on_draw_ui", 40.0))),
+                        vec![],
+                    ),
+                    "last 60 ms: script hud.rhai:on_draw_ui 40.0 ms",
+                ),
+                // A render stall in a frame whose longest callback was
+                // 0.3 ms is the render's.
+                (
+                    hitch(
+                        55.0,
+                        player(Phase::Render, 38.0, Some(("idle.rhai:on_update", 0.3))),
+                        vec![],
+                    ),
+                    "last 55 ms: render +38.0 ms",
+                ),
+                (
+                    hitch(
+                        50.0,
+                        Cause::Elsewhere {
+                            acquire_ms: 0.5,
+                            present_ms: 44.0,
+                        },
+                        vec![],
+                    ),
+                    "last 50 ms: elsewhere, present 44.0 ms",
+                ),
+                // The longer of the swapchain's two waits is named (#1123)
+                (
+                    hitch(
+                        50.0,
+                        Cause::Elsewhere {
+                            acquire_ms: 41.0,
+                            present_ms: 0.3,
+                        },
+                        vec![],
+                    ),
+                    "last 50 ms: elsewhere, acquire 41.0 ms",
+                ),
+            ];
+            for (h, said) in cases {
+                let mut out = String::new();
+                write_cause(&mut out, &h);
+                assert_eq!(out, said);
+                assert_eq!(
+                    out,
+                    format!("last {:.0} ms: {}", h.judged_ms, h.cause_line())
+                );
+            }
+        }
+
+        /// #1123: the acquire's wait is drawn as `Elsewhere`, with what no
+        /// phase accounts for, not as the renderer's.
+        #[test]
+        fn the_acquire_is_drawn_as_elsewhere() {
+            let mut f = Frame {
+                ms: 50.0,
+                ..Frame::default()
+            };
+            f.phases[Phase::Render as usize] = 3.0;
+            f.phases[Phase::Acquire as usize] = 40.0;
+            f.phases[Phase::Present as usize] = 1.0;
+            let g = graph_frame(&f, true);
+            assert_eq!(g.bands[Band::Render as usize], 3.0);
+            assert_eq!(g.bands[Band::HudPresent as usize], 1.0);
+            // 40 in the acquire and the 6 no phase holds
+            assert_eq!(g.bands[Band::Elsewhere as usize], 46.0);
         }
 
         /// The ticket's "no allocation for it while closed, none that grows
