@@ -13,9 +13,9 @@ path = "src/main.rs"
 # flint-cli --no-default-features` builds every command with no ALSA or
 # libudev headers, and without rfd's async D-Bus stack; `flint render`,
 # `gen`, `bundle` and the rest never needed them. What each costs when off:
-#   audio    `play` runs silent; `calibrate` and `play-chart` won't start
-#            (`render-suite` renders offline either way)
-#   gamepad  no pads; `spike-rumble` reports it
+#   audio    `play` runs silent; `music calibrate` and `music chart play`
+#            won't start (`music render` renders offline either way)
+#   gamepad  no pads; the rumble spike reports it
 #   dialogs  the editors' Save As / Export / Browse buttons say so instead
 [features]
 default = ["audio", "gamepad", "dialogs"]
@@ -87,7 +87,7 @@ naga = { version = "30.0.2", features = ["wgsl-in"] }
 # A JSON Schema validator, for the test that `flint schema --format json-schema`
 # describes every example scene (#684). Tests only.
 boon = "0.6"
-# Reads the WAV `render-suite` writes, for the music-suite test (#745).
+# Reads the WAV `music render` writes, for the music-suite test (#745).
 hound = { workspace = true }
 
 # Built-in shader modules and frame acquisition go through flint-render's

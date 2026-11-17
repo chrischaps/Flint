@@ -153,8 +153,8 @@ rhai = { version = "~1.24", features = ["sync"] }
 # performance.now() / Date.now() on the web.
 web-time = "1.1"
 # default-features off: gilrs's default Windows backend (WGI) only delivers
-# input to the process owning the foreground window — console apps (play-chart,
-# the input spike) get nothing. XInput polls regardless of focus. See ADR 0011.
+# input to the process owning the foreground window — console apps (`flint music
+# chart play`, the input spike) get nothing. XInput polls regardless of focus. See ADR 0011.
 # The backend is picked by target, not feature, everywhere else: evdev on
 # Linux, IOKit on macOS, the browser Gamepad API on wasm32. `xinput` is a
 # no-op there (rusty-xinput is a Windows-only dep) but must stay on: gilrs-core

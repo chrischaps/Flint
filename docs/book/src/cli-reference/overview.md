@@ -40,15 +40,36 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
 | `flint bundle <game>` | Pack a game folder into `.flintpack` bundles for the web player, running `flint check`'s file and load checks over the packed files first. Given a `.scene.toml`, it packs that scene alone with only what it reaches ([One scene](../guides/publishing-to-the-web.md#one-scene-flint-bundle-scene)) |
 | `flint export web <game>` | A folder any static server plays the game from: the web player, the bundles and `games.json` ([Publishing to the Web](../guides/publishing-to-the-web.md)) |
-| `flint validate-suite <manifest>` | Validate a musical suite manifest and optional chart ([music commands](music.md)) |
-| `flint play-suite <manifest>` | Play a suite's stems sample-locked, no judgment |
-| `flint calibrate <manifest>` | Tap-to-beat latency calibration, written to `logs/latency/` |
-| `flint play-chart <manifest>` | Play a suite against its chart with live gamepad capture |
-| `flint replay-chart <manifest>` | Replay a recorded or synthetic session through judgment, headless |
-| `flint render-suite <manifest>` | Render a music `.suite.toml` to WAV, offline and deterministically |
-| `flint spike-rumble` | Time the gamepad rumble command paths |
+| `flint music validate <manifest>` | Validate a musical suite manifest and optional chart ([music commands](music.md)) |
+| `flint music play <manifest>` | Play a suite's stems sample-locked, no judgment |
+| `flint music calibrate <manifest>` | Tap-to-beat latency calibration, written to `logs/latency/` |
+| `flint music chart play <manifest>` | Play a suite against its chart with live gamepad capture |
+| `flint music chart replay <manifest>` | Replay a recorded or synthetic session through judgment, headless |
+| `flint music render <manifest>` | Render a music `.suite.toml` to WAV, offline and deterministically |
+| `flint goldens <file>.goldens.toml` | Render a list of scenes and gate each against its golden PNG ([Golden Suites](../guides/headless-rendering.md#golden-suites)) |
 
-The seven music commands are documented on their own page: [Music Commands](music.md).
+The music commands are documented on their own page: [Music Commands](music.md). Until #709 they were top-level (`validate-suite`, `play-suite`, `calibrate`, `play-chart`, `replay-chart`, `render-suite`); those names still run for one release, printing their new spelling, and the rumble spike is an example program now.
+
+## Machine-readable output
+
+Every command that doesn't open a window takes `--json`, a global flag that goes anywhere on the line. With it the command prints exactly one JSON document on stdout, and every other line it would have printed (progress, warnings, what it wrote) goes to stderr, so `flint <cmd> --json | jq` always has one value to read:
+
+```bash
+flint check --json                          # the report: valid, errors, diagnostics...
+flint scene info scenes/main.scene.toml --json
+flint gen specs/stone_wall.procgen.toml -o wall.png --json   # the variants it made, and their files
+flint render scenes/main.scene.toml --json  # the render's report (--report json)
+```
+
+The exit status says whether the command succeeded: 0, or 1 on any failure. A command that answers with a report prints it whether or not it failed, so `flint check` of a broken project prints its `"valid": false` report and exits 1. Any other failure prints an error document instead, with the message and the errors that caused it:
+
+```json
+{ "error": { "message": "no component, scene table or archetype named `nope`", "causes": [] } }
+```
+
+A mistake on the command line itself (an unknown flag or subcommand) is an error document too, `{"error": {"message", "usage"}}`, with clap's exit status 2; `--help` and `--version` print as always. A command that opens a window (`play`, `edit` other than a model's or effect's `--render`, `prefab view`, `music play`, `music calibrate`, `music chart play`) refuses `--json` with an error document rather than opening one. `flint render --watch` refuses it too, since it never finishes.
+
+Where a command already had its own form, `--json` is that form: `validate`'s `--format json`, `query`'s and `entity list/show`'s `--format json`, `schema`'s `--format json` (a `--format json-schema` stays a JSON Schema), `render`'s `--report json`. `flint gen --report json` still prints a JSON line a variant; with `--json` the variants are one document's `variants` list instead. Paths in the documents use `/` on every platform. `crates/flint-cli/tests/json_cli.rs` runs every command `--help` lists with `--json` and parses what it prints, so a new command has a JSON form or is named as a window.
 
 ## The `init` Command
 
@@ -183,18 +204,22 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 `--music-volume 0` is the quickest way to audition a scene's sound design
 without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).
 
-The standalone `flint-player` binary takes the same flags (the window ones
-too, #611) plus `--msaa <1|4>`
-(default `1`) for multisample anti-aliasing of the scene passes; `flint play`
-does not expose `--msaa`. Its `--procgen-defer` shows placeholders for a
-scene's procgen assets at once and generates them over the following frames
-instead of during load (see [Specs in Scenes](../concepts/procgen.md#specs-in-scenes)).
+The standalone `flint-player` binary is the same player: both flatten one
+set of flags (`flint_player::PlayerArgs`) and launch through one function
+(`flint_player::launch`), so their `--help` differs only by `flint-player`'s
+`--bundle <file>`, which plays a game bundle made by `flint bundle` (#705).
+Every flag below, the capture and quality ones included, works on either, and
+a scene plays the same under both. Among them: `--msaa <1|4>` (default `1`)
+for multisample anti-aliasing of the scene passes, `--render-scale` and
+`--quality`, and `--procgen-defer`, which shows placeholders for a scene's
+procgen assets at once and generates them over the following frames instead
+of during load (see [Specs in Scenes](../concepts/procgen.md#specs-in-scenes)).
 
 ### Player Screenshots (HUD included)
 
 `flint render` is headless and never runs scripts, so it cannot show a
-script-drawn HUD. The standalone `flint-player` can capture the frame it
-actually presents — scene *and* egui overlay — and exit on its own, which
+script-drawn HUD. The player (`flint play` or the standalone `flint-player`)
+can capture the frame it actually presents — scene *and* egui overlay — and exit on its own, which
 makes it the tool for verifying `on_draw_ui` output:
 
 ```bash
@@ -228,8 +253,8 @@ adapter, no window) also exits 1 now, from `flint play` too.
 | `--input-script <file>` | Play timed keys, typed text, axes, gamepad buttons, the wheel and the mouse, one event per line (below). Scripted keys reach egui and the debug keys too, so `2.0 tap F2` opens the stats overlay |
 | `--stats` | Open the F2 rendering stats overlay from the first frame. F2 still closes it |
 | `--perf` | Print a perf line every 10 s: frame p50/p99/max, each phase's CPU time (mean/max), each pass's GPU time where the adapter can time, draws and triangles. The same line the web page's `?perf=1` copies, so a desktop and a browser can be set side by side |
-| `--no-hot-reload` | Don't watch the game's files: scripts, UI documents, user styles, glyph sets and palettes load once and never reload, and nothing polls the disk (#633). Also on `flint play` |
-| `--strict-scripts` | Exit 1 when any script failed, to load, to compile or while running (#693). Without it script errors are still counted and `--exit-after` prints them, a line each with its count ([When a script fails while running](../concepts/scripting.md#when-a-script-fails-while-running)). Also on `flint play` |
+| `--no-hot-reload` | Don't watch the game's files: scripts, UI documents, user styles, glyph sets and palettes load once and never reload, and nothing polls the disk (#633) |
+| `--strict-scripts` | Exit 1 when any script failed, to load, to compile or while running (#693). Without it script errors are still counted and `--exit-after` prints them, a line each with its count ([When a script fails while running](../concepts/scripting.md#when-a-script-fails-while-running)) |
 
 A stepped run is repeatable as long as its scripts are. `--frame-step` (or `--seed`) takes care of `random()`; a script that reads `timestamp()` still sees the wall clock. Two stepped runs of `examples/seeded_stars.scene.toml`, which scatters a sky with `random()` every second, write byte-identical screenshots; before #635 every run drew its own sky:
 
@@ -310,7 +335,8 @@ wall-clock seconds since launch, so a capture lands on the same gameplay
 moment regardless of load time. The capture reads the swapchain back on the
 GPU, so it requires a surface that advertises `COPY_SRC`; on adapters that do
 not (some GL/Android surfaces) the player logs a warning and skips the
-screenshot rather than failing. `flint play` does not expose these flags.
+screenshot rather than failing. `flint play` takes every one of these flags
+too (#705).
 
 ### Player Controls (Defaults)
 
@@ -422,7 +448,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--gpu <name>` | (high-perf) | GPU adapter to use (substring match); `--list-gpus` prints the names |
 | `--list-styles` | | Print every registered style, its stage, table, and each parameter's default and range, then exit; with a scene, its `styles/` user styles too ([Stylize Passes](../concepts/stylize-passes.md#listing-the-styles)) |
 | `--list-effects` | | Print every built-in post effect and each of its `[post_process]` keys with its kind, default, the range it is tuned for and its help, then exit ([Post-Processing](../concepts/post-processing.md#listing-the-keys)) |
-| `--json` | | With `--list-styles` or `--list-effects`: the list as JSON, for agents |
+| `--json` | | The [global flag](#machine-readable-output): a render's report as one document, as `--report json` prints it; with `--list-styles`, `--list-effects` or `--list-gpus` the list; with `--variant` the files written |
 | `--watch` | `false` | Keep running and write `--output` again after every save to the scene's folder, its style folders, its schemas or a file a flag names (#432). A still or a `--sweep` keeps its GPU, scene and renderer, so a user style's `.wgsl` save is drawn again on them; anything else (and a `.shader.toml` whose description changed) loads the scene again on the same GPU. One `watch: render <n> in <s>` line a render, then each style's error. Ctrl-C stops it ([Stylize Passes](../concepts/stylize-passes.md#user-authored-styles)) |
 | `--distance <f32>` | (auto) | Camera distance from target |
 | `--yaw <deg>` | (auto) | Horizontal camera angle |
@@ -440,6 +466,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--msaa <n>` | `1` | MSAA sample count for the scene passes: `1` (off) or `4`. Default 1 keeps headless pixel-diff gates single-sample ([ADR 0058](https://github.com/chrischaps/Flint/blob/main/docs/adr/0058-opt-in-4x-msaa-for-scene-passes.md)) |
 | `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image on each side (0.25–1), upscaled in the composite, as `flint-player --render-scale` (#122) |
 | `--gpu-time <frames>` | (none) | Render the frame this many times with GPU timing on and print each pass's smoothed time ([ADR 0108](https://github.com/chrischaps/Flint/blob/main/docs/adr/0108-gpu-timing-from-timestamp-queries.md)) before writing the image |
+| `--frame-dump <file.json>` | (none) | Write the rendered frame's description as JSON (#1084, [ADR 0126](https://github.com/chrischaps/Flint/blob/main/docs/adr/0126-what-a-frame-capture-holds-and-how-it-replays.md)): every pass in the order drawn, named as `--gpu-time`'s rows are, with the targets it read and wrote, its draws by entity, what a cull set aside and why, why a skipped pass was skipped and its GPU time in that frame; then the frame's settings, targets, lights and stats. Of a `--time` span, the last frame; not with `--frames`, `--mesh` or `--sweep`. `--report json` names the file ([A frame's description](../guides/profiling.md#a-frames-description)) |
 | `--frames <n>` | (none) | Draw a sequence of `n` frames on one renderer, written as `<stem>_0000.png`... beside `--output`; temporal styles see consecutive frames ([Frame sequences](../guides/headless-rendering.md#frame-sequences), #345) |
 | `--frame-dt <s>` | `1/60` | With `--frames`: seconds between frames; post time, grass wind and particles advance by it |
 | `--orbit <deg/s>` / `--camera-path <file>` | (still) | With `--frames`: orbit the camera about its target, or follow a TOML of `[[key]] time/position/target` keys |
@@ -774,7 +801,7 @@ When an entity is selected, a **translate gizmo** appears with colored axis arro
 | Ctrl+S | Save spline to disk |
 | Ctrl+Z | Undo |
 
-> **Legacy aliases:** `flint serve`, `flint preview`, `flint gen-preview`, `flint tex-edit`, `flint terrain-edit`, and `flint spline-edit` still work. They are hidden subcommands that open the same tools `flint edit` dispatches to; they are omitted from `flint --help`.
+> **Legacy aliases:** `flint serve`, `flint preview`, `flint gen-preview`, `flint tex-edit`, `flint terrain-edit`, and `flint spline-edit` still work (`serve` has no code of its own: it opens the scene viewer `flint edit <scene>` does). They are hidden subcommands that open the same tools `flint edit` dispatches to; they are omitted from `flint --help`.
 
 ## The `asset generate` Command
 

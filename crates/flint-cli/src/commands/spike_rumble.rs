@@ -1,7 +1,6 @@
-//! H1 rumble spike (ADR 0025): prove force feedback fires on this stack,
-//! let the operator feel the three weight-axis prototypes (tick / thump /
-//! grind), time both command paths, and commit the report to
-//! `logs/latency/` beside the audio-latency and input-granularity spikes.
+//! `flint spike-rumble`, hidden since #709: the H1 rumble spike (ADR 0025)
+//! is `cargo run -p flint-input-capture --example spike_rumble` now, and
+//! this alias goes in a later release. It runs the same spike.
 
 use anyhow::Result;
 use std::path::PathBuf;
@@ -17,7 +16,12 @@ pub struct SpikeRumbleArgs {
     pub no_feel: bool,
 }
 
+const MOVED: &str = "note: `flint spike-rumble` is \
+    `cargo run -p flint-input-capture --example spike_rumble` now; \
+    the old name goes in a later release";
+
 pub fn run(args: SpikeRumbleArgs) -> Result<()> {
+    eprintln!("{MOVED}");
     let base_dir = args
         .base_dir
         .map(PathBuf::from)
@@ -26,17 +30,7 @@ pub fn run(args: SpikeRumbleArgs) -> Result<()> {
     println!("rumble command-path spike (hold the controller)");
     let report = flint_input_capture::rumble::spike_rumble(!args.no_feel)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    println!(
-        "direct set_ff_state: median {:.1} us, p99 {:.1} us, max {:.1} us (n={})",
-        report.direct.median_us, report.direct.p99_us, report.direct.max_us, report.direct.n
-    );
-    if let Some(ep) = &report.effect_play {
-        println!(
-            "Effect::play call:   median {:.1} us (n={}) — plus the ff server's structural \
-             0-50 ms tick quantization on top",
-            ep.median_us, ep.n
-        );
-    }
+    println!("{}", report.summary());
 
     let path = super::write_latency_report(&base_dir, "rumble", &report.to_toml())?;
     println!("wrote {}", path.display());

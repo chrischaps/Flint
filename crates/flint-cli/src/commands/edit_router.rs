@@ -204,9 +204,23 @@ pub struct EditArgs {
 pub fn run(args: EditArgs) -> Result<()> {
     let path = Path::new(&args.file);
     let file_kind = detect_file_kind(path)?;
-    let styled = !args.style.styles.is_empty() || args.style.style_time.is_some();
     let renders =
         args.render.is_some() && matches!(file_kind, FileKind::Model | FileKind::ParticleEffect);
+    if !renders {
+        crate::output::refuse_interactive("edit")?;
+    }
+    let written = args.render.clone().filter(|_| renders);
+    run_kind(args, file_kind, renders)?;
+    if let Some(path) = written {
+        if crate::output::json() {
+            crate::output::document(&serde_json::json!({ "written": [path] }));
+        }
+    }
+    Ok(())
+}
+
+fn run_kind(args: EditArgs, file_kind: FileKind, renders: bool) -> Result<()> {
+    let styled = !args.style.styles.is_empty() || args.style.style_time.is_some();
     // The scene viewer takes them too (#328), but not the spline editor
     let scene_viewer = matches!(file_kind, FileKind::Scene) && !args.spline;
     if styled && !renders && !scene_viewer {

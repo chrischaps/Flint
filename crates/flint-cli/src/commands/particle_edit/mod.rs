@@ -85,7 +85,7 @@ pub fn run(args: ParticleEditArgs) -> Result<()> {
     } else {
         let preset = args.preset.as_deref().unwrap_or("sparks");
         let fx = presets::bootstrap(&path, preset)?;
-        println!(
+        crate::output::say!(
             "Created new particle effect '{}' from the '{}' preset at {}",
             fx.name,
             preset,
@@ -187,7 +187,7 @@ fn run_headless(
     }
     img.save(output)
         .with_context(|| format!("Failed to save image to {output}"))?;
-    println!(
+    crate::output::say!(
         "Rendered '{}' at t = {:.2}s ({} particles alive) → {}",
         effect.name,
         t,

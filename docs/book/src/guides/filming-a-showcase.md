@@ -366,7 +366,7 @@ For each cut it arranges the score (`tools/showcase/score.py`) to the shot
 list, synthesizes six stems (`tools/showcase/synth.py`: sines, noise and FM,
 no samples), writes a suite and its mix automation
 (`tools/showcase/music/<cut>.suite.toml`, `<cut>.events.toml`), renders
-them with `flint render-suite`, and masters the result to -14 LUFS under a
+them with `flint music render`, and masters the result to -14 LUFS under a
 -1.5 dBTP ceiling: `many-hands-<cut>.wav`, 48 kHz 24-bit, exactly as long as
 the cut. The JSON beside it has its length in samples and frames, its
 loudness and peaks, and each shot's start frame. It needs numpy and scipy

@@ -249,6 +249,10 @@ impl SceneRenderer {
             let frame_config = own.map(|c| std::mem::replace(&mut self.postprocess_config, c));
             self.swap_view(&mut view.slot);
             let depth = crate::bind_cache::DepthTarget::new(&view.depth_view, view.depth_id);
+            // A described frame names each panel's view (#1084)
+            if let Some(log) = &mut self.frame_log {
+                log.panels.push(spec.name.clone());
+            }
             if i == last {
                 self.encode_to(device, queue, encoder, depth, &cam, &view.color_view);
             } else {
@@ -284,6 +288,12 @@ impl SceneRenderer {
             .map(|(spec, rect)| (*rect, &views[&spec.name].picture_bind))
             .collect();
         compositor.encode(queue, encoder, target_view, frame_size, &layout, &pictures);
+        if let Some(log) = &mut self.frame_log {
+            log.on_page = true;
+            let pass = log.ran("Panels", false);
+            pass.writes(&["surface"]);
+            pass.pass.also = layout.panels.iter().map(|p| p.name.clone()).collect();
+        }
         self.panel_state.compositor = Some(compositor);
         self.panel_state.views = views;
         self.panel_state.posts = posts;

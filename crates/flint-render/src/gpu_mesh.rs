@@ -568,6 +568,25 @@ impl MeshCache {
         self.meshes.insert(name.to_string(), meshes);
     }
 
+    /// Every cached mesh's vertex buffer by address, with its asset name,
+    /// its index among that asset's meshes and its material's name: what a
+    /// frame's description names a draw's mesh by (#1084).
+    pub(crate) fn names_by_buffer(&self) -> HashMap<usize, (String, usize, String)> {
+        let plain = self.meshes.iter().flat_map(|(name, meshes)| {
+            meshes.iter().enumerate().map(move |(i, m)| {
+                let key = Arc::as_ptr(&m.vertex_buffer) as usize;
+                (key, (name.clone(), i, m.material.name.clone()))
+            })
+        });
+        let skinned = self.skinned_meshes.iter().flat_map(|(name, meshes)| {
+            meshes.iter().enumerate().map(move |(i, m)| {
+                let key = Arc::as_ptr(&m.vertex_buffer) as usize;
+                (key, (name.clone(), i, m.material.name.clone()))
+            })
+        });
+        plain.chain(skinned).collect()
+    }
+
     /// Whether `name` was uploaded procedurally (from vertex data, not a file).
     pub fn is_procedural(&self, name: &str) -> bool {
         self.procedural.contains(name)

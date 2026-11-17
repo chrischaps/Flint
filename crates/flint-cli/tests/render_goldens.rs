@@ -69,17 +69,19 @@ fn stylize_goldens_hold() {
     }
 }
 
+/// `flint <command> --help`, the command's words split on spaces.
 fn help(command: &str) -> String {
     let run = Command::new(FLINT)
-        .args([command, "--help"])
+        .args(command.split_whitespace())
+        .arg("--help")
         .output()
         .expect("run flint");
     assert!(run.status.success(), "flint {command} --help failed");
     String::from_utf8_lossy(&run.stdout).into_owned()
 }
 
-/// #327: `goldens` and `render-suite` are two commands, and each one's
-/// `--help` lists only its own flags.
+/// #327: `goldens` and `music render` (once `render-suite`) are two
+/// commands, and each one's `--help` lists only its own flags.
 #[test]
 fn goldens_and_music_each_list_only_their_own_flags() {
     const GOLDEN: &[&str] = &[
@@ -102,7 +104,7 @@ fn goldens_and_music_each_list_only_their_own_flags() {
         "--chunk-frames",
     ];
     let goldens = help("goldens");
-    let music = help("render-suite");
+    let music = help("music render");
     let has = |text: &str, flag: &str| text.split_whitespace().any(|w| w == flag);
     for flag in GOLDEN {
         assert!(
@@ -111,13 +113,13 @@ fn goldens_and_music_each_list_only_their_own_flags() {
         );
         assert!(
             !has(&music, flag),
-            "render-suite --help has {flag}:\n{music}"
+            "music render --help has {flag}:\n{music}"
         );
     }
     for flag in MUSIC {
         assert!(
             has(&music, flag),
-            "render-suite --help lacks {flag}:\n{music}"
+            "music render --help lacks {flag}:\n{music}"
         );
         assert!(
             !has(&goldens, flag),
@@ -146,13 +148,16 @@ fn render_suite_still_runs_a_goldens_manifest() {
         assert!(!run.status.success(), "{command}: {err}");
         assert!(err.contains("no cases to run"), "{command}: {err}");
     }
-    // A music suite still needs its WAV, now from clap
-    let run = Command::new(FLINT)
-        .args(["render-suite", "x.suite.toml"])
-        .output()
-        .expect("run flint");
-    let err = String::from_utf8_lossy(&run.stderr);
-    assert!(!run.status.success() && err.contains("--output"), "{err}");
+    // A music suite still needs its WAV, now from clap, by either name
+    for command in [&["render-suite"][..], &["music", "render"]] {
+        let run = Command::new(FLINT)
+            .args(command)
+            .arg("x.suite.toml")
+            .output()
+            .expect("run flint");
+        let err = String::from_utf8_lossy(&run.stderr);
+        assert!(!run.status.success() && err.contains("--output"), "{err}");
+    }
 }
 
 /// A user style that fails to compile (#417): `flint render` names its

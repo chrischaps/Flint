@@ -56,6 +56,15 @@ impl MsaaTargets {
         std::mem::swap(&mut self.view, other);
     }
 
+    /// The multisampled colour and depth textures, for a frame's
+    /// description (#1084).
+    pub(crate) fn textures(&self) -> (Option<&wgpu::Texture>, Option<&wgpu::Texture>) {
+        (
+            self.view.color.as_ref().map(|(t, _, _, _)| t),
+            self.view.depth.as_ref().map(|(t, _)| t),
+        )
+    }
+
     /// The multisampled colour target. Made by [`Self::prepare`].
     pub(crate) fn color_view(&self) -> Option<&wgpu::TextureView> {
         self.view.color.as_ref().map(|(_, view, _, _)| view)

@@ -2,6 +2,8 @@
 
 This guide covers how AI coding agents interact with Flint to build game scenes programmatically. It describes the agent interaction loop, error handling patterns, and best practices.
 
+Every command below that doesn't open a window takes `--json`: one JSON document on stdout and everything else on stderr, exit 1 on a failure with the report or an `error` document still on stdout ([Machine-readable output](../cli-reference/overview.md#machine-readable-output)). Read an answer from that document rather than from the text, which is written for a person and changes.
+
 ## The Agent Interaction Loop
 
 An agent building a scene follows a create-validate-query-render cycle:

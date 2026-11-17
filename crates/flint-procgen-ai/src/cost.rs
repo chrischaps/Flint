@@ -237,7 +237,7 @@ pub fn parse_ledger(text: &str) -> LedgerContents {
 }
 
 /// Calls and dollars for one group of a report.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
 pub struct Tally {
     /// API calls.
     pub calls: u64,
@@ -260,7 +260,7 @@ impl Tally {
 }
 
 /// A ledger summed up: the total, and per provider, model and spec.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct CostSummary {
     /// Everything in range.
     pub total: Tally,

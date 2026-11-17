@@ -23,15 +23,14 @@ A scannable cheat sheet for daily Flint development.
 | `flint asset generate <type>` | AI asset generation (texture, model, audio) |
 | `flint asset import <file>` | Import file into asset catalog |
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
-| `flint validate-suite <manifest>` | Validate a music suite manifest (`--chart` to cross-check) |
-| `flint play-suite <manifest>` | Play a suite's stems, no judgment |
-| `flint calibrate <manifest>` | Tap-to-beat latency calibration |
-| `flint play-chart <manifest> --chart <chart>` | Play a chart with live gamepad capture (`--record`, `--window`) |
-| `flint replay-chart <manifest> --chart <chart>` | Replay a recorded or synthetic session headless |
-| `flint render-suite <manifest> -o out.wav` | Render a scripted suite session to WAV |
+| `flint music validate <manifest>` | Validate a music suite manifest (`--chart` to cross-check) |
+| `flint music play <manifest>` | Play a suite's stems, no judgment |
+| `flint music calibrate <manifest>` | Tap-to-beat latency calibration |
+| `flint music chart play <manifest> --chart <chart>` | Play a chart with live gamepad capture (`--record`, `--window`) |
+| `flint music chart replay <manifest> --chart <chart>` | Replay a recorded or synthetic session headless |
+| `flint music render <manifest> -o out.wav` | Render a scripted suite session to WAV |
 | `flint goldens <file>.goldens.toml` | Render scenes and gate them against golden PNGs (`--bless` rewrites) |
 | `flint render <scene> --style ascii:cell=12` | Preview any registered style over a scene |
-| `flint spike-rumble` | Time the gamepad rumble paths |
 
 Music commands are detailed in [Music Commands](cli-reference/music.md).
 

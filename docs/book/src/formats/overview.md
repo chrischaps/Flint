@@ -582,13 +582,13 @@ The rhythm system ([Music Sessions](../concepts/music-sessions.md)) has its own 
 |------|---------|
 | `*.suite.toml` | Suite manifest: `[suite]` id and title, `[audio] sample_rate`, `[[tempo]]` anchors (`sample`, `bpm`, `time_signature`), `[[sections]]` (`name`, `start_sample`, and for a rhythm suite `pulse_window_ms`), and one `[buses.<name>]` per bus, named by the suite and mixed in the order it declares them, with `file` or `silent = true`. Optional `[[degraded_alternates]]`. A rhythm suite adds `[reintegration]` (`re_entry_sections`, `lead_bus`, `reassembly_bars`) and keeps exactly the six buses `foundation`, `harmony`, `world_voice`, `home_theme`, `child_motif`, `texture`. Checked by `flint validate-suite`. |
 | `*.chart.toml` | Beatmap: `suite` id, `[[curves]]` (`channel` ∈ `lean`, `sway`, `pressure_l`, `pressure_r`; `beat`; `value`; `interp` ∈ `linear`, `hold`, `smooth`), `[[pulses]]` (`beat`, `kind` ∈ `pulse`, `press`, `flick`, optional `window_ms`, `strength`, `direction`), `[[cues]]` (`beat`, `cue`, optional `params`), `[[intensity]]` (`beat`, `value`). |
-| `*.events.toml` | Offline event script for `flint render-suite`: `[[events]]` with `at = "bar:N"` or `"beat:N"`, `bus`, `action` ∈ `set_gain` (`db`, `ramp_ms`), `set_lpf` (`hz`, `ramp_ms`), `set_detune` (`semitones`, `ramp_ms`), `marker` (`label`). |
-| `*.session.jsonl` | Recorded input session (`flint play-chart --record`): one JSON object per line, a `header` (suite, chart, sample rate, latency and calibration offsets, config snapshots) followed by `lean` (`sample`, `x`, `y`) and `pulse` (`sample`, `kind`) events stamped in suite samples. Replayed by `flint replay-chart --session`. |
+| `*.events.toml` | Offline event script for `flint music render`: `[[events]]` with `at = "bar:N"` or `"beat:N"`, `bus`, `action` ∈ `set_gain` (`db`, `ramp_ms`), `set_lpf` (`hz`, `ramp_ms`), `set_detune` (`semitones`, `ramp_ms`), `marker` (`label`). |
+| `*.session.jsonl` | Recorded input session (`flint music chart play --record`): one JSON object per line, a `header` (suite, chart, sample rate, latency and calibration offsets, config snapshots) followed by `lean` (`sample`, `x`, `y`) and `pulse` (`sample`, `kind`) events stamped in suite samples. Replayed by `flint music chart replay --session`. |
 | `config/coherence.toml` | Coherence integrator tuning (`--config`) |
 | `config/ladder.toml` | Disintegration ladder: rungs, hysteresis, per-rung audio and visual params, and the `[seam]` table (`lead_in_beats` 0–8, default 0) (`--ladder`) |
 | `config/gradient.toml` | Error-driven audio gradient (`--gradient`) |
 | `config/haptics.toml` | Rumble entrainment (`--haptics`) |
-| `logs/latency/calibration-*.toml` | Written by `flint calibrate`; the median tap offset feeds later sessions. `flint spike-rumble` writes its timing report beside it |
+| `logs/latency/calibration-*.toml` | Written by `flint music calibrate`; the median tap offset feeds later sessions. The rumble spike (`cargo run -p flint-input-capture --example spike_rumble`) writes its timing report beside it |
 | `logs/sessions/*.session.jsonl`, `logs/judgment/*.jsonl` | Default locations for recorded sessions and replay judgment logs |
 
 ## Configuration (`~/.flint/config.toml`, `.flint/config.toml`)

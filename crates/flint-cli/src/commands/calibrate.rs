@@ -1,7 +1,8 @@
 //! Tap-to-beat calibration: play the foundation bus solo, collect the
 //! player's pulses, and write the median signed offset vs the
 //! latency-compensated beat grid to `logs/latency/calibration-*.toml`.
-//! Consumed by play-chart as part of the total judgment offset.
+//! Consumed by `music chart play` as part of the total judgment offset.
+//! `flint music calibrate`, the old `calibrate` (#709).
 //! Undiegetic and ugly by design at this stage (production plan D6).
 
 use anyhow::{bail, Context, Result};
@@ -136,7 +137,7 @@ pub fn run(args: CalibrateArgs) -> Result<()> {
 
     let latency_file = latency.map(|(f, _)| f).unwrap_or_else(|| "none".into());
     let contents = format!(
-        "# Tap-to-beat calibration (flint calibrate)\n[calibration]\nmedian_ms = {median_ms:.3}\nmad_ms = {mad_ms:.3}\ntaps = {}\nlatency_file_used = \"{latency_file}\"\n",
+        "# Tap-to-beat calibration (flint music calibrate)\n[calibration]\nmedian_ms = {median_ms:.3}\nmad_ms = {mad_ms:.3}\ntaps = {}\nlatency_file_used = \"{latency_file}\"\n",
         errors_ms.len()
     );
     let path = super::write_latency_report(&base_dir, "calibration", &contents)?;

@@ -320,6 +320,7 @@ impl SkyRenderer {
             texture_bind_group,
         });
 
-        println!("Loaded skybox: {} ({}x{})", path.display(), width, height);
+        // stderr: stdout is what a command answers with (#710)
+        eprintln!("Loaded skybox: {} ({}x{})", path.display(), width, height);
     }
 }

@@ -93,6 +93,45 @@ With `--exit-after` and `--stats`, the player prints the average GPU frame time 
 [perf] avg GPU 2.73 ms/frame over 6692 timed frames no vsync
 ```
 
+### A frame's description
+
+`--gpu-time` says what each part cost. `--frame-dump <file.json>` says what each part did (#1084): which passes ran in the frame `flint render` drew, in the order they were recorded, and why the others didn't; what each read and wrote; and every draw, by the entity it draws.
+
+```bash
+flint render examples/stylize_props.scene.toml --frame-dump frame.json
+```
+
+```text
+Wrote the frame's description to frame.json: 11 of 19 passes ran, 8 scene draws, GPU-timed
+```
+
+A pass, trimmed:
+
+```json
+{
+  "name": "Scene", "ran": true, "skipped": null, "timed": true, "gpu_ms": 0.204,
+  "reads": ["shadow_map"], "writes": ["hdr_scene", "depth"],
+  "render_passes": ["Render Pass"], "also": ["Sky", "Grid"],
+  "draws": [
+    { "entity": "props_barrel", "entity_id": 1, "kind": "Static", "layer": "Opaque static",
+      "blend": "opaque", "vertex": "plain", "pipeline": "pbr double-sided",
+      "mesh": "barrel#0", "material": "material_0", "material_id": 0,
+      "triangles": 17756, "instances": 1, "casts_shadow": true, "culled": null }
+  ],
+  "culled": [ { "entity": "far_crate", "kind": "Static", "culled": "draw distance" } ],
+  "passes": []
+}
+```
+
+- **Passes** are named by their GPU timer scope, so the `timed` ones, in order, are `--gpu-time`'s rows, and `gpu_ms` is that pass's raw time in this frame, not a smoothed figure. The frame is timed when the adapter has `TIMESTAMP_QUERY`. A pass with no scope of its own has `timed: false`: each shadow map layer (`Shadow cascade 0`, inside `Shadows`, with its casters), the depth upscale, and the composite while FXAA ends the chain.
+- **A skipped pass** is listed where it would have run, with why: `no grass in the scene`, `off ([post_process] volumetric_enabled = false)`, `capped by quality (ssao = false)`, `no style reads the albedo`, a style at `blend 0`, `no sun gives light and no spot casts`.
+- **Draws** come from the same choices the pass draws with, so the scene pass's `draws` are `RenderStats::draw_calls` exactly. Each names its entity, and `entity_id` is there for display only (ids move between runs, ADR 0126). `mesh` is a model's sub-mesh as `<asset>#<n>`, or `box` for a `bounds` box. Draws with one `material_id` share a material buffer. `culled` lists what this camera set aside: `frustum`, `lod` (another level of detail draws from here) or `draw distance`.
+- **The frame**: `frame` (size, scene size, render scale, MSAA, adapter, backend, debug view, every `--quality` setting, the drawn `[post_process]` by key, the styles in chain order), `targets` (every texture the frame drew into or read: its id, format, size, layers, samples and bytes), `memory`, `lights` (which were drawn and which a cap left out) and `stats`, the F2 overlay's totals. A comic page's panels are each a frame drawn again, so each has its own passes under `panels`, and the page's compositor is the top-level `Panels` pass.
+
+The file has `"format": "flintframe"` and `"version": 1`. It is the same type (`flint_render::frame_capture::FrameDescription`) a frame capture's `manifest.json` will hold (#1085, #1086), so the frame tool to come (#1087) reads both with one reader. A host describes a frame with `renderer.describe_next_frame()` before it and `renderer.describe_frame(Some(&world), &FrameHost { .. })` after, then `FrameDescription::lay_gpu_times` with that frame's `GpuTimer::recorded` times once they are read back. A frame nobody asked about keeps no log and draws the same bytes.
+
+With `--time`, the frame described is the span's last. `--report json` names the file as `frame_dump`.
+
 ### The perf line
 
 `flint-player --perf` prints one line every ten seconds: frame p50, p99 and max, the CPU time of each phase of the frame (input, scripts, physics, script ui, anim/fx, sync, render, hud, present; mean and worst), the four script callbacks with the worst single frame, each named by file and callback (`hud.rhai:on_draw_ui`, `kart.rhai:on_update`, `door.rhai:on_collision`), and the script system's own steps (`[hot reload]`, `[load]`) without the callbacks they ran, the GPU time of each scope above, draws and triangles. In a browser, `?perf=1` shows the same numbers in a corner of the page and copies them as the same line ([web.md](https://github.com/chrischaps/Flint/blob/main/docs/design/web.md#the-perf-readout-120)).

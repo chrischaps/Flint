@@ -1,6 +1,6 @@
 //! Console readout of musical position and per-bus state.
 //!
-//! Shared by `flint play-suite` (live) and `flint render-suite` (offline) so
+//! Shared by `flint music play` (live) and `flint music render` (offline) so
 //! realtime and headless evidence are textually comparable. This is a dev
 //! surface only — nothing here may reach a player-facing build (GDD: the
 //! world is the interface).

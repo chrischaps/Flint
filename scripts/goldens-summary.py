@@ -1,4 +1,4 @@
-"""Markdown table of a render-suite report.json, for a CI job summary (#314).
+"""Markdown table of a `flint goldens` report.json, for a CI job summary (#314).
 
     python scripts/goldens-summary.py target/tmp/stylize-goldens/report.json
 

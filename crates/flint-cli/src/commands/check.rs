@@ -24,10 +24,6 @@ pub struct CheckArgs {
     #[arg(default_value = ".")]
     pub path: PathBuf,
 
-    /// Print one JSON document on stdout instead of text
-    #[arg(long)]
-    pub json: bool,
-
     /// Schema directories, later ones overriding earlier (repeatable).
     /// Without it: the project's flint.toml `schemas`, else schemas/ in the
     /// working directory, beside each scene and one level up
@@ -64,13 +60,5 @@ pub fn report(args: &CheckArgs) -> Result<check::Report> {
 
 pub fn run(args: CheckArgs) -> Result<()> {
     let report = report(&args)?;
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&check::json(&report))?);
-    } else {
-        print!("{}", check::text(&report));
-    }
-    if report.has_errors() {
-        std::process::exit(1);
-    }
-    Ok(())
+    crate::output::emit(&report)
 }
