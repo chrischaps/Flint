@@ -175,13 +175,15 @@ impl PhysicsWorld {
         self.rigid_body_set.get_mut(handle)
     }
 
-    /// Cast a ray and return the first hit
+    /// Cast a ray and return the first hit, of the colliders `groups` lets
+    /// through (`None`: every one)
     pub fn cast_ray(
         &self,
         origin: [f32; 3],
         direction: [f32; 3],
         max_distance: f32,
         exclude_collider: Option<ColliderHandle>,
+        groups: Option<InteractionGroups>,
     ) -> Option<RaycastHit> {
         let ray = Ray::new(
             point![origin[0], origin[1], origin[2]],
@@ -195,7 +197,10 @@ impl PhysicsWorld {
                 true
             }
         };
-        let filter = QueryFilter::default().predicate(&predicate);
+        let mut filter = QueryFilter::default().predicate(&predicate);
+        if let Some(groups) = groups {
+            filter = filter.groups(groups);
+        }
 
         self.query_pipeline
             .cast_ray_and_get_normal(

@@ -224,7 +224,13 @@ impl PlayerApp {
             }
         }
 
-        // Re-sync physics for new entities
+        // Re-sync physics for new entities, the chunk's mesh colliders
+        // given their models' triangles first (#729)
+        let collider_meshes: Vec<_> = super::collider_meshes::requests(&self.core.world)
+            .into_iter()
+            .filter(|(id, _)| spawned_ids.contains(id))
+            .collect();
+        self.prepare_physics(&collider_meshes);
         self.core
             .physics
             .sync_new_entities(&mut self.core.world, &spawned_ids);
