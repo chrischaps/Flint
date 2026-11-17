@@ -1946,6 +1946,7 @@ dependencies = [
  "flint-animation",
  "flint-asset",
  "flint-audio",
+ "flint-audio-worklet",
  "flint-core",
  "flint-debug-ui",
  "flint-ecs",

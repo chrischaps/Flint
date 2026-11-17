@@ -126,7 +126,8 @@ pub struct SoundPlay {
     pub pitch: f64,
     /// Plays until `stop_sound`, or the scene's end.
     pub looping: bool,
-    /// The mixer bus by name: `sfx` (the default) or `music`.
+    /// The mixer bus by name: `sfx` (the default), `music` or one the game
+    /// declares in `flint.toml` (#730).
     pub bus: String,
 }
 
@@ -191,6 +192,12 @@ pub enum ScriptCommand {
         handle: u64,
         volume: f64,
         fade: f64,
+    },
+    /// `set_bus_volume`: a mixer bus's volume (linear, 1 = unity), by name:
+    /// `sfx`, `music` or one the game declares in `flint.toml` (#730).
+    SetBusVolume {
+        bus: String,
+        volume: f64,
     },
     FireEvent {
         name: String,

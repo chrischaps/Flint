@@ -172,7 +172,12 @@ impl AudioSync {
             let volume = source.f64("volume", 1.0);
             let pitch = source.f64("pitch", 1.0);
             let file = source.str("file", "");
-            let bus = Bus::from_name(source.choice("bus", Bus::NAMES, "sfx"));
+            // One of the engine's buses: the built-in two and the game's (#730)
+            let bus = {
+                let names: Vec<&str> = engine.buses().names().collect();
+                let name = source.choice("bus", &names, "sfx");
+                engine.bus(name).unwrap_or(Bus::SFX)
+            };
 
             if file.is_empty() {
                 self.synced_entities.insert(entity_id);

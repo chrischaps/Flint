@@ -21,7 +21,7 @@ pub use extension::{
     ExtensionAudio, ExtensionCtx, ExtensionGpu, KeyInput, MeshOptions, PlayerExtension,
     SoundOptions, Stage,
 };
-pub use flint_audio::Bus;
+pub use flint_audio::{Bus, Buses};
 pub use flint_core::quality::{GpuInfo, QualitySettings, QualityValue};
 pub use flint_geometry::ray_mesh::{RayHit, RayMesh, RayScene};
 pub use flint_render::{

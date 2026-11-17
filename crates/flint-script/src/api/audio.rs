@@ -12,10 +12,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Handles for the sounds scripts start, never reused in a run (0 is none).
 static NEXT_SOUND_HANDLE: AtomicU64 = AtomicU64::new(1);
 
-/// The buses a script may name: the engine's two, until #730 makes buses
-/// data.
-const BUSES: &[&str] = &["sfx", "music"];
-
 /// What `play_sound`'s opts map takes, and `play_sound_at`'s.
 const PLAY_KEYS: &[&str] = &["volume", "pitch", "looping", "bus"];
 const PLACE_KEYS: &[&str] = &[
@@ -43,7 +39,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
 
     m.func(
         "play_sound",
-        "Play a sound, not placed in the world: a volume (0..1), or a map of any of volume, pitch, looping (until stop_sound), bus (sfx or music).",
+        "Play a sound, not placed in the world: a volume (0..1), or a map of any of volume, pitch, looping (until stop_sound), bus (sfx, music or one the game declares).",
     )
     .arg("name", Str)
     .arg("volume_or_opts", Any)
@@ -166,6 +162,19 @@ pub(crate) fn register(api: &mut ScriptApi) {
     )
     .returns(Num, "seconds; -1.0 where it isn't known (the desktop)")
     .run(|call, ()| call.ctx_ref().audio_output_latency.unwrap_or(-1.0));
+
+    m.func(
+        "set_bus_volume",
+        "A mixer bus's volume (0 mutes, 1 is unity), by name: sfx, music or one the game declares in flint.toml's [audio.buses]; it scales the bus's children too.",
+    )
+    .arg("bus", Str)
+    .arg("volume", Num)
+    .run(|call, (bus, volume)| {
+        call.ctx().commands.push(ScriptCommand::SetBusVolume {
+            bus: bus.to_string(),
+            volume: volume.max(0.0),
+        });
+    });
 
     m.func(
         "set_audio_lowpass",
@@ -322,9 +331,14 @@ impl SoundOpts {
                     Ok(b) => o.play.looping = b,
                     Err(_) => problem(key, "should be true or false".into()),
                 },
+                // Any bus the game declares (#730): the engine says once
+                // when a name is none and plays it on sfx.
                 "bus" => match value.read_lock::<rhai::ImmutableString>() {
-                    Some(bus) if BUSES.contains(&bus.as_str()) => o.play.bus = bus.to_string(),
-                    _ => problem(key, format!("should be one of {}", BUSES.join(", "))),
+                    Some(bus) if !bus.is_empty() => o.play.bus = bus.to_string(),
+                    _ => problem(
+                        key,
+                        "should be a bus's name (sfx, music or the game's)".into(),
+                    ),
                 },
                 _ => {
                     let Some(v) = number(value) else {
@@ -521,7 +535,7 @@ mod tests {
         let engine = ScriptEngine::new();
         let map: rhai::Map = engine
             .rhai_engine()
-            .eval(r#"#{ "loop": true, looping: 1, bus: "voice", pitch: 2, max_distance: 9 }"#)
+            .eval(r#"#{ "loop": true, looping: 1, bus: 3, pitch: 2, max_distance: 9 }"#)
             .unwrap();
         let (o, problems) = SoundOpts::from_map(&map, PLAY_KEYS);
         assert_eq!(o.play.pitch, 2.0);
