@@ -63,10 +63,13 @@ carries, with a decision on moving the heavy part out of the subtree.
    names an `examples/` binary that isn't pinned, and when a pin has no
    borrower left. Changing a borrowed example file is copy on write: first
    copy the old bytes into the fixtures and point the fixture there, then
-   change the example. Two kinds of copy are kept on purpose, each named with
-   its reason in `DUPLICATE_EXCEPTIONS`: Sun Prints' 10 KB palm (a web game
-   whose bundle packs only its own folder) and the showcase game's ten sounds
-   (#760; its scripts build their names at run time, inside its own project).
+   change the example. Three kinds of copy are kept on purpose, each named
+   with its reason in `DUPLICATE_EXCEPTIONS`: Sun Prints' 10 KB palm (a web
+   game whose bundle packs only its own folder), the showcase game's ten
+   sounds (#760; its scripts build their names at run time, inside its own
+   project), and five images of the frozen frame captures (#1087, 2.5 KB: a
+   pass the diffed entity never reached is the same image in both captures,
+   and each capture's manifest names its images inside its own folder).
 4. **Textures are capped** at 2048 texels a side and 3 MB encoded.
    `tools/assets/cap_textures.py` halves an image over the side cap with
    `flint_pixels::mip_chain`'s own filter (2x2 box, colour in linear light),
