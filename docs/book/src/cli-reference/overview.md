@@ -19,6 +19,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint script check [dir\|scene\|file.rhai]` | Compile every script and the modules it imports, and check each call's name and argument count against the script API, each callback's name and parameters, and each import, reported as `file:line:col`. Exits 1 on an error; `--json`; `--allow` / `--api` for a game's own functions ([Checking your scripts](../concepts/scripting.md#checking-your-scripts)) |
 | `flint check [dir\|scene]` | The pre-flight: everything wrong with a project, or with one scene, in one run. Schemas, entity references, every asset and file a scene names (with the paths tried), styles and looks, constraints, scripts. Exits 1 on any error; `--json` ([The `check` Command](#the-check-command)) |
 | `flint frame show <capture>` | A frame capture's summary (scene, adapter, size, GPU time by pass, draws and triangles, memory), and `--passes`, `--draws [--pass P] [--entity E] [--sort tris] [--culled]`, `--targets`, `--hitch`; `flint frame diff <a> <b> [--out dir]` says what changed between two; `flint frame image <capture> <pass> -o x.png` copies a pass's image out to look at; `flint frame open <capture>` is the frame debugger's window ([The Frame Debugger](../guides/frame-debugger.md)); `flint frame replay <capture>` draws it again, a draw at a time or with an entity or pass left out. All but `replay` read only the capture folder; `--json` ([The `frame` Command](#the-frame-command)) |
+| `flint profile explain <trace> [frame]` | Why a frame was slow, as a sentence first: each scope of a `--trace` file against its median over the trace's normal frames, the deepest scope that carries the excess named in the first line, then what ran only in that frame. `flint profile top <trace>` lists the scopes by total, self time, worst call or calls (`--thread`, `--frames a..b`); `flint profile frame <trace> <n\|worst\|hitch>` prints that frame's scope tree; `flint profile diff <a> <b>` compares two traces scope by scope and marks the deltas the frames' own spread explains. Reads only the file; `--json` ([The `profile` Command](#the-profile-command)) |
 | `flint validate <scene>` | Check one scene against its schemas (every unknown archetype, component and field, every value of the wrong type, every entity reference to nothing and every missing asset, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format text\|json`; `--fix` applies what a constraint can fix |
 | `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from `examples/index.toml` or fails validation |
 | `flint asset import` | Import a file into the asset store |
@@ -313,6 +314,73 @@ The pass is named as `--passes` lists it (`Scene`, `Bloom`, `Shadow cascade 1`, 
 ### Capture versions
 
 A manifest carries an integer `version` (ADR 0126). `flint frame` reads its own version and every older one. A field it doesn't know is ignored, and one an older capture lacks is defaulted. A newer capture is refused, naming both versions: `this is a version 2 capture, and this flint reads version 1 and older: read it with a newer engine`.
+
+## The `profile` Command
+
+```bash
+flint-player examples/hitch_metronome.scene.toml --trace-on-hitch   # make one (traces/)
+flint profile explain traces/hitch_metronome-hitch-t3.000.json      # why the worst frame was slow
+flint profile explain out.json hitch                 # the last hitch the detector found
+flint profile frame out.json 412 --min-ms 0.2        # that frame's scope tree
+flint profile top out.json --sort self --thread main --frames 400..500
+flint profile diff before.json after.json            # what moved, and what the spread explains
+```
+
+`flint profile` reads a scope trace: the Chrome trace-event JSON that `flint-player --trace`, `--trace-on-hitch`, Shift+F3 and a frame capture's `trace.json` hold ([Recording a trace](../guides/profiling.md#recording-a-trace)). It reads only that file: no GPU, no scene, no schemas. A frame is named by the trace's own frame index, the `frame` each scope carries, which Perfetto shows in its args; `worst` is the longest frame, and `hitch` the last hitch on the trace's `hitches` track, which for a `--trace-on-hitch` file is the one it was saved for. Every view answers `--json` with one document carrying the numbers its text shows. A trace of a newer version than the reader knows is refused, naming both.
+
+### `flint profile explain`
+
+```text
+frame 525 took 107.28 ms (median 4.57): stall.rhai:on_update 100.09 ms against its median 0.032, +100.06 of the frame's +102.71 ms excess
+  inside tick > run_scripts > script::update > script::on_update > script::call (examples/scripts/stall.rhai) on main
+  the hitch detector: script stall.rhai:on_update 100.1 ms (judged 108.33 ms against 4.17)
+```
+
+The first lines are the answer. The frame (the worst, unless one is named) is held against the trace's **normal frames**: every frame but the look-back's first and last (whose scopes may be cut), the hitches the detector found, and any over twice the median frame. Each scope's time in the frame is compared with its median over those, a frame it didn't run in counting 0. The answer is found by walking down the frame thread's tree from the frame's excess: at each level the walk goes into the child with the largest excess while that child carries at least half its parent's, so it stops at the deepest scope that still explains the frame, not at `tick`, which every excess is inside.
+
+- A scope that ran in no normal frame says so: `import_model (models/whale.glb) 30.00 ms ran only here`.
+- When no outermost scope carries the excess, the time was outside any scope, and the phases say where: `no scope covers the +40.00 ms excess; the acquire phase took 40.50 ms against its median 0.50`, with `a wait, not work` for `acquire` and `present`.
+- When the scope found spreads its excess over children too small to carry half each, the answer says so and names `flint profile frame` to see them.
+
+Below the answer: the phases against their medians, a table of scopes by **self excess** (the time in a scope less its children's, over its median, so the culprit is the first row and its ancestors follow), with `ran in` counting the normal frames each ran in, the scopes that ran in no normal frame, and the frame's notes. A scope with text detail is counted by its detail too (`script::call (scripts/stall.rhai)`), so one scope at many files reads as many.
+
+### `flint profile frame`
+
+```text
+main: 103.90 ms in its outermost scopes
+  scope                                                   ms  share  self ms  calls
+  tick                                                101.15  97.2%    0.082      1
+    run_scripts                                       100.47  96.6%    0.056      1
+      script::update                                  100.41  96.5%    0.006      1
+        script::on_update                             100.18  96.3%    0.011      1
+          script::call (examples/scripts/stall.rhai)  100.07  96.2%    0.008      1
+            stall.rhai:on_update                      100.06  96.2%   100.06      1
+    (16 more under the threshold)                       0.34   0.3%
+```
+
+One frame's scopes, thread by thread, indented, each with its ms, its share of the frame and its self time. Siblings of one name under one parent are one row with their call count. `--min-ms` (default 0.05) leaves short scopes out, and each parent says how many it left out and their time. Then the frame's phases, its GPU passes and its notes. `--thread` keeps one thread.
+
+### `flint profile top`
+
+Every scope over the trace: calls, total, self, mean per frame (the total over every frame in range, so it reads against the frame's budget), the worst single call and the frame it was in. `--sort total|self|worst|calls` (default total), `--limit` (20), `--thread`, `--frames 400..500` (or `400..`, `..500`, one frame), and `--by-detail` to count a scope with text detail by its detail as well. A scope inside one of its own name counts once in a total.
+
+### `flint profile diff`
+
+```text
+frame: mean 3.79 -> 16.43 ms (+12.64), p90 3.79 -> 41.29 (+37.50), over 14 and 14 frames
+  the frame time's delta is inside its own spread (+-15.14 ms, 2 standard errors): run both again before believing it
+
+ms a frame, by the size of the mean's delta:
+  scope      a mean  b mean  delta  a p90  b p90  delta p90
+  encode_to    0.40    0.90  +0.50   0.40   0.90      +0.50
+  render       0.80    1.30  +0.50   0.80   1.30      +0.50
+
+  10 scopes moved less than 2 standard errors of their frames' spread: --all lists them, marked ~
+```
+
+(The tests' two hand-made traces: `b` has three hitches in sixteen frames, which make its mean frame four times `a`'s and are still inside the spread, while `encode_to`'s steady half millisecond is not.)
+
+Each scope's time a frame in two traces (every frame but each trace's first and last, a frame it didn't run in counting 0): its mean and p90 in each, and the deltas, largest first. Two runs of one build never match exactly, so a delta under twice the standard error of the two means (the frames' own spread) is left out and counted, and `--all` lists it marked `~`; a scope in one trace only says `only in a` or `only in b`. The frame time's own line says when its delta is inside its spread: `run both again before believing it`. A hitch in one trace is a large mean over few frames, and usually inside the spread for that reason. A note says when the two traces' scenes, builds, adapters or backends differ.
 
 ## The `play` Command
 

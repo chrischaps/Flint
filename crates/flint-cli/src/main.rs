@@ -9,9 +9,9 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
     asset, bundle, capture, check as check_cmd, dxc, edit_router, entity, env, examples, export,
-    frame, gen, gen_preview, init, legacy_names, music, play, playtest, prefab, preview, query,
-    render, render_goldens, scene, schema, script, spike_rumble, spline_edit, style, terrain_edit,
-    tex_edit, validate,
+    frame, gen, gen_preview, init, legacy_names, music, play, playtest, prefab, preview, profile,
+    query, render, render_goldens, scene, schema, script, spike_rumble, spline_edit, style,
+    terrain_edit, tex_edit, validate,
 };
 
 #[derive(Parser)]
@@ -100,6 +100,11 @@ enum Commands {
     /// Read a frame capture (`flint render --frame-capture`): show its
     /// passes, draws, targets and GPU time, diff two, copy a pass's image out
     Frame(Box<frame::FrameArgs>),
+
+    /// Read a scope trace (`flint-player --trace`): the top scopes, a
+    /// frame's tree, why a frame was slow against the normal ones, two
+    /// traces' deltas
+    Profile(Box<profile::ProfileArgs>),
 
     /// The curated example scenes, from examples/index.toml: list them by
     /// topic, or --check that every one is indexed and validates
@@ -285,6 +290,7 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Validate(args) => validate::run(*args),
         Commands::Check(args) => check_cmd::run(*args),
         Commands::Frame(args) => frame::run(*args),
+        Commands::Profile(args) => profile::run(*args),
         Commands::Examples(args) => examples::run(*args),
         Commands::Env(args) => env::run(*args),
         Commands::Bundle(args) => bundle::run(*args),
