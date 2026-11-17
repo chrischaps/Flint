@@ -12,6 +12,46 @@ use std::collections::HashMap;
 /// How long a jump press is remembered, in seconds
 const JUMP_BUFFER_WINDOW: f32 = 0.15;
 
+/// The `character_controller` fields the controller reads, with the
+/// fallbacks the schema's defaults repeat
+/// (`schemas/components/character_controller.toml`). Read again every
+/// step, so a script can change them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Settings {
+    /// Walk speed, units a second
+    pub move_speed: f32,
+    /// Upward speed a jump starts with
+    pub jump_force: f32,
+    /// Speed times this while `sprint` is held
+    pub sprint_multiplier: f32,
+    /// Radians turned per unit of raw mouse motion (the field is degrees)
+    pub look_sensitivity: f32,
+    /// Pitch is held within +/- this, radians (the field is degrees)
+    pub pitch_limit: f32,
+    /// The physics world's gravity times this pulls the character down
+    pub gravity_scale: f32,
+    /// Tallest ledge walked up without a jump; 0 turns stepping off
+    pub step_height: f32,
+    /// Furthest the character is pulled down onto the ground; 0 turns it off
+    pub snap_to_ground: f32,
+}
+
+impl Settings {
+    pub(crate) fn of(world: &FlintWorld, id: EntityId) -> Self {
+        let cc = world.view(id, comp::CHARACTER_CONTROLLER);
+        Self {
+            move_speed: cc.f32("move_speed", 5.0),
+            jump_force: cc.f32("jump_force", 6.0),
+            sprint_multiplier: cc.f32("sprint_multiplier", 1.6),
+            look_sensitivity: cc.f32("look_sensitivity", 0.172).to_radians(),
+            pitch_limit: cc.f32("pitch_limit", 80.0).to_radians(),
+            gravity_scale: cc.f32("gravity_scale", 1.0),
+            step_height: cc.f32("step_height", 0.5),
+            snap_to_ground: cc.f32("snap_to_ground", 0.2),
+        }
+    }
+}
+
 /// First-person character controller wrapping Rapier's KinematicCharacterController
 pub struct CharacterController {
     /// The Rapier character controller
@@ -22,10 +62,11 @@ pub struct CharacterController {
     vertical_velocity: f32,
     /// Whether the character is on the ground
     pub(crate) grounded: bool,
-    /// Remaining time in the jump input buffer (seconds). When the player
-    /// presses jump, this is set to `JUMP_BUFFER_WINDOW` and ticks down each
-    /// physics step. A jump executes whenever the character is grounded and
-    /// this timer is still positive.
+    /// Remaining time in the jump input buffer (seconds). A press, taken
+    /// once a frame by `frame_input`, sets it to `JUMP_BUFFER_WINDOW`; each
+    /// physics step ticks it down. A jump executes whenever the character
+    /// is grounded and this timer is still positive, so a press on a frame
+    /// that ran no step waits for the next one.
     jump_buffer: f32,
     /// Camera yaw (horizontal look angle in radians)
     pub(crate) yaw: f32,
@@ -73,7 +114,45 @@ impl CharacterController {
         self.player_entity
     }
 
-    /// Update the character controller based on input
+    /// Face the scene's `start_yaw` (degrees about +Y; 0 faces +Z, 90 faces
+    /// +X), level, when the player entity is found.
+    pub(crate) fn face_start(&mut self, world: &FlintWorld) {
+        let Some(id) = self.player_entity else {
+            return;
+        };
+        self.yaw = world
+            .view(id, comp::CHARACTER_CONTROLLER)
+            .f32("start_yaw", 0.0)
+            .to_radians();
+        self.pitch = 0.0;
+    }
+
+    /// The frame's share of input, taken once a frame before the fixed
+    /// steps (#728): mouse look turns the view, and a jump press is
+    /// buffered for the steps to come. Read inside each step, a frame of
+    /// two steps turned twice as far, and a frame of none (most frames
+    /// above 60 Hz) lost its motion and its press.
+    pub fn frame_input(&mut self, input: &InputState, world: &FlintWorld) {
+        let Some(id) = self.player_entity else {
+            return;
+        };
+        if world.get_components(id).is_none() {
+            return;
+        }
+        let settings = Settings::of(world, id);
+        let (raw_dx, raw_dy) = input.raw_mouse_delta();
+        self.yaw -= raw_dx as f32 * settings.look_sensitivity;
+        self.pitch -= raw_dy as f32 * settings.look_sensitivity;
+        let limit = settings.pitch_limit.abs();
+        self.pitch = self.pitch.clamp(-limit, limit);
+
+        if input.is_action_just_pressed("jump") {
+            self.jump_buffer = JUMP_BUFFER_WINDOW;
+        }
+    }
+
+    /// One fixed step of walking, falling and jumping. Look and the jump
+    /// press come from `frame_input`; a step reads only what is held.
     pub fn update(
         &mut self,
         input: &InputState,
@@ -98,23 +177,20 @@ impl CharacterController {
             None => return,
         };
 
-        // Read character controller settings from component. Read every
-        // step, so a script can change them; the view takes an integer
-        // (`move_speed = 8` was 5.0, the default, before #685).
-        let (move_speed, jump_force) = {
-            if world.get_components(entity_id).is_none() {
-                return;
-            }
-            let cc = world.view(entity_id, comp::CHARACTER_CONTROLLER);
-            (cc.f32("move_speed", 5.0), cc.f32("jump_force", 6.0))
-        };
-
-        // Process mouse look
-        let (raw_dx, raw_dy) = input.raw_mouse_delta();
-        let mouse_sensitivity = 0.003;
-        self.yaw -= raw_dx as f32 * mouse_sensitivity;
-        self.pitch -= raw_dy as f32 * mouse_sensitivity;
-        self.pitch = self.pitch.clamp(-1.4, 1.4);
+        // Read every step, so a script can change them; the view takes an
+        // integer (`move_speed = 8` was 5.0, the default, before #685).
+        if world.get_components(entity_id).is_none() {
+            return;
+        }
+        let settings = Settings::of(world, entity_id);
+        let (move_speed, jump_force) = (settings.move_speed, settings.jump_force);
+        self.controller.autostep = (settings.step_height > 0.0).then_some(CharacterAutostep {
+            max_height: CharacterLength::Absolute(settings.step_height),
+            min_width: CharacterLength::Absolute(0.2),
+            include_dynamic_bodies: false,
+        });
+        self.controller.snap_to_ground = (settings.snap_to_ground > 0.0)
+            .then_some(CharacterLength::Absolute(settings.snap_to_ground));
 
         // Compute movement direction from input (relative to yaw)
         let mut move_dir = Vec3::ZERO;
@@ -147,7 +223,7 @@ impl CharacterController {
         let horizontal_len = (world_move.x * world_move.x + world_move.z * world_move.z).sqrt();
         let horizontal = if horizontal_len > 0.001 {
             let speed_mult = if input.is_action_pressed("sprint") {
-                1.6
+                settings.sprint_multiplier
             } else {
                 1.0
             };
@@ -160,10 +236,7 @@ impl CharacterController {
             Vec3::ZERO
         };
 
-        // Buffer jump input — a press is remembered for JUMP_BUFFER_WINDOW seconds
-        if input.is_action_just_pressed("jump") {
-            self.jump_buffer = JUMP_BUFFER_WINDOW;
-        }
+        // A press `frame_input` buffered is remembered for JUMP_BUFFER_WINDOW seconds
         self.jump_buffer = (self.jump_buffer - dt as f32).max(0.0);
 
         // Gravity and jumping
@@ -174,7 +247,7 @@ impl CharacterController {
                 self.jump_buffer = 0.0;
             }
         } else {
-            self.vertical_velocity -= 9.81 * dt as f32;
+            self.vertical_velocity += physics.gravity.y * settings.gravity_scale * dt as f32;
         }
 
         // Build desired translation

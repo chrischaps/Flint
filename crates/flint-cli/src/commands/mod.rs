@@ -41,6 +41,7 @@ pub mod play;
 pub mod play_chart;
 pub mod play_chart_window;
 pub mod play_suite;
+pub mod playtest;
 pub mod prefab;
 pub mod preview;
 pub mod query;

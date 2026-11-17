@@ -9,13 +9,18 @@ use flint_core::Vec3 as FlintVec3;
 use flint_script::{CameraOverrides, ScriptHost, SoundPlay, SoundRef};
 use std::time::Duration;
 
-/// A script's sound as the engine plays it.
-fn keyed(play: &SoundPlay) -> flint_audio::engine::KeyedPlay {
+/// A script's sound as the engine plays it, on the bus it names: any the
+/// game declares (#730); an unknown one is warned about once and plays on
+/// sfx.
+fn keyed(
+    engine: &mut flint_audio::engine::AudioEngine,
+    play: &SoundPlay,
+) -> flint_audio::engine::KeyedPlay {
     flint_audio::engine::KeyedPlay {
         volume: play.volume,
         pitch: play.pitch,
         looping: play.looping,
-        bus: flint_audio::Bus::from_name(&play.bus),
+        bus: engine.bus_or_sfx(&play.bus),
     }
 }
 
@@ -82,7 +87,8 @@ impl ScriptHost for PlayerApp {
     // find it by, on kira here or in the browser's worklet alike.
     fn play_sound(&mut self, handle: u64, name: String, play: SoundPlay) {
         if self.audio.engine.is_available() {
-            if let Err(e) = self.audio.engine.play_keyed(handle, &name, keyed(&play)) {
+            let play = keyed(&mut self.audio.engine, &play);
+            if let Err(e) = self.audio.engine.play_keyed(handle, &name, play) {
                 tracing::warn!(target: "script", "play_sound error: {:?}", e);
             }
         }
@@ -97,14 +103,20 @@ impl ScriptHost for PlayerApp {
         distances: Option<(f32, f32)>,
         rolloff: Option<f32>,
     ) {
+        // As `play_sound`: with no device there's nothing to say (#714
+        // found it warning on every call in a silent run)
+        if !self.audio.engine.is_available() {
+            return;
+        }
         let pos = FlintVec3::new(position.0 as f32, position.1 as f32, position.2 as f32);
+        let play = keyed(&mut self.audio.engine, &play);
         if let Err(e) = self.audio.engine.play_keyed_at(
             handle,
             &name,
             pos,
             distances.unwrap_or(flint_audio::engine::DEFAULT_DISTANCES),
             rolloff.unwrap_or(flint_audio::engine::DEFAULT_ROLLOFF),
-            keyed(&play),
+            play,
         ) {
             tracing::warn!(target: "script", "play_sound_at error: {:?}", e);
         }
@@ -125,6 +137,12 @@ impl ScriptHost for PlayerApp {
     fn set_sound_volume(&mut self, handle: u64, volume: f64, fade: f64) {
         let fade = Duration::from_secs_f64(fade.max(0.0));
         self.audio.engine.set_keyed_volume(handle, volume, fade);
+    }
+
+    // Kept while silent too, so the mixer opens at it (the web's Begin). A
+    // name that is no bus is warned about once, by the engine.
+    fn set_bus_volume(&mut self, bus: String, volume: f64) {
+        let _ = self.audio.engine.set_bus_volume_named(&bus, volume);
     }
 
     fn fire_event(&mut self, name: String, data: toml::Value) {

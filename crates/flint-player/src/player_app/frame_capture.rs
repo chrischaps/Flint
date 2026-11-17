@@ -27,6 +27,10 @@
 //! `--capture-on-hitch` captures the frame after it and puts the history's
 //! window around the hitch in the manifest's `cpu`: what the hitch cost by
 //! phase is its record there, and the images show the scene a frame later.
+//! The hitches of the first [`STARTUP_SECS`] of game time are passed over
+//! unless `--capture-on-hitch-startup` asks for them (#1207): the exit
+//! report and `--max-hitches` set them apart as loading's, and a capture
+//! spent on one is a capture of the load.
 //!
 //! Desktop only: the web player declines with a note (no files, and no `exr`
 //! in its `image`).
@@ -44,6 +48,7 @@ use std::path::{Path, PathBuf};
 use super::frame_history::{Frame, FrameHistory};
 use super::hitch::{Cause, Hitch};
 use super::perf::Phase;
+use crate::hitch_args::STARTUP_SECS;
 
 /// Frames a capture waits for its frame's GPU times once its images are
 /// read back, before it is written without them.
@@ -144,6 +149,13 @@ pub(crate) struct FrameCaptures {
     pub at: Vec<f64>,
     /// `--capture-on-hitch`: hitches still to capture.
     pub on_hitch: u32,
+    /// `--capture-on-hitch-startup`: take the hitches of the first
+    /// [`STARTUP_SECS`] too. Off, they are passed over, as the exit report
+    /// and `--max-hitches` set them apart (#1207): loading's noise, not the
+    /// hitch someone felt mid-game.
+    pub on_hitch_startup: bool,
+    /// Startup hitches passed over, so the first is said once.
+    passed_startup: u32,
     /// `--capture-dir`; `None` is `captures/` at the project's root.
     pub dir: Option<PathBuf>,
     queue: VecDeque<Trigger>,
@@ -179,6 +191,18 @@ impl FrameCaptures {
             return true;
         }
         !self.queue.is_empty() || self.armed.is_some()
+    }
+
+    /// The hitches asked for and not taken yet, oldest first.
+    #[cfg(test)]
+    pub(crate) fn queued_hitches(&self) -> Vec<&HitchDescription> {
+        self.queue
+            .iter()
+            .filter_map(|t| match t {
+                Trigger::Hitch(h) => Some(&**h),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Ask for the next frame to be captured. One in flight at a time: the
@@ -691,8 +715,9 @@ pub(crate) fn hitch_description(h: &Hitch) -> HitchDescription {
 
 impl super::PlayerApp {
     /// Capture the frames at `times` (game seconds, earliest first) and
-    /// after the run's first `on_hitch` hitches, into `dir` (`None`:
-    /// `captures/` at the project's root). Hitches need the frame history
+    /// after the run's first `on_hitch` hitches (past the start, unless
+    /// [`capture_startup_hitches`](Self::capture_startup_hitches)), into
+    /// `dir` (`None`: `captures/` at the project's root). Hitches need the frame history
     /// and named scripts, so this turns both on, as `--hitch-log` does.
     pub fn capture_frames(&mut self, times: Vec<f64>, on_hitch: u32, dir: Option<PathBuf>) {
         self.frame_captures.at = times;
@@ -704,9 +729,18 @@ impl super::PlayerApp {
         }
     }
 
+    /// Whether `--capture-on-hitch` takes the hitches of the first
+    /// [`STARTUP_SECS`] of game time too (`--capture-on-hitch-startup`).
+    /// By default it passes over them, as the exit report and
+    /// `--max-hitches` do (#1207).
+    pub fn capture_startup_hitches(&mut self, take: bool) {
+        self.frame_captures.on_hitch_startup = take;
+    }
+
     /// In `tick`, once the clock and the hitch detector have run: the
     /// hitches it just found (`found`, the newest) for `--capture-on-hitch`,
-    /// and the `--capture-frame-at` times reached.
+    /// past the start unless `on_hitch_startup`, and the
+    /// `--capture-frame-at` times reached.
     pub(super) fn frame_capture_triggers(&mut self, found: usize) {
         let captures = &mut self.frame_captures;
         if captures.on_hitch > 0 && found > 0 {
@@ -714,6 +748,18 @@ impl super::PlayerApp {
             for h in hitches.iter().skip(hitches.len().saturating_sub(found)) {
                 if captures.on_hitch == 0 {
                     break;
+                }
+                if !captures.on_hitch_startup && h.game_time < STARTUP_SECS {
+                    if captures.passed_startup == 0 {
+                        tracing::info!(
+                            target: "player",
+                            "[capture] passed over a startup hitch at t={:.2} s (before t={STARTUP_SECS:.0} s; \
+                             --capture-on-hitch-startup takes them)",
+                            h.game_time
+                        );
+                    }
+                    captures.passed_startup += 1;
+                    continue;
                 }
                 captures.on_hitch -= 1;
                 captures.request(Trigger::Hitch(Box::new(hitch_description(h))));
@@ -879,9 +925,10 @@ fn write(job: Job) -> Result<Written, String> {
 }
 
 /// The checkout's commit at `root` and whether its tracked files changed,
-/// where git can say.
+/// where git can say: a capture's `engine.commit` and `engine.dirty`. The
+/// player's writer and `flint render --frame-capture` both ask it (#1208).
 #[cfg(not(target_arch = "wasm32"))]
-fn git_state(root: &Path) -> (Option<String>, Option<bool>) {
+pub fn git_state(root: &Path) -> (Option<String>, Option<bool>) {
     let git = |args: &[&str]| {
         std::process::Command::new("git")
             .arg("-C")

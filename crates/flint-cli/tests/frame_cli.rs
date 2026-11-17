@@ -279,7 +279,7 @@ fn diff_names_the_entity_taken_out_and_the_images_that_differ() {
 
     let text = ok(&flint(&[&"frame", &"diff", &two(), &one()]));
     assert!(
-        text.contains("removed  lantern in Scene: 1 draw (pbr)"),
+        text.contains("removed  lantern in Scene: 1 draw: pbr"),
         "{text}"
     );
     assert!(text.contains("Scene / hdr_scene"), "{text}");
@@ -287,6 +287,71 @@ fn diff_names_the_entity_taken_out_and_the_images_that_differ() {
     let text = ok(&flint(&[&"frame", &"diff", &two(), &two()]));
     assert!(text.contains("every entity draws as it did"), "{text}");
     assert!(text.contains("every pass image is the same"), "{text}");
+}
+
+/// Copy a capture folder (manifest and images) to `to`.
+fn copy_capture(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to.join("targets")).unwrap();
+    std::fs::copy(from.join("manifest.json"), to.join("manifest.json")).unwrap();
+    for f in std::fs::read_dir(from.join("targets")).unwrap() {
+        let f = f.unwrap();
+        std::fs::copy(f.path(), to.join("targets").join(f.file_name())).unwrap();
+    }
+}
+
+#[test]
+fn a_vanished_entity_of_many_draws_counts_its_kinds() {
+    // The lantern drawn as 40 parts, as a skinned body is (#1208: Float's
+    // `body`, 91 draws a pass, printed its kind 91 times), and in the
+    // scene pass one part drawn by another pipeline
+    let lantern = tmp("many-parts").join("lantern.flintframe");
+    copy_capture(&two(), &lantern);
+    let mut m = manifest(&lantern);
+    fn repeat(passes: &mut Value) {
+        for p in passes.as_array_mut().into_iter().flatten() {
+            let scene = p["name"] == "Scene";
+            if let Some(draws) = p["draws"].as_array_mut() {
+                if let Some(d) = draws.iter().find(|d| d["entity"] == "lantern").cloned() {
+                    for _ in 1..40 {
+                        draws.push(d.clone());
+                    }
+                    if scene {
+                        draws.last_mut().unwrap()["pipeline"] = "unlit".into();
+                    }
+                }
+            }
+            repeat(&mut p["passes"]);
+        }
+    }
+    repeat(&mut m["passes"]);
+    std::fs::write(lantern.join("manifest.json"), m.to_string()).unwrap();
+
+    let text = ok(&flint(&[&"frame", &"diff", &lantern, &one()]));
+    assert!(
+        text.contains("removed  lantern in Shadow cascade 0: 40 draws: shadow\n"),
+        "one kind is named once: {text}"
+    );
+    assert!(
+        text.contains("removed  lantern in Scene: 40 draws (39 pbr, 1 unlit)\n"),
+        "several are counted, most first: {text}"
+    );
+    assert!(!text.contains("pbr, pbr"), "{text}");
+    // and an entity that appears reads the same way
+    let text = ok(&flint(&[&"frame", &"diff", &one(), &lantern]));
+    assert!(
+        text.contains("added    lantern in Shadow cascade 1: 40 draws: shadow\n"),
+        "{text}"
+    );
+    // The JSON keeps every draw's pipeline, as before
+    let doc = json(&flint(&[&"--json", &"frame", &"diff", &lantern, &one()]));
+    let scene = doc["draws"]["vanished"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["pass"] == "Scene")
+        .unwrap();
+    assert_eq!(scene["draws"], 40);
+    assert_eq!(scene["pipelines"].as_array().unwrap().len(), 40);
 }
 
 #[test]
@@ -441,6 +506,21 @@ fn a_fresh_capture_from_todays_writer_reads() {
     assert_eq!(s["written_by"], "flint render");
     assert_eq!(s["scene"]["name"], "Crate and Lantern");
     assert!(s["captured_at"].as_str().unwrap().ends_with('Z'));
+    // It names the engine's commit, as the player's do (#1208): this test
+    // runs in the engine's checkout, so git can say
+    let head = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo())
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    if let Some(head) = head {
+        let engine = &manifest(&capture)["engine"];
+        assert_eq!(engine["commit"], head.as_str(), "{engine}");
+        assert!(engine["dirty"].is_boolean(), "{engine}");
+    }
     // The same scene as the frozen capture draws the same draws, and
     // the frozen one's images still match today's where nothing moves
     let doc = json(&flint(&[&"--json", &"frame", &"diff", &two(), &capture]));

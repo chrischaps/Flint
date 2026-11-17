@@ -522,7 +522,16 @@ impl PhysicsSystem {
         );
     }
 
-    /// Run the character controller update (called from player app with input access)
+    /// The character's share of a frame's input, once a frame before its
+    /// fixed steps, whether the frame runs none or several (#728): mouse
+    /// look turns the view, a jump press waits for the next step.
+    pub fn character_frame_input(&mut self, input: &InputState, world: &FlintWorld) {
+        self.character.frame_input(input, world);
+    }
+
+    /// One fixed step of the character: walk, fall, jump (called from the
+    /// player's fixed loop; look and jump presses come from
+    /// `character_frame_input`)
     pub fn update_character(&mut self, input: &InputState, world: &mut FlintWorld, dt: f64) {
         self.character.update(
             input,
@@ -548,6 +557,7 @@ impl PhysicsSystem {
             if let Some(components) = world.get_components(entity.id) {
                 if components.has(comp::CHARACTER_CONTROLLER) {
                     self.character.set_player_entity(entity.id);
+                    self.character.face_start(world);
                     break;
                 }
             }
@@ -1223,5 +1233,126 @@ mod tests {
         let (wrong, reports) = metres_walked("move_speed = \"fast\"");
         assert_eq!(wrong, unset);
         assert_eq!(reports, 1);
+    }
+
+    /// A floor and a character standing on it after half a second, whose
+    /// `character_controller` is `settings`.
+    fn standing(settings: &str) -> (FlintWorld, PhysicsSystem, EntityId) {
+        let mut world = FlintWorld::new();
+        let mut sys = PhysicsSystem::new();
+        spawn_from_toml(
+            &mut world,
+            "floor",
+            "[transform]\nposition = [0, -0.5, 0]\n[rigidbody]\nbody_type = \"static\"\n\
+             [collider]\nshape = \"box\"\nsize = [200, 1, 200]",
+        );
+        let id = spawn_from_toml(
+            &mut world,
+            "player",
+            &format!(
+                "[transform]\nposition = [0, 1, 0]\n[rigidbody]\nbody_type = \"kinematic\"\n\
+                 [collider]\nshape = \"capsule\"\nsize = [0.6, 1.8, 0.6]\n\
+                 [character_controller]\n{settings}"
+            ),
+        );
+        sys.initialize(&mut world).unwrap();
+        let input = InputState::new();
+        for _ in 0..30 {
+            sys.character_frame_input(&input, &world);
+            sys.update_character(&input, &mut world, 1.0 / 60.0);
+            sys.step(&mut world, 1.0 / 60.0);
+        }
+        (world, sys, id)
+    }
+
+    /// Highest the character's feet rise over `steps` steps of 1/60 s.
+    fn rise(sys: &mut PhysicsSystem, world: &mut FlintWorld, id: EntityId, steps: usize) -> f32 {
+        let input = InputState::new();
+        let floor = world.get_transform(id).unwrap().position.y;
+        let mut top = floor;
+        for _ in 0..steps {
+            sys.character_frame_input(&input, world);
+            sys.update_character(&input, world, 1.0 / 60.0);
+            sys.step(world, 1.0 / 60.0);
+            top = top.max(world.get_transform(id).unwrap().position.y);
+        }
+        top - floor
+    }
+
+    #[test]
+    fn a_jump_pressed_on_a_frame_with_no_step_still_jumps() {
+        let (mut world, mut sys, id) = standing("");
+        // A 144 Hz frame that runs no fixed step: Space goes down and is
+        // cleared again at the frame's end, before any step reads it
+        let mut input = InputState::new();
+        input.process_key_down(flint_runtime::parse_key_code("Space").unwrap());
+        sys.character_frame_input(&input, &world);
+        input.end_frame();
+        assert!(!input.is_action_just_pressed("jump"));
+
+        let height = rise(&mut sys, &mut world, id, 30);
+        // jump_force 6 under 9.81: about 1.8 at the top
+        assert!(
+            height > 1.0,
+            "the press waited for the next step: rose {height}"
+        );
+    }
+
+    #[test]
+    fn a_frame_of_several_steps_turns_once() {
+        let (world, mut sys, _) = standing("");
+        let mut input = InputState::new();
+        input.process_mouse_raw_delta(100.0, 0.0);
+        sys.character_frame_input(&input, &world);
+        let turned = -sys.camera_yaw();
+        // 100 units at 0.172 degrees each, however many steps follow
+        assert!((turned - 17.2f32.to_radians()).abs() < 1e-5, "{turned}");
+    }
+
+    #[test]
+    fn a_character_starts_facing_its_start_yaw() {
+        let (world, sys, _) = standing("start_yaw = 90");
+        assert!((sys.camera_yaw() - std::f32::consts::FRAC_PI_2).abs() < 1e-6);
+        let eye = sys.camera_position(&world);
+        let ahead = sys.camera_target(eye) - eye;
+        assert!(
+            ahead.x > 0.999 && ahead.z.abs() < 1e-3,
+            "faces +X: {ahead:?}"
+        );
+
+        // Unset: +Z, as before
+        let (world, sys, _) = standing("");
+        let eye = sys.camera_position(&world);
+        let ahead = sys.camera_target(eye) - eye;
+        assert!(ahead.z > 0.999, "faces +Z: {ahead:?}");
+    }
+
+    #[test]
+    fn the_look_and_fall_settings_are_the_components() {
+        // Pitch held at 30 degrees, however far the mouse goes
+        let (world, mut sys, _) = standing("pitch_limit = 30");
+        let mut input = InputState::new();
+        input.process_mouse_raw_delta(0.0, -10_000.0);
+        sys.character_frame_input(&input, &world);
+        assert!((sys.camera_pitch() - 30f32.to_radians()).abs() < 1e-6);
+
+        // Twice the sensitivity, twice the turn
+        let (world, mut sys, _) = standing("look_sensitivity = 0.344");
+        let mut input = InputState::new();
+        input.process_mouse_raw_delta(100.0, 0.0);
+        sys.character_frame_input(&input, &world);
+        assert!((-sys.camera_yaw() - 34.4f32.to_radians()).abs() < 1e-5);
+
+        // Half the gravity, a jump about twice as high
+        let jump_height = |settings: &str| {
+            let (mut world, mut sys, id) = standing(settings);
+            let mut input = InputState::new();
+            input.process_key_down(flint_runtime::parse_key_code("Space").unwrap());
+            sys.character_frame_input(&input, &world);
+            rise(&mut sys, &mut world, id, 120)
+        };
+        let full = jump_height("");
+        let half = jump_height("gravity_scale = 0.5");
+        assert!((half / full - 2.0).abs() < 0.1, "{full} then {half}");
     }
 }

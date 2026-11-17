@@ -13,6 +13,8 @@ mod collider_meshes;
 // The load summary and controls line a scene says when it comes up (#716)
 #[cfg(test)]
 mod capture_gate_tests;
+#[cfg(test)]
+mod character_input_tests;
 #[cfg(all(test, feature = "debug-hud"))]
 mod component_panel_tests;
 mod console;
@@ -31,7 +33,7 @@ mod extension_hooks_tests;
 mod extension_tests;
 pub mod fonts;
 mod frame;
-mod frame_capture;
+pub(crate) mod frame_capture;
 #[cfg(test)]
 mod frame_capture_tests;
 mod frame_history;
@@ -49,7 +51,9 @@ mod hitch_watch;
 mod hold_tests;
 mod hud_render;
 mod init;
+pub mod input_checks;
 mod input_config;
+mod input_probe;
 pub mod input_script;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod inspect;
@@ -74,6 +78,8 @@ mod missing_features;
 mod pacing;
 mod perf;
 mod persist;
+pub mod playtest;
+pub mod playtest_warnings;
 #[cfg(feature = "procgen")]
 pub mod procgen_assets;
 mod quality;
@@ -83,6 +89,8 @@ mod scene_entry;
 mod scene_entry_tests;
 pub(crate) mod scene_loading;
 mod schemas;
+#[cfg(test)]
+mod script_bus_tests;
 pub mod script_commands;
 #[cfg(feature = "debug-hud")]
 mod script_error_card;

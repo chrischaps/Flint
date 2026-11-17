@@ -47,7 +47,7 @@
 
 pub mod cargo;
 mod references;
-mod report;
+pub mod report;
 pub mod scene;
 pub mod scripts;
 
@@ -371,7 +371,17 @@ fn from_here(path: &Path) -> PathBuf {
 /// `bad-manifest` that says why.
 fn project_of(path: &Path) -> (Project, Vec<Diagnostic>) {
     match Project::for_path(path) {
-        Ok(project) => (project, Vec::new()),
+        // The manifest's `[audio.buses]` too (#730), which the player reads
+        // at start and keeps its buses when it doesn't
+        Ok(project) => {
+            let buses = match flint_player::Buses::for_project(&project) {
+                Ok(_) => Vec::new(),
+                Err(e) => vec![Diagnostic::error(codes::BAD_MANIFEST, e.to_string())
+                    .file(from_here(&project.manifest_path()))
+                    .hint("the game plays with the built-in buses, sfx and music")],
+            };
+            (project, buses)
+        }
         Err(e) => (
             Project::for_scene(path),
             vec![Diagnostic::error(codes::BAD_MANIFEST, e.to_string())

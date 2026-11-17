@@ -301,7 +301,7 @@ Audio functions produce deferred commands that the player processes after the sc
 | Function | Returns | Description |
 |---|---|---|
 | `play_sound(name: str)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound at full volume, not placed in the world. |
-| `play_sound(name: str, volume_or_opts: any)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound, not placed in the world: a volume (0..1), or a map of any of volume, pitch, looping (until `stop_sound`), bus (sfx or music). |
+| `play_sound(name: str, volume_or_opts: any)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound, not placed in the world: a volume (0..1), or a map of any of volume, pitch, looping (until `stop_sound`), bus (sfx, music or one the game declares). |
 | `play_sound(name: str, volume: num, pitch: num)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound at a volume and a pitch multiplier, not placed in the world. |
 | `play_sound_at(name: str, x: num, y: num, z: num, volume_or_opts: any)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound at a point: a volume, or a map of any of volume, pitch, looping, bus, `min_distance`, `max_distance`, rolloff. |
 | `play_sound_at(name: str, x: num, y: num, z: num, volume: num, pitch: num)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound at a point, at a volume and a pitch multiplier. |
@@ -352,8 +352,8 @@ Animation functions write directly to the `animator` component on the target ent
 
 | Function | Returns | Description |
 |---|---|---|
-| `play_clip(id: entity, clip: str)` | — | Start playing a named clip on the entity's animator. |
-| `stop_clip(id: entity)` | — | Stop the entity's animator. |
+| `play_clip(id: entity, clip: str)` | — | Play a named clip on the entity's animator: a new clip cuts to its start (cancelling a crossfade), a stopped one resumes, a finished one-shot replays. |
+| `stop_clip(id: entity)` | — | Pause the entity's animator: its clip holds the current frame (layers keep their own clocks). |
 | `blend_to(id: entity, clip: str, duration: num)` | — | Crossfade to another clip over a duration in seconds. |
 | `set_anim_speed(id: entity, speed: num)` | — | Set the animator's playback speed (1 normal). |
 | `set_anim_layer(id: entity, index: int, clip: str, weight: num)` | — | Play a clip on layer \`index\`, additive and unmasked, at a weight. |

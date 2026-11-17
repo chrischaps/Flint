@@ -15,7 +15,7 @@ pub(crate) fn register(api: &mut ScriptApi) {
     // ── Clips ──
     m.func(
         "play_clip",
-        "Start playing a named clip on the entity's animator.",
+        "Play a named clip on the entity's animator: a new clip cuts to its start (cancelling a crossfade), a stopped one resumes, a finished one-shot replays.",
     )
     .arg("id", Entity)
     .arg("clip", Str)
@@ -27,11 +27,18 @@ pub(crate) fn register(api: &mut ScriptApi) {
                 toml::Value::String(clip.to_string()),
             );
             comps.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(true));
+            // A crossfade still in flight would otherwise finish on its
+            // target and override this clip (#732).
+            comps.set_field(
+                comp::ANIMATOR,
+                "blend_target",
+                toml::Value::String(String::new()),
+            );
         }
         Ok(())
     });
 
-    m.func("stop_clip", "Stop the entity's animator.")
+    m.func("stop_clip", "Pause the entity's animator: its clip holds the current frame (layers keep their own clocks).")
         .arg("id", Entity)
         .run(|call, (id,)| {
             if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {

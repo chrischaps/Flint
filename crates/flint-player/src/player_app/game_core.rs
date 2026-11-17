@@ -84,6 +84,10 @@ pub struct GameCore {
     /// The script modules the game's extensions declared (#754): enabled
     /// for the whole run, beside the subsystems'.
     pub(crate) extension_modules: Vec<&'static str>,
+    /// Every named event of the run with its game time (`fire_event` and
+    /// the engine's own), for an input script's `expect event` / `wait
+    /// event` (#714). `None`, and nothing kept, unless the run has checks.
+    pub event_log: Option<Vec<(f64, String)>>,
 }
 
 impl GameCore {
@@ -110,6 +114,7 @@ impl GameCore {
             commands_warned: Default::default(),
             fixed_steps: 0,
             extension_modules: Vec::new(),
+            event_log: None,
         }
     }
 }
@@ -453,6 +458,13 @@ impl GameCore {
     /// pause/unpause keybinds work.
     fn collect_game_events(&mut self, input: &InputState) -> Vec<GameEvent> {
         let mut game_events = self.events.drain();
+        if let Some(log) = &mut self.event_log {
+            for event in &game_events {
+                if let GameEvent::Custom { name, .. } = event {
+                    log.push((self.clock.total_time, name.clone()));
+                }
+            }
+        }
         for action in input.actions_just_pressed() {
             game_events.push(GameEvent::ActionPressed(action));
         }
@@ -517,6 +529,11 @@ impl GameCore {
     ) -> Option<Listener> {
         self.physics.begin_frame(self.clock.pending_fixed_ratio());
         self.fixed_steps = 0;
+        // Look and the jump press once a frame, however many steps run
+        // below: none on most frames above 60 Hz, two at 30 (#728)
+        if has_fps_player && config.runs(PHYSICS) {
+            self.physics.character_frame_input(input, &self.world);
+        }
         while self.clock.should_fixed_update() {
             let dt = self.clock.fixed_timestep;
 
@@ -788,6 +805,7 @@ pub(crate) fn for_the_host(command: &ScriptCommand) -> bool {
         | C::PlaySoundAt { .. }
         | C::StopSound { .. }
         | C::SetSoundVolume { .. }
+        | C::SetBusVolume { .. }
         | C::Rumble { .. }
         | C::SetCameraCutDetection { .. }
         | C::SetLook { .. }

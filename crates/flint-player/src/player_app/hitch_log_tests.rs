@@ -4,7 +4,8 @@
 //! clock as `--input-script` + `--exit-after` runs are. The hitch log gets
 //! one line per stall naming the script, the first counted as `startup`;
 //! the exit report totals them; `--max-hitches 0` fails the run and a clean
-//! scene passes it.
+//! scene passes it. `--capture-on-hitch` passes over the startup stall
+//! and takes the next, unless `--capture-on-hitch-startup` (#1207).
 //!
 //! No GPU: the stalls are the script's. The detector's floor is raised to
 //! 60 ms here so a busy machine's own hiccups (several agents build on
@@ -225,4 +226,48 @@ fn a_calm_scene_passes_the_gate_with_an_empty_log() {
         assert_eq!(std::fs::read_to_string(&log).unwrap(), "");
     });
     let _ = std::fs::remove_file(&log);
+}
+
+/// #1207: `--capture-on-hitch` asks for the stall at 3 s, not the one at
+/// 1 s that the report and gate count as the start's; with
+/// `--capture-on-hitch-startup` it asks for the one at 1 s. No GPU: what's
+/// checked is the request the detector's hitch queues (`tick` never takes
+/// one for a frame without a renderer).
+#[test]
+fn a_hitch_capture_passes_over_the_start_unless_asked_to_take_it() {
+    use crate::hitch_args::STARTUP_SECS;
+    vfs::scoped(Arc::new(game(STALL)), || {
+        let mut app = started();
+        app.capture_frames(Vec::new(), 1, None);
+        play_to(&mut app, 3.5);
+        assert_eq!(
+            app.stats.hitches.session().hitches,
+            2,
+            "the stalls at 1 s and 3 s are both hitches"
+        );
+        let asked = app.frame_captures.queued_hitches();
+        assert_eq!(asked.len(), 1, "{asked:?}");
+        assert!(
+            asked[0].game_time >= STARTUP_SECS && asked[0].game_time < 3.5,
+            "the hitch after the start: {:?}",
+            asked[0]
+        );
+        assert_eq!(app.frame_captures.on_hitch, 0, "and that spent it");
+
+        let mut app = started();
+        app.capture_frames(Vec::new(), 1, None);
+        app.capture_startup_hitches(true);
+        play_to(&mut app, 3.5);
+        let asked = app.frame_captures.queued_hitches();
+        assert_eq!(asked.len(), 1, "{asked:?}");
+        assert!(
+            asked[0].game_time < STARTUP_SECS,
+            "the startup hitch, when asked for: {:?}",
+            asked[0]
+        );
+        assert!(asked[0]
+            .script
+            .as_deref()
+            .is_some_and(|s| s.contains("stall.rhai")));
+    });
 }

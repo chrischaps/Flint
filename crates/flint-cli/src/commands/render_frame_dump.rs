@@ -58,18 +58,34 @@ impl Origin<'_> {
             name,
             sha256: bytes.map(|b| flint_core::ContentHash::from_bytes(&b).to_hex()),
         });
-        // As the player writes it (#1086): the version, the commit left
-        // to a host that asks git
+        // As the player writes it (#1086, #1208): the version, and the
+        // commit of the checkout the scene's project is in, so a replay of
+        // a render's capture can say which engine drew it
+        let (commit, dirty) = checkout_of(std::path::Path::new(self.scene));
         description.engine = Some(flint_render::frame_capture::EngineDescription {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            commit: None,
-            dirty: None,
+            commit,
+            dirty,
         });
         description.frame.game_time = self.game_time;
         description.written_by = Some(self.written_by.into());
         description.notes.extend(self.notes.iter().cloned());
         description.captured_at = Some(super::frame::utc_now());
     }
+}
+
+/// The commit of the checkout `scene`'s project is in, and whether its
+/// tracked files changed, where git can say: what the player's writer asks
+/// at its project root (`flint_player::git_state`), asked the same way.
+pub(super) fn checkout_of(scene: &std::path::Path) -> (Option<String>, Option<bool>) {
+    let scene_dir = scene
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new("."));
+    let root = flint_core::project::Project::for_path(scene)
+        .map(|p| p.root_for(scene_dir))
+        .unwrap_or_else(|_| scene_dir.to_path_buf());
+    flint_player::git_state(&root)
 }
 
 /// What a capture needs to be drawn again (#1089, ADR 0126 decision 4):
