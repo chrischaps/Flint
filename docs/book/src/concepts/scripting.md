@@ -352,8 +352,8 @@ Animation functions write directly to the `animator` component on the target ent
 
 | Function | Returns | Description |
 |---|---|---|
-| `play_clip(id: entity, clip: str)` | — | Start playing a named clip on the entity's animator. |
-| `stop_clip(id: entity)` | — | Stop the entity's animator. |
+| `play_clip(id: entity, clip: str)` | — | Play a named clip on the entity's animator: a new clip cuts to its start (cancelling a crossfade), a stopped one resumes, a finished one-shot replays. |
+| `stop_clip(id: entity)` | — | Pause the entity's animator: its clip holds the current frame (layers keep their own clocks). |
 | `blend_to(id: entity, clip: str, duration: num)` | — | Crossfade to another clip over a duration in seconds. |
 | `set_anim_speed(id: entity, speed: num)` | — | Set the animator's playback speed (1 normal). |
 | `set_anim_layer(id: entity, index: int, clip: str, weight: num)` | — | Play a clip on layer \`index\`, additive and unmasked, at a weight. |
