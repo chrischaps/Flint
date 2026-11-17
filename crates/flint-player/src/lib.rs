@@ -21,7 +21,7 @@ pub use extension::{
     ExtensionAudio, ExtensionCtx, ExtensionGpu, KeyInput, MeshOptions, PlayerExtension,
     SoundOptions, Stage,
 };
-pub use flint_audio::Bus;
+pub use flint_audio::{Bus, Buses};
 pub use flint_core::quality::{GpuInfo, QualitySettings, QualityValue};
 pub use flint_geometry::ray_mesh::{RayHit, RayMesh, RayScene};
 pub use flint_render::{
@@ -35,11 +35,14 @@ pub use hitch_args::{HitchArgs, HitchClass, HitchGate};
 pub use player_app::expression_feed::ExpressionListener;
 pub use player_app::expression_feed::{ExpressionFeed, ExpressionTimeline, TimedState};
 pub use player_app::fonts::project_font_definitions;
+#[cfg(not(target_arch = "wasm32"))]
+pub use player_app::frame_capture::git_state;
 pub use player_app::frame_rate::FrameRateSetting;
 pub use player_app::headless_animation::HeadlessAnimation;
 pub use player_app::headless_game::{
     apply_look, HeadlessGame, LookRequest, ScriptLook, Skipped, PRESENTATION_ONLY, SCRIPT_SEED,
 };
+pub use player_app::input_checks::CheckOutcome;
 pub use player_app::input_script::{Applied, InputScript, PointerEvent, ScriptEvent};
 #[cfg(not(target_arch = "wasm32"))]
 pub use player_app::inspect::InspectListener;
@@ -50,6 +53,11 @@ pub use player_app::living_props::{
     apply_preset as apply_living_preset, boil_at, species_problems, wanted_by as living_wanted,
     wooze_of_scene,
 };
+pub use player_app::playtest::{
+    run as playtest, Ended as PlaytestEnded, Failure as PlaytestFailure, PlaytestOptions,
+    PlaytestReport, DEFAULT_STEP as PLAYTEST_STEP,
+};
+pub use player_app::playtest_warnings::warning_layer as playtest_warning_layer;
 #[cfg(feature = "procgen")]
 pub use player_app::procgen_assets::GpuSink;
 pub use player_app::render_scale::{RenderScaleSetting, WEB_DPR_CAP};

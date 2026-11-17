@@ -1,0 +1,39 @@
+# The Phase 4 tavern's first minute, played with no window (#714):
+#
+#   flint playtest examples/phase4_runtime.scene.toml \
+#       --input-script examples/playtests/phase4_runtime.playtest.txt --exit-after 8
+#
+# The player starts at the kitchen end facing the hall (+Z). They step
+# right to the bar and talk to the bartender, then walk the clear lane up
+# the hall and open the front door. Each `wait` holds the lines after it
+# until the game shows what it asks, so the walk doesn't depend on how fast
+# the character moves; each `expect` is checked once. A line that doesn't
+# hold fails the run (`cargo test -p flint-cli --test playtest_cli` runs it).
+
+# Before anything moves
+0.0  expect tavern_kitchen_door door.locked == true
+0.0  expect bartender interactable.enabled == true
+
+# To the bar: A strafes toward +X
+0.2  down   KeyA
+0.2  wait   player transform.position.x > 3.6 within 3
+0.2  up     KeyA
+0.3  expect bartender animator.speed > 1.3        # the bartender is alert
+0.4  tap    KeyE                                  # "Welcome to the Rusty Flint!"
+0.6  expect log bartender_greeted == true
+
+# Back to the lane at x = 1, which no table or patron stands in
+0.8  down   KeyD
+0.8  wait   player transform.position.x < 1.2 within 3
+0.8  up     KeyD
+
+# Up the hall to the front door
+0.9  down   KeyW
+0.9  wait   player transform.position.z > 8.6 within 6
+0.9  up     KeyW
+1.0  down   KeyD
+1.0  wait   player transform.position.x < 0.2 within 3
+1.0  up     KeyD
+1.1  tap    KeyE
+1.3  wait   event door_opened within 1
+1.4  expect 1 entities where door.locked == true  # the kitchen's, still

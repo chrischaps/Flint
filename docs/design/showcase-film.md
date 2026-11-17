@@ -116,7 +116,8 @@ editor project file has to be kept in step with the takes, and the film
 rebuilds after a beat is recaptured:
 
 ```bash
-python tools/showcase/capture.py --cut master 08_pencil   # reshoot a beat after a style ticket lands
+python tools/showcase/cut.py master --capture --dry-run    # write the master's shot list
+flint capture ~/flint-film/master/shots.toml --shot 08_pencil   # reshoot a beat after a style ticket lands
 python tools/showcase/music.py master                     # the score, if a shot moved
 python tools/showcase/cut.py master                       # master, web, poster, with the score
 python tools/showcase/check_cut.py master                 # every frame, the sound, the bars
@@ -354,11 +355,14 @@ quarter-bars, and each cut ends on a whole bar.
 
 ## Capture
 
+`tools/showcase/capture.py` until #722, which made it `flint capture`;
+the notes below that name `capture.py` are from before.
+
 ```bash
-cargo build --release --bin flint-player
-python tools/showcase/capture.py            # every beat, every take, 3840x2160
-python tools/showcase/capture.py --scale 0.5 02_type  # one beat at 1920x1080
-python tools/showcase/capture.py --verify   # each take twice, compared
+cargo build --release --bin flint
+flint capture tools/showcase/film.toml            # every beat, every take, 3840x2160
+flint capture tools/showcase/film.toml --scale 0.5 --shot 02_type  # one beat at 1920x1080
+flint capture tools/showcase/film.toml --verify   # each take twice, compared
 ```
 
 Takes land outside the repo (`~/flint-film/<beat>/<take>/frame_0001.png`;

@@ -201,6 +201,10 @@ fn every_command_answers_with_one_json_document() {
     assert_eq!(check["valid"], true);
     run("validate");
     assert_eq!(ok(&dir, &["validate", scene])["valid"], true);
+    // A second of the scaffold played headless (#714)
+    run("playtest");
+    let played = ok(&dir, &["playtest", scene, "--exit-after", "1"]);
+    assert_eq!(played["passed"], true, "{played:#}");
     run("query");
     assert!(ok(&dir, &["query", "entities", "--scene", scene]).is_array());
 
@@ -259,6 +263,22 @@ fn every_command_answers_with_one_json_document() {
 
     run("examples");
     assert!(ok(&dir, &["examples", "--dir", &r("examples")]).is_array());
+
+    // Exit 1 when a FLINT_* switch here holds a bad value, so only the
+    // document is held (#715)
+    run("env");
+    assert!(json(&dir, &["env"]).1["switches"].is_array());
+
+    // Its takes open player windows, so the case is the plan (#722);
+    // tests/capture_cli.rs captures for real
+    run("capture");
+    std::fs::write(
+        dir.join("trailer.shots.toml"),
+        format!("[[shot]]\nid = \"open\"\nscene = \"{scene}\"\nseconds = 1\n"),
+    )
+    .unwrap();
+    let planned = ok(&dir, &["capture", "trailer.shots.toml", "--dry-run"]);
+    assert_eq!(planned["takes"][0]["frames"], 31, "{planned:#}");
 
     run("bundle");
     let bundle = ok(&dir, &["bundle", ".", "--dry-run"]);

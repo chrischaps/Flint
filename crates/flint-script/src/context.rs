@@ -126,7 +126,8 @@ pub struct SoundPlay {
     pub pitch: f64,
     /// Plays until `stop_sound`, or the scene's end.
     pub looping: bool,
-    /// The mixer bus by name: `sfx` (the default) or `music`.
+    /// The mixer bus by name: `sfx` (the default), `music` or one the game
+    /// declares in `flint.toml` (#730).
     pub bus: String,
 }
 
@@ -191,6 +192,12 @@ pub enum ScriptCommand {
         handle: u64,
         volume: f64,
         fade: f64,
+    },
+    /// `set_bus_volume`: a mixer bus's volume (linear, 1 = unity), by name:
+    /// `sfx`, `music` or one the game declares in `flint.toml` (#730).
+    SetBusVolume {
+        bus: String,
+        volume: f64,
     },
     FireEvent {
         name: String,
@@ -832,6 +839,9 @@ pub struct ScriptCallContext {
     /// How long after it is mixed a sound is heard, seconds, where the
     /// platform says (the browser), for `audio_output_latency`.
     pub audio_output_latency: Option<f64>,
+    /// What `test_assert`, `test_fail`, `test_pass` and `test_log` said
+    /// (#714), for the whole run: a scene change keeps it.
+    pub test: crate::testing::TestRecord,
 }
 
 // SAFETY: ScriptCallContext is only accessed from the main thread within
@@ -928,6 +938,7 @@ impl ScriptCallContext {
             opts_warned: HashSet::new(),
             audio_positions: std::collections::HashMap::new(),
             audio_output_latency: None,
+            test: Default::default(),
         }
     }
 

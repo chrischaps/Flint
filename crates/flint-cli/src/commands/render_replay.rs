@@ -209,11 +209,14 @@ impl ReplayHost {
                 ));
             }
         }
-        if let Some(commit) = description.engine.as_ref().and_then(|e| e.commit.as_ref()) {
-            notes.push(format!(
-                "captured at engine commit {commit}: the comparison below says whether this \
-                 engine draws it the same"
-            ));
+        // Which engine drew it against which draws it now (#1208: a render's
+        // capture names its commit too, so both sides usually can)
+        let captured_at = description.engine.as_ref().and_then(|e| e.commit.as_ref());
+        let (here, here_dirty) = super::super::render_frame_dump::checkout_of(&scene_path);
+        if let Some(note) =
+            commit_note(captured_at.map(String::as_str), here.as_deref(), here_dirty)
+        {
+            notes.push(note);
         }
 
         // The render a capture of this frame would be, as words
@@ -485,6 +488,34 @@ impl ReplayHost {
     }
 }
 
+/// The note on which engine commit drew the capture and which draws the
+/// replay: the same one, another (the comparison is across commits), or
+/// only the captured one known. Nothing when the capture names none.
+fn commit_note(captured: Option<&str>, here: Option<&str>, dirty: Option<bool>) -> Option<String> {
+    let captured = captured?;
+    let short = |c: &str| c.chars().take(9).collect::<String>();
+    let changes = if dirty == Some(true) {
+        "; this checkout has uncommitted changes"
+    } else {
+        ""
+    };
+    Some(match here {
+        Some(here) if here == captured => {
+            format!("captured at this engine's commit, {}{changes}", short(here))
+        }
+        Some(here) => format!(
+            "captured at engine commit {} and replayed at {}{changes}: the comparison \
+             below is across commits",
+            short(captured),
+            short(here)
+        ),
+        None => format!(
+            "captured at engine commit {captured}: the comparison below says whether this \
+             engine draws it the same"
+        ),
+    })
+}
+
 /// Lay `captured` over `world` by entity name (ADR 0126 decision 4): every
 /// captured entity's archetype, components and parent; one `world` lacks
 /// spawned; one the capture lacks despawned. What it did, a line each.
@@ -719,4 +750,26 @@ fn check_assets(assets: &[AssetDescription], scene: &str) -> Vec<AssetCheck> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::commit_note;
+
+    #[test]
+    fn the_commit_note_says_whether_the_replay_is_across_commits() {
+        let (a, b) = ("beef94170000", "c0ffee000000");
+        assert_eq!(commit_note(None, Some(a), Some(false)), None);
+        let same = commit_note(Some(a), Some(a), Some(false)).unwrap();
+        assert!(same.contains("this engine's commit, beef94170"), "{same}");
+        let other = commit_note(Some(a), Some(b), Some(true)).unwrap();
+        assert!(
+            other.contains("beef94170 and replayed at c0ffee000"),
+            "{other}"
+        );
+        assert!(other.contains("uncommitted"), "{other}");
+        assert!(other.contains("across commits"), "{other}");
+        let unknown = commit_note(Some(a), None, None).unwrap();
+        assert!(unknown.contains(a), "{unknown}");
+    }
 }

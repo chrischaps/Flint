@@ -182,6 +182,11 @@ impl App {
                 if self.captured.is_none() {
                     self.captured = Some(was);
                 }
+                // The CPU side stays the captured frame's: a replay runs no
+                // game loop, and those phases are the frame it draws (#1208)
+                if let Some((original, _)) = &self.captured {
+                    self.timing = std::mem::take(&mut self.timing).replaying(&original.description);
+                }
             }
             Err(e) => self.replay.status = Status::Failed(format!("{e:#}")),
         }
@@ -1848,6 +1853,9 @@ impl App {
                 if let Some(ms) = t.cpu_ms {
                     ui.label(RichText::new(format!("{ms:.2} ms")).small().color(ink::DIM));
                 }
+                if t.cpu_of_captured {
+                    ui.label(RichText::new("as captured").small().color(ink::FAINT));
+                }
             });
             if t.cpu.is_empty() {
                 ui.label(
@@ -1925,14 +1933,12 @@ impl App {
                             .color(ink::DIM),
                     );
                 }
+                if t.cpu_of_captured && !t.history.is_empty() {
+                    ui.label(RichText::new("as captured").small().color(ink::FAINT));
+                }
             });
             if t.history.is_empty() {
-                ui.label(
-                    RichText::new(
-                        "no frame history: the player's captures keep the frames around theirs",
-                    )
-                    .color(ink::FAINT),
-                );
+                ui.label(RichText::new(t.history_missing.clone()).color(ink::FAINT));
                 return;
             }
             let h = (ui.available_height() - 22.0).clamp(48.0, 140.0);
@@ -2374,6 +2380,59 @@ mod app_tests {
     fn shown_target(app: &App) -> Option<String> {
         let (shown, _) = app.images();
         shown.map(|(i, _)| app.model.images[i].image.target.clone())
+    }
+
+    #[test]
+    fn a_replay_of_a_player_capture_keeps_the_captured_frames_cpu_side() {
+        use flint_render::frame_capture::{CpuDescription, CpuFrame};
+        // The frozen fixture, as the player would have written it: one
+        // frame of history, the captured one
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/frames/two_crates.flintframe");
+        let mut capture = Capture::open(&path).unwrap();
+        let captured = CpuFrame {
+            index: 7,
+            ms: 16.5,
+            phases_ms: [("scripts".to_string(), 2.0), ("render".to_string(), 4.0)]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        capture.description.written_by = Some("flint-player".into());
+        capture.description.cpu = Some(CpuDescription {
+            frame: Some(captured.clone()),
+            window: vec![captured],
+            ..Default::default()
+        });
+        let mut app = App::new(capture, "two_crates".into(), &Start::default(), true, 8192);
+        assert!(!app.timing.cpu_of_captured);
+        // What `flint frame replay` writes: no CPU side of its own
+        let dir = std::env::temp_dir().join(format!("flint-1208-replay-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path.join("manifest.json")).unwrap())
+                .unwrap();
+        manifest["written_by"] = "flint frame replay".into();
+        manifest["cpu"] = serde_json::Value::Null;
+        std::fs::write(dir.join("manifest.json"), manifest.to_string()).unwrap();
+
+        app.show_replay(&dir);
+        assert!(app.showing_replay());
+        let t = &app.timing;
+        assert!(t.cpu_of_captured);
+        assert_eq!(t.cpu_ms, Some(16.5), "the captured frame's phases");
+        assert_eq!(t.cpu.len(), 2);
+        assert_eq!(t.history.len(), 1);
+        assert_eq!(t.cpu_missing, None, "nothing blames `flint render`");
+        // The strip draws with it
+        let ctx = egui::Context::default();
+        frame(&ctx, &mut app, &[]);
+        // and the captured frame put back is the capture's own again
+        app.show_captured();
+        assert!(!app.timing.cpu_of_captured);
+        assert_eq!(app.timing.cpu_ms, Some(16.5));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

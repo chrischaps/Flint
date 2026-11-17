@@ -36,6 +36,8 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint asset job resume <id>` | Finish a job a generate didn't see through: wait, download, register; nothing new is paid for |
 | `flint edit <file>` | Unified interactive editor (auto-detects file type) |
 | `flint play [scene]` | Play a scene with first-person controls and physics; with no scene, the project's default (`flint.toml`'s `[project] scene`) |
+| `flint playtest <scene>` | Play a scene headless on a fixed clock, with an input script's `expect` / `wait` lines and the scripts' `test_*` calls; one JSON report, the same bytes every run, exit 1 on a failure ([Playtesting](../guides/playtesting.md)) |
+| `flint capture <shots.toml>` | Capture a shot list as deterministic frame sequences, each take a stepped `flint play`; `--verify` runs each twice and names the frames that differ, `--encode mp4` ([Filming a Showcase](../guides/filming-a-showcase.md)) |
 | `flint render <scene>` | Render a scene to PNG (headless) |
 | `flint dxc status` | What DX12 compiles shaders with here, and why: DXC is linked into the binary ([DX12's shader compiler](#dx12s-shader-compiler)); `flint dxc notices` writes DXC's licence and notices for a Windows build you ship |
 | `flint goldens <file>.goldens.toml` | Render a list of scenes and gate each against its golden PNG; `--bless` rewrites them ([Golden Suites](../guides/headless-rendering.md#golden-suites)) |
@@ -239,10 +241,10 @@ Frame
   shadow draws 9 -> 6 (-3)
 
 Draws by entity
-  removed  lantern in Shadow cascade 0: 1 draw (shadow)
-  removed  lantern in Shadow cascade 1: 1 draw (shadow)
-  removed  lantern in Shadow cascade 2: 1 draw (shadow)
-  removed  lantern in Scene: 1 draw (pbr)
+  removed  lantern in Shadow cascade 0: 1 draw: shadow
+  removed  lantern in Shadow cascade 1: 1 draw: shadow
+  removed  lantern in Shadow cascade 2: 1 draw: shadow
+  removed  lantern in Scene: 1 draw: pbr
 
 Images (5 of 11 the same)
   image                                     differing     of     max  diff
@@ -452,7 +454,8 @@ adapter, no window) also exits 1 now, from `flint play` too.
 | `--perf` | Print a perf line every 10 s: frame p50/p99/max, each phase's CPU time (mean/max), each pass's GPU time where the adapter can time, draws and triangles. The same line the web page's `?perf=1` copies, so a desktop and a browser can be set side by side |
 | `--no-hot-reload` | Don't watch the game's files: scripts, UI documents, user styles, glyph sets and palettes load once and never reload, and nothing polls the disk (#633) |
 | `--capture-frame-at <secs>` | Capture the frame at this game time for the frame debugger (#1086): a `<scene>-t<secs>.flintframe/` folder under `--capture-dir` with every pass's image, the frame's passes, draws and GPU times, the frame history around it and what a replay needs. Repeatable. With `--frame-step` two runs write the same folder apart from its timings. The run exits 1 when a time is never reached or a capture can't be written ([Capturing from the running player](../guides/profiling.md#capturing-from-the-running-player)) |
-| `--capture-on-hitch[=N]` | Capture the frame after each of the run's first N hitches (default 1). A hitch is over by the time it is found, so the capture is the next frame, and the manifest's `cpu` holds the hitch, its cause and the frame history around it. Turns the frame history and script timing on, as `--hitch-log` does |
+| `--capture-on-hitch[=N]` | Capture the frame after each of the run's first N hitches past the start (default 1). Hitches in the first 2 s of game time are passed over, as the exit report and `--max-hitches` set them apart (#1207); the first one passed over is said on the console. A hitch is over by the time it is found, so the capture is the next frame, and the manifest's `cpu` holds the hitch, its cause and the frame history around it. Turns the frame history and script timing on, as `--hitch-log` does |
+| `--capture-on-hitch-startup` | Let `--capture-on-hitch` take the hitches of the first 2 s too, when the load is what you're chasing. Needs `--capture-on-hitch` |
 | `--capture-dir <dir>` | Where frame captures go: by default `captures/` at the project's root. Shift+F2 and an input script's `capture frame` write there too |
 | `--strict-scripts` | Exit 1 when any script failed, to load, to compile or while running (#693). Without it script errors are still counted and `--exit-after` prints them, a line each with its count ([When a script fails while running](../concepts/scripting.md#when-a-script-fails-while-running)) |
 
@@ -489,7 +492,16 @@ An input script plays its events at set game times. `#` starts a comment:
 10.0  look    40 -10             # raw mouse motion, for mouse-look
 10.5  look    300 0 1.5          # spread over 1.5 s
 11.0  capture frame              # capture the next frame for the frame debugger (#1086)
+12.0  expect  door door.open == true          # ask the game (flint-query's conditions)
+12.0  wait    player transform.position.z > 9 within 5   # hold what follows until it holds
 ```
+
+`expect` and `wait` ask the game rather than play into it: an `expect`
+once at its time, a `wait` every frame until it holds, holding back the
+lines after it (they then play that much later). A failed one is printed
+with the exit report and makes the run exit 1. Their forms (an entity's
+field, `entities where`, `persist`, `log`, `event`) are in
+[Playtesting](../guides/playtesting.md), which is where they are most use.
 
 `pull` sets an analog button's travel, as a real pad's trigger sends it: a
 `gamepad_button` binding to `RightTrigger2` reads 0.6, not the 0 or 1 that
@@ -724,6 +736,64 @@ cargo run --bin flint-player -- examples/phase4_runtime.scene.toml
 cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
   scenes/level_1.scene.toml
 ```
+
+## The `playtest` Command
+
+Play a scene with no window, GPU or sound device, on a fixed clock, and
+report whether it passed: every `expect` and `wait` of the input script,
+every `test_assert`, `test_fail` and `test_pass` of the scripts, every script
+error with its file and line, and the engine's warnings, as one JSON document
+that two runs write byte for byte. Exit 1 on any failure. The whole story is
+[Playtesting](../guides/playtesting.md).
+
+```bash
+flint playtest examples/phase4_runtime.scene.toml     --input-script examples/playtests/phase4_runtime.playtest.txt --exit-after 8
+flint playtest scenes/level1.scene.toml --timeout 30 --strict --dump player --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--input-script <file>` | Keys, pads and the pointer, and `expect` / `wait` lines that check the game |
+| `--exit-after <s>` | End at this game time, passing if nothing failed (10 when neither this nor `--timeout` is given) |
+| `--timeout <s>` | End at this game time as a failure: the run should have ended itself (`test_pass()`, `test_fail()`, `quit_game()`) |
+| `--frame-step <s>` | Game seconds a frame (default 1/60) |
+| `--seed <n>` | `random()`'s seed (default: every stepped run's) |
+| `--strict` | A warning while the scene loads fails the run, and so does anything `flint check` finds in the scene |
+| `--dump <entity>` | Put the entity's components at the end in the report (repeatable) |
+| `--report <file>` | Write the JSON report to this file as well |
+| `--timings` | Wall-clock times in the report (two runs then differ) |
+| `--width <w>`, `--height <h>` | The screen scripts see, in points (1280 x 720) |
+| `--schemas <dir>` | Schema directories (repeatable); without it, the project's |
+## The `capture` Command
+
+Captures a shot list (`[capture]` and its `[[shot]]`s: a scene, `seconds`,
+optionally a look, a seed, an input script and several takes) as PNG frame
+sequences, each take one run of `flint play` with the clock stepped exactly
+one frame a frame, so a slow frame changes nothing on screen. The list's
+keys and what a take is: [Filming a Showcase](../guides/filming-a-showcase.md).
+
+```bash
+flint capture showcase_game/trailer.shots.toml
+flint capture showcase_game/trailer.shots.toml --verify --encode mp4
+flint capture tools/showcase/film.toml --shot 02_type --scale 0.5 --dry-run --json
+```
+
+### Capture Flags
+
+| Flag | Description |
+|------|-------------|
+| `--shot <id>` | Only this shot (repeatable) |
+| `--take <name>` | Only takes of this name (repeatable) |
+| `--scale <f>` | A fraction of each shot's size, keeping the point canvas |
+| `--width <w>`, `--height <h>` | One frame size for every shot |
+| `--out <dir>` | Where takes go (default: the list's `out`, else `captures/<list name>/` beside it) |
+| `--verify` | Capture each take twice and compare the runs; exit 1 when a frame differs |
+| `--tolerance <levels>` | With `--verify`: the largest 8-bit difference that still counts as the same |
+| `--encode mp4` | Also an MP4 a take (H.264, BT.709, no sound; needs ffmpeg on `PATH`) |
+| `--dry-run` | Print each take's frames and `flint play` command line; capture nothing |
+| `--schemas <dir>` | Schema directories for the player (repeatable; default: the scene's project's) |
+
+Words after `--` are added to every take's `flint play` command line.
 
 ## The `render` Command
 

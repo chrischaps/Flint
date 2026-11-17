@@ -11,6 +11,7 @@
 //! and `web` is the main-thread stream it falls back to. `page` suspends
 //! both while the page is hidden (#162).
 
+pub mod bus;
 pub mod clock;
 pub mod decode;
 pub mod engine;
@@ -26,8 +27,9 @@ pub mod web;
 #[cfg(target_arch = "wasm32")]
 pub mod worklet;
 
+pub use bus::{Bus, BusDecl, Buses};
 use engine::AudioEngine;
-pub use engine::{Bus, MixCounts};
+pub use engine::{MixCounts, Unhosted};
 use flint_core::{Result, Vec3};
 use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, RuntimeSystem};
@@ -39,6 +41,9 @@ pub struct AudioSystem {
     pub engine: AudioEngine,
     pub sync: AudioSync,
     pub triggers: AudioTrigger,
+    /// Silent on purpose ([`AudioSystem::silent`]): a run with no sound to
+    /// play doesn't warn that it has none.
+    meant_silent: bool,
 }
 
 impl Default for AudioSystem {
@@ -53,6 +58,19 @@ impl AudioSystem {
             engine: AudioEngine::new(),
             sync: AudioSync::new(),
             triggers: AudioTrigger::new(),
+            meant_silent: false,
+        }
+    }
+
+    /// A system that opens no device and plays nothing, saying nothing of
+    /// it: sounds still load (so a missing file still warns), nothing is
+    /// heard. A headless playtest's (#714).
+    pub fn silent() -> Self {
+        Self {
+            engine: AudioEngine::silent(),
+            sync: AudioSync::new(),
+            triggers: AudioTrigger::new(),
+            meant_silent: true,
         }
     }
 
@@ -159,7 +177,7 @@ impl AudioSystem {
                         }
                     } else if let Err(e) =
                         self.engine
-                            .play_non_spatial(&sound, volume, 1.0, false, Bus::Sfx)
+                            .play_non_spatial(&sound, volume, 1.0, false, Bus::SFX)
                     {
                         // One-shot non-spatial: handle not needed
                         tracing::warn!("{:?}", e);
@@ -179,7 +197,9 @@ impl RuntimeSystem for AudioSystem {
         if !self.engine.is_available() {
             // No device, or (in the browser) no click yet: `start` picks up
             // the rest.
-            tracing::warn!("No sound yet, running silent");
+            if !self.meant_silent {
+                tracing::warn!("No sound yet, running silent");
+            }
             return Ok(());
         }
 

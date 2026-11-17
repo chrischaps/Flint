@@ -40,10 +40,8 @@ CLAUDE.md asks.
 | `test-models/double_sided_palm.py` | `demo/models/palm_{two,one}_sided.glb` for `demo/double_sided.scene.toml` (#623) | | standard library |
 | **The showcase film** (`showcase/CLAUDE.md`) | | | |
 | `showcase/build_scenes.py` | Writes `demo/film/*.scene.toml` from the set and each beat; `--check` for staleness | | standard library |
-| `showcase/capture.py` | Captures each beat as a PNG sequence, unattended | `flint-player` | flint-player |
-| `showcase/compare.py` | Two captures of one take, frame by frame: is it deterministic? | | numpy, Pillow |
 | `showcase/music.py` (`score.py`, `synth.py`) | The film's score: synthesizes stems, then mixes them | `flint music render` | numpy, scipy (matplotlib for the plot), flint |
-| `showcase/cut.py` | Cuts the takes into the master, web and reel files | | numpy, Pillow, ffmpeg |
+| `showcase/cut.py` | Cuts the takes into the master, web and reel files; `--capture` shoots a cut's takes with `flint capture` | `flint capture` | numpy, Pillow, ffmpeg |
 | `showcase/check_cut.py` | Checks the encoded files frame by frame, and their sound | | numpy, ffmpeg |
 | **The web player** | | | |
 | `play-site/build.py` | Assembles play.chaps.dev from `play-site/games.toml` (#103) | `flint export web` | flint, a trunk build of the player |

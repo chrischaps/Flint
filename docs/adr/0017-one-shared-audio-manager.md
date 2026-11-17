@@ -53,6 +53,12 @@ Not recorded in the surviving text.
 - Since then (#136): on the web, `manager_mut()` returns `None` when the mix
   runs in the browser's AudioWorklet, so a scene with a `music_session` keeps
   the main-thread cpal stream.
+- Since then (#730, [ADR 0127](0127-the-mixer-is-a-trait-and-buses-are-data.md)):
+  `manager_mut()` is gone. The session starts through
+  `AudioEngine::host(|manager| ..)`, which lends the manager for that call
+  only where kira mixes on this thread; the worklet's `MixerBackend::host`
+  answers `Unhosted::Worklet`, so the web still mixes a music scene on the
+  main thread. The drop order above is unchanged.
 
 ## Measured
 

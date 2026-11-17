@@ -74,13 +74,15 @@ fn vec3(p: [f32; 3]) -> glam::Vec3 {
 const SWEEP_EVERY: u32 = 32;
 
 /// kira, set up as `flint_audio::AudioEngine` sets it up on the desktop (a
-/// low-pass on the main track, music and SFX buses under it), driven by
-/// commands instead of calls.
+/// low-pass on the main track, music and SFX buses under it, and the
+/// game's own buses after them), driven by commands instead of calls.
 pub struct Mixer {
     manager: AudioManager<Capture>,
     renderer: Renderer,
     filter: FilterHandle,
-    buses: [TrackHandle; 2],
+    /// By number: [`protocol::BUS_SFX`], [`protocol::BUS_MUSIC`], then each
+    /// [`Command::BusNew`] in turn (#730).
+    buses: Vec<TrackHandle>,
     listener: Option<ListenerHandle>,
     sounds: HashMap<u32, StaticSoundData>,
     tracks: HashMap<u32, SpatialTrackHandle>,
@@ -117,7 +119,7 @@ impl Mixer {
             manager,
             renderer,
             filter,
-            buses: [sfx, music],
+            buses: vec![sfx, music],
             listener: None,
             sounds: HashMap::new(),
             tracks: HashMap::new(),
@@ -215,6 +217,18 @@ impl Mixer {
             }
             Command::BusVolume { bus, db, tween: t } => {
                 self.bus(bus)?.set_volume(Decibels(db), tween(t));
+            }
+            Command::BusNew { bus, parent, db } => {
+                // Numbered in order, so a number is never two buses.
+                if bus as usize != self.buses.len() {
+                    return None;
+                }
+                let builder = TrackBuilder::new().volume(Decibels(db));
+                let track = match parent {
+                    protocol::BUS_MAIN => self.manager.add_sub_track(builder).ok()?,
+                    parent => self.bus(parent)?.add_sub_track(builder).ok()?,
+                };
+                self.buses.push(track);
             }
             Command::Listener { pos, quat } => {
                 let orientation = glam::Quat::from_array(quat);
@@ -462,6 +476,57 @@ mod tests {
         loudness(&mut m, 4);
         assert_eq!(loudness(&mut m, 4), (0.0, 0.0));
         assert_eq!(m.errors, 0);
+    }
+
+    /// A game's buses (#730): made in number order, under the main track or
+    /// another bus, whose volume scales theirs.
+    #[test]
+    fn a_games_bus_hangs_off_its_parent_and_is_made_in_order() {
+        let mut m = mixer_with_tone();
+        m.apply(&batch(&[
+            // A number out of turn is refused, and makes nothing.
+            Command::BusNew {
+                bus: 3,
+                parent: BUS_MAIN,
+                db: 0.0,
+            },
+            Command::BusNew {
+                bus: 2,
+                parent: BUS_SFX,
+                db: -6.0,
+            },
+            Command::Play {
+                voice: 1,
+                sound: 1,
+                target: Target::Bus(2),
+                db: 0.0,
+                rate: 1.0,
+                pan: 0.0,
+                looping: true,
+            },
+        ]));
+        assert_eq!(m.errors, 1, "bus 3 before bus 2");
+        loudness(&mut m, 2);
+        let (l, _) = loudness(&mut m, 40);
+        // The tone's RMS is 0.5/sqrt(2); -6 dB is about half.
+        assert!((l / 0.3536 - 0.501).abs() < 0.03, "-6 dB: {l}");
+
+        // Its parent, sfx, turned down: the child goes with it.
+        m.apply(&batch(&[Command::BusVolume {
+            bus: BUS_SFX,
+            db: -60.0,
+            tween: 0.0,
+        }]));
+        loudness(&mut m, 2);
+        let (quiet, _) = loudness(&mut m, 40);
+        assert!(quiet < l * 0.01, "under a silent parent: {quiet}");
+        // A bus the mixer doesn't have is an error, never a panic.
+        m.apply(&batch(&[Command::BusVolume {
+            bus: 9,
+            db: 0.0,
+            tween: 0.0,
+        }]));
+        assert_eq!(m.errors, 2);
     }
 
     #[test]
