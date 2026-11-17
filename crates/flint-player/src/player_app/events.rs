@@ -632,6 +632,9 @@ impl ApplicationHandler for PlayerApp {
     /// Every exit path (close button, Escape, --exit-after, script-requested,
     /// init failure) funnels through here: last chance to write the store.
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        // A frame capture still on its way is written before the run ends
+        #[cfg(not(target_arch = "wasm32"))]
+        self.finish_frame_captures();
         self.flush_persistent_store(true, "exit");
     }
 }
@@ -894,6 +897,9 @@ impl PlayerApp {
                 if self.focus.cursor_captured && !self.text_has_focus() {
                     self.input.process_mouse_raw_delta(dx, dy);
                 }
+            }
+            ScriptEvent::Capture(at) => {
+                self.ask_frame_capture(super::frame_capture::Trigger::Script(at), "capture");
             }
             ScriptEvent::Text(text) => {
                 if self.egui_sees_input() {

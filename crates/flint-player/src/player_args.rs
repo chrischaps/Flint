@@ -257,6 +257,12 @@ pub struct PlayerArgs {
     /// non-zero past them) (#1079)
     #[command(flatten)]
     pub hitches: crate::HitchArgs,
+
+    /// `--capture-frame-at SECS` (repeatable), `--capture-on-hitch[=N]` and
+    /// `--capture-dir DIR`: frames for the frame debugger, as
+    /// `.flintframe` folders (#1086). Shift+F2 captures one too
+    #[command(flatten)]
+    pub frame_captures: crate::FrameCaptureArgs,
 }
 
 /// `flint-player`'s command line: [`PlayerArgs`] and `--bundle`, the one
@@ -516,6 +522,7 @@ impl PlayerArgs {
         launch.expression_feed = expression_feed;
         app.input.touch_controls_mut().set_mode(touch_mode);
         args.hitches.apply(&mut app)?;
+        args.frame_captures.apply(&mut app)?;
         // Skybox, ambient, shading levers, shadows, default lights, camera,
         // user styles and post from the scene file, as every host and
         // transition take them (#723)

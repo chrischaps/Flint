@@ -256,6 +256,9 @@ adapter, no window) also exits 1 now, from `flint play` too.
 | `--stats` | Open the F2 rendering stats overlay from the first frame. F2 still closes it |
 | `--perf` | Print a perf line every 10 s: frame p50/p99/max, each phase's CPU time (mean/max), each pass's GPU time where the adapter can time, draws and triangles. The same line the web page's `?perf=1` copies, so a desktop and a browser can be set side by side |
 | `--no-hot-reload` | Don't watch the game's files: scripts, UI documents, user styles, glyph sets and palettes load once and never reload, and nothing polls the disk (#633) |
+| `--capture-frame-at <secs>` | Capture the frame at this game time for the frame debugger (#1086): a `<scene>-t<secs>.flintframe/` folder under `--capture-dir` with every pass's image, the frame's passes, draws and GPU times, the frame history around it and what a replay needs. Repeatable. With `--frame-step` two runs write the same folder apart from its timings. The run exits 1 when a time is never reached or a capture can't be written ([Capturing from the running player](../guides/profiling.md#capturing-from-the-running-player)) |
+| `--capture-on-hitch[=N]` | Capture the frame after each of the run's first N hitches (default 1). A hitch is over by the time it is found, so the capture is the next frame, and the manifest's `cpu` holds the hitch, its cause and the frame history around it. Turns the frame history and script timing on, as `--hitch-log` does |
+| `--capture-dir <dir>` | Where frame captures go: by default `captures/` at the project's root. Shift+F2 and an input script's `capture frame` write there too |
 | `--strict-scripts` | Exit 1 when any script failed, to load, to compile or while running (#693). Without it script errors are still counted and `--exit-after` prints them, a line each with its count ([When a script fails while running](../concepts/scripting.md#when-a-script-fails-while-running)) |
 
 A stepped run is repeatable as long as its scripts are. `--frame-step` (or `--seed`) takes care of `random()`; a script that reads `timestamp()` still sees the wall clock. Two stepped runs of `examples/seeded_stars.scene.toml`, which scatters a sky with `random()` every second, write byte-identical screenshots; before #635 every run drew its own sky:
@@ -290,6 +293,7 @@ An input script plays its events at set game times. `#` starts a comment:
 9.5   tap     Enter
 10.0  look    40 -10             # raw mouse motion, for mouse-look
 10.5  look    300 0 1.5          # spread over 1.5 s
+11.0  capture frame              # capture the next frame for the frame debugger (#1086)
 ```
 
 `pull` sets an analog button's travel, as a real pad's trigger sends it: a

@@ -29,6 +29,7 @@ mod terrain;
 mod water;
 
 pub use binding::{BoundGrass, BoundScene, LoadedTerrain, SceneBinding};
+pub use capture::HeldFrameCapture;
 pub use describe::FrameHost;
 use draw_list::{Blend, Draw, DrawItem, DrawList, Layer, VertexStage};
 pub(crate) use fog_veil::FOG_VEIL_FORMAT;

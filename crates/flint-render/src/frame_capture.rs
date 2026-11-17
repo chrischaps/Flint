@@ -40,7 +40,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use crate::frame_capture_write::{write_capture, WrittenCapture};
+pub use crate::frame_capture_write::{write_capture, write_capture_on, WrittenCapture};
 pub use crate::frame_taps::{CaptureTargets, CapturedFrame, CapturedImage, FrameCapture};
 
 /// What `format` says: this is a Flint frame.
@@ -76,6 +76,27 @@ pub struct FrameDescription {
     /// What a capture (#1085) read back and wrote: `None` for a frame
     /// described without its images (`--frame-dump`).
     pub capture: Option<CaptureDescription>,
+    /// What wrote it: `flint-player`, `flint render`. `None` in a
+    /// description written before #1086.
+    pub written_by: Option<String>,
+    /// When it was captured, UTC, RFC 3339 (`2026-11-16T22:30:00Z`).
+    pub captured_at: Option<String>,
+    /// The engine that drew it.
+    pub engine: Option<EngineDescription>,
+    /// The scene it drew, by path and hash.
+    pub scene: Option<SceneDescription>,
+    /// Why the frame was captured (#1086): a time, a key, a script, a hitch.
+    pub trigger: Option<TriggerDescription>,
+    /// The player's side of the frame (#1086, ADR 0126 decision 3): the
+    /// frame history's window around it, and the hitch that asked for it.
+    pub cpu: Option<CpuDescription>,
+    /// What the capture holds for drawing the frame again (#1089): the
+    /// files under `replay/`, the assets by hash, and what a replay draws
+    /// fresh. `None` when no replay inputs were captured.
+    pub replay: Option<ReplayDescription>,
+    /// What a reader should know about this frame, a line each: a Living
+    /// Props split, GPU timing that didn't arrive.
+    pub notes: Vec<String>,
 }
 
 impl Default for FrameDescription {
@@ -91,6 +112,14 @@ impl Default for FrameDescription {
             passes: Vec::new(),
             panels: Vec::new(),
             capture: None,
+            written_by: None,
+            captured_at: None,
+            engine: None,
+            scene: None,
+            trigger: None,
+            cpu: None,
+            replay: None,
+            notes: Vec::new(),
         }
     }
 }
@@ -181,6 +210,14 @@ impl FrameDescription {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FrameInfo {
+    /// The frame's number in the host's frame history (the player's), when
+    /// it keeps one.
+    pub index: Option<u64>,
+    /// The game time it was drawn at, seconds (what scripts read as
+    /// `total_time()`).
+    pub game_time: Option<f64>,
+    /// The game step it took, seconds.
+    pub dt: Option<f64>,
     /// The output's size in pixels.
     pub size: [u32; 2],
     /// What the 3D scene is drawn at: `size` at render scale 1 (#122).
@@ -213,6 +250,158 @@ pub struct FrameInfo {
     /// out as it drew, so its GPU time holds those copies, and a hitch
     /// detector (#1076) should pass over it.
     pub capturing: bool,
+}
+
+/// The engine a capture was drawn with.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EngineDescription {
+    /// The crate version (`CARGO_PKG_VERSION`).
+    pub version: String,
+    /// The checkout's commit when the frame was captured (`git rev-parse
+    /// HEAD` at the project's root: a game carrying the engine as a subtree
+    /// names its own), `None` where git couldn't say.
+    pub commit: Option<String>,
+    /// Whether that checkout had changes to tracked files.
+    pub dirty: Option<bool>,
+}
+
+/// The scene a capture drew.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SceneDescription {
+    /// As the host was handed it (relative to where it ran).
+    pub path: String,
+    /// Its `[scene] name`.
+    pub name: String,
+    /// The file's SHA-256, hex, when it could be read.
+    pub sha256: Option<String>,
+}
+
+/// Why a frame was captured (#1086).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TriggerDescription {
+    /// `at` (`--capture-frame-at`), `key` (the debug key), `script` (an
+    /// `--input-script` line) or `hitch` (`--capture-on-hitch`).
+    pub kind: String,
+    /// In a line: `--capture-frame-at 2`, `Shift+F2`, `input script at
+    /// 1.5 s`, `the hitch at frame 312`.
+    pub detail: String,
+}
+
+/// The player's side of a captured frame: its frame history around it.
+/// Times are ms.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CpuDescription {
+    /// The captured frame's own record, when the history kept it.
+    pub frame: Option<CpuFrame>,
+    /// The frames around it, oldest first: the capture's own and those
+    /// before it, or, for a hitch, those before the hitch and after it up
+    /// to the capture's read-back.
+    pub window: Vec<CpuFrame>,
+    /// Whether script callbacks were timed (each frame's `scripts_ms` holds
+    /// their times only then).
+    pub scripts_timed: bool,
+    /// The hitch that asked for the capture (`--capture-on-hitch`). The
+    /// captured frame is the one after it: a hitch is over by the time it
+    /// is judged, so its own frame can't be drawn again. What it cost by
+    /// phase is its record in `window`; what the scene looked like is the
+    /// next frame's images.
+    pub hitch: Option<HitchDescription>,
+    /// Why there is no window, when there isn't one (a build without the
+    /// frame history and no `--perf`).
+    pub missing: Option<String>,
+}
+
+/// One frame of the player's history (#1076).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CpuFrame {
+    pub index: u64,
+    pub game_time: f64,
+    /// Wall time from its start to the next frame's.
+    pub ms: f32,
+    /// What the hitch detector judges it by: paced under vsync, else `ms`.
+    pub judged_ms: f32,
+    /// Each phase of the player's work by name (`scripts`, `physics`,
+    /// `render`, `present`...).
+    pub phases_ms: BTreeMap<String, f32>,
+    /// Each script callback's time, when scripts were timed.
+    pub scripts_ms: BTreeMap<String, f32>,
+    pub present_ms: Option<f32>,
+    pub fixed_steps: u32,
+    /// The GPU time read back during it (a frame or two old).
+    pub gpu_ms: Option<f32>,
+    /// What the engine did in it (#1077).
+    pub notes: Vec<CpuNote>,
+    /// A capture was in flight on it, so the hitch detector passed over it.
+    pub capturing: bool,
+    /// The detector found a hitch on it.
+    pub hitch: bool,
+}
+
+/// One frame note (`flint_core::frame_notes`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CpuNote {
+    pub kind: String,
+    pub detail: String,
+    pub ms: Option<f32>,
+    pub depth: u8,
+}
+
+/// A hitch, as the hitch log writes it (#1079).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HitchDescription {
+    /// Its frame's [`CpuFrame::index`].
+    pub frame: u64,
+    pub game_time: f64,
+    pub ms: f32,
+    pub judged_ms: f32,
+    /// The median of the frames before it, which it stood out from.
+    pub median_ms: f32,
+    /// `player` (the engine's own work) or `elsewhere`.
+    pub class: String,
+    /// In a line: its notes' likely cause, else the script or phase.
+    pub cause: String,
+    /// The player's phase that grew most, and by how much.
+    pub phase: Option<String>,
+    pub phase_ms: Option<f32>,
+    /// The script callback that took longest, when scripts were timed.
+    pub script: Option<String>,
+    pub script_ms: Option<f32>,
+}
+
+/// What a capture holds for replay (ADR 0126 decision 4).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReplayDescription {
+    /// Whether the replay inputs were written.
+    pub available: bool,
+    /// The files under the capture's folder, `replay/...`.
+    pub files: Vec<String>,
+    /// What a replay draws fresh rather than as captured, a line each.
+    pub fresh_only: Vec<String>,
+    /// Each file the load resolved, by path and SHA-256, never a copy.
+    pub assets: Vec<AssetDescription>,
+}
+
+/// One asset a captured frame drew from.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AssetDescription {
+    /// `model` or `texture`.
+    pub kind: String,
+    /// What the scene named it by (`tavern`, `textures/wood.png`).
+    pub name: String,
+    /// Where it was found, as the host's search returned it.
+    pub path: String,
+    /// Its SHA-256, hex; `None` when it couldn't be read.
+    pub sha256: Option<String>,
+    pub bytes: u64,
 }
 
 /// A style the post chain ran, in the order it ran.
@@ -459,6 +648,8 @@ pub(crate) struct FrameLog {
     pub panels: Vec<String>,
     /// Whether the next pass goes to the page rather than a view.
     pub on_page: bool,
+    /// What the description's `notes` say of the frame (a split view).
+    pub notes: Vec<String>,
 }
 
 impl FrameLog {
