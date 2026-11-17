@@ -409,7 +409,7 @@ A `clock stall` is the long frame itself, so it is kept on the hitch but is no c
 
 F2 shows the history as it happens. The overlay opens with a graph of the last four seconds above the rendering stats:
 
-![The F2 overlay on examples/hitch_metronome at 240 Hz: two 100 ms script stalls as orange blocks with marks over them, a few small hitches elsewhere, and the counters and legend under the graph](../images/f2-frame-graph.png)
+![The F2 overlay on examples/hitch_metronome at 240 Hz: two 100 ms script stalls as orange blocks with marks over them, the late frames between them unmarked, and the counters and legend under the graph](../images/f2-frame-graph.png)
 
 Each pixel column is a slice of time, and its bar is the worst frame in that slice: one frame a column at 60 Hz, the worst of four at 240 Hz. A frame longer than a slice takes as many columns as it lasted, so a 100 ms stall is a block six columns wide, not a one-pixel line. A bar is as tall as its frame stood on screen. That is the time the hitch detector judges: whole refreshes under vsync pacing, so the 6, 6, 6, 45 ms bursts draw as an even row of single refreshes.
 
