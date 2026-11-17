@@ -44,11 +44,12 @@ direction = [0.3, 1.0, 0.2]
 source = "game.rhai"
 "#;
 
-/// Stalls 150 ms on the frame game time crosses 1 s.
+/// Stalls 150 ms on the frame game time crosses 2.5 s: past the start,
+/// whose hitches `--capture-on-hitch` passes over (#1207).
 const STALL: &str = r#"
 fn on_update() {
     let t = total_time();
-    if t - delta_time() < 1.01 && t >= 1.01 {
+    if t - delta_time() < 2.51 && t >= 2.51 {
         let start = timestamp();
         while start.elapsed < 0.15 { }
     }
@@ -304,7 +305,7 @@ fn a_hitch_is_captured_on_the_next_frame_with_its_window_and_cause() {
     // A busy machine's own hiccups (several agents build on this one) don't
     // count: the stall is 150 ms
     app.stats.hitches.thresholds.floor_ms = 60.0;
-    while app.core.clock.total_time < 1.6 {
+    while app.core.clock.total_time < 3.1 {
         frame(&mut app, gpu);
     }
     app.finish_frame_captures();
