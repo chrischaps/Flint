@@ -56,6 +56,7 @@
 //! the scene's settings for it ([`refresh_settings`]).
 
 use super::kit;
+use super::variant_table::{storage_entry, VariantTable};
 use super::{
     MaskUse, StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleNeed, StyleOption,
     StyleParam, StylePass, StyleStage,
@@ -990,15 +991,6 @@ impl ShaderStyleDef {
 /// uniform, well inside every backend's limit.
 pub const MAX_PARAMS: usize = 64;
 
-/// Settings rows a mask-reading style's uniform holds (#414): row 0 the
-/// scene's, then one a per-entity variant. Variants past it are drawn
-/// with the scene's settings.
-pub const MAX_VARIANTS: usize = 16;
-
-/// Mask ids the slot table covers; an entity of the style with an id past
-/// it is drawn like an unstyled pixel.
-pub const MAX_IDS: usize = 256;
-
 /// The component a mask-reading user style `name` is set on entities with.
 pub fn component_name(name: &str) -> String {
     format!("{name}_style")
@@ -1143,10 +1135,10 @@ fn flint_mask_id(uv: vec2<f32>) -> u32 {
 // Mask id -> this style's settings row + 1; 0 for a pixel that isn't one
 // of this style's entities (or one opted out)
 fn flint_slot(id: u32) -> u32 {
-    if (id >= 256u) {
+    if (id >= arrayLength(&flint_slots)) {
         return 0u;
     }
-    return flint_params.slots[id / 4u][id % 4u];
+    return flint_slots[id];
 }
 
 // How much of this style the entity at uv asks for: 0 where it isn't this
@@ -1302,20 +1294,22 @@ pub fn prelude_pass(source: &StyleSource, pass: usize) -> String {
     text.push_str("    _flint_pad: vec4<f32>,\n};\n");
     text.push_str(&option_constants(source));
     // The settings table (#414): row 0 the scene's, then a row for each
-    // per-entity variant, and which row each mask id takes
-    let mask = source.inputs.mask;
-    text.push_str(&format!(
-        "\nstruct FlintParamTable {{\n    rows: array<Params, {}>,\n{}}};\n\
-         @group(0) @binding(1) var<uniform> flint_params: FlintParamTable;\n\
-         // This pixel's settings: its entity's, else the scene's\n\
+    // per-entity variant, and which row each mask id takes, as many of
+    // each as the frame has (#740: the framework's variant table)
+    text.push_str(
+        "\nstruct FlintParamTable {\n    rows: array<Params>,\n};\n\
+         @group(0) @binding(1) var<storage, read> flint_params: FlintParamTable;\n",
+    );
+    if source.inputs.mask {
+        text.push_str(
+            "// Each mask id's row + 1, 0 for none of this style's\n\
+             @group(0) @binding(2) var<storage, read> flint_slots: array<u32>;\n",
+        );
+    }
+    text.push_str(
+        "// This pixel's settings: its entity's, else the scene's\n\
          var<private> params: Params;\n",
-        table_rows(mask),
-        if mask {
-            format!("    slots: array<vec4<u32>, {}>,\n", MAX_IDS / 4)
-        } else {
-            String::new()
-        }
-    ));
+    );
     text.push_str(&prelude_sample(source.stage));
     if source.inputs.depth {
         text.push_str(PRELUDE_DEPTH);
@@ -1446,38 +1440,16 @@ pub fn params_size(count: usize) -> usize {
     count.div_ceil(4) * 16 + 16
 }
 
-/// The settings rows a style's table holds: one (the scene's) unless it
-/// reads the mask, which is what tells entities apart.
-pub fn table_rows(mask: bool) -> usize {
-    if mask {
-        MAX_VARIANTS
-    } else {
-        1
-    }
-}
-
-/// The size in bytes of a style's settings table (#414): its rows of
-/// `Params`, then for a mask-reading style the slot of each mask id.
-pub fn table_size(count: usize, mask: bool) -> usize {
-    table_rows(mask) * params_size(count) + if mask { MAX_IDS * 4 } else { 0 }
-}
-
-/// The settings table's contents, as 32-bit words: `rows` (row 0 the
-/// scene's) each laid out as `Params` with values in declaration order,
-/// then, with `slots`, the row + 1 each mask id takes (0: not this
-/// style's).
-pub fn table_words(count: usize, rows: &[Vec<f32>], slots: Option<&[u32; MAX_IDS]>) -> Vec<u32> {
+/// The settings table's rows (#414) as 32-bit words: `rows` (row 0 the
+/// scene's) each laid out as `Params`, its `count` values in declaration
+/// order. Which row each mask id takes is the table's other buffer.
+pub fn row_words(count: usize, rows: &[Vec<f32>]) -> Vec<u32> {
     let stride = params_size(count) / 4;
-    let mask = slots.is_some();
-    let mut words = vec![0u32; table_size(count, mask) / 4];
-    for (r, row) in rows.iter().take(table_rows(mask)).enumerate() {
+    let mut words = vec![0u32; rows.len() * stride];
+    for (r, row) in rows.iter().enumerate() {
         for (i, v) in row.iter().take(count).enumerate() {
             words[r * stride + i] = v.to_bits();
         }
-    }
-    if let Some(slots) = slots {
-        let at = table_rows(mask) * stride;
-        words[at..at + MAX_IDS].copy_from_slice(slots);
     }
     words
 }
@@ -2938,8 +2910,8 @@ struct CustomPass {
     frame_bgl: wgpu::BindGroupLayout,
     input_bgl: wgpu::BindGroupLayout,
     extra_bgl: Option<wgpu::BindGroupLayout>,
-    /// The settings table, shared by every pass.
-    params_buffer: wgpu::Buffer,
+    /// The settings table, shared by every pass (#740: the framework's).
+    table: Mutex<VariantTable>,
     /// The passes in order (one for a style with a top-level `shader`).
     passes: Vec<PassGpu>,
     /// Draws the input unchanged, while a pass can't.
@@ -2951,8 +2923,6 @@ struct CustomPass {
     empty: Option<wgpu::BindGroup>,
     /// The history targets' parity and what the last frame drew (#412).
     history: Mutex<History>,
-    /// Whether the variant overflow has been warned about.
-    warned: std::sync::atomic::AtomicBool,
 }
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {
@@ -2965,7 +2935,7 @@ fn build(d: &StyleDevice) -> CustomPass {
     let source = &loaded.source;
     let frame_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("User Style Frame BGL"),
-        entries: &[uniform_entry(0), uniform_entry(1)],
+        entries: &[uniform_entry(0), storage_entry(1), storage_entry(2)],
     });
     let input_bgl = kit::sampled_layout(device, "User Style Input BGL");
     let images = ImageSet::new(device, source);
@@ -3089,12 +3059,11 @@ fn build(d: &StyleDevice) -> CustomPass {
         d.format,
     );
     let pass = CustomPass {
-        params_buffer: device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("User Style Params"),
-            size: table_size(source.uniform_fields(), source.inputs.mask) as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
+        table: Mutex::new(VariantTable::new(
+            device,
+            "User Style",
+            params_size(source.uniform_fields()),
+        )),
         frame_bgl,
         input_bgl,
         extra_bgl,
@@ -3103,7 +3072,6 @@ fn build(d: &StyleDevice) -> CustomPass {
         images: images.map(Mutex::new),
         empty,
         history: Mutex::new(History::default()),
-        warned: Default::default(),
         loaded,
     };
     for i in 0..pass.passes.len() {
@@ -3715,7 +3683,9 @@ impl CustomPass {
     /// Pass `i`'s group 0: its frame uniform and the shared settings table.
     fn frame_bind(&self, frame: &StyleFrame<'_>, i: usize) -> Arc<wgpu::BindGroup> {
         let name = self.loaded.names.passes[i].frame;
-        frame.bind(name, 0, || {
+        let table = self.table.lock().unwrap_or_else(|e| e.into_inner());
+        let [rows, slots] = table.entries(1);
+        frame.bind(name, table.generation(), || {
             frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(name),
                 layout: &self.frame_bgl,
@@ -3724,10 +3694,8 @@ impl CustomPass {
                         binding: 0,
                         resource: self.passes[i].frame_buffer.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: self.params_buffer.as_entire_binding(),
-                    },
+                    rows,
+                    slots,
                 ],
             })
         })
@@ -3795,44 +3763,32 @@ impl StylePass for CustomPass {
                 .find(|(n, _)| n == name)
                 .map_or(0, |(_, o)| o.index(value))
         };
+        // (#740: every variant gets a row and every mask id a slot)
         let mut rows = vec![row(&|n| frame.param(n), &|n| index(n, frame.option(n)))];
-        let words = if source.inputs.mask {
-            let mut slots = [0u32; MAX_IDS];
-            let mut overflow = false;
+        let mut slots = Vec::new();
+        if source.inputs.mask {
+            slots.resize(frame.style_ids.len() + 1, 0u32);
             for (id, v) in frame.variants() {
                 if v.off {
                     continue; // an opt-out reads as no entity of this style
                 }
-                let Some(slot) = slots.get_mut(id as usize) else {
-                    overflow = true;
-                    continue;
-                };
-                if rows.len() == MAX_VARIANTS {
-                    overflow = true;
-                    *slot = 1; // the scene's settings
-                    continue;
-                }
                 rows.push(row(&|n| frame.variant_param(v, n), &|n| {
                     index(n, frame.variant_option(v, n))
                 }));
-                *slot = rows.len() as u32;
+                slots[id as usize] = rows.len() as u32;
             }
-            if overflow && !self.warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                tracing::warn!(
-                    "style '{}': more per-entity variants than the {} a frame holds (or mask \
-                     ids past {MAX_IDS}); the rest take the scene's settings",
-                    source.name,
-                    MAX_VARIANTS - 1
-                );
-            }
-            table_words(source.uniform_fields(), &rows, Some(&slots))
-        } else {
-            table_words(source.uniform_fields(), &rows, None)
-        };
+        }
+        let words = row_words(source.uniform_fields(), &rows);
         let images_ready = self.update_images(frame);
-        frame
-            .queue
-            .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&words));
+        self.table
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .upload_bytes(
+                frame.device,
+                frame.queue,
+                bytemuck::cast_slice(&words),
+                &slots,
+            );
         let input_bg = frame.sampled_input(names.input, &self.input_bgl, input);
 
         // Every pass must have built once (a build the browser hasn't
@@ -4144,21 +4100,30 @@ mod tests {
     }
 
     #[test]
-    fn the_settings_table_holds_a_row_a_variant_and_a_slot_an_id() {
-        // Two params: a 32-byte row; 16 rows, then 256 slots
-        assert_eq!(table_size(2, false), 32);
-        assert_eq!(table_size(2, true), 16 * 32 + 256 * 4);
+    fn the_settings_table_holds_a_row_a_variant() {
+        // Two params: a 32-byte row, as many rows as the frame has (#740)
+        assert_eq!(params_size(2), 32);
         let rows = vec![vec![0.5, 1.0], vec![0.25, 2.0]];
-        let mut slots = [0u32; MAX_IDS];
-        slots[3] = 2;
-        let words = table_words(2, &rows, Some(&slots));
-        assert_eq!(words.len(), table_size(2, true) / 4);
+        let words = row_words(2, &rows);
+        assert_eq!(words.len(), 2 * 8);
         let f = |i: usize| f32::from_bits(words[i]);
         assert_eq!((f(0), f(1)), (0.5, 1.0), "row 0, the scene's");
         assert_eq!((f(8), f(9)), (0.25, 2.0), "row 1 at the next 32 bytes");
-        assert_eq!(words[16 * 8 + 3], 2, "id 3 takes row 1 (+1)");
-        let bare = table_words(2, &rows, None);
-        assert_eq!(bare.len(), 8, "a style without the mask holds row 0 alone");
+        assert_eq!(row_words(2, &rows[..1]).len(), 8, "row 0 alone");
+        // The slots are the table's own buffer, declared only with the mask
+        let masked = source(
+            "version = 1\nname = \"x\"\nshader = \"x.wgsl\"\ninputs = [\"mask\"]\n",
+            "styles/x.shader.toml",
+        )
+        .unwrap();
+        assert!(prelude(&masked).contains("var<storage, read> flint_slots: array<u32>;"));
+        let bare = source(
+            "version = 1\nname = \"x\"\nshader = \"x.wgsl\"\n",
+            "styles/x.shader.toml",
+        )
+        .unwrap();
+        assert!(!prelude(&bare).contains("flint_slots"));
+        assert!(prelude(&bare).contains("var<storage, read> flint_params: FlintParamTable;"));
     }
 
     #[test]
@@ -5004,17 +4969,20 @@ fn style(p: StylePixel) -> vec4<f32> {
         let (settings, warnings) = super::super::StyleSettings::from_tables(&tables);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.param("utest_good", "k"), Some(0.25));
-        // Loading again is a no-op. Counted by name: tests running beside
-        // this one register styles of their own in the same registry
+        // Loading again is a no-op: each of this test's two styles is still
+        // registered once. Counted by exact name, never by the registry's
+        // length: tests running beside this one register styles of their
+        // own in the same process-wide registry (#519), and no other test
+        // takes these two names
         let copies = || {
             super::super::registry()
                 .iter()
-                .filter(|d| d.name.starts_with("utest_good") || d.name.starts_with("utest_bad"))
+                .filter(|d| d.name == "utest_good" || d.name == "utest_bad")
                 .count()
         };
-        let before = copies();
+        assert_eq!(copies(), 2, "each style registered once");
         assert!(load_dir(&dir).is_empty());
-        assert_eq!(copies(), before);
+        assert_eq!(copies(), 2, "a second load registered a style again");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -5630,7 +5598,7 @@ fn style(p: StylePixel) -> vec4<f32> {
                     return flint_image_paper(p.uv) * params.a * gloss;\n}\n";
         check(&s, user).unwrap_or_else(|e| panic!("{e}"));
         let rows = vec![vec![0.5, f32::from_bits(0)], vec![0.25, f32::from_bits(1)]];
-        let words = table_words(s.uniform_fields(), &rows, Some(&[0u32; MAX_IDS]));
+        let words = row_words(s.uniform_fields(), &rows);
         let stride = params_size(s.uniform_fields()) / 4;
         assert_eq!(words[1], 0, "row 0: matte");
         assert_eq!(words[stride + 1], 1, "row 1: gloss");

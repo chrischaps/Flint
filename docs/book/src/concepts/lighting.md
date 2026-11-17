@@ -109,6 +109,8 @@ Directional lights cast shadows through cascaded shadow maps: several cascades c
 
 **Skinned casters.** Skinned meshes cast shadows through a dedicated `vs_skinned_shadow` entry point that applies bone transforms before the depth write.
 
+**One lighting for every surface.** Meshes, skinned meshes and terrain shade through the same BRDF and the same loop over the scene's lights (#738), so everything on this page applies to all three alike: area lights, the clay levers below, the cascades' normal offset, the spot's shadow. The ocean takes the same cascades, PCSS included, with no normal offset; grass and the god rays read the same light uniforms. Until #738 each shader had its own copy and they had drifted: skinned characters ignored `diffuse_wrap`, `oren_nayar`, sheen and `source_radius`, terrain ignored all of those and took its shadows without the normal offset, and the ocean's shadows stayed hard under a sun with an `angular_size`.
+
 **Turning casting off.** Every mesh casts by default, transparent ones included: the shadow pass writes depth only, so a sheet at `opacity = 0.02` casts as dark a shadow as a wall. Set **`material.cast_shadows = false`** ([ADR 0100](https://github.com/chrischaps/Flint/blob/main/docs/adr/0100-entity-can-opt-out-of-shadows.md)) on anything that shouldn't, like mist, glass, spray or a smoke card:
 
 ```toml

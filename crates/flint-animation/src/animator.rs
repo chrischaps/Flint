@@ -15,6 +15,7 @@
 use crate::playback_state::{has_finished, start_time, AnimLayer, ClipPlaybackState, LayerMode};
 use flint_core::components as comp;
 use flint_core::diagnostic::{self, codes, Diagnostic};
+use flint_core::tween::Easing;
 use flint_core::EntityId;
 use flint_ecs::{ComponentView, ComponentsMut, FlintWorld};
 
@@ -45,6 +46,7 @@ const MODE: &str = "mode";
 const MASK: &str = "mask";
 const FADE_TARGET: &str = "fade_target";
 const FADE_DURATION: &str = "fade_duration";
+const FADE_EASING: &str = "fade_easing";
 
 /// The scalar fields of an `animator`, with the defaults every sync used.
 #[derive(Debug, Clone, PartialEq)]
@@ -199,6 +201,9 @@ pub fn layer(entry: &ComponentView<'_>) -> AnimLayer {
         weight,
         fade_target: entry.f32(FADE_TARGET, weight),
         fade_duration: entry.f32(FADE_DURATION, 0.0).max(0.0),
+        // A fade written before easings (#734) is linear, as it was
+        fade_easing: Easing::from_name(entry.choice(FADE_EASING, Easing::NAMES, "linear"))
+            .unwrap_or(Easing::Linear),
         mode: layer_mode(entry),
         mask: entry.str(MASK, "").to_string(),
         time: 0.0,
@@ -349,6 +354,7 @@ fn layer_table(layer: &AnimLayer) -> toml::Value {
             FADE_DURATION.into(),
             toml::Value::Float(layer.fade_duration as f64),
         );
+        t.insert(FADE_EASING.into(), layer.fade_easing.name().into());
     }
     toml::Value::Table(t)
 }
@@ -460,14 +466,20 @@ impl LayerEdit<'_> {
         self.set(FADE_DURATION, toml::Value::Float(0.0))
     }
 
-    /// Ramp the weight toward `weight` over `seconds` (at once when
-    /// `seconds <= 0`).
+    /// Ramp the weight toward `weight` over `seconds`, linearly (at once
+    /// when `seconds <= 0`).
     pub fn fade(&mut self, weight: f64, seconds: f64) -> &mut Self {
+        self.fade_eased(weight, seconds, Easing::Linear)
+    }
+
+    /// [`Self::fade`], moving as `easing` says (#734).
+    pub fn fade_eased(&mut self, weight: f64, seconds: f64, easing: Easing) -> &mut Self {
         if seconds <= 0.0 {
             return self.weight(weight);
         }
         self.set(FADE_TARGET, toml::Value::Float(weight))
             .set(FADE_DURATION, toml::Value::Float(seconds))
+            .set(FADE_EASING, easing.name().into())
     }
 }
 

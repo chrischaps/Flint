@@ -29,18 +29,21 @@ pub fn bind(flag: &str, addr: &str) -> anyhow::Result<TcpListener> {
 
 /// Accept on a thread named `name` until `closed` is set, handing each
 /// connection, with its peer's address, to `serve` on a thread of its own.
-/// Past [`MAX_CONNECTIONS`] open at once a new one is refused.
+/// Past [`MAX_CONNECTIONS`] open at once a new one is refused. Returns how
+/// many are open now, which the reader threads keep (the F3 Expression
+/// panel shows it, #525).
 pub fn accept_on_thread(
     listener: TcpListener,
     name: &'static str,
     closed: Arc<AtomicBool>,
     serve: impl Fn(TcpStream, &str) + Send + Sync + 'static,
-) -> std::io::Result<()> {
+) -> std::io::Result<Arc<AtomicUsize>> {
     let serve = Arc::new(serve);
+    let open = Arc::new(AtomicUsize::new(0));
+    let counted = open.clone();
     std::thread::Builder::new()
         .name(name.into())
         .spawn(move || {
-            let open = Arc::new(AtomicUsize::new(0));
             for stream in listener.incoming() {
                 if closed.load(Ordering::Relaxed) {
                     return;
@@ -80,7 +83,7 @@ pub fn accept_on_thread(
                 }
             }
         })
-        .map(|_| ())
+        .map(|_| counted)
 }
 
 pub enum Line {

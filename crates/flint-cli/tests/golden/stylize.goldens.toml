@@ -395,6 +395,38 @@ name = "style-veil"
 scene = "tests/fixtures/scenes/style_veil.scene.toml"
 args = ["--no-grid", "--particle-time", "2"]
 
+# Echoes veil too (#737): a living oak's echoes hang in front of a glyph
+# stone. They stay leaves, fading the glyphs behind them by their alpha;
+# before #737 the veil walked no echo, and the stone's glyphs and inked
+# edges were drawn through them
+[[case]]
+name = "style-veil-echo"
+scene = "tests/fixtures/scenes/style_veil_echo.scene.toml"
+args = ["--no-grid", "--time", "2"]
+
+# Billboards need no veil (#737): their alpha cuts them out and what's
+# kept writes depth, so the mask's own depth test leaves the two wisps out
+# of the stone behind them. #1011 masks a styled billboard; this one must
+# stay byte for byte
+[[case]]
+name = "style-veil-billboard"
+scene = "tests/fixtures/scenes/style_veil_billboard.scene.toml"
+args = ["--no-grid"]
+
+# A woozy mesh's mask (#737): shallow wooze moves a slab's and a skinned
+# figure's vertices, and the mask moves them the same way, so each id
+# fills what the scene drew (at rest pose it had holes and spill); the
+# still slab behind them is masked as before. At 4x too, its own stages
+[[case]]
+name = "style-mask-wooze"
+scene = "tests/fixtures/scenes/style_mask_wooze.scene.toml"
+args = ["--no-grid", "--time", "2", "--debug-mode", "style"]
+
+[[case]]
+name = "style-mask-wooze-msaa4"
+scene = "tests/fixtures/scenes/style_mask_wooze.scene.toml"
+args = ["--no-grid", "--time", "2", "--debug-mode", "style", "--msaa", "4"]
+
 # --- pencil sketch (#273) ---------------------------------------------------
 #
 # Strokes are thin, hard-edged and everywhere, so a GPU that rounds one

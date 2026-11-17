@@ -93,8 +93,7 @@ impl LookFade {
     /// The eased share of the way from `from` to `to`: smoothstep of
     /// [`progress`](Self::progress), slow out of the old look and into the new.
     pub fn eased(&self) -> f32 {
-        let t = self.progress();
-        t * t * (3.0 - 2.0 * t)
+        flint_core::tween::Easing::Smooth.apply_f32(self.progress())
     }
 
     /// Whether the fade has reached the new look.

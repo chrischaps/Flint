@@ -68,7 +68,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if passes_through(slot) {
         return vec4<f32>(1.0, 0.0, 0.0, 0.0);
     }
-    let row = u.rows[slot];
+    let row = pencil_rows[slot];
 
     // Tone and the luminance gradient (Sobel)
     var l: array<f32, 9>;

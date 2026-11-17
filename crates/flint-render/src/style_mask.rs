@@ -77,7 +77,8 @@
 //! alone would leave a styled stone masked where fire or glass sits in
 //! front of it, and the style would glyphize the fire as stone. Just before
 //! the mask, a veil pass draws every visible transparent mesh (static and
-//! skinned) and every particle into an `R8Unorm` target, depth-tested
+//! skinned), every living prop's echo (#737: front faces only, as the scene
+//! draws them) and every particle into an `R8Unorm` target, depth-tested
 //! against the scene with no depth write, each with the alpha it is drawn
 //! with (an additive particle by its alpha times its brightest channel),
 //! "over" blended so layers add up to their combined coverage. The mask
@@ -103,7 +104,18 @@
 //!
 //! Particles, sprites, grass and water stay unmasked (particles and
 //! unstyled transparents only veil): grass is instanced, and the others
-//! write no depth.
+//! write no depth. A sprite (billboard) needs no veil either: its alpha cuts
+//! it out and what's kept writes depth, so the mask's depth test leaves it
+//! out of whatever styled entity it stands in front of.
+//!
+//! ## Shallow wooze (#737)
+//!
+//! A `shallow_wooze` mesh's vertices drift in the main and shadow passes'
+//! own vertex stages (#215). The mask redraws it through
+//! `style_mask_wooze.wgsl`'s stages, in a second module
+//! ([`woozy_mask_source`]) built the first frame a styled draw drifts, so
+//! its id covers where it was drawn; at its rest pose it had holes where
+//! the mesh had moved off and spill where it had moved from.
 //!
 //! [`StyleDescriptor::uses_mask`]: crate::stylize::StyleDescriptor::uses_mask
 //! [`StyleDescriptor::component`]: crate::stylize::StyleDescriptor::component
@@ -150,6 +162,19 @@ pub(crate) const STYLE_MASK_WGSL: &str = concat!(
     include_str!("tear_mask.wgsl"),
     include_str!("style_mask.wgsl")
 );
+
+/// The mask's shader for woozy draws (#737): the wooze noise, the mask
+/// shader with its transform's drift field on, then the woozy vertex
+/// stages. The plain module stays [`STYLE_MASK_WGSL`], so a frame with no
+/// woozy styled draw compiles and runs exactly what it did.
+pub(crate) fn woozy_mask_source() -> String {
+    format!(
+        "{}\n{}\n{}",
+        include_str!("wooze_noise.wgsl"),
+        STYLE_MASK_WGSL.replace("//FLINT_WOOZE ", ""),
+        include_str!("style_mask_wooze.wgsl")
+    )
+}
 
 /// The id of a pixel no style drew.
 pub const NO_STYLE: u16 = 0;
@@ -272,6 +297,9 @@ pub struct StyleIds {
     shown: Vec<(bool, bool)>,
     /// Whether the frame tears ([`crate::postprocess::tear_active`]).
     tear_on: bool,
+    /// Beside `names` (#740): the first styled root (by name) drawn in
+    /// each id, the entity a cap names when it leaves the id out.
+    entities: Vec<String>,
 }
 
 impl StyleIds {
@@ -353,7 +381,18 @@ impl StyleIds {
     pub fn set(&mut self, mut entries: Vec<(String, StyleVariant)>) -> bool {
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         entries.dedup_by(|a, b| a.0 == b.0);
-        entries.truncate(u16::MAX as usize - 1);
+        // The mask holds an id in 16 bits, 0 for none
+        let cap = u16::MAX as usize - 1;
+        if let Some((name, _)) = entries.get(cap) {
+            crate::stylize::variant_table::report_drop(
+                "style mask",
+                "style ids",
+                cap,
+                name,
+                "drawn unstyled",
+            );
+        }
+        entries.truncate(cap);
         let same = self.names.len() == entries.len()
             && self.names.iter().zip(&entries).all(|(a, (b, _))| a == b);
         if same {
@@ -365,6 +404,7 @@ impl StyleIds {
             return false;
         }
         (self.names, self.variants) = entries.into_iter().unzip();
+        self.entities.clear();
         self.faded = vec![false; self.names.len()];
         self.shown = vec![(true, true); self.names.len()];
         true
@@ -383,6 +423,19 @@ impl StyleIds {
         (id as usize)
             .checked_sub(1)
             .and_then(|i| self.names.get(i))
+            .map(String::as_str)
+    }
+
+    /// The first styled root (by name) drawn in id `id`: the entity a
+    /// style's cap names when it leaves the id out (#740). The id's own
+    /// name when the entities aren't known (a table made with [`Self::set`]
+    /// alone).
+    pub fn entity(&self, id: u16) -> Option<&str> {
+        let i = (id as usize).checked_sub(1)?;
+        self.entities
+            .get(i)
+            .filter(|e| !e.is_empty())
+            .or_else(|| self.names.get(i))
             .map(String::as_str)
     }
 
@@ -858,7 +911,20 @@ pub(crate) fn resolve_blended(
         .iter()
         .map(|&e| (e, request(world, config, e)))
         .collect();
-    ids.set(requests.iter().filter_map(|(_, r)| r.clone()).collect());
+    let changed = ids.set(requests.iter().filter_map(|(_, r)| r.clone()).collect());
+    if changed || ids.entities.len() != ids.len() {
+        // Roots come in name order, so the first an id meets is its first
+        let mut entities = vec![String::new(); ids.len()];
+        for (root, req) in &requests {
+            if let Some(id) = req.as_ref().and_then(|(n, _)| ids.id(n)) {
+                let slot = &mut entities[id as usize - 1];
+                if slot.is_empty() {
+                    *slot = world.get_name(*root).unwrap_or_default().to_string();
+                }
+            }
+        }
+        ids.entities = entities;
+    }
     let mut stack = Vec::new();
     // Ids with a root above blend 0 (#400), a pair of flags per id: one at
     // its own blend, one following the tear (#397)
@@ -1032,6 +1098,9 @@ pub(crate) struct MaskDraw<'a> {
     pub blend: f32,
     /// Whether the blend is scaled by the tear at each pixel (#397).
     pub torn: bool,
+    /// Whether its vertices drift on the wooze field (#215), as the main
+    /// pass drew them: it is masked through the woozy vertex stages (#737).
+    pub woozy: bool,
 }
 
 /// One transparent mesh in front of whatever it covers, for the veil
@@ -1044,6 +1113,9 @@ pub(crate) struct VeilMesh<'a> {
     pub material_bind_group: &'a wgpu::BindGroup,
     /// The bone matrices, for a skinned draw.
     pub bones: Option<&'a wgpu::BindGroup>,
+    /// A living prop's echo (#737): skinned, front faces only, as the main
+    /// pass draws it, so a two-sided leaf card covers once.
+    pub echo: bool,
 }
 
 /// The frame's particles, for the veil: the particle pipeline's shared
@@ -1075,9 +1147,9 @@ struct ParticleVeil {
     additive: wgpu::RenderPipeline,
 }
 
-/// A veil pipeline: `module`'s `vs`/`fs`, both faces, single-sample,
-/// depth-tested against the scene and never writing it, its coverage
-/// "over" what's there (red only).
+/// A veil pipeline: `module`'s `vs`/`fs`, single-sample, depth-tested
+/// against the scene and never writing it, its coverage "over" what's
+/// there (red only). Both faces unless `cull_mode` says otherwise.
 fn veil_pipeline(
     device: &wgpu::Device,
     label: &str,
@@ -1085,6 +1157,7 @@ fn veil_pipeline(
     (vs, fs): (&str, &str),
     layouts: &[&wgpu::BindGroupLayout],
     buffers: &[wgpu::VertexBufferLayout<'static>],
+    cull_mode: Option<wgpu::Face>,
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
@@ -1112,6 +1185,7 @@ fn veil_pipeline(
         }),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
+            cull_mode,
             ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {
@@ -1141,8 +1215,14 @@ pub(crate) struct MaskLayouts<'a> {
 pub struct StyleMaskPass {
     static_pipeline: wgpu::RenderPipeline,
     skinned_pipeline: wgpu::RenderPipeline,
+    /// The woozy vertex stages (#737), made the first frame a styled draw
+    /// drifts, and the module they come from (the 4x path's are made from
+    /// it too).
+    woozy: Option<(wgpu::ShaderModule, MaskStages)>,
     veil_static: wgpu::RenderPipeline,
     veil_skinned: wgpu::RenderPipeline,
+    /// `veil_skinned` on front faces only, for echoes (#737).
+    veil_echo: wgpu::RenderPipeline,
     /// Made the first frame with particles (the particle pipeline is too).
     veil_particles: Option<ParticleVeil>,
     draw_bgl: wgpu::BindGroupLayout,
@@ -1162,6 +1242,54 @@ pub struct StyleMaskPass {
     scratch: Vec<u8>,
     /// Styled draws the last frame masked.
     last_draws: usize,
+}
+
+/// One vertex stage's mask pipelines, static and skinned.
+struct MaskStages {
+    static_pipeline: wgpu::RenderPipeline,
+    skinned_pipeline: wgpu::RenderPipeline,
+}
+
+impl MaskStages {
+    /// The woozy pair (#737) from `shader`, the woozy module, at `samples`
+    /// with `fragment` (`fs_main`, or `fs_msaa` at 4x) over `draw_bgl`.
+    fn woozy(
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        (fragment, samples): (&str, u32),
+        draw_bgl: &wgpu::BindGroupLayout,
+        transform_bgl: &wgpu::BindGroupLayout,
+        bone_bgl: &wgpu::BindGroupLayout,
+    ) -> Self {
+        let label = |skinned: bool| match (skinned, samples > 1) {
+            (false, false) => "Style Mask Woozy Pipeline",
+            (true, false) => "Style Mask Woozy Skinned Pipeline",
+            (false, true) => "Style Mask MSAA Woozy Pipeline",
+            (true, true) => "Style Mask MSAA Woozy Skinned Pipeline",
+        };
+        Self {
+            static_pipeline: mask_pipeline(
+                device,
+                shader,
+                label(false),
+                "vs_static_wooze",
+                fragment,
+                samples,
+                &[transform_bgl, draw_bgl],
+                crate::primitives::Vertex::desc(),
+            ),
+            skinned_pipeline: mask_pipeline(
+                device,
+                shader,
+                label(true),
+                "vs_skinned_wooze",
+                fragment,
+                samples,
+                &[transform_bgl, draw_bgl, bone_bgl],
+                crate::primitives::SkinnedVertex::desc(),
+            ),
+        }
+    }
 }
 
 /// One cache variant for a pair of [`gpu_id`](crate::bind_cache::gpu_id)s:
@@ -1185,6 +1313,8 @@ fn mask_draw_buffer(device: &wgpu::Device, slots: usize) -> wgpu::Buffer {
 struct MsaaMask {
     static_pipeline: wgpu::RenderPipeline,
     skinned_pipeline: wgpu::RenderPipeline,
+    /// The woozy vertex stages at 4x (#737), made with the single-sample ones.
+    woozy: Option<MaskStages>,
     draw_bgl: wgpu::BindGroupLayout,
     resolve_pipeline: wgpu::RenderPipeline,
     resolve_bgl: wgpu::BindGroupLayout,
@@ -1377,6 +1507,7 @@ impl MsaaMask {
         Self {
             static_pipeline,
             skinned_pipeline,
+            woozy: None,
             draw_bgl,
             resolve_pipeline,
             resolve_bgl,
@@ -1449,11 +1580,11 @@ impl StyleMaskPass {
         );
         let pbr = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Veil PBR Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SCENE.into()),
         });
         let skinned = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Veil Skinned Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("skinned_shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SKINNED.into()),
         });
         let veil_static = veil_pipeline(
             device,
@@ -1462,6 +1593,7 @@ impl StyleMaskPass {
             ("vs_main", "fs_veil"),
             &[transform_bgl, layouts.material, layouts.light],
             &[crate::primitives::Vertex::desc()],
+            None,
         );
         let veil_skinned = veil_pipeline(
             device,
@@ -1470,13 +1602,25 @@ impl StyleMaskPass {
             ("vs_skinned", "fs_veil"),
             &[transform_bgl, layouts.material, layouts.light, bone_bgl],
             &[crate::primitives::SkinnedVertex::desc()],
+            None,
+        );
+        let veil_echo = veil_pipeline(
+            device,
+            "Style Veil Echo Pipeline",
+            &skinned,
+            ("vs_skinned", "fs_veil"),
+            &[transform_bgl, layouts.material, layouts.light, bone_bgl],
+            &[crate::primitives::SkinnedVertex::desc()],
+            Some(wgpu::Face::Back),
         );
         let draw_buffer = mask_draw_buffer(device, INITIAL_MASK_SLOTS);
         Self {
             static_pipeline,
             skinned_pipeline,
+            woozy: None,
             veil_static,
             veil_skinned,
+            veil_echo,
             veil_particles: None,
             draw_bgl,
             msaa: None,
@@ -1509,6 +1653,44 @@ impl StyleMaskPass {
     ) {
         if self.msaa.is_none() {
             self.msaa = Some(MsaaMask::new(device, &self.shader, transform_bgl, bone_bgl));
+        }
+    }
+
+    /// Build the woozy vertex stages (#737) if they aren't yet, at 1x and,
+    /// once the 4x path exists, at 4x: the first frame a styled draw
+    /// drifts on the wooze field. Call it after [`ensure_msaa`](Self::ensure_msaa).
+    pub(crate) fn ensure_wooze(
+        &mut self,
+        device: &wgpu::Device,
+        transform_bgl: &wgpu::BindGroupLayout,
+        bone_bgl: &wgpu::BindGroupLayout,
+    ) {
+        if self.woozy.is_none() {
+            let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Style Mask Woozy Shader"),
+                source: wgpu::ShaderSource::Wgsl(woozy_mask_source().into()),
+            });
+            let stages = MaskStages::woozy(
+                device,
+                &shader,
+                ("fs_main", 1),
+                &self.draw_bgl,
+                transform_bgl,
+                bone_bgl,
+            );
+            self.woozy = Some((shader, stages));
+        }
+        if let (Some(msaa), Some((shader, _))) = (&mut self.msaa, &self.woozy) {
+            if msaa.woozy.is_none() {
+                msaa.woozy = Some(MaskStages::woozy(
+                    device,
+                    shader,
+                    ("fs_msaa", MSAA_SAMPLES),
+                    &msaa.draw_bgl,
+                    transform_bgl,
+                    bone_bgl,
+                ));
+            }
         }
     }
 
@@ -1580,7 +1762,15 @@ impl StyleMaskPass {
                 &pp.texture_bind_group_layout,
             ];
             let make = |label, fs| {
-                veil_pipeline(device, label, &shader, ("vs_particle", fs), &layouts, &[])
+                veil_pipeline(
+                    device,
+                    label,
+                    &shader,
+                    ("vs_particle", fs),
+                    &layouts,
+                    &[],
+                    None,
+                )
             };
             self.veil_particles = Some(ParticleVeil {
                 alpha: make("Style Veil Particle Pipeline", "fs_veil"),
@@ -1613,17 +1803,17 @@ impl StyleMaskPass {
         if veil.is_empty() {
             return;
         }
-        let mut skinned = None;
+        let mut bound = None;
         for m in &veil.meshes {
-            let is_skinned = m.bones.is_some();
-            if skinned != Some(is_skinned) {
-                pass.set_pipeline(if is_skinned {
-                    &self.veil_skinned
-                } else {
-                    &self.veil_static
+            let key = (m.bones.is_some(), m.echo);
+            if bound != Some(key) {
+                pass.set_pipeline(match key {
+                    (_, true) => &self.veil_echo,
+                    (true, false) => &self.veil_skinned,
+                    (false, false) => &self.veil_static,
                 });
                 pass.set_bind_group(2, veil.light_bind_group, &[]);
-                skinned = Some(is_skinned);
+                bound = Some(key);
             }
             pass.set_bind_group(0, m.transform_bind_group, &[]);
             pass.set_bind_group(1, m.material_bind_group, &[]);
@@ -1755,13 +1945,8 @@ impl StyleMaskPass {
             {
                 let mut pass = clear_pass(encoder, "Style Mask MSAA Pass", ms_view);
                 if let Some(draw_bg) = &draw_bg {
-                    record_draws(
-                        &mut pass,
-                        draws,
-                        draw_bg,
-                        &msaa.static_pipeline,
-                        &msaa.skinned_pipeline,
-                    );
+                    let plain = (&msaa.static_pipeline, &msaa.skinned_pipeline);
+                    record_draws(&mut pass, draws, draw_bg, plain, msaa.woozy.as_ref());
                 }
             }
             let mut pass = clear_pass(encoder, "Style Mask Resolve Pass", &mask.view);
@@ -1777,13 +1962,9 @@ impl StyleMaskPass {
             .then(|| self.draw_bind(device, binds, scene_depth, veil_view, depth_key));
         let mut pass = clear_pass(encoder, "Style Mask Pass", &mask.view);
         if let Some(draw_bg) = &draw_bg {
-            record_draws(
-                &mut pass,
-                draws,
-                draw_bg,
-                &self.static_pipeline,
-                &self.skinned_pipeline,
-            );
+            let plain = (&self.static_pipeline, &self.skinned_pipeline);
+            let woozy = self.woozy.as_ref().map(|(_, stages)| stages);
+            record_draws(&mut pass, draws, draw_bg, plain, woozy);
         }
     }
 }
@@ -1813,24 +1994,27 @@ fn clear_pass<'e>(
 }
 
 /// Record every masked draw, switching between the static and skinned
-/// pipelines as the list does.
+/// pipelines, plain or woozy (#737), as the list does. A woozy draw with
+/// no woozy stages yet (the caller didn't
+/// [`ensure_wooze`](StyleMaskPass::ensure_wooze)) is drawn plain.
 fn record_draws(
     pass: &mut wgpu::RenderPass<'_>,
     draws: &[MaskDraw<'_>],
     draw_bg: &wgpu::BindGroup,
-    static_pipeline: &wgpu::RenderPipeline,
-    skinned_pipeline: &wgpu::RenderPipeline,
+    (static_pipeline, skinned_pipeline): (&wgpu::RenderPipeline, &wgpu::RenderPipeline),
+    woozy: Option<&MaskStages>,
 ) {
-    let mut skinned = None;
+    let mut bound = None;
     for (i, d) in draws.iter().enumerate() {
-        let is_skinned = d.bones.is_some();
-        if skinned != Some(is_skinned) {
-            pass.set_pipeline(if is_skinned {
-                skinned_pipeline
-            } else {
-                static_pipeline
+        let key = (d.bones.is_some(), d.woozy && woozy.is_some());
+        if bound != Some(key) {
+            pass.set_pipeline(match (key, woozy) {
+                ((true, true), Some(w)) => &w.skinned_pipeline,
+                ((false, true), Some(w)) => &w.static_pipeline,
+                ((true, _), _) => skinned_pipeline,
+                ((false, _), _) => static_pipeline,
             });
-            skinned = Some(is_skinned);
+            bound = Some(key);
         }
         pass.set_bind_group(0, d.transform_bind_group, &[]);
         pass.set_bind_group(1, draw_bg, &[(i as u64 * DRAW_STRIDE) as u32]);
@@ -2605,6 +2789,44 @@ mod tests {
         assert!(!follows("b"), "the style component's own wins");
         assert!(!follows("c"), "an unknown source is the entity's own");
         assert!(follows("d"));
+    }
+
+    /// The woozy module (#737) validates, has both woozy vertex stages and
+    /// both fragment stages, and its transform is the 256-byte arena slot
+    /// the drift rides in (the plain one stops at the 208 bytes before it).
+    #[test]
+    fn the_woozy_mask_module_validates_and_reads_the_whole_slot() {
+        let size_of_transform = |src: &str| {
+            let module = naga::front::wgsl::parse_str(src).expect("parses");
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::default(),
+            )
+            .validate(&module)
+            .expect("validates");
+            let entries: Vec<_> = module.entry_points.iter().map(|e| e.name.clone()).collect();
+            let span = module
+                .types
+                .iter()
+                .find_map(|(_, ty)| match &ty.inner {
+                    naga::TypeInner::Struct { span, .. }
+                        if ty.name.as_deref() == Some("TransformUniforms") =>
+                    {
+                        Some(*span)
+                    }
+                    _ => None,
+                })
+                .expect("TransformUniforms");
+            (span, entries)
+        };
+        let (plain, plain_entries) = size_of_transform(STYLE_MASK_WGSL);
+        let (woozy, entries) = size_of_transform(&woozy_mask_source());
+        assert_eq!(plain, 208);
+        assert_eq!(woozy, 256, "the drift is the slot's last 48 bytes");
+        for e in ["vs_static_wooze", "vs_skinned_wooze", "fs_main", "fs_msaa"] {
+            assert!(entries.iter().any(|n| n == e), "{e} in {entries:?}");
+        }
+        assert!(!plain_entries.iter().any(|n| n.ends_with("_wooze")));
     }
 
     /// The Rust uniform is laid out as the WGSL `MaskDraw` reads it (#397

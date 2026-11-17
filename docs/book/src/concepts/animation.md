@@ -240,7 +240,10 @@ A posed joint and everything past it draw orange in the skeleton overlay.
 
 A layer's `weight` is a live dial, so a script that sets it pops the pose. To
 ramp instead, set `fade_target` and `fade_duration` on the layer table (or call
-`fade_anim_layer(entity, index, weight, seconds)`). The engine owns the weight
+`fade_anim_layer(entity, index, weight, seconds)`). A ramp is linear unless the
+layer's `fade_easing` says otherwise (`fade_anim_layer(entity, index, weight,
+seconds, easing)`: `"linear"`, `"smooth"`, `"ease_in"`, `"ease_out"` or
+`"ease_in_out"`, the engine's one set of easings, #734). The engine owns the weight
 while the ramp runs: it writes the ramped value back to `layers[i].weight`
 every frame and zeroes `fade_duration` when it arrives, so the next
 `sync_from_world` doesn't re-arm it — the same contract as `blend_target`. Any
@@ -470,6 +473,7 @@ Animations can be controlled from [Rhai scripts](scripting.md) by writing direct
 | `set_anim_layer(entity_id, index, clip, weight, #{mode, mask})` | Same with a `mode` (`"additive"`/`"override"`) and a root-joint `mask` |
 | `set_anim_layer_weight(entity_id, index, weight)` | Set a layer's weight instantly (cancels a fade) |
 | `fade_anim_layer(entity_id, index, weight, seconds)` | Ramp a layer's weight over `seconds` |
+| `fade_anim_layer(entity_id, index, weight, seconds, easing)` | The same, eased: `linear`, `smooth`, `ease_in`, `ease_out` or `ease_in_out` |
 | `clear_anim_layer(entity_id, index)` | Leave an inactive slot |
 | `play_sequence(entity_id, name)` / `stop_sequence(entity_id)` | Drive the animator from a `*.sequence.toml` |
 | `on_sequence_cue(sequence, cue)` | Callback: a sequence passed a `cue` event |

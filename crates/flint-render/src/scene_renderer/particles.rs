@@ -48,6 +48,7 @@ impl SceneRenderer {
         queue: &wgpu::Queue,
         draws: &[ParticleDrawData<'_>],
     ) {
+        flint_core::scope!("particles::upload", draws.len());
         self.particle_draws.clear();
         self.draws.set_particles(std::iter::empty());
         if self.pipelines.particle.is_none() || self.particle_buffers.is_none() {

@@ -203,6 +203,7 @@ impl SceneRenderer {
     /// a far chunk's shadow comes from its simple level too. Only static
     /// draws have a level of detail.
     pub(super) fn cull_draws_to_lod(&mut self, eye: [f32; 3]) {
+        flint_core::scope!("cull_lod", self.draws.len());
         let LodSettings {
             lod_scale,
             draw_distance_scale,
@@ -232,6 +233,7 @@ impl SceneRenderer {
         let Some(frustum) = &self.camera_frustum else {
             return;
         };
+        flint_core::scope!("cull_frustum", self.draws.len());
         for item in self.draws.iter_mut() {
             let out = match &item.draw {
                 Draw::Static(d) => !d.is_wireframe && !draw_visible(d, frustum),

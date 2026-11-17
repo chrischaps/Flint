@@ -7,12 +7,8 @@
 // (the mask's .g), through the pipeline's alpha blend, so a foreign entity
 // fading out of its style (blend 0) is this style's again.
 
-struct Uniforms {
-    // owner[id] for id 0..255, four to a vec4
-    owner: array<vec4<u32>, 64>,
-}
-
-@group(0) @binding(0) var<uniform> u: Uniforms;
+// owners[id] for every id the frame has (#740), NONE past them
+@group(0) @binding(0) var<storage, read> owners: array<u32>;
 @group(1) @binding(0) var input_tex: texture_2d<f32>;
 @group(1) @binding(1) var input_sampler: sampler;
 @group(2) @binding(0) var style_mask: texture_2d<u32>;
@@ -44,10 +40,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let mp = clamp(vec2<i32>(uv * vec2<f32>(msize)), vec2<i32>(0), msize - 1);
     let m = textureLoad(style_mask, mp, 0);
     let id = m.r;
-    if id == 0u || id >= 256u {
+    if id == 0u || id >= arrayLength(&owners) {
         discard;
     }
-    let owner = u.owner[id / 4u][id % 4u];
+    let owner = owners[id];
     if owner == NONE || owner == in.style {
         discard;
     }

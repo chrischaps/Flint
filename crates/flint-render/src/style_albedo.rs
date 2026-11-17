@@ -130,11 +130,11 @@ impl StyleAlbedoPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         let pbr = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Albedo PBR Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SCENE.into()),
         });
         let skinned = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Albedo Skinned Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("skinned_shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SKINNED.into()),
         });
         Self {
             pbr,

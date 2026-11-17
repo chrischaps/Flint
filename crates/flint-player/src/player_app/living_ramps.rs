@@ -221,7 +221,7 @@ impl KnobRamps {
     fn head_for(&mut self, species: Option<&str>, knob: Eased, now: f32, to: f32, seconds: f64) {
         let time = self.time;
         if let Some(running) = self.find(species, knob) {
-            if running.ramp.target() != to {
+            if *running.ramp.target() != to {
                 running.ramp.head_for(to, time, seconds);
             }
             return;

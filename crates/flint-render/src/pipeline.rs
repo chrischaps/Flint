@@ -270,7 +270,7 @@ pub struct DirectionalLight {
     pub volumetric_color: [f32; 3], // god ray tint, defaults to light color
     /// Apparent angular size of the source in radians (authored in degrees
     /// on the light table); 0 = punctual → hard legacy shadows. Drives PCSS
-    /// penumbra via ShadowUniforms.pcss.w — the WGSL mirrors keep this slot
+    /// penumbra via ShadowUniforms.pcss.w — `lights.wgsl` keeps this slot
     /// named `_pad1` because no shader reads it directly (ADR 0056).
     pub angular_size: f32, // was _pad1 — layout unchanged
 }
@@ -298,7 +298,7 @@ pub struct PointLight {
     pub intensity: f32,
     /// Physical source radius in world units (representative-point area
     /// light, ADR 0056); 0 = punctual → verbatim legacy shading. Grew the
-    /// struct 32 → 48 B — mirrored in all six WGSL light structs.
+    /// struct 32 → 48 B — `lights.wgsl` declares it for every shader (#738).
     pub source_radius: f32,
     pub _pad0: f32,
     pub _pad1: f32,
@@ -332,8 +332,7 @@ pub struct SpotLight {
     pub outer_angle: f32,
     pub intensity: f32,
     /// Physical source radius in world units (ADR 0056); 0 = punctual.
-    /// Rides the former _pad0 slot — layout unchanged; only shader.wgsl's
-    /// mirror renames the field (sole reader).
+    /// Rides the former _pad0 slot — layout unchanged.
     pub source_radius: f32, // was _pad0
     /// 1.0 on the one spot whose shadow map is drawn this frame (#504),
     /// else 0.0. Rides the former _pad1 slot, so the layout is unchanged;
@@ -639,7 +638,7 @@ impl RenderPipeline {
     ) -> Self {
         let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("PBR Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SCENE.into()),
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

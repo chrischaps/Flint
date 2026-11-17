@@ -103,6 +103,7 @@ pub mod reveal;
 mod spec;
 mod targets;
 pub mod text;
+pub mod variant_table;
 
 pub use ascii::{edge_view_thresholds, EDGE_VIEW_LEGEND};
 pub use edges::EDGE_FORMAT;
@@ -3061,15 +3062,14 @@ pub fn any_uses_mask(config: &PostProcessConfig, ids: &StyleIds) -> bool {
 /// style is off for it, so a whole-frame style leaves the prop as it came,
 /// as it did while the faded style still ran; a style off everywhere
 /// (#376) owns nothing, so its props are plain scene to every other
-/// style. Id 0 (unstyled) is always
-/// none; the table is [`ownership::MAX_IDS`] long.
+/// style. Id 0 (unstyled) is always none; the table has a slot for every
+/// id (#740: it held 256, and ids past them were silently the whole
+/// frame's).
 pub fn owner_table(config: &PostProcessConfig, ids: &StyleIds) -> Vec<u32> {
     let registry = registry();
-    let mut table = vec![ownership::NONE; ownership::MAX_IDS];
+    let mut table = vec![ownership::NONE; ids.len() + 1];
     for (id, _) in ids.iter() {
-        let Some(slot) = table.get_mut(id as usize) else {
-            continue;
-        };
+        let slot = &mut table[id as usize];
         let Some(v) = ids.variant(id) else {
             continue;
         };

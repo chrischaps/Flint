@@ -216,18 +216,19 @@ impl SceneRenderer {
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
     ) -> bool {
+        flint_core::scope!("encode_fog_veil");
         let Some(skinned) = &self.pipelines.skinned else {
             return false;
         };
         if self.fog_veil.pipelines.is_none() {
             let pbr = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Fog Veil PBR Shader"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("../shader.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SCENE.into()),
             });
             let skinned_module =
                 device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("Fog Veil Skinned Shader"),
-                    source: wgpu::ShaderSource::Wgsl(include_str!("../skinned_shader.wgsl").into()),
+                    source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SKINNED.into()),
                 });
             let l = &self.layouts;
             let mesh_layouts = [

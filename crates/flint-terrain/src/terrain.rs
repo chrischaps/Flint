@@ -76,6 +76,7 @@ impl Terrain {
     /// `chunk_resolution` quads, with the heightmap distributed across
     /// all chunks. For small heightmaps, a single chunk is used.
     pub fn generate(heightmap: &Heightmap, config: &TerrainConfig) -> Self {
+        flint_core::scope!("terrain::generate");
         let res = config.chunk_resolution.max(2);
 
         // Determine how many chunks we need based on heightmap resolution

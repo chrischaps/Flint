@@ -1239,8 +1239,8 @@ impl SceneRenderer {
     // ── Slim update_from_world: dispatch loop calling extraction helpers ──
 
     /// Update meshes from the world state
-    #[profiling::function]
     pub(crate) fn update_from_world(&mut self, world: &FlintWorld, device: &wgpu::Device) {
+        flint_core::scope!("update_from_world");
         if self.device_lost {
             return;
         }
@@ -1254,61 +1254,79 @@ impl SceneRenderer {
 
         // The hierarchy, for the selection outline's subtree (#602)
         self.entity_children.clear();
-        for entity in world.all_entities() {
-            if let Some(parent) = world.get_parent(entity.id) {
-                self.entity_children
-                    .entry(parent)
-                    .or_default()
-                    .push(entity.id);
+        {
+            flint_core::scope!("extract::hierarchy");
+            for entity in world.all_entities() {
+                if let Some(parent) = world.get_parent(entity.id) {
+                    self.entity_children
+                        .entry(parent)
+                        .or_default()
+                        .push(entity.id);
+                }
             }
         }
 
-        self.sync_debug_styles();
-        // Ids for every styled entity: they say which styles are on for
-        // entities alone (#266) as well as what the mask holds (#263)
-        if self.postprocess_resources.is_some() && self.postprocess_config.enabled {
-            self.style_mask.resolve(world, &self.postprocess_config);
-        } else {
-            self.style_mask.clear();
+        {
+            flint_core::scope!("extract::style_mask");
+            self.sync_debug_styles();
+            // Ids for every styled entity: they say which styles are on for
+            // entities alone (#266) as well as what the mask holds (#263)
+            if self.postprocess_resources.is_some() && self.postprocess_config.enabled {
+                self.style_mask.resolve(world, &self.postprocess_config);
+            } else {
+                self.style_mask.clear();
+            }
         }
 
         // Who is drawn on ticks this frame (#405): empty, and unwalked, in a
         // scene with no motion_hold and no whole-frame rate. Before the
         // lights, which a held entity carries on its ticks too (#873)
-        self.motion_hold.set_rates(crate::motion_hold::held_rates(
-            world,
-            self.postprocess_config.motion_hold,
-        ));
-        if self.motion_hold.any() {
-            // Bones went up before the rates were known: a hold that starts
-            // this frame keeps what they show
-            for id in self.skinning.bone_buffers.keys() {
-                self.motion_hold.bones_shown(*id);
+        {
+            flint_core::scope!("extract::motion_hold");
+            self.motion_hold.set_rates(crate::motion_hold::held_rates(
+                world,
+                self.postprocess_config.motion_hold,
+            ));
+            if self.motion_hold.any() {
+                // Bones went up before the rates were known: a hold that starts
+                // this frame keeps what they show
+                for id in self.skinning.bone_buffers.keys() {
+                    self.motion_hold.bones_shown(*id);
+                }
             }
         }
 
         // Extract lights from scene entities
-        self.lights.extract(world, &mut self.motion_hold);
+        {
+            flint_core::scope!("extract::lights");
+            self.lights.extract(world, &mut self.motion_hold);
+        }
 
         // Extract ocean params (regenerates the wave spectrum only on change)
-        self.water
-            .extract_ocean(world, self.pipelines.ocean.is_some());
-        self.water.extract_contact(world, self.ocean_time);
-        self.water
-            .extract_bodies(world, device, self.pipelines.ocean.as_deref());
-        if self.water_active() {
-            // Ocean always binds group 3; make sure the placeholder exists
-            // even on paths where the grab pass never runs.
+        {
+            flint_core::scope!("extract::water");
             self.water
-                .ensure_grab_dummy(device, self.pipelines.ocean.as_deref());
+                .extract_ocean(world, self.pipelines.ocean.is_some());
+            self.water.extract_contact(world, self.ocean_time);
+            self.water
+                .extract_bodies(world, device, self.pipelines.ocean.as_deref());
+            if self.water_active() {
+                // Ocean always binds group 3; make sure the placeholder exists
+                // even on paths where the grab pass never runs.
+                self.water
+                    .ensure_grab_dummy(device, self.pipelines.ocean.as_deref());
+            }
         }
 
         // Extract procedural sky params (+ optional ambient override)
-        self.sky.extract(
-            world,
-            self.pipelines.sky.is_some(),
-            &mut self.lights.uniforms,
-        );
+        {
+            flint_core::scope!("extract::sky");
+            self.sky.extract(
+                world,
+                self.pipelines.sky.is_some(),
+                &mut self.lights.uniforms,
+            );
+        }
 
         let need_overlay = self.debug_state.mode == DebugMode::WireframeOverlay
             || self.debug_state.mode == DebugMode::WireframeOnly;
@@ -1329,119 +1347,130 @@ impl SceneRenderer {
         // (#628): empty and unwalked in a scene that never hides anything.
         let hidden = world.hidden_entities();
 
-        for entity in world.all_entities() {
-            if hidden.contains(&entity.id) {
-                continue;
-            }
-            let visual = entity
-                .archetype
-                .as_deref()
-                .and_then(|archetype| self.archetype_visuals.get(archetype))
-                .copied()
-                .unwrap_or_default();
+        {
+            // One scope for the walk, never one an entity (#1096)
+            flint_core::scope!("extract::entities", world.entity_count());
+            for entity in world.all_entities() {
+                if hidden.contains(&entity.id) {
+                    continue;
+                }
+                let visual = entity
+                    .archetype
+                    .as_deref()
+                    .and_then(|archetype| self.archetype_visuals.get(archetype))
+                    .copied()
+                    .unwrap_or_default();
 
-            let model_matrix = world
-                .get_world_matrix(entity.id)
-                .unwrap_or_else(|| Transform::default().to_matrix());
-            // Held on twos (#405): where it was drawn when its tick began
-            let model_matrix = self.motion_hold.matrix(entity.id, model_matrix);
-            let world_pos = [model_matrix[3][0], model_matrix[3][1], model_matrix[3][2]];
+                let model_matrix = world
+                    .get_world_matrix(entity.id)
+                    .unwrap_or_else(|| Transform::default().to_matrix());
+                // Held on twos (#405): where it was drawn when its tick began
+                let model_matrix = self.motion_hold.matrix(entity.id, model_matrix);
+                let world_pos = [model_matrix[3][0], model_matrix[3][1], model_matrix[3][2]];
 
-            // Check if entity has a model component
-            let model_asset = world
-                .view(entity.id, comp::MODEL)
-                .opt_str("asset")
-                .map(String::from);
+                // Check if entity has a model component
+                let model_asset = world
+                    .view(entity.id, comp::MODEL)
+                    .opt_str("asset")
+                    .map(String::from);
 
-            if let Some(asset_name) = &model_asset {
-                if let Some(mesh) = self.ray_meshes.get(asset_name) {
-                    ray_scene.add(entity.id, mesh.clone(), model_matrix);
+                if let Some(asset_name) = &model_asset {
+                    if let Some(mesh) = self.ray_meshes.get(asset_name) {
+                        ray_scene.add(entity.id, mesh.clone(), model_matrix);
+                    }
+
+                    // Check for skinned meshes first
+                    if self.extract_skinned_entity(
+                        device,
+                        tex_cache_ref,
+                        world,
+                        entity.id,
+                        asset_name,
+                        model_matrix,
+                        need_overlay,
+                    ) {
+                        continue;
+                    }
+
+                    // Check for standard (non-skinned) model
+                    if self.extract_model_entity(
+                        device,
+                        tex_cache_ref,
+                        world,
+                        entity.id,
+                        asset_name,
+                        model_matrix,
+                        need_overlay,
+                        need_normals,
+                        arrow_length,
+                    ) {
+                        continue;
+                    }
                 }
 
-                // Check for skinned meshes first
-                if self.extract_skinned_entity(
-                    device,
+                // Check for sprite component — render as billboard or 2D sprite
+                let sprite = world.view(entity.id, comp::SPRITE);
+                if sprite.exists() {
+                    self.extract_sprite_entity(
+                        device,
+                        tex_cache_ref,
+                        world,
+                        entity.id,
+                        &sprite,
+                        world_pos,
+                        &mut sprite2d_collected,
+                    );
+                    continue;
+                }
+
+                // Standalone ui_text: entities with ui_text but no sprite
+                if self.extract_ui_text_entity(
                     tex_cache_ref,
                     world,
                     entity.id,
-                    asset_name,
-                    model_matrix,
-                    need_overlay,
+                    world_pos,
+                    &mut sprite2d_collected,
                 ) {
                     continue;
                 }
 
-                // Check for standard (non-skinned) model
-                if self.extract_model_entity(
+                // Only draw fallback geometry for entities that explicitly have bounds
+                if let Some(components) = world.get_components(entity.id) {
+                    let has_bounds = components.get(comp::BOUNDS).is_some();
+                    if !has_bounds {
+                        continue;
+                    }
+                }
+
+                // Fall back to procedural bounds geometry
+                self.extract_bounds_entity(
                     device,
                     tex_cache_ref,
                     world,
                     entity.id,
-                    asset_name,
+                    &visual,
                     model_matrix,
                     need_overlay,
                     need_normals,
                     arrow_length,
-                ) {
-                    continue;
-                }
-            }
-
-            // Check for sprite component — render as billboard or 2D sprite
-            let sprite = world.view(entity.id, comp::SPRITE);
-            if sprite.exists() {
-                self.extract_sprite_entity(
-                    device,
-                    tex_cache_ref,
-                    world,
-                    entity.id,
-                    &sprite,
-                    world_pos,
-                    &mut sprite2d_collected,
                 );
-                continue;
             }
-
-            // Standalone ui_text: entities with ui_text but no sprite
-            if self.extract_ui_text_entity(
-                tex_cache_ref,
-                world,
-                entity.id,
-                world_pos,
-                &mut sprite2d_collected,
-            ) {
-                continue;
-            }
-
-            // Only draw fallback geometry for entities that explicitly have bounds
-            if let Some(components) = world.get_components(entity.id) {
-                let has_bounds = components.get(comp::BOUNDS).is_some();
-                if !has_bounds {
-                    continue;
-                }
-            }
-
-            // Fall back to procedural bounds geometry
-            self.extract_bounds_entity(
-                device,
-                tex_cache_ref,
-                world,
-                entity.id,
-                &visual,
-                model_matrix,
-                need_overlay,
-                need_normals,
-                arrow_length,
-            );
         }
 
         // Sort & batch sprite2d instances
-        self.batch_sprite2d_instances(device, tex_cache_ref, sprite2d_collected);
+        {
+            flint_core::scope!("extract::sprite2d", sprite2d_collected.len());
+            self.batch_sprite2d_instances(device, tex_cache_ref, sprite2d_collected);
+        }
 
-        self.apply_shallow_wooze(device);
+        {
+            flint_core::scope!("extract::shallow_wooze");
+            self.apply_shallow_wooze(device);
+        }
 
         // Drop cached resources nothing used this frame (despawned entities,
         // entities that changed shape/model).
+        flint_core::scope!("extract::retire_caches");
         let frame = self.extract_frame;
         self.draw_bind_cache.retain_frame(frame);
         self.skinning.bone_binds.retain(|_, b| b.touched == frame);

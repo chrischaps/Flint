@@ -17,12 +17,16 @@
 // Rust prepends to this file, as it does to the composite's), so its
 // style shows only where reality tears.
 
+// A woozy draw (#215, #737) is masked by the woozy module: wooze_noise.wgsl,
+// then this file with the FLINT_WOOZE line on, then style_mask_wooze.wgsl's
+// vertex stages, which move each vertex as wooze_vertex.wgsl does.
 struct TransformUniforms {
     view_proj: mat4x4<f32>,
     model: mat4x4<f32>,
     model_inv_transpose: mat4x4<f32>,
     camera_pos: vec3<f32>,
     _pad: f32,
+    //FLINT_WOOZE wooze: ShallowWooze,
 };
 
 struct MaskDraw {

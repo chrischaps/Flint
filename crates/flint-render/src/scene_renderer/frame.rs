@@ -243,7 +243,6 @@ impl SceneRenderer {
     /// (Self::set_motion_time) stamps the same `time`: a held entity's bones
     /// are gated by its hold's tick (#405), and the uploads precede the
     /// extraction that reads them.
-    #[profiling::function]
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -251,6 +250,7 @@ impl SceneRenderer {
         world: &FlintWorld,
         inputs: &FrameInputs<'_>,
     ) {
+        flint_core::scope!("prepare");
         // A described frame starts its log here (#1084)
         if let Some(log) = &mut self.frame_log {
             **log = Default::default();
@@ -385,7 +385,6 @@ impl SceneRenderer {
     /// with the next submission, so encode one camera per submission: a
     /// second camera's uniforms would overwrite this one's. After
     /// submitting, call [`frame_submitted`](Self::frame_submitted).
-    #[profiling::function]
     ///
     /// `depth` is the caller's depth buffer: a `&TextureView`, or a
     /// [`DepthTarget`](crate::bind_cache::DepthTarget) with an id
@@ -400,6 +399,7 @@ impl SceneRenderer {
         camera: &Camera,
         target_view: &wgpu::TextureView,
     ) {
+        flint_core::scope!("encode_to");
         if self.device_lost {
             return;
         }
@@ -492,7 +492,10 @@ impl SceneRenderer {
         let wireframe_only = self.debug_state.mode == DebugMode::WireframeOnly;
 
         // Update light uniforms
-        self.lights.upload(queue, camera_pos);
+        {
+            flint_core::scope!("upload_lights");
+            self.lights.upload(queue, camera_pos);
+        }
 
         // Grass compute (ADR 0092): scatters this camera's blades, culled to
         // its view, and counts them into the indirect draw arguments. It goes
@@ -1039,6 +1042,7 @@ impl SceneRenderer {
     /// [`encode_gpu_timings`](Self::encode_gpu_timings) resolved them, the
     /// GPU timer's. Call once that frame is submitted.
     pub fn frame_submitted(&mut self) {
+        flint_core::scope!("frame_submitted");
         if std::mem::take(&mut self.grass.readback_due) {
             if let Some(readback) = &mut self.grass.count_readback {
                 readback.start_map();
@@ -1061,6 +1065,7 @@ impl SceneRenderer {
         if self.postprocess_resources.is_none() {
             return;
         }
+        flint_core::scope!("render_world_lines", self.world_lines.len());
         // Drawn into the surface, whatever the scene's render scale
         let viewport = [self.surface_size.0 as f32, self.surface_size.1 as f32];
         let format = self.surface_format;

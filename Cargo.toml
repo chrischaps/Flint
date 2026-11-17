@@ -294,6 +294,23 @@ opt-level = 3
 [profile.dev.package.sha2]
 opt-level = 3
 
+# A sampling profiler's build (#1101; book: guides/profiling.md, "When
+# scopes aren't enough"): release's code with line tables in every crate,
+# dependencies included, so Superluminal, samply and WPA name the function
+# and line of each sample in Flint, wgpu or Rapier, inlined frames too.
+# `cargo build --profile profiling -p flint-player` writes
+# target/profiling/, shared with no other profile: cold, 2.7 GB and 3 min
+# 46 s on the 24-thread machine, a 73 MB exe and a 187 MB PDB (release's PDB
+# is 30 MB and names only what wasn't inlined: in a sampled script stall,
+# 55 functions a stack against this profile's 86, and 5% of frames with a
+# line against 68%). Frame pointers aren't a profile key on stable Cargo;
+# no sampler named in the guide needs them (Windows walks the stack from
+# .pdata, samply on Linux from .eh_frame), and the guide gives the flag for
+# `perf --call-graph fp`.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+
 # The web player's build (#123): `trunk build --release --cargo-profile
 # web-release` in crates/flint-player, as .github/workflows/play.yml does.
 # Every first visit downloads the wasm before the world appears, so it

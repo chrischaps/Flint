@@ -48,11 +48,13 @@ struct PaintUniforms {
     far: f32,
     // The paper image's mean and spread of luma (#390)
     paper_stats: vec4<f32>,
-    rows: array<Row, 16>,
-    slots: array<vec4<u32>, 64>,
 };
 
 @group(0) @binding(0) var<uniform> params: PaintUniforms;
+// The variant table (#740, the framework's): a row a variant, and the row
+// of each mask id, as long as the frame needs
+@group(0) @binding(1) var<storage, read> paint_rows: array<Row>;
+@group(0) @binding(2) var<storage, read> paint_slots: array<u32>;
 @group(1) @binding(0) var input_texture: texture_2d<f32>;
 @group(1) @binding(1) var input_sampler: sampler;
 @group(2) @binding(0) var wash_texture: texture_2d<f32>;
@@ -135,10 +137,10 @@ fn mask_at(uv: vec2<f32>) -> u32 {
 }
 
 fn slot_of(id: u32) -> u32 {
-    if (id >= 256u) {
+    if (id >= arrayLength(&paint_slots)) {
         return 0u;
     }
-    let slot = params.slots[id / 4u][id % 4u];
+    let slot = paint_slots[id];
     return select(0u, slot, slot < params.row_count);
 }
 
@@ -150,7 +152,7 @@ fn view_depth(uv: vec2<f32>) -> f32 {
 }
 
 fn painted(slot: u32) -> bool {
-    let off = (params.rows[slot].flags & PASS_THROUGH) != 0u;
+    let off = (paint_rows[slot].flags & PASS_THROUGH) != 0u;
     return !off && !(slot == 0u && params.passthrough == 1u);
 }
 
@@ -169,7 +171,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Where this pixel's paint comes from: the mask read at a wobbled
     // position, so a painted silhouette wanders over its surroundings
     let home = slot_of(mask_at(in.uv));
-    let r0 = params.rows[home];
+    let r0 = paint_rows[home];
     let reach = wobble_field(pt / r0.wobble_scale) * r0.wobble * to_uv;
     let slot = slot_of(mask_at(in.uv + reach));
     if (!painted(slot)) {
@@ -178,7 +180,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let at = select(in.uv, in.uv + reach, painted(home));
         return textureSampleLevel(input_texture, input_sampler, at, 0.0);
     }
-    let r = params.rows[slot];
+    let r = paint_rows[slot];
     let wuv = in.uv + wobble_field(pt / r.wobble_scale) * r.wobble * to_uv;
 
     let src = sample_display(input_texture, input_sampler, wuv);

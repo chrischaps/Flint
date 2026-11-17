@@ -64,6 +64,7 @@ pub(crate) mod terrain_pipeline;
 mod texture_cache;
 mod trusted_shader;
 pub mod water_body;
+mod wgsl_sources;
 mod wooze_pipeline;
 pub(crate) mod world_line_pipeline;
 
@@ -124,7 +125,7 @@ pub use world_line_pipeline::DEPTH_SLACK as WORLD_LINE_DEPTH_SLACK;
 mod tests {
     #[test]
     fn shader_wgsl_parses_and_validates() {
-        let source = include_str!("shader.wgsl");
+        let source = crate::wgsl_sources::SCENE;
         let module = naga::front::wgsl::parse_str(source).expect("shader.wgsl failed to parse");
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
@@ -141,8 +142,8 @@ mod tests {
     #[test]
     fn material_group_holds_no_samplers() {
         for (name, source) in [
-            ("shader.wgsl", include_str!("shader.wgsl")),
-            ("skinned_shader.wgsl", include_str!("skinned_shader.wgsl")),
+            ("shader.wgsl", crate::wgsl_sources::SCENE),
+            ("skinned_shader.wgsl", crate::wgsl_sources::SKINNED),
         ] {
             let module = naga::front::wgsl::parse_str(source).expect(name);
             let mut material_sampler = None;
@@ -199,7 +200,7 @@ mod tests {
 
     #[test]
     fn skinned_shader_wgsl_parses() {
-        let source = include_str!("skinned_shader.wgsl");
+        let source = crate::wgsl_sources::SKINNED;
         naga::front::wgsl::parse_str(source).expect("skinned_shader.wgsl failed to parse");
     }
 
@@ -224,7 +225,7 @@ mod tests {
 
     #[test]
     fn terrain_shader_wgsl_parses() {
-        let source = include_str!("terrain_shader.wgsl");
+        let source = crate::wgsl_sources::TERRAIN;
         naga::front::wgsl::parse_str(source).expect("terrain_shader.wgsl failed to parse");
     }
 
@@ -233,7 +234,7 @@ mod tests {
         // Validated too: a failure here would otherwise only show as the
         // pipeline's catch_unwind quietly turning the ocean (and every water
         // body) off.
-        let source = include_str!("ocean_shader.wgsl");
+        let source = crate::wgsl_sources::OCEAN;
         let module =
             naga::front::wgsl::parse_str(source).expect("ocean_shader.wgsl failed to parse");
         naga::valid::Validator::new(
@@ -371,10 +372,10 @@ mod tests {
 
     #[test]
     fn light_uniforms_layout() {
-        // LightUniforms is mirrored field-for-field in SIX WGSL structs
-        // (shader / skinned / terrain / grass_render / volumetric / ocean);
-        // bind groups use min_binding_size: None, so a divergence surfaces
-        // as a draw-time wgpu validation error, not a compile error. The
+        // LightUniforms is declared once in WGSL, lights.wgsl (#738), and
+        // `wgsl_sources::tests::wgsl_layouts_match_rust` holds its size to
+        // this struct's in every shader; bind groups use min_binding_size:
+        // None, so a divergence would surface only at draw time. The
         // sheen vec4 (ADR 0048) grew the struct from 1264 to 1280 bytes;
         // PointLight's source_radius row (ADR 0056) grew it to 1536
         // (16 point lights × 16 extra bytes).
@@ -382,7 +383,7 @@ mod tests {
         assert_eq!(size % 16, 0, "LightUniforms not 16-byte aligned");
         assert_eq!(
             size, 1536,
-            "LightUniforms size changed — update all six WGSL mirrors"
+            "LightUniforms size changed — update lights.wgsl"
         );
     }
 
@@ -433,21 +434,19 @@ mod tests {
 
     #[test]
     fn shadow_uniforms_layout() {
-        // ShadowUniforms is mirrored in six WGSL shaders (same set as
-        // LightUniforms); the PCSS vec4 (ADR 0057) grew it 208 → 224 bytes,
-        // and the spot's matrix and vec4 (ADR 0124) to 304. The spot's two
-        // fields are declared only in shader, skinned and terrain WGSL; the
-        // other three mirrors stop at `pcss`, the first 224 bytes.
+        // ShadowUniforms is declared once in WGSL, lights.wgsl (#738); the
+        // PCSS vec4 (ADR 0057) grew it 208 → 224 bytes, and the spot's
+        // matrix and vec4 (ADR 0124) to 304.
         let size = std::mem::size_of::<crate::shadow::ShadowUniforms>();
         assert_eq!(size % 16, 0, "ShadowUniforms not 16-byte aligned");
         assert_eq!(
             size, 304,
-            "ShadowUniforms size changed — update all six WGSL mirrors"
+            "ShadowUniforms size changed — update lights.wgsl"
         );
         assert_eq!(
             std::mem::offset_of!(crate::shadow::ShadowUniforms, spot_view_proj),
             224,
-            "the spot's fields follow `pcss`, so the shorter mirrors read the same bytes"
+            "the spot's fields follow `pcss`"
         );
     }
 
@@ -462,7 +461,6 @@ mod tests {
     #[test]
     fn spot_shadow_mark_rides_the_old_pad() {
         // `SpotLight::shadow` is the former `_pad1`: the struct stays 64 bytes
-        // and the five mirrors that keep `_pad1` read the same layout
         use crate::pipeline::SpotLight;
         assert_eq!(std::mem::size_of::<SpotLight>(), 64);
         assert_eq!(std::mem::offset_of!(SpotLight, shadow), 56);
@@ -547,10 +545,7 @@ mod tests {
     fn grass_render_shader_wgsl_parses() {
         // As grass_pipeline.rs builds it: shallow wooze's noise first, for the
         // comb of woozy grass (#252).
-        let source = concat!(
-            include_str!("wooze_noise.wgsl"),
-            include_str!("grass_render.wgsl")
-        );
+        let source = crate::wgsl_sources::GRASS;
         let module =
             naga::front::wgsl::parse_str(source).expect("grass_render.wgsl failed to parse");
         naga::valid::Validator::new(

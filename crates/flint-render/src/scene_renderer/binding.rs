@@ -153,6 +153,7 @@ impl SceneRenderer {
         world: &FlintWorld,
         binding: &SceneBinding,
     ) -> BoundScene {
+        flint_core::scope!("bind_scene");
         self.set_asset_scope(binding.assets.clone());
         // A user style's component has no schema ranges for the loader to
         // check, so its out-of-range fields are said here (#492)
@@ -165,6 +166,8 @@ impl SceneRenderer {
         self.set_scene_shadows(true);
         self.set_default_lights(true);
         self.lights.forget_warnings();
+        // A new scene says its own styles' dropped entities (#740)
+        crate::stylize::variant_table::forget_dropped();
         if let Some(env) = &binding.environment {
             self.set_environment(env);
         }
@@ -249,6 +252,7 @@ fn load_scene_terrain(
     renderer: &mut SceneRenderer,
 ) -> Option<LoadedTerrain> {
     use flint_terrain::{Heightmap, Terrain, TerrainConfig};
+    flint_core::scope!("load_terrain");
 
     for entity in world.all_entities() {
         // Through the typed view (ADR 0115): a wrong type is reported once

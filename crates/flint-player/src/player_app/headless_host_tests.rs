@@ -129,6 +129,13 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
             seconds: 1.0,
             easing: s("linear"),
         },
+        C::Tween {
+            entity,
+            path: s("light.intensity"),
+            target: 2.0.into(),
+            seconds: 1.0,
+            easing: flint_core::tween::Easing::Linear,
+        },
         C::ClearEntityStyle { entity },
         C::SetPostStyle {
             style: s("kuwahara"),
@@ -359,6 +366,7 @@ fn every_command_is_applied_headless_or_presentation_only() {
         "SetEntityStyle",
         "SetStyleParam",
         "TweenStyleParam",
+        "Tween",
         "ClearEntityStyle",
         "SetPostStyle",
         "SetLook",
@@ -440,6 +448,65 @@ fn a_capture_styles_tweens_and_reads_as_the_player_does() {
     assert_eq!(style.as_deref(), Some("ascii"), "{seen:?}");
     assert!(run.skipped().is_empty(), "{:?}", run.skipped());
     assert!(run.notes().is_empty(), "{:?}", run.notes());
+}
+
+/// A script that eases a lamp's light from 2 to 10 over a second and writes
+/// down the `tween_done` it hears (#734).
+const LAMPLIGHTER: &str = r#"
+fn on_init() {
+    tween(get_entity("lamp"), "light.intensity", 10, 1.0, "linear");
+}
+
+fn on_event(name, data) {
+    if name == "tween_done" {
+        set_field(self_entity(), "seen", "done", data.path);
+    }
+}
+"#;
+
+#[test]
+#[allow(clippy::disallowed_methods)] // a test asserts on the TOML exactly as written
+fn a_capture_tweens_a_component_field_and_says_when_it_arrives() {
+    let (dir, scene) = scene_folder("field_tween", &[("lamplighter.rhai", LAMPLIGHTER)]);
+    let mut world = FlintWorld::new();
+    let lamp = world.spawn("lamp").unwrap();
+    let mut light = toml::Table::new();
+    light.insert("type".into(), "point".into());
+    light.insert("intensity".into(), 2.into());
+    world.set_component(lamp, "light", light.into()).unwrap();
+    let director = world.spawn("director").unwrap();
+    let mut script = toml::Table::new();
+    script.insert("source".into(), "lamplighter.rhai".into());
+    world
+        .set_component(director, "script", script.into())
+        .unwrap();
+    let mut seen = toml::Table::new();
+    seen.insert("done".into(), "".into());
+    world.set_component(director, "seen", seen.into()).unwrap();
+
+    let mut run = load(&scene, world);
+    let mut camera = flint_render::Camera::new();
+    let intensity =
+        |world: &FlintWorld| world.get_component(lamp, "light").unwrap()["intensity"].clone();
+    let done = |world: &FlintWorld| world.get_component(director, "seen").unwrap()["done"].clone();
+    // The first step carries on_init's command: the tween starts, unmoved
+    run.step(0.0, &mut camera, None, None);
+    assert_eq!(intensity(run.world()), toml::Value::Integer(2));
+    for expect in [4.0, 6.0, 8.0] {
+        run.step(0.25, &mut camera, None, None);
+        assert_eq!(intensity(run.world()), toml::Value::Float(expect));
+    }
+    run.step(0.25, &mut camera, None, None);
+    assert_eq!(
+        intensity(run.world()),
+        toml::Value::Integer(10),
+        "lands whole"
+    );
+    assert_eq!(done(run.world()).as_str(), Some(""), "heard next frame");
+    run.step(0.25, &mut camera, None, None);
+    let _ = std::fs::remove_dir_all(dir);
+    assert_eq!(done(run.world()).as_str(), Some("light.intensity"));
+    assert!(run.script_errors().is_empty(), "{:?}", run.script_errors());
 }
 
 /// What `run` wrote to the log, every level (#1013).

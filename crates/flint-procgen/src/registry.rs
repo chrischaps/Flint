@@ -81,6 +81,7 @@ impl GeneratorRegistry {
     /// Resolve the generator from a spec, create a seeded RNG, and run
     /// generation.
     pub fn generate_from_spec(&self, spec: &ProcGenSpec) -> Result<GeneratorOutput> {
+        flint_core::scope!("procgen::generate", spec.meta.name.as_str());
         let generator = self
             .generators
             .get(&spec.generator)

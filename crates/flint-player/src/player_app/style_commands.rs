@@ -14,6 +14,7 @@
 //! the player and a headless capture alike, so a style command does the
 //! same in each.
 
+use flint_core::tween::Tween;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_render::entity_style;
@@ -117,53 +118,9 @@ impl StyleReader for SceneStyles {
 /// with `#{ entity, param }`.
 pub const STYLE_TWEEN_DONE: &str = "style_tween_done";
 
-/// How a style tween moves from its start to its target (#370).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Easing {
-    Linear,
-    /// Smoothstep: slow out, slow in. The default.
-    Smooth,
-    /// Cubic, slow out of the start.
-    EaseIn,
-    /// Cubic, slow into the target.
-    EaseOut,
-    /// Cubic both ends.
-    EaseInOut,
-}
-
-impl Easing {
-    pub const NAMES: &'static [&'static str] =
-        &["linear", "smooth", "ease_in", "ease_out", "ease_in_out"];
-
-    pub fn from_name(name: &str) -> Option<Self> {
-        Some(match name {
-            "linear" => Self::Linear,
-            "" | "smooth" => Self::Smooth,
-            "ease_in" => Self::EaseIn,
-            "ease_out" => Self::EaseOut,
-            "ease_in_out" => Self::EaseInOut,
-            _ => return None,
-        })
-    }
-
-    /// The eased fraction of the way at `t` (0..1).
-    pub fn apply(self, t: f64) -> f64 {
-        let t = t.clamp(0.0, 1.0);
-        match self {
-            Self::Linear => t,
-            Self::Smooth => t * t * (3.0 - 2.0 * t),
-            Self::EaseIn => t * t * t,
-            Self::EaseOut => 1.0 - (1.0 - t).powi(3),
-            Self::EaseInOut => {
-                if t < 0.5 {
-                    4.0 * t * t * t
-                } else {
-                    1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
-                }
-            }
-        }
-    }
-}
+/// How a style tween moves from its start to its target (#370): the
+/// engine's one easing (#734), which every timed change names.
+pub use flint_core::tween::Easing;
 
 #[derive(Debug)]
 struct StyleTween {
@@ -172,27 +129,16 @@ struct StyleTween {
     /// is given another
     style: &'static str,
     param: String,
-    from: Vec<f64>,
-    to: Vec<f64>,
-    seconds: f64,
-    elapsed: f64,
-    easing: Easing,
+    /// A number is a list of one; a colour, of three or four.
+    tween: Tween<Vec<f64>>,
 }
 
-impl StyleTween {
-    fn value(&self, k: f64) -> toml::Value {
-        let at = |(a, b): (&f64, &f64)| a + (b - a) * k;
-        if self.from.len() == 1 {
-            toml::Value::Float(at((&self.from[0], &self.to[0])))
-        } else {
-            toml::Value::Array(
-                self.from
-                    .iter()
-                    .zip(&self.to)
-                    .map(|p| toml::Value::Float(at(p)))
-                    .collect(),
-            )
-        }
+/// A style setting's value, from the numbers a tween eases: one is a
+/// number, more a colour.
+fn style_value(numbers: Vec<f64>) -> toml::Value {
+    match numbers[..] {
+        [one] => toml::Value::Float(one),
+        _ => toml::Value::Array(numbers.into_iter().map(toml::Value::Float).collect()),
     }
 }
 
@@ -231,17 +177,7 @@ fn post_tween_done(style: &str, param: &str) -> GameEvent {
 struct PostStyleTween {
     style: String,
     param: String,
-    from: f64,
-    to: f64,
-    seconds: f64,
-    elapsed: f64,
-    easing: Easing,
-}
-
-impl PostStyleTween {
-    fn value(&self, k: f64) -> toml::Value {
-        toml::Value::Float(self.from + (self.to - self.from) * k)
-    }
+    tween: Tween<f64>,
 }
 
 /// What one frame of style tweens did.
@@ -322,11 +258,9 @@ impl StyleTweens {
         seconds: f64,
         easing: &str,
     ) -> StyleApplied {
-        let Some(easing) = Easing::from_name(easing) else {
-            return StyleApplied::Failed(format!(
-                "tween_post_style_param: no easing `{easing}`; one of {}",
-                Easing::NAMES.join(", ")
-            ));
+        let easing = match Easing::parse(easing, "tween_post_style_param") {
+            Ok(easing) => easing,
+            Err(e) => return StyleApplied::Failed(e),
         };
         if !target.is_finite() {
             return StyleApplied::Failed(format!(
@@ -356,19 +290,16 @@ impl StyleTweens {
         let tween = PostStyleTween {
             style: style.to_string(),
             param: param.to_string(),
-            from,
-            to: target,
-            seconds,
-            elapsed: 0.0,
-            easing,
+            tween: Tween::new(from, target, seconds, easing),
         };
-        // Written once now, at its start: a reveal the style didn't have
-        // is then 0, so the frame stays live until it moves
-        let k = if seconds > 0.0 { 0.0 } else { 1.0 };
-        if let Err(e) = post_style::set_post_style_param(config, style, param, tween.value(k)) {
+        // Written once now, at its start (its target, with no time to ease
+        // over): a reveal the style didn't have is then 0, so the frame
+        // stays live until it moves
+        let now = toml::Value::Float(tween.tween.value());
+        if let Err(e) = post_style::set_post_style_param(config, style, param, now) {
             return StyleApplied::Failed(format!("tween_post_style_param: {e}"));
         }
-        if seconds.is_nan() || seconds <= 0.0 {
+        if tween.tween.done() {
             return applied(Some(post_tween_done(style, param)));
         }
         self.post.push(tween);
@@ -390,18 +321,12 @@ impl StyleTweens {
             return (out, false);
         }
         self.post.retain_mut(|t| {
-            t.elapsed += dt.max(0.0);
-            let done = t.elapsed >= t.seconds * (1.0 - 1e-9);
-            let k = if done {
-                1.0
-            } else {
-                t.easing.apply(t.elapsed / t.seconds)
-            };
-            if let Err(e) = post_style::set_post_style_param(config, &t.style, &t.param, t.value(k))
-            {
+            let value = toml::Value::Float(t.tween.step(dt));
+            if let Err(e) = post_style::set_post_style_param(config, &t.style, &t.param, value) {
                 out.failures.push(format!("tween_post_style_param: {e}"));
                 return false;
             }
+            let done = t.tween.done();
             if done {
                 out.events.push(post_tween_done(&t.style, &t.param));
             }
@@ -470,11 +395,9 @@ impl StyleTweens {
         seconds: f64,
         easing: &str,
     ) -> StyleApplied {
-        let Some(easing) = Easing::from_name(easing) else {
-            return StyleApplied::Failed(format!(
-                "tween_style_param: no easing `{easing}`; one of {}",
-                Easing::NAMES.join(", ")
-            ));
+        let easing = match Easing::parse(easing, "tween_style_param") {
+            Ok(easing) => easing,
+            Err(e) => return StyleApplied::Failed(e),
         };
         let id = entity;
         let ends = match entity_style::tween_endpoints(world, id, param, target, config) {
@@ -495,15 +418,12 @@ impl StyleTweens {
             entity: id,
             style: ends.style,
             param: param.to_string(),
-            from: ends.from,
-            to: ends.to,
-            seconds,
-            elapsed: 0.0,
-            easing,
+            tween: Tween::new(ends.from, ends.to, seconds, easing),
         };
-        if seconds.is_nan() || seconds <= 0.0 {
+        if tween.tween.done() {
             // No time to ease over: there now, done now
-            return match entity_style::set_style_param(world, id, param, tween.value(1.0)) {
+            let there = style_value(tween.tween.value());
+            return match entity_style::set_style_param(world, id, param, there) {
                 Ok(_) => applied(Some(tween_done(id, param))),
                 Err(e) => StyleApplied::Failed(format!("tween_style_param: {e}")),
             };
@@ -528,18 +448,13 @@ impl StyleTweens {
                 // Given another style (or none) since: nothing left to ease
                 return false;
             }
-            t.elapsed += dt.max(0.0);
-            // A hair of slack so 60 steps of 1/60 s finish a 1 s tween
-            let done = t.elapsed >= t.seconds * (1.0 - 1e-9);
-            let k = if done {
-                1.0
-            } else {
-                t.easing.apply(t.elapsed / t.seconds)
-            };
-            if let Err(e) = entity_style::set_style_param(world, id, &t.param, t.value(k)) {
+            // 60 steps of 1/60 s finish a 1 s tween (`Tween::done`'s slack)
+            let value = style_value(t.tween.step(dt));
+            if let Err(e) = entity_style::set_style_param(world, id, &t.param, value) {
                 out.failures.push(format!("tween_style_param: {e}"));
                 return false;
             }
+            let done = t.tween.done();
             if done {
                 out.events.push(tween_done(t.entity, &t.param));
             }

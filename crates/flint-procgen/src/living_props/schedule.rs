@@ -109,6 +109,7 @@ impl LivingProps {
         registry: &GeneratorRegistry,
         wooze: Option<(&WoozeField, f64)>,
     ) -> Vec<LineageDone> {
+        flint_core::scope!("living::tick", self.props.len());
         self.time += dt;
         let start = Instant::now();
         let species = &self.species;
@@ -128,11 +129,15 @@ impl LivingProps {
         }
 
         let done = if budget_ms > 0.0 {
+            flint_core::scope!("living::build_lineage");
             self.build_next_lineage(registry)
         } else {
             None
         };
-        let worked = done.is_some() || self.fill_within(budget_ms, start, registry);
+        let worked = done.is_some() || {
+            flint_core::scope!("living::fill_rings");
+            self.fill_within(budget_ms, start, registry)
+        };
         self.start_what_is_ready();
 
         let spent = start.elapsed().as_secs_f64() * 1000.0;

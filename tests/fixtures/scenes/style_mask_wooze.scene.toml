@@ -1,0 +1,120 @@
+# Style mask, shallow wooze: glyph props that drift on the field (#737).
+#
+# A `shallow_wooze` entity's vertices move through the field's noise in a
+# vertex stage of their own (#215), in the main and shadow passes. The
+# style mask redraws styled entities and tests each fragment against the
+# scene's depth, so it must move them the same way: before #737 it drew
+# them at their rest pose, and where the drawn mesh had drifted off it the
+# mask had holes (unstyled pixels on the prop) and spill (glyphs on the
+# ground beside it). The amplitude here is far past any real prop's, so a
+# rest-pose mask would miss by many cells.
+#
+#   cargo run --bin flint -- render tests/fixtures/scenes/style_mask_wooze.scene.toml --no-grid --time 2 -o wooze.png
+#   cargo run --bin flint -- render tests/fixtures/scenes/style_mask_wooze.scene.toml --no-grid --time 2 -o mask.png --debug-mode style
+#
+# Without `--time` the field doesn't run and the props stand at rest.
+
+[scene]
+name = "Style Mask Wooze"
+version = "1.0"
+description = "Glyph props on the shallow wooze field, masked where they are drawn (#737)"
+
+[wooze]
+step = 0.5
+glide = 0.4
+
+[camera]
+position = [0.0, 1.4, 4.2]
+target = [0.0, 0.7, 0.0]
+fov = 50.0
+
+[post_process]
+exposure = 1.15
+vignette_enabled = true
+vignette_intensity = 0.3
+
+[post_process.styles.ascii]
+scope = "entities"
+cell = 8
+background = 0.25
+brightness = 0.2
+contrast = 1.3
+
+[entities.key]
+[entities.key.transform]
+position = [0, 20, 0]
+[entities.key.light]
+type = "directional"
+direction = [-0.5, 0.8, 0.45]
+color = [1.0, 0.9, 0.78]
+intensity = 2.2
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.05, 0.07, 0.14, 1.0]
+horizon_color = [0.20, 0.18, 0.22, 1.0]
+cloud_coverage = 0.1
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-20, -0.1, -20]
+max = [20, 0, 20]
+[entities.ground.material]
+color = [0.16, 0.14, 0.11, 1.0]
+roughness = 0.95
+
+# --- In glyphs, on the field ---
+
+# A tall slab, drifting
+[entities.slab]
+archetype = "furniture"
+[entities.slab.transform]
+position = [-0.8, 0, 0]
+rotation = [0, 15, 0]
+[entities.slab.bounds]
+min = [-0.4, 0.0, -0.15]
+max = [0.4, 1.6, 0.15]
+[entities.slab.material]
+color = [0.58, 0.56, 0.52, 1.0]
+roughness = 0.9
+[entities.slab.ascii_style]
+color = "tint"
+tint = [0.55, 0.85, 1.0]
+ramp = "classic"
+[entities.slab.shallow_wooze]
+amplitude = 0.25
+wavelength = 0.6
+
+# A skinned figure, drifting with it
+[entities.figure]
+[entities.figure.transform]
+position = [0.75, 0, 0]
+rotation = [0, -20, 0]
+[entities.figure.model]
+asset = "../../../examples/models/YBot.glb"
+[entities.figure.ascii_style]
+ramp = "blocks"
+color = "tint"
+tint = [1.0, 0.72, 0.32]
+[entities.figure.shallow_wooze]
+amplitude = 0.2
+wavelength = 0.5
+
+# A still twin of the slab, at the back: its mask must not move
+[entities.still]
+archetype = "furniture"
+[entities.still.transform]
+position = [0.1, 0, -1.6]
+[entities.still.bounds]
+min = [-0.4, 0.0, -0.15]
+max = [0.4, 1.4, 0.15]
+[entities.still.material]
+color = [0.5, 0.5, 0.56, 1.0]
+roughness = 0.9
+[entities.still.ascii_style]
+color = "tint"
+tint = [0.7, 1.0, 0.7]
+ramp = "classic"

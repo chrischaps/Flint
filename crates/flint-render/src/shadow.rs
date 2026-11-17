@@ -69,9 +69,8 @@ pub struct ShadowUniforms {
     /// verbatim, so stale/default uniforms keep pre-lever behavior.
     pub pcss: [f32; 4],
     /// The spot's shadow (#504): world to the spot map's clip space
-    /// ([`SPOT_SHADOW_LAYER`]). Only the main, skinned and terrain shaders
-    /// declare these two; the other mirrors stop at `pcss`, which a larger
-    /// buffer allows.
+    /// ([`SPOT_SHADOW_LAYER`]). The struct is declared once in WGSL,
+    /// `lights.wgsl` (#738), and every lit shader takes all of it.
     pub spot_view_proj: [[f32; 4]; 4],
     /// x = near plane, y = far plane (the light's `range`), z = tan of the
     /// map's half-angle, w = 1.0 when the spot map was drawn this frame.

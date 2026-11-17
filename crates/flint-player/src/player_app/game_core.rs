@@ -65,6 +65,8 @@ pub struct GameCore {
     pub(crate) store: PersistentStore,
     /// Entity style tweens (#370), stepped with game time.
     pub(crate) style_tweens: super::style_commands::StyleTweens,
+    /// Scripts' `tween`s of component fields (#734), stepped with them.
+    pub(crate) field_tweens: flint_script::FieldTweens,
     /// The renderer's config generation the scripts' style reader was
     /// last made from (#372).
     pub(crate) style_reader_generation: Option<u64>,
@@ -107,6 +109,7 @@ impl GameCore {
             state_machine: super::subsystem::state_machine(),
             store: PersistentStore::new(),
             style_tweens: Default::default(),
+            field_tweens: Default::default(),
             style_reader_generation: None,
             #[cfg(feature = "procgen")]
             procgen_resolver: ProcGenResolver::new(),
@@ -363,6 +366,7 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     // draw), then what it asked, then what it drew
     {
         let core = host.core();
+        flint_core::scope!("call_draw_uis");
         core.script.call_draw_uis(&mut core.world);
     }
     dispatch(host);
@@ -407,6 +411,7 @@ pub(crate) fn run_stage<H: FrameHost + ?Sized>(
     policy: Option<&StateConfig>,
 ) {
     if !host.core().subsystems.is_empty() {
+        flint_core::scope!("subsystems", stage.label());
         let (core, lent) = host.lend();
         core.with_subsystems(lent, policy, |subsystems, ctx| {
             subsystems.update(stage, ctx)
@@ -457,6 +462,7 @@ impl GameCore {
     /// released. Always collected: input is processed while paused, so
     /// pause/unpause keybinds work.
     fn collect_game_events(&mut self, input: &InputState) -> Vec<GameEvent> {
+        flint_core::scope!("collect_game_events");
         let mut game_events = self.events.drain();
         if let Some(log) = &mut self.event_log {
             for event in &game_events {
@@ -476,8 +482,8 @@ impl GameCore {
 
     /// Hand scripts' style reads (#372) the settings the renderer draws
     /// with, copied only when they've changed since the last hand-over.
-    #[profiling::function]
     fn publish_style_reader(&mut self, renderer: Option<&SceneRenderer>) {
+        flint_core::scope!("publish_style_reader");
         let Some(renderer) = renderer else {
             return;
         };
@@ -495,6 +501,7 @@ impl GameCore {
     /// input and events, the clock), then `on_update` unless the game state
     /// pauses scripts.
     fn run_scripts(&mut self, config: &StateConfig, events: &[GameEvent], lent: Lent<'_>) {
+        flint_core::scope!("run_scripts");
         self.publish_style_reader(lent.renderer.as_deref());
         let camera = &*lent.camera;
         self.script
@@ -518,7 +525,6 @@ impl GameCore {
     /// consuming steps to avoid a spiral), then the first-person camera.
     /// Returns where the listener goes, when the sound runs and a
     /// first-person player moved the camera.
-    #[profiling::function]
     fn tick_fixed_physics(
         &mut self,
         config: &StateConfig,
@@ -527,6 +533,7 @@ impl GameCore {
         input: &InputState,
         camera: &mut Camera,
     ) -> Option<Listener> {
+        flint_core::scope!("tick_fixed_physics");
         self.physics.begin_frame(self.clock.pending_fixed_ratio());
         self.fixed_steps = 0;
         // Look and the jump press once a frame, however many steps run
@@ -571,18 +578,23 @@ impl GameCore {
         })
     }
 
-    /// Move the style tweens on by this frame's game time (#370), while
-    /// scripts run.
+    /// Move the style tweens (#370) and the field tweens (#734) on by this
+    /// frame's game time, while scripts run.
     fn step_style_tweens(&mut self) {
         if self.state_machine.active_config().runs(SCRIPTS) {
-            let step = self
-                .style_tweens
-                .step(&mut self.world, self.clock.delta_time);
+            flint_core::scope!("step_style_tweens");
+            let dt = self.clock.delta_time;
+            let step = self.style_tweens.step(&mut self.world, dt);
             for event in step.events {
                 self.events.push(event);
             }
             for message in step.failures {
                 tracing::warn!(target: "script", "{message}");
+            }
+            if !self.field_tweens.is_empty() {
+                for event in self.field_tweens.step(&mut self.world, dt) {
+                    self.events.push(event);
+                }
             }
         }
     }
@@ -634,8 +646,8 @@ impl GameCore {
 
     /// Animations, then the sprite animations' ends and sequence cues to
     /// the scripts (skipped while the game state pauses animation).
-    #[profiling::function]
     fn animate(&mut self, config: &StateConfig) {
+        flint_core::scope!("animate");
         if !config.runs(ANIMATION) {
             return;
         }
@@ -668,10 +680,14 @@ impl GameCore {
 
     /// Bone probes, IK, then the particles.
     fn after_animation(&mut self, config: &StateConfig) {
+        flint_core::scope!("after_animation");
         // Publish bone_probe joints: model-local joint positions written
         // into the component right after the pose computation, so scripts
         // read this frame's pose (e.g. seat_camera following the eye).
-        super::headless_animation::publish_bone_probes(&self.animation, &mut self.world);
+        {
+            flint_core::scope!("publish_bone_probes");
+            super::headless_animation::publish_bone_probes(&self.animation, &mut self.world);
+        }
 
         // Two-bone IK (ADR 0070): pin chain tips to their targets now that
         // scripts, physics and animation have all posed the world; the
@@ -691,8 +707,8 @@ impl GameCore {
     /// renderer, when there is one. Living props move on after it, at
     /// `Stage::Procgen`, in whatever it left of the budget.
     #[cfg(feature = "procgen")]
-    #[profiling::function]
     pub(crate) fn tick_procgen(&mut self, lent: Lent<'_>) {
+        flint_core::scope!("tick_procgen");
         use flint_core::frame_notes::{self, NoteKind};
         // Whether the queue made anything is known only after: timed by
         // hand, noted (#1077) when it did
@@ -766,6 +782,7 @@ pub(crate) fn dispatch_commands<H: FrameHost + ?Sized>(
     host: &mut H,
     mut commands: Vec<ScriptCommand>,
 ) {
+    flint_core::scope!("dispatch_commands", commands.len());
     commands.retain(|command| !host.refuses(command));
     if !host.core().subsystems.is_empty() && !commands.is_empty() {
         let (core, lent) = host.lend();
@@ -1035,6 +1052,25 @@ impl ScriptHost for CoreCommands<'_> {
             )
         };
         self.style_applied(applied);
+    }
+
+    fn tween(
+        &mut self,
+        entity: EntityId,
+        path: String,
+        target: toml::Value,
+        seconds: f64,
+        easing: flint_core::tween::Easing,
+    ) {
+        let core = &mut *self.core;
+        let started =
+            (core.field_tweens).start(&mut core.world, entity, &path, &target, seconds, easing);
+        match started {
+            Ok(Some(done)) => core.events.push(done),
+            Ok(None) => {}
+            // The world changed between the call, which checked, and now
+            Err(message) => tracing::warn!(target: "script", "{message}"),
+        }
     }
 
     fn clear_entity_style(&mut self, entity: EntityId) {

@@ -28,6 +28,7 @@ mod reload_worker;
 pub mod style_reader;
 pub mod sync;
 pub mod testing;
+pub mod tween;
 pub mod ui;
 
 pub use context::MusicClock;
@@ -46,6 +47,7 @@ pub use module::{ModuleCommand, ScriptModule};
 pub use projector::{GroundField, Projector, ScreenPoint, View};
 pub use style_reader::{EntityStyle, StyleReader};
 use sync::ScriptSync;
+pub use tween::{FieldTweens, TWEEN_DONE};
 
 /// Top-level scripting system integrating engine, sync, and the game loop
 pub struct ScriptSystem {
@@ -569,6 +571,7 @@ impl ScriptSystem {
 
     /// Generate draw commands from the data-driven UI system (unclipped)
     pub fn generate_ui_draw_commands(&mut self, screen_w: f32, screen_h: f32) -> Vec<DrawItem> {
+        flint_core::scope!("script::ui_layout");
         let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.ui_system
             .generate_draw_commands(screen_w, screen_h)
@@ -731,6 +734,7 @@ impl RuntimeSystem for ScriptSystem {
     }
 
     fn update(&mut self, world: &mut FlintWorld, _dt: f64) -> Result<()> {
+        flint_core::scope!("script::update");
         // Errors say which frame they first happened in (#693)
         self.engine.errors.next_frame();
         // A perf readout times every callback (ScriptEngine::call), and
@@ -738,17 +742,27 @@ impl RuntimeSystem for ScriptSystem {
 
         // Check for hot-reloaded scripts
         let began = self.engine.step_began();
-        self.sync.check_hot_reload(&mut self.engine, world);
+        {
+            flint_core::scope!("script::hot_reload_poll");
+            {
+                flint_core::scope!("script::poll_scripts");
+                self.sync.check_hot_reload(&mut self.engine, world);
+            }
 
-        // Check for edited .ui.toml / .style.toml / token files
-        crate::lock_or_recover(&self.engine.ctx)
-            .ui_system
-            .poll_reload();
+            // Check for edited .ui.toml / .style.toml / token files
+            flint_core::scope!("script::poll_ui");
+            crate::lock_or_recover(&self.engine.ctx)
+                .ui_system
+                .poll_reload();
+        }
         self.engine.step_done("[hot reload]", began);
 
         // Discover any new script entities
         let began = self.engine.step_began();
-        self.sync.discover_and_load(world, &mut self.engine);
+        {
+            flint_core::scope!("script::discover");
+            self.sync.discover_and_load(world, &mut self.engine);
+        }
 
         // Save data at an older version (a slot a script switched to last
         // frame, or one no earlier scene's scripts could migrate), before

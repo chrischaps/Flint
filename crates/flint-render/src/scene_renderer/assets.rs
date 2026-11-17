@@ -70,6 +70,7 @@ impl SceneRenderer {
         name: &str,
         import_result: &ImportResult,
     ) {
+        flint_core::scope!("upload_model", name);
         self.mesh_cache
             .upload_imported(device, name, import_result, super::MODEL_FALLBACK_COLOR);
 
@@ -92,6 +93,7 @@ impl SceneRenderer {
         name: &str,
         import_result: &ImportResult,
     ) {
+        flint_core::scope!("upload_model", name);
         if let Some(sp) = &self.pipelines.skinned {
             self.mesh_cache.upload_skinned(
                 device,

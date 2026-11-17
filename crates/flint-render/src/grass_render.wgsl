@@ -54,65 +54,6 @@ struct EntityPosition {
     _pad: f32,
 };
 
-// Must match LightUniforms layout in terrain_shader.wgsl and shader.wgsl
-struct DirectionalLight {
-    direction: vec3<f32>,
-    volumetric_intensity: f32,
-    color: vec3<f32>,
-    intensity: f32,
-    volumetric_color: vec3<f32>,
-    _pad1: f32,
-};
-
-struct PointLight {
-    position: vec3<f32>,
-    radius: f32,
-    color: vec3<f32>,
-    intensity: f32,
-    // Physical source radius (world units); 0 = punctual (ADR 0056).
-    // Struct grew 32 -> 48 B — must match the Rust PointLight in all six
-    // LightUniforms mirrors (light_uniforms_layout test).
-    source_radius: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
-};
-
-struct SpotLight {
-    position: vec3<f32>,
-    radius: f32,
-    direction: vec3<f32>,
-    inner_angle: f32,
-    color: vec3<f32>,
-    outer_angle: f32,
-    intensity: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
-};
-
-struct LightUniforms {
-    directional_lights: array<DirectionalLight, 4>,
-    point_lights: array<PointLight, 16>,
-    spot_lights: array<SpotLight, 8>,
-    directional_count: u32,
-    point_count: u32,
-    spot_count: u32,
-    _pad: u32,
-    ambient_sky: vec4<f32>,
-    ambient_ground: vec4<f32>,
-    // rgb = sheen tint, w = strength; zero = off (must match LightUniforms in pipeline.rs)
-    sheen_color_strength: vec4<f32>,
-};
-
-struct ShadowUniforms {
-    cascade_view_proj: array<mat4x4<f32>, 3>,
-    cascade_splits: vec4<f32>,
-    // PCSS (ADR 0057): xyz = per-cascade light-ortho depth range (world
-    // units), w = tan(sun angular size); w = 0 -> legacy 3x3 PCF verbatim.
-    pcss: vec4<f32>,
-};
-
 // Bind group 0: Transform (shared)
 @group(0) @binding(0)
 var<uniform> transform: TransformUniforms;
@@ -121,15 +62,7 @@ var<uniform> transform: TransformUniforms;
 @group(1) @binding(0)
 var<uniform> grass: GrassRenderUniforms;
 
-// Bind group 2: Lights (shared with terrain/PBR)
-@group(2) @binding(0)
-var<uniform> lights: LightUniforms;
-@group(2) @binding(1)
-var shadow_depth: texture_depth_2d_array;
-@group(2) @binding(2)
-var shadow_sampler: sampler_comparison;
-@group(2) @binding(3)
-var<uniform> shadow_uniforms: ShadowUniforms;
+// Bind group 2: Lights (light_bindings.wgsl, the scene shaders' own, #738)
 
 // Bind group 3: Instance data + entity positions
 @group(3) @binding(0)
@@ -243,17 +176,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let n_dot_l = max(dot(in.world_normal, light_dir), 0.0);
 
         // Shadow sampling (cascade 0 only for grass)
-        let shadow_pos = shadow_uniforms.cascade_view_proj[0] * vec4<f32>(in.world_pos, 1.0);
+        let shadow_pos = shadow.cascade_view_proj[0] * vec4<f32>(in.world_pos, 1.0);
         let shadow_ndc = shadow_pos.xyz / shadow_pos.w;
         let shadow_uv = shadow_ndc.xy * vec2<f32>(0.5, -0.5) + 0.5;
-        var shadow = 1.0;
+        var lit = 1.0;
         // A far plane of 0 is "shadows off" (the pass is skipped and its
         // maps are stale), as in the PBR shader.
-        if shadow_uniforms.cascade_splits.z > 0.0 && shadow_uv.x >= 0.0 && shadow_uv.x <= 1.0 && shadow_uv.y >= 0.0 && shadow_uv.y <= 1.0 {
-            shadow = textureSampleCompareLevel(shadow_depth, shadow_sampler, shadow_uv, 0, shadow_ndc.z - 0.002);
+        if shadow.cascade_splits.z > 0.0 && shadow_uv.x >= 0.0 && shadow_uv.x <= 1.0 && shadow_uv.y >= 0.0 && shadow_uv.y <= 1.0 {
+            lit = textureSampleCompareLevel(shadow_maps, shadow_sampler, shadow_uv, 0, shadow_ndc.z - 0.002);
         }
 
-        let diffuse = n_dot_l * lights.directional_lights[0].intensity * shadow;
+        let diffuse = n_dot_l * lights.directional_lights[0].intensity * lit;
 
         // Subsurface scattering approximation — backlit tips glow
         let view_dir = normalize(transform.camera_pos - in.world_pos);

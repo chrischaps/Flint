@@ -341,6 +341,7 @@ impl DecodeQueue {
 
     /// Take a queued sound out and decode all of it now.
     pub fn decode_now(&mut self, name: &str) -> Option<Decoded> {
+        flint_core::scope!("audio::decode", name);
         let i = self.queue.iter().position(|q| q.name == name)?;
         let start = Instant::now();
         let q = self.queue.remove(i);

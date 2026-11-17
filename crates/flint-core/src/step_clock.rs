@@ -53,7 +53,7 @@ pub fn eased(frac: f64, glide: f32) -> f32 {
         return 0.0;
     }
     let x = ((frac - (1.0 - glide)) / glide).clamp(0.0, 1.0);
-    (x * x * (3.0 - 2.0 * x)) as f32
+    crate::tween::Easing::Smooth.apply(x) as f32
 }
 
 /// Which tick `time` falls in at `rate` ticks a second: the clock with no

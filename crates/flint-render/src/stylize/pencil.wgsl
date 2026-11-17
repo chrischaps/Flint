@@ -348,7 +348,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if passes_through(slot) {
         return src;
     }
-    let row = u.rows[slot];
+    let row = pencil_rows[slot];
     let ppp = u.pixels_per_point;
     let texel = 1.0 / u.size;
     let prep = textureSampleLevel(prep_texture, prep_sampler, in.uv, 0.0);

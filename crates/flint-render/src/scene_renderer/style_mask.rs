@@ -119,6 +119,7 @@ impl SceneRenderer {
         depth_view: &wgpu::TextureView,
         depth_key: crate::bind_cache::DepthKey,
     ) {
+        flint_core::scope!("encode_style_mask");
         self.style_mask.veiled = false;
         // A replay stepping the mask (#1204): its styled draws past the limit
         let (state, terrain, frustum) = (
@@ -188,6 +189,18 @@ impl SceneRenderer {
                     }),
             );
         }
+        for d in &mut draws {
+            d.woozy = self.masks_woozy(d);
+        }
+        if draws.iter().any(|d| d.woozy) {
+            if let Some(pass) = &mut self.style_mask.passes.mask {
+                pass.ensure_wooze(
+                    device,
+                    &self.layouts.transform_bind_group_layout,
+                    &skinned.bone_bind_group_layout,
+                );
+            }
+        }
         // The veil's selector (#290): what's in front of them, every item
         // that blends and isn't styled itself, drawn as its coverage
         let mut veil = crate::style_mask::Veil {
@@ -209,6 +222,7 @@ impl SceneRenderer {
                             transform_bind_group: &d.transform_bind_group,
                             material_bind_group: &d.material_bind_group,
                             bones: None,
+                            echo: false,
                         })
                     }
                     Draw::Skinned(d) => veil.meshes.push(crate::style_mask::VeilMesh {
@@ -218,12 +232,26 @@ impl SceneRenderer {
                         transform_bind_group: &d.transform_bind_group,
                         material_bind_group: &d.material_bind_group,
                         bones: Some(&d.bone_bind_group),
+                        echo: false,
+                    }),
+                    // A living prop's echoes (#228, #737), translucent and
+                    // depth-tested with no depth write, each by its alpha: a
+                    // lightening echo (`echo_blend = "lighten"`) too, since
+                    // the veil can't know how much light it adds there
+                    Draw::Echo(d) => veil.meshes.push(crate::style_mask::VeilMesh {
+                        vertex_buffer: &d.vertex_buffer,
+                        index_buffer: &d.index_buffer,
+                        index_count: d.index_count,
+                        transform_bind_group: &d.transform_bind_group,
+                        material_bind_group: &d.material_bind_group,
+                        bones: Some(&d.bone_bind_group),
+                        echo: true,
                     }),
                     // Every particle draw goes in, as the upload sorted them
                     Draw::Particles(_) => particles = true,
-                    // Echoes aren't in the veil yet: #737's next step
-                    Draw::Echo(_) => {}
-                    // Billboards and terrain don't blend; a wireframe isn't a surface
+                    // Billboards and terrain don't blend (a billboard's alpha
+                    // cuts it out, and what's kept writes depth, so the mask's
+                    // own depth test leaves it out); a wireframe isn't a surface
                     Draw::Static(_) | Draw::Billboard(_) | Draw::Terrain(_) => {}
                 }
             }
@@ -277,6 +305,7 @@ impl SceneRenderer {
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
     ) {
+        flint_core::scope!("encode_style_albedo");
         let Some(resources) = &self.postprocess_resources else {
             return;
         };
@@ -398,10 +427,11 @@ impl SceneRenderer {
                 else {
                     continue;
                 };
-                let name = if d.bones.is_some() {
-                    "style mask skinned"
-                } else {
-                    "style mask"
+                let name = match (d.bones.is_some(), self.masks_woozy(&d)) {
+                    (false, false) => "style mask",
+                    (true, false) => "style mask skinned",
+                    (false, true) => "style mask woozy",
+                    (true, true) => "style mask woozy skinned",
                 };
                 if self.draws.within(item, SteppedPass::StyleMask) {
                     pass.draws.push(self.logged_draw(item, None, name));
@@ -414,6 +444,18 @@ impl SceneRenderer {
         if self.style_mask.veiled {
             pass.pass.also.push("Veil".into());
         }
+    }
+
+    /// Whether the mask draws `d` through the woozy vertex stages (#737):
+    /// it drifts, and the main pass drew it through its own (they're made
+    /// on its first woozy draw), so the two put each vertex alike.
+    fn masks_woozy(&self, d: &crate::style_mask::MaskDraw<'_>) -> bool {
+        d.woozy
+            && if d.bones.is_some() {
+                self.pipelines.wooze_skinned.is_some()
+            } else {
+                self.pipelines.wooze_standard.is_some()
+            }
     }
 
     /// Log the style albedo's meshes (#1204), as
@@ -493,6 +535,7 @@ fn mask_draw<'a>(
         id,
         blend: state.blend_by_entity.get(entity).copied().unwrap_or(1.0),
         torn: state.torn_entities.contains(entity),
+        woozy: item.wooze().is_some(),
     })
 }
 
