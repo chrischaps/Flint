@@ -5,7 +5,7 @@
 //!
 //! Reading the committed logs in `<base_dir>/logs/latency/`: output-latency
 //! measurements (`latency-*.toml`, from spikes/latency_harness) and tap-to-beat
-//! calibrations (`calibration-*.toml`, from `flint calibrate`). File names
+//! calibrations (`calibration-*.toml`, from `flint music calibrate`). File names
 //! embed date/epoch so lexicographic max = newest. Both offsets are echoed
 //! into every judgment/session header so runs are reproducible.
 
@@ -76,7 +76,8 @@ pub fn resolve_timing_offsets(base_dir: &Path) -> TimingOffsets {
             ms
         }
         None => {
-            notices.push("tap calibration: none on record (run `flint calibrate`)".to_string());
+            notices
+                .push("tap calibration: none on record (run `flint music calibrate`)".to_string());
             0.0
         }
     };

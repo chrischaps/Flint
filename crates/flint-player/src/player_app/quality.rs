@@ -24,14 +24,11 @@ impl PlayerApp {
         };
         // FLINT_SHADOWS=0 starts with the shadow pass off, so a perf run
         // can A/B its cost headlessly.
-        if std::env::var("FLINT_SHADOWS").is_ok_and(|v| v == "0") {
+        if flint_core::env::SHADOWS.flag() == Some(false) {
             q.shadows = false;
         }
         // FLINT_SHADOW_RES=1024 sizes each cascade's map (FlintKart#54).
-        if let Some(res) = std::env::var("FLINT_SHADOW_RES")
-            .ok()
-            .and_then(|v| v.parse::<u32>().ok())
-        {
+        if let Some(res) = flint_core::env::SHADOW_RES.u32() {
             q.shadow_resolution = res;
         }
         for e in q.apply_str(&self.launch.quality_overrides) {

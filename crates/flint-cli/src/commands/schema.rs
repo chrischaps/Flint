@@ -30,14 +30,11 @@ pub struct SchemaArgs {
     pub list: bool,
 
     /// text; json (the schemas as data: every field, type, default and
-    /// range); or json-schema (a JSON Schema for a .scene.toml, for taplo
-    /// and Even Better TOML; with a component's name, for its table alone)
+    /// range; the global --json is the same); or json-schema (a JSON Schema
+    /// for a .scene.toml, for taplo and Even Better TOML; with a component's
+    /// name, for its table alone)
     #[arg(long, default_value = "text")]
     pub format: String,
-
-    /// The same as --format json
-    #[arg(long)]
-    pub json: bool,
 
     /// Write to this file (UTF-8, no byte-order mark) instead of stdout
     #[arg(long, short)]
@@ -58,11 +55,11 @@ enum Format {
 }
 
 pub fn run(args: SchemaArgs) -> Result<()> {
-    let format = match (args.format.as_str(), args.json) {
+    // A JSON Schema is a JSON document too, so --json keeps it
+    let format = match (args.format.as_str(), crate::output::json()) {
         ("text", true) | ("json", _) => Format::Json,
         ("text", false) => Format::Text,
-        ("json-schema", false) => Format::JsonSchema,
-        ("json-schema", true) => bail!("--json and --format json-schema are two formats: pass one"),
+        ("json-schema", _) => Format::JsonSchema,
         (other, _) => bail!("unknown format '{other}': text, json or json-schema"),
     };
 
@@ -141,8 +138,10 @@ pub fn run(args: SchemaArgs) -> Result<()> {
         Some(path) => {
             std::fs::write(path, &out).with_context(|| format!("Failed to write {path}"))?;
             eprintln!("Wrote {path}");
+            crate::output::when_json(|| serde_json::json!({ "written": [path] }));
         }
-        None => print!("{out}"),
+        None if format == Format::Text => print!("{out}"),
+        None => crate::output::document_text(&out),
     }
     Ok(())
 }

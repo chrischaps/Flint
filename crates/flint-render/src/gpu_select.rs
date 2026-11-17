@@ -95,11 +95,19 @@ pub fn backends() -> wgpu::Backends {
 
 /// Create a wgpu instance over [`backends`], with DX12 compiling shaders
 /// through [`dx12_shaders`]' choice: wgpu's `Auto` unless
-/// `WGPU_DX12_COMPILER` says otherwise.
+/// `WGPU_DX12_COMPILER` says otherwise. When draws are named for a GPU
+/// debugger ([`crate::gpu_labels::draws`]) it is made with
+/// `InstanceFlags::DEBUG`, without which Vulkan hands the driver no label
+/// in a release build (#1083).
 pub fn instance() -> wgpu::Instance {
     let backends = backends();
+    let mut flags = wgpu::InstanceFlags::default();
+    if crate::gpu_labels::draws() {
+        flags |= wgpu::InstanceFlags::DEBUG;
+    }
     wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends,
+        flags,
         backend_options: wgpu::BackendOptions {
             dx12: wgpu::Dx12BackendOptions {
                 shader_compiler: dx12_compiler(backends),
@@ -459,12 +467,12 @@ async fn select_by_name(
     matched
 }
 
-/// Whether GPU tests must find an adapter (#314): `FLINT_REQUIRE_GPU` set
-/// to anything but `0` or empty. CI sets it on the job that renders on a
+/// Whether GPU tests must find an adapter (#314): `FLINT_REQUIRE_GPU` on
+/// (`1`, `on`, `true`; a value it doesn't take warns and is off). CI sets it on the job that renders on a
 /// software adapter, so a test that can't get one fails there instead of
 /// passing without having run.
 pub fn gpu_required() -> bool {
-    std::env::var("FLINT_REQUIRE_GPU").is_ok_and(|v| !v.is_empty() && v != "0")
+    flint_core::env::REQUIRE_GPU.flag().unwrap_or(false)
 }
 
 /// What a GPU test calls when it found no adapter, before it returns

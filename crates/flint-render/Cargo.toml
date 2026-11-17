@@ -27,6 +27,8 @@ flint-terrain = { workspace = true }
 flint-particles = { workspace = true }
 toml = { workspace = true }
 serde = { workspace = true }
+# A frame's description (#1084): the drawn post config's values by key
+serde_json = { workspace = true }
 ab_glyph = { workspace = true }
 wgpu = { workspace = true }
 winit = { workspace = true }
@@ -53,6 +55,10 @@ image = { workspace = true, features = ["default"] }
 # web relies on the browser's compiler instead. `wgsl-out` writes the
 # module back out with every user loop guarded (#411).
 naga = { version = "30.0.2", features = ["wgsl-in", "wgsl-out"] }
+# A frame capture's float and depth targets as OpenEXR half / f32 with ZIP
+# (#1085, ADR 0126): image's default `exr` feature already builds the crate;
+# it's used directly for half floats, u32 channels and the compression.
+exr = { version = "1.74", default-features = false }
 
 # DX12's shader compiler (#912, #947): in a build without static DXC,
 # `gpu_select` loads dxcompiler.dll by name before wgpu-hal does, to report

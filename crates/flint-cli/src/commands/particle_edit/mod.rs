@@ -82,7 +82,7 @@ pub fn editor(args: ParticleEditArgs) -> Result<ParticleEditApp> {
     } else {
         let preset = args.preset.as_deref().unwrap_or("sparks");
         let fx = presets::bootstrap(&path, preset)?;
-        println!(
+        crate::output::say!(
             "Created new particle effect '{}' from the '{}' preset at {}",
             fx.name,
             preset,

@@ -43,65 +43,59 @@ flint render levels/tavern.scene.toml \
 
 ## Post-Processing Flags
 
-Every `[post_process]` key has a flag. CLI values win over the scene block:
+Every `[post_process]` key is one flag, `--set post.<key>=<value>`, spelled as the scene would write it. It repeats, and the command line wins over the scene block. A vector is comma-separated and a bool is `true` or `false`:
 
 ```bash
 # Disable all post-processing (raw shader output)
 flint render scene.toml --no-postprocess --output raw.png
 
 # Custom bloom settings
-flint render scene.toml --bloom-intensity 0.08 --bloom-threshold 0.8
+flint render scene.toml --set post.bloom_intensity=0.08 --set post.bloom_threshold=0.8
 
 # Adjust exposure
-flint render scene.toml --exposure 1.5
+flint render scene.toml --set post.exposure=1.5
 
 # Cheaper SSAO, depth of field, a warm grade
-flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5 \
-    --grade-lift 0.03,0.02,0.015 --grade-gain 1.04,1,0.94
+flint render scene.toml --set post.ssao_samples=16 --set post.dof_strength=0.6 --set post.dof_focus_distance=10 \
+    --set post.dof_focus_range=5 --set post.grade_lift=0.03,0.02,0.015 --set post.grade_gain=1.04,1,0.94
+
+# Fog: an effect with an on switch needs it set too
+flint render scene.toml --set post.fog_enabled=true --set post.fog_density=0.05 --set post.fog_color=0.7,0.75,0.82
 ```
+
+Styles take keys the same way. `--style <name>:<key>=<value>,...` turns a style on with those keys; `--set <style>.<key>=<value>` sets a key and leaves the style on or off as the scene had it. A colour in a `--style` word is `r/g/b` or `#rrggbb`, since commas separate the keys:
+
+```bash
+flint render scene.toml --style kuwahara:radius=6,anisotropy=0.5
+flint render scene.toml --style contour:width=1.5,color=#2a1408
+flint render scene.toml --style ascii:ramp=blocks,palette=amber,color=palette --set ascii.cell=12
+```
+
+The binary lists the keys, so this page doesn't:
+
+| Command | Lists |
+|---------|-------|
+| `flint render --list-effects [--json]` | Every `[post_process]` key by effect, with its kind, default and tuned range. A value past the range still draws, with a warning |
+| `flint render --list-styles [--json]` | Every style, its stage and each key's default and range; with a scene, its user styles too |
+| `flint render --look help` | Every look and the sweeps that tune it |
+| `flint render --style help` | Every style and its keys |
+| `flint render --help` | Every flag, grouped by heading |
+
+The per-effect flags these replaced (`--bloom-intensity`, `--fog-density`, `--kuwahara-radius`, `--ascii-ramp`...) still work for one release, and each prints its new spelling.
+
+The flags that are not `[post_process]` keys:
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--no-postprocess` | `false` | Disable entire post-processing pipeline |
-| `--bloom-intensity <f32>` | `0.04` | Bloom mix strength |
-| `--bloom-threshold <f32>` | `1.0` | Minimum brightness for bloom |
-| `--exposure <f32>` | `1.0` | Exposure multiplier |
-| `--ssao-radius <f32>` | `0.5` | SSAO sample radius |
-| `--ssao-intensity <f32>` | `1.0` | SSAO strength (0 disables) |
-| `--ssao-samples <u32>` | `64` | SSAO samples per pixel, 1--64 |
-| `--fog-density <f32>` | `0.02` | Fog density (enables fog; 0 disables) |
-| `--fog-color <r,g,b>` | `0.7,0.75,0.82` | Fog color |
-| `--fog-height-falloff <f32>` | `0.1` | Enables height fog with this falloff |
-| `--volumetric-density <f32>` | `1.0` | Enables god rays with this density |
-| `--volumetric-samples <u32>` | `32` | Volumetric ray-march steps |
-| `--dither-intensity <f32>` | `0.03` | Enables ordered dither |
-| `--desaturate <f32>` | `0` | Desaturation toward ash grey, 0--1 |
-| `--dof <f32>` | `0` | Depth-of-field strength |
-| `--dof-focus <f32>` | `10.0` | Focus plane distance, world units |
-| `--dof-range <f32>` | `5.0` | Focus half-width, world units |
-| `--kuwahara-radius <u32>` | `4` | Enables the Kuwahara filter with this radius |
-| `--kuwahara-sharpness <f32>` | `8.0` | Kuwahara sector sharpness |
-| `--kuwahara-hardness <f32>` | `8.0` | Kuwahara sector hardness |
-| `--kuwahara-anisotropy <f32>` | `1.0` | Kuwahara anisotropy, 0--1 |
-| `--edge-depth <f32>` / `--edge-normal <f32>` | `0.6` / `2.5` | Shared geometry edges' thresholds (`--style edges_view` shows what they find) |
-| `--kuwahara-boil <f32>` | `0.0` | How far each drawing moves the paint |
-| `--contour` | off | Enable the contour pass |
-| `--contour-width <f32>` | `1.25` | Half a line's width at 1080p (enables contour) |
-| `--contour-threshold <f32>` | `0.08` | How strong an edge must be before it inks (enables contour) |
-| `--contour-strength <f32>` | `0.9` | How dark the ink goes, 0--1 (enables contour) |
-| `--contour-luma <f32>` | `0.5` | How much luminance edges count (enables contour) |
-| `--contour-color <R,G,B>` | near black | The ink's colour, linear (enables contour) |
-| `--contour-fade <f32>` | `30` | Metres at which a line has faded by half (enables contour) |
-| `--contour-boil <f32>` | `0.0` | How far each drawing moves the lines (enables contour) |
-| `--boil-on <u32>` | `2` | Film frames each drawing is held: 1, 2 or 3 |
+| `--set <key=value>` | (none) | One `[post_process]` key (`post.<key>=v`) or one key of a style's table (`<style>.<key>=v`), repeatable, in the order given |
+| `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene, e.g. `ascii:cell=12,ramp=blocks`, `invert`, `kuwahara:radius=6`, `ascii:off` (off everywhere, entities' own included, #376); repeatable; applied after `--set` ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
+| `--look <name\|path>` | (none) | A preset `[post_process]` block merged over the scene's (and over a look the scene names itself with `look = "<name>"`, which goes under its keys): `ascii_noir`, `matrix`, `ink_wash`, `graphite`, `watercolor`, `coloured_pencil`, `blueprint`, `charcoal`, `rotoscope`, or a `styles/<name>.look.toml`; `--set` and `--style` apply over it ([Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps)) |
 | `--boil-time <f64>` | `0` | Seconds of the wooze field to run, which picks the drawing |
-| `--tear <f32>` | `0` | The frame's tear, which `blend_source = "tear"` styles and props show through |
-| `--render-mode <1-6>` | none | Deprecated (#746): the reality styles (`--style matrix`, `blood`, `drunk`, `tron`, `underwater`) |
-| `--film-grain <f32>` | `0` | Film grain intensity |
 | `--grain-time <f32>` | `0` | Post time driving grain and mode animation |
-| `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene, e.g. `ascii:cell=12,ramp=blocks`, `invert`, `kuwahara:radius=6`, `ascii:off` (off everywhere, entities' own included, #376); repeatable; `--style help` lists them, `--list-styles [--json]` with stages and ranges ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
 | `--style-time <f32>` | `0` | Post time animated styles read (the same clock as `--grain-time`) |
-| `--look <name\|path>` | (none) | A preset `[post_process]` block merged over the scene's (and over a look the scene names itself with `look = "<name>"`, which goes under its keys): `ascii_noir`, `matrix`, `ink_wash`, `graphite`, `watercolor`, `coloured_pencil`, `blueprint`, `charcoal`, `rotoscope`, or a `styles/<name>.look.toml`; other flags apply over it; `--look help` lists them ([Looks and sweeps](../concepts/stylize-passes.md#looks-and-sweeps)) |
+| `--render-mode <1-6>` | none | Deprecated (#746): the reality styles (`--style matrix`, `blood`, `drunk`, `tron`, `underwater`) |
+| `--pixels-per-point <f32>` | `1` | High-DPI scale factor for styles sized in points |
 | `--sweep <key=v1,v2,...>` | (none) | One labelled contact sheet of the frame at each value: `ascii.cell=6,8,12`, `post.exposure=0.8,1.2`, `look=a,b`, or `wooze.glide=0,1` ([below](#sweeping-a-knob)); cells default to 640x360, and pixel-identical neighbours are warned about. Give it twice for a grid: the first key across, the second down (#358) |
 | `--sweep-crop <x,y,w,h>` | (none) | Draw each sweep cell at `--width`x`--height` (default 1920x1080) and keep this region 1:1, so point-sized styles show their final glyph size. Pixels, or fractions of the frame when a value has a decimal point (`0.4,0.48,0.33,0.33`); the sheet's header shows where the region sits ([Cells at the final scale](../concepts/stylize-passes.md#cells-at-the-final-scale)) |
 | `--sweep-scale <cell\|full>` | `cell` | `full`: draw each sweep cell at the full size and shrink it to 640 wide, so the cell shows the final composition |
@@ -109,17 +103,6 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 | `--reference <png>` | (none) | A target image: each frame or column's distance to it, printed with its terms, on the sheet's labels and in the report |
 | `--reference-text <txt>` | (none) | The reference's glyph grid, as `--ascii-text` wrote it: an ASCII frame is then scored by its letters (mean colour, glyph coverage, glyph layout) rather than its pixels, in a sweep, a report and `--ai-refine` (#495; [Measuring and refining a look](../concepts/stylize-passes.md#measuring-and-refining-a-look)) |
 | `--ai-refine` | off | With `--look` and `--reference`: an agent proposes edits, each rendered and measured, kept while the distance falls; writes `<look>_refined.look.toml`, its `.json` log and a sheet of the rounds. `--refine-rounds 4`, `--refine-candidates 4`, `--refine-out`, `--ai-provider anthropic\|mock`, `--ai-model`, `--max-cost` |
-| `--grade-lift <r,g,b>` | `0,0,0` | Color grade lift |
-| `--grade-gamma <r,g,b>` | `1,1,1` | Color grade gamma |
-| `--grade-gain <r,g,b>` | `1,1,1` | Color grade gain |
-| `--fxaa` | `false` | Run the FXAA pass |
-| `--ascii` | (off) | The full-screen ASCII style (#265): one glyph per cell on one grid |
-| `--ascii-font` / `--ascii-ramp` / `--ascii-color` | `builtin` / the set's / `source` | ASCII style glyph set, ramp and colour mode (`source`, `tint`, `raw`, `mono`, `palette`) |
-| `--ascii-palette` / `--ascii-ground` / `--ascii-glow` | `phosphor` / `dim` / `0` | ASCII style palette (`cga`, `cga16`, `amber`... or a `.palette.toml`), ground (`dim`, `black`, `inverse`) and glyph halo |
-| `--ascii-tint <r,g,b>` / `--ascii-background <f32>` | phosphor green / `0.15` | ASCII style tint and how much cell colour fills behind glyphs |
-| `--ascii-brightness` / `--ascii-contrast` / `--ascii-ink` | `0` / `1` / `1` | ASCII style luminance remap and ink brightness |
-| `--ascii-dither` | `0` | ASCII style ordered dither, fixed to the cell grid (#277) |
-| `--ascii-exposure` / `--ascii-normalize` | `0` / `0` | ASCII style exposure in stops, and per-style-id tone normalisation so dark props stay legible (#289) |
 | `--ascii-text <file>` / `--ascii-text-ansi <file>` | (none) | Also write the ASCII style's character grid as UTF-8 text, or with 24-bit ANSI colours ([Reading a render as text](#reading-a-render-as-text), #317) |
 
 ### Reading a render as text
@@ -127,19 +110,12 @@ flint render scene.toml --ssao-samples 16 --dof 0.6 --dof-focus 10 --dof-range 5
 An ASCII render is a real character grid, so it can also be read rather than looked at. `--ascii-text` writes the grid the frame drew: one line per cell row, one character per cell, the same cells as the PNG (part cells at the borders included). A cell the picture passes through, under `scope = "entities"` or where a later style draws its own entity, is a space.
 
 ```bash
-flint render examples/pbr_test.scene.toml --ascii --ascii-text frame.txt
+flint render examples/pbr_test.scene.toml --style ascii --ascii-text frame.txt
 #   Wrote 240x135 ASCII grid to frame.txt
-flint render examples/pbr_test.scene.toml --ascii --ascii-text-ansi frame.ans && cat frame.ans
+flint render examples/pbr_test.scene.toml --style ascii --ascii-text-ansi frame.ans && cat frame.ans
 ```
 
 The text fits in a prompt, diffs line by line between two runs, and lets a test say "the box is `#`" without pixel tolerances. The ANSI file paints each glyph in its ink over its ground, for a 24-bit terminal. The grid comes from the GPU: a pass of one fragment a cell records which glyph the glyph pass draws at the cell's centre, and the frame copies it back. It runs only while capture is on (`SceneRenderer::set_style_text_capture` / `style_text`). A cell on a styled entity's silhouette holds that glyph plus the outline ink the entity draws (#288), so there the text names the centre's glyph.
-| `--pixels-per-point <f32>` | `1` | High-DPI scale factor for styles sized in points |
-| `--ascii-cell <n>` | `8` | ASCII cell width in points |
-| `--ascii-levels <n>` / `--ascii-footprint <cells>` | `0` / `1` | ASCII tone bands and tone footprint |
-| `--ascii-no-edges` | `false` | No line glyphs on edges |
-| `--ascii-edges <f32>` | `1` | ASCII style edge glyph strength (0 off) |
-| `--ascii-edge-threshold <f32>` / `--ascii-edge-max <f32>` | `0.5` / `3` | ASCII style: cell widths of edge that make a line glyph, and past which it's texture |
-| `--ascii-edge-depth <f32>` / `--ascii-edge-normal <f32>` | `0.6` / `2.5` | Edge sensitivity |
 
 ## Lighting Flags
 
@@ -194,7 +170,7 @@ Both wireframe modes include skinned meshes, drawn in their bind pose.
 - **MSAA and FXAA default off** precisely so the default path stays single-sample and single-pass. Turn them on for hero shots, not for baselines.
 - **Animation runs only when asked.** Without a flag skinned meshes render at bind pose. `--anim-time <s>` runs the scene's animation to that time first, as the player has it there ([Posed Characters](#posed-characters)). For one model on its own, the model previewer's render mode does the same: `flint edit model.glb --render out.png --anim-time 1.5`, or `--sequence file.sequence.toml --anim-time 2.0` to replay a timed sequence deterministically, or `--pose-bone joint:x,y,z` to turn a joint by hand.
 - **Particles start at t = 0**, so emitters appear empty unless you pass `--particle-time <s>`, which steps them deterministically before the capture. `--time` does this too.
-- **Cost levers are free to change** without affecting geometry: `--ssao-samples 16` is roughly four times cheaper than the default 64 and usually indistinguishable on matte scenes ([ADR 0052](https://github.com/chrischaps/Flint/blob/main/docs/adr/0052-authorable-ssao-sample-count.md)), which matters when a CI job renders dozens of frames.
+- **Cost levers are free to change** without affecting geometry: `--set post.ssao_samples=16` is roughly four times cheaper than the default 64 and usually indistinguishable on matte scenes ([ADR 0052](https://github.com/chrischaps/Flint/blob/main/docs/adr/0052-authorable-ssao-sample-count.md)), which matters when a CI job renders dozens of frames.
 
 ## Frame sequences
 
@@ -254,7 +230,7 @@ flint render examples/ascii_motion.scene.toml --no-grid \
 
 The history removes the tone glyphs' shimmer completely, as the player capture in #277 found (0.1 reversals a frame), and nearly all the edge glyphs' since they got one of their own (#477; 30.3 a frame before it). What's left is a line glyph showing in a cell for a single frame, almost never the same cell twice ([Temporal stability](../concepts/stylize-passes.md#temporal-stability), #481). Measured 2026-11-13. The scene's `[camera]` is the first pose of its orbit script, so `--orbit 6.8755` (the script's 0.12 rad/s) follows the same path as the player's capture.
 
-A sequence is byte-identical run to run: the same flags give the same PNGs, which the player's `--frame-step` captures don't quite manage (#341). A debug build draws this bench at about a second a frame; `--no-images` and `--ssao-samples 16` are the cheap ways to make it quicker. At the goldens' 640 x 360 it takes about a twentieth of a second a frame, and `flint goldens` holds it to a reversal budget ([sequence cases](#sequence-cases-a-shimmer-budget)).
+A sequence is byte-identical run to run: the same flags give the same PNGs, which the player's `--frame-step` captures don't quite manage (#341). A debug build draws this bench at about a second a frame; `--no-images` and `--set post.ssao_samples=16` are the cheap ways to make it quicker. At the goldens' 640 x 360 it takes about a twentieth of a second a frame, and `flint goldens` holds it to a reversal budget ([sequence cases](#sequence-cases-a-shimmer-budget)).
 
 ### Mesh sequences
 
@@ -392,13 +368,13 @@ A sweep turns one key. To compare things that aren't one key (two looks against 
 flint render examples/ascii_entities.scene.toml --no-grid -o scope.png \
   --variant "smooth: --style ascii:blend=0" \
   --variant "per entity, screen grid:" \
-  --variant "full screen: --ascii-scope screen" \
-  --variant "per entity, object grid: --ascii-grid object" \
+  --variant "full screen: --style ascii:scope=screen" \
+  --variant "per entity, object grid: --style ascii:grid=object" \
   --zoom 860,380,1380,620@2
 #   [1/4] smooth: --style ascii:blend=0
 #   [2/4] per entity, screen grid: (the base command)
-#   [3/4] full screen: --ascii-scope screen
-#   [4/4] per entity, object grid: --ascii-grid object
+#   [3/4] full screen: --style ascii:scope=screen
+#   [4/4] per entity, object grid: --style ascii:grid=object
 #   Wrote 4 variants as one 3944x842 sheet to scope.png (each variant's frame beside it as .\scope-<label>.png)
 #   Wrote zoom 860,380,1380,620@2 as a 4264x782 sheet to .\scope-zoom.png
 ```
@@ -425,8 +401,8 @@ zoom = ["860,380,1380,620@2"]                         # as --zoom; the command l
 
 [[variant]]
 label = "full screen"
-flags = "--ascii-scope screen"          # a line, split as a shell would, or
-# flags = ["--ascii-scope", "screen"]   # the words themselves
+flags = "--style ascii:scope=screen"    # a line, split as a shell would, or
+# flags = ["--style", "ascii:scope=screen"]   # the words themselves
 ```
 
 `examples/variants/` has two: `ascii_scope.variants.toml` puts the ASCII spike's (#261) three routes side by side on `examples/ascii_entities.scene.toml`, and `ascii_rounds.variants.toml` redraws the spike's two rounds of full-screen glyphs on any scene, one command a scene:
@@ -529,7 +505,7 @@ Headless rendering works on machines without a display. On one without a GPU, it
 
 ## Golden Suites
 
-`flint goldens` renders a `*.goldens.toml`, a list of cases, as `flint render` would and compares each with a golden PNG (#271). Before #327 this was `flint render-suite <x>.goldens.toml`, which still works and runs the same command. It exits non-zero when any case moves past its tolerance, so it works as a gate in a script or a test:
+`flint goldens` renders a `*.goldens.toml`, a list of cases, as `flint render` would and compares each with a golden PNG (#271). Before #327 this was `flint render-suite <x>.goldens.toml`, which still runs the same command for one release (#709 moved the music half of `render-suite` to `flint music render`). It exits non-zero when any case moves past its tolerance, so it works as a gate in a script or a test:
 
 ```bash
 flint goldens crates/flint-cli/tests/golden/stylize.goldens.toml
@@ -704,7 +680,7 @@ For a game's own scenes, a golden suite as above is the shortest path. By hand, 
    cp tests/current/tavern.png tests/baseline/tavern.png
    ```
 
-Keep baselines on the default flags (no `--msaa`, no `--fxaa`, no `--grain-time`) so a lever you added for a hero shot never silently changes the gate.
+Keep baselines on the default flags (no `--msaa`, no `post.fxaa`, no `--grain-time`) so a lever you added for a hero shot never silently changes the gate.
 
 ## Rendering Multiple Views
 

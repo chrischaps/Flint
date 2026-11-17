@@ -100,13 +100,9 @@ static TURNS: RwLock<()> = RwLock::new(());
 pub fn pipeline_cache_on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
-        !matches!(
-            std::env::var("FLINT_GPU_TEST_PIPELINE_CACHE")
-                .unwrap_or_default()
-                .to_ascii_lowercase()
-                .as_str(),
-            "0" | "off" | "false"
-        )
+        flint_core::env::GPU_TEST_PIPELINE_CACHE
+            .flag()
+            .unwrap_or(true)
     })
 }
 
@@ -147,15 +143,11 @@ pub const PARALLEL_BY_DEFAULT: bool = true;
 /// unset [`PARALLEL_BY_DEFAULT`].
 pub fn parallel() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| parse_parallel(std::env::var("FLINT_GPU_TEST_PARALLEL").ok().as_deref()))
-}
-
-fn parse_parallel(value: Option<&str>) -> bool {
-    match value.map(|v| v.trim().to_ascii_lowercase()) {
-        Some(v) if matches!(v.as_str(), "0" | "off" | "false") => false,
-        Some(v) if !v.is_empty() => true,
-        _ => PARALLEL_BY_DEFAULT,
-    }
+    *ON.get_or_init(|| {
+        flint_core::env::GPU_TEST_PARALLEL
+            .flag()
+            .unwrap_or(PARALLEL_BY_DEFAULT)
+    })
 }
 
 /// The device, alongside whichever other tests hold a `lease` (or, with
@@ -222,7 +214,7 @@ impl Drop for Lease {
                 }
             }
         }
-        if std::env::var_os("FLINT_GPU_TEST_TIMES").is_some_and(|v| v != "0") {
+        if flint_core::env::GPU_TEST_TIMES.flag() == Some(true) {
             let held = self.since.elapsed().as_secs_f64();
             let building = (flint_render::pipeline_cache::thread_build_time() - self.built_before)
                 .as_secs_f64();
@@ -269,11 +261,9 @@ impl Drop for Watch {
 }
 
 fn timeout() -> Duration {
-    let secs = std::env::var("FLINT_GPU_TEST_TIMEOUT")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .filter(|&s| s > 0)
-        .unwrap_or(DEFAULT_TIMEOUT_S);
+    let secs = flint_core::env::GPU_TEST_TIMEOUT
+        .u32()
+        .map_or(DEFAULT_TIMEOUT_S, u64::from);
     Duration::from_secs(secs)
 }
 

@@ -1616,6 +1616,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "flint-ai-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "toml",
+ "ureq",
+]
+
+[[package]]
 name = "flint-android"
 version = "0.1.0"
 dependencies = [
@@ -1675,6 +1686,7 @@ name = "flint-asset-gen"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "flint-ai-core",
  "flint-asset",
  "flint-core",
  "flint-import",
@@ -1686,7 +1698,6 @@ dependencies = [
  "thiserror 2.0.18",
  "toml",
  "tracing",
- "ureq",
  "uuid",
 ]
 
@@ -1732,6 +1743,7 @@ dependencies = [
  "egui-snarl",
  "egui-wgpu",
  "egui-winit",
+ "flint-ai-core",
  "flint-animation",
  "flint-asset",
  "flint-asset-gen",
@@ -2000,13 +2012,13 @@ dependencies = [
 name = "flint-procgen-ai"
 version = "0.1.0"
 dependencies = [
+ "flint-ai-core",
  "flint-procgen",
  "image",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "toml",
- "ureq",
 ]
 
 [[package]]
@@ -2030,6 +2042,7 @@ dependencies = [
  "ab_glyph",
  "bytemuck",
  "epaint_default_fonts",
+ "exr",
  "flint-asset",
  "flint-core",
  "flint-ecs",

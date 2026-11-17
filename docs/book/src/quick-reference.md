@@ -23,15 +23,14 @@ A scannable cheat sheet for daily Flint development.
 | `flint asset generate <type>` | AI asset generation (texture, model, audio) |
 | `flint asset import <file>` | Import file into asset catalog |
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
-| `flint validate-suite <manifest>` | Validate a music suite manifest (`--chart` to cross-check) |
-| `flint play-suite <manifest>` | Play a suite's stems, no judgment |
-| `flint calibrate <manifest>` | Tap-to-beat latency calibration |
-| `flint play-chart <manifest> --chart <chart>` | Play a chart with live gamepad capture (`--record`, `--window`) |
-| `flint replay-chart <manifest> --chart <chart>` | Replay a recorded or synthetic session headless |
-| `flint render-suite <manifest> -o out.wav` | Render a scripted suite session to WAV |
+| `flint music validate <manifest>` | Validate a music suite manifest (`--chart` to cross-check) |
+| `flint music play <manifest>` | Play a suite's stems, no judgment |
+| `flint music calibrate <manifest>` | Tap-to-beat latency calibration |
+| `flint music chart play <manifest> --chart <chart>` | Play a chart with live gamepad capture (`--record`, `--window`) |
+| `flint music chart replay <manifest> --chart <chart>` | Replay a recorded or synthetic session headless |
+| `flint music render <manifest> -o out.wav` | Render a scripted suite session to WAV |
 | `flint goldens <file>.goldens.toml` | Render scenes and gate them against golden PNGs (`--bless` rewrites) |
 | `flint render <scene> --style ascii:cell=12` | Preview any registered style over a scene |
-| `flint spike-rumble` | Time the gamepad rumble paths |
 
 Music commands are detailed in [Music Commands](cli-reference/music.md).
 
@@ -49,14 +48,16 @@ Music commands are detailed in [Music Commands](cli-reference/music.md).
 | Left Click | Fire |
 | R | Reload |
 | 1 / 2 | Weapon slots |
+| F1 | Show the debug keys (`--list-keys` prints them; an input config's `[debug_keys]` rebinds them) |
 | F2 | Toggle render stats overlay (with the GPU's time per phase, where the device can time) |
 | F3 | Toggle scene debug panels (ocean, day/time, camera, grass, weather… — only those the scene uses; never the F4 menu) and the game's own ([ADR 0107](https://github.com/chrischaps/Flint/blob/main/docs/adr/0107-debug-panels-from-the-game.md)) |
 | F4 | Toggle the **Rendering & Effects** menu (all render/post toggles and parameters, debug shading mode, shadows, lighting levers) |
-| F9 | Force a music-session full-fail (debug builds, session running) |
-| `` ` `` / `\` | Music Guide overlay / Manifest Map strip (debug builds, session running) |
+| F5-F8 | Living props: freeze, A/B flip, A/B split, pick (only in a scene with living props) |
+| F9 | Force a music-session full-fail (debug builds, a charted session playing) |
+| `` ` `` / `\` | Music Guide overlay / Manifest Map strip (debug builds, a charted session playing) |
 | F11 | Toggle fullscreen |
 
-The old per-effect keys (F1 debug mode, F4 shadows, F5 bloom, F6 post) are gone; everything is in the F4 menu.
+Where a key's owner isn't in the scene, or the game binds the key, the press is the game's. The old per-effect keys (F1 debug mode, F4 shadows, F5 bloom, F6 post) are gone; everything is in the F4 menu.
 | Escape | Release cursor / Exit (the game's own key when its input config binds it, see [Escape](concepts/physics-and-runtime.md#escape)) |
 
 ### Scene Viewer (`flint edit <scene.toml>`)
@@ -380,17 +381,18 @@ flint render scene.toml -o wireframe.png --debug-mode wireframe
 flint render scene.toml -o normals.png --debug-mode normals
 flint render scene.toml -o depth.png --debug-mode depth
 
-# Post-processing control
-flint render scene.toml -o bloom.png --bloom-intensity 0.08
+# Post-processing control: --set post.<key>=<value> sets one [post_process] key
+flint render --list-effects     # every key, its kind, default and range
+flint render scene.toml -o bloom.png --set post.bloom_intensity=0.08 --set post.bloom_enabled=true
 flint render scene.toml -o raw.png --no-postprocess
-flint render scene.toml -o dof.png --dof 0.6 --dof-focus 8 --dof-range 3
-flint render scene.toml -o graded.png --grade-lift 0.03,0.02,0.015 --grade-gain 1.04,1,0.94 --film-grain 0.03
-flint render scene.toml -o drained.png --desaturate 0.85
+flint render scene.toml -o dof.png --set post.dof_strength=0.6 --set post.dof_focus_distance=8 --set post.dof_focus_range=3
+flint render scene.toml -o graded.png --set post.grade_lift=0.03,0.02,0.015 --set post.grade_gain=1.04,1,0.94 --set post.film_grain=0.03
+flint render scene.toml -o drained.png --set post.desaturate=0.85
 
 # Anti-aliasing and lighting levers (both default off; ADR 0058 / 0048)
-flint render scene.toml -o smooth.png --msaa 4 --fxaa
+flint render scene.toml -o smooth.png --msaa 4 --set post.fxaa=true
 flint render scene.toml -o clay.png --oren-nayar 0.7 --sheen-strength 0.15 --sheen-color 1,0.9,0.8
 
 # Cheaper SSAO for quick iteration
-flint render scene.toml -o fast.png --ssao-samples 16
+flint render scene.toml -o fast.png --set post.ssao_samples=16
 ```

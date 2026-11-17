@@ -34,13 +34,13 @@ pub fn editor(
         super::common_args::load_schemas(Some(&args.scene), &args.schemas)?;
     super::common_args::warn_dropped_schemas(&schema_dirs);
     if schema_dirs.dirs.is_empty() {
-        println!("Warning: No schemas directories found");
+        eprintln!("Warning: No schemas directories found");
     }
 
     // Load scene
     let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
-    println!("Loaded scene: {}", scene_file.scene.name);
-    println!("Entities: {}", world.entity_count());
+    crate::output::say!("Loaded scene: {}", scene_file.scene.name);
+    crate::output::say!("Entities: {}", world.entity_count());
 
     // Find the first entity with a `spline` component
     let scene_dir = Path::new(&args.scene)
@@ -65,7 +65,7 @@ pub fn editor(
                 spline_file_path = Some(full_path.to_string_lossy().to_string());
                 // Try to get a name from the entity
                 spline_name = entity.name.clone();
-                println!("Found spline: {} -> {}", entity.name, full_path.display());
+                crate::output::say!("Found spline: {} -> {}", entity.name, full_path.display());
                 break;
             } else {
                 tracing::warn!("Spline file not found: {}", full_path.display());
@@ -126,7 +126,7 @@ pub fn editor(
         });
     }
 
-    println!(
+    crate::output::say!(
         "Loaded {} control points from {} (closed={}, spacing={:.1})",
         control_points.len(),
         spline_path,

@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a 32-member Cargo workspace (31 crates under `crates/` plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a 33-member Cargo workspace (32 crates under `crates/` plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -11,6 +11,7 @@ flint/
 │   ├── flint-asset-gen/    # AI asset generation: providers, style guides, batch resolution
 │   ├── flint-procgen/      # Procedural generation: Generator trait, registry, tree/texture/creature generators
 │   ├── flint-procgen-ai/   # AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
+│   ├── flint-ai-core/      # What every paid AI call goes through: transport, retry, prices, ledger, cost meter
 │   ├── flint-player/       # Standalone player binary with game loop, physics, audio, animation, scripting
 │   ├── flint-android/      # Android entry point (NativeActivity, APK asset extraction)
 │   ├── flint-script/       # Rhai scripting: ScriptEngine, ScriptSync, hot-reload
@@ -129,7 +130,7 @@ User / AI Agent
                                              flint-core
 ```
 
-`flint-cli` depends on `flint-player` directly: `flint play` is the player embedded in the CLI, and the rhythm commands (`play-chart`, `replay-chart`, `render-suite`, ...) drive `flint-music`, `flint-rhythm` and `flint-input-capture` without a scene at all. `flint-procgen-ai` is tool-time only: `flint-cli` links it, the player does not. Every crate but `flint-android` is a default workspace member, so plain `cargo test` runs all their tests.
+`flint-cli` depends on `flint-player` directly: `flint play` is the player embedded in the CLI, and the rhythm commands (`flint music chart play`, `chart replay`, `render`, ...) drive `flint-music`, `flint-rhythm` and `flint-input-capture` without a scene at all. `flint-procgen-ai` is tool-time only: `flint-cli` links it, the player does not. Every crate but `flint-android` is a default workspace member, so plain `cargo test` runs all their tests.
 
 ## Crate Details
 
@@ -264,7 +265,7 @@ Music for any game, with no game rules in it:
 - `Conductor`, `TempoMap`, `MusicalPosition` --- beat/bar arithmetic and the `ClockBridge` that maps the audio clock onto game time
 - `SuiteSession`, `BusMixer`, `Scheduler` / `EventScript` --- stems sample-locked on one clock tick, per-bus gain, low-pass and detune, bus events on the musical grid
 - `latency` --- the newest output-latency measurement and tap calibration on record
-- `render_offline` / `write_wav` --- headless suite rendering behind `flint render-suite`
+- `render_offline` / `write_wav` --- headless suite rendering behind `flint music render`
 - Depends only on `flint-core` plus kira, symphonia, hound, toml_edit
 
 ### flint-rhythm
@@ -327,7 +328,8 @@ AI asset generation pipeline:
 - `validate_model()` --- reads a GLB with `flint_procgen::read_model` and runs `flint_procgen::validate_model` with the style's constraints (`StyleGuide::validation_constraints`): the checks `flint gen --validate` runs
 - `BuildManifest` --- provenance tracking (provider, prompt, content hash) for all generated assets
 - `FlintConfig` --- layered configuration for API keys and provider settings
-- `JobStore` --- persistent tracking of async generation jobs (for long-running 3D model generation)
+- `Calls` --- what every provider request goes through: one `flint-ai-core` transport and retry policy, the run's `CostMeter` (asked before each paid call with the units it bills, recorded once the provider accepts it) and the job store. Providers are tested end to end over a `ScriptedTransport`
+- `JobStore` --- a Meshy task is a `GenerationJob` in `.flint/jobs/` from the moment Meshy accepts (and bills) it, updated as it is polled; `GenerationProvider::resume` finishes one a run didn't see through
 
 ### flint-procgen
 
@@ -348,6 +350,16 @@ AI-assisted procedural generation (tool-time only):
 - `AnthropicAgent` --- asks Claude over the Messages API (`ureq`, API version `2026-10-21`, default model `claude-opus-5-5`). The system prompt holds the generator's `param_schema()` verbatim, the spec format and a valid example, and it is the same for every call to that generator, so it is cached. Each reply's params are checked against the schema and then actually generated (an empty mesh counts as a failure). A failed reply goes back with the validator's report for another round, up to `max_iterations`; after that the schema repair clamps what it can. `refine_spec` sends the reference image as base64, beside a picture of what the spec builds now: a texture's own pixels, or whatever the caller's `Previewer` draws (`with_previewer`; `flint-cli` renders meshes with the headless model renderer, so this crate stays free of `flint-render`). With both images it measures their distance (`measure::distance`: mean colour, luminance histogram, 16x16 layout) and loops, rendering each round's result and sending it back while the distance falls, up to `refine_rounds`; the closest spec is returned. `Report.distances` holds the distance per round and `Report.kept` the round returned. The `*_reported` methods return a `Report` with each round's issues and token usage. 429/529/5xx responses are retried (honouring `retry-after`); 401 is not.
 - `AgentConfig` --- `Debug` redacts the API key and serialization skips it; `ANTHROPIC_API_KEY` takes precedence over a key in the config; optional `effort`
 - `cargo run -p flint-procgen-ai --example walkthrough -- out/` writes create/refine specs for `flint gen`; `--example claude_live -- out/` does the same against the real API (spends tokens)
+- Its transport, retry loop and cost meter are `flint-ai-core`'s
+
+### flint-ai-core
+
+What every paid AI call in the tools goes through, shared by `flint-procgen-ai`, `flint-asset-gen` and the CLI (#721; tool-time only):
+- `http` --- the one-method `Transport` (GET and POST, byte bodies), `UreqTransport`, and `ScriptedTransport`, which replays canned responses and keeps every request, so a provider is tested with no network
+- `retry` --- one `RetryPolicy`: 408, 429, 5xx and 529 and network failures are retried, waiting the base delay and then twice that, or the provider's `retry-after`, at most a minute
+- `cost::PriceTable` --- the prices as data: `prices.toml` in the crate (Anthropic's per-token rates by model; Flux per megapixel, ElevenLabs per second, Meshy per task), under a project's `.flint/prices.toml`. An unknown model is priced as the dearest
+- `CostLedger` --- `.flint/ai_costs.jsonl` at the project root, one JSON object per paid call (the procgen agent's older `.flint/procgen_costs.json` is read beside it); `CostSummary` is the report `flint gen --cost-report` and `flint asset costs` print
+- `CostMeter` --- `admit` (a token-billed reply: caps `max_tokens` or refuses) and `admit_call` (a call priced per unit) before a call, `record` / `record_call` after it; refuses with `cost ceiling reached` before any call that could pass `--max-cost`
 
 ### flint-terrain
 
@@ -379,11 +391,11 @@ Standalone player binary that wires together runtime, physics, audio, animation,
 - Optional asset catalog integration for runtime name-based asset resolution
 - Music-session lifecycle: starts a `flint-rhythm` `ChartSession` on the shared Kira manager and hands the gamepad to `flint-input-capture` while a `music_session` component is active
 - Summonable debug overlay (F3 scene panels, F4 Rendering & Effects, Music Guide and Manifest Map strips) behind the `debug-hud` feature
-- Has its own `--msaa` flag; `flint play` (the CLI wrapper) does not expose it
+- One launch (`player_args.rs`, #705): `flint_player::PlayerArgs` is every flag, `flint_player::launch` turns them into a running `PlayerApp`, and both `flint-player` (which adds `--bundle`) and `flint play` call it, so the two take the same flags and play a scene the same
 
 ### flint-cli
 
-Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: `init`, `entity`, `scene`, `query`, `schema`, `script`, `edit`, `validate`, `check`, `examples`, `bundle`, `export`, `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `spike-rumble`, `replay-chart`, `render-suite`, `goldens`, `prefab`, `asset`, `play`, `gen`, `render`, `dxc` and `style`, of which `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `spike-rumble`, `replay-chart` and `render-suite` are the rhythm-game tools. The pre-`edit` tools (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`, `spline-edit`) survive as hidden subcommands. [The CLI reference](../cli-reference/overview.md) covers each one.
+Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: `init`, `entity`, `scene`, `query`, `schema`, `script`, `edit`, `validate`, `check`, `examples`, `env`, `bundle`, `export`, `music`, `goldens`, `prefab`, `asset`, `play`, `gen`, `render`, `dxc` and `style`, of which `music` holds the rhythm-game tools (`validate`, `play`, `render`, `calibrate`, `chart play`, `chart replay`; top-level commands until #709, whose old names still run for one release). The pre-`edit` tools (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`, `spline-edit`) survive as hidden subcommands. [The CLI reference](../cli-reference/overview.md) covers each one.
 
 ### tools/arch-analyzer
 

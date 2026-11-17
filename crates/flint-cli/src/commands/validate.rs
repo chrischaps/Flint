@@ -187,7 +187,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
     let schemas = load_schemas(&args.scene, &args.schemas)?;
     let script_api = args.script.api()?;
     super::common_args::warn_dropped_schemas(&schemas.dirs);
-    let json = args.format == Format::Json;
+    let json = args.format == Format::Json || crate::output::json();
 
     // What the scene has wrong with it, from the pass `flint check` runs:
     // it needs no constraint files, so a project with none is still checked
@@ -223,7 +223,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
                 print!("{}", diagnostics_text(&args.scene, &diagnostics, allowed));
                 println!("The scene does not load, so nothing else was checked.");
             }
-            std::process::exit(1);
+            return Err(crate::output::failed());
         }
     };
     let no_constraints = schemas.constraints.is_empty();
@@ -242,7 +242,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
             print_report_text(&args.scene, &report, &diagnostics, allowed, no_constraints);
         }
         if !report.is_valid() || diagnostic::has_errors(&diagnostics) {
-            std::process::exit(1);
+            return Err(crate::output::failed());
         }
         return Ok(());
     }
@@ -300,7 +300,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
         }
     }
     if !report.is_valid() || diagnostic::has_errors(&diagnostics) {
-        std::process::exit(1);
+        return Err(crate::output::failed());
     }
     Ok(())
 }
@@ -430,7 +430,7 @@ fn print_violations_text(report: &ValidationReport) {
 }
 
 fn print_json(document: serde_json::Value) {
-    println!("{}", serde_json::to_string_pretty(&document).unwrap());
+    crate::output::document(&document);
 }
 
 /// The report as one JSON document. With `--fix` or `--dry-run` it also has

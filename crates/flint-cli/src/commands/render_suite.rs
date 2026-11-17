@@ -1,13 +1,14 @@
 //! Render a scripted suite session to WAV, offline and deterministic — the
 //! agent-facing "programmatic ears". Validates the manifest, runs the event
 //! script through the same `SuiteSession` used live, and writes 32-bit float
-//! stereo. Prints the same status lines as `play-suite` so offline and
-//! realtime evidence are textually comparable.
+//! stereo. Prints the same status lines as `flint music play` so offline
+//! and realtime evidence are textually comparable. This is
+//! `flint music render`, the old `render-suite` (#709).
 //!
 //! A `*.goldens.toml` (the programmatic eyes, #271) is `flint goldens`
-//! since #327; `render-suite` given one is routed there before parsing
-//! ([`super::render_goldens::route_render_suite_goldens`]), so these flags
-//! are the music suite's alone.
+//! since #327; the old `render-suite` given one is routed there before
+//! parsing ([`super::legacy_names::route`]), so these flags are the music
+//! suite's alone.
 
 use anyhow::{bail, Context, Result};
 use flint_music::event_script::EventScript;
@@ -20,7 +21,7 @@ use std::path::{Path, PathBuf};
 #[derive(clap::Args)]
 #[command(
     after_help = "A `.goldens.toml` (scenes gated against golden PNGs) is \
-    `flint goldens`; given one, this command runs that instead."
+    `flint goldens`."
 )]
 pub struct RenderSuiteArgs {
     /// Path to the music suite manifest (`.suite.toml`)
@@ -107,7 +108,7 @@ pub fn run(args: RenderSuiteArgs) -> Result<()> {
         Some(other) => bail!("--status-every must be 'bar' or 'beat', got '{other}'"),
     };
 
-    println!(
+    crate::output::say!(
         "rendering suite '{}': {} samples ({:.1} s) at {} Hz, {} scripted events, chunk {} frames",
         manifest.id,
         duration_samples,
@@ -138,13 +139,13 @@ pub fn run(args: RenderSuiteArgs) -> Result<()> {
         if key != last_line {
             last_line = key;
             let section = conductor.section_at_sample(pos.sample);
-            println!("{}", status_line(pos, section, mixer));
+            crate::output::say!("{}", status_line(pos, section, mixer));
         }
     })
     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     for f in &result.fired {
-        println!(
+        crate::output::say!(
             "fired @ sample {:>9}{}: {:?} {:?}",
             f.sample,
             if f.late { " (LATE)" } else { "" },
@@ -155,12 +156,27 @@ pub fn run(args: RenderSuiteArgs) -> Result<()> {
     let out_path = Path::new(&output);
     write_wav(out_path, &result.samples, manifest.sample_rate)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    println!(
+    crate::output::say!(
         "wrote {} ({} frames, {:.1} s)",
         out_path.display(),
         result.samples.len() / 2,
         (result.samples.len() / 2) as f64 / manifest.sample_rate as f64
     );
+    crate::output::when_json(|| {
+        serde_json::json!({
+            "suite": manifest.id,
+            "written": [out_path.display().to_string().replace('\\', "/")],
+            "sample_rate": manifest.sample_rate,
+            "frames": result.samples.len() / 2,
+            "seconds": (result.samples.len() / 2) as f64 / manifest.sample_rate as f64,
+            "fired": result.fired.iter().map(|f| serde_json::json!({
+                "sample": f.sample,
+                "late": f.late,
+                "bus": f.bus,
+                "action": format!("{:?}", f.action),
+            })).collect::<Vec<_>>(),
+        })
+    });
     Ok(())
 }
 

@@ -69,7 +69,7 @@ trunk serve
 
 ## Layout
 
-- `crates/` holds the 31-crate workspace: the `flint` CLI, `flint-player`, the wgpu renderer, Rapier physics, Kira audio, Rhai scripting, animation, particles, terrain, the query language and the editors
+- `crates/` holds the 32-crate workspace: the `flint` CLI, `flint-player`, the wgpu renderer, Rapier physics, Kira audio, Rhai scripting, animation, particles, terrain, the query language and the editors
 - `schemas/` defines the engine's components and archetypes in TOML
 - `examples/` has showcase scenes, scripts and effects
 - `docs/book/` is the mdBook source for [docs.chaps.dev/flint](https://docs.chaps.dev/flint)

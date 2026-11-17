@@ -115,7 +115,7 @@ pub fn load_schemas(
 ) -> Result<(SchemaRegistry, ConstraintRegistry, SchemaDirs)> {
     let (registry, dirs) = SchemaRegistry::resolve(Some(Path::new(scene_path)), schemas)?;
     if dirs.dirs.is_empty() {
-        println!("Warning: No schemas directories found");
+        eprintln!("Warning: No schemas directories found");
     }
     let mut constraints = ConstraintRegistry::new();
     for dir in &dirs.dirs {
@@ -213,8 +213,8 @@ pub fn viewer(
     // Living props' tables: checked, and the preset [wooze] names filled in (#686)
     flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))?;
 
-    println!("Loaded scene: {}", scene_file.scene.name);
-    println!("Entities: {}", world.entity_count());
+    eprintln!("Loaded scene: {}", scene_file.scene.name);
+    eprintln!("Entities: {}", world.entity_count());
 
     // Parse the scene file as an editable document for structure-preserving saves
     let scene_doc = SceneDocument::from_file(scene_path).ok();
@@ -237,7 +237,7 @@ pub fn viewer(
 
     let watcher = if watch {
         let watcher = watch_scene(scene_path, &schema_dirs.dirs, &state)?;
-        println!("Watching for changes in scene and related assets...");
+        eprintln!("Watching for changes in scene and related assets...");
         Some(watcher)
     } else {
         None
@@ -264,7 +264,7 @@ pub fn run_with_world(
 ) -> Result<()> {
     let constraint_registry = ConstraintRegistry::default();
 
-    println!("Entities: {}", world.entity_count());
+    eprintln!("Entities: {}", world.entity_count());
 
     let state = Arc::new(Mutex::new(ViewerState {
         world,
@@ -314,8 +314,8 @@ pub fn track_editor(
     let (world, mut scene_file) = load_scene(scene_path, &registry)?;
     flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))?;
 
-    println!("Loaded scene: {}", scene_file.scene.name);
-    println!("Entities: {}", world.entity_count());
+    eprintln!("Loaded scene: {}", scene_file.scene.name);
+    eprintln!("Entities: {}", world.entity_count());
 
     let state = Arc::new(Mutex::new(ViewerState {
         world,
@@ -336,7 +336,7 @@ pub fn track_editor(
 
     let watcher = if watch {
         let watcher = watch_scene(scene_path, &schema_dirs.dirs, &state)?;
-        println!("Watching for changes...");
+        eprintln!("Watching for changes...");
         Some(watcher)
     } else {
         None
@@ -897,7 +897,9 @@ impl ViewerApp {
                     &self.style_specs,
                     self.motion_hold,
                 ));
-                println!("Scene [post_process] applied (F4 > Authored post toggles scene/default)");
+                eprintln!(
+                    "Scene [post_process] applied (F4 > Authored post toggles scene/default)"
+                );
             } else if !self.style_specs.is_empty() || self.motion_hold.is_some() {
                 let config = scene_renderer.post_process_config().clone();
                 scene_renderer.set_post_process_config(with_flags(
@@ -907,10 +909,10 @@ impl ViewerApp {
                 ));
             }
             if !self.style_specs.is_empty() {
-                println!("--style applied: {}", self.style_specs.join(" "));
+                eprintln!("--style applied: {}", self.style_specs.join(" "));
             }
             if let Some(rate) = self.motion_hold {
-                println!("--motion-hold applied: the whole frame drawn {rate} times a second");
+                eprintln!("--motion-hold applied: the whole frame drawn {rate} times a second");
             }
             // The F4 style editor marks edits against these (#268)
             self.render_panel
@@ -924,7 +926,7 @@ impl ViewerApp {
                 state.scene_post.as_ref().and_then(|d| d.look.as_deref()),
             );
             if let Some(look) = state.scene_post.as_ref().and_then(|d| d.look.as_deref()) {
-                println!("Scene look: {look} (F4 -> Look switches it)");
+                eprintln!("Scene look: {look} (F4 -> Look switches it)");
             }
             // ...and writes a style back into the file (#364)
             self.render_panel.set_scene_file(

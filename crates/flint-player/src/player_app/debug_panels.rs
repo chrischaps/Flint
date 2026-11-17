@@ -315,7 +315,7 @@ impl PlayerApp {
     /// `key` says `absent_msg` on screen and in the console (#367). One body
     /// for the F4 key handler.
     #[cfg(feature = "debug-hud")]
-    pub(super) fn toggle_named_panel(&mut self, name: &str, key: &'static str, absent_msg: &str) {
+    pub(super) fn toggle_named_panel(&mut self, name: &str, key: &str, absent_msg: &str) {
         let mut opened = false;
         let mut exists = false;
         for panel in &mut self.debug_panels {

@@ -352,6 +352,10 @@ pub struct SsaoBlurUniforms {
     pub _pad: [f32; 2],
 }
 
+/// What [`PostProcessPipeline::run_bloom`] calls after each step while a
+/// frame is captured (#1085): the encoder, the mip written, the step.
+pub type BloomStepHook<'a> = &'a mut dyn FnMut(&mut wgpu::CommandEncoder, usize, &'static str);
+
 /// SSAO texture format (single-channel occlusion).
 const SSAO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
@@ -362,6 +366,7 @@ const SSAO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 pub struct FogVeilTargets {
     pub behind: wgpu::Texture,
     pub behind_view: wgpu::TextureView,
+    pub veil: wgpu::Texture,
     pub veil_view: wgpu::TextureView,
 }
 
@@ -387,17 +392,23 @@ impl FogVeilTargets {
         let behind = texture(
             "Fog Veil Behind",
             HDR_FORMAT,
-            wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+            // and copied out by a frame capture (#1085)
+            wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
         );
         let veil = texture(
             "Fog Veil",
             crate::scene_renderer::FOG_VEIL_FORMAT,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
         );
         Self {
             behind_view: behind.create_view(&Default::default()),
             veil_view: veil.create_view(&Default::default()),
             behind,
+            veil,
         }
     }
 }
@@ -430,7 +441,10 @@ impl FxaaResources {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                // Copied out by a frame capture (#1085)
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -1776,10 +1790,8 @@ impl PostProcessPipeline {
             })
         });
 
-        let timed = timer.map(|t| {
-            let scope = t.begin(encoder, "FXAA");
-            (t, scope)
-        });
+        let mut timer = timer;
+        let scope = crate::gpu_labels::begin(timer.as_deref_mut(), encoder, "FXAA");
         fullscreen_pass(
             encoder,
             "FXAA Pass",
@@ -1788,9 +1800,7 @@ impl PostProcessPipeline {
             &fxaa.pipeline,
             &[&uniform_bg, &texture_bg],
         );
-        if let Some((timer, scope)) = timed {
-            timer.end(encoder, scope);
-        }
+        crate::gpu_labels::end(timer, encoder, scope);
     }
 
     /// Run the bloom downsample/upsample chain.
@@ -1803,6 +1813,12 @@ impl PostProcessPipeline {
     /// the steps used to share one, rewritten and submitted step by step.
     /// Slot 0 is the threshold, `i` the downsample into mip `i`, and
     /// `mips + i` the upsample into mip `i`.
+    ///
+    /// `after_step`, while a frame is captured (#1085), is called after
+    /// each step with the mip it wrote and the step's name (`threshold`,
+    /// `down`, `up`): the upsample writes over the downsample's mips, so
+    /// each step is read where it happens. `None` on every other frame.
+    #[allow(clippy::too_many_arguments)]
     pub fn run_bloom(
         &self,
         queue: &wgpu::Queue,
@@ -1811,6 +1827,7 @@ impl PostProcessPipeline {
         resources: &PostProcessResources,
         config: &PostProcessConfig,
         source: &crate::stylize::StyleInput<'_>,
+        mut after_step: Option<BloomStepHook<'_>>,
     ) {
         let mips = resources.bloom_mip_count;
         if mips == 0 {
@@ -1894,6 +1911,9 @@ impl PostProcessPipeline {
                 &source_bg("bloom input", source.id, source.view),
             ],
         );
+        if let Some(after) = after_step.as_mut() {
+            after(encoder, 0, "threshold");
+        }
 
         // Step 2: Progressive downsample mip[0] → mip[1] → ... → mip[N-1]
         for i in 1..mips {
@@ -1908,6 +1928,9 @@ impl PostProcessPipeline {
                     &source_bg("bloom source", i as u64, &resources.bloom_mips[i - 1].view),
                 ],
             );
+            if let Some(after) = after_step.as_mut() {
+                after(encoder, i, "down");
+            }
         }
 
         // Step 3: Progressive upsample mip[N-1] → mip[N-2] → ... → mip[0]
@@ -1928,6 +1951,9 @@ impl PostProcessPipeline {
                     ),
                 ],
             );
+            if let Some(after) = after_step.as_mut() {
+                after(encoder, i, "up");
+            }
         }
     }
 
@@ -2473,10 +2499,8 @@ impl PostProcessPipeline {
                 })
             });
 
-        let timed = timer.map(|t| {
-            let scope = t.begin(encoder, "Composite");
-            (t, scope)
-        });
+        let mut timer = timer;
+        let scope = crate::gpu_labels::begin(timer.as_deref_mut(), encoder, "Composite");
         fullscreen_pass(
             encoder,
             "Composite Pass",
@@ -2488,9 +2512,7 @@ impl PostProcessPipeline {
             },
             &[&uniform_bg, &scene_bg, &bloom_bg, &ssao_depth_bg],
         );
-        if let Some((timer, scope)) = timed {
-            timer.end(encoder, scope);
-        }
+        crate::gpu_labels::end(timer, encoder, scope);
     }
 }
 
@@ -2650,7 +2672,9 @@ impl PostProcessResources {
                 dimension: wgpu::TextureDimension::D2,
                 format: HDR_FORMAT,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    // Copied out by a frame capture (#1085)
+                    | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -2678,7 +2702,10 @@ impl PostProcessResources {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: SSAO_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                // Copied out by a frame capture (#1085)
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let ssao_view = ssao_texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -2694,7 +2721,10 @@ impl PostProcessResources {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: SSAO_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                // Copied out by a frame capture (#1085)
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let ssao_blur_view = ssao_blur_texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -2714,7 +2744,10 @@ impl PostProcessResources {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: HDR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                // Copied out by a frame capture (#1085)
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let volumetric_view =
@@ -2731,7 +2764,10 @@ impl PostProcessResources {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: HDR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                // Copied out by a frame capture (#1085)
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let volumetric_blur_view =

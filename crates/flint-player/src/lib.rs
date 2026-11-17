@@ -3,14 +3,18 @@
 //! This crate provides the `PlayerApp` application handler
 //! for running Flint scenes with physics and first-person controls.
 
+pub mod capture_args;
 pub mod extension;
 pub mod hitch_args;
 #[cfg(feature = "music")]
 mod music;
 mod player_app;
+// The desktop launch, shared by `flint play` and `flint-player` (#705)
+pub mod player_args;
 pub mod user_files;
 pub mod window_args;
 
+pub use capture_args::FrameCaptureArgs;
 pub use extension::{
     ExtensionAudio, ExtensionCtx, ExtensionGpu, KeyInput, MeshOptions, PlayerExtension,
     SoundOptions, Stage,
@@ -63,6 +67,7 @@ pub use player_app::web_startup::WEB_CANVAS_ID;
 pub use player_app::ProcGenMode;
 pub use player_app::StatsView;
 pub use player_app::{CaptureConfig, GameCore, LaunchOptions, PlayerApp, SceneSettings};
+pub use player_args::{launch, launch_bundle, PlayerArgs, PlayerCli, Prepared};
 pub use window_args::WindowArgs;
 
 /// A script system with the player's whole API: flint-script's core and

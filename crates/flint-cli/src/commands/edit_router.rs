@@ -378,6 +378,10 @@ pub fn run(args: EditArgs) -> Result<()> {
         FileKind::ParticleEffect => K::Particles,
     };
     check_flags(&args, kind)?;
+    // A window can't answer --json (#710); a still of any kind can (#712)
+    if args.render.is_none() {
+        crate::output::refuse_interactive("edit")?;
+    }
 
     let (width, height) = kind.default_size();
     let options = HostOptions {
@@ -510,14 +514,17 @@ impl Launch {
         picture
             .save(&out)
             .with_context(|| format!("Failed to save image to {out}"))?;
-        println!(
+        crate::output::say!(
             "Rendered {}x{} of {} to {out}",
             picture.width(),
             picture.height(),
             self.kind.label()
         );
         if let Some(note) = editor.still_note() {
-            println!("  {note}");
+            crate::output::say!("  {note}");
+        }
+        if crate::output::json() {
+            crate::output::document(&serde_json::json!({ "written": [out] }));
         }
         Ok(())
     }

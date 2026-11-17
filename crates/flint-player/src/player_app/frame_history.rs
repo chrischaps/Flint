@@ -42,28 +42,9 @@ pub(crate) const STALL_MS: f32 = 250.0;
 
 /// Whether to record every frame: `FLINT_FRAME_HISTORY=0|1` (also
 /// `off`/`on`, `false`/`true`) over the build's default. Anything else is
-/// said once and the default kept.
+/// said once and the default kept (`flint_core::env`).
 pub(crate) fn always_on_from_env() -> bool {
-    let (on, warning) = parse_switch(std::env::var("FLINT_FRAME_HISTORY").ok(), BUILT_IN);
-    if let Some(warning) = warning {
-        tracing::warn!("{warning}");
-    }
-    on
-}
-
-fn parse_switch(value: Option<String>, default: bool) -> (bool, Option<String>) {
-    match value.as_deref().map(str::trim) {
-        None | Some("") => (default, None),
-        Some("0" | "off" | "false") => (false, None),
-        Some("1" | "on" | "true") => (true, None),
-        Some(other) => (
-            default,
-            Some(format!(
-                "FLINT_FRAME_HISTORY={other:?} is not 0 or 1: keeping the build's {}",
-                if default { "on" } else { "off" }
-            )),
-        ),
-    }
+    flint_core::env::FRAME_HISTORY.flag().unwrap_or(BUILT_IN)
 }
 
 /// The clock's view of a frame's interval, from the tick that ended it.
@@ -128,6 +109,10 @@ pub(crate) struct Frame {
     pub notes: Vec<FrameNote>,
     /// Notes the channel had no room for in it.
     pub notes_dropped: u32,
+    /// A frame capture (#1086) was being recorded or read back in it: the
+    /// hitch detector passes over it, so a capture isn't counted as the
+    /// hitch it may cause.
+    pub capturing: bool,
 }
 
 impl Frame {
@@ -348,6 +333,19 @@ impl FrameHistory {
         self.under_way.game_time = total_time;
     }
 
+    /// The frame under way is captured, or a capture is read back in it
+    /// (#1086): the hitch detector passes over it.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // desktop only
+    pub(crate) fn capturing(&mut self) {
+        self.under_way.capturing = true;
+    }
+
+    /// The number the frame under way will have once it closes.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // desktop only
+    pub(crate) fn under_way_index(&self) -> u64 {
+        self.frames.back().map_or(0, |f| f.index + 1)
+    }
+
     /// The frames kept, oldest first.
     pub(crate) fn frames(&self) -> &VecDeque<Frame> {
         &self.frames
@@ -454,17 +452,6 @@ mod tests {
             .filter(|f| buffers.contains(&f.scripts.as_ptr()))
             .count();
         assert!(reused >= 7, "{reused} of 8 buffers reused");
-    }
-
-    #[test]
-    fn the_switch_reads_on_and_off_over_the_builds_default() {
-        assert_eq!(parse_switch(None, true), (true, None));
-        assert_eq!(parse_switch(None, false), (false, None));
-        assert_eq!(parse_switch(Some("0".into()), true), (false, None));
-        assert_eq!(parse_switch(Some(" on ".into()), false), (true, None));
-        let (on, warning) = parse_switch(Some("maybe".into()), true);
-        assert!(on);
-        assert!(warning.unwrap().contains("FLINT_FRAME_HISTORY"));
     }
 
     #[test]

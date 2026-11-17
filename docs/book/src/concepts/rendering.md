@@ -188,7 +188,7 @@ The renderer includes an HDR post-processing pipeline that applies bloom, SSAO, 
 
 When post-processing is active, all scene pipelines render to an `Rgba16Float` HDR intermediate buffer. A composite fullscreen pass then applies exposure, ACES tonemapping and the rest of the chain to produce the final sRGB output.
 
-Configure post-processing per-scene via the `[post_process]` TOML block, override with `flint render` flags (`--no-postprocess`, `--bloom-intensity`, `--exposure`, `--dof`, `--grade-gain`, and the rest of the set listed on the post-processing page), or tune it live from the F4 menu.
+Configure post-processing per-scene via the `[post_process]` TOML block, override any key headlessly with `flint render --set post.<key>=<value>` (`--set post.exposure=1.5`; `flint render --list-effects` lists the keys) or `--no-postprocess`, or tune it live from the F4 menu.
 
 ## PBR Materials
 

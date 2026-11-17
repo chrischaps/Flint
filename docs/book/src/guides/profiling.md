@@ -1,6 +1,6 @@
 # Profiling
 
-Two tools say where a frame's time goes. **GPU timing** shows how long the GPU spends on each phase of the frame, in the F2 overlay and in `RenderStats`. The **`profile` feature** sends the frame loop's CPU time to [Tracy](https://github.com/wolfpld/tracy), scope by scope. Both are off until asked for, and a build without the feature carries none of the profiler.
+Two tools say where a frame's time goes. **GPU timing** shows how long the GPU spends on each phase of the frame, in the F2 overlay and in `RenderStats`. The **`profile` feature** sends the frame loop's CPU time to [Tracy](https://github.com/wolfpld/tracy), scope by scope. Both are off until asked for, and a build without the feature carries none of the profiler. For what a frame drew and with which GPU state, [capture it in RenderDoc or PIX](#capturing-a-frame-in-renderdoc), where Flint's frames are named part by part.
 
 ## GPU timing
 
@@ -40,7 +40,7 @@ The ASCII numbers from #313 (RTX 4070 laptop, Vulkan, `flint render --gpu-time 2
 
 The last row is the noise. At footprint 1 neither binary runs the pre-pass, yet they read 8% apart, so only the two 4K footprint-2 close-ups (−16% and −20%, in separate runs) are a measured win. The rest are within noise. Other sessions shared the GPU: take the least of several processes, and check a pass the change doesn't touch.
 
-Whole-frame ASCII over styled props, from #507 (the same GPU, `examples/ascii_entities` at 1080p, `--ascii-scope screen --ascii-edges 0 --gpu-time 240`, the least of 3 processes per binary, main and the branch taking turns; runs agreed to 1 µs). The four scenes are the demo with no prop styled, every prop's `enabled = false` (only the mask is read), the barrel without `normalize`, and the demo as it is:
+Whole-frame ASCII over styled props, from #507 (the same GPU, `examples/ascii_entities` at 1080p, `--style ascii:scope=screen,edges=0 --gpu-time 240`, the least of 3 processes per binary, main and the branch taking turns; runs agreed to 1 µs). The four scenes are the demo with no prop styled, every prop's `enabled = false` (only the mask is read), the barrel without `normalize`, and the demo as it is:
 
 | Case | Before | After |
 |---|---|---|
@@ -93,6 +93,102 @@ With `--exit-after` and `--stats`, the player prints the average GPU frame time 
 [perf] avg GPU 2.73 ms/frame over 6692 timed frames no vsync
 ```
 
+### A frame's description
+
+`--gpu-time` says what each part cost. `--frame-dump <file.json>` says what each part did (#1084): which passes ran in the frame `flint render` drew, in the order they were recorded, and why the others didn't; what each read and wrote; and every draw, by the entity it draws.
+
+```bash
+flint render examples/stylize_props.scene.toml --frame-dump frame.json
+```
+
+```text
+Wrote the frame's description to frame.json: 11 of 19 passes ran, 8 scene draws, GPU-timed
+```
+
+A pass, trimmed:
+
+```json
+{
+  "name": "Scene", "ran": true, "skipped": null, "timed": true, "gpu_ms": 0.204,
+  "reads": ["shadow_map"], "writes": ["hdr_scene", "depth"],
+  "render_passes": ["Render Pass"], "also": ["Sky", "Grid"],
+  "draws": [
+    { "entity": "props_barrel", "entity_id": 1, "kind": "Static", "layer": "Opaque static",
+      "blend": "opaque", "vertex": "plain", "pipeline": "pbr double-sided",
+      "mesh": "barrel#0", "material": "material_0", "material_id": 0,
+      "triangles": 17756, "instances": 1, "casts_shadow": true, "culled": null }
+  ],
+  "culled": [ { "entity": "far_crate", "kind": "Static", "culled": "draw distance" } ],
+  "passes": []
+}
+```
+
+- **Passes** are named by their GPU timer scope, so the `timed` ones, in order, are `--gpu-time`'s rows, and `gpu_ms` is that pass's raw time in this frame, not a smoothed figure. The frame is timed when the adapter has `TIMESTAMP_QUERY`. A pass with no scope of its own has `timed: false`: each shadow map layer (`Shadow cascade 0`, inside `Shadows`, with its casters), the depth upscale, and the composite while FXAA ends the chain.
+- **A skipped pass** is listed where it would have run, with why: `no grass in the scene`, `off ([post_process] volumetric_enabled = false)`, `capped by quality (ssao = false)`, `no style reads the albedo`, a style at `blend 0`, `no sun gives light and no spot casts`.
+- **Draws** come from the same choices the pass draws with, so the scene pass's `draws` are `RenderStats::draw_calls` exactly. Each names its entity, and `entity_id` is there for display only (ids move between runs, ADR 0126). `mesh` is a model's sub-mesh as `<asset>#<n>`, or `box` for a `bounds` box. Draws with one `material_id` share a material buffer. `culled` lists what this camera set aside: `frustum`, `lod` (another level of detail draws from here) or `draw distance`.
+- **The frame**: `frame` (size, scene size, render scale, MSAA, adapter, backend, debug view, every `--quality` setting, the drawn `[post_process]` by key, the styles in chain order), `targets` (every texture the frame drew into or read: its id, format, size, layers, samples and bytes), `memory`, `lights` (which were drawn and which a cap left out) and `stats`, the F2 overlay's totals. A comic page's panels are each a frame drawn again, so each has its own passes under `panels`, and the page's compositor is the top-level `Panels` pass.
+
+The file has `"format": "flintframe"` and `"version": 1`. It is the same type (`flint_render::frame_capture::FrameDescription`) a frame capture's `manifest.json` holds ([below](#a-frames-images)), so the frame tool to come (#1087) reads both with one reader. A host describes a frame with `renderer.describe_next_frame()` before it and `renderer.describe_frame(Some(&world), &FrameHost { .. })` after, then `FrameDescription::lay_gpu_times` with that frame's `GpuTimer::recorded` times once they are read back. A frame nobody asked about keeps no log and draws the same bytes.
+
+With `--time`, the frame described is the span's last. `--report json` names the file as `frame_dump`.
+
+### A frame's images
+
+`--frame-capture <dir>` writes the frame's description and every target each pass wrote, as that pass left it (#1085, [ADR 0126](https://github.com/chrischaps/Flint/blob/main/docs/adr/0126-what-a-frame-capture-holds-and-how-it-replays.md)): the shadow cascades, the HDR scene before post, SSAO, each bloom step, the style mask, each style's output and its own targets.
+
+```bash
+flint render examples/stylize_props.scene.toml --frame-capture props.flintframe
+```
+
+```text
+Captured the frame to props.flintframe: 26 images from 10 passes, 5.1 MB on disk (143.0 MB read back), GPU-timed
+```
+
+```text
+props.flintframe/
+  manifest.json                   the frame's description, each pass with its images; written last
+  targets/
+    02-shadow_cascade_0.exr       NN is the pass's place in the frame
+    05-hdr_scene.exr
+    05-depth.exr
+    07-style_mask.png
+    10-ssao.png
+    12-bloom_mip_1-down.exr       a step of a pass that writes one target more than once
+    14-style_display_ping_0.png   a style's output, then its own targets (ascii_cells_a ...)
+    15-surface.png                the output, byte for byte the -o file
+```
+
+- **Each target is kept once, exactly**: 8-bit targets as PNG, 16-bit integers (the style mask) as a 16-bit PNG, half floats (the HDR chain) as OpenEXR half, depth and 32-bit floats as OpenEXR f32 (channel `Z` for depth), the EXRs ZIP-compressed. No viewable copy sits beside an EXR: tonemapping HDR and linearizing depth for a look is the reader's job (the frame tool to come, #1087). An EXR opens in most image tools.
+- **Read where it's written.** Each copy is made right after the pass, in the frame's own encoder, because the chain reuses its targets: a style stage's two pings, and bloom's mips, which the upsample writes over. So a ping written by two styles is two images, and bloom's are `threshold`, each `down` and each `up`. A multisampled target is read through its resolve (the HDR buffer), each shadow map layer that was drawn is its own image (a sun's cascades, a casting spot's `spot_shadow`), and a style's own targets are whatever it asked the chain's table for while it drew, so a user style's are there too.
+- **In the manifest**, each pass's `images` lists `target`, `step`, `layer`, `format`, `size`, `file` and `stored` (`png`, `png16`, `exr-half`, `exr-f32`, `exr-u32`, or `raw` for a format nothing else holds). `frame.capturing` is true. `capture` says what it cost: images, bytes read back and on disk, the targets a pass wrote that weren't read and why (`grass_instances` is a buffer), and the milliseconds spent recording the copies, waiting, copying out and encoding.
+- **The last `surface` image is the output.** A pass that writes after it (the depth upscale below render scale 1) still follows it in the folder. A comic page's panels each have their own `surface`, the panel's picture, and the page's is the `Panels` pass's.
+- **A folder that holds anything but a capture is refused**, so a wrong path can't empty it; an earlier capture there is replaced.
+
+The capture costs only the frame that asked: no other frame makes a copy or a buffer, and every golden is byte-identical. The capturing frame does pay: the copies stay on its GPU timeline, and reading them back is the raw size of every target (72 MB for the tavern at 1280 x 720), which a headless render waits for. A host captures with `renderer.capture_next_frame(CaptureTargets { surface, depth })` (its own output and depth, each made with `COPY_SRC`), then after the submit `take_frame_capture()`, `map()` and `poll(&device)` on later frames until it says ready (never waiting), `read()`, `describe_frame(..)`, and `flint_render::frame_capture::write_capture(dir, &mut description, frame)` off the frame thread.
+
+### Capturing from the running player
+
+The frames worth a look happen mid-play, so the player writes the same capture (#1086). It writes one at a game time, from an input script, on a key, or on a hitch:
+
+```bash
+flint-player levels/tavern_hub.scene.toml --frame-step 0.0167 --capture-frame-at 2 --exit-after 3
+flint-player examples/hitch_metronome.scene.toml --capture-on-hitch --exit-after 7
+```
+
+```text
+[debug] capture: capturing the frame at t=2.00 s to captures/tavern_hub-t2.004.flintframe
+[capture] wrote captures/tavern_hub-t2.004.flintframe: 18 images from 8 passes, 5.9 MB
+```
+
+- **Triggers.** `--capture-frame-at <secs>` (repeatable), **Shift+F2** while playing (the player's `capture_frame` debug key, which `[debug_keys]` can move; the note at the top of the window names the folder), `capture frame` in an `--input-script`, and `--capture-on-hitch[=N]` for the first N hitches. `flint play` takes the same flags. Captures go to `--capture-dir`, or `captures/` at the project's root, which `.gitignore` leaves out: a capture holds renders of a game's content.
+- **The folder** is the one `flint render --frame-capture` writes, named `<scene>-t<game time>.flintframe`. The player adds its own `UI` pass at the end, the HUD drawn over the frame, with the presented image. It also adds `trigger` (why), `scene` (path, `[scene] name`, SHA-256), `engine` (version, the checkout's commit and whether it had changes), `captured_at`, `frame.index`, `frame.game_time` and `frame.dt`, and `cpu`: the frame history's record of the frame and the second of frames before it, each with its phases, script callbacks, notes, physics steps and GPU time.
+- **A hitch can't be captured itself.** It is over by the time the detector judges it, because its clock comes in on the next tick. So `--capture-on-hitch` captures the frame after it. The manifest's `cpu.hitch` holds the hitch: its frame, ms, the median it stood out from, `player` or `elsewhere`, and the cause line the hitch log writes. Its record in `cpu.window` (`"hitch": true`) shows what it cost by phase. The images show the scene one frame later.
+- **Replay inputs** go under `replay/` (ADR 0126 decision 4), for the replay to come (#1089). `world.toml` is every entity by name in a scene's encoding. `inputs.json` holds every `FrameInputs` field, the whole camera, the drawn config's styles, the quality, MSAA, render scale, debug mode, the selected entity, motion holds' kept matrices and ticks, part tints and softness, and the palette and particle indexes. `skinning.bin` holds every bone, shadow and echo palette, read back from the GPU. `particles.bin` is the packed particle stream as drawn. The manifest's `replay.assets` lists each model and texture by path and SHA-256, never a copy. `replay.fresh_only` lists what a replay will draw fresh for this frame (ASCII's history, a user style's history targets, runtime meshes, grass and terrain edits).
+- **Two stepped runs give the same capture.** With `--frame-step`, two runs of the tavern wrote byte-identical images and replay files, and manifests that differ only in their timings.
+- **It never waits on the frame.** The capture is armed for one frame, and its copies go into that frame's one submission. The frames after poll the read-back, and a writer thread copies it out, encodes it and writes the folder on a quarter of the machine's cores, manifest last. One capture is in flight at a time, and a request made meanwhile waits for it. The capturing frame and every frame until the writer takes over are marked `capturing` in the frame history, and the hitch detector passes over them, so the capture isn't counted as the hitch it may cause. The writing still shares the machine: in a debug build, small hitches showed in the hot-reload poll while a capture was written to disk.
+- **The Living Props split** (#238) draws its other side over part of the frame. The capture keeps the shown side's passes and images and says so in `notes`, and the `UI` image shows both.
+- **Desktop only.** The web player declines with a note: it writes no files, and its `image` has no EXR.
+
 ### The perf line
 
 `flint-player --perf` prints one line every ten seconds: frame p50, p99 and max, the CPU time of each phase of the frame (input, scripts, physics, script ui, anim/fx, sync, render, hud, present; mean and worst), the four script callbacks with the worst single frame, each named by file and callback (`hud.rhai:on_draw_ui`, `kart.rhai:on_update`, `door.rhai:on_collision`), and the script system's own steps (`[hot reload]`, `[load]`) without the callbacks they ran, the GPU time of each scope above, draws and triangles. In a browser, `?perf=1` shows the same numbers in a corner of the page and copies them as the same line ([web.md](https://github.com/chrischaps/Flint/blob/main/docs/design/web.md#the-perf-readout-120)).
@@ -143,6 +239,81 @@ renderer.finish_gpu_timings(&device, &queue); // after the frame's last timed su
 
 `begin_submit` and `end_submit` put the timestamps in submissions of their own, for work that makes its own encoders. A frame holds up to 32 scopes; past that, scopes time nothing.
 
+To have the scope show up in a GPU debugger too, open it with `flint_render::gpu_labels::begin(renderer.gpu_timer_mut(), &mut encoder, "My pass")` and close it with `gpu_labels::end`. Each call opens a debug group of the same name (next section) and, when the renderer is timing, the timer's scope inside it. Without timing, they open only the group.
+
+## Capturing a frame in RenderDoc
+
+[RenderDoc](https://renderdoc.org) on Vulkan or DX12, and [PIX](https://devblogs.microsoft.com/pix/) on DX12, capture one of Flint's frames as wgpu recorded it. Every draw, bind and resource is there, down to the GPU state of each draw. Flint names the frame for them (#1083). Each part the F2 overlay times is a **debug group** of the same name, so the event list starts with the same rows as F2's GPU section. Inside the scene and shadow passes, the draws are grouped by layer. With draw markers on, each draw is named by its entity and kind:
+
+```text
+Shadows
+  Shadow cascade 0
+    Terrain
+      ground · Terrain chunk 0
+    Grass
+    Opaque static
+      barrel · Static
+    Opaque skinned
+      bartender · Skinned
+  Shadow cascade 1
+  Shadow cascade 2
+  Spot shadow
+Scene
+  Render Pass
+    Sky
+    Terrain
+    Grass
+    Water
+    Opaque static
+      barrel · Static
+    Billboards
+    2D sprites
+    Blended static
+    Echoes
+    Particles
+      Particles · draw 0
+SSAO
+Bloom
+Composite
+UI
+```
+
+Other groups are `Grass` (the compute, ahead of the shadows), `Fog veil`, `Style mask`, `Style albedo`, `Selection mask`, each effect and style (`Kuwahara`, `Volumetric`, `ASCII`, ...), `FXAA`, `Selection outline` and `World lines`. Debug views add `Wireframe`, `Wireframe overlay`, `Normal arrows`, `Skeletons`, `Gizmos` and `Editor grid` inside the scene pass. Only what the frame draws appears: a layer with nothing in view has no group. While F2 is open, each group also holds the timer's `GPU Timestamp` compute passes. Passes and resources keep the names they are made with (`Composite Pass`, `HDR Scene Texture`, `barrel Vertex Buffer`, each texture by the name it was loaded under), so the resource list reads the same way.
+
+### What is named, and when
+
+`FLINT_GPU_LABELS` sets how much of the frame is named:
+
+| `FLINT_GPU_LABELS` | Groups | Draw markers |
+|---|---|---|
+| unset, no capture tool | yes (native), no (web) | no |
+| unset, launched from RenderDoc or PIX | yes | yes |
+| `groups` | yes | no |
+| `1`, `on` or `draws` | yes | yes |
+| `0` or `off` | no | no |
+
+Another word warns once and is taken as unset.
+
+Flint notices a capture tool at start-up. RenderDoc gives itself away through its Vulkan layer's switch (`ENABLE_VULKAN_RENDERDOC_CAPTURE=1`, set in the program it launches) or through `renderdoc.dll` (`librenderdoc.so` on Linux) loaded into the process, and PIX through `WinPixGpuCapturer.dll`. A tool attached to a program that is already running isn't seen. Set `FLINT_GPU_LABELS=1` for that, or for Nsight Graphics.
+
+Groups name parts of the frame, not draws, so they cost a few dozen calls a frame and Flint formats nothing for them (wgpu copies each name into its command list). Natively they are always on. A draw marker writes the entity's name into a buffer kept for the pass, so draw markers are off unless asked for. With them off, a frame formats no string for a draw. With them on, the instance is also made with wgpu's `InstanceFlags::DEBUG`. Without that flag, Vulkan passes no label to the driver in a release build. With it, shaders carry their debug information, so RenderDoc can show their source. Labels change no pixel: every example and golden renders the same bytes at all three levels.
+
+### RenderDoc
+
+1. In RenderDoc's **Launch Application** tab, set **Executable Path** to the player (`target/release/flint-player.exe`, or `target/debug/`). Set **Working Directory** to the game's folder and **Command-line Arguments** to the scene, e.g. `examples/phase4_runtime.scene.toml`. A game binary that embeds `PlayerApp` is launched the same way.
+2. Under **Environment Variables**, add `WGPU_BACKEND=vulkan` or `WGPU_BACKEND=dx12`. Both backends work, but Vulkan's captures are what RenderDoc reads best. Without it, wgpu picks the backend.
+3. **Launch**, play to the moment you want, and press **F12** or **Print Screen** in the game window. The capture shows up in RenderDoc's list. Open it and the **Event Browser** holds the groups above.
+
+Capture the player rather than `flint render`: RenderDoc ends a frame at a present, and a headless render never presents. Use a release build to judge timings. A debug build runs wgpu's validation, which adds its own work to each call.
+
+### PIX
+
+PIX reads DX12 only. In **Launch Win32**, set the player, its working directory and the scene as above, add `WGPU_BACKEND=dx12` to the environment, and launch it for GPU capture. Then take a capture with **Print Screen** or PIX's capture button. The **Events** view shows the groups as PIX events, nested the same way.
+
+### On the web
+
+The browser's WebGPU makes each debug group a call of its own, so the web player adds none unless the page asks: `?gpu_labels=1` (or `groups`) names the frame as `FLINT_GPU_LABELS` does natively. Without it, `?perf=1`'s WebGPU call counts are what they were before groups existed.
+
 ## The `profile` feature
 
 Build the player with `--features profile` (a game binary passes it on: `profile = ["flint-player/profile"]`) and run [Tracy's viewer](https://github.com/wolfpld/tracy/releases) beside it. The viewer finds the game on this machine and shows each frame as a stack of scopes on a timeline ([ADR 0109](https://github.com/chrischaps/Flint/blob/main/docs/adr/0109-tracy-frame-profiler.md)):
@@ -181,7 +352,7 @@ A mean frame time hides uneven frames. `--exit-after N` prints two spreads besid
 
 With vsync (Fifo), every shown frame stays on screen for a whole number of refreshes. But the CPU can be let through in bursts: on a hybrid-GPU laptop (the dGPU renders and the iGPU drives the panel), frames came 6, 6, 6, then 45 ms apart at a 60 Hz mean. Stepping by those makes each shown frame move 6, 6, 6, then 45 ms of game time, which is judder. So under Fifo the player paces the clock: it passes the window's monitor refresh to `GameClock::set_vsync_period`, and each frame's `delta_time` is a whole number of refresh periods, as many as keep game time on the wall clock and at least one. Game time can run up to 100 ms ahead of the wall clock inside a burst. A stall over 250 ms passes through as one clamped step, as it would unpaced. Frames that come faster on average than that refresh (the wrong monitor, or not really vsynced) fall back to the raw time. `GameClock::raw_delta_time` always has the unpaced wall time.
 
-Switches: `FLINT_PACING=0` turns pacing off, `FLINT_FRAME_LATENCY=1..3` sets the swapchain's frame latency (default 2), and `FLINT_VSYNC=0|mailbox` picks the present mode. A game that samples its own clock (interpolating snapshots at `Instant::now()`, say) should advance that clock by `delta_time` too, or it will still step in bursts.
+Switches: `FLINT_PACING=0` turns pacing off, `FLINT_FRAME_LATENCY=1..3` sets the swapchain's frame latency (default 2), and `FLINT_VSYNC=0|mailbox` picks the present mode. A value a switch doesn't take warns and leaves the default, and `flint env` lists every switch with its value in your shell ([Environment Switches](../cli-reference/environment.md)). A game that samples its own clock (interpolating snapshots at `Instant::now()`, say) should advance that clock by `delta_time` too, or it will still step in bursts.
 
 ### Hitches
 

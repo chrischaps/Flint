@@ -14,8 +14,14 @@ mod context;
 mod debug;
 pub mod entity_style;
 mod file_watch;
+pub mod frame_capture;
+#[cfg(not(target_arch = "wasm32"))]
+mod frame_capture_write;
+pub mod frame_replay;
+mod frame_taps;
 pub mod frustum;
 pub mod glyph_atlas;
+pub mod gpu_labels;
 mod gpu_mesh;
 pub mod gpu_select;
 pub mod gpu_timer;
@@ -93,9 +99,9 @@ pub use render_scale::{clamp_render_scale, scaled_size, MIN_RENDER_SCALE};
 pub use render_stats::{format_count, RenderStats};
 pub use scene_renderer::{
     load_grass_ground_in, load_scene_grass_ground, load_scene_particle_textures,
-    load_scene_splines, BoundGrass, BoundScene, FrameInputs, LightingLevers, LoadedGrassGround,
-    LoadedSplines, LoadedTerrain, LodSettings, RendererConfig, SceneBinding, SceneRenderer,
-    SplineCollider, View2d, DEFAULT_CLEAR_COLOR,
+    load_scene_splines, BoundGrass, BoundScene, FrameHost, FrameInputs, HeldFrameCapture,
+    LightingLevers, LoadedGrassGround, LoadedSplines, LoadedTerrain, LodSettings, RendererConfig,
+    SceneBinding, SceneRenderer, SplineCollider, View2d, DEFAULT_CLEAR_COLOR,
 };
 /// The most bones one skinned mesh's buffer holds.
 pub use skinned_pipeline::MAX_BONES;

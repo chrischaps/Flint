@@ -9,7 +9,7 @@ description = "Music for Flint games: suite manifests with manifest-named stem b
 default = ["device"]
 # Realtime playback through the sound card (kira's cpal backend, ALSA on
 # Linux). Off, a realtime session fails to start as with no device; offline
-# rendering (`render-suite`) never needs it (#221).
+# rendering (`flint music render`) never needs it (#221).
 device = ["kira/cpal"]
 
 [dependencies]

@@ -50,6 +50,10 @@ impl PlayerApp {
                 return Some(failure);
             }
         }
+        // A capture asked for and never written (#1086)
+        if let Some(failure) = self.frame_captures.failure() {
+            return Some(failure);
+        }
         // `--max-hitches` and `--max-hitches-startup` (#1079)
         self.stats.watch.failure()
     }
@@ -95,6 +99,7 @@ impl PlayerApp {
             post: Default::default(),
             audio_vfs_generation: flint_core::vfs::generation(),
             capture: CaptureConfig::default(),
+            frame_captures: Default::default(),
             outcome: Default::default(),
             #[cfg(test)]
             test_gpu: None,
@@ -411,6 +416,23 @@ impl PlayerApp {
     ) {
         self.schemas.set(registry, &dirs.dirs);
         self.schema_dirs = dirs;
+    }
+
+    /// Advance the game exactly `step` seconds a frame, whatever the wall
+    /// time (`--frame-step`, the web's `?frame_step=`; none or 0 is the
+    /// wall clock), and seed scripts' `random()` with `seed`. A stepped run
+    /// is meant to repeat, so with no seed it takes the one `flint render
+    /// --scripts` uses (#635); neither leaves the clock-started sequence.
+    pub fn step_frames(&mut self, step: Option<f64>, seed: Option<u64>) {
+        self.core.clock.frame_step = step.filter(|s| *s > 0.0);
+        if let Some(seed) = seed.or(self
+            .core
+            .clock
+            .frame_step
+            .map(|_| super::headless_game::SCRIPT_SEED))
+        {
+            self.core.script.seed_random(seed);
+        }
     }
 
     /// Set the schema directories as the one resolver named them (ADR
@@ -940,7 +962,7 @@ impl PlayerApp {
 }
 
 /// Where the procgen disk tier goes for a scene in `scene_dir` (#181):
-/// `FLINT_PROCGEN_CACHE=<dir>` if set (`0`, `off` or empty: no disk tier),
+/// `FLINT_PROCGEN_CACHE=<dir>` if set (`0`, `off`, `false`, `no`: no disk tier),
 /// else `.flint/procgen-cache/` at the scene's project root
 /// (`Project::root_for`, ADR 0114), so every scene of a project shares one
 /// cache and the `.flint/` it makes marks the root that was already in use.
@@ -949,11 +971,12 @@ fn procgen_disk_config(
     project: &flint_core::project::Project,
     scene_dir: &Path,
 ) -> Option<flint_procgen::DiskCacheConfig> {
-    if let Ok(value) = std::env::var("FLINT_PROCGEN_CACHE") {
-        return match value.trim() {
-            "" | "0" | "off" | "false" => None,
-            dir => Some(flint_procgen::DiskCacheConfig::new(dir)),
-        };
+    match flint_core::env::PROCGEN_CACHE.get() {
+        Some(flint_core::env::Value::Off) => return None,
+        Some(flint_core::env::Value::Path(dir)) => {
+            return Some(flint_procgen::DiskCacheConfig::new(dir))
+        }
+        _ => {}
     }
     Some(flint_procgen::DiskCacheConfig::in_project(
         &project.root_for(scene_dir),

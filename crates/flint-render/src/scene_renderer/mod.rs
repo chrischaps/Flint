@@ -2,6 +2,8 @@
 
 mod assets;
 mod binding;
+mod capture;
+mod describe;
 mod draw_list;
 mod draws;
 mod extract;
@@ -27,6 +29,8 @@ mod terrain;
 mod water;
 
 pub use binding::{BoundGrass, BoundScene, LoadedTerrain, SceneBinding};
+pub use capture::HeldFrameCapture;
+pub use describe::FrameHost;
 use draw_list::{Blend, Draw, DrawItem, DrawList, Layer, VertexStage};
 pub(crate) use fog_veil::FOG_VEIL_FORMAT;
 pub use frame::{FrameInputs, View2d};
@@ -174,20 +178,14 @@ impl LodSettings {
 
     /// The defaults, overridden by `FLINT_LOD_SCALE` and
     /// `FLINT_DRAW_DISTANCE_SCALE` when they hold a number.
+    /// A value under [`Self::MIN_SCALE`] warns (the table's minimum).
     pub fn from_env() -> Self {
-        let read = |key: &str| {
-            std::env::var(key)
-                .ok()
-                .and_then(|v| v.trim().parse::<f32>().ok())
-                .filter(|v| v.is_finite())
-                .map(|v| v.max(Self::MIN_SCALE))
-        };
         let mut s = Self::default();
-        if let Some(v) = read("FLINT_LOD_SCALE") {
-            s.lod_scale = v;
+        if let Some(v) = flint_core::env::LOD_SCALE.f32() {
+            s.lod_scale = v.max(Self::MIN_SCALE);
         }
-        if let Some(v) = read("FLINT_DRAW_DISTANCE_SCALE") {
-            s.draw_distance_scale = v;
+        if let Some(v) = flint_core::env::DRAW_DISTANCE_SCALE.f32() {
+            s.draw_distance_scale = v.max(Self::MIN_SCALE);
         }
         s
     }
@@ -565,6 +563,12 @@ pub struct SceneRenderer {
     grass: grass::GrassRenderer,
     /// Times the frame's phases on the GPU, while timing is on (ADR 0108)
     gpu_timer: Option<crate::gpu_timer::GpuTimer>,
+    /// The frame being described (#1084), only after `describe_next_frame`;
+    /// `None` costs a frame nothing (`describe.rs`)
+    frame_log: Option<Box<crate::frame_capture::FrameLog>>,
+    /// The frame being captured (#1085): its targets' copies so far. `None`
+    /// unless `capture_next_frame` asked.
+    frame_taps: Option<Box<crate::frame_taps::FrameTaps>>,
     /// Comic panels (#880, ADR 0120): the layout and each panel's view
     panel_state: panels::PanelState,
     /// Per-entity styles (#263): who is styled, how far, the mask and
@@ -800,6 +804,8 @@ impl SceneRenderer {
             lod_settings: LodSettings::from_env(),
             lod_culled: 0,
             gpu_timer: None,
+            frame_log: None,
+            frame_taps: None,
             panel_state: Default::default(),
             style_mask: style_mask::StyleMaskState::new(),
             fog_veil: fog_veil::FogVeilState::default(),
@@ -1440,6 +1446,11 @@ impl SceneRenderer {
         self.draw_bind_cache.retain_frame(frame);
         self.skinning.bone_binds.retain(|_, b| b.touched == frame);
         self.ray_scene = Arc::new(ray_scene);
+
+        // Who each draw is, for a GPU debugger's draw markers (#1083)
+        if crate::gpu_labels::draws() {
+            self.draws.name_entities(|id| world.get_name(id));
+        }
 
         // Put texture cache back
         self.texture_cache = tex_cache;

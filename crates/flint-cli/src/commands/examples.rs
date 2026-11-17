@@ -30,10 +30,6 @@ pub struct ExamplesArgs {
     #[arg(long)]
     pub topic: Option<String>,
 
-    /// Print the list as JSON
-    #[arg(long)]
-    pub json: bool,
-
     /// Check the index against the folder and validate every example;
     /// exits 1 naming each failure
     #[arg(long)]
@@ -76,24 +72,33 @@ pub fn run(args: ExamplesArgs) -> Result<()> {
 
     if args.check {
         let failures = check(&dir, &examples, &args.schemas);
+        let mut text = String::new();
         for failure in &failures {
-            println!("FAIL {failure}");
+            text += &format!("FAIL {failure}\n");
         }
-        if !failures.is_empty() {
-            println!(
-                "\n{} examples in {}: {} failure(s)",
+        if failures.is_empty() {
+            text += &format!(
+                "{} examples in {}: every one indexed and valid\n",
+                examples.len(),
+                dir.display()
+            );
+        } else {
+            text += &format!(
+                "\n{} examples in {}: {} failure(s)\n",
                 examples.len(),
                 dir.display(),
                 failures.len()
             );
-            std::process::exit(1);
         }
-        println!(
-            "{} examples in {}: every one indexed and valid",
-            examples.len(),
-            dir.display()
-        );
-        return Ok(());
+        let failures: Vec<String> = failures.iter().map(|f| f.to_string()).collect();
+        let document = serde_json::json!({
+            "dir": dir.to_string_lossy().replace('\\', "/"),
+            "examples": examples.len(),
+            "valid": failures.is_empty(),
+            "failures": failures,
+        });
+        let failed = !failures.is_empty();
+        return crate::output::emit(&crate::output::Answer::new(text, document).failed_if(failed));
     }
 
     let shown: Vec<&Example> = examples
@@ -108,7 +113,7 @@ pub fn run(args: ExamplesArgs) -> Result<()> {
             );
         }
     }
-    if args.json {
+    if crate::output::json() {
         let list: Vec<serde_json::Value> = shown
             .iter()
             .map(|e| {
@@ -119,7 +124,7 @@ pub fn run(args: ExamplesArgs) -> Result<()> {
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&list)?);
+        crate::output::document(&serde_json::Value::Array(list));
         return Ok(());
     }
     print!("{}", listing(&dir, &shown));

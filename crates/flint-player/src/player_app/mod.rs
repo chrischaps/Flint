@@ -13,6 +13,7 @@ mod capture_gate_tests;
 mod component_panel_tests;
 #[cfg(test)]
 mod debug_key_tests;
+mod debug_keys;
 mod debug_panels;
 mod egui_input;
 #[cfg(test)]
@@ -25,6 +26,9 @@ mod extension_hooks_tests;
 mod extension_tests;
 pub mod fonts;
 mod frame;
+mod frame_capture;
+#[cfg(test)]
+mod frame_capture_tests;
 mod frame_history;
 #[cfg(test)]
 mod frame_notes_tests;
@@ -320,6 +324,10 @@ pub struct PlayerApp {
     /// `--screenshot-every` / `--exit-after`. Captures the presented frame
     /// (scene + egui HUD) right before `present()`.
     pub capture: CaptureConfig,
+    /// Frame captures for the frame debugger (#1086): `--capture-frame-at`,
+    /// `--capture-on-hitch`, the debug key and an input script's `capture`
+    /// line, each a `.flintframe` folder (`frame_capture.rs`).
+    pub(crate) frame_captures: frame_capture::FrameCaptures,
     /// How the run ends, and why it failed if it did
     outcome: state::Outcome,
     /// A windowless device for the tests that take a scene through a

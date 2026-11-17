@@ -75,8 +75,21 @@ pub fn run(args: ValidateSuiteArgs) -> Result<()> {
         record("chart", validate_chart(&chart, &manifest));
     }
 
+    crate::output::when_json(|| {
+        serde_json::json!({
+            "suite": manifest.id,
+            "valid": issues.is_empty(),
+            "rhythm": rhythm,
+            "sections": manifest.sections.len(),
+            "tempo_anchors": manifest.tempo.len(),
+            "buses": manifest.buses.len(),
+            "issues": issues.iter().map(|(scope, issue)| {
+                serde_json::json!({ "scope": scope, "message": issue.to_string() })
+            }).collect::<Vec<_>>(),
+        })
+    });
     if issues.is_empty() {
-        println!(
+        crate::output::say!(
             "OK: suite '{}' ({} sections, {} tempo anchors, {} buses{}{})",
             manifest.id,
             manifest.sections.len(),
@@ -94,6 +107,7 @@ pub fn run(args: ValidateSuiteArgs) -> Result<()> {
         for (scope, issue) in &issues {
             eprintln!("{scope}: {issue}");
         }
-        anyhow::bail!("{} validation issue(s)", issues.len());
+        eprintln!("{} validation issue(s)", issues.len());
+        Err(crate::output::failed())
     }
 }
