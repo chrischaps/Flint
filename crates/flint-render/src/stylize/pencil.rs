@@ -281,6 +281,8 @@ pub(super) static STYLE: StyleDescriptor =
         .params(PARAMS)
         .options(OPTIONS)
         .uses_albedo(super::MaskUse::When(reads_albedo))
+        // The contour's depth steps and creases (#743)
+        .needs(&[super::StyleNeed::Edges])
         .draws_blend(draws_on)
         .component("pencil_style");
 
@@ -373,6 +375,8 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
             image_entry(3),
             // The style albedo (#869), or the blank stand-in
             image_entry(4),
+            // The shared edges (#743), or the blank stand-in
+            image_entry(5),
         ],
     });
     // Bound while no entity asks for the style: one unstyled pixel
@@ -407,6 +411,22 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         view_formats: &[],
     });
     let no_albedo_view = no_albedo.create_view(&Default::default());
+    // Bound if the shared edge pass couldn't be built: one texel of no edge
+    let no_edges = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Pencil No Edges"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: super::edges::EDGE_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let no_edges_view = no_edges.create_view(&Default::default());
     let blit = kit::Blit::new(device, "Pencil Blit", &input_bgl, d.format);
     let flow_shader = kit::shader(device, "Pencil Flow Shader", FLOW_SHADER);
     let flow_pipeline = |label: &str, entry: &str| {
@@ -452,6 +472,8 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         no_mask_view,
         _no_albedo: no_albedo,
         no_albedo_view,
+        _no_edges: no_edges,
+        no_edges_view,
         blit,
         warned: Mutex::new(false),
         images: Mutex::new(Images {
@@ -478,6 +500,7 @@ pub(super) fn image_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 
 const PREP_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "edges_read.wgsl",
     "pencil_common.wgsl",
     "pencil_prep.wgsl"
 );
@@ -571,6 +594,8 @@ struct PencilUniforms {
     _pad1: f32,
     info: [u32; 4],
     img: [f32; 4],
+    /// The shared edges' thresholds (#743): `edge_depth`, `edge_normal`
+    edge: [f32; 4],
     rows: [PencilRow; MAX_VARIANTS],
     slots: [[u32; 4]; MAX_IDS / 4],
 }
@@ -735,6 +760,22 @@ pub fn choose_image(names: &[String], rows: &mut [PencilRow], lane: usize) -> (S
 /// disc it measures (three times `clutter_radius` in `pencil.wgsl`: six
 /// contour widths, at least nine pixels); and four pixels for the bilinear
 /// taps' footprint and the flow's half-resolution texels.
+/// Where the prep pass draws (#385): per entity, their rect grown by how
+/// far a styled pixel reads the prep; `None` for the whole frame.
+fn prep_rect(
+    frame: &StyleFrame<'_>,
+    rows: &[PencilRow],
+    pixels_per_point: f32,
+) -> Option<kit::PixelRect> {
+    frame.styled_rect(0).map(|r| {
+        r.padded(
+            prep_reach(rows, pixels_per_point),
+            frame.width,
+            frame.height,
+        )
+    })
+}
+
 fn prep_reach(rows: &[PencilRow], pixels_per_point: f32) -> u32 {
     let pixels = rows
         .iter()
@@ -773,6 +814,8 @@ struct Pencil {
     no_mask_view: wgpu::TextureView,
     _no_albedo: wgpu::Texture,
     no_albedo_view: wgpu::TextureView,
+    _no_edges: wgpu::Texture,
+    no_edges_view: wgpu::TextureView,
     /// The input through, outside the styled entities' rect (#385).
     blit: kit::Blit,
     /// Whether the too-many-variants warning has been given.
@@ -791,9 +834,11 @@ impl Pencil {
     ) -> Arc<wgpu::BindGroup> {
         let mask = frame.mask.filter(|_| with_mask);
         // Keyed by both images' uploads, so a new paper gets a new group,
-        // and by the albedo's size, which a render-scale step changes
+        // and by the albedo's and the edges' sizes, which a render-scale
+        // step changes
         let key = (mask.is_some() as u64 | paper.generation << 1 | stroke.generation << 32)
-            ^ frame.albedo_key().wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            ^ frame.albedo_key().wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ frame.edges_key().wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
         frame.depth_bind("Pencil Geometry BG", key, || {
             frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Pencil Geometry BG"),
@@ -824,6 +869,15 @@ impl Pencil {
                                 .albedo
                                 .as_ref()
                                 .map_or(&self.no_albedo_view, |a| &a.view),
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(
+                            frame
+                                .edges
+                                .as_ref()
+                                .map_or(&self.no_edges_view, |e| &e.view),
                         ),
                     },
                 ],
@@ -930,6 +984,22 @@ impl Pencil {
 }
 
 impl StylePass for Pencil {
+    /// Per entity (#743), the prep reads the shared edges only where it
+    /// draws: [`prep_rect`], in depth pixels.
+    fn edges_rect(&self, frame: &StyleFrame<'_>) -> Option<kit::PixelRect> {
+        let (rows, _, _) = self.variant_table(frame);
+        let ppp = if frame.pixels_per_point.is_finite() && frame.pixels_per_point > 0.0 {
+            frame.pixels_per_point
+        } else {
+            1.0
+        };
+        let size = [frame.width, frame.height];
+        prep_rect(frame, &rows, ppp).map(|r| {
+            r.rescaled(size, frame.depth_size)
+                .padded(2, frame.depth_size[0], frame.depth_size[1])
+        })
+    }
+
     fn encode(
         &self,
         frame: &StyleFrame<'_>,
@@ -961,6 +1031,12 @@ impl StylePass for Pencil {
                 0,
             ],
             img: paper.stats.paper_and(stroke.stats),
+            edge: [
+                frame.config.edge_depth.max(super::edges::MIN_THRESHOLD),
+                frame.config.edge_normal.max(super::edges::MIN_THRESHOLD),
+                0.0,
+                0.0,
+            ],
             rows: [PencilRow::zeroed(); MAX_VARIANTS],
             slots: [[0; 4]; MAX_IDS / 4],
         };
@@ -982,13 +1058,7 @@ impl StylePass for Pencil {
         // how far a styled pixel reads the prep
         let size = [frame.width, frame.height];
         let draw_rect = frame.styled_rect(0);
-        let prep_rect = draw_rect.map(|r| {
-            r.padded(
-                prep_reach(&rows, uniforms.pixels_per_point),
-                size[0],
-                size[1],
-            )
-        });
+        let prep_rect = prep_rect(frame, &rows, uniforms.pixels_per_point);
         kit::fullscreen_pass_in(
             encoder,
             "Pencil Prep",
@@ -1117,7 +1187,8 @@ mod tests {
         assert_eq!(std::mem::size_of::<PencilRow>(), 160);
         assert_eq!(
             std::mem::size_of::<PencilUniforms>(),
-            64 + 16 + 16 + 16 + 16 + 16 + MAX_VARIANTS * 160 + MAX_IDS * 4
+            // ... the images' measures, then #743's edge thresholds
+            64 + 16 + 16 + 16 + 16 + 16 + 16 + MAX_VARIANTS * 160 + MAX_IDS * 4
         );
     }
 

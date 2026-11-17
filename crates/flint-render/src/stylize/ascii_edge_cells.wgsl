@@ -3,7 +3,10 @@
 // One fragment per cell of the ASCII grid (the target is the grid, one
 // texel a cell, offset by one so the part cell at the top left is 0, 0).
 // It reads every edge pixel of its cell, not a sparse lattice, so a
-// one-pixel outline can't slip between samples and leave a gap.
+// one-pixel outline can't slip between samples and leave a gap. The edge
+// pixels are the shared edges' with the mask's outlines over them
+// (ascii_edge_source.wgsl, #743; until then this style's own edge pass
+// found the geometry too).
 //
 // The edge pixels' structure tensors are summed: its dominant orientation
 // is the line's direction, smoothed over the whole cell, with no voting
@@ -65,6 +68,8 @@
 // exactly the stateless pass's.
 
 struct CellUniforms {
+    // The edge pixels' inputs (ascii_edge_source.wgsl)
+    src: EdgeSource,
     cell: vec2<f32>,
     origin: vec2<f32>,
     size: vec2<f32>,
@@ -88,11 +93,15 @@ struct CellUniforms {
 };
 
 @group(0) @binding(0) var<uniform> u: CellUniforms;
-@group(1) @binding(0) var edges: texture_2d<f32>;
+// Group 0's edge table and group 1's edges, mask and depth are
+// ascii_edge_source.wgsl's
 // The style's input picture, at output resolution (#351)
 @group(2) @binding(0) var picture: texture_2d<f32>;
 // Last frame's edge cells (#477), read only with `u.history`
 @group(3) @binding(0) var past_cells: texture_2d<f32>;
+// The mask's outlines (ascii_edge_outline.wgsl), read only with
+// `u.src.outlines`
+@group(3) @binding(1) var outlines: texture_2d<f32>;
 
 // The picture at output pixel `p` in display values, 0..1
 fn shown(p: vec2<i32>) -> vec3<f32> {
@@ -197,7 +206,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             // a one-pixel line is 1/scale output pixels wide, so each hit
             // weighs `scale` and lengths stay in output cell widths
             let q = min(vec2<i32>((vec2<f32>(p) + 0.5) * to_edge), edge_max_px);
-            let e = textureLoad(edges, q, 0);
+            var o = vec4<f32>(0.0);
+            if u.src.outlines == 1u {
+                o = textureLoad(outlines, q, 0);
+            }
+            let e = edge_pixel(q, o);
             if e.w > 0.5 {
                 // The sample's place in the cell, in cells from its centre
                 let at = vec2<f32>(x, y) / u.cell - 0.5;
@@ -208,7 +221,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 all_cx += e.x * at;
                 all_cy += e.y * at;
                 all_cz += e.z * at;
-                // w: 1 crease, 2 depth, 3 outline (ascii_edges.wgsl)
+                // w: 1 crease, 2 depth, 3 outline (ascii_edge_source.wgsl)
                 if e.w > 2.5 {
                     out_j += e.xyz;
                     out_n += weight;

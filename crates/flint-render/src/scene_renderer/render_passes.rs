@@ -1547,11 +1547,12 @@ impl SceneRenderer {
         // style on this frame that needs them
         if let Some(frame) = &mut style_frame {
             let both: Vec<_> = hdr_styles.iter().chain(&display_styles).copied().collect();
-            frame.edges =
+            let edges =
                 pp.styles
                     .encode_edges(&both, frame, encoder, &mut |label, encoder, run| {
                         self.run_style_part(device, scopes, label, encoder, run, None)
                     });
+            frame.edges = edges;
             scopes.note(crate::stylize::edges::EDGE_LABEL, |p| {
                 p.reads(&[sd]).writes(&["style edges"]);
             });

@@ -1,8 +1,9 @@
 // ASCII edge view (#349): what the edge passes found and what each glyph
 // cell made of it. `flint render --debug-mode edges` (and F4's "Style
 // Edges") draw this in place of the glyphs, over the scene in dim grey:
-//   - each edge pixel (ascii_edges.wgsl) in its source's colour: cyan a
-//     depth step, amber a crease, magenta a styled entity's outline;
+//   - each edge pixel (ascii_edge_source.wgsl: the shared edges and the
+//     mask's outlines, #743) in its source's colour: cyan a depth step,
+//     amber a crease, magenta a styled entity's outline;
 //   - each glyph cell's decision (ascii_edge_cells.wgsl, then the
 //     thinning and corners of ascii_edge_thin.wgsl and
 //     ascii_edge_corners.wgsl, #910, the texel the glyph pass reads): a
@@ -18,6 +19,8 @@
 // The colours are ascii.rs's EDGE_VIEW_LEGEND; keep them together.
 
 struct EdgeViewUniforms {
+    // The edge pixels' inputs (ascii_edge_source.wgsl)
+    src: EdgeSource,
     cell: vec2<f32>,
     origin: vec2<f32>,
     size: vec2<f32>,
@@ -35,12 +38,15 @@ struct EdgeViewUniforms {
 };
 
 @group(0) @binding(0) var<uniform> u: EdgeViewUniforms;
-@group(1) @binding(0) var input_texture: texture_2d<f32>;
-@group(1) @binding(1) var input_sampler: sampler;
-@group(2) @binding(0) var edges: texture_2d<f32>;
+// Group 0's edge table and group 1's edges, mask and depth are
+// ascii_edge_source.wgsl's
+@group(2) @binding(0) var input_texture: texture_2d<f32>;
+@group(2) @binding(1) var input_sampler: sampler;
 @group(3) @binding(0) var edge_cells: texture_2d<f32>;
 // The edge slot pass's packed decision per cell (#910)
 @group(3) @binding(1) var edge_slots: texture_2d<u32>;
+// The mask's outlines (#743, ascii_edge_outline.wgsl), 0 while it didn't run
+@group(3) @binding(2) var outlines: texture_2d<f32>;
 
 // The edge cells are offset by one, so the part cell at the top left is
 // texel 0, 0 (ascii_common.wgsl's CELL_OFFSET)
@@ -155,7 +161,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         vec2<i32>(p * u.edge_size / u.size),
         vec2<i32>(u.edge_size) - vec2<i32>(1),
     );
-    let kind = textureLoad(edges, q, 0).w;
+    let kind = edge_pixel(q, textureLoad(outlines, q, 0)).w;
     if kind > 2.5 {
         out = OUTLINE_COLOR;
     } else if kind > 1.5 {

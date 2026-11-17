@@ -76,7 +76,7 @@ fn bayer(c: vec2<i32>) -> f32 {
 
 // The scene's view depth (clip w) at output pixel `px`, and the world
 // point there. The sky is cleared to depth 1, which unprojects to the far
-// plane by a w f32 rounds to 0; stop just short of it (ascii_edges.wgsl).
+// plane by a w f32 rounds to 0; stop just short of it (edges.wgsl).
 struct Surface {
     world: vec3<f32>,
     w: f32,

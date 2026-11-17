@@ -169,9 +169,17 @@ mod tests {
     /// Both of the shading boil's passes, on the validator the player's GPU runs.
     #[test]
     fn shading_boil_shaders_validate() {
+        // With the helpers they're built with (#743)
         for source in [
-            include_str!("stylize/contour.wgsl"),
-            include_str!("stylize/kuwahara.wgsl"),
+            concat!(
+                include_str!("stylize/prelude_core.wgsl"),
+                include_str!("stylize/edges_read.wgsl"),
+                include_str!("stylize/contour.wgsl")
+            ),
+            concat!(
+                include_str!("stylize/prelude_core.wgsl"),
+                include_str!("stylize/kuwahara.wgsl")
+            ),
         ] {
             let module = naga::front::wgsl::parse_str(source).expect("failed to parse");
             naga::valid::Validator::new(
