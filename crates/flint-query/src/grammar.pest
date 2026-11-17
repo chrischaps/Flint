@@ -6,6 +6,10 @@ WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
 // condition (`and ...`, a second clause) is a parse error, not ignored (#687)
 query = { SOI ~ resource ~ (where_clause)? ~ EOI }
 
+// One condition alone, as `flint playtest`'s `expect <entity> <condition>`
+// asks of one entity (#714)
+condition_only = { SOI ~ condition ~ EOI }
+
 // Resources that can be queried
 resource = { "entities" | "components" }
 
@@ -15,7 +19,8 @@ where_clause = { ^"where" ~ condition }
 // Conditions
 condition = { field ~ operator ~ value }
 
-// Field path (e.g., "archetype" or "door.locked")
+// Field path (e.g., "archetype" or "door.locked"; an array's element by
+// x, y, z or w: "transform.position.y")
 field = @{ identifier ~ ("." ~ identifier)* }
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 

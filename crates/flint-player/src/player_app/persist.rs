@@ -387,6 +387,14 @@ impl PlayerApp {
     /// saved over.
     pub(super) fn load_persistent_store(&mut self) {
         self.refresh_project();
+        if self.launch.saves_in_memory {
+            // No backend: nothing read, `save_persistent_store` writes nothing
+            self.core
+                .store
+                .set_game_version(self.core.project.save_version);
+            tracing::info!("persist: saves are kept in memory for this run");
+            return;
+        }
         let files = SaveFiles::locate(
             &self.core.project,
             &self.core.scene_path,

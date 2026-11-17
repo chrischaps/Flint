@@ -33,6 +33,8 @@ toml = { workspace = true }
 # sorts its keys. Already in the tree under `toml`.
 toml_edit = { workspace = true }
 tracing = { workspace = true }
+# What `test_log` records, as a playtest's report holds it (#714)
+serde_json = { workspace = true }
 
 # The web player trims rhai (#123): no AST optimizer, no custom syntax and
 # i64 as the only integer type. Flint registers no syntax, sets no

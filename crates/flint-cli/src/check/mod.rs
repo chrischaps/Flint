@@ -47,7 +47,7 @@
 
 pub mod cargo;
 mod references;
-mod report;
+pub mod report;
 pub mod scene;
 pub mod scripts;
 

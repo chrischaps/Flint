@@ -57,6 +57,7 @@ mod sprite;
 mod state;
 mod style;
 mod terrain;
+mod test;
 mod time;
 mod touch;
 mod ui;
@@ -108,4 +109,5 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     data::register(api);
     expression::register(api);
     music::register(api);
+    test::register(api);
 }
