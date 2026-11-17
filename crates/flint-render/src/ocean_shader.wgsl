@@ -136,75 +136,7 @@ struct BodyUniforms {
 @group(1) @binding(1)
 var<uniform> body: BodyUniforms;
 
-// Bind group 2: lights + shadows (same layout as shader.wgsl / terrain)
-struct DirectionalLight {
-    direction: vec3<f32>,
-    volumetric_intensity: f32,
-    color: vec3<f32>,
-    intensity: f32,
-    volumetric_color: vec3<f32>,
-    _pad1: f32,
-};
-
-struct PointLight {
-    position: vec3<f32>,
-    radius: f32,
-    color: vec3<f32>,
-    intensity: f32,
-    // Physical source radius (world units); 0 = punctual (ADR 0056).
-    // Struct grew 32 -> 48 B — must match the Rust PointLight in all six
-    // LightUniforms mirrors (light_uniforms_layout test).
-    source_radius: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
-};
-
-struct SpotLight {
-    position: vec3<f32>,
-    radius: f32,
-    direction: vec3<f32>,
-    inner_angle: f32,
-    color: vec3<f32>,
-    outer_angle: f32,
-    intensity: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
-};
-
-struct LightUniforms {
-    directional_lights: array<DirectionalLight, 4>,
-    point_lights: array<PointLight, 16>,
-    spot_lights: array<SpotLight, 8>,
-    directional_count: u32,
-    point_count: u32,
-    spot_count: u32,
-    _pad: u32,
-    ambient_sky: vec4<f32>,
-    ambient_ground: vec4<f32>,
-    // rgb = sheen tint, w = strength; zero = off (must match LightUniforms in pipeline.rs)
-    sheen_color_strength: vec4<f32>,
-};
-
-@group(2) @binding(0)
-var<uniform> lights: LightUniforms;
-
-@group(2) @binding(1)
-var shadow_maps: texture_depth_2d_array;
-@group(2) @binding(2)
-var shadow_sampler: sampler_comparison;
-
-struct ShadowUniforms {
-    cascade_view_proj: array<mat4x4<f32>, 3>,
-    cascade_splits: vec4<f32>,
-    // PCSS (ADR 0057): xyz = per-cascade light-ortho depth range (world
-    // units), w = tan(sun angular size); w = 0 -> legacy 3x3 PCF verbatim.
-    pcss: vec4<f32>,
-};
-
-@group(2) @binding(3)
-var<uniform> shadow: ShadowUniforms;
+// Bind group 2: lights + shadows (lights.wgsl, light_bindings.wgsl, #738)
 
 // Grab pass (valid when grab_enabled == 1): the opaque scene rendered
 // before the ocean, for refraction of whatever is underwater.
@@ -443,71 +375,12 @@ fn vs_body(in: BodyVertexInput) -> VertexOutput {
     return out;
 }
 
-// ── Shadow sampling (same as terrain_shader.wgsl) ───────────────────────
-
-fn shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
-    let shadow_far = shadow.cascade_splits.z;
-    let fade_start = shadow_far * 0.75;
-    if (view_depth > shadow_far) {
-        return 1.0;
-    }
-    let distance_fade = 1.0 - smoothstep(fade_start, shadow_far, view_depth);
-
-    var cascade: i32 = 0;
-    if (view_depth > shadow.cascade_splits.x) {
-        cascade = 1;
-    }
-    if (view_depth > shadow.cascade_splits.y) {
-        cascade = 2;
-    }
-
-    let light_space = shadow.cascade_view_proj[cascade] * vec4<f32>(world_pos, 1.0);
-    let proj = light_space.xyz / light_space.w;
-    let shadow_uv = proj.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
-
-    let edge_fade = min(
-        min(smoothstep(0.0, 0.02, shadow_uv.x), smoothstep(0.0, 0.02, 1.0 - shadow_uv.x)),
-        min(smoothstep(0.0, 0.02, shadow_uv.y), smoothstep(0.0, 0.02, 1.0 - shadow_uv.y))
-    );
-    if (edge_fade <= 0.0) {
-        return 1.0;
-    }
-
-    let depth = proj.z;
-    // Texel size rides cascade_splits.w (0 = unset -> legacy 1/2048).
-    var texel_size = shadow.cascade_splits.w;
-    if (texel_size <= 0.0) {
-        texel_size = 1.0 / 2048.0;
-    }
-    var shadow_sum = 0.0;
-    for (var y = -1; y <= 1; y = y + 1) {
-        for (var x = -1; x <= 1; x = x + 1) {
-            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-            shadow_sum += textureSampleCompareLevel(
-                shadow_maps, shadow_sampler, shadow_uv + offset, cascade, depth
-            );
-        }
-    }
-
-    let raw_shadow = shadow_sum / 9.0;
-    return mix(1.0, raw_shadow, distance_fade * edge_fade);
-}
-
 // Invert the engine's wgpu-convention [0,1] projection (ADR 0055): stored
 // depth d maps to view distance z = n·f / (f − d·(f−n)).
 fn linearize_depth(d: f32) -> f32 {
     let n = ocean.camera_near;
     let f = ocean.camera_far;
     return (n * f) / max(f - d * (f - n), 1e-4);
-}
-
-fn aces_filmic(x: vec3<f32>) -> vec3<f32> {
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-    return saturate((x * (a * x + b)) / (x * (c * x + d) + e));
 }
 
 // Quantize a 0..1 value into `steps` hard bands with fwidth anti-aliasing.
@@ -948,7 +821,9 @@ fn fs_main(in: VertexOutput,
     let spec = smoothstep(0.30 - spec_aa, 0.30 + spec_aa, spec_raw) * front_f;
 
     // ── Shadows (scene silhouettes on the water) ────────────────────────
-    let sf = shadow_factor(in.world_pos, view_depth);
+    // The cascades every surface takes (shadows.wgsl), with no normal offset:
+    // the waves' own normal would move the shadow with the swell.
+    let sf = shadow_factor(in.world_pos, view_depth, vec3<f32>(0.0));
 
     // Lighting composition. The water body color is treated as pre-lit
     // (stylized): tinted by the sun, dimmed in shadow, foam takes light fully.

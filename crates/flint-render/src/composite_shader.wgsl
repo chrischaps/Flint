@@ -141,15 +141,7 @@ fn vs_composite(@builtin(vertex_index) vid: u32) -> VsOut {
     return out;
 }
 
-// ACES filmic tone mapping curve
-fn aces_filmic(x: vec3<f32>) -> vec3<f32> {
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-    return saturate((x * (a * x + b)) / (x * (c * x + d) + e));
-}
+// ACES filmic tone mapping: `aces_filmic`, tonemap.wgsl (#738), put in front
 
 // Linear to sRGB gamma correction
 fn linear_to_srgb(color: vec3<f32>) -> vec3<f32> {

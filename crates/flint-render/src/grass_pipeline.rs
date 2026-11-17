@@ -550,13 +550,7 @@ impl GrassPipeline {
             label: Some("Grass Render Shader"),
             // The comb (#252) is shallow wooze's noise, so grass and a bench
             // standing in it are moved by one field.
-            source: wgpu::ShaderSource::Wgsl(
-                concat!(
-                    include_str!("wooze_noise.wgsl"),
-                    include_str!("grass_render.wgsl")
-                )
-                .into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::GRASS.into()),
         });
 
         // --- Compute bind group layouts ---

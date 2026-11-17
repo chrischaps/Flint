@@ -28,74 +28,8 @@ var depth_texture: texture_2d<f32>;
 @group(1) @binding(1)
 var depth_sampler_nn: sampler;
 
-// Group 2: Shadow maps + comparison sampler + ShadowUniforms + LightUniforms
-// Mirror the light structures from the PBR shader
-struct DirectionalLight {
-    direction: vec3<f32>,
-    volumetric_intensity: f32,
-    color: vec3<f32>,
-    intensity: f32,
-    volumetric_color: vec3<f32>,
-    _pad1: f32,
-};
-
-struct PointLight {
-    position: vec3<f32>,
-    radius: f32,
-    color: vec3<f32>,
-    intensity: f32,
-    // Physical source radius (world units); 0 = punctual (ADR 0056).
-    // Struct grew 32 -> 48 B — must match the Rust PointLight in all six
-    // LightUniforms mirrors (light_uniforms_layout test).
-    source_radius: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
-};
-
-struct SpotLight {
-    position: vec3<f32>,
-    radius: f32,
-    direction: vec3<f32>,
-    inner_angle: f32,
-    color: vec3<f32>,
-    outer_angle: f32,
-    intensity: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
-};
-
-struct LightUniforms {
-    directional_lights: array<DirectionalLight, 4>,
-    point_lights: array<PointLight, 16>,
-    spot_lights: array<SpotLight, 8>,
-    directional_count: u32,
-    point_count: u32,
-    spot_count: u32,
-    _pad: u32,
-    ambient_sky: vec4<f32>,
-    ambient_ground: vec4<f32>,
-    // rgb = sheen tint, w = strength; zero = off (must match LightUniforms in pipeline.rs)
-    sheen_color_strength: vec4<f32>,
-};
-
-struct ShadowUniforms {
-    cascade_view_proj: array<mat4x4<f32>, 3>,
-    cascade_splits: vec4<f32>,
-    // PCSS (ADR 0057): xyz = per-cascade light-ortho depth range (world
-    // units), w = tan(sun angular size); w = 0 -> legacy 3x3 PCF verbatim.
-    pcss: vec4<f32>,
-};
-
-@group(2) @binding(0)
-var shadow_maps: texture_depth_2d_array;
-@group(2) @binding(1)
-var shadow_sampler: sampler_comparison;
-@group(2) @binding(2)
-var<uniform> shadow: ShadowUniforms;
-@group(2) @binding(3)
-var<uniform> lights: LightUniforms;
+// Group 2: the scene's light group (lights.wgsl, light_bindings.wgsl, #738):
+// the lights, the shadow maps with their comparison sampler, ShadowUniforms
 
 struct VsOut {
     @builtin(position) position: vec4<f32>,
