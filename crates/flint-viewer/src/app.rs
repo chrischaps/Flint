@@ -400,6 +400,10 @@ pub struct ViewerApp {
     dirty: bool,
     last_save_time: Option<Instant>,
     suppress_reload_until: Option<Instant>,
+    /// Until when the next reload is the one F4's Commit to scene caused
+    /// (#516): it leaves the post config on screen as it is, so tweaks
+    /// never written anywhere (bloom, fog, another style) survive it.
+    own_commit_until: Option<Instant>,
     /// Frames counted for the user style poll in `check_reload` (#275).
     user_style_polls: u32,
 
@@ -583,6 +587,12 @@ fn scene_binding(scene_path: &str) -> SceneBinding {
     binding
 }
 
+/// How long after Commit to scene writes the file the reload is taken for
+/// its own (#516). The watcher reports a write after its half-second
+/// debounce; the window only stops a commit it missed from keeping the F4
+/// post over some later edit of the file.
+const OWN_COMMIT_RELOAD: Duration = Duration::from_secs(3);
+
 /// `config` with the `--style` words (#328) and `--motion-hold` (#871)
 /// written over it.
 fn with_flags(
@@ -669,6 +679,7 @@ impl ViewerApp {
             dirty: false,
             last_save_time: None,
             suppress_reload_until: None,
+            own_commit_until: None,
             user_style_polls: 0,
             pending_edits: Vec::new(),
             gizmo_drag_ended: false,
@@ -738,6 +749,7 @@ impl ViewerApp {
             dirty: false,
             last_save_time: None,
             suppress_reload_until: None,
+            own_commit_until: None,
             user_style_polls: 0,
             pending_edits: Vec::new(),
             gizmo_drag_ended: false,
@@ -1358,6 +1370,10 @@ impl ViewerApp {
                     Some(Err(e)) => eprintln!("look: {e}"),
                     None => {}
                 }
+            }
+            if flags.styles_committed {
+                // The watcher is about to reload the file just written
+                self.own_commit_until = Some(Instant::now() + OWN_COMMIT_RELOAD);
             }
             if flags.pp_changed {
                 renderer.set_post_process_config(rp.pp.clone());
@@ -2266,6 +2282,11 @@ impl ViewerApp {
                 let mut state = self.state.lock().unwrap();
                 state.needs_reload = false;
             }
+            // The first reload after a Commit to scene is its own (#516)
+            let own_commit = self
+                .own_commit_until
+                .take()
+                .is_some_and(|until| Instant::now() < until);
 
             let reload_result = {
                 let state = self.state.lock().unwrap();
@@ -2352,8 +2373,15 @@ impl ViewerApp {
                         );
 
                         // Re-derive the authored post-process so [post_process]
-                        // edits hot-reload like the rest of the scene.
-                        if self.scene_post_enabled {
+                        // edits hot-reload like the rest of the scene. Not
+                        // after the viewer's own Commit to scene (#516): the
+                        // config on screen already says what the file now
+                        // says of the committed style, and taking the file's
+                        // would throw away every F4 tweak never written
+                        // anywhere (bloom, fog, SSAO, another style's).
+                        if own_commit {
+                            println!("Kept the F4 post-process: the reload was its own commit's");
+                        } else if self.scene_post_enabled {
                             // --style keeps winning over the reloaded file (#328)
                             if let Some(def) = &state.scene_post {
                                 renderer.set_post_process_config(with_flags(
@@ -3017,3 +3045,7 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats) 
 #[cfg(test)]
 #[path = "app_binding_tests.rs"]
 mod binding_tests;
+
+#[cfg(test)]
+#[path = "app_commit_tests.rs"]
+mod commit_tests;

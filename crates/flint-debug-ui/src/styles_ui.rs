@@ -412,7 +412,8 @@ impl StylesEditor {
             )
             .on_hover_text(format!(
                 "Write this look into {file}'s [post_process.styles.{}], keeping its comments \
-                 (values back at their default are removed)",
+                 (values back at their default are removed). Only this style is written: the \
+                 rest of F4 (bloom, fog, other styles) stays on screen as tuned, not saved",
                 style.name
             ));
         let button = match &self.commit_blocked {
