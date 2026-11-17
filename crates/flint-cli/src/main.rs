@@ -48,25 +48,8 @@ enum Commands {
     #[command(subcommand)]
     Scene(Box<scene::SceneCommands>),
 
-    /// Query entities
-    Query {
-        /// Query string (e.g., "entities where archetype == 'door'")
-        query: String,
-
-        /// Path to scene file
-        #[arg(long)]
-        scene: Option<String>,
-
-        /// Output format (json or toml)
-        #[arg(long, default_value = "json")]
-        format: String,
-
-        /// Schema directories, later ones overriding earlier (repeatable).
-        /// Without it: the project's flint.toml `schemas`, else schemas/ in
-        /// the working directory, beside the scene and one level up
-        #[arg(long, action = clap::ArgAction::Append)]
-        schemas: Vec<String>,
-    },
+    /// Query entities: of a scene file, or of a running game (--attach)
+    Query(Box<query::QueryArgs>),
 
     /// Show schema information: one component or archetype, --list for
     /// all of them, --format json / json-schema for the schemas as data
@@ -263,12 +246,7 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Init(args) => init::run(*args),
         Commands::Entity(cmd) => entity::run(*cmd),
         Commands::Scene(cmd) => scene::run(*cmd),
-        Commands::Query {
-            query,
-            scene,
-            format,
-            schemas,
-        } => query::run(&query, scene.as_deref(), &format, &schemas),
+        Commands::Query(args) => query::run(*args),
         Commands::Schema(args) => schema::run(*args),
         Commands::Script(cmd) => script::run(*cmd),
         Commands::Validate(args) => validate::run(*args),

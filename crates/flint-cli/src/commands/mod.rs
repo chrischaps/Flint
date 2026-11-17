@@ -3,6 +3,7 @@
 pub mod ai_costs;
 pub mod asset;
 pub mod asset_where;
+pub mod attach;
 pub mod bundle;
 pub mod calibrate;
 pub mod check;

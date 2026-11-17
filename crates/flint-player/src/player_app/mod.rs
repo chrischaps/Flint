@@ -48,6 +48,8 @@ mod hud_render;
 mod init;
 mod input_config;
 pub mod input_script;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod inspect;
 mod key_note;
 #[cfg(feature = "living")]
 mod living_ab;
@@ -63,6 +65,8 @@ mod living_subsystem;
 pub(crate) mod living_tuning;
 #[cfg(test)]
 mod look_read_tests;
+#[cfg(not(target_arch = "wasm32"))]
+mod loopback;
 mod missing_features;
 mod pacing;
 mod perf;
@@ -104,6 +108,8 @@ pub mod web_page;
 mod web_perf;
 #[cfg(target_arch = "wasm32")]
 pub mod web_startup;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod world_dump;
 mod world_text;
 
 #[cfg(target_os = "android")]

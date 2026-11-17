@@ -347,6 +347,10 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 | `--expression-listen <ip:port>` | Take expression states as newline-delimited JSON over TCP at a loopback address, e.g. `127.0.0.1:7777`. Off unless given |
 | `--log-format <text\|json>` | How the player writes what it says, to stderr: `text` (default) or `json`, one object a line with `timestamp`, `level`, `target`, `message` and the event's fields (#716) |
 | `--quiet` | Say only warnings, errors and what a flag asked for (`--perf`'s lines, the `--exit-after` report): no load summary, controls line or transitions |
+| `--inspect-listen <ip:port>` | Answer questions about the live world at a loopback address, e.g. `127.0.0.1:7878`: `flint query --attach` and `flint entity show --attach` ask it. Off unless given ([Asking a running game](#asking-a-running-game)) |
+| `--dump-world <file>` | Write the world as JSON at `--dump-world-at` times, each entity `--dump-query` picks with its components' values ([Asking a running game](#asking-a-running-game)) |
+| `--dump-world-at <secs>` | Game times for `--dump-world`, repeatable or comma separated (`1,2.5`), each taken on the first frame at or after it. Default: `--exit-after`'s time, else the first frame |
+| `--dump-query <query>` | Which entities `--dump-world` writes, in [query](../concepts/queries.md) grammar. Default `entities`, all of them |
 
 `--music-volume 0` is the quickest way to audition a scene's sound design
 without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).
@@ -533,6 +537,100 @@ GPU, so it requires a surface that advertises `COPY_SRC`; on adapters that do
 not (some GL/Android surfaces) the player logs a warning and skips the
 screenshot rather than failing. `flint play` takes every one of these flags
 too (#705).
+
+### Asking a running game
+
+A screenshot shows what a run looks like; most gameplay bugs turn on what it
+*is*: where the player stands, whether the door is locked. Two flags let a
+run answer that (#713), both in the [query](../concepts/queries.md) grammar
+`flint query` takes for a scene file, and both answered by the same code, so
+a query means the same thing whichever world it is asked of.
+
+**A dump at game times**, for scripted runs. `--dump-world <file>` writes the
+entities `--dump-query` picks (all of them by default), each with its
+components' values, on the first frame at or after each `--dump-world-at`
+time:
+
+```bash
+flint-player examples/phase4_runtime.scene.toml --frame-step 0.0166667 \
+  --input-script examples/walk_to_door.txt --exit-after 5 \
+  --dump-world out/world.json --dump-world-at 0.5,2.5,5 \
+  --dump-query "entities where archetype == 'player'"
+```
+
+prints `[dump] out/world.json at t=2.500s (frame 151): 1 entities` as each
+snapshot is written, and leaves (the second snapshot, shortened):
+
+```json
+{
+  "scene": "examples/phase4_runtime.scene.toml",
+  "query": "entities where archetype == 'player'",
+  "snapshots": [
+    {
+      "at": 2.5,
+      "time": 2.5,
+      "frame": 151,
+      "entities": [
+        {
+          "id": 9,
+          "name": "player",
+          "archetype": "player",
+          "components": ["character_controller", "collider", "rigidbody", "script", "transform"],
+          "data": {
+            "transform": {"position": [-0.0073, 0.86, 4.2899], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
+            "character_controller": {"camera_mode": "first_person", "move_speed": 5.0, "...": "..."}
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+That run is the reason the dump exists: the input script holds W to walk to
+the front door at z = 10, and a screenshot at 5 s shows the door ahead
+under a `[E] Talk to Patron` prompt. The dump says the player stopped at
+z = 4.29 by 2.5 s and stayed there, 5.8 m short of the door. A dump of every
+entity (leave out `--dump-query`) says why: `tavern_table_3` stands at z = 5
+with a collider 0.8 m deep, so its near edge is at z = 4.6, and the player's
+capsule is 0.3 m round. `patron_1`, 1.2 m away, is who the script's `E`
+spoke to.
+
+`time` is the frame's game time and `at` the time asked for; `frame` counts
+the run's frames from 1. The world is read after the frame's scripts,
+physics, animation and procgen, and before `--exit-after`'s check, so a dump
+at the exit time is the run's last world. The file is written whole again
+after each snapshot. A time the run never reaches fails it, as a screenshot
+does: `Error: --dump-world out/world.json: the run ended at t=3.200s, before
+--dump-world-at 5`, exit 1. With no `--dump-world-at`, the world is dumped
+at `--exit-after`'s time, else on the first frame.
+
+**A live question**, for a game you are playing or a long run.
+`--inspect-listen 127.0.0.1:<port>` opens a loopback socket (only 127.0.0.1
+or ::1 can listen; off unless given), and `--attach <port>` on `flint query`
+and `flint entity show` asks it instead of a file. What they print is what
+they print for a file, so a command line moves between the two by swapping
+`--scene` for `--attach`:
+
+```bash
+flint play examples/phase4_runtime.scene.toml --inspect-listen 127.0.0.1:7878
+
+# in another terminal, while it runs
+flint query "entities where door.locked == true" --attach 7878
+flint entity show player --attach 7878
+flint query "entities where archetype == 'character'" --attach 7878 --data
+```
+
+Each answer says on stderr when in the run it was read
+(`live: examples/phase4_runtime.scene.toml at t=12.483s (frame 749)`);
+stdout is the answer alone. The socket speaks one line of JSON each way, so a
+program can ask without `flint`: send `{"query": "entities", "data": true}`,
+`{"entity": "player"}`, or a bare query line, and read back
+`{"ok": true, "scene": ..., "time": ..., "frame": ..., "answer": ...}` or
+`{"ok": false, ..., "error": "Entity 'x' not found"}`. The network is read
+and written on threads of its own; the frame answers at most 16 questions,
+at the end of its update, and a question no frame answers within 10 s (a
+game stopped in a debugger) is answered with an error saying so.
 
 ### Player Controls (Defaults)
 

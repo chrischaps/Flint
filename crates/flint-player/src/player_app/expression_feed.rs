@@ -38,7 +38,7 @@ use serde_json::Value;
 
 /// The longest line the socket takes, in bytes, newline excluded.
 #[cfg(not(target_arch = "wasm32"))]
-pub const MAX_LINE_BYTES: usize = 64 * 1024;
+pub use super::loopback::MAX_LINE_BYTES;
 /// The most socket messages a frame takes. The rest wait for the next one.
 #[cfg(not(target_arch = "wasm32"))]
 pub const MAX_PER_FRAME: usize = 64;
@@ -46,9 +46,6 @@ pub const MAX_PER_FRAME: usize = 64;
 /// flood never costs the latest state, which is the one that matters.
 #[cfg(not(target_arch = "wasm32"))]
 pub const QUEUE_CAPACITY: usize = 256;
-/// The most connections the socket keeps open at once.
-#[cfg(not(target_arch = "wasm32"))]
-pub const MAX_CONNECTIONS: usize = 8;
 
 /// A JSON value as a script sees it: objects are maps, numbers are floats.
 pub fn json_to_dynamic(value: &Value) -> Dynamic {
@@ -194,10 +191,11 @@ pub use listener::ExpressionListener;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod listener {
+    use super::super::loopback::{self, read_capped_line, trim, Line};
     use super::*;
     use std::collections::VecDeque;
-    use std::io::{BufRead, BufReader, Read};
-    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::io::BufReader;
+    use std::net::{SocketAddr, TcpStream};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -211,7 +209,7 @@ mod listener {
         /// States pushed out by newer ones since the frame last looked.
         dropped: AtomicUsize,
         /// Set when the listener is dropped, so readers stop.
-        closed: AtomicBool,
+        closed: Arc<AtomicBool>,
     }
 
     impl Shared {
@@ -243,24 +241,16 @@ mod listener {
         /// accepting. Anything but a loopback address is refused: this is an
         /// input to the game from the same machine, never from a network.
         pub fn bind(addr: &str) -> anyhow::Result<Self> {
-            let wanted: SocketAddr = addr.parse().map_err(|e| {
-                anyhow::anyhow!(
-                    "--expression-listen {addr}: expected IP:port, like 127.0.0.1:7777 ({e})"
-                )
-            })?;
-            if !wanted.ip().is_loopback() {
-                anyhow::bail!(
-                    "--expression-listen {addr}: only a loopback address (127.0.0.1 or ::1) can listen"
-                );
-            }
-            let listener = TcpListener::bind(wanted)
-                .map_err(|e| anyhow::anyhow!("--expression-listen {addr}: {e}"))?;
+            let listener = loopback::bind("--expression-listen", addr)?;
             let addr = listener.local_addr()?;
             let shared = Arc::new(Shared::default());
-            let for_thread = shared.clone();
-            std::thread::Builder::new()
-                .name("expression-listen".into())
-                .spawn(move || accept_loop(listener, for_thread))?;
+            let for_readers = shared.clone();
+            loopback::accept_on_thread(
+                listener,
+                "expression-listen",
+                shared.closed.clone(),
+                move |stream, peer| read_lines(stream, &for_readers, peer),
+            )?;
             tracing::info!(target: "expression", "listening on {addr}");
             Ok(Self { shared, addr })
         }
@@ -286,48 +276,6 @@ mod listener {
                 );
             }
             taken
-        }
-    }
-
-    fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
-        let open = Arc::new(AtomicUsize::new(0));
-        for stream in listener.incoming() {
-            if shared.closed.load(Ordering::Relaxed) {
-                return;
-            }
-            let stream = match stream {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!(target: "expression", "accept failed: {e}");
-                    continue;
-                }
-            };
-            let peer = stream
-                .peer_addr()
-                .map(|a| a.to_string())
-                .unwrap_or_else(|_| "?".into());
-            if open.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
-                tracing::warn!(
-                    target: "expression",
-                    "refused {peer}: already {MAX_CONNECTIONS} connections"
-                );
-                continue;
-            }
-            open.fetch_add(1, Ordering::SeqCst);
-            let shared = shared.clone();
-            let still_open = open.clone();
-            let spawned = std::thread::Builder::new()
-                .name("expression-reader".into())
-                .spawn(move || {
-                    tracing::info!(target: "expression", "{peer} connected");
-                    read_lines(stream, &shared, &peer);
-                    tracing::info!(target: "expression", "{peer} disconnected");
-                    still_open.fetch_sub(1, Ordering::SeqCst);
-                });
-            if let Err(e) = spawned {
-                open.fetch_sub(1, Ordering::SeqCst);
-                tracing::warn!(target: "expression", "no reader thread: {e}");
-            }
         }
     }
 
@@ -363,61 +311,6 @@ mod listener {
                 }
             }
         }
-    }
-
-    enum Line {
-        Ready,
-        TooLong,
-        Eof,
-    }
-
-    /// Read one line into `buf` (newline excluded), holding at most
-    /// [`MAX_LINE_BYTES`] of it. A longer line is read through to its end and
-    /// thrown away. A last line without a newline still counts.
-    fn read_capped_line<R: BufRead>(reader: &mut R, buf: &mut Vec<u8>) -> std::io::Result<Line> {
-        let n = reader
-            .by_ref()
-            .take(MAX_LINE_BYTES as u64 + 1)
-            .read_until(b'\n', buf)?;
-        if n == 0 {
-            return Ok(Line::Eof);
-        }
-        if buf.last() == Some(&b'\n') {
-            buf.pop();
-            return Ok(Line::Ready);
-        }
-        if buf.len() <= MAX_LINE_BYTES {
-            return Ok(Line::Ready); // the stream ended mid-line
-        }
-        // Too long: skip to the end of it without holding any more.
-        loop {
-            let (done, used) = {
-                let chunk = reader.fill_buf()?;
-                if chunk.is_empty() {
-                    return Ok(Line::TooLong);
-                }
-                match chunk.iter().position(|&b| b == b'\n') {
-                    Some(i) => (true, i + 1),
-                    None => (false, chunk.len()),
-                }
-            };
-            reader.consume(used);
-            if done {
-                return Ok(Line::TooLong);
-            }
-        }
-    }
-
-    fn trim(bytes: &[u8]) -> &[u8] {
-        let start = bytes
-            .iter()
-            .position(|b| !b.is_ascii_whitespace())
-            .unwrap_or(bytes.len());
-        let end = bytes
-            .iter()
-            .rposition(|b| !b.is_ascii_whitespace())
-            .map_or(start, |i| i + 1);
-        &bytes[start..end]
     }
 
     #[cfg(test)]

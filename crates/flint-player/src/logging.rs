@@ -33,11 +33,11 @@ use web_time::Instant;
 
 /// What the player shows by default: warnings, and each target's info.
 pub const DEFAULT_FILTER: &str = "warn,load=info,transition=info,perf=info,report=info,\
-     script=info,input=info,music=info,player=info";
+     script=info,input=info,music=info,player=info,inspect=info";
 
-/// `--quiet`: warnings, errors and what a flag asked for (`--perf`'s lines
-/// and the exit report).
-pub const QUIET_FILTER: &str = "warn,perf=info,report=info";
+/// `--quiet`: warnings, errors and what a flag asked for (`--perf`'s lines,
+/// the exit report, and `--inspect-listen`'s and `--dump-world`'s, #713).
+pub const QUIET_FILTER: &str = "warn,perf=info,report=info,inspect=info";
 
 /// How log lines are written.
 #[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -199,7 +199,7 @@ pub struct LoadTallyLayer(LoadTally);
 /// happens and left out of the count, so the summary names the warnings a
 /// game can do something about.
 fn flint_target(target: &str) -> bool {
-    const SHORT: [&str; 9] = [
+    const SHORT: [&str; 11] = [
         "load",
         "transition",
         "perf",
@@ -209,6 +209,8 @@ fn flint_target(target: &str) -> bool {
         "music",
         "player",
         "expression",
+        "inspect",
+        "loopback",
     ];
     target.starts_with("flint") || SHORT.contains(&target)
 }

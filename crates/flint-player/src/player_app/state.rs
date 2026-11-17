@@ -114,6 +114,15 @@ pub struct LaunchOptions {
     /// run time, fails (`PlayerApp::run_failure`), so a headless run of a
     /// broken game can't exit 0.
     pub strict_scripts: bool,
+    /// `--inspect-listen` (#713): the loopback socket that answers queries
+    /// about the live world, handed to its subsystem at the start.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub inspect: Option<super::inspect::InspectListener>,
+    /// `--dump-world` (#713): the world written to a file at game times,
+    /// handed to its subsystem at the start; `run_failure` asks it whether
+    /// every time came.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub world_dump: Option<super::world_dump::WorldDump>,
 }
 
 impl Default for LaunchOptions {
@@ -141,6 +150,10 @@ impl Default for LaunchOptions {
             compare: None,
             compare_at_start: None,
             strict_scripts: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            inspect: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            world_dump: None,
         }
     }
 }
