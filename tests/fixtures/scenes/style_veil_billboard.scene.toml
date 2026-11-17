@@ -1,0 +1,95 @@
+# Style Veil, billboards: two wisps in front of a glyph stone (#737).
+#
+# A billboard is opaque to the renderer: its texture's alpha only cuts it
+# out (at 0.5), and what it keeps writes depth. So the style mask's own
+# depth test already leaves a wisp in front of the stone out of the stone's
+# mask, and the wisp is drawn as a wisp, not as stone glyphs. The veil
+# needs no billboard draw, and this case holds that: if billboards ever
+# blend without writing depth, they need one (the veil's selector says so).
+#
+#   cargo run --bin flint -- render tests/fixtures/scenes/style_veil_billboard.scene.toml --no-grid -o billboard.png
+#   cargo run --bin flint -- render tests/fixtures/scenes/style_veil_billboard.scene.toml --no-grid -o mask.png --debug-mode style
+
+[scene]
+name = "Style Veil Billboard"
+version = "1.0"
+description = "Two billboard wisps in front of a glyph stone (#737)"
+
+[camera]
+position = [0.0, 1.0, 3.2]
+target = [0.0, 0.9, -1.0]
+fov = 50.0
+
+[post_process]
+exposure = 1.15
+vignette_enabled = true
+vignette_intensity = 0.3
+
+[post_process.styles.ascii]
+scope = "entities"
+cell = 8
+background = 0.25
+brightness = 0.2
+contrast = 1.3
+
+[entities.key]
+[entities.key.transform]
+position = [0, 20, 0]
+[entities.key.light]
+type = "directional"
+direction = [-0.4, 0.8, 0.5]
+color = [1.0, 0.9, 0.78]
+intensity = 2.0
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.01, 0.015, 0.04, 1.0]
+horizon_color = [0.06, 0.05, 0.08, 1.0]
+cloud_coverage = 0.1
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-20, -0.1, -20]
+max = [20, 0, 20]
+[entities.ground.material]
+color = [0.12, 0.09, 0.07, 1.0]
+roughness = 0.95
+
+# --- In glyphs ---
+
+[entities.stone]
+archetype = "furniture"
+[entities.stone.transform]
+position = [0, 0, -1.0]
+[entities.stone.bounds]
+min = [-1.2, 0.0, -0.2]
+max = [1.2, 2.0, 0.2]
+[entities.stone.material]
+color = [0.58, 0.56, 0.52, 1.0]
+roughness = 0.9
+[entities.stone.ascii_style]
+color = "tint"
+tint = [0.55, 0.85, 1.0]
+ramp = "classic"
+
+# --- Smooth, in front ---
+
+[entities.wisp_left]
+[entities.wisp_left.transform]
+position = [-0.45, 0.35, 0.4]
+[entities.wisp_left.sprite]
+texture = "../../../examples/textures/wisp_sprite.png"
+width = 0.8
+height = 1.2
+
+[entities.wisp_right]
+[entities.wisp_right.transform]
+position = [0.55, 0.5, 0.1]
+[entities.wisp_right.sprite]
+texture = "../../../examples/textures/wisp_sprite.png"
+width = 0.7
+height = 1.05
+tint = [0.8, 1.0, 0.9, 1.0]
