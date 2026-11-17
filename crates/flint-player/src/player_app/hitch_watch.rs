@@ -26,12 +26,39 @@ pub(crate) const AROUND: usize = 8;
 /// Causes the report names before "N more".
 const CAUSES_NAMED: usize = 4;
 
-/// The hitches of one part of the run: the start, or after it.
+/// The hitches of one part of the run (the start, or after it), all of
+/// them and each class's apart, so a gate narrowed to one class names
+/// that class's worst and causes (#1130).
 #[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) struct Tally {
+    pub all: Seen,
+    pub player: Seen,
+    pub elsewhere: Seen,
+}
+
+impl Tally {
+    fn add(&mut self, h: &Hitch) {
+        self.all.add(h);
+        match h.cause {
+            Cause::Player { .. } => self.player.add(h),
+            Cause::Elsewhere { .. } => self.elsewhere.add(h),
+        }
+    }
+
+    /// The hitches a gate of `class` counts.
+    pub(crate) fn of(&self, class: HitchClass) -> &Seen {
+        match class {
+            HitchClass::All => &self.all,
+            HitchClass::Player => &self.player,
+            HitchClass::Elsewhere => &self.elsewhere,
+        }
+    }
+}
+
+/// Some hitches: how many, the longest, and what caused them.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) struct Seen {
     pub hitches: u64,
-    pub player: u64,
-    pub elsewhere: u64,
     /// The longest: its wall ms, game time and cause.
     pub worst: Option<(f32, f64, String)>,
     /// How many hitches each cause had ([`Hitch::cause_key`]), first seen
@@ -39,13 +66,9 @@ pub(crate) struct Tally {
     pub causes: Vec<(String, u64)>,
 }
 
-impl Tally {
+impl Seen {
     fn add(&mut self, h: &Hitch) {
         self.hitches += 1;
-        match h.cause {
-            Cause::Player { .. } => self.player += 1,
-            Cause::Elsewhere { .. } => self.elsewhere += 1,
-        }
         if self.worst.as_ref().is_none_or(|w| h.ms > w.0) {
             self.worst = Some((h.ms, h.game_time, h.cause_line()));
         }
@@ -53,15 +76,6 @@ impl Tally {
         match self.causes.iter_mut().find(|(k, _)| *k == key) {
             Some((_, n)) => *n += 1,
             None => self.causes.push((key, 1)),
-        }
-    }
-
-    /// The hitches a gate of `class` counts.
-    pub(crate) fn of(&self, class: HitchClass) -> u64 {
-        match class {
-            HitchClass::All => self.hitches,
-            HitchClass::Player => self.player,
-            HitchClass::Elsewhere => self.elsewhere,
         }
     }
 
@@ -360,24 +374,26 @@ impl HitchWatch {
         let gate = self.gate?;
         let of = gate.of;
         if let Some(max) = gate.max {
-            let n = self.run.of(of);
+            let seen = self.run.of(of);
+            let n = seen.hitches;
             if n > max {
                 return Some(format!(
                     "{n} {}{} after the first {STARTUP_SECS} s, over --max-hitches {max}: {}",
                     of.words(),
                     plural(n, "hitch", "hitches"),
-                    self.run.worst_and_causes()
+                    seen.worst_and_causes()
                 ));
             }
         }
         if let Some(max) = gate.max_startup {
-            let n = self.startup.of(of);
+            let seen = self.startup.of(of);
+            let n = seen.hitches;
             if n > max {
                 return Some(format!(
                     "{n} {}{} in the first {STARTUP_SECS} s, over --max-hitches-startup {max}: {}",
                     of.words(),
                     plural(n, "hitch", "hitches"),
-                    self.startup.worst_and_causes()
+                    seen.worst_and_causes()
                 ));
             }
         }
@@ -387,7 +403,7 @@ impl HitchWatch {
     /// `--exit-after`'s lines (`[perf] hitches: ...`).
     pub(crate) fn report(&self) -> Vec<String> {
         let mut lines = Vec::new();
-        let r = &self.run;
+        let r = &self.run.all;
         let secs = self.after_start_secs;
         if r.hitches == 0 {
             lines.push(format!(
@@ -402,12 +418,12 @@ impl HitchWatch {
             lines.push(format!(
                 "[perf] hitches: {} ({per_min:.1}/min over {secs:.1} s after t={STARTUP_SECS:.0} s; {} player, {} elsewhere), {}",
                 r.hitches,
-                r.player,
-                r.elsewhere,
+                self.run.player.hitches,
+                self.run.elsewhere.hitches,
                 r.worst_and_causes()
             ));
         }
-        let s = &self.startup;
+        let s = &self.startup.all;
         let gated = match self.gate.and_then(|g| g.max_startup) {
             Some(max) => format!("--max-hitches-startup {max}"),
             None => "not gated".to_string(),
@@ -671,10 +687,10 @@ mod tests {
         run.frames(120);
         run.frame(120.0, 100.0);
         run.frames(30);
-        assert_eq!(run.watch.startup.hitches, 1);
-        assert_eq!(run.watch.startup.elsewhere, 1);
-        assert_eq!(run.watch.run.hitches, 1);
-        assert_eq!(run.watch.run.player, 1);
+        assert_eq!(run.watch.startup.all.hitches, 1);
+        assert_eq!(run.watch.startup.elsewhere.hitches, 1);
+        assert_eq!(run.watch.run.all.hitches, 1);
+        assert_eq!(run.watch.run.player.hitches, 1);
         assert_eq!(run.watch.failure(), None, "no gate");
 
         run.watch.gate = Some(HitchGate {
@@ -725,6 +741,57 @@ mod tests {
             ),
             "{report:?}"
         );
+    }
+
+    /// #1130: a gate narrowed to one class names that class's worst and
+    /// causes, not a longer hitch of the class it was told to leave out.
+    #[test]
+    fn a_gate_of_one_class_names_that_class_s_worst_and_causes() {
+        let mut run = Run::new();
+        run.frames(150); // past the start
+        run.frame(60.0, 40.0); // the player's: the script
+        run.frames(60);
+        run.frame(150.0, 0.5); // longer, and not the player's
+        run.frames(30);
+        let r = &run.watch.run;
+        assert_eq!(
+            (r.all.hitches, r.player.hitches, r.elsewhere.hitches),
+            (2, 1, 1)
+        );
+
+        let gate = |of| HitchGate {
+            max: Some(0),
+            max_startup: None,
+            of,
+        };
+        run.watch.gate = Some(gate(HitchClass::Player));
+        let why = run.watch.failure().unwrap();
+        assert!(
+            why.starts_with("1 player hitch after the first 2 s"),
+            "{why}"
+        );
+        assert!(why.contains(": worst 60.0 ms at t="), "{why}");
+        assert!(
+            why.ends_with("; causes: 1 script stall.rhai:on_update"),
+            "{why}"
+        );
+
+        run.watch.gate = Some(gate(HitchClass::Elsewhere));
+        let why = run.watch.failure().unwrap();
+        assert!(
+            why.starts_with("1 elsewhere hitch after the first 2 s"),
+            "{why}"
+        );
+        assert!(why.contains(": worst 150.0 ms at t="), "{why}");
+        assert!(why.ends_with("; causes: 1 elsewhere"), "{why}");
+
+        // Every class: the worst of all, and both causes
+        run.watch.gate = Some(gate(HitchClass::All));
+        let why = run.watch.failure().unwrap();
+        assert!(why.starts_with("2 hitches after the first 2 s"), "{why}");
+        assert!(why.contains(": worst 150.0 ms at t="), "{why}");
+        assert!(why.contains("1 script stall.rhai:on_update"), "{why}");
+        assert!(why.contains("1 elsewhere"), "{why}");
     }
 
     #[test]
