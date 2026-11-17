@@ -60,6 +60,7 @@
 - [Headless Rendering](guides/headless-rendering.md)
 - [Playtesting](guides/playtesting.md)
 - [Stylized Rendering](guides/stylized-rendering.md)
+  - [A Live Scene Pulled into a Drawing](guides/a-live-scene-pulled-into-a-drawing.md)
 - [Filming a Showcase](guides/filming-a-showcase.md)
 - [AI Agent Workflow](guides/ai-agent-workflow.md)
 - [Building a Game Project](guides/building-a-game-project.md)

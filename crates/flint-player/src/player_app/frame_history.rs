@@ -209,7 +209,9 @@ impl FrameHistory {
         self.keep_secs = secs;
     }
 
-    /// A new frame begins now: the one before it ends.
+    /// A new frame begins now: the one before it ends. (The player goes
+    /// through `PerfRecorder`, which takes one `now` for the trace too.)
+    #[cfg(test)]
     pub(crate) fn begin_frame(&mut self) {
         self.begin_frame_at(Instant::now());
     }
@@ -250,18 +252,20 @@ impl FrameHistory {
     }
 
     /// The end of `phase`, now.
+    #[cfg(test)]
     pub(crate) fn mark(&mut self, phase: Phase) {
         self.mark_at(phase, Instant::now());
     }
 
-    pub(crate) fn mark_at(&mut self, phase: Phase, now: Instant) {
-        let Some(last) = self.last_mark else {
-            return;
-        };
+    /// The end of `phase` at `now`; returns when it began (the last mark),
+    /// if a frame is under way.
+    pub(crate) fn mark_at(&mut self, phase: Phase, now: Instant) -> Option<Instant> {
+        let last = self.last_mark?;
         // `+=`: a phase marked twice in a frame (a second render path)
         // counts both.
         self.under_way.phases[phase as usize] += now.duration_since(last).as_secs_f32() * 1000.0;
         self.last_mark = Some(now);
+        Some(last)
     }
 
     /// This frame's time in each script callback

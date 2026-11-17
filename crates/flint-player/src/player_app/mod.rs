@@ -112,6 +112,9 @@ mod text_halo;
 #[cfg(test)]
 mod touch_controls_tests;
 mod touch_overlay;
+pub(crate) mod trace;
+#[cfg(test)]
+mod trace_tests;
 mod transition;
 #[cfg(test)]
 mod transition_tests;

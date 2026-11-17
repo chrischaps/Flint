@@ -67,6 +67,27 @@ pub(crate) struct Times {
     entries: Vec<(String, f32)>,
     /// Every callback's time so far, so a step can leave it out.
     in_callbacks: f32,
+    /// What the callbacks' functions took (#1100), by callback and function.
+    functions: Vec<FnTime>,
+}
+
+/// A function's time inside one callback (#1100), since the last take:
+/// an engine function the callback's script called (`raycast()`) or one of
+/// the script's own (`scripts/hud.rhai:draw_bar()`). Times are inclusive: a
+/// script function's holds the engine calls it made.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FnTime {
+    /// The callback it was called under, `<source>:<callback>`, as
+    /// [`ScriptSystem::take_times`](crate::ScriptSystem::take_times) names it
+    pub callback: String,
+    /// The function, as the trace names its scope
+    pub function: &'static str,
+    /// Every call, recursive ones too
+    pub calls: u32,
+    /// The outermost calls' time together, ms
+    pub total_ms: f32,
+    /// The longest outermost call, ms
+    pub worst_ms: f32,
 }
 
 /// When a step of the script system began ([`Times::step`]).
@@ -90,6 +111,47 @@ impl Times {
             Some((_, t)) => *t += ms,
             None => self.entries.push((format!("{source}:{callback}"), ms)),
         }
+    }
+
+    /// What `callback` on the script from `source` spent in each function
+    /// (`took`, drained).
+    pub(crate) fn functions(
+        &mut self,
+        source: &str,
+        callback: &str,
+        took: &mut Vec<crate::fn_times::Took>,
+    ) {
+        for t in took.drain(..) {
+            let label_is = |label: &str| {
+                label
+                    .strip_prefix(source)
+                    .and_then(|rest| rest.strip_prefix(':'))
+                    == Some(callback)
+            };
+            let found = self
+                .functions
+                .iter_mut()
+                .find(|f| std::ptr::eq(f.function, t.name) && label_is(&f.callback));
+            match found {
+                Some(f) => {
+                    f.calls += t.calls;
+                    f.total_ms += t.total_ms;
+                    f.worst_ms = f.worst_ms.max(t.worst_ms);
+                }
+                None => self.functions.push(FnTime {
+                    callback: format!("{source}:{callback}"),
+                    function: t.name,
+                    calls: t.calls,
+                    total_ms: t.total_ms,
+                    worst_ms: t.worst_ms,
+                }),
+            }
+        }
+    }
+
+    /// The functions' times since the last take.
+    pub(crate) fn take_functions(&mut self) -> Vec<FnTime> {
+        std::mem::take(&mut self.functions)
     }
 
     pub(crate) fn begin(&self) -> StepStart {

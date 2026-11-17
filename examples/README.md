@@ -17,6 +17,11 @@ A new scene here needs an entry in `index.toml`, and
 `flint validate`. A scene that only a test needs belongs in the fixtures
 instead.
 
+Whole films and places, made to be watched rather than to show one
+feature, live in [flint-demos](https://github.com/chrischaps/flint-demos),
+which carries the engine as a subtree. Understudy and the Luminarium
+(`phase3_showcase`) moved there on 2026-11-17.
+
 The folders beside the scenes (`models/`, `textures/`, `scripts/`, `particles/`,
 `styles/`, ...) are the examples' assets, found by the engine's asset search.
 `film/` is the showcase film's set (`tools/showcase`).

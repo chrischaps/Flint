@@ -49,6 +49,28 @@ pub struct GpuTimings {
     pub frame_ms: f32,
 }
 
+/// One frame's scopes as measured, for a trace (#1097): each scope's start
+/// from the frame's first timestamp and its length, unsmoothed, under the
+/// tag the host gave the frame ([`GpuTimer::set_frame_tag`]), so a trace
+/// can lay a read-back a frame or two late beside the frame that drew it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TracedGpuFrame {
+    pub tag: u64,
+    pub passes: Vec<TracedPass>,
+}
+
+/// One scope of a [`TracedGpuFrame`], ms.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TracedPass {
+    pub label: &'static str,
+    /// From the frame's first timestamp to this scope's first.
+    pub start_ms: f32,
+    pub ms: f32,
+}
+
+/// Traced frames kept for the host to take; more and the oldest go.
+const TRACED_KEPT: usize = 16;
+
 /// A scope [`GpuTimer::begin`] opened, to hand back to [`GpuTimer::end`].
 /// One past the frame's capacity times nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +100,10 @@ struct Readback {
     /// Whether recording was on when this frame was resolved, so a frame
     /// drawn before [`GpuTimer::record`] and read back after isn't kept.
     record: bool,
+    /// The host's tag for the frame, and whether tracing was on when it
+    /// was resolved.
+    tag: u64,
+    trace: bool,
     /// 0 while the map is pending, 1 mapped, 2 failed
     state: Arc<AtomicU8>,
 }
@@ -100,6 +126,11 @@ pub struct GpuTimer {
     /// The busy time of the last frame read back, unsmoothed, until
     /// [`take_latest_frame_ms`](Self::take_latest_frame_ms) takes it.
     latest_ms: Option<f32>,
+    /// What [`set_frame_tag`](Self::set_frame_tag) said last.
+    frame_tag: u64,
+    /// Frames read back while [`trace`](Self::trace) is on, until
+    /// [`take_traced`](Self::take_traced) takes them.
+    traced: Option<std::collections::VecDeque<TracedGpuFrame>>,
 }
 
 impl GpuTimer {
@@ -139,6 +170,8 @@ impl GpuTimer {
                 count: 0,
                 in_flight: false,
                 record: false,
+                tag: 0,
+                trace: false,
                 state: Default::default(),
             })
             .collect();
@@ -152,6 +185,8 @@ impl GpuTimer {
             resolved: None,
             recorded: None,
             latest_ms: None,
+            frame_tag: 0,
+            traced: None,
         })
     }
 
@@ -160,6 +195,31 @@ impl GpuTimer {
     /// spread, which [`spread`] makes of [`recorded`](Self::recorded).
     pub fn record(&mut self, on: bool) {
         self.recorded = on.then(Vec::new);
+    }
+
+    /// Keep each frame read back from now on as a [`TracedGpuFrame`], for a
+    /// trace (#1097), or stop. Turning it on again keeps what waits.
+    pub fn trace(&mut self, on: bool) {
+        if !on {
+            self.traced = None;
+        } else if self.traced.is_none() {
+            self.traced = Some(Default::default());
+        }
+    }
+
+    /// The tag the frames resolved from now on carry (the host's frame
+    /// index), until it says another.
+    pub fn set_frame_tag(&mut self, tag: u64) {
+        self.frame_tag = tag;
+    }
+
+    /// The traced frames read back since the last take, oldest first: at
+    /// most the last 16, so a host that takes once a frame misses none.
+    pub fn take_traced(&mut self) -> Vec<TracedGpuFrame> {
+        self.traced
+            .as_mut()
+            .map(|t| t.drain(..).collect())
+            .unwrap_or_default()
     }
 
     /// The frames resolved since [`record`](Self::record) was turned on and
@@ -285,6 +345,8 @@ impl GpuTimer {
         readback.count = count;
         readback.in_flight = true;
         readback.record = self.recorded.is_some();
+        readback.tag = self.frame_tag;
+        readback.trace = self.traced.is_some();
         readback.state.store(0, Ordering::Release);
         self.resolved = Some(slot);
         true
@@ -342,6 +404,15 @@ impl GpuTimer {
                     };
                     readback.buffer.unmap();
                     readback.in_flight = false;
+                    if let (Some(traced), true) = (&mut self.traced, readback.trace) {
+                        if traced.len() >= TRACED_KEPT {
+                            traced.pop_front();
+                        }
+                        traced.push_back(TracedGpuFrame {
+                            tag: readback.tag,
+                            passes: traced_times(&readback.labels, &ticks, self.period_ns),
+                        });
+                    }
                     let frame = frame_times(&readback.labels, &ticks, self.period_ns);
                     self.latest_ms = Some(frame.frame_ms);
                     if let (Some(recorded), true) = (&mut self.recorded, readback.record) {
@@ -386,6 +457,29 @@ fn frame_times(labels: &[&'static str], ticks: &[u64], period_ns: f32) -> GpuTim
     }
     let frame_ms = passes.iter().map(|p| p.ms).sum();
     GpuTimings { passes, frame_ms }
+}
+
+/// One frame's scopes laid from its first timestamp, as
+/// [`frame_times`] reads them.
+fn traced_times(labels: &[&'static str], ticks: &[u64], period_ns: f32) -> Vec<TracedPass> {
+    let ms = |ticks: u64| (ticks as f64 * period_ns as f64 / 1e6) as f32;
+    let pairs: Vec<(&'static str, u64, u64)> = labels
+        .iter()
+        .enumerate()
+        .map_while(|(i, label)| Some((*label, *ticks.get(2 * i)?, *ticks.get(2 * i + 1)?)))
+        .filter(|&(_, start, end)| start != 0 && end >= start)
+        .collect();
+    let Some(base) = pairs.iter().map(|&(_, start, _)| start).min() else {
+        return Vec::new();
+    };
+    pairs
+        .into_iter()
+        .map(|(label, start, end)| TracedPass {
+            label,
+            start_ms: ms(start - base),
+            ms: ms(end - start),
+        })
+        .collect()
 }
 
 /// One scope's times over many frames (#292), in milliseconds. A
@@ -529,6 +623,29 @@ mod tests {
             ]
         );
         assert_eq!(frame.frame_ms, 6.0, "the idle millisecond isn't counted");
+    }
+
+    #[test]
+    fn a_traced_frame_lays_each_scope_from_its_first_timestamp() {
+        // b was never written (0): left out, as frame_times leaves it
+        let ticks = [5_000_000, 7_000_000, 0, 0, 8_000_000, 9_500_000];
+        let passes = traced_times(&["a", "b", "c"], &ticks, 1.0);
+        assert_eq!(
+            passes,
+            [
+                TracedPass {
+                    label: "a",
+                    start_ms: 0.0,
+                    ms: 2.0
+                },
+                TracedPass {
+                    label: "c",
+                    start_ms: 3.0,
+                    ms: 1.5
+                }
+            ]
+        );
+        assert!(traced_times(&["a"], &[0, 0], 1.0).is_empty());
     }
 
     #[test]

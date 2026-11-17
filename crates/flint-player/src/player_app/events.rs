@@ -579,6 +579,9 @@ impl ApplicationHandler for PlayerApp {
                 self.web_frame_end();
                 // The frame's end, for both profilers (ADRs 0109, 0128).
                 flint_core::profile::finish_frame();
+                // The recorder's saves due by now (#1097): the frame just
+                // ended is whole, with no scope open on this thread
+                self.trace_frame_end();
                 if self.outcome.exit_requested {
                     event_loop.exit();
                 }
@@ -635,6 +638,8 @@ impl ApplicationHandler for PlayerApp {
         // A frame capture still on its way is written before the run ends
         #[cfg(not(target_arch = "wasm32"))]
         self.finish_frame_captures();
+        // `--trace FILE`, and any trace still on its way (#1097)
+        self.finish_traces();
         self.flush_persistent_store(true, "exit");
     }
 }

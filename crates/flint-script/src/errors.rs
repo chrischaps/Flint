@@ -139,7 +139,11 @@ impl Failure {
                     if !source.is_empty() {
                         file = source.clone();
                     }
-                    function = (name != callback).then(|| name.clone());
+                    // A timed function's original body (#1100) is its
+                    // wrapper's call, which is named already
+                    if !crate::fn_times::is_inner(name) {
+                        function = (name != callback).then(|| name.clone());
+                    }
                     at = inner;
                 }
                 rhai::EvalAltResult::ErrorInModule(_, inner, _) => at = inner,
