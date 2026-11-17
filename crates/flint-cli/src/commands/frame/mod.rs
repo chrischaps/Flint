@@ -12,13 +12,17 @@
 //! flint frame show <capture> [--passes] [--draws ...] [--targets] [--hitch]
 //! flint frame diff <a> <b> [--out dir]
 //! flint frame image <capture> <pass> -o out.png [--target id] [--raw] | --all -o dir
+//! flint frame open <capture> [--pass name] [--entity name] [--screenshot out.png]
 //! ```
 //!
 //! Every view answers the global `--json` with one document carrying the
-//! numbers its text shows.
+//! numbers its text shows. `open` is a window (#1088, `open/`), and answers
+//! `--json` only with `--screenshot`.
 
 mod diff;
+pub(crate) mod display;
 mod image_out;
+pub mod open;
 pub(crate) mod read;
 mod show;
 mod table;
@@ -45,6 +49,10 @@ pub enum FrameCommands {
     /// Copy a pass's image out as a PNG you can look at: HDR tonemapped at
     /// the frame's exposure, depth stretched to grey, ids coloured
     Image(ImageArgs),
+    /// The frame debugger: a window with the pass tree, each pass's image
+    /// (zoom, pixel readout, channels, exposure, A/B wipe), its draws, and
+    /// the frame's CPU and GPU times
+    Open(open::OpenArgs),
 }
 
 #[derive(Args)]
@@ -140,6 +148,7 @@ pub fn run(args: FrameArgs) -> Result<()> {
         FrameCommands::Show(args) => show::run(args),
         FrameCommands::Diff(args) => diff::run(args),
         FrameCommands::Image(args) => image_out::run(args),
+        FrameCommands::Open(args) => open::run(args),
     }
 }
 

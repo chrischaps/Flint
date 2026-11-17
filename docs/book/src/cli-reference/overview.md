@@ -18,7 +18,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint script api` | Every function a script can call, with its parameters and a one-line doc, and the callbacks; `--json` for the same as data, `--filter <text>` for names or modules containing it. A function a game's extension registers on the Rhai engine directly is listed with its parameter types only. `--book` writes the book's [Script API Reference](../reference/script-api.md) and the generated tables in its chapters; `--check-book` fails when they are stale or a chapter calls a function that doesn't exist (CI runs it) ([Scripting](../concepts/scripting.md#api-reference)) |
 | `flint script check [dir\|scene\|file.rhai]` | Compile every script and the modules it imports, and check each call's name and argument count against the script API, each callback's name and parameters, and each import, reported as `file:line:col`. Exits 1 on an error; `--json`; `--allow` / `--api` for a game's own functions ([Checking your scripts](../concepts/scripting.md#checking-your-scripts)) |
 | `flint check [dir\|scene]` | The pre-flight: everything wrong with a project, or with one scene, in one run. Schemas, entity references, every asset and file a scene names (with the paths tried), styles and looks, constraints, scripts. Exits 1 on any error; `--json` ([The `check` Command](#the-check-command)) |
-| `flint frame show <capture>` | A frame capture's summary (scene, adapter, size, GPU time by pass, draws and triangles, memory), and `--passes`, `--draws [--pass P] [--entity E] [--sort tris] [--culled]`, `--targets`, `--hitch`; `flint frame diff <a> <b> [--out dir]` says what changed between two; `flint frame image <capture> <pass> -o x.png` copies a pass's image out to look at. Reads only the capture folder; `--json` ([The `frame` Command](#the-frame-command)) |
+| `flint frame show <capture>` | A frame capture's summary (scene, adapter, size, GPU time by pass, draws and triangles, memory), and `--passes`, `--draws [--pass P] [--entity E] [--sort tris] [--culled]`, `--targets`, `--hitch`; `flint frame diff <a> <b> [--out dir]` says what changed between two; `flint frame image <capture> <pass> -o x.png` copies a pass's image out to look at; `flint frame open <capture>` is the frame debugger's window ([The Frame Debugger](../guides/frame-debugger.md)). Reads only the capture folder; `--json` ([The `frame` Command](#the-frame-command)) |
 | `flint validate <scene>` | Check one scene against its schemas (every unknown archetype, component and field, every value of the wrong type, every entity reference to nothing and every missing asset, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format text\|json`; `--fix` applies what a constraint can fix |
 | `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from `examples/index.toml` or fails validation |
 | `flint asset import` | Import a file into the asset store |
@@ -183,6 +183,8 @@ flint frame diff before.flintframe after.flintframe --out diffs/
 flint frame image dock.flintframe Scene -o scene.png              # HDR, tonemapped
 flint frame image dock.flintframe Scene --target depth -o depth.png
 flint frame image dock.flintframe --all -o dock-images/
+flint frame open dock.flintframe                    # the frame debugger's window
+flint frame open dock.flintframe --pass Scene --screenshot scene.png   # one frame of it, no window
 ```
 
 `flint frame` reads a frame capture: the folder `flint render --frame-capture` writes, with a `manifest.json` describing the frame and an image for each target each pass wrote ([A frame's images](../guides/profiling.md#a-frames-images)). It reads only that folder: no GPU, no scene, no schemas. So a capture from another machine, or attached to an issue, reads the same as one made here. A `--frame-dump` JSON file reads too, with no images.
@@ -269,6 +271,20 @@ The diff is a report, so it exits 0 whatever it finds.
 | integer ids (the style mask, a u32 target) | a colour each, spaced round the hue circle; id 0 black |
 
 The pass is named as `--passes` lists it (`Scene`, `Bloom`, `Shadow cascade 1`, `Bloom (2)` for the second pass of that name), or by an image's file name (`05-hdr_scene.exr`). A pass that writes several images gives its first. `--target <id>` picks another (`--target depth`), and `--step <step>` picks one of bloom's `threshold`, `down` and `up`. `--raw` copies the stored file (an EXR stays an EXR). `--all -o <dir>` writes every image of the capture.
+
+### `flint frame open`
+
+`flint frame open <capture>` is the frame debugger: a window with the passes as a tree, the selected pass's image (zoom, pan, a texel readout, channel, exposure and depth range, an A/B wipe against the pass before or the finished frame), its draws as a table linked by entity across passes, and the frame's CPU phases, GPU passes and frame history along the bottom ([The Frame Debugger](../guides/frame-debugger.md)).
+
+| Flag | What it does |
+|------|--------------|
+| `--pass <name>` | Open on this pass (`Scene`, `Bloom (2)`); else the finished frame. A name the capture lacks is refused before any window, naming the nearest |
+| `--target <id>` | Open on this of the pass's images (`depth`) |
+| `--entity <name>` | Select this entity (any part of its name): its draws are marked in every pass |
+| `--wipe previous`, `--wipe final` | Open with an A/B wipe against the previous pass's image or the finished frame |
+| `--screenshot <png>` | Draw one frame of the window into a PNG and exit, with no window; `--json` answers `{"written": [path]}`. Without it the command is a window and refuses `--json` |
+| `--width`, `--height` | The window's size in points (1600 x 1000); a screenshot's in pixels |
+| `--scale <x>` | A screenshot's pixels per point |
 
 ### Capture versions
 

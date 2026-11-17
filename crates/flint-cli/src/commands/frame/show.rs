@@ -55,6 +55,12 @@ pub fn run(args: ShowArgs) -> Result<()> {
 
 // ── The summary ──
 
+/// The text `flint frame show <capture>` prints: what `flint frame open`'s
+/// Copy summary puts on the clipboard.
+pub(crate) fn summary_of(d: &FrameDescription, shown: &str) -> String {
+    summary_text(shown, &summary(d, 10))
+}
+
 /// A pass's own draws and their triangles.
 fn pass_totals(p: &PassAt) -> (usize, u64) {
     let draws = p.pass.draws.len();

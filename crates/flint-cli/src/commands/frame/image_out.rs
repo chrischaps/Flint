@@ -14,7 +14,8 @@
 //!   white, the clear value black;
 //! - integer ids (a 16-bit or u32 mask) take a colour each, 0 black.
 
-use super::read::{self, Capture, Kind, Texels};
+use super::display::{Display, Prepared};
+use super::read::{self, Capture, Texels};
 use super::{passes, ImageArgs};
 use crate::output::{self, Answer};
 use anyhow::{bail, Context, Result};
@@ -214,144 +215,30 @@ pub(crate) fn exposure(d: &FrameDescription) -> f32 {
         .map_or(1.0, |e| e as f32)
 }
 
-/// `texels` as an 8-bit RGBA picture, and what was done to make it one.
+/// `texels` as an 8-bit RGBA picture, and what was done to make it one
+/// ([`Display::auto`], the same choice `flint frame open` starts from).
 pub(crate) fn viewable(
     t: &Texels,
     image: &ImageDescription,
     exposure: f32,
 ) -> (image::RgbaImage, String) {
-    let n = t.pixels();
-    let c = t.channels;
-    let mut out = vec![0u8; n * 4];
-    let put = |out: &mut [u8], i: usize, rgb: [f32; 3]| {
+    let p = Prepared::new(t, image);
+    let (display, view) = Display::auto(&p, exposure);
+    let mut out = vec![0u8; p.pixels() * 4];
+    for i in 0..p.pixels() {
+        let rgb = display.map(p.texel(i), p.channels);
         for (k, v) in rgb.iter().enumerate() {
-            out[i * 4 + k] = (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+            out[i * 4 + k] = (v * 255.0 + 0.5) as u8;
         }
         out[i * 4 + 3] = 255;
-    };
-    let integer =
-        image.format.contains("Uint") || image.format.contains("Sint") || t.kind == Kind::Uint;
-    let view: String = if integer {
-        for i in 0..n {
-            let id = t.texel(i)[0] as u32;
-            put(&mut out, i, id_colour(id));
-        }
-        "ids coloured".into()
-    } else if t.kind == Kind::Depth {
-        let drawn = |v: f32| v < 1.0 && v > 0.0;
-        let (lo, hi) = t
-            .values
-            .iter()
-            .copied()
-            .filter(|v| drawn(*v))
-            .fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
-        let span = (hi - lo).max(1e-12);
-        for i in 0..n {
-            let v = t.texel(i)[0];
-            let g = if drawn(v) && lo <= hi {
-                1.0 - 0.85 * (v - lo) / span
-            } else {
-                0.0
-            };
-            put(&mut out, i, [g, g, g]);
-        }
-        if lo <= hi {
-            format!("depth {lo:.5}..{hi:.5} stretched, near white")
-        } else {
-            "depth: nothing drawn".into()
-        }
-    } else if c >= 3 && t.kind == Kind::Float {
-        for i in 0..n {
-            let p = t.texel(i);
-            let rgb = [p[0], p[1], p[2]].map(|x| linear_to_srgb(aces(x * exposure)));
-            put(&mut out, i, rgb);
-        }
-        format!("tonemapped at exposure {exposure}")
-    } else {
-        // One or two channels, or 16-bit colour: as stored when it lies in
-        // 0..1. Past 1 it is a measure (a distance, a count), stretched on
-        // a log scale so that a far sky doesn't black out the rest.
-        let scale = t.scale();
-        let finite = || t.values.iter().copied().filter(|v| v.is_finite());
-        let max = finite().fold(0.0f32, |m, v| m.max(v.abs())) / scale;
-        let min = finite().fold(0.0f32, f32::min) / scale;
-        let signed = min < 0.0;
-        let log = max > 1.0 && !signed;
-        let norm = |v: f32| {
-            let v = v / scale;
-            if log {
-                (1.0 + v.max(0.0)).ln() / (1.0 + max).ln()
-            } else if signed {
-                0.5 + 0.5 * v / max.max(1.0)
-            } else {
-                v
-            }
-        };
-        for i in 0..n {
-            let p = t.texel(i);
-            let rgb = match c {
-                1 => [norm(p[0]); 3],
-                2 => [norm(p[0]), norm(p[1]), 0.0],
-                _ => [norm(p[0]), norm(p[1]), norm(p[2])],
-            };
-            // 16-bit colour is already display-encoded or linear data:
-            // shown as stored, as an 8-bit PNG would be
-            put(&mut out, i, rgb);
-        }
-        match (c, max > 1.0, signed) {
-            (_, _, true) => "signed, 0 at mid-grey".into(),
-            (_, true, _) => format!("log-stretched over 0..{max:.3}"),
-            (1, ..) => "grey".into(),
-            (2, ..) => "R and G as red and green".into(),
-            _ => "as stored, 8-bit".into(),
-        }
-    };
+    }
     let rgba = image::RgbaImage::from_raw(t.width, t.height, out).expect("sized above");
     (rgba, view)
 }
 
-/// The composite's ACES fit (`composite_shader.wgsl`'s `aces_filmic`).
-fn aces(x: f32) -> f32 {
-    let (a, b, c, d, e) = (2.51, 0.03, 2.43, 0.59, 0.14);
-    ((x * (a * x + b)) / (x * (c * x + d) + e)).clamp(0.0, 1.0)
-}
-
-/// The sRGB transfer, as an sRGB target encodes.
-pub(crate) fn linear_to_srgb(x: f32) -> f32 {
-    let x = x.clamp(0.0, 1.0);
-    if x <= 0.003_130_8 {
-        x * 12.92
-    } else {
-        1.055 * x.powf(1.0 / 2.4) - 0.055
-    }
-}
-
-/// A colour for an id: 0 black, the rest spaced round the hue circle by
-/// the golden angle, so neighbouring ids never look alike.
-fn id_colour(id: u32) -> [f32; 3] {
-    if id == 0 {
-        return [0.0; 3];
-    }
-    let hue = (id as f32 * 0.618_034).fract();
-    hsv(hue, 0.62, 0.95)
-}
-
-fn hsv(h: f32, s: f32, v: f32) -> [f32; 3] {
-    let i = (h * 6.0).floor();
-    let f = h * 6.0 - i;
-    let (p, q, t) = (v * (1.0 - s), v * (1.0 - f * s), v * (1.0 - (1.0 - f) * s));
-    match i as i32 % 6 {
-        0 => [v, t, p],
-        1 => [q, v, p],
-        2 => [p, v, t],
-        3 => [p, q, v],
-        4 => [t, p, v],
-        _ => [v, p, q],
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::read::Kind;
     use super::*;
 
     fn image(format: &str) -> ImageDescription {
