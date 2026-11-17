@@ -2,6 +2,7 @@
 
 mod assets;
 mod binding;
+mod capture;
 mod describe;
 mod draw_list;
 mod draws;
@@ -570,6 +571,9 @@ pub struct SceneRenderer {
     /// The frame being described (#1084), only after `describe_next_frame`;
     /// `None` costs a frame nothing (`describe.rs`)
     frame_log: Option<Box<crate::frame_capture::FrameLog>>,
+    /// The frame being captured (#1085): its targets' copies so far. `None`
+    /// unless `capture_next_frame` asked.
+    frame_taps: Option<Box<crate::frame_taps::FrameTaps>>,
     /// Comic panels (#880, ADR 0120): the layout and each panel's view
     panel_state: panels::PanelState,
     /// Per-entity styles (#263): who is styled, how far, the mask and
@@ -806,6 +810,7 @@ impl SceneRenderer {
             lod_culled: 0,
             gpu_timer: None,
             frame_log: None,
+            frame_taps: None,
             panel_state: Default::default(),
             style_mask: style_mask::StyleMaskState::new(),
             fog_veil: fog_veil::FogVeilState::default(),

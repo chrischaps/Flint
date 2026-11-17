@@ -68,6 +68,14 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                           and recording for it), write() after the read-back (finish + flush, the raw times
    #                           laid on). Still path: column 0; stage path: the first cell's last capture.
    #                           Refused with --frames/--mesh/--sweep; --report json carries `frame_dump`)
+   #   --frame-capture out.flintframe
+   #                          (#1085: the same frame captured, manifest.json last + targets/NN-<target>.<ext>,
+   #                           through the same arm()/write() (`Wanted` says which of the two): arm() calls
+   #                           capture_next_frame with ctx's colour and depth textures (both COPY_SRC), write()
+   #                           takes the capture, waits (headless may), reads, describes, write_capture. With
+   #                           --frame-dump too, the JSON carries the capture's `capture` block. The last
+   #                           `-surface.png` is the -o PNG byte for byte (same image::save_buffer encoder).
+   #                           --report json carries `frame_capture`. tests/render_frame_capture_cli.rs)
    #   --mesh tree_a=out/oaks [--mesh tree_b='out/w*.glb'] [--sheet | -o x.gif --fps 4 | -o f-%03d.png]
    #                          (#222: a frame per GLB on that entity, one renderer; natural order;
    #                           multi-node GLBs baked flat, mesh_seq.rs; examples/mesh_sequence.scene.toml)

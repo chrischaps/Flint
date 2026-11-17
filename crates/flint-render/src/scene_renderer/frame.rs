@@ -172,6 +172,8 @@ impl SceneRenderer {
         if let Some(log) = &mut self.frame_log {
             **log = Default::default();
         }
+        // and a captured one its copies (#1085)
+        self.reset_frame_taps();
         self.take_inputs(queue, inputs);
         self.update_from_world(world, device);
         match inputs.particles {
@@ -342,10 +344,14 @@ impl SceneRenderer {
         // borrowed; put back at the end (ADR 0108). With them the frame's
         // description, while one is asked for (#1084): each part logs its
         // pass where it opens its scope.
+        // With them a captured frame's copies (#1085): each pass's targets
+        // are read as it ends (`tap_pass`).
         let mut scopes = crate::frame_capture::FrameScopes {
             timer: self.gpu_timer.take(),
             log: self.frame_log.take(),
+            taps: self.frame_taps.take(),
         };
+        self.begin_view_taps(&scopes);
         if let Some(log) = scopes.log() {
             log.begin_view(self.surface_size.into());
         }
@@ -421,6 +427,7 @@ impl SceneRenderer {
             scopes.note("Grass", |p| {
                 p.writes(&["grass_instances"]);
             });
+            self.tap_pass(device, &mut scopes, encoder, "Grass");
             // Its count is read back once the frame is submitted
             self.grass.readback_due = true;
         } else {
@@ -442,6 +449,7 @@ impl SceneRenderer {
         let scope = scopes.begin(encoder, "Shadows");
         self.render_shadow_pass(device, queue, encoder, camera, camera_pos, scopes.log());
         scopes.end(encoder, scope);
+        self.tap_pass(device, &mut scopes, encoder, "Shadows");
 
         // Set aside draws outside the camera frustum for the rest of the frame.
         self.cull_draws_to_camera();
@@ -753,6 +761,7 @@ impl SceneRenderer {
         if let Some(pass) = scopes.log().and_then(|l| l.named("Scene")) {
             self.log_scene_draws(pass, camera_pos);
         }
+        self.tap_pass(device, &mut scopes, encoder, "Scene");
 
         // The fog veil (#513): the translucent draws' weight, depth and
         // coverage, against the finished frame's single-sample depth
@@ -763,6 +772,7 @@ impl SceneRenderer {
             scopes.note("Fog veil", |p| {
                 p.reads(&[sd]).writes(&["fog_veil"]);
             });
+            self.tap_pass(device, &mut scopes, encoder, "Fog veil");
         } else {
             scopes.skip("Fog veil", || {
                 if !has_postprocess {
@@ -786,6 +796,7 @@ impl SceneRenderer {
                 p.reads(&[sd])
                     .writes(&["style veil", crate::style_mask::MASK_TARGET]);
             });
+            self.tap_pass(device, &mut scopes, encoder, "Style mask");
         } else {
             scopes.skip("Style mask", || {
                 "no style reads the entity mask".to_string()
@@ -803,6 +814,7 @@ impl SceneRenderer {
             scopes.note("Style albedo", |p| {
                 p.reads(&[sd]).writes(&[crate::style_albedo::ALBEDO_TARGET]);
             });
+            self.tap_pass(device, &mut scopes, encoder, "Style albedo");
         } else {
             scopes.skip("Style albedo", || "no style reads the albedo".to_string());
         }
@@ -842,6 +854,7 @@ impl SceneRenderer {
                     .reads(&["scene_depth"])
                     .writes(&["depth"]);
             }
+            self.tap_pass(device, &mut scopes, encoder, "Depth upscale");
         }
 
         // The selection outline, over the finished image: after every
@@ -850,6 +863,10 @@ impl SceneRenderer {
             let scope = scopes.begin(encoder, "Selection outline");
             self.encode_selection_outline(queue, encoder, target_view);
             scopes.end(encoder, scope);
+            scopes.note("Selection outline", |p| {
+                p.writes(&["surface"]);
+            });
+            self.tap_pass(device, &mut scopes, encoder, "Selection outline");
         } else {
             scopes.skip("Selection outline", || "nothing selected".to_string());
         }
@@ -872,6 +889,7 @@ impl SceneRenderer {
             scopes.note("World lines", |p| {
                 p.reads(&["depth"]).writes(&["surface"]);
             });
+            self.tap_pass(device, &mut scopes, encoder, "World lines");
         } else {
             let none = self.world_lines.is_empty();
             scopes.skip("World lines", || {
@@ -885,6 +903,7 @@ impl SceneRenderer {
         }
         self.gpu_timer = scopes.timer;
         self.frame_log = scopes.log;
+        self.frame_taps = scopes.taps;
     }
 
     /// [`encode_to`](Self::encode_to) a second time in a frame, for the other

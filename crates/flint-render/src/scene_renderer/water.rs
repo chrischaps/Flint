@@ -322,7 +322,9 @@ impl WaterRenderer {
                 dimension: wgpu::TextureDimension::D2,
                 format,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT
+                    // Copied out by a frame capture (#1085)
+                    | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
             let view = tex.create_view(&Default::default());

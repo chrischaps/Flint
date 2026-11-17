@@ -136,7 +136,7 @@ fn shadow_casters<'a>(
 
 /// Each shadow map layer's pass, by layer: a GPU debugger lists them by
 /// these names (#1083).
-const SHADOW_PASS_LABELS: [&str; crate::shadow::SHADOW_LAYERS] = {
+pub(super) const SHADOW_PASS_LABELS: [&str; crate::shadow::SHADOW_LAYERS] = {
     let mut labels = ["Shadow cascade"; crate::shadow::SHADOW_LAYERS];
     labels[0] = "Shadow cascade 0";
     labels[1] = "Shadow cascade 1";
@@ -1516,7 +1516,7 @@ impl SceneRenderer {
             frame.edges =
                 pp.styles
                     .encode_edges(&both, frame, encoder, &mut |label, encoder, run| {
-                        scopes.run(label, encoder, run)
+                        self.run_style_part(device, scopes, label, encoder, run, None)
                     });
             scopes.note(crate::stylize::edges::EDGE_LABEL, |p| {
                 p.reads(&[sd]).writes(&["style edges"]);
@@ -1525,6 +1525,15 @@ impl SceneRenderer {
 
         // HDR stage: Kuwahara and friends, in linear HDR at scene resolution
         let hdr_steps = crate::stylize::plan(hdr_styles.len(), false);
+        // Where each style writes, for a captured frame's taps (#1085)
+        let hdr_dsts = style_dsts(
+            scopes.taps.is_some(),
+            &hdr_styles,
+            &hdr_steps,
+            crate::stylize::StyleStage::Hdr,
+            "hdr_scene",
+            "",
+        );
         let hdr_result = match &mut style_frame {
             Some(frame) if !hdr_styles.is_empty() => crate::stylize::run_stage(
                 &hdr_styles,
@@ -1540,7 +1549,10 @@ impl SceneRenderer {
                 pp.styles.blend_pass(),
                 pp.styles.ownership(),
                 pp.styles.fade(),
-                &mut |label, encoder, run| scopes.run(label, encoder, run),
+                &mut |label, encoder, run| {
+                    let dst = dst_of(&hdr_dsts, label);
+                    self.run_style_part(device, scopes, label, encoder, run, dst)
+                },
             ),
             _ => None,
         };
@@ -1577,6 +1589,7 @@ impl SceneRenderer {
             scopes.note("SSAO", |p| {
                 p.reads(&[sd]).writes(&["ssao", "ssao_blur"]);
             });
+            self.tap_pass(device, scopes, encoder, "SSAO");
         } else {
             scopes.skip("SSAO", || self.post_off_reason("ssao_enabled"));
         }
@@ -1608,6 +1621,7 @@ impl SceneRenderer {
                         p.reads(&[sd, "shadow_map"])
                             .writes(&["volumetric", "volumetric_blur"]);
                     });
+                    self.tap_pass(device, scopes, encoder, "Volumetric");
                 }
             }
             if !self.shadows_drawn() || self.shadow_pass.is_none() {
@@ -1634,9 +1648,26 @@ impl SceneRenderer {
                 },
             };
             let from_style = source.id != crate::stylize::input_id::HDR;
-            scopes.run("Bloom", encoder, &mut |encoder| {
-                pp.run_bloom(queue, encoder, device, resources, config, &source)
-            });
+            // A captured frame reads each step's mip as it's written (#1085):
+            // the upsample writes over the downsample's
+            let scope = scopes.begin(encoder, "Bloom");
+            if scopes.taps.is_some() {
+                pp.run_bloom(
+                    queue,
+                    encoder,
+                    device,
+                    resources,
+                    config,
+                    &source,
+                    Some(&mut |encoder, mip, step| {
+                        let id = format!("bloom_mip_{mip}");
+                        self.tap_step(device, scopes, encoder, "Bloom", &id, step)
+                    }),
+                );
+            } else {
+                pp.run_bloom(queue, encoder, device, resources, config, &source, None);
+            }
+            scopes.end(encoder, scope);
             let mips = resources.bloom_mips.len();
             scopes.note("Bloom", |p| {
                 p.reads(&[if from_style {
@@ -1749,8 +1780,17 @@ impl SceneRenderer {
                 scopes.timer.as_mut()
             },
         );
+        self.tap_pass(device, scopes, encoder, "Composite");
 
         if let (Some(frame), Some(input)) = (&mut style_frame, &display_in) {
+            let display_dsts = style_dsts(
+                scopes.taps.is_some(),
+                &display_styles,
+                &display_steps,
+                crate::stylize::StyleStage::Display,
+                "style display in",
+                if fxaa_active { "fxaa_in" } else { "surface" },
+            );
             frame.width = input.width;
             frame.height = input.height;
             frame.format = pp.surface_format;
@@ -1772,7 +1812,10 @@ impl SceneRenderer {
                 pp.styles.blend_pass(),
                 pp.styles.ownership(),
                 pp.styles.fade(),
-                &mut |label, encoder, run| scopes.run(label, encoder, run),
+                &mut |label, encoder, run| {
+                    let dst = dst_of(&display_dsts, label);
+                    self.run_style_part(device, scopes, label, encoder, run, dst)
+                },
             );
             log_style_steps(
                 scopes,
@@ -1801,6 +1844,7 @@ impl SceneRenderer {
                 target_view,
                 scopes.timer.as_mut(),
             );
+            self.tap_pass(device, scopes, encoder, "FXAA");
         } else {
             scopes.skip("FXAA", || self.post_off_reason("fxaa"));
         }
@@ -1868,6 +1912,35 @@ fn log_style_steps(
             p.reads(&[&src, sd]).writes(&[&dst]);
         });
     }
+}
+
+/// Each style of one stage with the target its step writes (#1085), by the
+/// description's names: what a captured frame reads as the style ends.
+/// Empty, and nothing allocated, unless the frame is `capturing`.
+fn style_dsts(
+    capturing: bool,
+    styles: &[(
+        &'static crate::stylize::StyleDescriptor,
+        &dyn crate::stylize::StylePass,
+    )],
+    steps: &[(crate::stylize::Slot, crate::stylize::Slot)],
+    stage: crate::stylize::StyleStage,
+    input: &'static str,
+    last: &'static str,
+) -> Vec<(&'static str, &'static str)> {
+    if !capturing {
+        return Vec::new();
+    }
+    styles
+        .iter()
+        .zip(steps.iter().copied())
+        .map(|((d, _), (_, dst))| (d.label, slot_id(stage, dst, input, last)))
+        .collect()
+}
+
+/// The target `label`'s style writes, from [`style_dsts`].
+fn dst_of(dsts: &[(&'static str, &'static str)], label: &str) -> Option<&'static str> {
+    dsts.iter().find(|(l, _)| *l == label).map(|(_, d)| *d)
 }
 
 /// A style stage's slot as the description names its target: the stage's

@@ -25,6 +25,10 @@ pub struct RenderReport {
     /// of the first cell.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frame_dump: Option<String>,
+    /// `--frame-capture`'s folder (#1085): the captured frame's manifest
+    /// and images.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_capture: Option<String>,
     /// One per image in the file: a moment and, in a sweep, a column.
     pub captures: Vec<CaptureReport>,
     /// Entities asking to be living props that drew as still models, with the reason
@@ -323,6 +327,7 @@ mod tests {
             wooze_zones: 0,
             sweep: None,
             frame_dump: None,
+            frame_capture: None,
             captures: vec![CaptureReport {
                 time: 3.5,
                 column: None,
