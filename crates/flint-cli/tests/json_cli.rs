@@ -313,6 +313,12 @@ fn every_command_answers_with_one_json_document() {
         &["frame", "image", &two, "Scene", "-o", "out/scene.png"]
     )["written"]
         .is_array());
+    // The frozen captures hold no replay/: refused, as one document
+    run("frame replay");
+    assert!(fails(&dir, &["frame", "replay", &two])["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("no replay inputs"));
 
     run("style new");
     assert_eq!(

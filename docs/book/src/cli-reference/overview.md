@@ -18,7 +18,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint script api` | Every function a script can call, with its parameters and a one-line doc, and the callbacks; `--json` for the same as data, `--filter <text>` for names or modules containing it. A function a game's extension registers on the Rhai engine directly is listed with its parameter types only. `--book` writes the book's [Script API Reference](../reference/script-api.md) and the generated tables in its chapters; `--check-book` fails when they are stale or a chapter calls a function that doesn't exist (CI runs it) ([Scripting](../concepts/scripting.md#api-reference)) |
 | `flint script check [dir\|scene\|file.rhai]` | Compile every script and the modules it imports, and check each call's name and argument count against the script API, each callback's name and parameters, and each import, reported as `file:line:col`. Exits 1 on an error; `--json`; `--allow` / `--api` for a game's own functions ([Checking your scripts](../concepts/scripting.md#checking-your-scripts)) |
 | `flint check [dir\|scene]` | The pre-flight: everything wrong with a project, or with one scene, in one run. Schemas, entity references, every asset and file a scene names (with the paths tried), styles and looks, constraints, scripts. Exits 1 on any error; `--json` ([The `check` Command](#the-check-command)) |
-| `flint frame show <capture>` | A frame capture's summary (scene, adapter, size, GPU time by pass, draws and triangles, memory), and `--passes`, `--draws [--pass P] [--entity E] [--sort tris] [--culled]`, `--targets`, `--hitch`; `flint frame diff <a> <b> [--out dir]` says what changed between two; `flint frame image <capture> <pass> -o x.png` copies a pass's image out to look at; `flint frame open <capture>` is the frame debugger's window ([The Frame Debugger](../guides/frame-debugger.md)). Reads only the capture folder; `--json` ([The `frame` Command](#the-frame-command)) |
+| `flint frame show <capture>` | A frame capture's summary (scene, adapter, size, GPU time by pass, draws and triangles, memory), and `--passes`, `--draws [--pass P] [--entity E] [--sort tris] [--culled]`, `--targets`, `--hitch`; `flint frame diff <a> <b> [--out dir]` says what changed between two; `flint frame image <capture> <pass> -o x.png` copies a pass's image out to look at; `flint frame open <capture>` is the frame debugger's window ([The Frame Debugger](../guides/frame-debugger.md)); `flint frame replay <capture>` draws it again, a draw at a time or with an entity or pass left out. All but `replay` read only the capture folder; `--json` ([The `frame` Command](#the-frame-command)) |
 | `flint validate <scene>` | Check one scene against its schemas (every unknown archetype, component and field, every value of the wrong type, every entity reference to nothing and every missing asset, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format text\|json`; `--fix` applies what a constraint can fix |
 | `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from `examples/index.toml` or fails validation |
 | `flint asset import` | Import a file into the asset store |
@@ -186,9 +186,11 @@ flint frame image dock.flintframe Scene --target depth -o depth.png
 flint frame image dock.flintframe --all -o dock-images/
 flint frame open dock.flintframe                    # the frame debugger's window
 flint frame open dock.flintframe --pass Scene --screenshot scene.png   # one frame of it, no window
+flint frame replay dock.flintframe                  # draw it again: byte-identical, or how far off
+flint frame replay dock.flintframe --draws 40 --hide barrel_02 --out step.flintframe
 ```
 
-`flint frame` reads a frame capture: the folder `flint render --frame-capture` writes, with a `manifest.json` describing the frame and an image for each target each pass wrote ([A frame's images](../guides/profiling.md#a-frames-images)). It reads only that folder: no GPU, no scene, no schemas. So a capture from another machine, or attached to an issue, reads the same as one made here. A `--frame-dump` JSON file reads too, with no images.
+`flint frame` reads a frame capture: the folder `flint render --frame-capture` writes, with a `manifest.json` describing the frame and an image for each target each pass wrote ([A frame's images](../guides/profiling.md#a-frames-images)). Every view but `replay` reads only that folder: no GPU, no scene, no schemas. So a capture from another machine, or attached to an issue, reads the same as one made here. A `--frame-dump` JSON file reads too, with no images. `replay` draws the frame again from the capture's `replay/`, so it needs the scene and its assets and a GPU.
 
 ### `flint frame show`
 
@@ -286,6 +288,23 @@ The pass is named as `--passes` lists it (`Scene`, `Bloom`, `Shadow cascade 1`, 
 | `--screenshot <png>` | Draw one frame of the window into a PNG and exit, with no window; `--json` answers `{"written": [path]}`. Without it the command is a window and refuses `--json` |
 | `--width`, `--height` | The window's size in points (1600 x 1000); a screenshot's in pixels |
 | `--scale <x>` | A screenshot's pixels per point |
+| `--replay` | Draw the frame again as it opens (R in the window): needs the capture's `replay/`, the scene and a GPU |
+| `--draws <n>`, `--hide <name>`, `--skip <pass>`, `--outline <name>` | Replay it with the scene pass stopped after N draws, without an entity, without a pass, with an entity's pixels outlined (each implies `--replay`; `--hide` and `--skip` repeat). A screenshot waits for the replay |
+| `--scene <file>`, `--schemas <dir>` | The replay's scene, when it isn't where the capture says, and its schema directories |
+
+### `flint frame replay`
+
+`flint frame replay <capture>` draws a captured frame again ([Replaying a frame](../guides/frame-debugger.md#replaying-a-frame)): the authored scene loaded as `flint render` loads it, the captured world laid over it by entity name, the renderer's state put back, no game step run. It writes the replayed frame as a capture, which every other `frame` view reads, and says whether its final image and its scene pass's image are byte-identical with the captured ones, or in how many pixels they differ and what the capture draws fresh. Each asset is checked against its recorded hash; a missing or changed one is named and the frame still drawn. A capture with no `replay/` is refused, saying so. `--json` carries `identical`, `final` and `scene` (`pixels`, `differing`), `assets` (each `same`, `moved`, `changed` or `missing`), `notes`, `fresh_only`, `refused` and `skippable`.
+
+| Flag | What it does |
+|------|--------------|
+| `--out <dir>` | Where the replay goes (default: beside the capture, `<name>.replay.flintframe`) |
+| `--draws <n>` | Stop the scene pass after its first N draws, counted as `flint frame show --draws --pass Scene` lists them |
+| `--hide <name>` | Draw the frame without this entity in any pass (repeatable) |
+| `--skip <pass>` | Draw the frame without this pass: `Shadows`, `SSAO`, `Volumetric`, `Bloom`, `FXAA`, `Fog veil`, or a style's (repeatable). The text answer lists what this capture takes |
+| `--outline <name>` | Mark this entity's pixels with the selection outline |
+| `--scene <file>` | The scene, when it isn't where the capture says (found as recorded, else under the capture folder's parents) |
+| `--schemas <dir>` | Schema directories, as `flint render` takes them |
 
 ### Capture versions
 

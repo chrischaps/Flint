@@ -8,8 +8,10 @@ use super::super::display::{Channel, Mode};
 use super::super::read::Capture;
 use super::loader::{Loader, Slot};
 use super::model::{Model, Sort, TableQuery};
+use super::replay::{Replay, Status};
 use super::timing::{band_of, Timing};
 use super::viewer::{self, Side, ViewState, Wipe};
+use crate::commands::render::replay_host::Controls;
 use egui::{Align, Color32, FontId, Key, Layout, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use flint_debug_ui::widgets::{Band, FrameGraph, GraphLayout};
 use std::collections::HashMap;
@@ -45,6 +47,12 @@ pub struct Start {
     pub entity: Option<String>,
     /// A wipe to start with.
     pub wipe: Option<Wipe>,
+    /// Replay the frame at once, under these controls (#1089).
+    pub replay: Option<Controls>,
+    /// The scene, when it isn't where the capture says.
+    pub scene: Option<std::path::PathBuf>,
+    /// `--schemas`, for the replay's load.
+    pub schemas: Vec<String>,
 }
 
 pub struct App {
@@ -71,6 +79,15 @@ pub struct App {
     /// The tree should bring the selected pass into view.
     scroll_tree: bool,
     styled: bool,
+    /// Drawing the frame again (#1089).
+    replay: Replay,
+    /// The captured frame, while a replay is shown in its place.
+    captured: Option<(Capture, String)>,
+    /// Whether the capture holds replay inputs.
+    replayable: bool,
+    /// Added to each image's key in the viewer's GPU cache, a new one each
+    /// time another capture (a replay) is shown.
+    key_base: usize,
 }
 
 impl App {
@@ -86,7 +103,19 @@ impl App {
         let timing = Timing::new(d, &model.passes);
         let summary = super::super::show::summary_of(d, &shown);
         let exposure = super::super::image_out::exposure(d);
+        let replayable = d.replay.as_ref().is_some_and(|r| r.available);
+        let scene_draws = d.pass("Scene").map_or(0, |p| p.draws.len());
+        let replay = Replay::new(
+            &capture.dir,
+            start.scene.clone(),
+            start.schemas.clone(),
+            scene_draws,
+        );
         let mut app = Self {
+            replay,
+            captured: None,
+            replayable,
+            key_base: 0,
             selected: model.default_pass(),
             model,
             timing,
@@ -129,7 +158,81 @@ impl App {
         if let Some(wipe) = start.wipe {
             app.view.wipe = wipe;
         }
+        if let Some(controls) = &start.replay {
+            app.replay.want = controls.clone();
+            app.replay.start();
+            // A step of the scene pass is the scene pass's image
+            if controls.scene_draws.is_some() && start.pass.is_none() {
+                if let Some(row) = app.model.find_pass("Scene") {
+                    app.selected = row;
+                }
+            }
+        }
         app
+    }
+
+    /// Wait for the replay under way, and show it: for a screenshot.
+    pub fn wait_for_replay(&mut self) {
+        if let Some(drawn) = self.replay.wait() {
+            self.show_replay(&drawn.dir);
+        }
+    }
+
+    /// Show the capture at `dir` (a replay) in place of the captured frame,
+    /// on the same pass and entity.
+    fn show_replay(&mut self, dir: &std::path::Path) {
+        match Capture::open(dir) {
+            Ok(replayed) => {
+                let shown = Capture::shown(dir);
+                let was = self.show(replayed, shown);
+                if self.captured.is_none() {
+                    self.captured = Some(was);
+                }
+            }
+            Err(e) => self.replay.status = Status::Failed(format!("{e:#}")),
+        }
+    }
+
+    /// Put the captured frame back.
+    fn show_captured(&mut self) {
+        if let Some((capture, shown)) = self.captured.take() {
+            self.show(capture, shown);
+        }
+    }
+
+    /// Show `capture`, keeping the pass, its image and the entity selected;
+    /// returns what was shown.
+    fn show(&mut self, capture: Capture, shown: String) -> (Capture, String) {
+        let key = self.model.passes.get(self.selected).map(|p| p.key.clone());
+        let d = &capture.description;
+        self.model = Model::new(d);
+        self.timing = Timing::new(d, &self.model.passes);
+        self.summary = super::super::show::summary_of(d, &shown);
+        self.exposure = super::super::image_out::exposure(d);
+        self.loader = Loader::new(2, 24);
+        self.key_base += 1 << 20;
+        self.selected = key
+            .and_then(|k| self.model.find_pass(&k))
+            .unwrap_or_else(|| self.model.default_pass());
+        self.draw = None;
+        let was = (
+            std::mem::replace(&mut self.capture, capture),
+            std::mem::replace(&mut self.shown, shown),
+        );
+        if let Some(entity) = self.entity.clone() {
+            self.select_entity(entity);
+        }
+        was
+    }
+
+    /// Whether a replay is on screen in place of the captured frame.
+    fn showing_replay(&self) -> bool {
+        self.captured.is_some()
+    }
+
+    /// Ask for the frame under `controls`.
+    fn replay_with(&mut self, controls: Controls) {
+        self.replay.ask(controls);
     }
 
     /// Whether an image is still being read (a screenshot waits for it).
@@ -243,6 +346,13 @@ impl App {
         let ctx = ui.ctx().clone();
         self.style(&ctx);
         self.loader.poll();
+        if let Some(drawn) = self.replay.poll() {
+            // Each replay asked for is shown as it lands
+            self.show_replay(&drawn.dir);
+        }
+        if self.replay.busy() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
         self.keys(&ctx);
 
         let (shown, compare) = self.images();
@@ -400,6 +510,57 @@ impl App {
             self.draw = None;
             self.query.filter.clear();
             self.query.all_passes = false;
+        }
+        // The replay (#1089): R draws the frame again, or switches between
+        // it and the capture; [ and ] step the scene pass a draw; H hides
+        // the selected entity
+        if self.replayable {
+            if pressed(Key::R) {
+                match (&self.replay.status, self.showing_replay()) {
+                    (Status::Off, _) => self.replay.start(),
+                    (_, true) => self.show_captured(),
+                    (_, false) => {
+                        if let Some(dir) = self.replay.last.as_ref().map(|l| l.dir.clone()) {
+                            self.show_replay(&dir);
+                        }
+                    }
+                }
+            }
+            if self.replay.status == Status::Ready {
+                let total = self.replay.scene_draws;
+                let now = self.replay.want.scene_draws.unwrap_or(total);
+                let step = |to: usize| (to < total).then_some(to);
+                if pressed(Key::OpenBracket) {
+                    let mut c = self.replay.want.clone();
+                    c.scene_draws = step(now.saturating_sub(1));
+                    self.replay_with(c);
+                }
+                if pressed(Key::CloseBracket) {
+                    let mut c = self.replay.want.clone();
+                    c.scene_draws = step((now + 1).min(total));
+                    self.replay_with(c);
+                }
+                if pressed(Key::O) {
+                    let mut c = self.replay.want.clone();
+                    c.outline = match (&c.outline, &self.entity) {
+                        (Some(_), _) => None,
+                        (None, e) => e.clone(),
+                    };
+                    self.replay_with(c);
+                }
+                if pressed(Key::H) {
+                    if let Some(e) = self.entity.clone() {
+                        let mut c = self.replay.want.clone();
+                        match c.hidden.iter().position(|h| *h == e) {
+                            Some(i) => {
+                                c.hidden.remove(i);
+                            }
+                            None => c.hidden.push(e),
+                        }
+                        self.replay_with(c);
+                    }
+                }
+            }
         }
     }
 
@@ -743,14 +904,14 @@ impl App {
         let hover = match a_slot {
             Some(Slot::Ready(la)) => {
                 let a_side = Side {
-                    key: a,
+                    key: self.key_base + a,
                     display: self.view.display(&la),
                     loaded: &la,
                 };
                 let lb = compare.and_then(|b| self.loader.ready(b));
                 let b_side = match (&lb, compare) {
                     (Some(lb), Some(b)) => Some(Side {
-                        key: b,
+                        key: self.key_base + b,
                         display: self.view.display(lb),
                         loaded: lb,
                     }),
@@ -1017,7 +1178,303 @@ impl App {
 
     // ── The draws ──
 
+    /// The captured frame's description, whichever is on screen.
+    fn captured_description(&self) -> &flint_render::frame_capture::FrameDescription {
+        match &self.captured {
+            Some((c, _)) => &c.description,
+            None => &self.capture.description,
+        }
+    }
+
+    /// The replay's strip, above the draws (#1089): what it found, how close
+    /// it came, and its controls.
+    fn replay_ui(&mut self, ui: &mut egui::Ui) {
+        let status = self.replay.status.clone();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Replay").strong());
+            match &status {
+                Status::Off => {
+                    if ui
+                        .button("Draw this frame again")
+                        .on_hover_text(
+                            "Load the scene and draw the frame from its replay inputs (R),                              then step the scene pass, hide entities, switch passes off",
+                        )
+                        .clicked()
+                    {
+                        self.replay.start();
+                    }
+                }
+                Status::Loading => {
+                    ui.spinner();
+                    ui.label(RichText::new("loading the scene").color(ink::DIM));
+                }
+                Status::Failed(_) => {
+                    ui.label(RichText::new("couldn't replay").color(ink::HITCH));
+                }
+                Status::Ready => {
+                    let showing = self.showing_replay();
+                    if ui
+                        .selectable_label(showing, "replayed")
+                        .on_hover_text("R switches")
+                        .clicked()
+                        && !showing
+                    {
+                        if let Some(dir) = self.replay.last.as_ref().map(|l| l.dir.clone()) {
+                            self.show_replay(&dir);
+                        }
+                    }
+                    if ui
+                        .selectable_label(!showing, "captured")
+                        .on_hover_text("R switches")
+                        .clicked()
+                        && showing
+                    {
+                        self.show_captured();
+                    }
+                    if self.replay.busy() {
+                        ui.spinner();
+                    }
+                }
+            }
+        });
+        if let Status::Failed(e) = &status {
+            ui.label(RichText::new(e).small().color(ink::HITCH));
+            return;
+        }
+        if status != Status::Ready {
+            return;
+        }
+
+        // How close it came
+        let fresh = self
+            .replay
+            .loaded
+            .as_ref()
+            .map(|l| l.fresh_only.clone())
+            .unwrap_or_default();
+        if let Some(last) = &self.replay.last {
+            let asked = last.controls != Controls::default();
+            let mut all = true;
+            for m in &last.matches {
+                all &= m.identical();
+                let colour = if m.identical() {
+                    ink::SELECT_LINE
+                } else if asked {
+                    ink::DIM
+                } else {
+                    ink::ENTITY
+                };
+                let what = match m.image {
+                    "final" => "final image",
+                    _ => "scene pass ",
+                };
+                ui.label(
+                    RichText::new(format!("{what}  {}", m.words()))
+                        .small()
+                        .color(colour),
+                );
+            }
+            if !all && !asked && !fresh.is_empty() {
+                ui.label(
+                    RichText::new(format!("drawn fresh: {}", fresh.join("; ")))
+                        .small()
+                        .color(ink::DIM),
+                );
+            }
+            for r in &last.refused {
+                ui.label(RichText::new(r).small().color(ink::HITCH));
+            }
+        }
+
+        // The scene pass, a draw at a time
+        let total = self.replay.scene_draws;
+        if total > 0 {
+            let mut k = self.replay.want.scene_draws.unwrap_or(total);
+            let mut moved = false;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("scene draws").small().color(ink::DIM));
+                let w = (ui.available_width() - 70.0).max(60.0);
+                ui.spacing_mut().slider_width = w;
+                moved = ui
+                    .add(egui::Slider::new(&mut k, 0..=total).show_value(false))
+                    .on_hover_text("[ and ] step a draw")
+                    .changed();
+                ui.label(RichText::new(format!("{k} / {total}")).monospace());
+            });
+            if moved {
+                let mut c = self.replay.want.clone();
+                c.scene_draws = (k < total).then_some(k);
+                self.replay_with(c);
+                // What the slider builds is the scene pass's image
+                if let Some(row) = self.model.find_pass("Scene") {
+                    self.select_pass(row);
+                }
+            }
+            let at = self.replay.want.scene_draws.unwrap_or(total);
+            // The replay's own last draw (hiding moves the count), else the
+            // captured frame's at that place
+            let drawn_here = self
+                .showing_replay()
+                .then(|| self.capture.description.pass("Scene"))
+                .flatten()
+                .filter(|p| p.draws.len() == at)
+                .and_then(|p| p.draws.last());
+            let last_drawn = (at > 0)
+                .then(|| {
+                    drawn_here.or_else(|| {
+                        self.captured_description()
+                            .pass("Scene")
+                            .and_then(|p| p.draws.get(at - 1))
+                    })
+                })
+                .flatten()
+                .map(|d| {
+                    let who = d.entity.clone().unwrap_or_else(|| d.kind.clone());
+                    format!("draw {at}: {who} · {} · {}", d.kind, d.layer)
+                });
+            let words = match last_drawn {
+                Some(w) if at < total => w,
+                _ if at == 0 => "nothing drawn yet: the sky and what isn't a draw".to_string(),
+                _ => "every draw".to_string(),
+            };
+            ui.label(RichText::new(words).small().color(ink::TEXT));
+        }
+
+        // Passes off
+        let skippable = self
+            .replay
+            .loaded
+            .as_ref()
+            .map(|l| l.skippable.clone())
+            .unwrap_or_default();
+        if !skippable.is_empty() {
+            let mut change = None;
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("passes").small().color(ink::DIM));
+                for s in &skippable {
+                    let mut on = !self.replay.want.skip.contains(&s.pass);
+                    if ui
+                        .checkbox(&mut on, RichText::new(&s.pass).small())
+                        .on_hover_text(format!("Off: {}", s.does))
+                        .changed()
+                    {
+                        change = Some((s.pass.clone(), on));
+                    }
+                }
+            });
+            if let Some((pass, on)) = change {
+                let mut c = self.replay.want.clone();
+                c.skip.retain(|p| *p != pass);
+                if !on {
+                    c.skip.push(pass);
+                }
+                self.replay_with(c);
+            }
+        }
+
+        // Entities hidden
+        let mut change = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("hidden").small().color(ink::DIM));
+            if self.replay.want.hidden.is_empty() {
+                ui.label(RichText::new("none").small().color(ink::FAINT));
+            }
+            for h in &self.replay.want.hidden {
+                if ui
+                    .small_button(RichText::new(format!("{h}  x")).color(ink::ENTITY))
+                    .on_hover_text("Draw it again")
+                    .clicked()
+                {
+                    change = Some((h.clone(), false));
+                }
+            }
+            if let Some(e) = &self.entity {
+                if !self.replay.want.hidden.contains(e)
+                    && ui
+                        .small_button(format!("hide {e}"))
+                        .on_hover_text("Draw the frame without it (H)")
+                        .clicked()
+                {
+                    change = Some((e.clone(), true));
+                }
+            }
+        });
+        // Its pixels marked
+        let mut outline = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("outlined").small().color(ink::DIM));
+            match (&self.replay.want.outline, &self.entity) {
+                (Some(o), _) => {
+                    if ui
+                        .small_button(RichText::new(format!("{o}  x")).color(ink::ENTITY))
+                        .on_hover_text("Take the outline off (O)")
+                        .clicked()
+                    {
+                        outline = Some(None);
+                    }
+                }
+                (None, Some(e)) => {
+                    if ui
+                        .small_button(format!("outline {e}"))
+                        .on_hover_text("Mark its pixels with the selection outline (O)")
+                        .clicked()
+                    {
+                        outline = Some(Some(e.clone()));
+                    }
+                }
+                (None, None) => {
+                    ui.label(
+                        RichText::new("select a draw's entity")
+                            .small()
+                            .color(ink::FAINT),
+                    );
+                }
+            }
+        });
+        if let Some(o) = outline {
+            let mut c = self.replay.want.clone();
+            c.outline = o;
+            self.replay_with(c);
+        }
+        if let Some((name, hide)) = change {
+            let mut c = self.replay.want.clone();
+            c.hidden.retain(|h| *h != name);
+            if hide {
+                c.hidden.push(name);
+            }
+            self.replay_with(c);
+        }
+
+        // What the load found
+        if let Some(loaded) = &self.replay.loaded {
+            for a in loaded.assets.iter().filter(|a| !a.same_bytes()) {
+                let words = match a.state {
+                    "missing" => format!("{} {} is missing (was {})", a.kind, a.name, a.path),
+                    _ => format!("{} {} has changed since the capture", a.kind, a.name),
+                };
+                ui.label(RichText::new(words).small().color(ink::HITCH));
+            }
+            if !loaded.notes.is_empty() {
+                egui::CollapsingHeader::new(
+                    RichText::new(format!("notes ({})", loaded.notes.len()))
+                        .small()
+                        .color(ink::DIM),
+                )
+                .id_salt("replay-notes")
+                .show(ui, |ui| {
+                    for n in &loaded.notes {
+                        ui.label(RichText::new(n).small().color(ink::DIM));
+                    }
+                });
+            }
+        }
+    }
+
     fn draws(&mut self, ui: &mut egui::Ui) {
+        if self.replayable {
+            self.replay_ui(ui);
+            ui.separator();
+        }
         self.query.pass = Some(self.selected);
         ui.horizontal(|ui| {
             ui.label(RichText::new("Draws").strong());

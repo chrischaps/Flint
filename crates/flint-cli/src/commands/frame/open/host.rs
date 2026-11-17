@@ -313,6 +313,8 @@ pub fn screenshot(
             .native_pixels_per_point = Some(scale);
         raw
     };
+    // A replay asked for is drawn before anything is laid out (#1089)
+    app.wait_for_replay();
     // A frame to lay out and ask for the images, a wait for them, then
     // frames until egui has settled (a window's first frame is its sizing)
     for frame in 0..6 {

@@ -10,7 +10,7 @@
 use super::*;
 use crate::frame_capture::FrameScopes;
 use crate::frame_replay::{
-    PaletteEntry, PaletteKind, ReplayRenderer, ReplayStateCapture, StyleState,
+    BoneMatrix, PaletteEntry, PaletteKind, ReplayRenderer, ReplayStateCapture, StyleState,
 };
 use crate::frame_taps::{CaptureTargets, FrameCapture, FrameTaps};
 
@@ -408,11 +408,16 @@ impl SceneRenderer {
         let renderer = ReplayRenderer {
             styles,
             post_process_debug: format!("{config:#?}"),
+            // The shadow map's real size: a host may set it apart from the
+            // quality (`flint render --shadow-resolution`)
             quality: self
                 .quality
                 .entries()
                 .into_iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .map(|(k, v)| match k {
+                    "shadow_resolution" => (k.to_string(), self.shadow_resolution().to_string()),
+                    _ => (k.to_string(), v.to_string()),
+                })
                 .collect(),
             msaa: self.pipelines.samples(),
             render_scale: self.render_scale,
@@ -438,6 +443,114 @@ impl SceneRenderer {
         };
         capture.renderer = renderer;
         capture
+    }
+}
+
+impl SceneRenderer {
+    /// Put back what [`capture_replay_state`](Self::capture_replay_state)
+    /// took (#1089, ADR 0126 decision 4), into a renderer whose scene is
+    /// bound and loaded: every bone, shadow and echo palette from
+    /// `skinning` (`skinning.bin`'s bytes, indexed by `state.skinning`), the
+    /// asset palettes, part tints and softness, which echoes lighten, the
+    /// motion hold's kept matrices and ticks, and the selected entity.
+    /// Entities are found in `world` by name; what names none is returned,
+    /// a line each. Quality, MSAA, render scale and the config are the
+    /// host's to set, as a load does.
+    pub fn restore_replay_state(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        world: &FlintWorld,
+        state: &ReplayRenderer,
+        skinning: &[u8],
+    ) -> Vec<String> {
+        let mut unknown = std::collections::BTreeSet::new();
+        let mut id_of = |name: &str| {
+            let id = world.get_id(name);
+            if id.is_none() {
+                unknown.insert(name.to_string());
+            }
+            id
+        };
+        let palette = |e: &PaletteEntry| -> Option<Vec<BoneMatrix>> {
+            let start = e.offset as usize;
+            let end = start + e.count as usize * std::mem::size_of::<BoneMatrix>();
+            skinning
+                .get(start..end)
+                .map(bytemuck::pod_collect_to_vec::<u8, BoneMatrix>)
+        };
+        let mut short = 0usize;
+        for e in &state.skinning {
+            let (Some(id), Some(m)) = (id_of(&e.entity), palette(e)) else {
+                short += palette(e).is_none() as usize;
+                continue;
+            };
+            match e.kind {
+                PaletteKind::Bones => {
+                    self.write_entity_bones(device, queue, id, 0, &m);
+                    // The CPU copy the style scissor bounds with
+                    let kept = &m[..m.len().min(crate::skinned_pipeline::MAX_BONES)];
+                    self.skinning.bone_matrices.insert(id, kept.to_vec());
+                }
+                PaletteKind::Shadow => self.write_entity_shadow_bones(device, queue, id, &m),
+                PaletteKind::Echo => {
+                    let opacity = e.opacity.unwrap_or(1.0);
+                    self.write_entity_echo_bones(
+                        device,
+                        queue,
+                        id,
+                        e.echo.unwrap_or(0),
+                        opacity,
+                        0,
+                        &m,
+                    );
+                }
+            }
+        }
+        for (asset, m) in &state.asset_bones {
+            self.skinning
+                .asset_bone_matrices
+                .insert(asset.clone(), m.clone());
+            if let Some(mesh) = self
+                .mesh_cache
+                .get_skinned(asset)
+                .and_then(|meshes| meshes.first())
+            {
+                queue.write_buffer(&mesh.bone_buffer, 0, bytemuck::cast_slice(m));
+            }
+        }
+        for (name, tints) in &state.part_tints {
+            if let Some(id) = id_of(name) {
+                for (part, tint) in tints.iter().enumerate() {
+                    self.set_entity_part_tint(id, part, *tint);
+                }
+            }
+        }
+        for (name, soft) in &state.part_softness {
+            if let Some(id) = id_of(name) {
+                for (part, s) in soft.iter().enumerate() {
+                    self.set_entity_part_softness(id, part, *s);
+                }
+            }
+        }
+        for name in &state.echo_lighten {
+            if let Some(id) = id_of(name) {
+                self.set_entity_echo_lighten(id, true);
+            }
+        }
+        self.motion_hold.restore(&state.motion_hold, &mut id_of);
+        let selected = state.selected.as_deref().and_then(&mut id_of);
+        self.set_selected_entity(selected);
+        let mut said: Vec<String> = unknown
+            .into_iter()
+            .map(|n| format!("the capture's renderer state names {n:?}, which the replay's world has no entity of"))
+            .collect();
+        if short > 0 {
+            said.push(format!(
+                "{short} bone palettes run past the end of skinning.bin"
+            ));
+        }
+        said
     }
 }
 

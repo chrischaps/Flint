@@ -100,6 +100,47 @@ impl MotionHold {
         }
     }
 
+    /// Put back what [`state`](Self::state) kept (#1089): the kept matrices
+    /// and bone ticks of every entity `id_of` finds by name. The rates come
+    /// from the world at the next `update_from_world`, which keeps a kept
+    /// matrix while its entity is still held.
+    pub(crate) fn restore(
+        &mut self,
+        state: &crate::frame_replay::MotionHoldState,
+        id_of: &mut dyn FnMut(&str) -> Option<EntityId>,
+    ) {
+        self.time = state.time;
+        for (name, rate) in &state.rates {
+            if let Some(id) = id_of(name) {
+                self.rates.insert(id, *rate);
+            }
+        }
+        for m in &state.matrices {
+            if let Some(id) = id_of(&m.entity) {
+                self.matrices.insert(
+                    id,
+                    Held {
+                        tick: m.tick,
+                        rate: m.rate,
+                        value: m.matrix,
+                    },
+                );
+            }
+        }
+        for b in &state.bones {
+            if let Some(id) = id_of(&b.entity) {
+                self.bones.insert(
+                    id,
+                    Held {
+                        tick: b.tick,
+                        rate: b.rate,
+                        value: (),
+                    },
+                );
+            }
+        }
+    }
+
     /// Who is held this frame (from `held_rates`); drops what an entity no
     /// longer held kept, so taking the hold off shows the live pose at once.
     pub fn set_rates(&mut self, rates: HashMap<EntityId, f32>) {

@@ -412,7 +412,7 @@ impl FrameCaptures {
             .particles
             .map(|p| flint_render::frame_replay::ParticlesState::of(p, world))
             .unwrap_or_default();
-        let fresh_only = fresh_only(renderer, world);
+        let fresh_only = flint_render::frame_replay::fresh_only(renderer, world);
         let job = Job {
             dir: dir.clone(),
             trigger: armed.trigger,
@@ -424,7 +424,7 @@ impl FrameCaptures {
             particles,
             world_toml,
             scene_path: PathBuf::from(facts.scene_path),
-            assets: assets_named(world),
+            assets: flint_render::frame_replay::assets_named(world),
             config: flint_render::model_loader::ModelLoadConfig::in_project(
                 facts.project.clone(),
                 facts.scene_path,
@@ -578,80 +578,6 @@ fn scene_stem(scene_path: &str) -> &str {
         .map(|n| n.trim_end_matches(".toml").trim_end_matches(".scene"))
         .filter(|n| !n.is_empty())
         .unwrap_or("scene")
-}
-
-/// What a replay of this frame draws fresh (ADR 0126 decision 4's list),
-/// for what the frame has of it.
-#[cfg(not(target_arch = "wasm32"))]
-fn fresh_only(
-    renderer: &flint_render::SceneRenderer,
-    world: &flint_ecs::FlintWorld,
-) -> Vec<String> {
-    let mut out = Vec::new();
-    let config = renderer.effective_post_process_config();
-    for (name, style) in config.styles.iter() {
-        if !style.enabled {
-            continue;
-        }
-        if name == "ascii" {
-            out.push("ascii: temporal history (#1136)".to_string());
-        } else if flint_render::stylize::custom::is_user_style(name) {
-            out.push(format!(
-                "{name}: a user style's history targets, if it keeps any"
-            ));
-        }
-        if !style.reveal.is_empty() {
-            out.push(format!("{name}: its reveal region (recorded as text only)"));
-        }
-    }
-    let runtime: Vec<String> = world
-        .entities_with_component(flint_core::components::MODEL)
-        .iter()
-        .copied()
-        .filter(|&id| {
-            world
-                .view(id, flint_core::components::MODEL)
-                .opt_bool("runtime")
-                .unwrap_or(false)
-        })
-        .map(|id| flint_render::frame_replay::entity_name(world, id))
-        .collect();
-    if !runtime.is_empty() {
-        out.push(format!("runtime meshes: {}", runtime.join(", ")));
-    }
-    if renderer.grass_config().is_some() {
-        out.push("grass: mask repaints since load (update_grass_mask)".into());
-    }
-    if !world
-        .entities_with_component(flint_core::components::TERRAIN)
-        .is_empty()
-    {
-        out.push("terrain: runtime edits since load".into());
-    }
-    out
-}
-
-/// Each model and texture the world names, for the manifest's assets.
-#[cfg(not(target_arch = "wasm32"))]
-fn assets_named(world: &flint_ecs::FlintWorld) -> Vec<(&'static str, String)> {
-    use flint_core::components as comp;
-    let mut out: Vec<(&'static str, String)> = Vec::new();
-    for info in world.all_entities() {
-        if let Some(asset) = world.view(info.id, comp::MODEL).opt_str("asset") {
-            // A model's split part (`bench/bench`) is its file's
-            let file = asset.split('/').next().unwrap_or(asset).to_string();
-            if !out.iter().any(|(k, n)| *k == "model" && *n == file) {
-                out.push(("model", file));
-            }
-        }
-        if let Some(texture) = world.view(info.id, comp::MATERIAL).opt_str("texture") {
-            if !out.iter().any(|(k, n)| *k == "texture" && n == texture) {
-                out.push(("texture", texture.to_string()));
-            }
-        }
-    }
-    out.sort();
-    out
 }
 
 /// The manifest's `cpu`: the history's window around the captured frame
@@ -867,7 +793,7 @@ impl super::PlayerApp {
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::disallowed_methods)] // a write path, into the capture's own folder
 fn write(job: Job) -> Result<Written, String> {
-    use flint_render::frame_capture::{AssetDescription, ReplayDescription};
+    use flint_render::frame_capture::ReplayDescription;
     let Job {
         dir,
         trigger: _,
@@ -892,11 +818,6 @@ fn write(job: Job) -> Result<Written, String> {
         .map_err(|e| fail("reading the bone palettes", &e))?;
 
     // replay/ first: write_capture keeps it, and writes the manifest last
-    std::fs::create_dir_all(dir.join("replay")).map_err(|e| fail("making replay/", &e))?;
-    let put = |name: &str, bytes: &[u8]| {
-        std::fs::write(dir.join("replay").join(name), bytes).map_err(|e| fail(name, &e))
-    };
-    put("world.toml", world_toml.as_bytes())?;
     let inputs = flint_render::frame_replay::ReplayInputs {
         version: 1,
         frame: inputs,
@@ -904,39 +825,19 @@ fn write(job: Job) -> Result<Written, String> {
         renderer,
         particles: particles.emitters,
     };
-    let json = serde_json::to_string_pretty(&inputs).map_err(|e| fail("inputs.json", &e))?;
-    put("inputs.json", json.as_bytes())?;
-    put("skinning.bin", &palettes.bytes)?;
-    put("particles.bin", &particles.bytes)?;
-
-    let hash = |path: &Path| {
-        flint_core::vfs::read(path).ok().map(|b| {
-            (
-                flint_core::ContentHash::from_bytes(&b).to_hex(),
-                b.len() as u64,
-            )
-        })
-    };
-    let mut found = Vec::new();
-    for (kind, name) in assets {
-        let path = match kind {
-            "model" => flint_render::model_loader::resolve_model_path(&config, &name),
-            _ => flint_render::model_loader::resolve_texture_path(&config, &name),
-        };
-        let Ok(path) = path else {
-            continue;
-        };
-        let (sha256, bytes) = hash(&path).map_or((None, 0), |(h, n)| (Some(h), n));
-        found.push(AssetDescription {
-            kind: kind.to_string(),
-            name,
-            path: flint_core::project::shown(&path),
-            sha256,
-            bytes,
-        });
-    }
+    flint_render::frame_capture::write_replay(
+        &dir,
+        &flint_render::frame_capture::ReplayFiles {
+            world_toml: &world_toml,
+            inputs: &inputs,
+            skinning: &palettes.bytes,
+            particles: &particles.bytes,
+        },
+    )
+    .map_err(|e| fail("writing replay/", &e))?;
+    let found = flint_render::frame_replay::hash_assets(assets, &config);
     if let Some(scene) = &mut description.scene {
-        scene.sha256 = hash(&scene_path).map(|(h, _)| h);
+        scene.sha256 = flint_render::frame_replay::hash_file(&scene_path).map(|(h, _)| h);
         // Its `[scene] name`, read here rather than on the frame thread
         scene.name = flint_core::vfs::read_to_string(&scene_path)
             .ok()
@@ -950,9 +851,9 @@ fn write(job: Job) -> Result<Written, String> {
     description.captured_at = Some(utc_now());
     description.replay = Some(ReplayDescription {
         available: true,
-        files: ["world.toml", "inputs.json", "skinning.bin", "particles.bin"]
+        files: flint_render::frame_capture::REPLAY_FILES
             .iter()
-            .map(|f| format!("replay/{f}"))
+            .map(|f| f.to_string())
             .collect(),
         fresh_only,
         assets: found,

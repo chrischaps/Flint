@@ -376,7 +376,7 @@ fn compare(
 /// How many pixels differ past `tolerance` (in each image's own units, an
 /// 8-bit step normalized to 1/255), the largest difference, and each
 /// pixel's.
-fn pixel_delta(a: &Texels, b: &Texels, tolerance: f32) -> (usize, f32, Vec<f32>) {
+pub(crate) fn pixel_delta(a: &Texels, b: &Texels, tolerance: f32) -> (usize, f32, Vec<f32>) {
     let scale = a.scale();
     let mut deltas = vec![0.0f32; a.pixels()];
     let (mut differing, mut max) = (0, 0.0f32);

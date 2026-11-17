@@ -126,6 +126,12 @@ struct Cull {
     lod: bool,
     /// Outside the camera's frustum: still in the shadow pass (ADR 0074).
     camera: bool,
+    /// Its entity is hidden by a replay's controls (#1089): out of every
+    /// pass, the shadows too.
+    hidden: bool,
+    /// Past a replay's scene draw limit (#1089): out of the scene pass and
+    /// what follows it, still in the shadows.
+    past_limit: bool,
 }
 
 /// One draw of the frame.
@@ -181,13 +187,30 @@ impl DrawItem {
     /// Whether this camera draws it: neither culled for its level of
     /// detail nor outside the frustum.
     pub fn drawn(&self) -> bool {
-        !self.cull.lod && !self.cull.camera
+        !self.cull.lod && !self.cull.camera && !self.cull.hidden && !self.cull.past_limit
     }
 
     /// Whether it is past its level of detail or draw distance from here,
     /// which leaves it out of the shadow pass too.
     pub fn lod_culled(&self) -> bool {
         self.cull.lod
+    }
+
+    /// Whether the shadow pass leaves it out: past its level of detail, or
+    /// hidden by a replay.
+    pub fn out_of_shadows(&self) -> bool {
+        self.cull.lod || self.cull.hidden
+    }
+
+    /// Whether a replay's controls (#1089) left it out, and why.
+    pub fn replay_cull(&self) -> Option<&'static str> {
+        if self.cull.hidden {
+            Some("hidden")
+        } else if self.cull.past_limit {
+            Some("past the draw limit")
+        } else {
+            None
+        }
     }
 
     pub fn set_lod_culled(&mut self, culled: bool) {
@@ -275,9 +298,107 @@ pub(super) struct DrawList {
     /// (#1083). Filled only while they are on, and kept, so a frame copies
     /// only a name that is new or changed (ids are never reused).
     names: HashMap<EntityId, String>,
+    /// A frame debugger's controls this frame (#1089), and what they cut
+    /// of the scene pass's draws that aren't items.
+    controls: Option<Controls>,
+}
+
+/// [`DrawControls`](super::DrawControls) as the list holds them, with the
+/// scene pass's extras the limit cut.
+#[derive(Default)]
+struct Controls {
+    hidden: std::collections::HashSet<EntityId>,
+    scene_draws: Option<usize>,
+    /// The grass is past the limit.
+    grass_cut: bool,
+    /// How many 2D sprite batches are within it.
+    sprites: usize,
 }
 
 impl DrawList {
+    /// Take the frame's controls (`FrameInputs::draw_controls`). `None`,
+    /// every frame but a replay's, keeps nothing.
+    pub fn set_controls(&mut self, controls: Option<&super::DrawControls>) {
+        self.controls = controls.map(|c| Controls {
+            hidden: c.hidden.iter().copied().collect(),
+            scene_draws: c.scene_draws,
+            grass_cut: false,
+            sprites: usize::MAX,
+        });
+    }
+
+    /// Hide the items of the entities the controls hide, before the shadow
+    /// pass (`render_to`'s culls, after the LOD cull).
+    pub fn cull_hidden(&mut self) {
+        let Some(c) = &self.controls else { return };
+        if c.hidden.is_empty() {
+            return;
+        }
+        for layer in &mut self.layers {
+            for item in layer.iter_mut() {
+                item.cull.hidden = item.entity.is_some_and(|e| c.hidden.contains(&e));
+            }
+        }
+    }
+
+    /// Cut the scene pass after the controls' draw limit, once the camera's
+    /// culls are made: `counts(item)` is whether the scene pass draws it,
+    /// `grass` whether it draws grass (after the terrain), `sprites` how many
+    /// 2D batches (after the billboards), as the frame's description counts
+    /// them. Returns nothing; the cut is kept for [`grass_cut`](Self::grass_cut)
+    /// and [`sprites_drawn`](Self::sprites_drawn).
+    pub fn cut_to_limit(
+        &mut self,
+        counts: impl Fn(&DrawItem) -> bool,
+        grass: bool,
+        sprites: usize,
+    ) {
+        let Some(limit) = self.controls.as_ref().and_then(|c| c.scene_draws) else {
+            return;
+        };
+        let mut n = 0usize;
+        let (mut grass_cut, mut sprites_in) = (false, sprites);
+        for layer in Layer::ALL {
+            for item in self.layers[layer.index()].iter_mut() {
+                if item.drawn() && counts(item) {
+                    n += 1;
+                    item.cull.past_limit = n > limit;
+                }
+            }
+            match layer {
+                Layer::Terrain if grass => {
+                    n += 1;
+                    grass_cut = n > limit;
+                }
+                Layer::Billboard => {
+                    sprites_in = limit.saturating_sub(n).min(sprites);
+                    n += sprites;
+                }
+                Layer::Terrain
+                | Layer::OpaqueStatic
+                | Layer::OpaqueSkinned
+                | Layer::BlendedStatic
+                | Layer::BlendedSkinned
+                | Layer::Echo
+                | Layer::Particles => {}
+            }
+        }
+        if let Some(c) = &mut self.controls {
+            c.grass_cut = grass_cut;
+            c.sprites = sprites_in;
+        }
+    }
+
+    /// Whether a replay's draw limit leaves the grass out of the scene pass.
+    pub fn grass_cut(&self) -> bool {
+        self.controls.as_ref().is_some_and(|c| c.grass_cut)
+    }
+
+    /// How many 2D sprite batches the scene pass draws (all, without a limit).
+    pub fn sprites_drawn(&self) -> usize {
+        self.controls.as_ref().map_or(usize::MAX, |c| c.sprites)
+    }
+
     /// Learn the names of the entities the items draw, for
     /// [`mark`](Self::mark). Only while draw markers are on.
     pub fn name_entities<'w>(&mut self, name_of: impl Fn(EntityId) -> Option<&'w str>) {
