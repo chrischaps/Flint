@@ -360,6 +360,18 @@ pub(super) fn render(
     }
     say!("Loaded scene: {}", scene_file.scene.name);
     say!("Entities: {}", world.entity_count());
+    // An echoes column with nothing to echo would draw the same picture
+    // in every column (#531)
+    if let Some(grid) = grid.as_ref().filter(|g| g.is_living()) {
+        if !flint_player::living_wanted(&world) {
+            anyhow::bail!(
+                "--sweep {}: this scene has no living props, so [living] echoes draws \
+                 nothing (a living prop is a model with a living_prop component whose \
+                 asset names a [living] spec)",
+                grid.name()
+            );
+        }
+    }
     for binding in &meshes {
         bind_mesh(&mut world, binding)?;
     }
@@ -1727,6 +1739,13 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
     scenes.push(first);
     for _ in 1..count {
         scenes.push(load_settled(&args.scene, registry)?);
+    }
+    // An echoes column is its scene with the column's [living] echoes (#531),
+    // written before anything reads the table
+    if let Some(grid) = grid.filter(|g| g.is_living()) {
+        for ((_, scene_file), &(column, row)) in scenes.iter_mut().zip(&cells) {
+            grid.lay_living(column, row, &mut scene_file.tables);
+        }
     }
     let scene_name = scenes[0].1.scene.name.clone();
 

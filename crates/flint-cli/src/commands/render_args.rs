@@ -404,7 +404,9 @@ pub struct SweepArgs {
     /// `post.exposure=0.8,1.2` (a [post_process] field; split on `|` to sweep
     /// a vector), `look=ascii_noir,matrix`, or a Living Props knob,
     /// `wooze.glide=0,0.5,1` (#216: .amplitude, .step, .glide, .jitter and
-    /// .preset; it sets the scene's global value, and zones still apply).
+    /// .preset; it sets the scene's global value, and zones still apply), or
+    /// `living.echoes.spread=0,0.9,1.8` (#531: .count, .spread and .alpha,
+    /// each column drawing what the scene would with that `[living] echoes`).
     /// --width/--height size each cell. Give it twice for a grid (#358):
     /// the first key across, the second down
     #[arg(long, value_parser = super::sweep::parse_sweep, action = clap::ArgAction::Append,

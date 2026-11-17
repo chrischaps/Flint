@@ -1137,7 +1137,8 @@ The fade writes only what the two looks set differently. Whatever else moves the
 - any `--style` key, written `<style>.<key>`: `ascii.cell=6,8,12`, `ascii.ramp=classic,blocks`, `kuwahara.radius=2,4,6,8`. Values are checked against the style's range;
 - any `[post_process]` field, written `post.<field>`: `post.exposure=0.8,1.2`. Use `|` between values to sweep a vector: `post.fog_color=0,0,0|0.7,0.75,0.82`;
 - `look=ascii_noir,matrix,ink_wash,graphite`, to compare whole looks;
-- a Living Props wooze knob, written `wooze.<knob>`: `wooze.glide=0,0.25,0.5,1`, `wooze.preset=boil,morph` (knobs `amplitude`, `step`, `glide`, `jitter`, `preset`). Each such column is a run of its own from time 0 (see [Sweeping a Knob](../guides/headless-rendering.md#sweeping-a-knob)).
+- a Living Props wooze knob, written `wooze.<knob>`: `wooze.glide=0,0.25,0.5,1`, `wooze.preset=boil,morph` (knobs `amplitude`, `step`, `glide`, `jitter`, `preset`). Each such column is a run of its own from time 0 (see [Sweeping a Knob](../guides/headless-rendering.md#sweeping-a-knob));
+- a field of the scene's `[living] echoes`, written `living.echoes.<knob>`: `living.echoes.spread=0,0.9,1.8` (knobs `count`, `spread`, `alpha`). Each column draws what a scene with that table draws.
 
 Each family is one key prefix on the one flag, parsed by one type (`commands/sweep.rs`, #353), and every family lands on the same sheet. Each cell is 640x360 unless you pass `--width` and `--height`. The scene loads once and every column re-renders the same frame, so four columns of `stylize_props` take about 13 s in a debug build. A sweep goes over `--look` and every other flag. When two neighbouring columns come out pixel-identical, `flint render` warns that the sweep showed nothing between them: the style was off, nothing on screen read the key, or both values clamped to one.
 
