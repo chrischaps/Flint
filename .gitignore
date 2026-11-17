@@ -32,6 +32,9 @@ renders/
 # Frame captures for the frame debugger (#1086): renders of a game's content;
 # and what `flint capture` writes beside a shot list by default (#722)
 captures/
+# The scope recorder's traces (#1097): Shift+F3 and --trace-on-hitch write
+# them to traces/ at the project's root; they name a game's scripts and assets
+traces/
 # What a `flint render` with no --output writes to the working directory,
 # one frame or a sequence (#760)
 render.png

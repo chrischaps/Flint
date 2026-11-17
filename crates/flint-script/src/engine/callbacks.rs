@@ -44,9 +44,16 @@ impl ScriptEngine {
             return true;
         }
         let script = self.scripts.get_mut(&entity).unwrap();
+        // The callback's own site, `<source>:<callback>` (#1097), found
+        // before the borrow `script::call`'s detail holds; nothing unless
+        // the recorder records
+        let named = flint_core::profile::recording().then(|| script.trace_site(callback));
         // Each script's call, by file: one a script a callback, never one
         // per function the script calls (#1096)
         flint_core::scope!("script::call", script.file.as_str());
+        // ... and inside it the callback by name, as its time is named,
+        // so a trace reads `stall.rhai:on_update` under `script::call`
+        let _named = named.map(flint_core::profile::Scope::enter);
         let began = self.times.is_some().then(web_time::Instant::now);
         let result =
             self.engine

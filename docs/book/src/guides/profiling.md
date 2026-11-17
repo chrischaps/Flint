@@ -369,6 +369,45 @@ fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
 
 A text detail (`flint_core::scope!("load_level", path)`, a `&str`, a `String` or a `&Path`) is copied into the recording, so keep it to scopes that run rarely, not to loops. A `&Path` is turned into text only while the scope records. A game's older `profiling::scope!` and `#[profiling::function]` still reach Tracy, but not the recorder.
 
+### Recording a trace
+
+A hitch is over by the time anyone notices it, and Tracy has to be attached before it happens. The recorder always holds the last few seconds instead, so the slow frame can be saved after the fact, scopes and all:
+
+```bash
+flint-player examples/hitch_metronome.scene.toml --trace out.json --exit-after 10   # the last 5 s, at exit
+flint-player examples/hitch_metronome.scene.toml --trace-on-hitch                   # 8 frames after the first hitch
+flint-player examples/hitch_metronome.scene.toml --trace-seconds 10                 # record; Shift+F3 saves
+```
+
+`flint play` takes the same flags. Each needs a build with the recorder: every debug build has one, and a release build has one with the `trace` feature (`cargo run --release -p flint-player --features trace -- ...`). A build without it refuses the flags with a line saying so.
+
+- **`--trace <file>`** writes the last `--trace-seconds` (default 5) when the run ends, however it ends.
+- **`--trace-on-hitch[=N]`** writes a trace eight frames after each of the first N hitches past the start (default 1), so the file shows what followed too. It passes over the first 2 s of game time, as the exit report does. Its files go beside `--trace`'s (`out-hitch-t3.000.json`), or into `traces/` at the project's root (`hitch_metronome-hitch-t3.000.json`).
+- **Shift+F3** (the `save_trace` debug key) saves the look-back mid-play, into the same place, and the note at the top names the file. With no flag, the first press starts the recorder and the next one saves.
+- **A frame capture** taken while the recorder runs ([Capturing from the running player](#capturing-from-the-running-player)) gets `trace.json` in its folder, and its manifest names it.
+- **`--trace-seconds 0`** keeps the whole session. That grows without bound: the tavern's trace came to about 180 bytes of JSON a scope with the other tracks, 1.6 MB a second at 270 fps. The run prints the size it wrote.
+
+Open the file in [Perfetto](https://ui.perfetto.dev) (Open trace file) or `chrome://tracing`. It is Chrome trace-event JSON, one process with these tracks:
+
+| Track | What it holds |
+|---|---|
+| a thread (`main`, ...) | every `flint_core::scope!` that closed on it, nested, each with its `frame`, `depth` and detail. Each script callback is a scope of its own while recording, named as `--perf` names its time (`scripts/stall.rhai:on_update`), inside the `script::call` that carries its file as detail |
+| `frames` | each frame, from one `RedrawRequested` to the next, with its `ms` |
+| `phases` | the player's ten phases (`input`, `scripts`, `physics`, ..., `acquire`, `present`) between their marks |
+| `gpu` | each pass the GPU timer measured. The GPU's clock isn't the CPU's, so a frame's passes are laid from its render phase's start, with the GPU's own durations |
+| `hitches` | each hitch the detector found, spanning its frame, with the cause line the hitch log writes |
+| `notes` | the engine's frame notes (a model load, a pipeline build, a reload poll), at their frame's start |
+
+The header (Perfetto's **Info and stats**, or `otherData` in the file) names the reason, the scene, the adapter and backend, the build, the engine's commit, the look-back, each ring's size and which rings wrapped. `--trace` turns the GPU timer on, as F2 does, to fill the `gpu` track.
+
+The stall in `hitch_metronome` reads like this: a 100 ms `stall.rhai:on_update` inside that frame's `tick`, the `scripts` phase as long, and the frame and its hitch mark spanning both.
+
+**What it costs.** Each thread's ring is sized for its seconds at 32 768 scopes a second: 163 840 records, 6.6 MB a thread for the default 5 s, taken once at the thread's first scope. A frame with more than that many scopes a second shortens the look-back, and the header's `wrapped` and `scopes_from_ms` say so. Recording, a scope costs about 40 ns in a release build ([ADR 0128](https://github.com/chrischaps/Flint/blob/main/docs/adr/0128-one-scope-macro-two-sinks.md)), and the player's own tracks about 0.65 µs a frame. The tavern's 38 scopes a frame come to about 2 µs. A run with and without `--trace` on that scene couldn't tell the two apart: identical runs on a busy machine differed by more (3.6 to 4.5 ms a frame). Saving copies the window on the frame thread, about 1.8 ms for 24 000 scopes in release, then writes the JSON on a thread of its own. The GPU timer `--trace` turns on may cost more than the recorder: `--perf`, which turns on the same timing, read 0.3 to 0.6 ms a frame over plain runs on the tavern at 300 fps, inside that same noise. A default release build has none of it.
+
+**What a trace says about a game.** A trace holds names, never contents: scope names, script paths, asset and scene names, the adapter. That is still a description of a game. Before attaching one to a public issue, check it doesn't name what isn't public yet. `traces/` is in `.gitignore`.
+
+**On the web**, with the recorder in the build, `?perf=1`'s panel has a **Save trace** button that downloads the look-back. The site's release build has no recorder, so the button isn't shown there. In a browser that isn't cross-origin isolated, `performance.now()` is coarsened, so short scopes read as 0 (docs/design/web.md).
+
 ## Frame pacing
 
 A mean frame time hides uneven frames. `--exit-after N` prints two spreads beside the mean, both taken after the first 2 s:

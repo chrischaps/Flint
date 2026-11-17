@@ -76,6 +76,10 @@ impl PlayerApp {
         if let Some(failure) = self.frame_captures.failure() {
             return Some(failure);
         }
+        // A trace that couldn't be written (#1097)
+        if let Some(failure) = self.trace_failure() {
+            return Some(failure);
+        }
         // `--max-hitches` and `--max-hitches-startup` (#1079)
         self.stats.watch.failure()
     }

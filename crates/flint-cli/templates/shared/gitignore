@@ -5,6 +5,8 @@
 # Frame captures (the player's, at the root) and `flint capture`'s takes
 # (beside a shot list unless it names an `out`)
 captures/
+# The scope recorder's traces (Shift+F3, --trace-on-hitch)
+traces/
 .flint/procgen-cache/
 .flint/input.user.toml
 .flint/viewer-edits.jsonl

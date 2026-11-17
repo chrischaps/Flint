@@ -118,8 +118,9 @@ struct Seen {
 /// record take turns, and turn it off after: every thread that scopes
 /// anything while it's on makes a ring of its own.
 fn recorded(f: impl FnOnce()) -> Vec<Seen> {
-    static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _turn = TURN.lock().unwrap_or_else(|e| e.into_inner());
+    // The recorder and its frame index are the process's: one test at a
+    // time records, this file's and the traces' (#1097)
+    let _turn = super::trace::recorder_test_turn();
     let thread = std::thread::current()
         .name()
         .expect("a test thread is named")
