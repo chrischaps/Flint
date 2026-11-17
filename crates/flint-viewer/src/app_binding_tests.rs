@@ -186,12 +186,13 @@ fn the_viewer_draws_a_scenes_terrain_in_the_style_mask() {
     // masked entity's do (with no terrain, both frames show sky there)
     let camera = scene_camera(&state);
     if let Some(def) = &state.scene_post {
-        renderer.set_post_process_config(post_process_config_from_def(def));
+        renderer.set_post_process_config(post_process_config_from_def(def, renderer.styles()));
     }
     let styled = frame(&mut renderer, device, queue, &state.world, &camera);
     assert!(renderer.styled_entities().contains_key(&terrain.entity));
     assert!(flint_render::entity_style::clear_entity_style(
         &mut state.world,
+        renderer.styles(),
         terrain.entity
     ));
     let plain = frame(&mut renderer, device, queue, &state.world, &camera);

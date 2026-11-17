@@ -264,9 +264,9 @@ mod tests {
     #[test]
     fn uniforms_scale_with_the_frame_and_the_field() {
         let mut config = PostProcessConfig::default();
-        crate::post_style::set_post_style_param(&mut config, "contour", "width", 2.0.into())
+        crate::post_style::set_post_style_param(&mut config, &crate::stylize::StyleRegistry::new(), "contour", "width", 2.0.into())
             .unwrap();
-        crate::post_style::set_post_style_param(&mut config, "contour", "boil", 0.5.into())
+        crate::post_style::set_post_style_param(&mut config, &crate::stylize::StyleRegistry::new(), "contour", "boil", 0.5.into())
             .unwrap();
         config.boil.amount = 1.5;
         config.boil.seed = 9;

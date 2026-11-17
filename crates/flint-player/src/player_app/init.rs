@@ -200,9 +200,13 @@ impl PlayerApp {
         }
         // The game's Rust styles (#419), before any scene's tables are read
         for descriptor in extension.styles() {
-            if let Err(e) = flint_render::stylize::register(descriptor) {
+            if let Err(e) = self.core.styles.register(descriptor) {
                 tracing::error!("player extension style: {e}");
             }
+        }
+        // A renderer made already draws them from now on
+        if let Some(renderer) = self.scene_renderer.as_mut() {
+            renderer.set_styles(self.core.styles.clone());
         }
         self.extensions.push(extension);
         // A late extension still gets its `fonts` hook.
@@ -278,12 +282,16 @@ impl PlayerApp {
 
         self.scene.camera = scene_file.camera.clone();
         // User styles first: the post_process tables are read against the
-        // registry, and a table for an unloaded style is dropped
+        // registry, and a table for an unloaded style is dropped. The
+        // scene's styles in place of the last scene's (#742): the game's
+        // kept, and a user style only another scene could see gone
         let scope = self.asset_scope();
-        let binding = flint_render::SceneBinding::new(scope).with_environment(env);
+        let binding =
+            flint_render::SceneBinding::over(scope, &self.core.styles).with_environment(env);
         for message in binding.style_messages() {
             tracing::warn!("{message}");
         }
+        self.core.styles = binding.styles().clone();
         self.scene_binding = Some(binding);
         // Living props' tables, with the preset `[wooze] preset` names
         // filled in (it can set the shading boil in `[post_process]` too).
@@ -399,7 +407,12 @@ impl PlayerApp {
             renderer.ensure_fxaa_resources(device);
             if seconds > 0.0 && seconds.is_finite() {
                 renderer.set_post_process_config(from.clone());
-                let fade = flint_render::look_fade::LookFade::new(from, config, seconds as f32);
+                let fade = flint_render::look_fade::LookFade::new(
+                    from,
+                    config,
+                    seconds as f32,
+                    &self.core.styles,
+                );
                 self.style.look_fade = Some((fade, look.map(str::to_string)));
             }
         }
@@ -503,26 +516,22 @@ impl PlayerApp {
     /// The post-processing config a scene starts with: its `[post_process]`
     /// with the `--style` words written over it (#328). A scene with no
     /// block starts from the defaults, the config a new renderer has, not
-    /// from what the last scene left (#723). A user style an earlier scene
-    /// loaded from a folder this one can't see is left out with a warning
-    /// (#426), as it is when the scene loads first; the scene's own tables
-    /// keep it, so a file the scene can see that takes the name over later
-    /// brings it back.
+    /// from what the last scene left (#723). Read against the scene's own
+    /// registry (#742), so a user style only an earlier scene could see is
+    /// an unknown style here, as it is when the scene loads first (#426);
+    /// the scene's own tables keep it, so a file the scene can see that
+    /// takes the name over later brings it back.
     pub fn scene_post_config(&self) -> flint_render::PostProcessConfig {
+        let styles = &self.core.styles;
         let mut config = self
             .scene
             .post_process
             .as_ref()
-            .map(|def| {
-                let mut def = def.clone();
-                let scope = self.kept_asset_scope();
-                for warning in flint_render::stylize::custom::drop_unseen(&mut def.styles, &scope) {
-                    tracing::warn!("{warning}");
-                }
-                scene_loading::post_process_config_from_def(&def)
-            })
+            .map(|def| scene_loading::post_process_config_from_def(def, styles))
             .unwrap_or_default();
-        for e in flint_render::stylize::apply_style_specs(&mut config, &self.launch.style_specs) {
+        for e in
+            flint_render::stylize::apply_style_specs(&mut config, &self.launch.style_specs, styles)
+        {
             tracing::warn!("{e}");
         }
         if let Some(rate) = self.launch.motion_hold {

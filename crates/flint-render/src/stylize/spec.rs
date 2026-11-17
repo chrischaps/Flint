@@ -28,7 +28,7 @@
 //! style clamps it or draws it badly, and either way not as asked. A scene's table keeps
 //! such a value and warns.
 
-use super::{color_from_text, find, names, registry, StyleDescriptor};
+use super::{color_from_text, StyleDescriptor, StyleRegistry};
 use crate::postprocess::PostProcessConfig;
 
 /// One parsed `--style` word.
@@ -45,8 +45,8 @@ pub struct StyleSpec {
 
 impl StyleSpec {
     /// Parse `name[:key=value,...]`, checking the name and keys against
-    /// the registry.
-    pub fn parse(spec: &str) -> Result<Self, String> {
+    /// `styles`.
+    pub fn parse(spec: &str, styles: &StyleRegistry) -> Result<Self, String> {
         let spec = spec.trim();
         let (name, rest) = match spec.split_once(':') {
             Some((name, rest)) => (name.trim(), rest.trim()),
@@ -56,13 +56,13 @@ impl StyleSpec {
             return Err(format!(
                 "the registered styles and their keys (`flint render --list-styles` gives \
                  ranges, stages and --json):\n{}",
-                style_spec_help()
+                style_spec_help(styles)
             ));
         }
-        let descriptor = find(name).ok_or_else(|| {
+        let descriptor = styles.find(name).ok_or_else(|| {
             format!(
                 "unknown style '{name}'; registered: {} (`--style help` lists their keys)",
-                names().join(", ")
+                styles.names().join(", ")
             )
         })?;
         let mut parsed = StyleSpec {
@@ -129,8 +129,9 @@ impl StyleSpec {
     }
 
     /// Write this spec into `config`: the style on (or off) with its
-    /// settings, over whatever the scene said.
-    pub fn apply(&self, config: &mut PostProcessConfig) {
+    /// settings, over whatever the scene said. `styles` is the registry it
+    /// was parsed against.
+    pub fn apply(&self, config: &mut PostProcessConfig, styles: &StyleRegistry) {
         self.apply_placement(config);
         if self.enabled {
             config.styles.set_enabled(&self.name, true);
@@ -140,16 +141,16 @@ impl StyleSpec {
             // scene renders unstyled with the rest of its post kept
             config.styles.set_off_everywhere(&self.name);
         }
-        self.apply_values(config);
+        self.apply_values(config, styles);
     }
 
     /// Write only the settings into `config`, leaving whether the style is
     /// on as the scene or an earlier word left it: `flint render --set
     /// <style>.<key>=v` (#708), as a scene's `[post_process.styles.<name>]`
     /// key with no `enabled`.
-    pub fn apply_settings(&self, config: &mut PostProcessConfig) {
+    pub fn apply_settings(&self, config: &mut PostProcessConfig, styles: &StyleRegistry) {
         self.apply_placement(config);
-        self.apply_values(config);
+        self.apply_values(config, styles);
     }
 
     /// Where the style draws: its order, blend, blend source, reveal and
@@ -186,8 +187,10 @@ impl StyleSpec {
     }
 
     /// The style's options, colours and numbers.
-    fn apply_values(&self, config: &mut PostProcessConfig) {
-        let descriptor = find(&self.name).expect("checked by parse");
+    fn apply_values(&self, config: &mut PostProcessConfig, styles: &StyleRegistry) {
+        let Some(descriptor) = styles.find(&self.name) else {
+            return;
+        };
         for (key, value) in &self.settings {
             if key == "order"
                 || key == "blend"
@@ -231,8 +234,12 @@ fn reveal_value(reveal: &super::StyleReveal, key: &str) -> toml::Value {
 }
 
 /// Parse `spec` and write it into `config`.
-pub fn apply_style_spec(config: &mut PostProcessConfig, spec: &str) -> Result<(), String> {
-    StyleSpec::parse(spec)?.apply(config);
+pub fn apply_style_spec(
+    config: &mut PostProcessConfig,
+    spec: &str,
+    styles: &StyleRegistry,
+) -> Result<(), String> {
+    StyleSpec::parse(spec, styles)?.apply(config, styles);
     Ok(())
 }
 
@@ -242,11 +249,15 @@ pub fn apply_style_spec(config: &mut PostProcessConfig, spec: &str) -> Result<()
 /// `flint edit scene.toml --style`, the web's `?style=`) call this over
 /// the scene's config at every load, transition and hot reload, so the
 /// command line keeps winning over what the scene authors.
-pub fn apply_style_specs(config: &mut PostProcessConfig, specs: &[String]) -> Vec<String> {
+pub fn apply_style_specs(
+    config: &mut PostProcessConfig,
+    specs: &[String],
+    styles: &StyleRegistry,
+) -> Vec<String> {
     specs
         .iter()
         .filter_map(|spec| {
-            apply_style_spec(config, spec)
+            apply_style_spec(config, spec, styles)
                 .err()
                 .map(|e| format!("--style {spec}: {e}"))
         })
@@ -256,17 +267,17 @@ pub fn apply_style_specs(config: &mut PostProcessConfig, specs: &[String]) -> Ve
 /// Check every word of `specs` against the registry, for a host to refuse
 /// a typo at start. Call it once the scene's user styles are registered
 /// (`custom::load_dir`), since a word may name one.
-pub fn check_style_specs(specs: &[String]) -> Result<(), String> {
+pub fn check_style_specs(specs: &[String], styles: &StyleRegistry) -> Result<(), String> {
     for spec in specs {
-        StyleSpec::parse(spec).map_err(|e| format!("--style {spec}: {e}"))?;
+        StyleSpec::parse(spec, styles).map_err(|e| format!("--style {spec}: {e}"))?;
     }
     Ok(())
 }
 
 /// One line per registered style with the keys `--style` takes, for help
 /// text and error messages.
-pub fn style_spec_help() -> String {
-    let mut lines: Vec<String> = registry()
+pub fn style_spec_help(styles: &StyleRegistry) -> String {
+    let mut lines: Vec<String> = styles
         .iter()
         .map(|d| format!("{}: {}", d.name, known_keys(d)))
         .collect();
@@ -340,7 +351,7 @@ fn number(name: &str, key: &str, value: &str) -> Result<(), String> {
 fn known_keys(descriptor: &StyleDescriptor) -> String {
     let mut keys: Vec<String> = {
         let mut params: Vec<String> = Vec::new();
-        for p in descriptor.params {
+        for p in &descriptor.params {
             match descriptor.color_of(p.name) {
                 Some(c) if std::ptr::eq(c.channels[0], p) => {
                     let [r, g, b] = c.default_rgb();
@@ -379,11 +390,12 @@ fn known_keys(descriptor: &StyleDescriptor) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stylize::{builtin, builtins};
 
     #[test]
     fn bare_name_turns_the_style_on_at_its_defaults() {
         let mut config = PostProcessConfig::default();
-        apply_style_spec(&mut config, "ascii").unwrap();
+        apply_style_spec(&mut config, "ascii", &crate::stylize::StyleRegistry::new()).unwrap();
         assert!(config.styles.is_enabled("ascii"));
         assert_eq!(config.styles.param("ascii", "cell"), None);
     }
@@ -393,24 +405,49 @@ mod tests {
     #[test]
     fn off_is_off_everywhere_and_a_later_word_lifts_it() {
         let mut config = PostProcessConfig::default();
-        apply_style_spec(&mut config, "ascii:cell=10").unwrap();
-        apply_style_spec(&mut config, "ascii:off").unwrap();
+        apply_style_spec(
+            &mut config,
+            "ascii:cell=10",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
+        apply_style_spec(
+            &mut config,
+            "ascii:off",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert!(!config.styles.is_enabled("ascii"));
         assert!(config.styles.is_off_everywhere("ascii"));
         assert_eq!(config.styles.param("ascii", "cell"), Some(10.0));
-        apply_style_spec(&mut config, "ascii").unwrap();
+        apply_style_spec(&mut config, "ascii", &crate::stylize::StyleRegistry::new()).unwrap();
         assert!(config.styles.is_enabled("ascii"));
         assert!(!config.styles.is_off_everywhere("ascii"));
-        apply_style_spec(&mut config, "ascii:enabled=false").unwrap();
+        apply_style_spec(
+            &mut config,
+            "ascii:enabled=false",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert!(config.styles.is_off_everywhere("ascii"));
-        apply_style_spec(&mut config, "ascii:on").unwrap();
+        apply_style_spec(
+            &mut config,
+            "ascii:on",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert!(!config.styles.is_off_everywhere("ascii"));
     }
 
     #[test]
     fn params_are_numbers_and_options_are_text() {
         let mut config = PostProcessConfig::default();
-        apply_style_spec(&mut config, "ascii:cell=12, ramp=blocks,color=tint").unwrap();
+        apply_style_spec(
+            &mut config,
+            "ascii:cell=12, ramp=blocks,color=tint",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert_eq!(config.styles.param("ascii", "cell"), Some(12.0));
         assert_eq!(config.styles.option("ascii", "ramp"), Some("blocks"));
         assert_eq!(config.styles.option("ascii", "color"), Some("tint"));
@@ -419,20 +456,36 @@ mod tests {
     #[test]
     fn a_colour_is_one_key_in_hex_or_slashes() {
         let mut config = PostProcessConfig::default();
-        apply_style_spec(&mut config, "ascii:color=tint,tint=0.3/1/0.4").unwrap();
+        apply_style_spec(
+            &mut config,
+            "ascii:color=tint,tint=0.3/1/0.4",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert_eq!(config.styles.param("ascii", "tint_r"), Some(0.3));
         assert_eq!(config.styles.param("ascii", "tint_g"), Some(1.0));
         assert_eq!(config.styles.param("ascii", "tint_b"), Some(0.4));
-        apply_style_spec(&mut config, "ascii:tint=#ff8000").unwrap();
-        let ascii = find("ascii").unwrap();
+        apply_style_spec(
+            &mut config,
+            "ascii:tint=#ff8000",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
+        let ascii = builtin("ascii").unwrap();
         assert_eq!(ascii.color(&config, "tint"), [1.0, 128.0 / 255.0, 0.0]);
         // A channel on its own is still a number
-        apply_style_spec(&mut config, "ascii:tint_b=0.5").unwrap();
+        apply_style_spec(
+            &mut config,
+            "ascii:tint_b=0.5",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert_eq!(config.styles.param("ascii", "tint_b"), Some(0.5));
-        let bad = StyleSpec::parse("ascii:tint=green").unwrap_err();
+        let bad = StyleSpec::parse("ascii:tint=green", &crate::stylize::StyleRegistry::new())
+            .unwrap_err();
         assert!(bad.contains("#rrggbb"), "{bad}");
-        assert!(StyleSpec::parse("ascii:tint=1/1").is_err());
-        let help = style_spec_help();
+        assert!(StyleSpec::parse("ascii:tint=1/1", &crate::stylize::StyleRegistry::new()).is_err());
+        let help = style_spec_help(&crate::stylize::StyleRegistry::new());
         assert!(help.contains("tint=0.35/1/0.45"), "{help}");
         assert!(!help.contains("tint_r="), "{help}");
     }
@@ -441,9 +494,19 @@ mod tests {
     fn off_turns_a_scene_style_off() {
         let mut config = PostProcessConfig::default();
         config.styles.set_enabled("invert", true);
-        apply_style_spec(&mut config, "invert:off").unwrap();
+        apply_style_spec(
+            &mut config,
+            "invert:off",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert!(!config.styles.is_enabled("invert"));
-        apply_style_spec(&mut config, "invert:enabled=true,strength=0.5").unwrap();
+        apply_style_spec(
+            &mut config,
+            "invert:enabled=true,strength=0.5",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert!(config.styles.is_enabled("invert"));
         assert_eq!(config.styles.param("invert", "strength"), Some(0.5));
     }
@@ -451,7 +514,12 @@ mod tests {
     #[test]
     fn kuwahara_writes_its_style_table() {
         let mut config = PostProcessConfig::default();
-        apply_style_spec(&mut config, "kuwahara:radius=6,anisotropy=0.5").unwrap();
+        apply_style_spec(
+            &mut config,
+            "kuwahara:radius=6,anisotropy=0.5",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert!(config.styles.is_enabled("kuwahara"));
         assert_eq!(config.styles.param("kuwahara", "radius"), Some(6.0));
         assert_eq!(config.styles.param("kuwahara", "anisotropy"), Some(0.5));
@@ -460,69 +528,115 @@ mod tests {
     #[test]
     fn order_is_a_key_of_every_style() {
         let mut config = PostProcessConfig::default();
-        apply_style_spec(&mut config, "invert:order=0,strength=0.5").unwrap();
+        apply_style_spec(
+            &mut config,
+            "invert:order=0,strength=0.5",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert_eq!(config.styles.order("invert"), Some(0.0));
         assert_eq!(config.styles.param("invert", "strength"), Some(0.5));
-        apply_style_spec(&mut config, "kuwahara:order=-1").unwrap();
+        apply_style_spec(
+            &mut config,
+            "kuwahara:order=-1",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert_eq!(config.styles.order("kuwahara"), Some(-1.0));
         assert!(config.styles.is_enabled("kuwahara"));
-        assert!(StyleSpec::parse("ascii:order=soon").is_err());
-        assert!(style_spec_help().contains("order=<n>"));
+        assert!(
+            StyleSpec::parse("ascii:order=soon", &crate::stylize::StyleRegistry::new()).is_err()
+        );
+        assert!(style_spec_help(&crate::stylize::StyleRegistry::new()).contains("order=<n>"));
     }
 
     #[test]
     fn feeds_bloom_is_for_hdr_styles() {
         let mut config = PostProcessConfig::default();
-        apply_style_spec(&mut config, "kuwahara:feeds_bloom=1,radius=6").unwrap();
+        apply_style_spec(
+            &mut config,
+            "kuwahara:feeds_bloom=1,radius=6",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert!(config.styles.is_enabled("kuwahara"));
         assert_eq!(config.styles.feeds_bloom("kuwahara"), Some(true));
         assert_eq!(config.styles.param("kuwahara", "radius"), Some(6.0));
-        assert!(find("kuwahara").unwrap().feeds_bloom_in(&config));
+        assert!(builtin("kuwahara").unwrap().feeds_bloom_in(&config));
         // Not a parameter: it never lands in the params
         assert_eq!(config.styles.param("kuwahara", "feeds_bloom"), None);
-        let display = StyleSpec::parse("ascii:feeds_bloom=1").unwrap_err();
+        let display =
+            StyleSpec::parse("ascii:feeds_bloom=1", &crate::stylize::StyleRegistry::new())
+                .unwrap_err();
         assert!(display.contains("hdr"), "{display}");
-        assert!(StyleSpec::parse("kuwahara:feeds_bloom=maybe").is_err());
-        assert!(style_spec_help().contains("feeds_bloom=false"));
+        assert!(StyleSpec::parse(
+            "kuwahara:feeds_bloom=maybe",
+            &crate::stylize::StyleRegistry::new()
+        )
+        .is_err());
+        assert!(
+            style_spec_help(&crate::stylize::StyleRegistry::new()).contains("feeds_bloom=false")
+        );
     }
 
     #[test]
     fn mistakes_name_what_would_have_worked() {
-        let unknown = StyleSpec::parse("watercolour").unwrap_err();
+        let unknown =
+            StyleSpec::parse("watercolour", &crate::stylize::StyleRegistry::new()).unwrap_err();
         assert!(unknown.contains("ascii"), "{unknown}");
-        let key = StyleSpec::parse("ascii:size=3").unwrap_err();
+        let key =
+            StyleSpec::parse("ascii:size=3", &crate::stylize::StyleRegistry::new()).unwrap_err();
         assert!(key.contains("cell=8"), "{key}");
-        let choice = StyleSpec::parse("ascii:color=purple").unwrap_err();
+        let choice = StyleSpec::parse("ascii:color=purple", &crate::stylize::StyleRegistry::new())
+            .unwrap_err();
         assert!(choice.contains("source"), "{choice}");
         // Open lists only suggest (#318): a glyph set's own ramp, a palette file
-        assert!(StyleSpec::parse("ascii:ramp=runes").is_ok());
-        assert!(StyleSpec::parse("ascii:palette=palettes/dusk.palette.toml").is_ok());
-        let nan = StyleSpec::parse("invert:strength=lots").unwrap_err();
+        assert!(
+            StyleSpec::parse("ascii:ramp=runes", &crate::stylize::StyleRegistry::new()).is_ok()
+        );
+        assert!(StyleSpec::parse(
+            "ascii:palette=palettes/dusk.palette.toml",
+            &crate::stylize::StyleRegistry::new()
+        )
+        .is_ok());
+        let nan = StyleSpec::parse(
+            "invert:strength=lots",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap_err();
         assert!(nan.contains("number"), "{nan}");
-        assert!(StyleSpec::parse("ascii:cell").is_err());
-        assert!(StyleSpec::parse("kuwahara:cell=3").is_err());
+        assert!(StyleSpec::parse("ascii:cell", &crate::stylize::StyleRegistry::new()).is_err());
+        assert!(
+            StyleSpec::parse("kuwahara:cell=3", &crate::stylize::StyleRegistry::new()).is_err()
+        );
     }
 
     #[test]
     fn a_number_outside_its_range_is_refused_naming_the_range() {
-        let cell = StyleSpec::parse("ascii:cell=400").unwrap_err();
+        let cell =
+            StyleSpec::parse("ascii:cell=400", &crate::stylize::StyleRegistry::new()).unwrap_err();
         assert_eq!(cell, "ascii: cell=400 is outside its range 4..32");
-        assert!(StyleSpec::parse("ascii:cell=3.5").is_err());
+        assert!(StyleSpec::parse("ascii:cell=3.5", &crate::stylize::StyleRegistry::new()).is_err());
         // The ends are inside
-        assert!(StyleSpec::parse("ascii:cell=4").is_ok());
-        assert!(StyleSpec::parse("ascii:cell=32").is_ok());
+        assert!(StyleSpec::parse("ascii:cell=4", &crate::stylize::StyleRegistry::new()).is_ok());
+        assert!(StyleSpec::parse("ascii:cell=32", &crate::stylize::StyleRegistry::new()).is_ok());
         // A colour's channels have ranges too
-        let tint = StyleSpec::parse("ascii:tint=2/1/0.4").unwrap_err();
+        let tint = StyleSpec::parse("ascii:tint=2/1/0.4", &crate::stylize::StyleRegistry::new())
+            .unwrap_err();
         assert!(
             tint.contains("tint_r=2 is outside its range 0..1"),
             "{tint}"
         );
-        assert!(StyleSpec::parse("ascii:tint=#ffffff").is_ok());
+        assert!(
+            StyleSpec::parse("ascii:tint=#ffffff", &crate::stylize::StyleRegistry::new()).is_ok()
+        );
         // `order` is a place in the chain, not a parameter: any number
-        assert!(StyleSpec::parse("ascii:order=1000").is_ok());
+        assert!(
+            StyleSpec::parse("ascii:order=1000", &crate::stylize::StyleRegistry::new()).is_ok()
+        );
         // Every default sits inside its own range
-        for d in registry() {
-            for p in d.params {
+        for d in builtins() {
+            for p in &d.params {
                 assert!(p.range_error(p.default).is_none(), "{}.{}", d.name, p.name);
             }
         }
@@ -536,7 +650,7 @@ mod tests {
             "watercolour".to_string(),
             "ascii:cell=6".to_string(),
         ];
-        let errors = apply_style_specs(&mut config, &words);
+        let errors = apply_style_specs(&mut config, &words, &crate::stylize::StyleRegistry::new());
         assert_eq!(errors.len(), 1);
         assert!(
             errors[0].starts_with("--style watercolour:"),
@@ -546,32 +660,28 @@ mod tests {
         // The good words still landed, the later one winning
         assert!(config.styles.is_enabled("ascii"));
         assert_eq!(config.styles.param("ascii", "cell"), Some(6.0));
-        assert!(check_style_specs(&words[..1]).is_ok());
-        assert!(check_style_specs(&words)
-            .unwrap_err()
-            .contains("watercolour"));
+        assert!(check_style_specs(&words[..1], &crate::stylize::StyleRegistry::new()).is_ok());
+        assert!(
+            check_style_specs(&words, &crate::stylize::StyleRegistry::new())
+                .unwrap_err()
+                .contains("watercolour")
+        );
     }
 
     #[test]
     fn every_registered_style_parses_bare() {
-        for d in registry() {
-            StyleSpec::parse(d.name).unwrap();
+        for d in builtins() {
+            StyleSpec::parse(d.name, &crate::stylize::StyleRegistry::new()).unwrap();
         }
         // A line a style, then the reveal's keys every style takes (#406).
-        // Tests beside this one register user and game styles (#489), and
-        // the registry only grows, so the help lists every style registered
-        // before it was made, in order, and at most those registered after
-        let before = registry();
-        let help = style_spec_help();
-        let after = registry().len();
+        // The registry is this test's own (#742), so no test beside it can
+        // add a style while the help is made (#489's race): exactly one
+        // line a built-in, in order
+        let before = builtins();
+        let help = style_spec_help(&crate::stylize::StyleRegistry::new());
         let lines: Vec<&str> = help.lines().collect();
         let (reveal, styles) = lines.split_last().unwrap();
-        assert!(
-            (before.len()..=after).contains(&styles.len()),
-            "{} lines for {}..{after} styles",
-            styles.len(),
-            before.len()
-        );
+        assert_eq!(styles.len(), before.len(), "{help}");
         for (d, line) in before.iter().zip(styles) {
             assert!(line.starts_with(&format!("{}: ", d.name)), "{line}");
         }
@@ -584,6 +694,7 @@ mod tests {
         apply_style_spec(
             &mut config,
             "pencil:reveal=0.4,reveal_shape=wipe,reveal_angle=30,reveal_ink=#102030",
+            &crate::stylize::StyleRegistry::new(),
         )
         .unwrap();
         assert!(config.styles.is_enabled("pencil"));
@@ -599,7 +710,7 @@ mod tests {
             "pencil:reveal_edge=big",
             "pencil:reveal_ink=red",
         ] {
-            let e = StyleSpec::parse(bad).unwrap_err();
+            let e = StyleSpec::parse(bad, &crate::stylize::StyleRegistry::new()).unwrap_err();
             assert!(e.contains("reveal"), "{bad}: {e}");
         }
     }

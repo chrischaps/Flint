@@ -18,13 +18,13 @@
 
 use crate::postprocess::PostProcessConfig;
 use crate::style_mask::BLEND_RANGE;
-use crate::stylize::{self, StyleDescriptor, StyleStage};
+use crate::stylize::{self, StyleDescriptor, StyleRegistry, StyleStage};
 
-fn style(name: &str) -> Result<&'static StyleDescriptor, String> {
-    stylize::find(name).ok_or_else(|| {
+fn style<'s>(styles: &'s StyleRegistry, name: &str) -> Result<&'s StyleDescriptor, String> {
+    styles.find(name).ok_or_else(|| {
         format!(
             "no style named `{name}`; styles: {}",
-            stylize::names().join(", ")
+            styles.names().join(", ")
         )
     })
 }
@@ -32,10 +32,11 @@ fn style(name: &str) -> Result<&'static StyleDescriptor, String> {
 /// Switch style `name` on or off for the whole frame, keeping its settings.
 pub fn set_post_style(
     config: &mut PostProcessConfig,
+    styles: &StyleRegistry,
     name: &str,
     enabled: bool,
 ) -> Result<(), String> {
-    let d = style(name)?;
+    let d = style(styles, name)?;
     config.styles.set_enabled(d.name, enabled);
     Ok(())
 }
@@ -54,11 +55,12 @@ pub fn set_post_style(
 /// author (#492), as [`ParamSet::clamped`](crate::entity_style::ParamSet).
 pub fn set_post_style_param(
     config: &mut PostProcessConfig,
+    styles: &StyleRegistry,
     name: &str,
     param: &str,
     value: toml::Value,
 ) -> Result<Option<String>, String> {
-    let d = style(name)?;
+    let d = style(styles, name)?;
     let number = flint_core::toml_util::toml_f64(&value).filter(|n| n.is_finite());
     let mut notes: Vec<String> = Vec::new();
     let mut clamp = |p: &stylize::StyleParam, n: f64| {
@@ -156,10 +158,11 @@ pub fn set_post_style_param(
 /// what it is.
 pub fn post_style_number(
     config: &PostProcessConfig,
+    styles: &StyleRegistry,
     name: &str,
     param: &str,
 ) -> Result<f32, String> {
-    let d = style(name)?;
+    let d = style(styles, name)?;
     let styles = &config.styles;
     if param == "blend" {
         return Ok(styles.blend(d.name));
@@ -192,10 +195,11 @@ pub fn post_style_number(
 /// on or off, and every value, as the scene loaded it.
 pub fn reset_post_style(
     config: &mut PostProcessConfig,
+    styles: &StyleRegistry,
     authored: &PostProcessConfig,
     name: &str,
 ) -> Result<(), String> {
-    let d = style(name)?;
+    let d = style(styles, name)?;
     config.styles.restore(d.name, &authored.styles);
     Ok(())
 }
@@ -208,41 +212,100 @@ mod tests {
     fn set_and_clear_a_whole_frame_style() {
         let authored = PostProcessConfig::default();
         let mut config = authored.clone();
-        let kuwahara = stylize::find("kuwahara").unwrap();
+        let kuwahara = stylize::builtin("kuwahara").unwrap();
         assert!(!kuwahara.is_enabled(&config));
 
-        set_post_style(&mut config, "kuwahara", true).unwrap();
+        set_post_style(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "kuwahara",
+            true,
+        )
+        .unwrap();
         assert!(kuwahara.is_enabled(&config));
-        set_post_style_param(&mut config, "kuwahara", "radius", 6_i64.into()).unwrap();
+        set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "kuwahara",
+            "radius",
+            6_i64.into(),
+        )
+        .unwrap();
         assert_eq!(kuwahara.param(&config, "radius"), 6.0);
         // Clamped to the descriptor's range, as the F4 slider is, and said
         // (#492); in range says nothing
-        let note = set_post_style_param(&mut config, "kuwahara", "radius", 99.0.into()).unwrap();
+        let note = set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "kuwahara",
+            "radius",
+            99.0.into(),
+        )
+        .unwrap();
         assert_eq!(kuwahara.param(&config, "radius"), 8.0);
         assert_eq!(
             note.as_deref(),
             Some("radius=99 is outside its range 1..8; clamped to 8")
         );
-        let note = set_post_style_param(&mut config, "kuwahara", "blend", 0.25.into()).unwrap();
+        let note = set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "kuwahara",
+            "blend",
+            0.25.into(),
+        )
+        .unwrap();
         assert_eq!(config.styles.blend("kuwahara"), 0.25);
         assert_eq!(note, None);
-        let note = set_post_style_param(&mut config, "kuwahara", "blend", (-3.0).into()).unwrap();
+        let note = set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "kuwahara",
+            "blend",
+            (-3.0).into(),
+        )
+        .unwrap();
         assert_eq!(config.styles.blend("kuwahara"), 0.0);
         assert!(note
             .unwrap()
             .starts_with("blend=-3 is outside its range 0..1"));
-        set_post_style_param(&mut config, "kuwahara", "blend", 1.0.into()).unwrap();
+        set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "kuwahara",
+            "blend",
+            1.0.into(),
+        )
+        .unwrap();
         assert_eq!(config.styles.blend("kuwahara"), 1.0);
         assert_eq!(config.styles.get("kuwahara").unwrap().blend, None);
 
         // Off keeps the settings; on again finds them
-        set_post_style(&mut config, "kuwahara", false).unwrap();
+        set_post_style(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "kuwahara",
+            false,
+        )
+        .unwrap();
         assert!(!kuwahara.is_enabled(&config));
-        set_post_style(&mut config, "kuwahara", true).unwrap();
+        set_post_style(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "kuwahara",
+            true,
+        )
+        .unwrap();
         assert_eq!(kuwahara.param(&config, "radius"), 8.0);
 
         // Reset: back to the scene's, which never had it
-        reset_post_style(&mut config, &authored, "kuwahara").unwrap();
+        reset_post_style(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            &authored,
+            "kuwahara",
+        )
+        .unwrap();
         assert_eq!(config.styles, authored.styles);
     }
 
@@ -252,37 +315,110 @@ mod tests {
         authored.styles.set_enabled("invert", true);
         authored.styles.set_param("invert", "strength", 0.4);
         let mut config = authored.clone();
-        set_post_style(&mut config, "invert", false).unwrap();
-        set_post_style_param(&mut config, "invert", "strength", 1.0.into()).unwrap();
-        reset_post_style(&mut config, &authored, "invert").unwrap();
+        set_post_style(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "invert",
+            false,
+        )
+        .unwrap();
+        set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "invert",
+            "strength",
+            1.0.into(),
+        )
+        .unwrap();
+        reset_post_style(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            &authored,
+            "invert",
+        )
+        .unwrap();
         assert_eq!(config.styles, authored.styles);
     }
 
     #[test]
     fn options_colours_and_the_reserved_keys_check_their_values() {
         let mut config = PostProcessConfig::default();
-        let ascii = stylize::find("ascii").unwrap();
-        set_post_style_param(&mut config, "ascii", "ramp", "blocks".into()).unwrap();
+        let ascii = stylize::builtin("ascii").unwrap();
+        set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "ascii",
+            "ramp",
+            "blocks".into(),
+        )
+        .unwrap();
         assert_eq!(ascii.option(&config, "ramp"), "blocks");
-        set_post_style_param(&mut config, "ascii", "tint", "#ff8000".into()).unwrap();
+        set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "ascii",
+            "tint",
+            "#ff8000".into(),
+        )
+        .unwrap();
         let tint = ascii.color(&config, "tint");
         assert!(
             (tint[0] - 1.0).abs() < 1e-3 && tint[2].abs() < 1e-3,
             "{tint:?}"
         );
         // A closed list refuses what it doesn't know, naming its choices
-        let e = set_post_style_param(&mut config, "ascii", "scope", "planet".into()).unwrap_err();
+        let e = set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "ascii",
+            "scope",
+            "planet".into(),
+        )
+        .unwrap_err();
         assert!(e.contains("screen"), "{e}");
-        let e = set_post_style_param(&mut config, "ascii", "cell", "big".into()).unwrap_err();
+        let e = set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "ascii",
+            "cell",
+            "big".into(),
+        )
+        .unwrap_err();
         assert!(e.contains("a number"), "{e}");
-        let e =
-            set_post_style_param(&mut config, "invert", "feeds_bloom", true.into()).unwrap_err();
+        let e = set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "invert",
+            "feeds_bloom",
+            true.into(),
+        )
+        .unwrap_err();
         assert!(e.contains("display style"), "{e}");
-        set_post_style_param(&mut config, "kuwahara", "feeds_bloom", true.into()).unwrap();
+        set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "kuwahara",
+            "feeds_bloom",
+            true.into(),
+        )
+        .unwrap();
         assert_eq!(config.styles.feeds_bloom("kuwahara"), Some(true));
-        let e = set_post_style_param(&mut config, "kuwahara", "glow", 1.0.into()).unwrap_err();
+        let e = set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "kuwahara",
+            "glow",
+            1.0.into(),
+        )
+        .unwrap_err();
         assert!(e.contains("radius"), "{e}");
-        let e = set_post_style(&mut config, "watercolour", true).unwrap_err();
+        let e = set_post_style(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "watercolour",
+            true,
+        )
+        .unwrap_err();
         assert!(e.contains("watercolor"), "{e}");
         // Nothing refused changed anything
         assert!(!ascii.is_enabled(&config));
@@ -292,7 +428,8 @@ mod tests {
     fn a_blend_reads_from_the_scene_and_writes_back_as_toml() {
         let tables: std::collections::BTreeMap<String, toml::Table> =
             toml::from_str("[kuwahara]\nblend = 0.5\n[invert]\nblend = \"half\"\n").unwrap();
-        let (styles, warnings) = stylize::StyleSettings::from_tables(&tables);
+        let (styles, warnings) =
+            stylize::StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert_eq!(styles.blend("kuwahara"), 0.5);
         assert_eq!(styles.blend("invert"), 1.0);
         assert!(
@@ -303,7 +440,7 @@ mod tests {
             styles,
             ..Default::default()
         };
-        let toml = stylize::style_toml(stylize::find("kuwahara").unwrap(), &config);
+        let toml = stylize::style_toml(stylize::builtin("kuwahara").unwrap(), &config);
         assert!(toml.contains("blend = 0.5\n"), "{toml}");
     }
 }

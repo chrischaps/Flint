@@ -141,6 +141,8 @@ pub(crate) struct SceneCtx<'a> {
     /// comparison `--compare` asked for, kept across scenes.
     pub launch: &'a mut LaunchOptions,
     pub project: &'a Project,
+    /// The styles the scene is drawn with (#742).
+    pub styles: &'a flint_render::stylize::StyleRegistry,
     pub script: &'a mut ScriptSystem,
     /// The procgen resolver, which holds the scene's living props.
     #[cfg(feature = "procgen")]
@@ -612,6 +614,7 @@ macro_rules! scene_ctx {
             scene: &$app.scene,
             launch: &mut $app.launch,
             project: &$app.core.project,
+            styles: &$app.core.styles,
             script: &mut $app.core.script,
             #[cfg(feature = "procgen")]
             resolver: &mut $app.core.procgen_resolver,

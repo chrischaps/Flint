@@ -1270,30 +1270,30 @@ mod tests {
         let none = StyleIds::default();
         let mut config = PostProcessConfig::default();
         config.styles.set_enabled("pencil", true);
-        assert!(!crate::stylize::any_uses_albedo(&config, &none), "picture is the default");
+        assert!(!crate::stylize::StyleRegistry::new().any_uses_albedo(&config, &none), "picture is the default");
         config.styles.set_option("pencil", "tone", "light");
-        assert!(crate::stylize::any_uses_albedo(&config, &none));
+        assert!(crate::stylize::StyleRegistry::new().any_uses_albedo(&config, &none));
         // A preset for entities draws nothing by itself
         config.styles.set_option("pencil", "scope", "entities");
-        assert!(!crate::stylize::any_uses_albedo(&config, &none));
+        assert!(!crate::stylize::StyleRegistry::new().any_uses_albedo(&config, &none));
 
         // An entity's variant: its own tone, else the preset's
         let mut ids = StyleIds::default();
         ids.set(vec![("pencil".to_string(), StyleVariant::plain("pencil"))]);
-        assert!(crate::stylize::any_uses_albedo(&config, &ids), "inherits light");
+        assert!(crate::stylize::StyleRegistry::new().any_uses_albedo(&config, &ids), "inherits light");
         let mut own = StyleVariant::plain("pencil");
         own.options.insert("tone".into(), "picture".into());
         ids.set(vec![("pencil{tone=picture}".to_string(), own)]);
-        assert!(!crate::stylize::any_uses_albedo(&config, &ids));
+        assert!(!crate::stylize::StyleRegistry::new().any_uses_albedo(&config, &ids));
         let mut off = StyleVariant::plain("pencil");
         off.off = true;
         ids.set(vec![("pencil{off}".to_string(), off)]);
-        assert!(!crate::stylize::any_uses_albedo(&config, &ids), "an opt-out");
+        assert!(!crate::stylize::StyleRegistry::new().any_uses_albedo(&config, &ids), "an opt-out");
         // Post-processing off draws no style at all
         let mut ids = StyleIds::default();
         ids.set(vec![("pencil".to_string(), StyleVariant::plain("pencil"))]);
         config.enabled = false;
-        assert!(!crate::stylize::any_uses_albedo(&config, &ids));
+        assert!(!crate::stylize::StyleRegistry::new().any_uses_albedo(&config, &ids));
     }
 
     /// `transition = "draw"` (#879): the row carries it in `i.z` and the
@@ -1366,8 +1366,8 @@ mod tests {
             ("pencil".into(), inherits),
             ("pencil{transition=fade}".into(), fades),
         ]);
-        let registry = crate::stylize::registry();
-        let table = super::super::fade::owner_table(&config, &ids, registry);
+        let registry = crate::stylize::StyleRegistry::new();
+        let table = super::super::fade::owner_table(&config, &ids, &registry);
         let me = registry.iter().position(|d| d.name == "pencil").unwrap() as u32 + 1;
         assert_eq!(table[ids.id("pencil").unwrap() as usize], 0, "drawn by pencil");
         assert_eq!(
@@ -1443,14 +1443,14 @@ mod tests {
                 reached.extend(channels);
             }
         }
-        for p in STYLE.params {
+        for p in &STYLE.params {
             assert!(
                 reached.iter().any(|r| r == p.name),
                 "{} not in the schema",
                 p.name
             );
         }
-        for o in STYLE.options {
+        for o in &STYLE.options {
             // scope is the scene table's, not an entity's
             if o.name != "scope" {
                 assert!(

@@ -121,7 +121,7 @@
 //! [`StyleDescriptor::component`]: crate::stylize::StyleDescriptor::component
 
 use crate::postprocess::PostProcessConfig;
-use crate::stylize::{StyleDescriptor, StyleParam};
+use crate::stylize::{StyleDescriptor, StyleParam, StyleRegistry};
 use crate::TrustedShader;
 use bytemuck::{Pod, Zeroable};
 use flint_core::EntityId;
@@ -583,14 +583,14 @@ impl StyleBounds {
 
 /// The blend a styled root asks for (#278): its style component's `blend`,
 /// else its `style_mask`'s, else 1. A number outside 0..1 is clamped.
-pub(crate) fn requested_blend(world: &FlintWorld, root: EntityId) -> f32 {
+pub(crate) fn requested_blend(world: &FlintWorld, styles: &StyleRegistry, root: EntityId) -> f32 {
     let from = |c: &str| {
         world
             .get_component(root, c)?
             .get(BLEND_FIELD)
             .and_then(flint_core::toml_util::toml_f64)
     };
-    crate::stylize::registry()
+    styles
         .iter()
         .filter_map(|d| d.component)
         .chain([STYLE_MASK_COMPONENT])
@@ -601,7 +601,7 @@ pub(crate) fn requested_blend(world: &FlintWorld, root: EntityId) -> f32 {
 /// Whether a styled root's blend follows the tear (#397): its style
 /// component's `blend_source`, else its `style_mask`'s, is `"tear"`. Any
 /// other value is its own blend (the schema warns about a wrong one).
-pub(crate) fn follows_tear(world: &FlintWorld, root: EntityId) -> bool {
+pub(crate) fn follows_tear(world: &FlintWorld, styles: &StyleRegistry, root: EntityId) -> bool {
     let from = |c: &str| {
         world
             .get_component(root, c)?
@@ -609,7 +609,7 @@ pub(crate) fn follows_tear(world: &FlintWorld, root: EntityId) -> bool {
             .and_then(|v| v.as_str())
             .map(|s| s == "tear")
     };
-    crate::stylize::registry()
+    styles
         .iter()
         .filter_map(|d| d.component)
         .chain([STYLE_MASK_COMPONENT])
@@ -705,13 +705,13 @@ pub fn out_of_range(d: &StyleDescriptor, table: &toml::Table) -> Vec<(String, St
 /// component is declared open (it loads at run time), so this is where its
 /// ranges are said. [`SceneRenderer::bind_scene`](crate::SceneRenderer::bind_scene)
 /// logs them.
-pub fn user_style_range_warnings(world: &FlintWorld) -> Vec<String> {
+pub fn user_style_range_warnings(world: &FlintWorld, styles: &StyleRegistry) -> Vec<String> {
     let mut found = Vec::new();
-    for d in crate::stylize::registry() {
+    for d in styles.iter() {
         let Some(component) = d.component else {
             continue;
         };
-        if !crate::stylize::custom::is_user_style(d.name) {
+        if !styles.is_user_style(d.name) {
             continue;
         }
         let mut lines: Vec<(String, String)> = Vec::new();
@@ -782,10 +782,11 @@ fn variant_name(v: &StyleVariant, root: &str) -> String {
 /// order) wins over a `style_mask` on the same entity.
 pub(crate) fn request(
     world: &FlintWorld,
+    styles: &StyleRegistry,
     config: &PostProcessConfig,
     root: EntityId,
 ) -> Option<(String, StyleVariant)> {
-    let from_component = crate::stylize::registry().iter().find_map(|d| {
+    let from_component = styles.iter().find_map(|d| {
         let table = world.get_component(root, d.component?)?.as_table()?;
         let mut v = StyleVariant::plain(d.name);
         if table.get("enabled").and_then(|e| e.as_bool()) == Some(false) {
@@ -793,13 +794,13 @@ pub(crate) fn request(
         } else {
             read_overrides(d, table, &mut v);
         }
-        Some((*d, v))
+        Some((d, v))
     });
     let (descriptor, mut variant) = match from_component {
         Some((d, v)) => (Some(d), v),
         None => {
             let style = requested_style(world, root)?;
-            (crate::stylize::find(style), StyleVariant::plain(style))
+            (styles.find(style), StyleVariant::plain(style))
         }
     };
     // An object-anchored grid: one variant per root, pinned to its origin
@@ -815,9 +816,9 @@ pub(crate) fn request(
 
 /// Whether `id` asks for a style itself: it carries a `style_mask` or a
 /// style's own component, so it roots a styled subtree.
-pub fn is_style_root(world: &FlintWorld, id: EntityId) -> bool {
+pub fn is_style_root(world: &FlintWorld, styles: &StyleRegistry, id: EntityId) -> bool {
     world.get_component(id, STYLE_MASK_COMPONENT).is_some()
-        || crate::stylize::registry()
+        || styles
             .iter()
             .filter_map(|d| d.component)
             .any(|c| world.get_component(id, c).is_some())
@@ -826,12 +827,12 @@ pub fn is_style_root(world: &FlintWorld, id: EntityId) -> bool {
 /// The styled root `id` takes its style from (#372): itself, else its
 /// nearest ancestor that asks for one, as [`resolve`] hands ids down.
 /// `None` when no entity on its chain to the top is styled.
-pub fn style_root(world: &FlintWorld, id: EntityId) -> Option<EntityId> {
+pub fn style_root(world: &FlintWorld, styles: &StyleRegistry, id: EntityId) -> Option<EntityId> {
     let mut at = Some(id);
     // A parent cycle can't load, but don't spin if one is built at run time
     for _ in 0..4096 {
         let e = at?;
-        if is_style_root(world, e) {
+        if is_style_root(world, styles, e) {
             return Some(e);
         }
         at = world.get_parent(e);
@@ -840,11 +841,11 @@ pub fn style_root(world: &FlintWorld, id: EntityId) -> Option<EntityId> {
 }
 
 /// Whether any entity carries a `style_mask` or a style's own component.
-pub(crate) fn any_styled(world: &FlintWorld) -> bool {
+pub(crate) fn any_styled(world: &FlintWorld, styles: &StyleRegistry) -> bool {
     !world
         .entities_with_component(STYLE_MASK_COMPONENT)
         .is_empty()
-        || crate::stylize::registry()
+        || styles
             .iter()
             .filter_map(|d| d.component)
             .any(|c| !world.entities_with_component(c).is_empty())
@@ -858,12 +859,14 @@ pub(crate) fn any_styled(world: &FlintWorld) -> bool {
 #[cfg(test)]
 pub(crate) fn resolve(
     world: &FlintWorld,
+    styles: &StyleRegistry,
     config: &PostProcessConfig,
     ids: &mut StyleIds,
     out: &mut HashMap<EntityId, u16>,
 ) {
     resolve_blended(
         world,
+        styles,
         config,
         ids,
         out,
@@ -886,6 +889,7 @@ pub(crate) fn resolve(
 /// draws no tear, as [`StyleIds::set_tear`] keeps them.
 pub(crate) fn resolve_blended(
     world: &FlintWorld,
+    styles: &StyleRegistry,
     config: &PostProcessConfig,
     ids: &mut StyleIds,
     out: &mut HashMap<EntityId, u16>,
@@ -896,20 +900,17 @@ pub(crate) fn resolve_blended(
     blends.clear();
     torn.clear();
     ids.set_tear(crate::postprocess::tear_active(config));
-    if !any_styled(world) {
+    if !any_styled(world, styles) {
         ids.set(Vec::new());
         return;
     }
     let mut roots: BTreeSet<EntityId> = world.entities_with_component(STYLE_MASK_COMPONENT).clone();
-    for c in crate::stylize::registry()
-        .iter()
-        .filter_map(|d| d.component)
-    {
+    for c in styles.iter().filter_map(|d| d.component) {
         roots.extend(world.entities_with_component(c));
     }
     let requests: Vec<(EntityId, Option<(String, StyleVariant)>)> = roots
         .iter()
-        .map(|&e| (e, request(world, config, e)))
+        .map(|&e| (e, request(world, styles, config, e)))
         .collect();
     let changed = ids.set(requests.iter().filter_map(|(_, r)| r.clone()).collect());
     if changed || ids.entities.len() != ids.len() {
@@ -934,8 +935,8 @@ pub(crate) fn resolve_blended(
         let Some(id) = req.as_ref().and_then(|(n, _)| ids.id(n)) else {
             continue; // an opt-out: its subtree stays unstyled
         };
-        let blend = requested_blend(world, root);
-        let tear = follows_tear(world, root);
+        let blend = requested_blend(world, styles, root);
+        let tear = follows_tear(world, styles, root);
         // As the mask's `.g` holds it: a blend that rounds to 0 shows nothing
         let above = encode_blend(blend) > 0;
         let flags = &mut shown[id as usize];
@@ -2033,7 +2034,7 @@ mod tests {
 
     #[test]
     fn a_style_components_fields_past_their_ranges_are_named() {
-        let ascii = crate::stylize::find("ascii").unwrap();
+        let ascii = crate::stylize::builtin("ascii").unwrap();
         let table: toml::Table = toml::from_str(
             r#"
             cell = 400
@@ -2070,7 +2071,7 @@ mod tests {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
         let registry = flint_schema::SchemaRegistry::load_from_directory(&dir).unwrap();
         let mut checked = Vec::new();
-        for d in crate::stylize::registry() {
+        for d in crate::stylize::builtins() {
             let Some(component) = d.component else {
                 continue;
             };
@@ -2273,7 +2274,13 @@ mod tests {
         ]);
         let mut ids = StyleIds::default();
         let mut out = HashMap::new();
-        resolve(&world, &PostProcessConfig::default(), &mut ids, &mut out);
+        resolve(
+            &world,
+            &crate::stylize::StyleRegistry::new(),
+            &PostProcessConfig::default(),
+            &mut ids,
+            &mut out,
+        );
         let get = |n: &str| out.get(&world.get_id(n).unwrap()).copied();
         let ascii = ids.id("ascii");
         let pencil = ids.id("pencil");
@@ -2302,7 +2309,13 @@ mod tests {
     ) -> (StyleIds, HashMap<EntityId, u16>) {
         let mut ids = StyleIds::default();
         let mut out = HashMap::new();
-        resolve(world, config, &mut ids, &mut out);
+        resolve(
+            world,
+            &crate::stylize::StyleRegistry::new(),
+            config,
+            &mut ids,
+            &mut out,
+        );
         (ids, out)
     }
 
@@ -2384,31 +2397,50 @@ mod tests {
         let mut world = FlintWorld::new();
         with_component(&mut world, "barrel", "ascii_style", "grid = \"object\"");
         with_component(&mut world, "lamp", "ascii_style", "cell = 12");
-        let ascii = crate::stylize::find("ascii").unwrap();
+        let ascii = crate::stylize::builtin("ascii").unwrap();
         let mut config = PostProcessConfig::default();
-        crate::stylize::apply_style_spec(&mut config, "pencil").unwrap();
+        crate::stylize::apply_style_spec(
+            &mut config,
+            "pencil",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         let (ids, out) = resolved(&world, &config);
         let barrel = out[&world.get_id("barrel").unwrap()];
         assert!(ids.requests("ascii") && ascii.is_on(&config, &ids));
-        let ascii_index = crate::stylize::registry_index(ascii).unwrap() as u32;
+        let ascii_index = crate::stylize::StyleRegistry::new()
+            .index_of(ascii.name)
+            .unwrap() as u32;
         assert_eq!(
-            crate::stylize::owner_table(&config, &ids)[barrel as usize],
+            crate::stylize::StyleRegistry::new().owner_table(&config, &ids)[barrel as usize],
             ascii_index
         );
 
-        crate::stylize::apply_style_spec(&mut config, "ascii:off").unwrap();
+        crate::stylize::apply_style_spec(
+            &mut config,
+            "ascii:off",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert!(config.styles.is_off_everywhere("ascii"));
         assert!(!ascii.is_on(&config, &ids), "the props still asked");
         assert!(!ascii.reads_mask(&config, &ids));
         assert_eq!(
-            crate::stylize::owner_table(&config, &ids)[barrel as usize],
+            crate::stylize::StyleRegistry::new().owner_table(&config, &ids)[barrel as usize],
             crate::stylize::ownership::NONE,
             "pencil yields to a style that isn't drawn"
         );
-        let pencil = crate::stylize::find("pencil").unwrap();
-        assert!(pencil.foreign_ids(&config, &ids).is_empty());
+        let pencil = crate::stylize::builtin("pencil").unwrap();
+        assert!(crate::stylize::StyleRegistry::new()
+            .foreign_ids(pencil, &config, &ids)
+            .is_empty());
 
-        crate::stylize::apply_style_spec(&mut config, "ascii").unwrap();
+        crate::stylize::apply_style_spec(
+            &mut config,
+            "ascii",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert!(!config.styles.is_off_everywhere("ascii"));
         assert!(ascii.is_on(&config, &ids), "a later word switches it back");
 
@@ -2432,6 +2464,7 @@ mod tests {
             let mut out = HashMap::new();
             resolve_blended(
                 world,
+                &crate::stylize::StyleRegistry::new(),
                 &config,
                 ids,
                 &mut out,
@@ -2447,9 +2480,9 @@ mod tests {
         assert_eq!(out.len(), 3, "faded entities stay in the mask's map");
         assert!(ids.is_faded(barrel) && ids.is_faded(lamp));
         assert!(!ids.requests("ascii"), "all at 0: the style is off");
-        let ascii = crate::stylize::find("ascii").unwrap();
+        let ascii = crate::stylize::builtin("ascii").unwrap();
         assert!(!ascii.is_on(&config, &ids));
-        assert!(!crate::stylize::any_uses_mask(&config, &ids));
+        assert!(!crate::stylize::StyleRegistry::new().any_uses_mask(&config, &ids));
 
         // One of the two plain ascii entities rises: its id is shown, the
         // lamp's own stays faded, and nothing is renumbered
@@ -2476,7 +2509,7 @@ mod tests {
         assert!(ascii.is_on(&preset, &ids), "a screen table draws the frame");
         preset.styles.set_option("ascii", "scope", "entities");
         assert!(!ascii.is_on(&preset, &ids));
-        assert!(!crate::stylize::any_uses_mask(&preset, &ids));
+        assert!(!crate::stylize::StyleRegistry::new().any_uses_mask(&preset, &ids));
         with_component(&mut world, "crate", "ascii_style", "blend = 1.0");
         resolve_at(&world, &mut ids);
         assert!(ascii.is_on(&preset, &ids));
@@ -2488,15 +2521,18 @@ mod tests {
         resolve_at(&world, &mut ids);
         let mut pencil_frame = PostProcessConfig::default();
         pencil_frame.styles.set_enabled("pencil", true);
-        let pencil = crate::stylize::find("pencil").unwrap();
+        let pencil = crate::stylize::builtin("pencil").unwrap();
         assert!(!ascii.is_on(&pencil_frame, &ids));
-        assert_eq!(pencil.foreign_ids(&pencil_frame, &ids), vec![barrel, lamp]);
-        assert!(crate::stylize::any_uses_mask(&pencil_frame, &ids));
+        assert_eq!(
+            crate::stylize::StyleRegistry::new().foreign_ids(pencil, &pencil_frame, &ids),
+            vec![barrel, lamp]
+        );
+        assert!(crate::stylize::StyleRegistry::new().any_uses_mask(&pencil_frame, &ids));
     }
 
     #[test]
     fn an_entity_falls_back_on_the_scenes_settings_then_the_defaults() {
-        let ascii = crate::stylize::find("ascii").unwrap();
+        let ascii = crate::stylize::builtin("ascii").unwrap();
         let mut config = PostProcessConfig::default();
         config.styles.set_param("ascii", "cell", 10.0);
         config.styles.set_option("ascii", "color", "tint");
@@ -2554,8 +2590,8 @@ mod tests {
 
     #[test]
     fn entities_switch_a_per_entity_style_on_without_a_table() {
-        let ascii = crate::stylize::find("ascii").unwrap();
-        let invert = crate::stylize::find("invert").unwrap();
+        let ascii = crate::stylize::builtin("ascii").unwrap();
+        let invert = crate::stylize::builtin("invert").unwrap();
         let config = PostProcessConfig::default();
         let mut world = FlintWorld::new();
         with_component(&mut world, "bench", "style_mask", "style = \"ascii\"");
@@ -2564,11 +2600,11 @@ mod tests {
         assert!(ascii.is_on(&config, &ids));
         assert!(ascii.reads_mask(&config, &ids));
         assert!(!invert.is_on(&config, &ids), "invert isn't per-entity");
-        assert!(crate::stylize::any_uses_mask(&config, &ids));
+        assert!(crate::stylize::StyleRegistry::new().any_uses_mask(&config, &ids));
         // Nobody asking: off, and the mask isn't drawn
         let (none, _) = resolved(&FlintWorld::new(), &config);
         assert!(!ascii.is_on(&config, &none));
-        assert!(!crate::stylize::any_uses_mask(&config, &none));
+        assert!(!crate::stylize::StyleRegistry::new().any_uses_mask(&config, &none));
     }
 
     /// #350: whole-frame ASCII asks for the mask only while it has edges
@@ -2581,7 +2617,7 @@ mod tests {
         let empty = FlintWorld::new();
         let (none, _) = resolved(&empty, &config);
         assert!(
-            !crate::stylize::any_uses_mask(&config, &none),
+            !crate::stylize::StyleRegistry::new().any_uses_mask(&config, &none),
             "nothing styled"
         );
 
@@ -2589,12 +2625,12 @@ mod tests {
         with_component(&mut world, "crate", "style_mask", "style = \"invert\"");
         let (other, _) = resolved(&world, &config);
         assert!(
-            crate::stylize::any_uses_mask(&config, &other),
+            crate::stylize::StyleRegistry::new().any_uses_mask(&config, &other),
             "edges outline it"
         );
         config.styles.set_param("ascii", "edges", 0.0);
         assert!(
-            crate::stylize::any_uses_mask(&config, &other),
+            crate::stylize::StyleRegistry::new().any_uses_mask(&config, &other),
             "another style's entity still passes through"
         );
 
@@ -2602,13 +2638,13 @@ mod tests {
         with_component(&mut world, "bench", "ascii_style", "ramp = \"blocks\"");
         let (ours, _) = resolved(&world, &config);
         assert!(
-            crate::stylize::any_uses_mask(&config, &ours),
+            crate::stylize::StyleRegistry::new().any_uses_mask(&config, &ours),
             "per-entity rows are found by mask id"
         );
 
         // --ascii-no-edges in a scene with no style_mask: no mask
         let (none, _) = resolved(&empty, &config);
-        assert!(!crate::stylize::any_uses_mask(&config, &none));
+        assert!(!crate::stylize::StyleRegistry::new().any_uses_mask(&config, &none));
     }
 
     /// #384: each pixel is one style's. A whole-frame style's foreign ids
@@ -2616,8 +2652,8 @@ mod tests {
     /// opt-out, not a style that isn't on.
     #[test]
     fn a_whole_frame_style_leaves_another_styles_entities() {
-        let ascii = crate::stylize::find("ascii").unwrap();
-        let pencil = crate::stylize::find("pencil").unwrap();
+        let ascii = crate::stylize::builtin("ascii").unwrap();
+        let pencil = crate::stylize::builtin("pencil").unwrap();
         let mut config = PostProcessConfig::default();
         config.styles.set_enabled("ascii", true);
         config.styles.set_param("ascii", "edges", 0.0);
@@ -2630,16 +2666,19 @@ mod tests {
         let (ids, out) = resolved(&world, &config);
         let id = |name: &str| out[&world.get_id(name).unwrap()];
 
-        let foreign = ascii.foreign_ids(&config, &ids);
+        let foreign = crate::stylize::StyleRegistry::new().foreign_ids(ascii, &config, &ids);
         assert!(foreign.contains(&id("cask")), "a style_mask naming pencil");
         assert!(foreign.contains(&id("crate")), "a pencil_style");
         assert!(!foreign.contains(&id("barrel")), "its own");
         assert!(!foreign.contains(&id("tag")), "an opt-out is nobody's");
         assert!(!foreign.contains(&id("box")), "invert isn't on");
         // And the other way round, pencil leaves ASCII's barrel
-        assert_eq!(pencil.foreign_ids(&config, &ids), vec![id("barrel")]);
+        assert_eq!(
+            crate::stylize::StyleRegistry::new().foreign_ids(pencil, &config, &ids),
+            vec![id("barrel")]
+        );
 
-        let table = crate::stylize::owner_table(&config, &ids);
+        let table = crate::stylize::StyleRegistry::new().owner_table(&config, &ids);
         assert_eq!(table[0], crate::stylize::ownership::NONE, "unstyled");
         assert_eq!(table[id("tag") as usize], crate::stylize::ownership::NONE);
         assert_eq!(table[id("cask") as usize], table[id("crate") as usize]);
@@ -2647,7 +2686,9 @@ mod tests {
 
         // A whole-frame invert now owns the box: ASCII leaves it too
         config.styles.set_enabled("invert", true);
-        assert!(ascii.foreign_ids(&config, &ids).contains(&id("box")));
+        assert!(crate::stylize::StyleRegistry::new()
+            .foreign_ids(ascii, &config, &ids)
+            .contains(&id("box")));
 
         // Neither Kuwahara nor invert reads the mask, but Kuwahara yields
         // to invert's box, so the mask is drawn for it
@@ -2657,10 +2698,10 @@ mod tests {
         let mut world = FlintWorld::new();
         with_component(&mut world, "box", "style_mask", "style = \"invert\"");
         let (only_box, _) = resolved(&world, &config);
-        assert!(crate::stylize::any_uses_mask(&config, &only_box));
+        assert!(crate::stylize::StyleRegistry::new().any_uses_mask(&config, &only_box));
         config.styles.set_enabled("kuwahara", false);
         assert!(
-            !crate::stylize::any_uses_mask(&config, &only_box),
+            !crate::stylize::StyleRegistry::new().any_uses_mask(&config, &only_box),
             "invert alone has nobody to yield to"
         );
     }
@@ -2669,7 +2710,7 @@ mod tests {
     /// yield; every other built-in does, with no code of its own.
     #[test]
     fn only_debug_views_and_the_glow_draw_over_entities() {
-        let over: Vec<&str> = crate::stylize::registry()
+        let over: Vec<&str> = crate::stylize::builtins()
             .iter()
             .filter(|d| !d.yields)
             .map(|d| d.name)
@@ -2706,7 +2747,15 @@ mod tests {
         with_component(&mut world, "bench", "ascii_style", "ramp = \"blocks\"");
         let resolve_at = |world: &FlintWorld, config: &PostProcessConfig, ids: &mut StyleIds| {
             let (mut out, mut torn) = (HashMap::new(), HashSet::new());
-            resolve_blended(world, config, ids, &mut out, &mut HashMap::new(), &mut torn);
+            resolve_blended(
+                world,
+                &crate::stylize::StyleRegistry::new(),
+                config,
+                ids,
+                &mut out,
+                &mut HashMap::new(),
+                &mut torn,
+            );
             (out, torn)
         };
         let barrel_e = world.get_id("barrel").unwrap();
@@ -2784,7 +2833,13 @@ mod tests {
             "blend_source = \"sideways\"",
         );
         with_component(&mut world, "d", "pencil_style", "blend_source = \"tear\"");
-        let follows = |n: &str| follows_tear(&world, world.get_id(n).unwrap());
+        let follows = |n: &str| {
+            follows_tear(
+                &world,
+                &crate::stylize::StyleRegistry::new(),
+                world.get_id(n).unwrap(),
+            )
+        };
         assert!(follows("a"));
         assert!(!follows("b"), "the style component's own wins");
         assert!(!follows("c"), "an unknown source is the entity's own");

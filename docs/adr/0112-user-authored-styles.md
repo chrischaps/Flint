@@ -520,6 +520,8 @@ Measured: `demo/styles/orton.*` (expose, blur across, blur down at half
 size, screen over the frame) costs 0.032 ms for all four passes at
 1280x720 on an RTX 4070, with 5.3 MB of targets.
 
+**Since then** (#742, [0129](0129-the-style-registry-is-a-value.md)): the registry is a value a renderer or host owns, not one append-only snapshot for the process. A user style is an `Arc` freed when nothing holds it, a style is told by its name and generation (never an address), and a scene's registry holds only the user styles it sees (`StyleRegistry::for_scene`), so `drop_unseen` and the in-place takeover below are gone.
+
 ## Addendum (#426): which of two styles of one name wins
 
 **Decided: option 2, scope by folder.** A scene draws the user style

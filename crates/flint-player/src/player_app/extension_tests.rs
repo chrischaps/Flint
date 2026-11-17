@@ -749,9 +749,7 @@ position = [0, 0, 0]
 /// the passes; `create` is never called.
 mod game_styles {
     use super::*;
-    use flint_render::stylize::{
-        self, StyleDescriptor, StyleDevice, StyleParam, StylePass, StyleStage,
-    };
+    use flint_render::stylize::{StyleDescriptor, StyleDevice, StyleParam, StylePass, StyleStage};
 
     fn never_built(_: &StyleDevice) -> Box<dyn StylePass> {
         unreachable!("a headless test builds no style")
@@ -792,12 +790,15 @@ mod game_styles {
         app.apply_scene_settings(&scene);
         app.add_extension(Box::new(Sepia));
 
-        let sepia = stylize::find("utest_ext_sepia").expect("registered by add_extension");
+        let styles = &app.core.styles;
+        let sepia = styles
+            .find("utest_ext_sepia")
+            .expect("registered by add_extension");
         assert!(std::ptr::eq(sepia, &SEPIA));
-        assert!(stylize::is_game_style("utest_ext_sepia"));
+        assert!(styles.is_game_style("utest_ext_sepia"));
         // The built-in kept its place
-        assert_eq!(stylize::find("invert").unwrap().label, "Invert");
-        assert!(!stylize::is_game_style("invert"));
+        assert_eq!(styles.find("invert").unwrap().label, "Invert");
+        assert!(!styles.is_game_style("invert"));
 
         let config = app.scene_post_config();
         assert!(config.styles.is_enabled("utest_ext_sepia"));
@@ -808,15 +809,21 @@ mod game_styles {
         let config = app.scene_post_config();
         assert_eq!(config.styles.param("utest_ext_sepia", "warmth"), Some(0.25));
 
-        // A second player in the process, the same extension: no error, one
-        // entry
+        // A second player in the process has a registry of its own (#742):
+        // without the extension it doesn't know the style, and with it
+        // added twice it holds one entry, no error
         let mut again = headless_app();
+        assert!(again.core.styles.find("utest_ext_sepia").is_none());
         again.add_extension(Box::new(Sepia));
-        let entries = stylize::registry()
+        again.add_extension(Box::new(Sepia));
+        let entries = again
+            .core
+            .styles
             .iter()
             .filter(|d| d.name == "utest_ext_sepia")
             .count();
         assert_eq!(entries, 1);
+        assert!(app.core.styles.find("utest_ext_sepia").is_some());
     }
 }
 
