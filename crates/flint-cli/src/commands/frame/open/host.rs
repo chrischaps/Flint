@@ -1,10 +1,12 @@
-//! Where the frame debugger's [`App`] runs: a window (winit 0.30, wgpu, egui),
-//! or no window at all, one frame of it drawn into a PNG
-//! (`--screenshot`) for an agent, a test or the book.
+//! Where the frame debugger's [`Window`] runs (its two tabs, the frame and
+//! the profiler): a window (winit 0.30, wgpu, egui), or no window at all,
+//! one frame of it drawn into a PNG (`--screenshot`) for an agent, a test
+//! or the book.
 
-use super::ui::{App, Start};
+use super::profile::ProfileStart;
+use super::ui::Start;
 use super::viewer::ViewerGpu;
-use crate::commands::frame::read::Capture;
+use super::window::{Opened, Tabs};
 use anyhow::{Context, Result};
 use flint_render::{AcquireFrame, HeadlessContext, RenderContext};
 use std::path::Path;
@@ -95,11 +97,32 @@ fn paint(
 
 // ── The window ──
 
-pub fn run_window(capture: Capture, shown: String, start: Start, size: [u32; 2]) -> Result<()> {
+/// What the window opens with.
+pub struct Launch {
+    pub opened: Opened,
+    pub start: Start,
+    pub profile: ProfileStart,
+    pub on_profile: bool,
+}
+
+impl Launch {
+    fn window(self, srgb_target: bool, max_side: u32) -> Tabs {
+        Tabs::new(
+            self.opened,
+            &self.start,
+            &self.profile,
+            self.on_profile,
+            srgb_target,
+            max_side,
+        )
+    }
+}
+
+pub fn run_window(launch: Launch, size: [u32; 2]) -> Result<()> {
     let event_loop = EventLoop::new().context("creating the event loop")?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut host = WindowHost {
-        pending: Some((capture, shown, start)),
+        pending: Some(launch),
         size,
         gfx: None,
         next_repaint: None,
@@ -118,11 +141,11 @@ struct Gfx {
     egui_ctx: egui::Context,
     egui_winit: egui_winit::State,
     renderer: egui_wgpu::Renderer,
-    app: App,
+    app: Tabs,
 }
 
 struct WindowHost {
-    pending: Option<(Capture, String, Start)>,
+    pending: Option<Launch>,
     size: [u32; 2],
     gfx: Option<Gfx>,
     next_repaint: Option<Instant>,
@@ -189,10 +212,10 @@ impl ApplicationHandler for WindowHost {
         if self.gfx.is_some() {
             return;
         }
-        let Some((capture, shown, start)) = self.pending.take() else {
+        let Some(launch) = self.pending.take() else {
             return;
         };
-        let title = format!("Flint frame — {shown}");
+        let title = launch.opened.title();
         let attrs = Window::default_attributes()
             .with_title(title)
             .with_inner_size(LogicalSize::new(self.size[0], self.size[1]));
@@ -224,7 +247,7 @@ impl ApplicationHandler for WindowHost {
         let format = ctx.config.format;
         let renderer = egui_renderer(&ctx.device, format);
         let max_side = ctx.device.limits().max_texture_dimension_2d;
-        let app = App::new(capture, shown, &start, format.is_srgb(), max_side);
+        let app = launch.window(format.is_srgb(), max_side);
         self.gfx = Some(Gfx {
             window,
             ctx,
@@ -279,9 +302,7 @@ impl ApplicationHandler for WindowHost {
 /// once every image it shows is read, with the pointer at `hover`
 /// (points) when given.
 pub fn screenshot(
-    capture: Capture,
-    shown: String,
-    start: Start,
+    launch: Launch,
     size: [u32; 2],
     scale: f32,
     hover: Option<[f32; 2]>,
@@ -293,7 +314,7 @@ pub fn screenshot(
     let mut renderer = egui_renderer(&hc.device, format);
     let ctx = egui::Context::default();
     let max_side = hc.device.limits().max_texture_dimension_2d;
-    let mut app = App::new(capture, shown, &start, format.is_srgb(), max_side);
+    let mut app = launch.window(format.is_srgb(), max_side);
     let points = egui::vec2(size[0] as f32 / scale, size[1] as f32 / scale);
     let input = |frame: usize| {
         let mut raw = egui::RawInput {

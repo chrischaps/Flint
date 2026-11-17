@@ -8,13 +8,14 @@ use flint_render::frame_capture::{CpuFrame, FrameDescription};
 
 /// The player's phases in the order a frame runs them
 /// (`flint_player::perf::Phase`'s labels); a phase not listed goes after.
-const PHASE_ORDER: [&str; 9] = [
+const PHASE_ORDER: [&str; 10] = [
     "input",
     "scripts",
     "physics",
     "script ui",
     "anim/fx",
     "sync",
+    "acquire",
     "render",
     "hud",
     "present",
@@ -28,6 +29,8 @@ pub fn band_of(phase: &str) -> Band {
         "physics" => Band::Physics,
         "sync" | "render" => Band::Render,
         "hud" | "present" => Band::HudPresent,
+        // The wait for a swapchain image isn't the player's (#1123)
+        "acquire" => Band::Elsewhere,
         _ => Band::Other,
     }
 }

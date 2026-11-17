@@ -408,6 +408,35 @@ The stall in `hitch_metronome` reads like this: a 100 ms `stall.rhai:on_update` 
 
 **On the web**, with the recorder in the build, `?perf=1`'s panel has a **Save trace** button that downloads the look-back. The site's release build has no recorder, so the button isn't shown there. In a browser that isn't cross-origin isolated, `performance.now()` is coarsened, so short scopes read as 0 (docs/design/web.md).
 
+### The flame view
+
+Perfetto opens any trace, but it doesn't know what a Flint frame is. `flint frame open` does. It opens the frame debugger's window on a trace file, or on a capture that holds one, with a **Profiler** tab:
+
+```bash
+flint frame open traces/hitch_metronome-hitch-t3.000.json          # a trace alone: the profiler
+flint frame open captures/hitch_metronome-t3.106.flintframe        # a capture with trace.json: both tabs, P switches
+flint frame open out.json --compare --scope stall                  # the stall's path tinted, its calls marked
+flint frame open out.json --trace-frame 1150..1200 --screenshot p.png
+```
+
+![The profiler tab on the metronome's 5 s trace: the strip of 1017 frames with two orange hitches, the second chosen; under it frame 1181 as a flame chart, tick over run_scripts over script::update down to a 100 ms stall.rhai:on_update, the scripts lane and the GPU's passes beneath; on the right every scope of the frame with count, total, mean, p90 and worst](../images/profiler-hitch.jpg)
+
+It opens on the hitch: the capture's own, when it was taken on one, else the worst in the trace, else the longest frame. `--trace-frame` takes a frame number, `A..B`, `hitch` or `worst` instead.
+
+- **The strip**, along the top, is every frame of the trace as the F2 graph draws it, each frame's phases in the overlay's bands and each hitch marked in vermillion. Click a frame, or drag across a range. Left and Right step a frame, Shift widens the range, H jumps to the next hitch and Shift+H to the one before.
+- **The flame chart**, in the middle, is the chosen frames as an icicle: first the player's phases, then each thread's scopes nested under their parents, then the script callbacks on a row of their own, then the GPU's passes, laid from the frame's render phase as Perfetto's `gpu` track is. A bar is coloured by the phase it ran inside, in the overlay's colours, so the two tools read alike: scripts orange, physics green, render blue, HUD and present purple. A bar that spans phases, such as `tick`, is grey. The wheel zooms about the pointer and dragging pans. W and S zoom, A and D pan, and F fits the chosen frames again. Hover a bar for its name, detail, time, share of the frame, self time and path. Click it to choose its scope, and double-click it to zoom to it. Hitches run along the ruler's foot, and the frame notes (a model load, a pipeline build) are gold diamonds on it.
+- **The statistics**, on the right, are every scope over the chosen frames: count, total, mean, p90 (by nearest rank) and worst, in ms, each call counted, nested calls included. Click a header to sort, and type to filter. Choosing a scope, here or in the chart, dims every other bar, outlines each of its calls, and plots its time in every frame of the trace under the table and as a white line over the strip. A cost that grows slowly shows as a line that climbs.
+
+**Compare with the median frame** (C, or `--compare`) tints each bar by how much longer its path took in its frame than in the trace's median frame. A path is the scope's thread and the names above it (`tick / run_scripts / script::update / ... / stall.rhai:on_update`), so a name called from two places is compared with itself. A bar that took what it usually takes is greyed. One that took longer turns vermillion, in proportion to how far the whole frame ran over the median. A hitch's cause is then the one red line down the chart, its parents red above it, everything else quiet. It is the picture of the hitch-against-median comparison [#1098](https://github.com/chrischaps/Flint/issues/1098) gives the command line.
+
+![Compare on the same hitch: tick, run_scripts and script::update down to stall.rhai:on_update in vermillion, the render and present work beside them greyed; the card under the pointer says the stall took 100 ms, 96% of the frame, against 0.032 ms in the median frame](../images/profiler-compare.jpg)
+
+![A range of frames around the hitch with stall.rhai:on_update chosen: its calls outlined in the chart, the rest dimmed, and under the table its time in every frame of the trace, flat at 0.03 ms but for its 100 ms spikes at the two hitches](../images/profiler-scope.jpg)
+
+**What it costs to look.** The header says how long the tab took to lay out its last frame. On a 5 s trace at 60 fps (45 300 scopes, `profiler_cost` in `commands/frame/open/profile.rs`), with flint-cli and egui optimized, it takes 1.1 ms a frame with one frame chosen, 2.4 ms with all 300, and 3.4 ms with all 300 under Compare. In a debug build those are 1.5, 4.6 and 9.2 ms. Reading the file is the slow part: 68 ms optimized for its 5.6 MB, 150 ms in debug. The metronome's own 5 s trace with vsync off (140 743 scopes over 1567 frames, 19.5 MB) draws all of its frames in 15 ms in a debug build.
+
+`--screenshot` draws the tab with no window, as it does the frame debugger's (`--hover X,Y` puts the pointer down for a card). The flags are under **Profiler (a trace)** in `flint frame open --help`.
+
 ## Frame pacing
 
 A mean frame time hides uneven frames. `--exit-after N` prints two spreads beside the mean, both taken after the first 2 s:
