@@ -560,6 +560,13 @@ impl ScriptSystem {
         self.engine.drain_world_texts()
     }
 
+    /// The data-driven UI documents (#731), for a host to show an element or
+    /// move focus as input would (`flint render --ui-show`, `--ui-focus`).
+    pub fn with_ui<R>(&mut self, f: impl FnOnce(&mut crate::ui::UiSystem) -> R) -> R {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        f(&mut c.ui_system)
+    }
+
     /// Generate draw commands from the data-driven UI system (unclipped)
     pub fn generate_ui_draw_commands(&mut self, screen_w: f32, screen_h: f32) -> Vec<DrawItem> {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
@@ -691,6 +698,8 @@ impl ScriptSystem {
     /// `measure_text` / `measure_text_ex`.
     pub fn set_text_measurer(&mut self, f: Option<context::TextMeasurer>) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
+        // UI documents lay their labels out with it too (#731)
+        c.ui_system.set_measurer(f.clone());
         c.text_measurer = f;
     }
 }

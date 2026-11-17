@@ -154,6 +154,9 @@ pub struct HeadlessGame {
     key_note: super::key_note::KeyNote,
     /// What scripts are told the capture draws at (`--pixels-per-point`).
     pixels_per_point: f32,
+    /// The last step's HUD (#731): what `on_draw_ui` drew and the UI
+    /// documents, for a capture to paint ([`HeadlessHud`](super::headless_hud::HeadlessHud)).
+    hud: Vec<flint_script::context::DrawItem>,
     #[cfg(feature = "debug-hud")]
     panels: Vec<Box<dyn flint_debug_ui::DebugPanel>>,
 }
@@ -177,9 +180,28 @@ impl HeadlessGame {
             look_request: None,
             key_note: Default::default(),
             pixels_per_point: 1.0,
+            hud: Vec::new(),
             #[cfg(feature = "debug-hud")]
             panels: Vec::new(),
         }
+    }
+
+    /// What the last step's HUD draws: `on_draw_ui`'s draw calls, then the
+    /// UI documents, in points. Empty before the first step.
+    pub fn hud(&self) -> &[flint_script::context::DrawItem] {
+        &self.hud
+    }
+
+    /// Lay text out for scripts and UI documents as the capture's HUD
+    /// painter draws it ([`HeadlessHud::measurer`](super::headless_hud::HeadlessHud::measurer)).
+    pub fn set_text_measurer(&mut self, measurer: flint_script::context::TextMeasurer) {
+        self.core.script.set_text_measurer(Some(measurer));
+    }
+
+    /// The loaded UI documents (#731), to show an element or give one focus
+    /// before a capture, as a player's input would.
+    pub fn with_ui<R>(&mut self, f: impl FnOnce(&mut flint_script::ui::UiSystem) -> R) -> R {
+        self.core.script.with_ui(f)
     }
 
     pub fn world(&self) -> &FlintWorld {
@@ -569,9 +591,12 @@ impl FrameHost for CaptureFrame<'_> {
 
     fn script_ui_drawn(&mut self) {
         let game = &mut *self.game;
-        if !game.core.script.drain_draw_commands().is_empty() {
-            game.note("on_draw_ui: the HUD isn't drawn in a headless capture");
-        }
+        // The HUD, as the player collects it: the draw calls, then the UI
+        // documents (#731); the capture paints the last step's
+        let mut hud = game.core.script.drain_draw_commands();
+        let (w, h) = game.screen;
+        hud.extend(game.core.script.generate_ui_draw_commands(w, h));
+        game.hud = hud;
         if !game.core.script.drain_world_lines().is_empty() {
             game.note("draw_world_line: world lines aren't drawn in a headless capture");
         }

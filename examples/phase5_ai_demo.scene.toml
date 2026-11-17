@@ -60,7 +60,7 @@ scale = [20, 0.2, 20]
 
 [entities.floor.collider]
 shape = "box"
-size = [20, 0.2, 20]
+size = [1, 1, 1]  # a unit box at the entity's scale (#729)
 
 [entities.floor.rigidbody]
 body_type = "static"
@@ -90,7 +90,7 @@ scale = [20, 5, 0.5]
 
 [entities.wall_north.collider]
 shape = "box"
-size = [20, 5, 0.5]
+size = [1, 1, 1]  # a unit box at the entity's scale (#729)
 
 [entities.wall_north.rigidbody]
 body_type = "static"
@@ -108,7 +108,7 @@ scale = [20, 5, 0.5]
 
 [entities.wall_south.collider]
 shape = "box"
-size = [20, 5, 0.5]
+size = [1, 1, 1]  # a unit box at the entity's scale (#729)
 
 [entities.wall_south.rigidbody]
 body_type = "static"
@@ -126,7 +126,7 @@ scale = [0.5, 5, 20]
 
 [entities.wall_east.collider]
 shape = "box"
-size = [0.5, 5, 20]
+size = [1, 1, 1]  # a unit box at the entity's scale (#729)
 
 [entities.wall_east.rigidbody]
 body_type = "static"
@@ -142,7 +142,7 @@ scale = [0.5, 5, 20]
 
 [entities.wall_west.collider]
 shape = "box"
-size = [0.5, 5, 20]
+size = [1, 1, 1]  # a unit box at the entity's scale (#729)
 
 [entities.wall_west.rigidbody]
 body_type = "static"

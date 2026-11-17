@@ -34,6 +34,61 @@ impl ImportResult {
             .reduce(|a, b| a.union(&b))
     }
 
+    /// Every triangle of the model where it is drawn, in the model's own
+    /// space: each mesh node's primitives through its node chain's
+    /// transforms (a skinned mesh as its vertices stand, its node's
+    /// transform being ignored as glTF says), only the nearest level of
+    /// detail (a primitive whose band starts past 0 is left out), triangle
+    /// lists only (a primitive with no indices is read in threes). What a
+    /// `mesh` or `convex` collider is made of (#729).
+    pub fn triangles(&self) -> (Vec<[f32; 3]>, Vec<[u32; 3]>) {
+        let mut positions = Vec::new();
+        let mut triangles = Vec::new();
+        let mut stack: Vec<(usize, Affine)> = self
+            .root_nodes
+            .iter()
+            .map(|&n| (n, Affine::IDENTITY))
+            .collect();
+        while let Some((index, parent)) = stack.pop() {
+            let Some(node) = self.nodes.get(index) else {
+                continue;
+            };
+            let here = parent.then(&Affine::trs(node.translation, node.rotation, node.scale));
+            for &p in &node.mesh_primitive_indices {
+                let Some(mesh) = self.meshes.get(p) else {
+                    continue;
+                };
+                if mesh.lod.is_some_and(|band| band.near > 0.0) {
+                    continue;
+                }
+                let place = if mesh.skin_index.is_some() {
+                    Affine::IDENTITY
+                } else {
+                    here
+                };
+                let first = positions.len() as u32;
+                positions.extend(mesh.positions.iter().map(|v| place.apply(*v)));
+                let count = mesh.positions.len() as u32;
+                let mut push = |a: u32, b: u32, c: u32| {
+                    if a < count && b < count && c < count {
+                        triangles.push([first + a, first + b, first + c]);
+                    }
+                };
+                if mesh.indices.is_empty() {
+                    for t in 0..count / 3 {
+                        push(t * 3, t * 3 + 1, t * 3 + 2);
+                    }
+                } else {
+                    for &[a, b, c] in mesh.indices.as_chunks::<3>().0 {
+                        push(a, b, c);
+                    }
+                }
+            }
+            stack.extend(node.children.iter().map(|&c| (c, here)));
+        }
+        (positions, triangles)
+    }
+
     /// Returns true when the GLB contains node-level (non-skeletal) animation clips
     pub fn has_node_animations(&self) -> bool {
         !self.node_clips.is_empty()
@@ -72,6 +127,72 @@ impl ImportResult {
         }
 
         false
+    }
+}
+
+/// A node's place as a 3x3 linear part (rows) and a translation, for
+/// [`ImportResult::triangles`].
+#[derive(Debug, Clone, Copy)]
+struct Affine {
+    m: [[f32; 3]; 3],
+    t: [f32; 3],
+}
+
+impl Affine {
+    const IDENTITY: Affine = Affine {
+        m: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        t: [0.0; 3],
+    };
+
+    /// Translation, rotation (quaternion x, y, z, w), scale: `T * R * S`.
+    fn trs(t: [f32; 3], q: [f32; 4], s: [f32; 3]) -> Affine {
+        let [x, y, z, w] = q;
+        let r = [
+            [
+                1.0 - 2.0 * (y * y + z * z),
+                2.0 * (x * y - z * w),
+                2.0 * (x * z + y * w),
+            ],
+            [
+                2.0 * (x * y + z * w),
+                1.0 - 2.0 * (x * x + z * z),
+                2.0 * (y * z - x * w),
+            ],
+            [
+                2.0 * (x * z - y * w),
+                2.0 * (y * z + x * w),
+                1.0 - 2.0 * (x * x + y * y),
+            ],
+        ];
+        let mut m = r;
+        for row in &mut m {
+            for (c, k) in row.iter_mut().zip(s) {
+                *c *= k;
+            }
+        }
+        Affine { m, t }
+    }
+
+    /// `self` after `inner`: a point goes through `inner` first.
+    fn then(&self, inner: &Affine) -> Affine {
+        let mut m = [[0.0; 3]; 3];
+        for (i, row) in m.iter_mut().enumerate() {
+            for (j, c) in row.iter_mut().enumerate() {
+                *c = (0..3).map(|k| self.m[i][k] * inner.m[k][j]).sum();
+            }
+        }
+        Affine {
+            m,
+            t: self.apply(inner.t),
+        }
+    }
+
+    fn apply(&self, p: [f32; 3]) -> [f32; 3] {
+        let mut out = self.t;
+        for (o, row) in out.iter_mut().zip(&self.m) {
+            *o += row[0] * p[0] + row[1] * p[1] + row[2] * p[2];
+        }
+        out
     }
 }
 

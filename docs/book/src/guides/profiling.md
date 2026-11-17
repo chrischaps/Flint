@@ -392,7 +392,17 @@ A note made inside another, such as a model inside a transition or a pipeline in
 | `physics steps` | a frame that ran more than one fixed step |
 | `clock stall` | a frame over 250 ms, which pacing passed through as it was |
 
-A `clock stall` is the long frame itself, so it is kept on the hitch but is no cause. Notes are made only on the player's frame thread and only while the history records. Otherwise each call site costs a flag read, about 1 ns. Collecting a frame's notes costs 2 to 3 ns. The F2 graph and the hitch log are what show them.
+A `clock stall` is the long frame itself, so it is kept on the hitch but is no cause. Neither is `physics steps`: extra fixed steps are the clock paying back the game time a long frame before owed, and their own cost is the `physics` phase's, which the hitch names by phase.
+
+The notes are named as a hitch's cause only when their times together cover at least half of its excess over the median, the rule a script callback is blamed by. Otherwise whose time it was comes first, and the notes follow it by kind and time:
+
+```text
+scene transition b.scene.toml, 151.2 ms
+sync +9.1 ms (also: reload poll 1.2 ms)
+render +40.0 ms (also: pipeline build 3.0 ms the frame before)
+```
+
+A note with no time (none of the engine's today) can't be weighed, so it is named. Notes are made only on the player's frame thread and only while the history records. Otherwise each call site costs a flag read, about 1 ns. Collecting a frame's notes costs 2 to 3 ns. The F2 graph and the hitch log are what show them.
 
 `FLINT_HITCH_FACTOR` (at least 1, default 2) and `FLINT_HITCH_FLOOR_MS` (default 8) change the thresholds.
 
@@ -417,7 +427,7 @@ A bar is split into the frame's phases, grouped into six bands, bottom up:
 
 The colours are Okabe and Ito's palette, which stays distinguishable under the common colour-vision deficiencies. Vermillion is kept for hitches. The line across the graph is the display's refresh period, labelled in ms and fps, and the fainter one is twice that. The top of the graph eases to fit the tallest bar and falls back slowly once a spike has scrolled off. It never sits below about twice the budget, and it stops at 250 ms, so a scene load doesn't flatten everything for seconds.
 
-The graph is quiet when nothing is wrong. A bar within its refresh is drawn dim, a bar past it brightens as it gets later, and a hitch is drawn at full colour with a vermillion mark over it and a faint band behind it. Under the graph are the session's hitches, hitches a minute, the worst frame, and how long since the last hitch. The count turns vermillion for a couple of seconds after a hitch, then fades back to grey. The line below says what the last hitch was: `last 100 ms: stall.rhai:on_update took 100` when a script took it, `last 30 ms: render +14` for another phase of the player's work, and `last 13 ms: elsewhere, present 1` (or `acquire`, whichever wait was longer) when it wasn't the player's. Scripts are timed while F2 is open, as under `--perf`, so a script hitch names its callback.
+The graph is quiet when nothing is wrong. A bar within its refresh is drawn dim, a bar past it brightens as it gets later, and a hitch is drawn at full colour with a vermillion mark over it and a faint band behind it. Under the graph are the session's hitches, hitches a minute, the worst frame, and how long since the last hitch. The count turns vermillion for a couple of seconds after a hitch, then fades back to grey. The line below says what the last hitch was, in the same words as the hitch log, the exit report and `--perf` (see [Finding a hitch](#finding-a-hitch)): `last 269 ms: style build ascii, 255.2 ms` when the engine noted what it was doing, `last 117 ms: script stall.rhai:on_update 100.0 ms` when a script took it, `last 30 ms: render +14.0 ms` for another phase of the player's work, and `last 13 ms: elsewhere, present 1.0 ms` (or `acquire`, whichever wait was longer) when it wasn't the player's. Scripts are timed while F2 is open, as under `--perf`, so a script hitch names its callback.
 
 Press F2 again for the graph alone, in a corner, small enough to leave on while playing:
 
@@ -469,7 +479,7 @@ The perf line's count includes the start's hitches; the exit report below sets t
 | `script`, `script_ms` | the script callback that took longest (`player` only) |
 | `acquire_ms`, `present_ms` | the swapchain's two waits: for an image, and handing it back (`elsewhere` only) |
 | `gpu_ms` | the GPU's busy time read back in it (a frame or two old), or `null` while the GPU isn't timed: a long `acquire_ms` beside a long `gpu_ms` waited on the GPU, one beside a short `gpu_ms` on the compositor |
-| `cause` | the line the report and the perf line name it by: the engine's notes when it has any, else the script, the phase or `elsewhere` |
+| `cause` | the line the report and the perf line name it by: the engine's notes when they cover half the hitch, else the script, the phase or `elsewhere`, with the notes after it as `(also: ..)` |
 | `notes` | the frame notes of its frame and the frame before, each with `kind`, `detail`, `ms`, `depth` and `frame_before` |
 | `before_ms`, `after_ms` | the eight frames either side, oldest first |
 
