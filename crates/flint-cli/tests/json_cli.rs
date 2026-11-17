@@ -452,6 +452,10 @@ fn every_command_answers_with_one_json_document() {
     assert!(ok(&dir, &["asset", "job", "list"])["jobs"].is_array());
     run("asset job status");
     assert!(fails(&dir, &["asset", "job", "status", "no-such-job"])["error"].is_object());
+    run("asset job resume");
+    assert!(fails(&dir, &["asset", "job", "resume", "no-such-job"])["error"].is_object());
+    run("asset costs");
+    assert!(ok(&dir, &["asset", "costs"])["total"]["calls"].is_u64());
 
     // Music: a one-bus suite, mixed offline; a chart replayed
     std::fs::create_dir_all(dir.join("stems")).unwrap();

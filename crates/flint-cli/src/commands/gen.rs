@@ -142,8 +142,9 @@ pub struct GenArgs {
     #[arg(long, value_name = "USD", value_parser = parse_usd, help_heading = "Cost tracking")]
     pub max_cost: Option<f64>,
 
-    /// Print what AI calls have cost, from .flint/procgen_costs.json: total,
-    /// per provider, per model, per spec
+    /// Print what AI calls have cost, from the project's .flint/ai_costs.jsonl
+    /// (procgen, looks and assets): total, per provider, per model, per spec
+    /// or asset
     #[arg(long, help_heading = "Cost tracking")]
     pub cost_report: bool,
 
@@ -282,23 +283,12 @@ fn parse_format(s: &str) -> std::result::Result<String, String> {
 }
 
 fn parse_usd(s: &str) -> std::result::Result<f64, String> {
-    let v: f64 = s
-        .trim()
-        .trim_start_matches('$')
-        .parse()
-        .map_err(|_| format!("'{s}' isn't an amount in USD (e.g. 0.50)"))?;
-    if !v.is_finite() || v < 0.0 {
-        return Err(format!("--max-cost must be a non-negative amount, not {s}"));
-    }
-    Ok(v)
+    super::ai_costs::parse_usd(s)
 }
 
 pub fn run(args: GenArgs) -> Result<()> {
     if args.cost_report {
-        return gen_ai::cost_report(
-            &flint_procgen_ai::CostLedger::open_default(),
-            args.since.as_deref(),
-        );
+        return super::ai_costs::cost_report(&super::ai_costs::ledger(), args.since.as_deref());
     }
     if args
         .spec
@@ -353,7 +343,7 @@ pub fn run(args: GenArgs) -> Result<()> {
             crate::output::when_json(|| serde_json::json!({ "dry_run": true, "plan": plan }));
             return Ok(());
         }
-        let meter = gen_ai::build_meter(&config, &args);
+        let meter = gen_ai::build_meter(&config, &args)?;
         let agent = gen_ai::build_agent(config, meter.clone(), args.refine_rounds)?;
         gen_ai::run_steps(&args, agent.as_ref(), &meter, loaded)?
     } else {

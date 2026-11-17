@@ -30,8 +30,10 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint asset validate` | Validate a generated model against style constraints |
 | `flint asset manifest` | Generate a build manifest of all generated assets |
 | `flint asset regenerate` | Regenerate an existing asset with new parameters |
-| `flint asset job status` | Check status of an async generation job |
+| `flint asset costs [--since DATE]` | What AI calls have cost, from the project's `.flint/ai_costs.jsonl`: assets, procgen specs and looks together |
+| `flint asset job status` | Check status of a generation job (a Meshy model) |
 | `flint asset job list` | List all generation jobs |
+| `flint asset job resume <id>` | Finish a job a generate didn't see through: wait, download, register; nothing new is paid for |
 | `flint edit <file>` | Unified interactive editor (auto-detects file type) |
 | `flint play [scene]` | Play a scene with first-person controls and physics; with no scene, the project's default (`flint.toml`'s `[project] scene`) |
 | `flint render <scene>` | Render a scene to PNG (headless) |
@@ -942,7 +944,7 @@ flint gen --cost-report --since 2026-10-01
 | `--print-spec` | `false` | Print the final spec as TOML on stdout (the summary moves to stderr) |
 | `--save-spec <path>` | (none) | Write the final spec to a file |
 | `--max-cost <USD>` | (none) | Refuse any AI call that could take the run past this amount |
-| `--cost-report` | `false` | Summarize `.flint/procgen_costs.json` by provider, model and spec |
+| `--cost-report` | `false` | Summarize the project's `.flint/ai_costs.jsonl` by provider, model and spec or asset (the same report as `flint asset costs`) |
 | `--since <date>` | (none) | With `--cost-report`: only calls from `YYYY-MM-DD` on |
 
 ## The `prefab view` Command

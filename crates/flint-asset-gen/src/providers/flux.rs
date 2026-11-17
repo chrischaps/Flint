@@ -1,31 +1,37 @@
 //! Flux texture generation provider (fal.ai)
 //!
-//! Generates textures via the Flux image generation API.
-//! Textures are fast (~10s) so `generate()` blocks synchronously.
+//! Generates textures via the Flux image generation API. Textures are fast
+//! (~10s), so `generate()` blocks. fal bills per megapixel, each image
+//! rounded up ([`megapixels`]); the call is checked against the budget
+//! before it is sent and recorded once fal answers.
 
+use crate::calls::{cost_error, endpoint_label, Calls};
 use crate::config::FlintConfig;
-use crate::job::GenerationJob;
 use crate::provider::*;
 use crate::style::StyleGuide;
+use flint_ai_core::HttpRequest;
 use flint_core::{FlintError, Result};
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::Duration;
 
 const DEFAULT_FLUX_URL: &str = "https://queue.fal.run/fal-ai/flux/dev";
-const REQUEST_TIMEOUT_SECS: u64 = 60;
-const MAX_RETRIES: usize = 3;
-const RETRY_BASE_DELAY_MS: u64 = 500;
 
 /// Flux provider for AI texture generation via fal.ai
 pub struct FluxProvider {
     api_key: String,
     api_url: String,
+    calls: Calls,
+}
+
+/// Megapixels fal bills a `width` x `height` image: the pixels over a
+/// million, rounded up, at least one.
+pub fn megapixels(width: u32, height: u32) -> f64 {
+    (f64::from(width) * f64::from(height) / 1e6).ceil().max(1.0)
 }
 
 impl FluxProvider {
-    /// Create a new FluxProvider from config
-    pub fn from_config(config: &FlintConfig) -> Result<Self> {
+    /// Create a new FluxProvider from config, its calls through `calls`
+    pub fn from_config(config: &FlintConfig, calls: Calls) -> Result<Self> {
         let api_key = config
             .api_key("flux")
             .ok_or_else(|| {
@@ -40,11 +46,15 @@ impl FluxProvider {
             .unwrap_or(DEFAULT_FLUX_URL)
             .to_string();
 
-        Ok(Self { api_key, api_url })
+        Ok(Self {
+            api_key,
+            api_url,
+            calls,
+        })
     }
 
-    /// Submit a request to fal.ai and poll for completion
-    fn submit_and_wait(
+    /// The paid request: one image of `width` x `height`.
+    fn submit(
         &self,
         prompt: &str,
         width: u32,
@@ -60,108 +70,13 @@ impl FluxProvider {
             "num_images": 1,
             "enable_safety_checker": false
         });
-
         if let Some(s) = seed {
             payload["seed"] = serde_json::json!(s);
         }
-
-        self.post_json_with_retry(&payload)
+        let req = HttpRequest::post_json(&self.api_url, &payload)
+            .with_header("Authorization", format!("Key {}", self.api_key));
+        self.calls.request_json(&req, "Flux API request")
     }
-
-    /// Download an image from a URL to a local file
-    fn download_image(&self, url: &str, output_path: &Path) -> Result<()> {
-        let bytes = self.download_bytes_with_retry(url)?;
-        std::fs::write(output_path, &bytes)?;
-        Ok(())
-    }
-
-    fn post_json_with_retry(&self, payload: &serde_json::Value) -> Result<serde_json::Value> {
-        for attempt in 0..MAX_RETRIES {
-            let agent = build_agent();
-            let response = agent
-                .post(&self.api_url)
-                .header("Authorization", &format!("Key {}", self.api_key))
-                .header("Content-Type", "application/json")
-                .send_json(payload);
-
-            match response {
-                Ok(mut ok) => {
-                    return ok.body_mut().read_json().map_err(|e| {
-                        FlintError::GenerationError(format!("Failed to parse Flux response: {}", e))
-                    });
-                }
-                Err(e) => {
-                    if attempt + 1 < MAX_RETRIES && is_retryable_error(&e) {
-                        sleep_backoff(attempt);
-                        continue;
-                    }
-                    return Err(FlintError::GenerationError(format!(
-                        "Flux API request failed: {}",
-                        e
-                    )));
-                }
-            }
-        }
-
-        Err(FlintError::GenerationError(
-            "Flux API request failed after retries".to_string(),
-        ))
-    }
-
-    fn download_bytes_with_retry(&self, url: &str) -> Result<Vec<u8>> {
-        for attempt in 0..MAX_RETRIES {
-            let agent = build_agent();
-            let response = agent.get(url).call();
-
-            match response {
-                Ok(ok) => {
-                    let mut reader = ok.into_body().into_reader();
-                    let mut bytes = Vec::new();
-                    std::io::Read::read_to_end(&mut reader, &mut bytes).map_err(|e| {
-                        FlintError::GenerationError(format!("Failed to read image data: {}", e))
-                    })?;
-                    return Ok(bytes);
-                }
-                Err(e) => {
-                    if attempt + 1 < MAX_RETRIES && is_retryable_error(&e) {
-                        sleep_backoff(attempt);
-                        continue;
-                    }
-                    return Err(FlintError::GenerationError(format!(
-                        "Failed to download image: {}",
-                        e
-                    )));
-                }
-            }
-        }
-
-        Err(FlintError::GenerationError(
-            "Image download failed after retries".to_string(),
-        ))
-    }
-}
-
-fn build_agent() -> ureq::Agent {
-    let config = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(REQUEST_TIMEOUT_SECS)))
-        .build();
-    config.into()
-}
-
-fn is_retryable_error(e: &ureq::Error) -> bool {
-    match e {
-        ureq::Error::Timeout(_)
-        | ureq::Error::Io(_)
-        | ureq::Error::ConnectionFailed
-        | ureq::Error::HostNotFound => true,
-        ureq::Error::StatusCode(code) => matches!(code, 429 | 500 | 502 | 503 | 504),
-        _ => false,
-    }
-}
-
-fn sleep_backoff(attempt: usize) {
-    let delay_ms = RETRY_BASE_DELAY_MS.saturating_mul(1u64 << attempt);
-    std::thread::sleep(Duration::from_millis(delay_ms));
 }
 
 impl GenerationProvider for FluxProvider {
@@ -180,6 +95,11 @@ impl GenerationProvider for FluxProvider {
         Ok(ProviderStatus::Available)
     }
 
+    fn billed_units(&self, request: &GenerateRequest) -> f64 {
+        let p = request.texture_params.clone().unwrap_or_default();
+        megapixels(p.width, p.height)
+    }
+
     fn generate(
         &self,
         request: &GenerateRequest,
@@ -188,35 +108,33 @@ impl GenerationProvider for FluxProvider {
     ) -> Result<GenerateResult> {
         let start = std::time::Instant::now();
         let prompt = self.build_prompt(request, style);
-
-        let params = request.texture_params.as_ref().cloned().unwrap_or_default();
-
+        let params = request.texture_params.clone().unwrap_or_default();
         std::fs::create_dir_all(output_dir)?;
 
-        // Submit and wait for result
-        let response = self.submit_and_wait(&prompt, params.width, params.height, params.seed)?;
+        let units = self.billed_units(request);
+        self.calls
+            .meter
+            .admit_call("flux", units)
+            .map_err(cost_error)?;
+        let response = self.submit(&prompt, params.width, params.height, params.seed)?;
+        // fal answered with an image: it's billed, whatever happens next.
+        self.calls
+            .meter
+            .record_call("flux", &endpoint_label(&self.api_url, "flux"), units);
 
-        // Extract image URL from response
-        let image_url = response
-            .get("images")
-            .and_then(|imgs| imgs.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|img| img.get("url"))
-            .and_then(|u| u.as_str())
-            .ok_or_else(|| {
-                FlintError::GenerationError(format!(
-                    "Unexpected Flux response format: {}",
-                    serde_json::to_string_pretty(&response).unwrap_or_default()
-                ))
-            })?;
+        let image_url = image_url(&response).ok_or_else(|| {
+            FlintError::GenerationError(format!(
+                "Unexpected Flux response format: {}",
+                serde_json::to_string_pretty(&response).unwrap_or_default()
+            ))
+        })?;
 
-        // Download the image
         let output_path = output_dir.join(format!("{}.png", request.name));
-        self.download_image(image_url, &output_path)?;
+        let image = self
+            .calls
+            .request(&HttpRequest::get(image_url), "Flux image download")?;
+        std::fs::write(&output_path, &image.body)?;
 
-        let duration = start.elapsed().as_secs_f64();
-
-        // Compute content hash
         let hash = flint_core::ContentHash::from_file(&output_path)
             .map(|h| h.to_prefixed_hex())
             .ok();
@@ -230,40 +148,10 @@ impl GenerationProvider for FluxProvider {
             output_path: output_path.to_string_lossy().to_string(),
             prompt_used: prompt,
             provider: "flux".to_string(),
-            duration_secs: duration,
+            duration_secs: start.elapsed().as_secs_f64(),
             content_hash: hash,
             metadata,
         })
-    }
-
-    fn submit_job(
-        &self,
-        request: &GenerateRequest,
-        style: Option<&StyleGuide>,
-    ) -> Result<GenerationJob> {
-        // Flux is fast enough to be synchronous, but we support async for consistency
-        let mut job = GenerationJob::new("flux", &request.name);
-        job.prompt = Some(self.build_prompt(request, style));
-        Ok(job)
-    }
-
-    fn poll_job(&self, _job: &GenerationJob) -> Result<JobPollResult> {
-        // Flux completes synchronously
-        Ok(JobPollResult::Complete)
-    }
-
-    fn download_result(&self, job: &GenerationJob, output_dir: &Path) -> Result<GenerateResult> {
-        // For Flux, we generate synchronously via generate()
-        let request = GenerateRequest {
-            name: job.asset_name.clone(),
-            description: job.prompt.clone().unwrap_or_default(),
-            kind: AssetKind::Texture,
-            texture_params: None,
-            model_params: None,
-            audio_params: None,
-            tags: vec![],
-        };
-        self.generate(&request, None, output_dir)
     }
 
     fn build_prompt(&self, request: &GenerateRequest, style: Option<&StyleGuide>) -> String {
@@ -274,24 +162,30 @@ impl GenerationProvider for FluxProvider {
     }
 }
 
-/// Parse a Flux API response for testing
-pub fn parse_flux_response(json: &str) -> Result<String> {
-    let response: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| FlintError::GenerationError(format!("Invalid JSON: {}", e)))?;
-
+/// The first image's URL in a Flux response.
+fn image_url(response: &serde_json::Value) -> Option<&str> {
     response
         .get("images")
         .and_then(|imgs| imgs.as_array())
         .and_then(|arr| arr.first())
         .and_then(|img| img.get("url"))
         .and_then(|u| u.as_str())
-        .map(|s| s.to_string())
+}
+
+/// Parse a Flux API response for testing
+pub fn parse_flux_response(json: &str) -> Result<String> {
+    let response: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| FlintError::GenerationError(format!("Invalid JSON: {}", e)))?;
+    image_url(&response)
+        .map(str::to_string)
         .ok_or_else(|| FlintError::GenerationError("No image URL in response".to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::test_support::{calls_over, request, temp_dir, test_config};
+    use flint_ai_core::{HttpResponse, Method, ScriptedTransport};
 
     #[test]
     fn test_parse_flux_response() {
@@ -320,33 +214,85 @@ mod tests {
     }
 
     #[test]
-    fn test_flux_build_prompt_no_style() {
-        // We can't create a FluxProvider without an API key, but we can test the prompt building
-        // through a mock scenario
-        let request = GenerateRequest {
-            name: "test".to_string(),
-            description: "red brick wall".to_string(),
-            kind: AssetKind::Texture,
-            texture_params: None,
-            model_params: None,
-            audio_params: None,
-            tags: vec![],
-        };
+    fn megapixels_round_up() {
+        assert_eq!(megapixels(1000, 1000), 1.0);
+        assert_eq!(megapixels(1024, 1024), 2.0);
+        assert_eq!(megapixels(512, 512), 1.0);
+        assert_eq!(megapixels(2048, 2048), 5.0);
+    }
 
-        // Without a provider, test prompt building logic directly
-        let style = StyleGuide {
-            name: "test".to_string(),
-            description: None,
-            prompt_prefix: Some("Fantasy".to_string()),
-            prompt_suffix: None,
-            negative_prompt: None,
-            palette: vec![],
-            materials: crate::style::MaterialConstraints::default(),
-            geometry: crate::style::GeometryConstraints::default(),
-        };
+    #[test]
+    fn a_generate_is_admitted_sent_recorded_and_downloaded() {
+        let script = ScriptedTransport::new(vec![
+            // A 503, retried, then fal's answer and the image.
+            Ok(HttpResponse::text_body(503, "busy")),
+            ScriptedTransport::json(serde_json::json!({
+                "images": [{"url": "http://fal.test/img.png"}], "seed": 7
+            })),
+            Ok(HttpResponse::bytes(b"\x89PNG fake".to_vec())),
+        ]);
+        let (calls, meter) = calls_over(&script, None);
+        let flux = FluxProvider::from_config(
+            &test_config("flux", "http://fal.test/fal-ai/flux/dev"),
+            calls,
+        )
+        .unwrap();
+        let dir = temp_dir("flux");
+        let result = flux
+            .generate(&request("brick", AssetKind::Texture), None, &dir)
+            .unwrap();
+        assert_eq!(std::fs::read(&result.output_path).unwrap(), b"\x89PNG fake");
+        assert_eq!(result.metadata["seed"], "7");
 
-        let enriched = style.enrich_prompt(&request.description);
-        assert!(enriched.contains("Fantasy"));
-        assert!(enriched.contains("red brick wall"));
+        let sent = script.requests();
+        assert_eq!(sent.len(), 3);
+        assert_eq!(sent[1].header("authorization"), Some("Key test-key"));
+        let body: serde_json::Value = serde_json::from_str(&sent[1].body).unwrap();
+        assert_eq!(body["image_size"]["width"], 1024);
+        assert_eq!(sent[2].method, Method::Get);
+        assert_eq!(sent[2].url, "http://fal.test/img.png");
+
+        // One call, 2 megapixels at $0.025.
+        let entries = meter.entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].provider, "flux");
+        assert_eq!(entries[0].model, "fal-ai/flux/dev");
+        assert_eq!(entries[0].units, Some(2.0));
+        assert!((entries[0].estimated_usd - 0.05).abs() < 1e-12);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_call_past_the_ceiling_is_never_sent() {
+        let script = ScriptedTransport::new(vec![]);
+        let (calls, meter) = calls_over(&script, Some(0.04));
+        let flux =
+            FluxProvider::from_config(&test_config("flux", "http://fal.test/x"), calls).unwrap();
+        let dir = temp_dir("flux-ceiling");
+        let e = flux
+            .generate(&request("brick", AssetKind::Texture), None, &dir)
+            .unwrap_err();
+        assert!(e.to_string().contains("cost ceiling reached"), "{e}");
+        assert!(script.requests().is_empty());
+        assert_eq!(meter.calls(), 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_billed_call_whose_download_fails_is_still_recorded() {
+        let script = ScriptedTransport::new(vec![
+            ScriptedTransport::json(serde_json::json!({"images": [{"url": "http://fal.test/i"}]})),
+            Ok(HttpResponse::text_body(404, "gone")),
+        ]);
+        let (calls, meter) = calls_over(&script, None);
+        let flux =
+            FluxProvider::from_config(&test_config("flux", "http://fal.test/x"), calls).unwrap();
+        let dir = temp_dir("flux-gone");
+        let e = flux
+            .generate(&request("brick", AssetKind::Texture), None, &dir)
+            .unwrap_err();
+        assert!(e.to_string().contains("Flux image download failed"), "{e}");
+        assert_eq!(meter.calls(), 1);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

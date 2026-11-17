@@ -1,142 +1,17 @@
-//! The HTTP seam under [`crate::AnthropicAgent`]: a one-method
-//! [`Transport`] trait, the real `ureq` implementation, and the mapping from
-//! a Messages API response (or error) to Rust values.
-//!
-//! Tests swap the transport for a scripted one, so every request the agent
-//! builds can be inspected and every response, good or broken, replayed.
-
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+//! The Messages API's side of the HTTP seam under [`crate::AnthropicAgent`]:
+//! turning a response (or error) into Rust values. The seam itself, the
+//! [`Transport`] trait, the real `ureq` transport and the scripted one, is
+//! [`flint_ai_core::http`]'s, shared with asset generation since #721, and
+//! re-exported here.
 
 use serde_json::Value as Json;
 
+pub use flint_ai_core::cost::Usage;
+pub use flint_ai_core::http::{
+    shorten, HttpRequest, HttpResponse, Method, ScriptedTransport, Transport, UreqTransport,
+};
+
 use crate::error::{ProcGenAiError, Result};
-
-/// An outgoing POST.
-#[derive(Debug, Clone)]
-pub struct HttpRequest {
-    /// Full URL.
-    pub url: String,
-    /// Header name/value pairs.
-    pub headers: Vec<(String, String)>,
-    /// JSON body.
-    pub body: String,
-}
-
-impl HttpRequest {
-    /// The value of a header, by case-insensitive name.
-    pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.as_str())
-    }
-}
-
-/// A response with any status. Transports never turn a status into an error.
-#[derive(Debug, Clone)]
-pub struct HttpResponse {
-    /// HTTP status.
-    pub status: u16,
-    /// The `retry-after` header in seconds, if present and numeric.
-    pub retry_after: Option<u64>,
-    /// Response body.
-    pub body: String,
-}
-
-/// Sends a POST and returns whatever came back. `Err` only for failures
-/// where no response arrived (connection, TLS, timeout).
-pub trait Transport: Send + Sync {
-    /// Send `req`.
-    fn post(&self, req: &HttpRequest) -> std::result::Result<HttpResponse, String>;
-}
-
-/// The real transport: a blocking `ureq` agent with a long timeout, since a
-/// thinking model can take minutes on a hard spec.
-pub struct UreqTransport {
-    agent: ureq::Agent,
-}
-
-impl UreqTransport {
-    /// A transport whose whole request may take up to `timeout`.
-    pub fn new(timeout: Duration) -> Self {
-        let config = ureq::Agent::config_builder()
-            .timeout_global(Some(timeout))
-            .http_status_as_error(false)
-            .build();
-        Self {
-            agent: config.into(),
-        }
-    }
-}
-
-impl Default for UreqTransport {
-    fn default() -> Self {
-        Self::new(Duration::from_secs(600))
-    }
-}
-
-impl Transport for UreqTransport {
-    fn post(&self, req: &HttpRequest) -> std::result::Result<HttpResponse, String> {
-        let mut builder = self.agent.post(&req.url);
-        for (k, v) in &req.headers {
-            builder = builder.header(k, v);
-        }
-        let mut resp = builder.send(req.body.as_str()).map_err(|e| e.to_string())?;
-        let status = resp.status().as_u16();
-        let retry_after = resp
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.trim().parse().ok());
-        let body = resp
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| e.to_string())?;
-        Ok(HttpResponse {
-            status,
-            retry_after,
-            body,
-        })
-    }
-}
-
-/// Token counts from one response.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Usage {
-    /// Uncached input tokens.
-    pub input_tokens: u64,
-    /// Output tokens (thinking included).
-    pub output_tokens: u64,
-    /// Input tokens read from the prompt cache.
-    pub cache_read_input_tokens: u64,
-    /// Input tokens written to the prompt cache.
-    pub cache_creation_input_tokens: u64,
-}
-
-impl Usage {
-    pub(crate) fn of(v: &Json) -> Self {
-        let n = |k: &str| v.get(k).and_then(Json::as_u64).unwrap_or(0);
-        Self {
-            input_tokens: n("input_tokens"),
-            output_tokens: n("output_tokens"),
-            cache_read_input_tokens: n("cache_read_input_tokens"),
-            cache_creation_input_tokens: n("cache_creation_input_tokens"),
-        }
-    }
-
-    /// Sum of two usages.
-    pub fn plus(self, o: Self) -> Self {
-        Self {
-            input_tokens: self.input_tokens + o.input_tokens,
-            output_tokens: self.output_tokens + o.output_tokens,
-            cache_read_input_tokens: self.cache_read_input_tokens + o.cache_read_input_tokens,
-            cache_creation_input_tokens: self.cache_creation_input_tokens
-                + o.cache_creation_input_tokens,
-        }
-    }
-}
 
 /// A successful Messages API reply.
 #[derive(Debug, Clone)]
@@ -164,22 +39,13 @@ fn error_parts(body: &str) -> (String, String) {
     }
 }
 
-/// `s` cut to `max` characters with an ellipsis.
-pub(crate) fn shorten(s: &str, max: usize) -> String {
-    let s = s.trim();
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let cut: String = s.chars().take(max).collect();
-        format!("{cut}...")
-    }
-}
-
 /// Turn a response into a [`Reply`] or a typed error. `attempts` is how many
 /// requests have been sent so far, for the rate-limit message.
 pub fn parse_response(resp: &HttpResponse, attempts: u32) -> Result<Reply> {
+    let body = resp.text();
+    let body = body.as_ref();
     if !(200..300).contains(&resp.status) {
-        let (kind, message) = error_parts(&resp.body);
+        let (kind, message) = error_parts(body);
         return Err(match resp.status {
             401 | 403 => ProcGenAiError::Auth {
                 status: resp.status,
@@ -203,11 +69,8 @@ pub fn parse_response(resp: &HttpResponse, attempts: u32) -> Result<Reply> {
         });
     }
 
-    let v: Json = serde_json::from_str(&resp.body).map_err(|e| {
-        ProcGenAiError::BadResponse(format!(
-            "body is not JSON ({e}): {}",
-            shorten(&resp.body, 200)
-        ))
+    let v: Json = serde_json::from_str(body).map_err(|e| {
+        ProcGenAiError::BadResponse(format!("body is not JSON ({e}): {}", shorten(body, 200)))
     })?;
     let stop = v.get("stop_reason").and_then(Json::as_str).unwrap_or("");
     if stop == "refusal" {
@@ -229,7 +92,7 @@ pub fn parse_response(resp: &HttpResponse, attempts: u32) -> Result<Reply> {
         .filter(|c| c.is_array())
         .cloned()
         .ok_or_else(|| {
-            ProcGenAiError::BadResponse(format!("no content array: {}", shorten(&resp.body, 200)))
+            ProcGenAiError::BadResponse(format!("no content array: {}", shorten(body, 200)))
         })?;
     if stop == "max_tokens" {
         return Err(ProcGenAiError::BadResponse(
@@ -317,75 +180,12 @@ pub fn image_media_type(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// A [`Transport`] that replays canned responses in order and keeps every
-/// request it was sent: for testing code that drives an agent, with no
-/// network. Clones share the script and the record.
-#[derive(Clone, Default)]
-pub struct ScriptedTransport {
-    responses: Arc<Mutex<VecDeque<std::result::Result<HttpResponse, String>>>>,
-    sent: Arc<Mutex<Vec<HttpRequest>>>,
-}
-
-impl ScriptedTransport {
-    /// A transport that answers with `responses`, one per request.
-    pub fn new(responses: Vec<std::result::Result<HttpResponse, String>>) -> Self {
-        Self {
-            responses: Arc::new(Mutex::new(responses.into())),
-            sent: Arc::default(),
-        }
-    }
-
-    /// A 200 Messages API reply whose one text block is `text`, from
-    /// `model`, with the given token counts.
-    pub fn reply(
-        model: &str,
-        text: &str,
-        input_tokens: u64,
-        output_tokens: u64,
-    ) -> std::result::Result<HttpResponse, String> {
-        let body = serde_json::json!({
-            "id": "msg_scripted",
-            "type": "message",
-            "role": "assistant",
-            "model": model,
-            "content": [{"type": "text", "text": text}],
-            "stop_reason": "end_turn",
-            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
-        });
-        Ok(HttpResponse {
-            status: 200,
-            retry_after: None,
-            body: body.to_string(),
-        })
-    }
-
-    /// Every request sent so far.
-    pub fn requests(&self) -> Vec<HttpRequest> {
-        self.sent.lock().expect("transport lock").clone()
-    }
-}
-
-impl Transport for ScriptedTransport {
-    fn post(&self, req: &HttpRequest) -> std::result::Result<HttpResponse, String> {
-        self.sent.lock().expect("transport lock").push(req.clone());
-        self.responses
-            .lock()
-            .expect("transport lock")
-            .pop_front()
-            .unwrap_or_else(|| Err("the script has no more responses".to_string()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn resp(status: u16, body: &str) -> HttpResponse {
-        HttpResponse {
-            status,
-            retry_after: None,
-            body: body.to_string(),
-        }
+        HttpResponse::text_body(status, body)
     }
 
     #[test]

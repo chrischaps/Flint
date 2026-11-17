@@ -49,6 +49,7 @@ flint-terrain = { workspace = true }
 flint-particles = { workspace = true }
 flint-procgen = { workspace = true }
 flint-procgen-ai = { workspace = true }
+flint-ai-core = { workspace = true }
 flint-viewer = { workspace = true }
 flint-debug-ui = { workspace = true, features = ["living"] }
 flint-music = { workspace = true }

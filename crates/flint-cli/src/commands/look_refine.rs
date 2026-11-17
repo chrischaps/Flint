@@ -25,7 +25,7 @@ use super::look::{self, Look};
 use super::look_measure::{self, DistanceReport, ImageMeasures, InkGrid, Metric, Reference};
 use super::sweep::{parse_value, Sweep, SweepKey};
 use anyhow::{bail, Context, Result};
-use flint_procgen_ai::cost::{CostLedger, CostMeter};
+use flint_procgen_ai::cost::CostMeter;
 use flint_procgen_ai::{AgentConfig, AnthropicAgent};
 use image::{RgbImage, RgbaImage};
 use serde::Serialize;
@@ -742,11 +742,7 @@ pub fn build_agent(
     model: Option<&str>,
     max_cost: Option<f64>,
 ) -> Result<(Box<dyn LookAgent>, Arc<CostMeter>)> {
-    let mut meter = CostMeter::new(provider).with_ledger(CostLedger::open_default());
-    if let Some(max) = max_cost {
-        meter = meter.with_ceiling(max);
-    }
-    let meter = Arc::new(meter);
+    let meter = Arc::new(super::ai_costs::meter(provider, max_cost)?);
     let agent: Box<dyn LookAgent> = match provider {
         "mock" => Box::new(TuneWalker),
         "anthropic" => {
