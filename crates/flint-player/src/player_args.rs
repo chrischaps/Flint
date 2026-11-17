@@ -292,8 +292,9 @@ pub struct PlayerArgs {
     #[command(flatten)]
     pub hitches: crate::HitchArgs,
 
-    /// `--capture-frame-at SECS` (repeatable), `--capture-on-hitch[=N]` and
-    /// `--capture-dir DIR`: frames for the frame debugger, as
+    /// `--capture-frame-at SECS` (repeatable), `--capture-on-hitch[=N]`
+    /// (past the start; `--capture-on-hitch-startup` for the first 2 s too,
+    /// #1207) and `--capture-dir DIR`: frames for the frame debugger, as
     /// `.flintframe` folders (#1086). Shift+F2 captures one too
     #[command(flatten)]
     pub frame_captures: crate::FrameCaptureArgs,
