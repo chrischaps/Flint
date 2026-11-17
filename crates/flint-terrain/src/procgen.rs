@@ -26,13 +26,19 @@ pub fn generate_heightmap(spec: &TerrainSpec, seed: u64) -> Vec<f32> {
 
 fn apply_noise(buffer: &mut [f32], res: usize, layer: &crate::spec::NoiseLayer, seed: u64) {
     let seed_u32 = (seed & 0xFFFF_FFFF) as u32;
+    // Each octave's noise is built once: `Perlin::new` shuffles a table, and
+    // building it per texel was nearly all of a bake's time (#719). The same
+    // seeds give the same tables, so the heights are unchanged bit for bit.
+    let octaves: Vec<OctaveNoise> = (0..layer.octaves)
+        .map(|octave| OctaveNoise::new(layer.noise_type, seed_u32.wrapping_add(octave)))
+        .collect();
 
     // Generate FBM noise values
     let noise_values: Vec<f32> = (0..res * res)
         .map(|idx| {
             let x = (idx % res) as f64 / res as f64;
             let y = (idx / res) as f64 / res as f64;
-            fbm_sample(x, y, layer, seed_u32) as f32 * layer.amplitude as f32
+            fbm_sample(x, y, layer, &octaves) as f32 * layer.amplitude as f32
         })
         .collect();
 
@@ -42,35 +48,45 @@ fn apply_noise(buffer: &mut [f32], res: usize, layer: &crate::spec::NoiseLayer, 
     }
 }
 
-fn fbm_sample(x: f64, y: f64, layer: &crate::spec::NoiseLayer, seed: u32) -> f64 {
+/// One octave's noise function, seeded.
+enum OctaveNoise {
+    Perlin(Perlin),
+    Simplex(OpenSimplex),
+    Value(ValueNoise),
+    Ridged(Perlin),
+}
+
+impl OctaveNoise {
+    fn new(kind: NoiseType, seed: u32) -> Self {
+        match kind {
+            NoiseType::Perlin => Self::Perlin(Perlin::new(seed)),
+            NoiseType::Simplex => Self::Simplex(OpenSimplex::new(seed)),
+            NoiseType::Value => Self::Value(ValueNoise::new(seed)),
+            NoiseType::Ridged => Self::Ridged(Perlin::new(seed)),
+        }
+    }
+
+    fn get(&self, p: [f64; 2]) -> f64 {
+        match self {
+            Self::Perlin(n) => n.get(p),
+            Self::Simplex(n) => n.get(p),
+            Self::Value(n) => n.get(p),
+            Self::Ridged(n) => 1.0 - n.get(p).abs(),
+        }
+    }
+}
+
+fn fbm_sample(x: f64, y: f64, layer: &crate::spec::NoiseLayer, octaves: &[OctaveNoise]) -> f64 {
     let mut total = 0.0;
     let mut freq = layer.frequency;
     let mut amp = 1.0;
     let mut max_amp = 0.0;
 
-    for octave in 0..layer.octaves {
-        let s = seed.wrapping_add(octave);
+    for noise in octaves {
         let nx = x * freq;
         let ny = y * freq;
 
-        let sample = match layer.noise_type {
-            NoiseType::Perlin => {
-                let n = Perlin::new(s);
-                n.get([nx, ny])
-            }
-            NoiseType::Simplex => {
-                let n = OpenSimplex::new(s);
-                n.get([nx, ny])
-            }
-            NoiseType::Value => {
-                let n = ValueNoise::new(s);
-                n.get([nx, ny])
-            }
-            NoiseType::Ridged => {
-                let n = Perlin::new(s);
-                1.0 - n.get([nx, ny]).abs()
-            }
-        };
+        let sample = noise.get([nx, ny]);
 
         total += sample * amp;
         max_amp += amp;
@@ -184,6 +200,10 @@ fn thermal_erosion(buffer: &mut [f32], res: usize, layer: &crate::spec::ErosionL
 }
 
 fn hydraulic_erosion(buffer: &mut [f32], res: usize, layer: &crate::spec::ErosionLayer, seed: u64) {
+    // A raindrop starts off the border, and a map under 3x3 has no inside
+    if res < 3 {
+        return;
+    }
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let strength = layer.strength as f32;
 

@@ -312,20 +312,10 @@ impl TerrainEditApp {
     fn regenerate(&mut self) {
         let start = Instant::now();
 
-        let seed = self.current_seed;
-        self.heightmap_data = flint_terrain::generate_heightmap(&self.spec, seed);
-
-        let geo = &self.spec.geometry;
-        self.splat_data = flint_terrain::generate_splat_map(
-            &self.heightmap_data,
-            geo.resolution,
-            geo.resolution, // splat same res as height
-            &self.spec.splat_rules,
-            geo.width,
-            geo.depth,
-            geo.height_scale,
-            seed,
-        );
+        // The same bake `flint gen x.terrain.toml` runs (#719)
+        let maps = flint_terrain::bake(&self.spec, self.current_seed);
+        self.heightmap_data = maps.heights;
+        self.splat_data = maps.splat;
 
         self.gen_time_ms = start.elapsed().as_secs_f64() * 1000.0;
 
@@ -596,10 +586,13 @@ impl TerrainEditApp {
                             .to_owned()
                             + "_splat.png",
                     );
+                    // The encoding `flint gen` writes, so the files match (#719)
                     let res = geo.resolution;
-                    let img = image::RgbaImage::from_raw(res, res, self.splat_data.clone())
-                        .expect("splat data size mismatch");
-                    match img.save(&splat_path) {
+                    let written = flint_terrain::encode_splat_png(&self.splat_data, res, res)
+                        .and_then(|png| {
+                            std::fs::write(&splat_path, png).map_err(|e| e.to_string())
+                        });
+                    match written {
                         Ok(()) => {
                             self.set_status(&format!(
                                 "Exported {} + {}",

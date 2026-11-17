@@ -258,6 +258,11 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
                                                              #   contact sheet (hold-and-glide from the spec's step/glide/stagger,
                                                              #   mesh rebuilt per frame, one fixed camera; --frames 48 --fps 24
                                                              #   --columns N --cell-size 240; byte-identical per machine, #210)
+   flint gen examples/rolling_meadow.terrain.toml -o terrain/meadow.png  # #719: a terrain spec, no window: 16-bit
+                                                             #   heightmap there + meadow_splat.png beside it (-o dir/ -> <name>.png);
+                                                             #   commands/terrain_gen.rs, routed like a .glyphs.toml; takes -o, --seed,
+                                                             #   --strict (unknown keys fail), --dry-run, --json (seed, coverage, sha256s);
+                                                             #   refuses procgen flags. Same bytes as the editor's Ctrl+E (flint_terrain::bake)
    # --ai-model, --ai-iterations, --ai-generator,
    # --print-spec (spec alone on stdout), --save-spec. Every API call goes through
    # flint_procgen_ai::CostMeter: priced, appended to the JSON Lines ledger, and

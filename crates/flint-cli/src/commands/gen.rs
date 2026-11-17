@@ -53,7 +53,9 @@ pub enum ReportFormat {
 pub struct GenArgs {
     /// Path to a .procgen.toml spec file (not needed with --ai-create or
     /// --cost-report), or a .glyphs.toml glyph set to preview: its atlas,
-    /// ramps and a specimen as one sheet (-o x.png) or every piece (-o dir/)
+    /// ramps and a specimen as one sheet (-o x.png) or every piece (-o dir/),
+    /// or a .terrain.toml to bake: its 16-bit heightmap (-o x.png, or
+    /// <name>.png in -o dir/) and x_splat.png beside it
     #[arg(required_unless_present_any = ["ai_create", "cost_report"])]
     pub spec: Option<String>,
 
@@ -304,6 +306,13 @@ pub fn run(args: GenArgs) -> Result<()> {
         .is_some_and(super::glyph_preview::is_glyph_set)
     {
         return super::glyph_preview::run(&args);
+    }
+    if args
+        .spec
+        .as_deref()
+        .is_some_and(super::terrain_gen::is_terrain_spec)
+    {
+        return super::terrain_gen::run(&args);
     }
     // `--report json` is a JSON line a variant; the global --json is one
     // document for the run, with each variant's report in it

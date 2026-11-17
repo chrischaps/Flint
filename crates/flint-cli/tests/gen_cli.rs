@@ -565,3 +565,135 @@ fn a_strip_is_byte_identical_across_runs_and_changes_with_glide() {
     let sheet = image::load_from_memory(&first).unwrap();
     assert_eq!(sheet.width(), 28 * 2 + 48 * 2 + 16);
 }
+
+// ── Terrain specs (#719) ────────────────────────────────────────────────
+
+/// The rolling meadow spec at 64 texels a side, written into `dir`, with
+/// `extra` appended (a stray key, say).
+fn small_terrain_spec(dir: &Path, extra: &str) -> PathBuf {
+    let src =
+        std::fs::read_to_string(repo_root().join("examples/rolling_meadow.terrain.toml")).unwrap();
+    let small = src.replace("resolution = 512", "resolution = 64");
+    assert_ne!(src, small, "rolling meadow no longer sets resolution = 512");
+    let path = dir.join("meadow.terrain.toml");
+    std::fs::write(&path, small + extra).unwrap();
+    path
+}
+
+#[test]
+fn a_terrain_spec_bakes_the_same_two_pngs_every_run() {
+    let dir = scratch("terrain");
+    let spec = small_terrain_spec(&dir, "");
+    let (a, b) = (dir.join("a/"), dir.join("b/"));
+    for out in [&a, &b] {
+        let o = gen(&[s(&spec), "-o", out.to_str().unwrap()]);
+        assert!(o.status.success(), "{}", text(&o));
+        assert!(!text(&o).contains("warning"), "{}", text(&o));
+    }
+    for name in ["rolling_meadow.png", "rolling_meadow_splat.png"] {
+        let first = std::fs::read(a.join(name)).unwrap();
+        assert_eq!(
+            first,
+            std::fs::read(b.join(name)).unwrap(),
+            "{name} differs"
+        );
+    }
+    let height = image::open(a.join("rolling_meadow.png")).unwrap();
+    assert_eq!(height.color(), image::ColorType::L16);
+    assert_eq!((height.width(), height.height()), (64, 64));
+    let splat = image::open(a.join("rolling_meadow_splat.png")).unwrap();
+    assert_eq!(splat.color(), image::ColorType::Rgba8);
+
+    // A heightmap that reads back as hills, not byte-swapped static: from
+    // one texel to the next, heights move a little
+    let h = height.into_luma16();
+    let steps: Vec<f64> = h
+        .rows()
+        .flat_map(|row| {
+            let row: Vec<u16> = row.map(|p| p.0[0]).collect();
+            row.windows(2)
+                .map(|w| (f64::from(w[0]) - f64::from(w[1])).abs() / 65535.0)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let mean = steps.iter().sum::<f64>() / steps.len() as f64;
+    assert!(mean < 0.05, "mean step {mean}: the heightmap is noise");
+}
+
+#[test]
+fn a_terrain_heightmap_path_puts_the_splat_map_beside_it() {
+    let dir = scratch("terrain_named");
+    let spec = small_terrain_spec(&dir, "");
+    let out = dir.join("maps/hills.png");
+    let o = gen(&[s(&spec), "-o", s(&out), "--seed", "3"]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert!(text(&o).contains("3 (--seed)"), "{}", text(&o));
+    assert!(out.is_file());
+    assert!(dir.join("maps/hills_splat.png").is_file());
+}
+
+#[test]
+fn an_unknown_terrain_key_is_named_and_strict_refuses_it() {
+    let dir = scratch("terrain_unknown");
+    let spec = small_terrain_spec(&dir, "\n[[height_layers]]\nop = \"noise\"\noctave = 3\n");
+    let out = dir.join("out/");
+    let o = gen(&[s(&spec), "-o", s(&out)]);
+    assert!(o.status.success(), "{}", text(&o));
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("height_layers[4].octave") && err.contains("did you mean `octaves`?"),
+        "{err}"
+    );
+
+    let strict = dir.join("strict/");
+    let o = gen(&[s(&spec), "-o", s(&strict), "--strict"]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("--strict"), "{}", text(&o));
+    assert!(!strict.exists(), "--strict wrote maps anyway");
+}
+
+#[test]
+fn a_procgen_flag_on_a_terrain_spec_is_refused() {
+    let dir = scratch("terrain_flags");
+    let spec = small_terrain_spec(&dir, "");
+    let o = gen(&[s(&spec), "--batch", "3"]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(
+        text(&o).contains("--batch is for .procgen.toml specs"),
+        "{}",
+        text(&o)
+    );
+    let o = gen(&[s(&spec), "-o", s(&dir.join("x.glb"))]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+}
+
+#[test]
+fn a_terrain_bake_answers_json_with_each_file_hashed() {
+    let dir = scratch("terrain_json");
+    let spec = small_terrain_spec(&dir, "");
+    let out = dir.join("out/");
+    let o = Command::new(FLINT)
+        .args(["--json", "gen", s(&spec), "-o", s(&out)])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", text(&o));
+    let doc: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(doc["seed"], 7);
+    assert_eq!(doc["resolution"], 64);
+    let files = doc["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2);
+    for f in files {
+        let bytes = std::fs::read(f["path"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            f["sha256"].as_str().unwrap(),
+            flint_core::ContentHash::from_bytes(&bytes).to_hex()
+        );
+    }
+    let shares: f64 = doc["coverage"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["share"].as_f64().unwrap())
+        .sum();
+    assert!((shares - 1.0).abs() < 0.01, "coverage sums to {shares}");
+}
