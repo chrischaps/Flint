@@ -873,7 +873,7 @@ Turn an entity into glyphs at a story beat and animate how it looks (#269). Thes
 
 Calls are queued and applied after the frame's scripts, before the renderer reads the world, so a change shows the same frame. Each `set_entity_style` and each `clear_entity_style` that removed something fires `style_changed` to every script's `on_event`, with `#{ entity, style }` (`style` is `""` after a clear). A param change fires nothing, since it may come every frame.
 
-Changing a param every frame is cheap: it becomes a row of the style's variant table, written into the uniform buffer the pass already has, with no new buffer, texture or bind group. Mistakes (an unknown style or setting, a wrong type, a param before any style) are logged as warnings and change nothing. Whole-frame styles such as `kuwahara` can't be set per entity; switch them with [`set_post_style`](#whole-frame-styles).
+Changing a param every frame is cheap: it becomes a row of the style's variant table, written into the storage buffers the pass already has, with no new buffer, texture or bind group (the table grows only when the frame has more variants than it has held, #740). Mistakes (an unknown style or setting, a wrong type, a param before any style) are logged as warnings and change nothing. Whole-frame styles such as `kuwahara` can't be set per entity; switch them with [`set_post_style`](#whole-frame-styles).
 
 A clear only removes the entity's own style. One it inherits from an ancestor, or the scene's whole-frame ASCII, still reaches it: to keep it smooth under those, use `set_style_param(id, "enabled", false)`.
 

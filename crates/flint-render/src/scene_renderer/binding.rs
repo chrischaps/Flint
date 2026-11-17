@@ -165,6 +165,8 @@ impl SceneRenderer {
         self.set_scene_shadows(true);
         self.set_default_lights(true);
         self.lights.forget_warnings();
+        // A new scene says its own styles' dropped entities (#740)
+        crate::stylize::variant_table::forget_dropped();
         if let Some(env) = &binding.environment {
             self.set_environment(env);
         }

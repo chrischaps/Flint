@@ -297,6 +297,9 @@ pub struct StyleIds {
     shown: Vec<(bool, bool)>,
     /// Whether the frame tears ([`crate::postprocess::tear_active`]).
     tear_on: bool,
+    /// Beside `names` (#740): the first styled root (by name) drawn in
+    /// each id, the entity a cap names when it leaves the id out.
+    entities: Vec<String>,
 }
 
 impl StyleIds {
@@ -378,7 +381,18 @@ impl StyleIds {
     pub fn set(&mut self, mut entries: Vec<(String, StyleVariant)>) -> bool {
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         entries.dedup_by(|a, b| a.0 == b.0);
-        entries.truncate(u16::MAX as usize - 1);
+        // The mask holds an id in 16 bits, 0 for none
+        let cap = u16::MAX as usize - 1;
+        if let Some((name, _)) = entries.get(cap) {
+            crate::stylize::variant_table::report_drop(
+                "style mask",
+                "style ids",
+                cap,
+                name,
+                "drawn unstyled",
+            );
+        }
+        entries.truncate(cap);
         let same = self.names.len() == entries.len()
             && self.names.iter().zip(&entries).all(|(a, (b, _))| a == b);
         if same {
@@ -390,6 +404,7 @@ impl StyleIds {
             return false;
         }
         (self.names, self.variants) = entries.into_iter().unzip();
+        self.entities.clear();
         self.faded = vec![false; self.names.len()];
         self.shown = vec![(true, true); self.names.len()];
         true
@@ -408,6 +423,19 @@ impl StyleIds {
         (id as usize)
             .checked_sub(1)
             .and_then(|i| self.names.get(i))
+            .map(String::as_str)
+    }
+
+    /// The first styled root (by name) drawn in id `id`: the entity a
+    /// style's cap names when it leaves the id out (#740). The id's own
+    /// name when the entities aren't known (a table made with [`Self::set`]
+    /// alone).
+    pub fn entity(&self, id: u16) -> Option<&str> {
+        let i = (id as usize).checked_sub(1)?;
+        self.entities
+            .get(i)
+            .filter(|e| !e.is_empty())
+            .or_else(|| self.names.get(i))
             .map(String::as_str)
     }
 
@@ -883,7 +911,20 @@ pub(crate) fn resolve_blended(
         .iter()
         .map(|&e| (e, request(world, config, e)))
         .collect();
-    ids.set(requests.iter().filter_map(|(_, r)| r.clone()).collect());
+    let changed = ids.set(requests.iter().filter_map(|(_, r)| r.clone()).collect());
+    if changed || ids.entities.len() != ids.len() {
+        // Roots come in name order, so the first an id meets is its first
+        let mut entities = vec![String::new(); ids.len()];
+        for (root, req) in &requests {
+            if let Some(id) = req.as_ref().and_then(|(n, _)| ids.id(n)) {
+                let slot = &mut entities[id as usize - 1];
+                if slot.is_empty() {
+                    *slot = world.get_name(*root).unwrap_or_default().to_string();
+                }
+            }
+        }
+        ids.entities = entities;
+    }
     let mut stack = Vec::new();
     // Ids with a root above blend 0 (#400), a pair of flags per id: one at
     // its own blend, one following the tear (#397)

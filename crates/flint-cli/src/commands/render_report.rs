@@ -38,6 +38,11 @@ pub struct RenderReport {
     /// With --scripts: every script error of the run, each once with its
     /// count (#693). Empty when every script ran clean.
     pub script_errors: Vec<ScriptErrorReport>,
+    /// What a style's cap left out (#740): the style, the cap, how many it
+    /// holds, the first entity past it and how that entity drew instead.
+    /// Left out of the JSON when nothing was.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub style_drops: Vec<flint_render::stylize::variant_table::Dropped>,
 }
 
 /// One way a script failed (#693), as `flint_script::ScriptError` counts it.
@@ -339,6 +344,7 @@ mod tests {
             still_props: vec![],
             warnings: vec![],
             script_errors: vec![],
+            style_drops: vec![],
         };
         let json: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();

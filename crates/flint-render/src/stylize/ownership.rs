@@ -19,22 +19,22 @@
 //! fading out of its style fades into the whole frame's.
 
 use super::kit;
+use super::variant_table::{storage_entry, GrowingStorage};
 use super::{StyleFrame, StyleInput};
 use std::sync::Mutex;
+
+const OWNERS_BG: &str = "Style Ownership Owners BG";
 
 /// No style owns this mask id.
 pub const NONE: u32 = u32::MAX;
 
-/// How many mask ids the owner table holds; ids past it stay the whole
-/// frame's (the mask has room for more, a frame never has this many).
-pub const MAX_IDS: usize = 256;
-
 pub(crate) struct OwnershipPass {
     module: kit::Shader,
-    uniform_bgl: wgpu::BindGroupLayout,
+    owners_bgl: wgpu::BindGroupLayout,
     input_bgl: wgpu::BindGroupLayout,
     mask_bgl: wgpu::BindGroupLayout,
-    uniforms: wgpu::Buffer,
+    /// Each mask id's owner, as long as the frame's ids (#740).
+    owners: Mutex<GrowingStorage>,
     /// One pipeline per target format (the HDR stage's and the display
     /// stage's), made on first use.
     pipelines: Mutex<Vec<(wgpu::TextureFormat, std::sync::Arc<wgpu::RenderPipeline>)>>,
@@ -51,15 +51,13 @@ impl OwnershipPass {
                 "Style Ownership Shader",
                 kit::wgsl!("ownership.wgsl"),
             ),
-            uniform_bgl: kit::uniform_layout(device, "Style Ownership Uniform BGL"),
+            owners_bgl: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Style Ownership Owners BGL"),
+                entries: &[storage_entry(0)],
+            }),
             input_bgl: kit::sampled_layout(device, "Style Ownership Input BGL"),
             mask_bgl: kit::mask_layout(device, "Style Ownership Mask BGL"),
-            uniforms: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Style Ownership Uniforms"),
-                size: (MAX_IDS * 4) as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            owners: Mutex::new(GrowingStorage::new(device, "Style Ownership Owners", 4)),
             pipelines: Mutex::new(Vec::new()),
             written: Mutex::new(None),
         }
@@ -95,7 +93,7 @@ impl OwnershipPass {
                     "Style Ownership Pipeline",
                     &self.module,
                     "fs_main",
-                    &[&self.uniform_bgl, &self.input_bgl, &self.mask_bgl],
+                    &[&self.owners_bgl, &self.input_bgl, &self.mask_bgl],
                     format,
                     Some(blend),
                 )
@@ -124,21 +122,26 @@ impl OwnershipPass {
         let Some(mask) = frame.mask_bind("Style Ownership Mask BG", &self.mask_bgl) else {
             return false;
         };
-        {
+        let uniform = {
+            let mut owners = self.owners.lock().unwrap_or_else(|e| e.into_inner());
             let mut written = self.written.lock().unwrap_or_else(|e| e.into_inner());
             if written.as_deref() != Some(&table[..]) {
-                frame
-                    .queue
-                    .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&table));
+                owners.write_words(frame.device, frame.queue, &table, NONE);
                 *written = Some(table);
             }
-        }
+            let buffer = owners.buffer();
+            frame.bind(OWNERS_BG, owners.generation(), || {
+                frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(OWNERS_BG),
+                    layout: &self.owners_bgl,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                })
+            })
+        };
         let pipeline = self.pipeline(frame.device, frame.format);
-        let uniform = frame.uniform(
-            "Style Ownership Uniform BG",
-            &self.uniform_bgl,
-            &self.uniforms,
-        );
         let input_bg = frame.sampled_input("Style Ownership Input BG", &self.input_bgl, input);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Style Ownership Pass"),
