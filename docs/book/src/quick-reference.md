@@ -334,7 +334,8 @@ position = [0, 0, 0]
 | `play_clip(id, clip)` | --- | Play an animation clip |
 | `set_anim_layer(id, idx, clip, w)` | --- | Play a clip on an animation layer |
 | `set_anim_layer_weight(id, idx, w)` | --- | Set a layer's weight instantly |
-| `fade_anim_layer(id, idx, w, secs)` | --- | Ramp a layer's weight over `secs` |
+| `fade_anim_layer(id, idx, w, secs[, easing])` | --- | Ramp a layer's weight over `secs` |
+| `tween(id, "component.field", target, secs[, easing])` | --- | Ease any numeric field over game time; fires `tween_done` |
 | `play_sequence(id, name)` / `stop_sequence(id)` | --- | Drive the animator from `animations/*.sequence.toml` (cues → `on_sequence_cue`) |
 | `raycast(ox,oy,oz, dx,dy,dz, dist)` | `Map`/`()` | Cast a ray, get hit info |
 | `raycast_meshes(ox,oy,oz, dx,dy,dz, dist)` / `screen_to_mesh(x, y)` | `Map`/`()` | The same against the meshes drawn as ray targets, no physics needed: a wall in the camera's way, the roof under the cursor ([ADR 0105](https://github.com/chrischaps/Flint/blob/main/docs/adr/0105-rays-against-drawn-meshes.md)) |

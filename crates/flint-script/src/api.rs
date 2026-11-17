@@ -60,6 +60,7 @@ mod terrain;
 mod test;
 mod time;
 mod touch;
+mod tween;
 mod ui;
 mod view;
 
@@ -110,4 +111,5 @@ pub fn register_all(api: &mut ScriptApi, random: &crate::random::ScriptRandom) {
     expression::register(api);
     music::register(api);
     test::register(api);
+    tween::register(api);
 }

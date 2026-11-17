@@ -2,6 +2,8 @@
 
 use std::collections::HashSet;
 
+use flint_core::tween::Easing;
+
 /// How an animation layer composes onto the pose beneath it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LayerMode {
@@ -53,6 +55,8 @@ pub struct AnimLayer {
     pub fade_target: f32,
     /// Seconds for the ramp; 0 = no fade in progress
     pub fade_duration: f32,
+    /// How the ramp moves (#734): linear unless the layer says otherwise
+    pub fade_easing: Easing,
 }
 
 impl Default for AnimLayer {
@@ -66,6 +70,7 @@ impl Default for AnimLayer {
             speed: 1.0,
             fade_target: 1.0,
             fade_duration: 0.0,
+            fade_easing: Easing::Linear,
         }
     }
 }

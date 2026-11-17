@@ -11,6 +11,7 @@ use crate::skeletal_clip::{JointProperty, SkeletalClip};
 use crate::skeletal_sampler::sample_joint_track;
 use crate::skeleton::{JointPose, Skeleton};
 use flint_core::components as comp;
+use flint_core::tween::{Easing, Tween};
 use flint_core::EntityId;
 use flint_ecs::ComponentView;
 use flint_ecs::FlintWorld;
@@ -119,23 +120,22 @@ pub struct SkeletalSync {
     completed_fades: Vec<(EntityId, usize)>,
 }
 
-/// One layer weight ramp
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct LayerFade {
-    from: f32,
-    to: f32,
-    duration: f32,
-    elapsed: f32,
+/// One layer weight ramp: the engine's one tween (#734), eased as the
+/// layer's `fade_easing` says.
+type LayerFade = Tween<f32>;
+
+/// A ramp for `layer`'s fade, from `weight`.
+fn fade_for(weight: f32, layer: &AnimLayer) -> LayerFade {
+    let seconds = f64::from(layer.fade_duration);
+    Tween::new(weight, layer.fade_target, seconds, layer.fade_easing)
 }
 
-impl LayerFade {
-    fn weight(&self) -> f32 {
-        let t = (self.elapsed / self.duration).clamp(0.0, 1.0);
-        self.from + (self.to - self.from) * t
-    }
-    fn done(&self) -> bool {
-        self.elapsed >= self.duration
-    }
+/// Whether `fade` is the ramp `layer` asks for, so a sync that sees it again
+/// leaves it running.
+fn is_layer_fade(fade: &LayerFade, layer: &AnimLayer) -> bool {
+    *fade.target() == layer.fade_target
+        && fade.seconds() == f64::from(layer.fade_duration)
+        && fade.easing() == layer.fade_easing
 }
 
 /// Turn `skeleton`'s local poses by `offsets`. Callers restore the poses after
@@ -189,6 +189,10 @@ impl SkeletalSync {
         for (i, incoming) in ecs.into_iter().enumerate() {
             let fading = incoming.fade_duration > 0.0;
             if let Some(cur) = state.layers.get_mut(i) {
+                let fade = fading.then(|| match &fades[i] {
+                    Some(running) if is_layer_fade(running, &incoming) => *running,
+                    _ => fade_for(cur.weight, &incoming),
+                });
                 if cur.clip != incoming.clip {
                     cur.clip = incoming.clip;
                     cur.time = 0.0;
@@ -198,30 +202,14 @@ impl SkeletalSync {
                 cur.speed = incoming.speed;
                 cur.fade_target = incoming.fade_target;
                 cur.fade_duration = incoming.fade_duration;
-                if fading {
-                    let same = fades[i].is_some_and(|f| {
-                        f.to == incoming.fade_target && f.duration == incoming.fade_duration
-                    });
-                    if !same {
-                        fades[i] = Some(LayerFade {
-                            from: cur.weight,
-                            to: incoming.fade_target,
-                            duration: incoming.fade_duration,
-                            elapsed: 0.0,
-                        });
-                    }
-                } else {
+                cur.fade_easing = incoming.fade_easing;
+                if fade.is_none() {
                     cur.weight = incoming.weight;
-                    fades[i] = None;
                 }
+                fades[i] = fade;
             } else {
                 if fading {
-                    fades[i] = Some(LayerFade {
-                        from: incoming.weight,
-                        to: incoming.fade_target,
-                        duration: incoming.fade_duration,
-                        elapsed: 0.0,
-                    });
+                    fades[i] = Some(fade_for(incoming.weight, &incoming));
                 }
                 state.layers.push(incoming);
             }
@@ -383,7 +371,8 @@ impl SkeletalSync {
                 let target_clip_name = state.blend_target.clone();
                 if let Some(target_clip) = self.clips.get(&target_clip_name) {
                     state.blend_elapsed += dt as f32;
-                    let blend_weight = (state.blend_elapsed / state.blend_duration).min(1.0);
+                    let blend_weight =
+                        Easing::Linear.over(state.blend_elapsed, state.blend_duration);
 
                     // Sample the target clip over the REST pose (same sparse-
                     // clip rule as above) so joints the target doesn't key
@@ -465,10 +454,9 @@ impl SkeletalSync {
                 // zero-weight early-outs so a fade-in from 0 actually starts.
                 if let Some(fade) = fades.as_deref_mut().and_then(|f| f.get_mut(li)) {
                     if let Some(f) = fade {
-                        f.elapsed += dt as f32;
-                        layer.weight = f.weight();
+                        // Its target exactly once it's done
+                        layer.weight = f.step(dt);
                         if f.done() {
-                            layer.weight = f.to;
                             layer.fade_duration = 0.0;
                             *fade = None;
                             self.completed_fades.push((entity_id, li));
@@ -693,7 +681,7 @@ impl SkeletalSync {
         self.fades
             .get(entity_id)?
             .get(index)?
-            .map(|f| (f.to, (f.duration - f.elapsed).max(0.0)))
+            .map(|f| (*f.target(), (f.seconds() - f.elapsed()).max(0.0) as f32))
     }
 
     /// Sample a clip's joint tracks into a pose array
@@ -1005,6 +993,50 @@ mod tests {
             .unwrap();
         step(&mut sync, &mut world, 0.05);
         assert_eq!(sync.layers(&eid).unwrap()[0].weight, 0.25);
+    }
+
+    /// `fade_anim_layer(id, i, w, s, easing)` (#734): the ramp follows the
+    /// engine's easing, written as the layer's `fade_easing`, and a change
+    /// of easing alone is a new ramp.
+    #[test]
+    fn an_eased_layer_fade_follows_its_easing() {
+        let mut sync = SkeletalSync::new();
+        sync.add_clip(slide_clip("idle", 4.0));
+        sync.add_clip(slide_clip("pose", 4.0));
+        let (mut world, eid) = world_with_animator("idle", "", 0.1);
+        sync.add_skeleton(eid, one_joint_skeleton());
+        let fade = |world: &mut FlintWorld, easing: Easing| {
+            let mut comps = world.get_components_mut(eid).unwrap();
+            animator::edit_layer(&mut comps, 0, |layer| {
+                layer.clip("pose").weight(0.0).fade_eased(1.0, 1.0, easing);
+            });
+        };
+        fade(&mut world, Easing::EaseIn);
+        let step = |sync: &mut SkeletalSync, world: &mut FlintWorld| {
+            sync.sync_from_world(world);
+            sync.advance_and_compute(0.25);
+            sync.write_back(world);
+        };
+        step(&mut sync, &mut world);
+        step(&mut sync, &mut world);
+        let w = sync.layers(&eid).unwrap()[0].weight;
+        assert!((w - 0.125).abs() < 1e-5, "half way, ease_in: {w}");
+        assert_eq!(
+            ecs_layer0(&world, eid)["fade_easing"].as_str(),
+            Some("ease_in")
+        );
+
+        // Same target and length, another easing: a new ramp from here
+        fade(&mut world, Easing::EaseOut);
+        step(&mut sync, &mut world);
+        let w = sync.layers(&eid).unwrap()[0].weight;
+        let expected = 0.125 + 0.875 * Easing::EaseOut.apply(0.25) as f32;
+        assert!((w - expected).abs() < 1e-5, "{w} against {expected}");
+        for _ in 0..4 {
+            step(&mut sync, &mut world);
+        }
+        assert_eq!(sync.layers(&eid).unwrap()[0].weight, 1.0);
+        assert!(sync.layer_fade(&eid, 0).is_none());
     }
 
     #[test]
