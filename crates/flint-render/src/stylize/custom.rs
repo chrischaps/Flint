@@ -4981,17 +4981,20 @@ fn style(p: StylePixel) -> vec4<f32> {
         let (settings, warnings) = super::super::StyleSettings::from_tables(&tables);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.param("utest_good", "k"), Some(0.25));
-        // Loading again is a no-op. Counted by name: tests running beside
-        // this one register styles of their own in the same registry
+        // Loading again is a no-op: each of this test's two styles is still
+        // registered once. Counted by exact name, never by the registry's
+        // length: tests running beside this one register styles of their
+        // own in the same process-wide registry (#519), and no other test
+        // takes these two names
         let copies = || {
             super::super::registry()
                 .iter()
-                .filter(|d| d.name.starts_with("utest_good") || d.name.starts_with("utest_bad"))
+                .filter(|d| d.name == "utest_good" || d.name == "utest_bad")
                 .count()
         };
-        let before = copies();
+        assert_eq!(copies(), 2, "each style registered once");
         assert!(load_dir(&dir).is_empty());
-        assert_eq!(copies(), before);
+        assert_eq!(copies(), 2, "a second load registered a style again");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
