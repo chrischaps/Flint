@@ -390,7 +390,17 @@ A note made inside another, such as a model inside a transition or a pipeline in
 | `physics steps` | a frame that ran more than one fixed step |
 | `clock stall` | a frame over 250 ms, which pacing passed through as it was |
 
-A `clock stall` is the long frame itself, so it is kept on the hitch but is no cause. Notes are made only on the player's frame thread and only while the history records. Otherwise each call site costs a flag read, about 1 ns. Collecting a frame's notes costs 2 to 3 ns. The F2 graph and the hitch log are what show them.
+A `clock stall` is the long frame itself, so it is kept on the hitch but is no cause. Neither is `physics steps`: extra fixed steps are the clock paying back the game time a long frame before owed, and their own cost is the `physics` phase's, which the hitch names by phase.
+
+The notes are named as a hitch's cause only when their times together cover at least half of its excess over the median, the rule a script callback is blamed by. Otherwise whose time it was comes first, and the notes follow it by kind and time:
+
+```text
+scene transition b.scene.toml, 151.2 ms
+sync +9.1 ms (also: reload poll 1.2 ms)
+render +40.0 ms (also: pipeline build 3.0 ms the frame before)
+```
+
+A note with no time (none of the engine's today) can't be weighed, so it is named. Notes are made only on the player's frame thread and only while the history records. Otherwise each call site costs a flag read, about 1 ns. Collecting a frame's notes costs 2 to 3 ns. The F2 graph and the hitch log are what show them.
 
 `FLINT_HITCH_FACTOR` (at least 1, default 2) and `FLINT_HITCH_FLOOR_MS` (default 8) change the thresholds.
 
@@ -466,7 +476,7 @@ The perf line's count includes the start's hitches; the exit report below sets t
 | `phase`, `phase_ms` | the phase that grew most, and by how much (`player` only) |
 | `script`, `script_ms` | the script callback that took longest (`player` only) |
 | `present_ms` | the `present` phase's share (`elsewhere` only) |
-| `cause` | the line the report and the perf line name it by: the engine's notes when it has any, else the script, the phase or `elsewhere` |
+| `cause` | the line the report and the perf line name it by: the engine's notes when they cover half the hitch, else the script, the phase or `elsewhere`, with the notes after it as `(also: ..)` |
 | `notes` | the frame notes of its frame and the frame before, each with `kind`, `detail`, `ms`, `depth` and `frame_before` |
 | `before_ms`, `after_ms` | the eight frames either side, oldest first |
 
