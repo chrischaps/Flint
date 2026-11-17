@@ -178,8 +178,8 @@ flint-player examples/hitch_metronome.scene.toml --capture-on-hitch --exit-after
 ```
 
 ```text
-[debug] capture: capturing the frame at t=2.00 s to captures/tavern_hub-t2.004.flintframe
-[capture] wrote captures/tavern_hub-t2.004.flintframe: 18 images from 8 passes, 5.9 MB
+INFO player: [debug] capture: capturing the frame at t=2.00 s to captures/tavern_hub-t2.004.flintframe
+INFO player: [capture] wrote captures/tavern_hub-t2.004.flintframe: 18 images from 8 passes, 5.9 MB
 ```
 
 - **Triggers.** `--capture-frame-at <secs>` (repeatable), **Shift+F2** while playing (the player's `capture_frame` debug key, which `[debug_keys]` can move; the note at the top of the window names the folder), `capture frame` in an `--input-script`, and `--capture-on-hitch[=N]` for the first N hitches. `flint play` takes the same flags. Captures go to `--capture-dir`, or `captures/` at the project's root, which `.gitignore` leaves out: a capture holds renders of a game's content.

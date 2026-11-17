@@ -479,7 +479,7 @@ pub fn resolve(
     }
 
     let props = resolver.living_props();
-    eprintln!(
+    tracing::debug!(target: "load",
         "[living] {} prop(s) on {} lineage(s)",
         props.props().len(),
         props.lineage_count()
@@ -491,7 +491,7 @@ pub fn resolve(
             apply_lineages(&done, sink);
             let props = resolver.living_props();
             let poses: usize = props.props().iter().map(|p| p.ready()).sum();
-            eprintln!(
+            tracing::debug!(target: "load",
                 "[living] {} lineage(s) and {poses} poses in {:.0} ms",
                 done.len(),
                 started.elapsed().as_secs_f64() * 1e3,

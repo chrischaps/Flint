@@ -11,6 +11,8 @@ use winit::keyboard::KeyCode;
 
 /// The player's actions, by the names `[debug_keys]` rebinds.
 const KEYS: &str = "keys";
+/// The action that shows the list, which the controls line names (#716)
+pub(super) const SHOW_KEYS_ACTION: &str = KEYS;
 const STATS: &str = "stats";
 #[cfg(feature = "debug-hud")]
 const PANELS: &str = "panels";
@@ -200,11 +202,11 @@ impl PlayerApp {
     pub(super) fn say_debug_key_config(&self) {
         let table = self.debug_key_table();
         for name in &table.unknown {
-            println!("[debug] [debug_keys] {name}: no debug key has this name (flint-player --list-keys lists them)");
+            tracing::warn!(target: "player", "[debug] [debug_keys] {name}: no debug key has this name (flint-player --list-keys lists them)");
         }
         for e in &table.entries {
             if let Standing::Clash(first) = e.standing {
-                println!(
+                tracing::warn!(target: "player",
                     "[debug] [debug_keys] {}: {} is `{first}`'s already, so it does nothing",
                     e.action,
                     e.key_label()
@@ -219,7 +221,7 @@ impl PlayerApp {
     pub(crate) fn list_debug_keys(&mut self) -> DebugKeyTable {
         self.refresh_project();
         if let Err(e) = self.configure_input_bindings() {
-            eprintln!("[debug] input config: {e:#}");
+            tracing::warn!(target: "input", "[debug] input config: {e:#}");
         }
         self.debug_key_table()
     }

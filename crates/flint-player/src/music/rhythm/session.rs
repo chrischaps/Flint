@@ -263,7 +263,7 @@ impl MusicSession {
         // is that input/timing liveness must be LOUD.
         let offsets = flint_rhythm::chart_session::resolve_timing_offsets(base_dir);
         for n in &offsets.notices {
-            println!("[music] {n}");
+            tracing::info!(target: "music", "{n}");
         }
         let (latency_ms, calibration_ms) = (offsets.latency_ms, offsets.calibration_ms);
 
@@ -285,13 +285,13 @@ impl MusicSession {
         // The shared manager (ADR 0017): the borrow ends at start — the
         // session keeps only kira handles, the manager stays in the engine.
         let Some(manager) = audio.manager_mut() else {
-            println!("[music] no audio device — session skipped");
+            tracing::info!(target: "music", "no audio device — session skipped");
             return Ok(None);
         };
         let (mut session, notices) =
             ChartSession::open_shared(&cfg, manager).map_err(|e| anyhow!("{e}"))?;
         for n in notices {
-            println!("[music] {n}");
+            tracing::info!(target: "music", "{n}");
         }
 
         // Gamepad handoff (ADR 0018): the capture thread owns the pad for the
@@ -313,8 +313,8 @@ impl MusicSession {
                 let (tx, rx) = std::sync::mpsc::channel();
                 let bridge = session.bridge();
                 session.set_input(rx, Box::new(()));
-                println!(
-                    "[music] *** NO GAMEPADS VISIBLE — debug KEYBOARD input armed \
+                tracing::info!(target: "music",
+                    "*** NO GAMEPADS VISIBLE — debug KEYBOARD input armed \
                      (debug-hud build): arrows = lean, Space = pulse. Prototype \
                      verbs only; not a feel surface."
                 );
@@ -336,7 +336,7 @@ impl MusicSession {
             for n in
                 flint_input_capture::attach_session_input(&mut session, verb_map, offset_samples)
             {
-                println!("[music] {n}");
+                tracing::info!(target: "music", "{n}");
             }
         }
 
@@ -411,7 +411,7 @@ impl MusicSession {
             }
         };
         for n in &outcome.notices {
-            println!("[music] {n}");
+            tracing::info!(target: "music", "{n}");
         }
 
         // Once per second: stem-skew evidence with the ADR 0017 re-read
@@ -570,19 +570,19 @@ impl MusicSession {
     pub fn stop(mut self) {
         self.session.stop_audio(STOP_FADE_MS);
         let evidence = format!(
-            "[music] session evidence: max confirmed skew {:.3} ms | events {} | \
+            "session evidence: max confirmed skew {:.3} ms | events {} | \
              monotonic violations {}",
             self.max_confirmed_skew_ms, self.events_total, self.monotonic_violations,
         );
         match self.session.finish() {
             Ok(notices) => {
                 for n in notices {
-                    println!("[music] {n}");
+                    tracing::info!(target: "music", "{n}");
                 }
             }
             Err(e) => tracing::warn!("music session finish failed: {e}"),
         }
-        println!("{evidence}");
+        tracing::info!(target: "music", "{evidence}");
     }
 }
 

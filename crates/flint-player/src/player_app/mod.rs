@@ -7,10 +7,12 @@ mod alloc_count;
 #[cfg(test)]
 mod asset_search_tests;
 mod camera_cut;
+// The load summary and controls line a scene says when it comes up (#716)
 #[cfg(test)]
 mod capture_gate_tests;
 #[cfg(all(test, feature = "debug-hud"))]
 mod component_panel_tests;
+mod console;
 #[cfg(test)]
 mod debug_key_tests;
 mod debug_keys;

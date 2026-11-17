@@ -192,17 +192,6 @@ enum Commands {
 }
 
 fn main() -> std::process::ExitCode {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                // `script=info`: what scripts print, and the script system's
-                // reloads (#703)
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,rfd=off,script=info")),
-        )
-        // Stdout belongs to what a command answers with, such as --report json.
-        .with_writer(std::io::stderr)
-        .init();
-
     // The old names (`play-chart` is `music chart play`, #709;
     // `render-suite <x>.goldens.toml` is `goldens`, #327) still run
     let (argv, moved) = legacy_names::route(std::env::args_os().collect());
@@ -229,6 +218,27 @@ fn main() -> std::process::ExitCode {
             e.exit();
         }
     };
+    // Installed once the command is known: the player says what
+    // `flint-player` says, as its `--log-format` and `--quiet` ask (#716)
+    match &cli.command {
+        Commands::Play(play) => flint_player::logging::init(&play.player.log),
+        _ => {
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                        // `script=info`: what scripts print, and the script
+                        // system's reloads (#703). `load=debug`: each file a
+                        // render or an editor loads, which the player counts
+                        // into one summary instead (#716)
+                        tracing_subscriber::EnvFilter::new("warn,rfd=off,script=info,load=debug")
+                    }),
+                )
+                // Stdout belongs to what a command answers with, such as --report json.
+                .with_writer(std::io::stderr)
+                .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+                .init();
+        }
+    }
     output::set_json(cli.json);
     output::finish(run(cli))
 }

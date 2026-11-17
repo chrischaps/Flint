@@ -842,7 +842,7 @@ impl super::PlayerApp {
                         let _ = writeln!(f, "{line}");
                     }
                 }
-                eprintln!("{line}");
+                tracing::info!(target: "perf", "{line}");
             }
         }
     }

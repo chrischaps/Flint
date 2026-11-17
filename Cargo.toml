@@ -174,7 +174,7 @@ ndk = "0.9"
 android_logger = "0.14"
 log = "0.4"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # HTTP
 ureq = { version = "3", features = ["json"] }

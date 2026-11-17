@@ -855,7 +855,7 @@ impl super::PlayerApp {
             );
         }
         for line in self.frame_captures.take_said() {
-            println!("[capture] {line}");
+            tracing::info!(target: "player", "[capture] {line}");
         }
     }
 }

@@ -168,7 +168,7 @@ impl DiskCache {
                 self.stats.evictions += imp::trim(&self.config.dir, self.config.max_bytes, &path);
             }
             Err(e) => {
-                eprintln!(
+                tracing::warn!(target: "load",
                     "[procgen] could not keep {} in the disk cache: {e}",
                     path.display()
                 );

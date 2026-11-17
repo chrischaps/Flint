@@ -514,6 +514,13 @@ pub(super) struct InputLayers {
     pub(super) config_paths: Option<InputConfigPaths>,
     pub(super) user_override: InputConfig,
     pub(super) pending_rebind: Option<PendingRebind>,
+    /// The actions the game's layer and `--input-config` name: what the
+    /// controls line lists (#716), with the player's rebinds on them. Empty
+    /// when neither names any, and the built-ins are the game's controls.
+    pub(super) named_actions: std::collections::BTreeSet<String>,
+    /// The controls line last said, so a transition says it again only
+    /// when the bindings changed
+    pub(super) said_controls: Option<String>,
 }
 
 impl InputLayers {
@@ -529,6 +536,8 @@ impl InputLayers {
                 debug_keys: None,
             },
             pending_rebind: None,
+            named_actions: Default::default(),
+            said_controls: None,
         }
     }
 }

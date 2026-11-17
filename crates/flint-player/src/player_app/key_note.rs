@@ -1,9 +1,8 @@
 //! What a debug key says when it has nothing to act on (#367): F3 in a scene
 //! with no panels, F4 with no renderer, the music keys with no session. The
 //! person who pressed the key is looking at the window, so the note shows
-//! there for a moment, and the console gets the same line (`[debug] F3: ...`,
-//! printed like the `[transition]` and `[script]` lines). It used to go to
-//! `tracing::info!`, which the player's log filter never prints.
+//! there for a moment, and the log gets the same line (`[debug] F3: ...`,
+//! at info under target `player`, which the player's filter shows, #716).
 //!
 //! One note at a time: a second key's note replaces the first. Its clock is
 //! egui's, so under `--frame-step` it runs on game time and a capture shows
@@ -30,7 +29,7 @@ struct Shown {
 impl KeyNote {
     /// Show `text` for `key` and print it to the console.
     pub(crate) fn say(&mut self, key: &str, text: &str) {
-        println!("[debug] {key}: {text}");
+        tracing::info!(target: "player", "[debug] {key}: {text}");
         self.shown = Some(Shown {
             key: key.to_string(),
             text: text.to_string(),
