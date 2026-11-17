@@ -11,15 +11,16 @@
 //! `contour_enabled`, `contour_width`... keys fold into that table when it
 //! loads (`flint_scene::fold_legacy_style_keys`).
 //!
-//! Lines come from breaks in depth (the second difference of 1 / distance,
-//! so flat ground draws none) and in luminance. In a scene with a `[wooze]`
+//! Lines come from breaks in depth (the shared edges' steps since #743,
+//! [`super::edges`], which leave out a plane seen edge-on, so flat ground
+//! draws none) and in luminance. In a scene with a `[wooze]`
 //! field, `boil` re-decides on each drawing of the field where a line runs,
 //! how wide it is and how hard the pen pressed; at 0 none of that runs.
 
 use super::kit;
 use super::{
-    StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleParam, StylePass,
-    StyleStage,
+    StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleNeed, StyleParam,
+    StylePass, StyleStage,
 };
 use crate::postprocess::{PostProcessConfig, HDR_FORMAT};
 use bytemuck::{Pod, Zeroable};
@@ -52,7 +53,9 @@ pub(super) static STYLE: StyleDescriptor = StyleDescriptor::new(
     StyleParam::new("boil", 0.0, 0.0..=2.0)
         .label("Boil")
         .help("How far each drawing of the wooze field moves the lines; needs a [wooze] table"),
-]);
+])
+// Its silhouettes (#743): the depth steps, no creases
+.needs(&[StyleNeed::EdgeSteps]);
 
 fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     Box::new(Contour::new(d))
@@ -73,7 +76,9 @@ pub(crate) struct ContourUniforms {
     pub boil: f32,
     pub seed: u32,
     pub fade: f32,
-    pub _pad: [u32; 2],
+    /// The shared edges' `edge_depth`, to read their steps back (#743).
+    pub edge_depth: f32,
+    pub _pad: u32,
 }
 
 impl ContourUniforms {
@@ -96,7 +101,8 @@ impl ContourUniforms {
             boil: param("boil").max(0.0) * config.boil.amount,
             seed: config.boil.seed,
             fade: param("fade").max(0.0),
-            _pad: [0; 2],
+            edge_depth: config.edge_depth.max(super::edges::MIN_THRESHOLD),
+            _pad: 0,
         }
     }
 }
@@ -110,6 +116,9 @@ struct Contour {
     /// Depth is read by the nearest texel. One kept bind group holds it,
     /// bound once a frame, so the DX12 sampler heap is safe.
     depth_sampler: wgpu::Sampler,
+    /// Bound if the shared edge pass couldn't be built: one texel of no edge.
+    _no_edges: wgpu::Texture,
+    no_edges_view: wgpu::TextureView,
 }
 
 impl Contour {
@@ -136,12 +145,14 @@ impl Contour {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
+                // The shared edges (#743), or the blank stand-in
+                super::pencil::image_entry(2),
             ],
         });
         let pipeline = kit::fullscreen_pipeline(
             device,
             "Contour Pipeline",
-            &kit::shader(device, "Contour Shader", kit::wgsl!("contour.wgsl")),
+            &kit::shader(device, "Contour Shader", kit::wgsl!("prelude_core.wgsl", "edges_read.wgsl", "contour.wgsl")),
             &[&uniform_bgl, &scene_bgl, &depth_bgl],
             HDR_FORMAT,
         );
@@ -153,7 +164,24 @@ impl Contour {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
+        let no_edges = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Contour No Edges"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: super::edges::EDGE_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let no_edges_view = no_edges.create_view(&Default::default());
         Self {
+            _no_edges: no_edges,
+            no_edges_view,
             uniforms: kit::uniform_buffer::<ContourUniforms>(device, "Contour Uniform Buffer"),
             pipeline,
             uniform_bgl,
@@ -182,7 +210,8 @@ impl StylePass for Contour {
         frame
             .queue
             .write_buffer(&self.uniforms, 0, bytemuck::cast_slice(&[uniforms]));
-        let depth = frame.depth_bind("Contour Depth BG", 0, || {
+        // Keyed by the edges' size, which a render-scale step changes
+        let depth = frame.depth_bind("Contour Depth BG", frame.edges_key(), || {
             frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Contour Depth BG"),
                 layout: &self.depth_bgl,
@@ -194,6 +223,15 @@ impl StylePass for Contour {
                     wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::Sampler(&self.depth_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(
+                            frame
+                                .edges
+                                .as_ref()
+                                .map_or(&self.no_edges_view, |e| &e.view),
+                        ),
                     },
                 ],
             })

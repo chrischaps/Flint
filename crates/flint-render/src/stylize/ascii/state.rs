@@ -96,7 +96,8 @@ pub(super) struct Ascii {
     pub(super) pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     pub(super) uniforms: wgpu::Buffer,
     pub(super) uniform_bgl: wgpu::BindGroupLayout,
-    /// The uniform and the variant table (#336), and the edge pass's.
+    /// The uniform and the variant table (#336), and the edge cell pass's
+    /// and edge view's uniform with the slots.
     pub(super) table_bgl: wgpu::BindGroupLayout,
     pub(super) edge_bgl: wgpu::BindGroupLayout,
     /// The variant table (#336, the framework's since #740).
@@ -112,9 +113,13 @@ pub(super) struct Ascii {
     pub(super) blit: kit::Blit,
     pub(super) fonts: Mutex<Fonts>,
     pub(super) history: Mutex<History>,
-    pub(super) edge_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    /// The mask's outlines (#743, `ascii_edge_outline.wgsl`), a fragment a
+    /// depth pixel into `outlines`, drawn only while the mask is bound.
+    pub(super) outline_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    /// The edge cell pass (#267), summing the edge pixels
+    /// (`ascii_edge_source.wgsl`: the shared edges and the mask's outlines,
+    /// #743) over each glyph cell.
     pub(super) edge_cell_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
-    pub(super) edge_uniforms: wgpu::Buffer,
     pub(super) edge_cell_uniforms: wgpu::Buffer,
     /// The edge debug view (#349), drawn instead of the glyphs under
     /// `DebugMode::StyleEdges`.
@@ -132,10 +137,14 @@ pub(super) struct Ascii {
     /// style mask.
     pub(super) thin_in_bgl: wgpu::BindGroupLayout,
     pub(super) edges_in_bgl: wgpu::BindGroupLayout,
-    pub(super) depth_bgl: wgpu::BindGroupLayout,
-    pub(super) mask_bgl: wgpu::BindGroupLayout,
-    pub(super) no_mask_bind: wgpu::BindGroup,
-    pub(super) edges: Mutex<Option<Owned>>,
+    /// The edge pixels' inputs (#743): the shared edges, mask and depth.
+    pub(super) source_bgl: wgpu::BindGroupLayout,
+    /// The edge cell pass's last group: last frame's cells and the outlines.
+    pub(super) past_outline_bgl: wgpu::BindGroupLayout,
+    /// The outline pass's target, at the depth's size.
+    pub(super) outlines: Mutex<Option<Owned>>,
+    pub(super) _no_edges: wgpu::Texture,
+    pub(super) no_edges_view: wgpu::TextureView,
     pub(super) edge_cells: Mutex<Option<Owned>>,
     pub(super) edge_thin: Mutex<Option<Owned>>,
     pub(super) edge_slots: Mutex<Option<Owned>>,

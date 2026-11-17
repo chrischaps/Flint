@@ -182,26 +182,32 @@ pub(super) const NO_EDGE_START: u32 = u32::MAX;
 /// (`ascii_edge_slot.wgsl`).
 pub(super) const EDGE_SLOTS: usize = 13;
 
-/// The edge pass's uniforms (#267), `ascii_edges.wgsl`.
+/// What the edge pixels are read with (#743), `EdgeSource` in
+/// `ascii_edge_source.wgsl`: the first member of the edge cell pass's and
+/// the edge view's uniforms.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-pub(super) struct EdgeUniforms {
+pub(super) struct EdgeSource {
     pub(super) inv_view_proj: [[f32; 4]; 4],
     pub(super) camera_pos: [f32; 3],
-    pub(super) _pad0: u32,
-    pub(super) _pad: [f32; 2],
-    pub(super) depth_threshold: f32,
-    pub(super) normal_threshold: f32,
     /// The plain `ascii` id (0 = none); the variants' ids are the ones the
     /// variant table gives a slot (#336).
     pub(super) plain_id: u32,
-    pub(super) _pad1: [u32; 3],
+    /// The shared `edge_depth` over the style's: the shared depth strength
+    /// times this is the style's.
+    pub(super) depth_scale: f32,
+    /// The shared `edge_normal` over the style's.
+    pub(super) normal_scale: f32,
+    /// 1 while the mask is bound, so the styled outlines are looked for.
+    pub(super) outlines: u32,
+    pub(super) _pad: u32,
 }
 
 /// The edge cell pass's uniforms (#267), `ascii_edge_cells.wgsl`.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(super) struct EdgeCellUniforms {
+    pub(super) src: EdgeSource,
     pub(super) cell: [f32; 2],
     pub(super) origin: [f32; 2],
     pub(super) size: [f32; 2],
@@ -256,6 +262,7 @@ pub(super) const EDGE_REACH: f32 = 1.0;
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(super) struct EdgeViewUniforms {
+    pub(super) src: EdgeSource,
     pub(super) cell: [f32; 2],
     pub(super) origin: [f32; 2],
     pub(super) size: [f32; 2],
@@ -299,9 +306,6 @@ pub fn edge_view_thresholds(config: &crate::postprocess::PostProcessConfig) -> S
     )
 }
 
-/// Edge pixels: the unit gradient's structure tensor and the edge's source
-/// (1 crease, 2 depth, 3 outline).
-pub(super) const EDGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// One texel a glyph cell: its line glyph's slot + 1, edge length, outline.
 /// 32-bit, so z holds the outline and cross-axis bits and the near side's hue above
 /// them as an exact integer (#351); x, y and w are kept at f16 precision,

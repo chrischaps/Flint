@@ -44,7 +44,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     reality::create(
         d,
         "Underwater Pass",
-        super::kit::wgsl!("../tear_mask.wgsl", "reality.wgsl", "underwater.wgsl"),
+        super::kit::wgsl!("prelude_core.wgsl", "../tear_mask.wgsl", "reality.wgsl", "underwater.wgsl"),
         fill,
     )
 }

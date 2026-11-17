@@ -280,20 +280,35 @@ impl StyleSet {
     /// Draw the shared edges (#301) if any of `styles` (this frame's
     /// active ones, both stages) needs them, inside a GPU-timer scope of
     /// their own. Returns the texture for [`StyleFrame::edges`].
-    pub(crate) fn encode_edges(
+    pub(crate) fn encode_edges<'a>(
         &self,
-        styles: &[(&StyleDescriptor, &dyn StylePass)],
-        frame: &StyleFrame<'_>,
+        styles: &[(&'a StyleDescriptor, &dyn StylePass)],
+        frame: &mut StyleFrame<'a>,
         encoder: &mut wgpu::CommandEncoder,
         scope: &mut Scope<'_>,
     ) -> Option<Arc<StyleTexture>> {
         let pass = self.edges.as_ref()?;
-        if !styles.iter().any(|(d, _)| d.needs_edges()) {
+        let readers: Vec<_> = styles
+            .iter()
+            .filter(|(d, _)| d.wants_edges(frame))
+            .collect();
+        if readers.is_empty() {
             return None;
         }
+        let creases = readers.iter().any(|(d, _)| d.needs_creases());
+        // Where they read them (#743): the union of their rects, unless
+        // one reads the whole frame
+        let was = frame.descriptor;
+        let mut rect = Some(kit::PixelRect::EMPTY);
+        for (d, style) in &readers {
+            frame.descriptor = d;
+            rect = rect.zip(style.edges_rect(frame)).map(|(a, b)| a.union(b));
+        }
+        frame.descriptor = was;
+        let frame = &*frame;
         let mut made = None;
         scope(edges::EDGE_LABEL, encoder, &mut |encoder| {
-            made = Some(pass.encode(frame, encoder));
+            made = Some(pass.encode(frame, encoder, creases, rect));
         });
         self.edge_runs
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

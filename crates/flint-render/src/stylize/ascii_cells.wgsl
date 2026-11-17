@@ -47,7 +47,7 @@
 
 // The tone luminance of a cell colour: stretched over the frame's range
 fn cell_luma(col: vec3<f32>) -> f32 {
-    return stretched(luma(col), textureLoad(tone_stats, vec2<i32>(0, 0), 0), u.stretch);
+    return stretched(flint_luma(col), textureLoad(tone_stats, vec2<i32>(0, 0), 0), u.stretch);
 }
 
 // Colour change (in luminance) over which smoothing lets go: below LO the
@@ -58,7 +58,7 @@ const SNAP_HI: f32 = 0.2;
 fn shown(p: vec2<i32>) -> vec3<f32> {
     let max_px = vec2<i32>(u.size) - vec2<i32>(1);
     let c = clamp(textureLoad(input_texture, clamp(p, vec2<i32>(0), max_px), 0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    return select(c, to_display(c), u.srgb == 1u);
+    return select(c, flint_to_display(c), u.srgb == 1u);
 }
 
 // The ramp step a tone draws, after the optional tone bands; the whole
@@ -76,7 +76,7 @@ fn bayer(c: vec2<i32>) -> f32 {
 
 // The scene's view depth (clip w) at output pixel `px`, and the world
 // point there. The sky is cleared to depth 1, which unprojects to the far
-// plane by a w f32 rounds to 0; stop just short of it (ascii_edges.wgsl).
+// plane by a w f32 rounds to 0; stop just short of it (edges.wgsl).
 struct Surface {
     world: vec3<f32>,
     w: f32,
@@ -87,8 +87,8 @@ fn surface_at(px: vec2<f32>) -> Surface {
     let uv = px / u.size;
     let q = clamp(vec2<i32>(floor(uv * vec2<f32>(dsize))), vec2<i32>(0), dsize - vec2<i32>(1));
     let d = min(textureLoad(scene_depth, q, 0), 0.99999);
-    let h = u.inv_view_proj * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
-    let hw = select(h.w, 1e-6, abs(h.w) < 1e-6);
+    let h = flint_unproject_h(u.inv_view_proj, uv, d);
+    let hw = flint_safe_w(h.w);
     // inv_view_proj * ndc is the world point over the clip w
     return Surface(h.xyz / hw, 1.0 / hw);
 }

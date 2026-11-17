@@ -42,6 +42,8 @@ impl Tally {
         match h.cause {
             Cause::Player { .. } => self.player.add(h),
             Cause::Elsewhere { .. } => self.elsewhere.add(h),
+            // Only the tools' own tally holds these (#1129), in `all`
+            Cause::Tooling { .. } => {}
         }
     }
 
@@ -125,7 +127,8 @@ struct LogLine {
     median_ms: f64,
     /// Under vsync, the refreshes it ran past its one; `null` without.
     missed_refreshes: Option<u32>,
-    /// `player` or `elsewhere`.
+    /// `player`, `elsewhere` or `tooling` (the player's own screenshot or
+    /// F2 overlay, #1129).
     class: &'static str,
     /// In the first [`STARTUP_SECS`] of game time.
     startup: bool,
@@ -197,6 +200,7 @@ impl LogLine {
                 None,
                 Some((r2(*acquire_ms), r2(*present_ms))),
             ),
+            Cause::Tooling { .. } => (None, None, None, None, None),
         };
         let frames = history.frames();
         let mut before: Vec<f64> = frames
@@ -288,6 +292,9 @@ pub(crate) struct HitchWatch {
     /// After the start, and in it.
     pub run: Tally,
     pub startup: Tally,
+    /// The player's own tools' hitches (`Cause::Tooling`, #1129), start or
+    /// not: in neither tally above, so no gate counts them.
+    pub tooling: Seen,
     log: Option<Log>,
     /// Lines waiting for the frames after their hitch.
     pending: Vec<LogLine>,
@@ -324,7 +331,9 @@ impl HitchWatch {
             let new = hitches.iter().skip(hitches.len().saturating_sub(found));
             for h in new {
                 let startup = h.game_time < STARTUP_SECS;
-                if startup {
+                if h.cause.is_tooling() {
+                    self.tooling.add(h);
+                } else if startup {
                     self.startup.add(h);
                 } else {
                     self.run.add(h);
@@ -456,6 +465,15 @@ impl HitchWatch {
                 s.worst_and_causes()
             ));
         }
+        // Said only when there were any: most runs take no screenshot
+        let t = &self.tooling;
+        if t.hitches > 0 {
+            lines.push(format!(
+                "[perf] tooling hitches (screenshots, the F2 overlay; never gated): {}, {}",
+                t.hitches,
+                t.worst_and_causes()
+            ));
+        }
         if let Some(log) = &self.log {
             let failed = log
                 .failed
@@ -504,7 +522,10 @@ impl HitchReadout {
         let horizon = history.frames().back().map_or(0.0, |f| f.end() - secs);
         let mut window = 0;
         let mut worst: Option<&Hitch> = None;
-        for h in detector.hitches().iter().filter(|h| h.at >= horizon) {
+        // The game's, not its tools' (#1129): the run's count leaves them out
+        // too
+        let game = detector.hitches().iter().filter(|h| !h.cause.is_tooling());
+        for h in game.filter(|h| h.at >= horizon) {
             window += 1;
             if worst.is_none_or(|w| h.ms > w.ms) {
                 worst = Some(h);
@@ -903,6 +924,58 @@ mod tests {
         assert!(why.contains(": worst 150.0 ms at t="), "{why}");
         assert!(why.contains("1 script stall.rhai:on_update"), "{why}");
         assert!(why.contains("1 elsewhere"), "{why}");
+    }
+
+    #[test]
+    fn a_screenshot_is_logged_and_reported_as_tooling_and_never_gated() {
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let log = Shared::default();
+        let mut run = Run::new();
+        run.watch.log_to("mem".into(), Box::new(log.clone()));
+        run.watch.gate = Some(HitchGate {
+            max: Some(0),
+            max_startup: Some(0),
+            of: HitchClass::All,
+        });
+        run.frames(150);
+        // The read-back and the PNG write, in no phase of the game's
+        frame_notes::note(NoteKind::Screenshot, || "shot_0003.png".into(), Some(92.5));
+        run.frame(110.0, 0.5);
+        run.frames(AROUND + 2);
+        frame_notes::listen(false);
+
+        let lines = log.lines();
+        assert_eq!(lines.len(), 1);
+        let l = &lines[0];
+        assert_eq!(l["class"], "tooling");
+        assert_eq!(l["cause"], "screenshot shot_0003.png, 92.5 ms");
+        assert_eq!(l["present_ms"], serde_json::Value::Null);
+        assert_eq!(l["notes"][0]["kind"], "screenshot");
+
+        assert_eq!(
+            (run.watch.run.all.hitches, run.watch.startup.all.hitches),
+            (0, 0)
+        );
+        assert_eq!(run.watch.tooling.hitches, 1);
+        assert_eq!(
+            run.watch.failure(),
+            None,
+            "its own screenshots never fail a run"
+        );
+        let report = run.watch.report();
+        assert!(report[0].starts_with("[perf] hitches: 0 in "), "{report:?}");
+        assert!(
+            report[2].starts_with(
+                "[perf] tooling hitches (screenshots, the F2 overlay; never gated): 1, worst 110.0 ms at t="
+            ),
+            "{report:?}"
+        );
+        assert!(report[2].ends_with("; causes: 1 screenshot"), "{report:?}");
+        // The readout counts the game's alone
+        let readout = HitchReadout::of(&run.detector, &run.history, 10.0);
+        assert_eq!((readout.window, readout.run), (0, 0));
+        assert_eq!(readout.worst, None);
     }
 
     #[test]

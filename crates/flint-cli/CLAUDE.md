@@ -106,8 +106,9 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    case's anew, for an A/B in one process; full suite on the RTX, debug: Vulkan 69 to 27 s, DX12/DXC 320
    to 45 s); a panicking case reruns in its own process (and drops the kept pipelines with the device),
    `--isolate` spawns every case. A case never sees an earlier one's state: each builds its own
-   renderer, and `flint render` drops a scene's table for a user style it can't see (#426) that an
-   earlier case registered (`tests/render_goldens.rs::a_case_cannot_see_a_user_style_an_earlier_case_loaded`). A new style adds a case. A case's `matches = [flags]` (#417) compares with a second render
+   renderer and draws with its own scene's style registry (#742), so a user style an earlier case
+   loaded is simply not in it (`tests/render_goldens.rs::a_case_cannot_see_a_user_style_an_earlier_case_loaded`:
+   the case blessed alone, then run after the one that loads the style, byte-identical). A new style adds a case. A case's `matches = [flags]` (#417) compares with a second render
    made with those flags instead of a golden, exact by default, and `error = "<text>"` needs a user
    style's error to hold it (`user-style-broken`: `tests/golden/fixtures/styles/broken.*` must draw a
    passthrough, which runs the prelude's sRGB round trip). A case's `text = "<x>.txt"`

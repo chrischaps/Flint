@@ -28,6 +28,15 @@ pub trait StylePass: Send + Sync {
     fn read_text(&self, _device: &wgpu::Device) -> Option<GlyphText> {
         None
     }
+
+    /// The shared edges' pixels (at [`StyleFrame::depth_size`]) this
+    /// style reads this frame (#743), when it reads them only near its
+    /// entities: the edge pass draws the union of its readers' rects and
+    /// leaves the rest 0. `None`, the default, is the whole frame. `frame`
+    /// is this style's ([`StyleFrame::descriptor`] is its descriptor).
+    fn edges_rect(&self, _frame: &StyleFrame<'_>) -> Option<kit::PixelRect> {
+        None
+    }
 }
 
 /// The view a style reads, with an id that's stable for as long as the

@@ -46,7 +46,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         pipeline: kit::fullscreen_pipeline(
             device,
             "Mask View Pipeline",
-            &kit::shader(device, "Mask View Shader", kit::wgsl!("mask_view.wgsl")),
+            &kit::shader(device, "Mask View Shader", kit::wgsl!("prelude_core.wgsl", "mask_view.wgsl")),
             &[&uniform_bgl, &input_bgl, &mask_bgl],
             d.format,
         ),

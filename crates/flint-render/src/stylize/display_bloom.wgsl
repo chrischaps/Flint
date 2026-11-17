@@ -44,12 +44,6 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return out;
 }
 
-fn to_display(c: vec3<f32>) -> vec3<f32> {
-    let lo = c * 12.92;
-    let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, c <= vec3<f32>(0.0031308));
-}
-
 fn sample_src(uv: vec2<f32>) -> vec3<f32> {
     return textureSample(src_texture, src_sampler, uv).rgb;
 }
@@ -73,13 +67,13 @@ fn fs_threshold(in: VertexOutput) -> @location(0) vec4<f32> {
     for (var i = 0u; i < 4u; i++) {
         let o = vec2<f32>(f32(i & 1u) * 2.0 - 1.0, f32(i >> 1u) * 2.0 - 1.0);
         let c = clamp(sample_src(in.uv + o * ts), vec3<f32>(0.0), vec3<f32>(1.0));
-        let shown = select(c, to_display(c), params.srgb > 0.5);
+        let shown = select(c, flint_to_display(c), params.srgb > 0.5);
         let peak = max(shown.r, max(shown.g, shown.b));
         color += c * pass_weight(peak);
     }
     color *= 0.25;
     // Saturation of the halo: 1 keeps the glyph's hue, 0 glows white
-    let grey = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let grey = flint_luma(color);
     color = mix(vec3<f32>(grey), color, params.saturation);
     return vec4<f32>(max(color, vec3<f32>(0.0)), 1.0);
 }

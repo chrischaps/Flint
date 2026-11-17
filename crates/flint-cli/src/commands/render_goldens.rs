@@ -31,7 +31,7 @@
 //! second time with those flags in place of its own and must equal that
 //! render, exactly unless it gives a tolerance. One adapter, one run, so
 //! it holds on any GPU. With `error`, a user style's error must hold that
-//! text afterwards (in this process, `stylize::custom::errors()`, which is
+//! text afterwards (in this process, the render's `RenderHost::style_errors()`, which is
 //! what `flint render` prints; with `--isolate`, the render's log):
 //!
 //! ```toml

@@ -90,11 +90,13 @@
 //!
 //! Luminance alone loses silhouettes, so cells along the scene's edges
 //! draw the glyph set's line glyphs (`─ │ ╱ ╲` in the built-in set)
-//! instead of a tone glyph. Two more passes, before the glyph pass:
-//! `ascii_edges.wgsl` finds edge pixels from geometry at the depth's
-//! resolution (depth, normals rebuilt from it, and the style mask), and
-//! `ascii_edge_cells.wgsl` reduces each glyph cell to one line glyph by the
-//! summed structure tensor of every edge pixel in it. The glyph pass draws
+//! instead of a tone glyph. The edge pixels come from geometry at the
+//! depth's resolution: depth steps and creases from the shared edge pass
+//! (`edges.wgsl`, every line style's since #743, scaled by this style's
+//! `edge_depth` / `edge_normal`), and the style mask's outlines
+//! (`ascii_edge_source.wgsl`). `ascii_edge_cells.wgsl` reduces each glyph
+//! cell to one line glyph by the summed structure tensor of every edge
+//! pixel in it. The glyph pass draws
 //! it over the tone glyph in the one cell the line passes within half a
 //! cell of (#352: the cell pass records where the line crosses the cell's
 //! centre column or row; `ascii_edge_thin.wgsl` keeps it there). Per
@@ -383,6 +385,9 @@ pub(super) static STYLE: StyleDescriptor =
         // The mask gives styled entities their outlines (#267), so only while
         // edges are on and something is styled (#350)
         .uses_mask(MaskUse::When(reads_mask))
+        // Its line glyphs are drawn from the shared edges (#743), so only
+        // while edges are on or the edge view shows them
+        .needs_edges_when(needs_edges)
         .component("ascii_style")
         // Its fade mixes in display space and its dissolve turns whole cells (#278)
         .blends_itself();
@@ -396,8 +401,8 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         label: Some("ASCII Table BGL"),
         entries: &[uniform_entry(), storage_entry(1), storage_entry(2)],
     });
-    // The edge pass's: its uniform and the slots, which say whose ids
-    // draw outlines
+    // The edge cell pass's and the edge view's group 0: its uniform and
+    // the slots, which say whose ids draw outlines (ascii_edge_source.wgsl)
     let edge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("ASCII Edge BGL"),
         entries: &[uniform_entry(), storage_entry(1)],
@@ -528,20 +533,16 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         ],
     });
     let edges_in_bgl = load_layout(device, "ASCII Edges In BGL");
-    let depth_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("ASCII Depth BGL"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Depth,
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        }],
+    // What the edge pixels are read from (#743, ascii_edge_source.wgsl):
+    // the shared edges, the style mask and the scene's depth
+    let source_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ASCII Edge Source BGL"),
+        entries: &[
+            texture_entry(0, wgpu::TextureSampleType::Float { filterable: false }),
+            texture_entry(1, wgpu::TextureSampleType::Uint),
+            texture_entry(2, wgpu::TextureSampleType::Depth),
+        ],
     });
-    let mask_bgl = kit::mask_layout(device, "ASCII Mask BGL");
     // Bound while no entity asks for the style: one unstyled pixel
     let no_mask = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("ASCII No Mask"),
@@ -558,14 +559,23 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         view_formats: &[],
     });
     let no_mask_view = no_mask.create_view(&Default::default());
-    let no_mask_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("ASCII No Mask BG"),
-        layout: &mask_bgl,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::TextureView(&no_mask_view),
-        }],
+    // Bound if the shared edge pass couldn't be built: no edge anywhere, so
+    // only the mask's outlines are found
+    let no_edges = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("ASCII No Edges"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: super::edges::EDGE_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
     });
+    let no_edges_view = no_edges.create_view(&Default::default());
     // The cell pass's past (#277, #344): last frame's cells and their
     // view depths, and the scene depth to reproject through
     let history_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -642,6 +652,17 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         entries: &[
             texture_entry(0, wgpu::TextureSampleType::Float { filterable: false }),
             texture_entry(1, wgpu::TextureSampleType::Uint),
+            // The mask's outlines (#743)
+            texture_entry(2, wgpu::TextureSampleType::Float { filterable: false }),
+        ],
+    });
+    // The edge cell pass's last group: last frame's edge cells (#477) and
+    // this frame's outlines (#743)
+    let past_outline_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ASCII Past Cells And Outlines BGL"),
+        entries: &[
+            texture_entry(0, wgpu::TextureSampleType::Float { filterable: false }),
+            texture_entry(1, wgpu::TextureSampleType::Float { filterable: false }),
         ],
     });
     // The edge debug view (#349): the edge pixels and the edge cells in
@@ -649,7 +670,8 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         device,
         "ASCII Edge View Pipeline",
         &kit::shader(device, "ASCII Edge View Shader", EDGE_VIEW_SHADER),
-        &[&uniform_bgl, &input_bgl, &edges_in_bgl, &edge_view_cells_bgl],
+        // The edge pixels' table and inputs first, as the cell pass's
+        &[&edge_bgl, &source_bgl, &input_bgl, &edge_view_cells_bgl],
         d.format,
     );
     // The thin pass's last group: last frame's edge slots (#477) and the
@@ -682,16 +704,14 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     );
     let blit = kit::Blit::new(device, "ASCII Blit", &input_bgl, d.format);
     Box::new(Ascii {
-        edge_pipeline: kit::fullscreen_pipeline(
+        outline_pipeline: kit::fullscreen_pipeline(
             device,
-            "ASCII Edge Pipeline",
-            &kit::shader(
-                device,
-                "ASCII Edge Shader",
-                kit::wgsl!("ascii_edges.wgsl"),
-            ),
-            &[&edge_bgl, &depth_bgl, &mask_bgl],
-            EDGE_FORMAT,
+            "ASCII Edge Outline Pipeline",
+            &kit::shader(device, "ASCII Edge Outline Shader", EDGE_OUTLINE_SHADER),
+            // The edge cell pass's table (its uniform starts with the edge
+            // source) and the edge pixels' inputs
+            &[&edge_bgl, &source_bgl],
+            super::edges::EDGE_FORMAT,
         ),
         edge_cell_pipeline: kit::fullscreen_pipeline(
             device,
@@ -699,14 +719,14 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
             &kit::shader(
                 device,
                 "ASCII Edge Cell Shader",
-                kit::wgsl!("ascii_edge_cells.wgsl"),
+                EDGE_CELLS_SHADER,
             ),
-            // The picture too (#351): the near side's hue; and last frame's
-            // edge cells (#477)
-            &[&uniform_bgl, &edges_in_bgl, &stats_in_bgl, &edges_in_bgl],
+            // The edge table and the edge pixels' inputs (#743), the picture
+            // (#351: the near side's hue), last frame's edge cells (#477) and
+            // the outlines
+            &[&edge_bgl, &source_bgl, &stats_in_bgl, &past_outline_bgl],
             EDGE_CELL_FORMAT,
         ),
-        edge_uniforms: kit::uniform_buffer::<EdgeUniforms>(device, "ASCII Edge Uniforms"),
         edge_cell_uniforms: kit::uniform_buffer::<EdgeCellUniforms>(
             device,
             "ASCII Edge Cell Uniforms",
@@ -725,10 +745,11 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
             "ASCII Edge View Uniforms",
         ),
         edges_in_bgl,
-        depth_bgl,
-        mask_bgl,
-        no_mask_bind,
-        edges: Mutex::new(None),
+        source_bgl,
+        past_outline_bgl,
+        outlines: Mutex::new(None),
+        _no_edges: no_edges,
+        no_edges_view,
         edge_cells: Mutex::new(None),
         edge_thin: Mutex::new(None),
         edge_slots: Mutex::new(None),
@@ -810,21 +831,36 @@ fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType) -> wgpu::Bi
 }
 
 const CELLS_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "ascii_cells.wgsl"
 );
 pub(crate) const GLYPH_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "../palette.wgsl",
     "ascii_dissolve.wgsl",
     "ascii.wgsl",
     "ascii_edge_slot.wgsl"
 );
+const EDGE_OUTLINE_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
+    "ascii_edge_source.wgsl",
+    "ascii_edge_outline.wgsl"
+);
+const EDGE_CELLS_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
+    "ascii_edge_source.wgsl",
+    "ascii_edge_cells.wgsl"
+);
 const EDGE_VIEW_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
+    "ascii_edge_source.wgsl",
     "ascii_edge_view.wgsl",
     "ascii_edge_slot.wgsl"
 );
 const EDGE_THIN_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "ascii_edge_slot.wgsl",
     "ascii_edge_thin.wgsl"
@@ -834,24 +870,29 @@ const EDGE_CORNER_SHADER: kit::Wgsl = kit::wgsl!(
     "ascii_edge_corners.wgsl"
 );
 const DISSOLVE_ORDER_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "ascii_dissolve.wgsl",
     "ascii_dissolve_order.wgsl"
 );
 const DISSOLVE_RANK_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "ascii_dissolve.wgsl",
     "ascii_dissolve_rank.wgsl"
 );
 const VARIANT_CELLS_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "ascii_variant_cells.wgsl"
 );
 const STATS_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "ascii_stats.wgsl"
 );
 const STATS_RESOLVE_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "ascii_stats_resolve.wgsl"
 );
@@ -952,9 +993,10 @@ mod tests {
         );
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edges), 128);
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 160);
-        assert_eq!(std::mem::size_of::<EdgeUniforms>(), 112);
-        // #477's history, hold and smoothing
-        assert_eq!(std::mem::size_of::<EdgeCellUniforms>(), 64);
+        // #743's edge source: the camera, the plain id, the thresholds' scales
+        assert_eq!(std::mem::size_of::<EdgeSource>(), 96);
+        // #477's history, hold and smoothing, after the edge source
+        assert_eq!(std::mem::size_of::<EdgeCellUniforms>(), 96 + 64);
         // #493's grid and who draws
         assert_eq!(std::mem::size_of::<EdgeThinUniforms>(), 48);
     }
@@ -963,13 +1005,8 @@ mod tests {
     fn the_edge_shaders_validate_and_their_uniforms_match_rust() {
         for (name, src, size) in [
             (
-                "ascii_edges.wgsl",
-                include_str!("ascii_edges.wgsl"),
-                std::mem::size_of::<EdgeUniforms>(),
-            ),
-            (
                 "ascii_edge_cells.wgsl",
-                include_str!("ascii_edge_cells.wgsl"),
+                EDGE_CELLS_SHADER.text,
                 std::mem::size_of::<EdgeCellUniforms>(),
             ),
             (

@@ -2386,6 +2386,84 @@ fn two_styles_share_one_edge_pass_a_frame() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #743: ASCII, pencil and contour read the one shared edge pass, which
+/// is drawn once a frame with all three on; ASCII asks for it only while
+/// its `edges` are on, and contour asks for the depth steps alone.
+#[test]
+fn ascii_pencil_and_contour_share_one_edge_pass() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let find = |name| flint_render::stylize::builtin(name).expect("a built-in style");
+    for name in ["ascii", "pencil", "contour"] {
+        assert!(find(name).needs_edges(), "{name} reads the shared edges");
+    }
+    assert!(find("ascii").needs_creases() && find("pencil").needs_creases());
+    assert!(
+        !find("contour").needs_creases(),
+        "contour inks silhouettes only"
+    );
+
+    let world = box_world();
+    let mut renderer = SceneRenderer::new_headless(
+        gpu.device,
+        gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let set = |renderer: &mut SceneRenderer, f: &dyn Fn(&mut flint_render::PostProcessConfig)| {
+        let mut config = renderer.post_process_config().clone();
+        f(&mut config);
+        renderer.set_post_process_config(config);
+        renderer.ensure_style_resources(gpu.device);
+    };
+
+    // ASCII with its edges off reads none of them
+    set(&mut renderer, &|c| {
+        c.styles.set_enabled("ascii", true);
+        c.styles.set_param("ascii", "edges", 0.0);
+    });
+    gpu.frame(&mut renderer, &world);
+    assert_eq!(
+        renderer.style_edge_runs(),
+        0,
+        "ASCII without edges drew the edge pass"
+    );
+
+    // All three on: one pass a frame
+    set(&mut renderer, &|c| {
+        c.styles.set_param("ascii", "edges", 1.0);
+        c.styles.set_enabled("pencil", true);
+        c.styles.set_enabled("contour", true);
+    });
+    for frames in 1..=3 {
+        gpu.frame(&mut renderer, &world);
+        assert_eq!(
+            renderer.style_edge_runs(),
+            frames,
+            "three styles reading the edges drew the pass more than once a frame"
+        );
+    }
+
+    // Contour alone still draws it (its steps), and nothing does with all off
+    set(&mut renderer, &|c| {
+        c.styles.set_enabled("ascii", false);
+        c.styles.set_enabled("pencil", false);
+    });
+    gpu.frame(&mut renderer, &world);
+    assert_eq!(renderer.style_edge_runs(), 4);
+    set(&mut renderer, &|c| c.styles.set_enabled("contour", false));
+    gpu.frame(&mut renderer, &world);
+    assert_eq!(
+        renderer.style_edge_runs(),
+        4,
+        "drawn after every style let go"
+    );
+}
+
 /// #427: a user style replaced 100 times (each a `.shader.toml` save, as
 /// the hot reload installs it) leaves the chain's bind cache holding what
 /// it held after the first frame, not one set of groups per save until a

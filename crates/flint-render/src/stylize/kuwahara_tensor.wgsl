@@ -31,23 +31,19 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return out;
 }
 
-fn luminance(c: vec3<f32>) -> f32 {
-    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
-}
-
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tx = params.texel_size;
 
     // Sample 3x3 neighborhood luminance (explicit LOD — single-mip textures)
-    let tl = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(-tx.x, -tx.y), 0.0).rgb);
-    let tc = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(0.0, -tx.y), 0.0).rgb);
-    let tr = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(tx.x, -tx.y), 0.0).rgb);
-    let ml = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(-tx.x, 0.0), 0.0).rgb);
-    let mr = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(tx.x, 0.0), 0.0).rgb);
-    let bl = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(-tx.x, tx.y), 0.0).rgb);
-    let bc = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(0.0, tx.y), 0.0).rgb);
-    let br = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(tx.x, tx.y), 0.0).rgb);
+    let tl = flint_luma(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(-tx.x, -tx.y), 0.0).rgb);
+    let tc = flint_luma(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(0.0, -tx.y), 0.0).rgb);
+    let tr = flint_luma(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(tx.x, -tx.y), 0.0).rgb);
+    let ml = flint_luma(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(-tx.x, 0.0), 0.0).rgb);
+    let mr = flint_luma(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(tx.x, 0.0), 0.0).rgb);
+    let bl = flint_luma(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(-tx.x, tx.y), 0.0).rgb);
+    let bc = flint_luma(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(0.0, tx.y), 0.0).rgb);
+    let br = flint_luma(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(tx.x, tx.y), 0.0).rgb);
 
     // Sobel gradients
     let jx = (tr + 2.0 * mr + br) - (tl + 2.0 * ml + bl);
