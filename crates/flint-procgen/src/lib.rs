@@ -51,10 +51,10 @@ pub use living::{
     STAGGER_PER_LEVEL,
 };
 pub use living_props::{
-    BlendFrame, ClockOverride, EchoOverride, LineageDone, LivingDefaults, LivingLayer,
-    LivingLayers, LivingProp, LivingPropId, LivingPropRequest, LivingProps, LivingScope,
-    LivingShadows, LivingStats, PropBlend, Resolved, ResolvedProp, SpeciesOverride,
-    VarianceOverride, POSE_CACHE_BYTES,
+    jitter_rate_clamped, BlendFrame, ClockOverride, EchoOverride, LineageDone, LivingDefaults,
+    LivingLayer, LivingLayers, LivingProp, LivingPropId, LivingPropRequest, LivingProps,
+    LivingScope, LivingShadows, LivingStats, PropBlend, Resolved, ResolvedProp, SpeciesOverride,
+    VarianceOverride, JITTER_RATE_MAX, POSE_CACHE_BYTES,
 };
 pub use output::{GeneratorOutput, OutputKind};
 pub use queue::{

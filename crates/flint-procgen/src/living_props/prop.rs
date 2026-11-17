@@ -32,6 +32,11 @@ pub struct LivingProp {
     pub(super) jitter_ahead: f64,
     /// The step when it was added, which puts its echoes' jitter in seconds.
     pub(super) jitter_step: f64,
+    /// The seconds its jitter has run through (#529): the props' clock, but moved
+    /// on by `dt` times its jitter rate, so a new rate changes how fast the boil
+    /// ticks from here and never where it is. At a rate of 1 it's the props'
+    /// clock to the bit.
+    pub(super) jitter_time: f64,
     /// See [`Self::beats`].
     pub(super) beats: f64,
     pub(super) position: [f32; 3],
@@ -76,6 +81,8 @@ pub struct LivingProp {
     pub(super) stagger_entity: bool,
     /// Its softness' (#582): its spec's, and the global layer's word.
     pub(super) softness_layers: Layered<Option<f32>>,
+    /// Its jitter rate's (#529): 1, and the global layer's word.
+    pub(super) jitter_rate_layers: Layered<Option<f32>>,
 }
 
 /// New clocks for a prop, held back until its ring has what they read.
@@ -122,6 +129,18 @@ impl LivingProp {
     /// The clock its leaf cards and shades boil on.
     pub fn jitter(&self) -> LivingJitter {
         self.jitter
+    }
+
+    /// Where its jitter's clock stands, in seconds: [`Self::jitter_time`] plus the
+    /// phase it was given. What its leaf cards and shades read now.
+    pub fn jitter_now(&self) -> f64 {
+        self.jitter_time + self.jitter_ahead
+    }
+
+    /// The seconds its jitter has run through: the props' clock, at its jitter
+    /// rate (#529).
+    pub fn jitter_time(&self) -> f64 {
+        self.jitter_time
     }
 
     /// How far into its step cycle it runs, as a fraction of a step.
@@ -178,9 +197,17 @@ impl LivingProp {
     }
 
     /// The seconds echo `index`'s jitter reads when this prop's reads `t`. By the
-    /// step it was added on, since jitter doesn't bend with the step.
+    /// pose step it was added on, since jitter doesn't bend with that step; `t`
+    /// is the jitter's own clock, so an echo keeps the same many boil ticks
+    /// behind at any jitter rate (#529).
     pub(super) fn echo_jitter_time(&self, index: usize, t: f64) -> f64 {
         t + f64::from(self.echoes[index].copy.offset) * self.jitter_step
+    }
+
+    /// How fast its jitter's clock runs against the props' (#529), from its
+    /// layers: its species' own, then the global layer's, then 1.
+    pub(super) fn jitter_rate_in(&self, species: &super::Species) -> f64 {
+        f64::from((self.jitter_rate_layers).value(species.over.jitter_rate))
     }
 
     /// The first step its current clocks can be reading: the farthest echo's.

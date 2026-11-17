@@ -284,6 +284,7 @@ fn values_of(
         ("variance.steady", value(at.variance_steady)),
         ("variance.keep_size", value(at.keep_size)),
         ("softness", value(at.softness)),
+        ("jitter_rate", value(at.jitter_rate)),
     ])
 }
 

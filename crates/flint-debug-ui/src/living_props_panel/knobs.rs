@@ -344,6 +344,14 @@ knob_table! {
         control: slider("jitter", 0.0, 4.0),
         help: "How far the leaf cards turn and their tints flicker, on the fast clock.",
     },
+    JitterRate {
+        field: jitter_rate: f32 = 1.0,
+        key: "jitter_rate",
+        preset: living.jitter_rate,
+        section: Clock,
+        control: log_slider("jitter rate (x)", 0.125, 8.0),
+        help: "How fast the fast clock ticks, times each spec's jitter.step: 2 boils twice as fast. A change holds every card until its next tick.",
+    },
     Stagger {
         field: stagger: String = "per_level".to_string(),
         key: "stagger",

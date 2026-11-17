@@ -122,6 +122,8 @@ impl LivingProps {
                 prop.clock.glide = prop.wooze.glide;
             }
             prop.beats += dt / f64::from(prop.clock.step);
+            // Times 1.0 is exact, so an untuned boil reads the props' clock (#529).
+            prop.jitter_time += dt * prop.jitter_rate_in(&species[prop.species]);
             let first = prop.window_start();
             if let Some(ring) = &mut prop.ring {
                 ring.slide_to(first);
