@@ -41,9 +41,10 @@ struct PanelView {
     format: wgpu::TextureFormat,
     msaa: u32,
     scale: f32,
-    _color: wgpu::Texture,
+    /// Its picture and depth, which a captured frame reads (#1085).
+    color: wgpu::Texture,
     color_view: wgpu::TextureView,
-    _depth: wgpu::Texture,
+    depth: wgpu::Texture,
     depth_view: wgpu::TextureView,
     depth_id: u64,
     picture_bind: wgpu::BindGroup,
@@ -253,6 +254,13 @@ impl SceneRenderer {
             if let Some(log) = &mut self.frame_log {
                 log.panels.push(spec.name.clone());
             }
+            // and a captured one reads the panel's picture as its surface
+            if let Some(taps) = &mut self.frame_taps {
+                taps.view = crate::frame_taps::CaptureTargets {
+                    surface: Some(view.color.clone()),
+                    depth: Some(view.depth.clone()),
+                };
+            }
             if i == last {
                 self.encode_to(device, queue, encoder, depth, &cam, &view.color_view);
             } else {
@@ -294,6 +302,18 @@ impl SceneRenderer {
             pass.writes(&["surface"]);
             pass.pass.also = layout.panels.iter().map(|p| p.name.clone()).collect();
         }
+        // The page, read from the host's own output (#1085)
+        if let Some(mut taps) = self.frame_taps.take() {
+            taps.view = taps.host().clone();
+            let mut scopes = crate::frame_capture::FrameScopes {
+                timer: None,
+                log: self.frame_log.take(),
+                taps: Some(taps),
+            };
+            self.tap_pass(device, &mut scopes, encoder, "Panels");
+            self.frame_log = scopes.log;
+            self.frame_taps = scopes.taps;
+        }
         self.panel_state.compositor = Some(compositor);
         self.panel_state.views = views;
         self.panel_state.posts = posts;
@@ -322,7 +342,10 @@ impl SceneRenderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                // Copied out by a frame capture (#1085)
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
@@ -333,7 +356,10 @@ impl SceneRenderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                // Copied out by a frame capture (#1085)
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
@@ -347,9 +373,9 @@ impl SceneRenderer {
             format,
             msaa: self.pipelines.samples(),
             scale: self.render_scale,
-            _color: color,
+            color,
             color_view,
-            _depth: depth,
+            depth,
             depth_view,
             depth_id: crate::bind_cache::new_depth_id(),
             picture_bind,

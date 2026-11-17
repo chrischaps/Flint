@@ -120,7 +120,7 @@ impl SceneRenderer {
             entity: Some(name),
             casts_shadow,
         };
-        Some(FrameDescription {
+        let mut described = FrameDescription {
             frame: fc::FrameInfo {
                 size: self.surface_size.into(),
                 scene_size: self.scene_size().into(),
@@ -135,6 +135,7 @@ impl SceneRenderer {
                 post_process,
                 styles,
                 gpu_frame_ms: None,
+                capturing: false,
             },
             stats,
             lights: fc::LightsDescription {
@@ -153,7 +154,9 @@ impl SceneRenderer {
             passes,
             panels,
             ..Default::default()
-        })
+        };
+        name_images(&mut described);
+        Some(described)
     }
 
     /// Every texture this frame's view draws into or reads, each once.
@@ -195,8 +198,7 @@ impl SceneRenderer {
             }
             if let Some(v) = &r.fog_veil {
                 out.push(fc::target("fog_veil_behind", &v.behind));
-                // The veil is made like the picture behind (Rgba16Float, its size)
-                out.push(fc::target("fog_veil", &v.behind));
+                out.push(fc::target("fog_veil", &v.veil));
             }
             for t in r.styles.entries() {
                 out.push(TargetDescription {
@@ -586,4 +588,42 @@ fn blend_name(blend: Blend) -> &'static str {
         Blend::Multiply => "multiply",
         Blend::Lighten => "lighten",
     }
+}
+
+/// Give each image a captured frame read (#1085) its file, ADR 0126's
+/// `targets/NN-<target>.<ext>`: `NN` the pass's place in
+/// [`FrameDescription::all_passes`], a shadow layer named by its pass
+/// (`shadow_cascade_0`), a step after the target (`bloom_mip_1-down`).
+/// Marks the frame `capturing` when it has any.
+fn name_images(described: &mut FrameDescription) {
+    let mut place = 0usize;
+    let mut taken = std::collections::HashSet::new();
+    let mut any = false;
+    described.each_pass_mut(&mut |pass| {
+        for image in &mut pass.images {
+            any = true;
+            let mut stem = if image.layer.is_some() {
+                crate::frame_taps::slug(&pass.name)
+            } else {
+                crate::frame_taps::slug(&image.target)
+            };
+            if let Some(step) = &image.step {
+                stem = format!("{stem}-{}", crate::frame_taps::slug(step));
+            }
+            let ext = match image.stored.as_str() {
+                "png" | "png16" => "png",
+                "raw" => "bin",
+                _ => "exr",
+            };
+            let mut file = format!("targets/{place:02}-{stem}.{ext}");
+            let mut again = 2;
+            while !taken.insert(file.clone()) {
+                file = format!("targets/{place:02}-{stem}-{again}.{ext}");
+                again += 1;
+            }
+            image.file = file;
+        }
+        place += 1;
+    });
+    described.frame.capturing = any;
 }

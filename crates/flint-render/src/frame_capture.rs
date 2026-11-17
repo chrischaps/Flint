@@ -39,6 +39,10 @@ use crate::render_stats::RenderStats;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use crate::frame_capture_write::{write_capture, WrittenCapture};
+pub use crate::frame_taps::{CaptureTargets, CapturedFrame, CapturedImage, FrameCapture};
+
 /// What `format` says: this is a Flint frame.
 pub const FORMAT: &str = "flintframe";
 
@@ -69,6 +73,9 @@ pub struct FrameDescription {
     /// A comic page's panels, each a whole frame drawn again (#880): empty
     /// for a frame with one view.
     pub panels: Vec<PanelDescription>,
+    /// What a capture (#1085) read back and wrote: `None` for a frame
+    /// described without its images (`--frame-dump`).
+    pub capture: Option<CaptureDescription>,
 }
 
 impl Default for FrameDescription {
@@ -83,6 +90,7 @@ impl Default for FrameDescription {
             memory: MemoryDescription::default(),
             passes: Vec::new(),
             panels: Vec::new(),
+            capture: None,
         }
     }
 }
@@ -103,6 +111,29 @@ impl FrameDescription {
         }
         walk(&self.passes, &mut out);
         out
+    }
+
+    /// Visit every pass in [`all_passes`](Self::all_passes)'s order, each
+    /// mutably: a pass, then the passes inside it.
+    pub fn each_pass_mut(&mut self, visit: &mut dyn FnMut(&mut PassDescription)) {
+        fn walk(passes: &mut [PassDescription], visit: &mut dyn FnMut(&mut PassDescription)) {
+            for pass in passes {
+                visit(pass);
+                walk(&mut pass.passes, visit);
+            }
+        }
+        for panel in &mut self.panels {
+            walk(&mut panel.passes, visit);
+        }
+        walk(&mut self.passes, visit);
+    }
+
+    /// Every image the frame's capture wrote, in pass order.
+    pub fn images(&self) -> Vec<&ImageDescription> {
+        self.all_passes()
+            .into_iter()
+            .flat_map(|p| p.images.iter())
+            .collect()
     }
 
     /// The first pass named `name` (a panel's included).
@@ -178,6 +209,10 @@ pub struct FrameInfo {
     pub styles: Vec<StyleDescription>,
     /// The frame's GPU busy time when it was timed: the scopes' sum.
     pub gpu_frame_ms: Option<f32>,
+    /// Whether this frame was captured (#1085): its targets were copied
+    /// out as it drew, so its GPU time holds those copies, and a hitch
+    /// detector (#1076) should pass over it.
+    pub capturing: bool,
 }
 
 /// A style the post chain ran, in the order it ran.
@@ -276,6 +311,63 @@ pub struct PassDescription {
     pub culled: Vec<DrawDescription>,
     /// Passes inside it: the shadow map's layers.
     pub passes: Vec<PassDescription>,
+    /// What a capture (#1085) read of each target it wrote, as the pass
+    /// left it, in the order read: empty unless the frame was captured.
+    pub images: Vec<ImageDescription>,
+}
+
+/// One target as a pass left it, read back by a capture (#1085, ADR 0126
+/// decision 2): stored once, exactly, in `file`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImageDescription {
+    /// The target's id ([`TargetDescription::id`]).
+    pub target: String,
+    /// The step of a pass that writes one target more than once: bloom's
+    /// `threshold`, `down` and `up`. `None` for most.
+    pub step: Option<String>,
+    /// The array layer read: a shadow map's cascade (0-2) or the casting
+    /// spot's (3). `None` for a plain texture.
+    pub layer: Option<u32>,
+    /// The texture's format, as wgpu names it (`Rgba16Float`).
+    pub format: String,
+    pub size: [u32; 2],
+    /// Where it is, from the capture's folder: `targets/NN-<target>.<ext>`,
+    /// `NN` the pass's place in the frame.
+    pub file: String,
+    /// How the texels are kept: `png` (8-bit, exact), `png16` (16-bit
+    /// integers, exact), `exr-half` (float, OpenEXR half, ZIP), `exr-f32`
+    /// (depth or a 32-bit float, ZIP), `exr-u32` or `raw` (the texels as
+    /// copied, for a format nothing else holds).
+    pub stored: String,
+    /// The read-back this came from, while the capture is in memory.
+    #[serde(skip)]
+    pub(crate) tap: Option<usize>,
+}
+
+/// What a frame's capture read back and wrote (#1085).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CaptureDescription {
+    /// Images written, one per [`ImageDescription`].
+    pub images: u32,
+    /// Bytes read back from the GPU: every image's texels.
+    pub raw_bytes: u64,
+    /// Bytes the image files take on disk.
+    pub file_bytes: u64,
+    /// Targets a pass wrote that weren't read, each with why: a buffer, a
+    /// multisampled texture (its resolve is read), one the renderer
+    /// doesn't hold.
+    pub untapped: Vec<String>,
+    /// Recording the copies into the frame's encoder, on the frame thread, ms.
+    pub record_ms: f64,
+    /// Waiting for the GPU to finish the frame and its copies, ms (headless
+    /// only: a window polls and never waits, ADR 0126 decision 5).
+    pub wait_ms: Option<f64>,
+    /// Copying out of mapped memory, ms.
+    pub copy_out_ms: f64,
+    /// Encoding and writing the files, ms (on the writer's threads).
+    pub encode_ms: f64,
 }
 
 /// One draw.
@@ -467,6 +559,9 @@ fn push_ids(list: &mut Vec<String>, ids: &[&str]) {
 pub(crate) struct FrameScopes {
     pub timer: Option<GpuTimer>,
     pub log: Option<Box<FrameLog>>,
+    /// While the frame is captured (#1085): each pass's targets, copied as
+    /// it ends (`SceneRenderer::tap_pass`).
+    pub taps: Option<Box<crate::frame_taps::FrameTaps>>,
 }
 
 /// A part [`FrameScopes::begin`] opened.

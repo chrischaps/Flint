@@ -15,6 +15,9 @@ mod debug;
 pub mod entity_style;
 mod file_watch;
 pub mod frame_capture;
+#[cfg(not(target_arch = "wasm32"))]
+mod frame_capture_write;
+mod frame_taps;
 pub mod frustum;
 pub mod glyph_atlas;
 pub mod gpu_labels;
