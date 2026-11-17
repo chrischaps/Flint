@@ -2181,6 +2181,7 @@ dependencies = [
  "flint-scene",
  "flint-schema",
  "flint-wooze",
+ "image",
  "notify",
  "notify-debouncer-mini",
  "pollster",

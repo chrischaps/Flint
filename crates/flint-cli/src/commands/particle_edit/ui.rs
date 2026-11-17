@@ -38,18 +38,8 @@ struct Frame {
     validation: Option<String>,
 }
 
-pub fn render_egui(app: &mut ParticleEditApp, target_view: &wgpu::TextureView) -> UiActions {
+pub fn render_egui(app: &mut ParticleEditApp, ui: &mut egui::Ui) -> UiActions {
     let mut actions = UiActions::default();
-    let Some(window) = app.window.clone() else {
-        return actions;
-    };
-    let (Some(context), Some(egui_winit), Some(egui_renderer)) = (
-        app.render_context.as_ref(),
-        app.egui_winit.as_mut(),
-        app.egui_renderer.as_mut(),
-    ) else {
-        return actions;
-    };
 
     let before = app.effect.clone();
     let frame = Frame {
@@ -81,12 +71,7 @@ pub fn render_egui(app: &mut ParticleEditApp, target_view: &wgpu::TextureView) -
     let views = &mut app.views;
     let solo = &mut app.solo;
     let mut selected = app.selected;
-    let egui_ctx = &app.egui_ctx;
-
-    let raw_input = egui_winit.take_egui_input(&window);
-    // A real frame: its texture updates are uploaded below (#944)
-    #[allow(clippy::disallowed_methods)]
-    let mut full_output = egui_ctx.run_ui(raw_input, |ui| {
+    {
         let ctx = &ui.ctx().clone();
         draw_menu_bar(ui, &frame, &mut actions);
         draw_left_panel(ui, effect, views, solo, &mut selected, &frame, &mut actions);
@@ -96,7 +81,7 @@ pub fn render_egui(app: &mut ParticleEditApp, target_view: &wgpu::TextureView) -
         let view = ui.available_rect_before_wrap();
         ctx.data_mut(|d| d.insert_temp(egui::Id::new(VIEW_RECT_ID), view));
         draw_overlays(ctx, view, effect, &frame, &mut actions);
-    });
+    }
     if selected != app.selected {
         actions.select = Some(selected);
     }
@@ -104,57 +89,6 @@ pub fn render_egui(app: &mut ParticleEditApp, target_view: &wgpu::TextureView) -
         app.pre_change_snapshot = Some(before);
     }
 
-    // Paint.
-    egui_winit.handle_platform_output(&window, full_output.platform_output);
-    let paint_jobs = egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
-    let screen = egui_wgpu::ScreenDescriptor {
-        size_in_pixels: [context.config.width, context.config.height],
-        pixels_per_point: full_output.pixels_per_point,
-    };
-    for (id, deltas) in &full_output.textures_delta.set {
-        for delta in deltas {
-            egui_renderer.update_texture(&context.device, &context.queue, *id, delta);
-        }
-    }
-    let mut encoder = context
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Particle Editor egui"),
-        });
-    egui_renderer.update_buffers(
-        &context.device,
-        &context.queue,
-        &mut encoder,
-        &paint_jobs,
-        &screen,
-    );
-    {
-        let mut pass = encoder
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Particle Editor egui pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            })
-            .forget_lifetime();
-        egui_renderer.render(&mut pass, &paint_jobs, &screen);
-    }
-    context.queue.submit(std::iter::once(encoder.finish()));
-    for id in &full_output.textures_delta.free {
-        egui_renderer.free_texture(id);
-    }
-    // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
-    full_output.textures_delta.clear();
     actions
 }
 

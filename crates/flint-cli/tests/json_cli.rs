@@ -29,7 +29,7 @@ fn repo() -> PathBuf {
 }
 
 /// The commands that open a window, play sound or read a pad: `--json`
-/// refuses them. `edit` is one except for a model's or effect's `--render`.
+/// refuses them. `edit` is one except for a `--render` still (any kind, #712).
 const WINDOWS: &[&str] = &[
     "play",
     "edit",
