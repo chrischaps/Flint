@@ -394,6 +394,7 @@ fn anthropic_without_a_key_fails_before_any_call() {
     let o = gen_in(&dir, &["--ai-create", "tall oak tree", "-o", "tree.glb"]);
     assert!(!o.status.success());
     assert!(text(&o).contains("ANTHROPIC_API_KEY"), "{}", text(&o));
+    assert!(!dir.join(".flint/ai_costs.jsonl").exists());
     assert!(!dir.join(".flint/procgen_costs.json").exists());
     assert!(!dir.join("tree.glb").exists());
 }

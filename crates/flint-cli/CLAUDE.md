@@ -60,7 +60,7 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    flint gen specs/oak_tree.procgen.toml --ai-refine --reference ref.png -o tree.glb
    #   Claude sees a headless render of what the spec builds each round and the refine
    #   loops while the measured distance falls (--refine-rounds N; #183)
-   flint gen --cost-report --since 2026-10-01                # sums .flint/procgen_costs.json
+   flint gen --cost-report --since 2026-10-01                # sums .flint/ai_costs.jsonl (= flint asset costs)
    flint gen specs/examples/oak_living.procgen.toml --strip -o strip.png  # a [living] spec over time, as one labelled
                                                              #   contact sheet (hold-and-glide from the spec's step/glide/stagger,
                                                              #   mesh rebuilt per frame, one fixed camera; --frames 48 --fps 24
@@ -72,8 +72,11 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
                                                              #   refuses procgen flags. Same bytes as the editor's Ctrl+E (flint_terrain::bake)
    # --ai-model, --ai-iterations, --ai-generator,
    # --print-spec (spec alone on stdout), --save-spec. Every API call goes through
-   # flint_procgen_ai::CostMeter: priced, appended to the JSON Lines ledger, and
-   # refused before sending if its worst case could pass --max-cost.
+   # flint_ai_core::CostMeter (re-exported by flint_procgen_ai): priced, appended to
+   # the JSON Lines ledger, and refused before sending if its worst case could pass
+   # --max-cost. A command gets its meter, ledger and prices from
+   # commands/ai_costs.rs (the project root's .flint/ai_costs.jsonl and
+   # .flint/prices.toml), never by building one (#721).
    ```
 
 ## Goldens and `flint goldens`

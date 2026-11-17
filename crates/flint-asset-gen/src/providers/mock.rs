@@ -3,7 +3,6 @@
 //! Generates solid-color PNGs (textures), minimal GLB (models),
 //! and silence WAV (audio) without any network calls.
 
-use crate::job::GenerationJob;
 use crate::provider::*;
 use crate::style::StyleGuide;
 use flint_core::{FlintError, Result};
@@ -71,35 +70,6 @@ impl GenerationProvider for MockProvider {
             content_hash: hash,
             metadata: HashMap::new(),
         })
-    }
-
-    fn submit_job(
-        &self,
-        request: &GenerateRequest,
-        _style: Option<&StyleGuide>,
-    ) -> Result<GenerationJob> {
-        let mut job = GenerationJob::new("mock", &request.name);
-        job.prompt = Some(request.description.clone());
-        Ok(job)
-    }
-
-    fn poll_job(&self, _job: &GenerationJob) -> Result<JobPollResult> {
-        // Mock jobs complete instantly
-        Ok(JobPollResult::Complete)
-    }
-
-    fn download_result(&self, job: &GenerationJob, output_dir: &Path) -> Result<GenerateResult> {
-        // For mock, just generate inline
-        let request = GenerateRequest {
-            name: job.asset_name.clone(),
-            description: job.prompt.clone().unwrap_or_default(),
-            kind: AssetKind::Texture,
-            texture_params: None,
-            model_params: None,
-            audio_params: None,
-            tags: vec![],
-        };
-        self.generate(&request, None, output_dir)
     }
 
     fn build_prompt(&self, request: &GenerateRequest, style: Option<&StyleGuide>) -> String {

@@ -1,31 +1,34 @@
 //! ElevenLabs audio generation provider
 //!
-//! Generates sound effects via the ElevenLabs sound generation API.
-//! Audio generation is fast (~3-10s), so `generate()` blocks synchronously.
+//! Generates sound effects via the ElevenLabs sound generation API. Audio
+//! is fast (~3-10s), so `generate()` blocks. A call is priced by the
+//! duration it asks for, checked against the budget before it is sent and
+//! recorded once ElevenLabs answers.
 
+use crate::calls::{cost_error, endpoint_label, Calls};
 use crate::config::FlintConfig;
-use crate::job::GenerationJob;
 use crate::provider::*;
 use crate::style::StyleGuide;
+use flint_ai_core::HttpRequest;
 use flint_core::{FlintError, Result};
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::Duration;
 
 const DEFAULT_ELEVENLABS_URL: &str = "https://api.elevenlabs.io/v1/sound-generation";
-const REQUEST_TIMEOUT_SECS: u64 = 60;
-const MAX_RETRIES: usize = 3;
-const RETRY_BASE_DELAY_MS: u64 = 500;
+
+/// The duration asked for when a request names none, in seconds.
+const DEFAULT_DURATION: f64 = 3.0;
 
 /// ElevenLabs provider for AI audio/sound effect generation
 pub struct ElevenLabsProvider {
     api_key: String,
     api_url: String,
+    calls: Calls,
 }
 
 impl ElevenLabsProvider {
-    /// Create a new ElevenLabsProvider from config
-    pub fn from_config(config: &FlintConfig) -> Result<Self> {
+    /// Create a new ElevenLabsProvider from config, its calls through `calls`
+    pub fn from_config(config: &FlintConfig, calls: Calls) -> Result<Self> {
         let api_key = config
             .api_key("elevenlabs")
             .ok_or_else(|| {
@@ -40,77 +43,20 @@ impl ElevenLabsProvider {
             .unwrap_or(DEFAULT_ELEVENLABS_URL)
             .to_string();
 
-        Ok(Self { api_key, api_url })
+        Ok(Self {
+            api_key,
+            api_url,
+            calls,
+        })
     }
 
-    /// Generate audio and return raw bytes
-    fn generate_audio(&self, prompt: &str, duration: f64) -> Result<Vec<u8>> {
-        let payload = serde_json::json!({
-            "text": prompt,
-            "duration_seconds": duration
-        });
-
-        self.post_audio_with_retry(&payload)
+    fn duration(request: &GenerateRequest) -> f64 {
+        request
+            .audio_params
+            .as_ref()
+            .map(|p| p.duration)
+            .unwrap_or(DEFAULT_DURATION)
     }
-
-    fn post_audio_with_retry(&self, payload: &serde_json::Value) -> Result<Vec<u8>> {
-        for attempt in 0..MAX_RETRIES {
-            let agent = build_agent();
-            let response = agent
-                .post(&self.api_url)
-                .header("xi-api-key", &self.api_key)
-                .header("Content-Type", "application/json")
-                .send_json(payload);
-
-            match response {
-                Ok(ok) => {
-                    let mut reader = ok.into_body().into_reader();
-                    let mut bytes = Vec::new();
-                    std::io::Read::read_to_end(&mut reader, &mut bytes).map_err(|e| {
-                        FlintError::GenerationError(format!("Failed to read audio data: {}", e))
-                    })?;
-                    return Ok(bytes);
-                }
-                Err(e) => {
-                    if attempt + 1 < MAX_RETRIES && is_retryable_error(&e) {
-                        sleep_backoff(attempt);
-                        continue;
-                    }
-                    return Err(FlintError::GenerationError(format!(
-                        "ElevenLabs API request failed: {}",
-                        e
-                    )));
-                }
-            }
-        }
-
-        Err(FlintError::GenerationError(
-            "ElevenLabs API request failed after retries".to_string(),
-        ))
-    }
-}
-
-fn build_agent() -> ureq::Agent {
-    let config = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(REQUEST_TIMEOUT_SECS)))
-        .build();
-    config.into()
-}
-
-fn is_retryable_error(e: &ureq::Error) -> bool {
-    match e {
-        ureq::Error::Timeout(_)
-        | ureq::Error::Io(_)
-        | ureq::Error::ConnectionFailed
-        | ureq::Error::HostNotFound => true,
-        ureq::Error::StatusCode(code) => matches!(code, 429 | 500 | 502 | 503 | 504),
-        _ => false,
-    }
-}
-
-fn sleep_backoff(attempt: usize) {
-    let delay_ms = RETRY_BASE_DELAY_MS.saturating_mul(1u64 << attempt);
-    std::thread::sleep(Duration::from_millis(delay_ms));
 }
 
 impl GenerationProvider for ElevenLabsProvider {
@@ -129,6 +75,10 @@ impl GenerationProvider for ElevenLabsProvider {
         Ok(ProviderStatus::Available)
     }
 
+    fn billed_units(&self, request: &GenerateRequest) -> f64 {
+        Self::duration(request)
+    }
+
     fn generate(
         &self,
         request: &GenerateRequest,
@@ -137,22 +87,28 @@ impl GenerationProvider for ElevenLabsProvider {
     ) -> Result<GenerateResult> {
         let start = std::time::Instant::now();
         let prompt = self.build_prompt(request, style);
-        let duration = request
-            .audio_params
-            .as_ref()
-            .map(|p| p.duration)
-            .unwrap_or(3.0);
-
+        let duration = Self::duration(request);
         std::fs::create_dir_all(output_dir)?;
 
-        // Generate audio
-        let audio_bytes = self.generate_audio(&prompt, duration)?;
+        self.calls
+            .meter
+            .admit_call("elevenlabs", duration)
+            .map_err(cost_error)?;
+        let req = HttpRequest::post_json(
+            &self.api_url,
+            &serde_json::json!({ "text": prompt, "duration_seconds": duration }),
+        )
+        .with_header("xi-api-key", &self.api_key);
+        let audio = self.calls.request(&req, "ElevenLabs API request")?;
+        self.calls.meter.record_call(
+            "elevenlabs",
+            &endpoint_label(&self.api_url, "elevenlabs"),
+            duration,
+        );
 
         // ElevenLabs returns MP3 by default
         let output_path = output_dir.join(format!("{}.mp3", request.name));
-        std::fs::write(&output_path, &audio_bytes)?;
-
-        let elapsed = start.elapsed().as_secs_f64();
+        std::fs::write(&output_path, &audio.body)?;
 
         let hash = flint_core::ContentHash::from_file(&output_path)
             .map(|h| h.to_prefixed_hex())
@@ -162,38 +118,10 @@ impl GenerationProvider for ElevenLabsProvider {
             output_path: output_path.to_string_lossy().to_string(),
             prompt_used: prompt,
             provider: "elevenlabs".to_string(),
-            duration_secs: elapsed,
+            duration_secs: start.elapsed().as_secs_f64(),
             content_hash: hash,
             metadata: HashMap::new(),
         })
-    }
-
-    fn submit_job(
-        &self,
-        request: &GenerateRequest,
-        style: Option<&StyleGuide>,
-    ) -> Result<GenerationJob> {
-        let mut job = GenerationJob::new("elevenlabs", &request.name);
-        job.prompt = Some(self.build_prompt(request, style));
-        Ok(job)
-    }
-
-    fn poll_job(&self, _job: &GenerationJob) -> Result<JobPollResult> {
-        // ElevenLabs is synchronous
-        Ok(JobPollResult::Complete)
-    }
-
-    fn download_result(&self, job: &GenerationJob, output_dir: &Path) -> Result<GenerateResult> {
-        let request = GenerateRequest {
-            name: job.asset_name.clone(),
-            description: job.prompt.clone().unwrap_or_default(),
-            kind: AssetKind::Audio,
-            texture_params: None,
-            model_params: None,
-            audio_params: None,
-            tags: vec![],
-        };
-        self.generate(&request, None, output_dir)
     }
 
     fn build_prompt(&self, request: &GenerateRequest, style: Option<&StyleGuide>) -> String {
@@ -223,6 +151,8 @@ pub fn parse_elevenlabs_error(json: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::test_support::{calls_over, request, temp_dir, test_config};
+    use flint_ai_core::{HttpResponse, ScriptedTransport};
 
     #[test]
     fn test_parse_elevenlabs_error_detail() {
@@ -236,5 +166,53 @@ mod tests {
         let json = r#"{"detail":"Unauthorized"}"#;
         let msg = parse_elevenlabs_error(json).unwrap();
         assert_eq!(msg, "Unauthorized");
+    }
+
+    #[test]
+    fn a_sound_is_priced_by_its_duration() {
+        let script = ScriptedTransport::new(vec![Ok(HttpResponse::bytes(b"ID3 fake".to_vec()))]);
+        let (calls, meter) = calls_over(&script, None);
+        let el = ElevenLabsProvider::from_config(
+            &test_config("elevenlabs", "http://el.test/v1/sound-generation"),
+            calls,
+        )
+        .unwrap();
+        let dir = temp_dir("eleven");
+        let mut req = request("door_creak", AssetKind::Audio);
+        req.audio_params = Some(AudioParams {
+            duration: 5.0,
+            seed: None,
+        });
+        let result = el.generate(&req, None, &dir).unwrap();
+        assert_eq!(std::fs::read(&result.output_path).unwrap(), b"ID3 fake");
+        let sent = &script.requests()[0];
+        assert_eq!(sent.header("xi-api-key"), Some("test-key"));
+        let body: serde_json::Value = serde_json::from_str(&sent.body).unwrap();
+        assert_eq!(body["duration_seconds"], 5.0);
+        // 5 s at $0.002.
+        let e = &meter.entries()[0];
+        assert_eq!((e.units, e.unit.as_deref()), (Some(5.0), Some("second")));
+        assert!((e.estimated_usd - 0.01).abs() < 1e-12);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_auth_failure_is_not_retried_or_recorded() {
+        let script = ScriptedTransport::new(vec![Ok(HttpResponse::text_body(
+            401,
+            r#"{"detail":{"message":"Invalid API key"}}"#,
+        ))]);
+        let (calls, meter) = calls_over(&script, None);
+        let el =
+            ElevenLabsProvider::from_config(&test_config("elevenlabs", "http://el.test"), calls)
+                .unwrap();
+        let dir = temp_dir("eleven-401");
+        let e = el
+            .generate(&request("x", AssetKind::Audio), None, &dir)
+            .unwrap_err();
+        assert!(e.to_string().contains("HTTP 401 after 1 attempt(s)"), "{e}");
+        assert!(e.to_string().contains("Invalid API key"), "{e}");
+        assert_eq!(meter.calls(), 0);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

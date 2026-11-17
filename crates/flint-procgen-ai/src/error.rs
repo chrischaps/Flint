@@ -74,6 +74,17 @@ pub enum ProcGenAiError {
     ProcGen(#[from] flint_procgen::ProcGenError),
 }
 
+impl From<flint_ai_core::CostError> for ProcGenAiError {
+    fn from(e: flint_ai_core::CostError) -> Self {
+        match e {
+            flint_ai_core::CostError::Ceiling { spent, next, max } => {
+                Self::CostCeiling { spent, next, max }
+            }
+            other => Self::ConfigError(other.to_string()),
+        }
+    }
+}
+
 impl ProcGenAiError {
     /// Whether sending the same request again might succeed.
     pub fn is_retryable(&self) -> bool {
