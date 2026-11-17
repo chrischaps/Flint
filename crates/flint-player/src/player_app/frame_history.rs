@@ -109,6 +109,10 @@ pub(crate) struct Frame {
     pub notes: Vec<FrameNote>,
     /// Notes the channel had no room for in it.
     pub notes_dropped: u32,
+    /// A frame capture (#1086) was being recorded or read back in it: the
+    /// hitch detector passes over it, so a capture isn't counted as the
+    /// hitch it may cause.
+    pub capturing: bool,
 }
 
 impl Frame {
@@ -327,6 +331,19 @@ impl FrameHistory {
     /// The game time the frame under way runs at (its tick's `total_time`).
     pub(crate) fn game_time(&mut self, total_time: f64) {
         self.under_way.game_time = total_time;
+    }
+
+    /// The frame under way is captured, or a capture is read back in it
+    /// (#1086): the hitch detector passes over it.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // desktop only
+    pub(crate) fn capturing(&mut self) {
+        self.under_way.capturing = true;
+    }
+
+    /// The number the frame under way will have once it closes.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // desktop only
+    pub(crate) fn under_way_index(&self) -> u64 {
+        self.frames.back().map_or(0, |f| f.index + 1)
     }
 
     /// The frames kept, oldest first.

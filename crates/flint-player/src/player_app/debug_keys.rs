@@ -17,11 +17,18 @@ const PANELS: &str = "panels";
 #[cfg(feature = "debug-hud")]
 const RENDER_PANEL: &str = "render_panel";
 const FULLSCREEN: &str = "fullscreen";
+/// Capture the next frame for the frame debugger (#1086).
+pub(crate) const CAPTURE_FRAME: &str = "capture_frame";
 
 const SHOW_KEYS: DebugKey = DebugKey {
     action: KEYS,
     key: "F1",
     does: "Show or hide this list of debug keys",
+};
+const CAPTURE: DebugKey = DebugKey {
+    action: CAPTURE_FRAME,
+    key: "Shift+F2",
+    does: "Capture the next frame for the frame debugger (a .flintframe folder in captures/)",
 };
 const SHOW_FULLSCREEN: DebugKey = DebugKey {
     action: FULLSCREEN,
@@ -37,6 +44,7 @@ const PLAYER_KEYS: &[DebugKey] = &[
         key: "F2",
         does: "Stats: frame-time graph, hitches, render stats; again: graph alone; again: off",
     },
+    CAPTURE,
     DebugKey {
         action: PANELS,
         key: "F3",
@@ -57,6 +65,7 @@ const PLAYER_KEYS: &[DebugKey] = &[
         key: "F2",
         does: "Stats overlay",
     },
+    CAPTURE,
     SHOW_FULLSCREEN,
 ];
 
@@ -130,12 +139,12 @@ impl PlayerApp {
     }
 
     /// One of the player's own actions; `key` is the chord it is on.
-    #[cfg_attr(not(feature = "debug-hud"), allow(unused_variables))] // its notes are F3's and F4's
     fn player_debug_key(&mut self, action: &str, key: &str) {
         match action {
             KEYS => self.hud.key_table_open = !self.hud.key_table_open,
             // Off, the full overlay, the graph alone, off (#1078)
             STATS => self.set_stats_view(self.stats.view.next()),
+            CAPTURE_FRAME => self.ask_frame_capture(super::frame_capture::Trigger::Key, key),
             #[cfg(feature = "debug-hud")]
             PANELS => {
                 // The scene-component panels (grass, ocean, ...), not the

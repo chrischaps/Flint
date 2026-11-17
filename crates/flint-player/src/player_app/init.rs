@@ -50,6 +50,10 @@ impl PlayerApp {
                 return Some(failure);
             }
         }
+        // A capture asked for and never written (#1086)
+        if let Some(failure) = self.frame_captures.failure() {
+            return Some(failure);
+        }
         // `--max-hitches` and `--max-hitches-startup` (#1079)
         self.stats.watch.failure()
     }
@@ -95,6 +99,7 @@ impl PlayerApp {
             post: Default::default(),
             audio_vfs_generation: flint_core::vfs::generation(),
             capture: CaptureConfig::default(),
+            frame_captures: Default::default(),
             outcome: Default::default(),
             #[cfg(test)]
             test_gpu: None,

@@ -9,7 +9,18 @@
 
 use super::*;
 use crate::frame_capture::FrameScopes;
+use crate::frame_replay::{
+    PaletteEntry, PaletteKind, ReplayRenderer, ReplayStateCapture, StyleState,
+};
 use crate::frame_taps::{CaptureTargets, FrameCapture, FrameTaps};
+
+/// A frame's description and capture, set aside while the host draws
+/// something else ([`SceneRenderer::hold_frame_capture`]).
+#[must_use = "put it back with SceneRenderer::resume_frame_capture"]
+pub struct HeldFrameCapture {
+    log: Option<Box<crate::frame_capture::FrameLog>>,
+    taps: Option<Box<FrameTaps>>,
+}
 
 impl SceneRenderer {
     /// Capture the next frame (#1085): describe it ([`describe_next_frame`]
@@ -27,6 +38,56 @@ impl SceneRenderer {
     /// Whether a frame is being captured.
     pub fn capturing_frame(&self) -> bool {
         self.frame_taps.is_some()
+    }
+
+    /// A pass of the host's own after the renderer's (#1086: the player's
+    /// HUD, `UI`), while the frame is described: logged on the page after
+    /// the renderer's passes, as writing `target`, and, while the frame is
+    /// captured, `texture` copied as the pass left it. `timed` says whether
+    /// the host opened a GPU timer scope of that name for it. Call after the
+    /// host's pass is recorded and before the frame is taken. Nothing
+    /// unless a frame is described.
+    pub fn capture_host_pass(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        name: &str,
+        target: &str,
+        texture: &wgpu::Texture,
+        timed: bool,
+    ) {
+        let Some(log) = self.frame_log.as_deref_mut() else {
+            return;
+        };
+        log.on_page = true;
+        let pass = log.ran(name, timed);
+        pass.reads(&[target]).writes(&[target]);
+        if let Some(taps) = self.frame_taps.as_deref_mut() {
+            taps.copy(device, encoder, pass, target, None, texture, None);
+        }
+    }
+
+    /// Set the frame's description and capture aside while the host draws
+    /// something that isn't the frame being captured (#1086: the Living
+    /// Props split's other side, `encode_again_to`), so it is neither
+    /// logged nor read; [`resume_frame_capture`](Self::resume_frame_capture)
+    /// puts it back.
+    pub fn hold_frame_capture(&mut self) -> HeldFrameCapture {
+        HeldFrameCapture {
+            log: self.frame_log.take(),
+            taps: self.frame_taps.take(),
+        }
+    }
+
+    /// Put back what [`hold_frame_capture`](Self::hold_frame_capture) set
+    /// aside.
+    pub fn resume_frame_capture(&mut self, held: HeldFrameCapture) {
+        if held.log.is_some() {
+            self.frame_log = held.log;
+        }
+        if held.taps.is_some() {
+            self.frame_taps = held.taps;
+        }
     }
 
     /// The copies the frame since [`capture_next_frame`](Self::capture_next_frame)
@@ -260,4 +321,130 @@ impl SceneRenderer {
             .texture(id)
             .ok_or("not a texture the renderer holds")
     }
+}
+
+impl SceneRenderer {
+    /// Record the renderer's replay state for the frame being recorded
+    /// (#1086): copy every bone, shadow and echo palette into staging in
+    /// `encoder` (after the frame's last draw, so they hold what it drew
+    /// with), and take the rest from the CPU. `world` names the entities.
+    /// Map it once the frame is submitted; see the module docs.
+    pub fn capture_replay_state(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        world: &FlintWorld,
+    ) -> ReplayStateCapture {
+        let name = |id: flint_core::EntityId| {
+            world
+                .get_name(id)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("#{}", id.0))
+        };
+        let skinning = &self.skinning;
+        let mut capture = ReplayStateCapture::new(ReplayRenderer::default());
+        let mut stage = |entry: PaletteEntry, source: &wgpu::Buffer| {
+            capture.stage(device, encoder, entry, source);
+        };
+        // By name, so two runs list them alike
+        let by_name = |ids: Vec<flint_core::EntityId>| {
+            let mut named: Vec<_> = ids.into_iter().map(|id| (name(id), id)).collect();
+            named.sort();
+            named
+        };
+        for (entity, id) in by_name(skinning.bone_buffers.keys().copied().collect()) {
+            let entry = PaletteEntry {
+                entity,
+                kind: PaletteKind::Bones,
+                ..Default::default()
+            };
+            stage(entry, &skinning.bone_buffers[&id]);
+        }
+        for (entity, id) in by_name(skinning.shadow_bone_buffers.keys().copied().collect()) {
+            let entry = PaletteEntry {
+                entity,
+                kind: PaletteKind::Shadow,
+                ..Default::default()
+            };
+            stage(entry, &skinning.shadow_bone_buffers[&id]);
+        }
+        for (entity, id) in by_name(skinning.echoes.keys().copied().collect()) {
+            for (i, echo) in skinning.echoes[&id].iter().enumerate() {
+                let entry = PaletteEntry {
+                    entity: entity.clone(),
+                    kind: PaletteKind::Echo,
+                    echo: Some(i),
+                    opacity: Some(echo.opacity),
+                    ..Default::default()
+                };
+                stage(entry, &echo.bones);
+            }
+        }
+
+        let config = self.effective_post_process_config();
+        let styles = config
+            .styles
+            .iter()
+            .map(|(n, s)| {
+                (
+                    n.to_string(),
+                    StyleState {
+                        enabled: s.enabled,
+                        params: s.params.clone(),
+                        options: s.options.clone(),
+                        order: s.order,
+                        feeds_bloom: s.feeds_bloom,
+                        blend: s.blend,
+                        follows_tear: s.follows_tear,
+                        off_everywhere: s.off_everywhere,
+                        reveal: (!s.reveal.is_empty()).then(|| format!("{:?}", s.reveal)),
+                    },
+                )
+            })
+            .collect();
+        let mut echo_lighten: Vec<String> =
+            skinning.echo_lighten.iter().map(|id| name(*id)).collect();
+        echo_lighten.sort();
+        let renderer = ReplayRenderer {
+            styles,
+            post_process_debug: format!("{config:#?}"),
+            quality: self
+                .quality
+                .entries()
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            msaa: self.pipelines.samples(),
+            render_scale: self.render_scale,
+            debug_mode: format!("{:?}", self.debug_state.mode),
+            selected: self.selected_entity.map(name),
+            motion_hold: self.motion_hold.state(&name),
+            skinning: Vec::new(),
+            // Only while a draw binds an asset's shared palette (an entity
+            // before its first own write): it holds whichever entity wrote
+            // last, which isn't the same entity every run
+            asset_bones: if skinning.bone_binds.values().any(|b| !b.from_entity) {
+                skinning
+                    .asset_bone_matrices
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            } else {
+                Default::default()
+            },
+            part_tints: by_entity(&skinning.part_tints, &name),
+            part_softness: by_entity(&skinning.part_softness, &name),
+            echo_lighten,
+        };
+        capture.renderer = renderer;
+        capture
+    }
+}
+
+/// A per-entity table of the skinning state, by entity name.
+fn by_entity<T: Clone>(
+    map: &HashMap<flint_core::EntityId, Vec<T>>,
+    name: &dyn Fn(flint_core::EntityId) -> String,
+) -> std::collections::BTreeMap<String, Vec<T>> {
+    map.iter().map(|(id, v)| (name(*id), v.clone())).collect()
 }
