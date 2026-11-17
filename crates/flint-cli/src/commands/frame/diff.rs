@@ -475,6 +475,31 @@ fn list(v: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// An entity's draws in a pass, the kinds counted (#1208): `91 draws:
+/// skinned shadow` when every draw is one kind, `3 draws (2 pbr, 1 unlit)`
+/// otherwise, the most-drawn kind first. A skinned body of 91 parts used
+/// to print its kind 91 times.
+fn draws_text(draws: &Value, pipelines: &Value) -> String {
+    let n = draws.as_u64().unwrap_or(0);
+    let noun = if n == 1 { "draw" } else { "draws" };
+    let mut kinds: Vec<(String, usize)> = Vec::new();
+    for kind in list(pipelines) {
+        match kinds.iter_mut().find(|(k, _)| *k == kind) {
+            Some((_, count)) => *count += 1,
+            None => kinds.push((kind, 1)),
+        }
+    }
+    kinds.sort_by(|(ka, a), (kb, b)| b.cmp(a).then_with(|| ka.cmp(kb)));
+    match kinds.as_slice() {
+        [] => format!("{n} {noun}"),
+        [(kind, _)] => format!("{n} {noun}: {kind}"),
+        _ => {
+            let counted: Vec<String> = kinds.iter().map(|(k, c)| format!("{c} {k}")).collect();
+            format!("{n} {noun} ({})", counted.join(", "))
+        }
+    }
+}
+
 fn text(a: &str, b: &str, doc: &Value) -> String {
     let mut out = format!("a  {a}\nb  {b}\n");
     let scene = &doc["scene"];
@@ -603,16 +628,10 @@ fn text(a: &str, b: &str, doc: &Value) -> String {
             any = true;
             let _ = writeln!(
                 out,
-                "  {label:<8} {} in {}: {} draw{} ({})",
+                "  {label:<8} {} in {}: {}",
                 r["entity"].as_str().unwrap_or(""),
                 r["pass"].as_str().unwrap_or(""),
-                r["draws"],
-                if r["draws"].as_u64() == Some(1) {
-                    ""
-                } else {
-                    "s"
-                },
-                list(&r["pipelines"]).join(", ")
+                draws_text(&r["draws"], &r["pipelines"])
             );
         }
     }
@@ -620,13 +639,11 @@ fn text(a: &str, b: &str, doc: &Value) -> String {
         any = true;
         let _ = writeln!(
             out,
-            "  changed  {} in {}: {} draws ({}) -> {} draws ({})",
+            "  changed  {} in {}: {} -> {}",
             r["entity"].as_str().unwrap_or(""),
             r["pass"].as_str().unwrap_or(""),
-            r["a"]["draws"],
-            list(&r["a"]["pipelines"]).join(", "),
-            r["b"]["draws"],
-            list(&r["b"]["pipelines"]).join(", ")
+            draws_text(&r["a"]["draws"], &r["a"]["pipelines"]),
+            draws_text(&r["b"]["draws"], &r["b"]["pipelines"])
         );
     }
     if !any {
@@ -837,7 +854,7 @@ mod tests {
         );
         let text = text("a", "b", &doc);
         assert!(
-            text.contains("removed  crate in Scene: 1 draw (pbr)"),
+            text.contains("removed  crate in Scene: 1 draw: pbr"),
             "{text}"
         );
     }

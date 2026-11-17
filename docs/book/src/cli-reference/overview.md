@@ -239,10 +239,10 @@ Frame
   shadow draws 9 -> 6 (-3)
 
 Draws by entity
-  removed  lantern in Shadow cascade 0: 1 draw (shadow)
-  removed  lantern in Shadow cascade 1: 1 draw (shadow)
-  removed  lantern in Shadow cascade 2: 1 draw (shadow)
-  removed  lantern in Scene: 1 draw (pbr)
+  removed  lantern in Shadow cascade 0: 1 draw: shadow
+  removed  lantern in Shadow cascade 1: 1 draw: shadow
+  removed  lantern in Shadow cascade 2: 1 draw: shadow
+  removed  lantern in Scene: 1 draw: pbr
 
 Images (5 of 11 the same)
   image                                     differing     of     max  diff
