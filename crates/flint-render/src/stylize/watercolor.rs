@@ -62,18 +62,13 @@
 
 use super::images::{ImageSlot, ImageUse, StyleImage};
 use super::kit;
+use super::variant_table::{report_drop, storage_entry, VariantTable};
 use super::{
     StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleOption, StyleParam,
     StylePass, StyleStage,
 };
 use bytemuck::{Pod, Zeroable};
 use std::sync::{Arc, Mutex};
-
-/// Variant rows the uniform holds; row 0 is the scene's.
-pub const MAX_VARIANTS: usize = 16;
-
-/// Mask ids the slot table covers.
-pub const MAX_IDS: usize = 256;
 
 /// A row's flag: leave these pixels alone (an opt-out variant).
 const PASS_THROUGH: u32 = 1;
@@ -195,15 +190,14 @@ struct PaintUniforms {
     far: f32,
     /// The paper image's mean and spread of luma (#390), then 0, 0.
     paper_stats: [f32; 4],
-    rows: [RowUniform; MAX_VARIANTS],
-    /// The row of each mask id, four ids a vec4.
-    slots: [[u32; 4]; MAX_IDS / 4],
 }
 
 struct Watercolor {
     wash_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     paint_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniform_bgl: wgpu::BindGroupLayout,
+    /// The paint pass's group 0: its uniform and the variant table (#740).
+    paint_bgl: wgpu::BindGroupLayout,
     sampled_bgl: wgpu::BindGroupLayout,
     entity_bgl: wgpu::BindGroupLayout,
     wash_h: wgpu::Buffer,
@@ -211,7 +205,8 @@ struct Watercolor {
     uniforms: wgpu::Buffer,
     _no_mask: wgpu::Texture,
     no_mask_view: wgpu::TextureView,
-    warned: std::sync::atomic::AtomicBool,
+    /// The variant table (#740): grows with the frame.
+    table: Mutex<VariantTable>,
     paper: Mutex<ImageSlot>,
 }
 
@@ -219,6 +214,23 @@ impl Watercolor {
     fn new(d: &super::StyleDevice) -> Self {
         let device = d.device;
         let uniform_bgl = kit::uniform_layout(device, "Watercolor Uniform BGL");
+        let paint_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Watercolor Paint BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                storage_entry(1),
+                storage_entry(2),
+            ],
+        });
         let sampled_bgl = kit::sampled_layout(device, "Watercolor Texture BGL");
         // The paint pass's mask and depth
         let entity_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -281,18 +293,23 @@ impl Watercolor {
                 device,
                 "Watercolor Pipeline",
                 &module,
-                &[&uniform_bgl, &sampled_bgl, &sampled_bgl, &entity_bgl],
+                &[&paint_bgl, &sampled_bgl, &sampled_bgl, &entity_bgl],
                 d.format,
             ),
             wash_h: kit::uniform_buffer::<WashUniforms>(device, "Watercolor Wash H Uniforms"),
             wash_v: kit::uniform_buffer::<WashUniforms>(device, "Watercolor Wash V Uniforms"),
             uniforms: kit::uniform_buffer::<PaintUniforms>(device, "Watercolor Uniforms"),
             uniform_bgl,
+            paint_bgl,
             sampled_bgl,
             entity_bgl,
             _no_mask: no_mask,
             no_mask_view,
-            warned: Default::default(),
+            table: Mutex::new(VariantTable::new(
+                device,
+                "Watercolor",
+                std::mem::size_of::<RowUniform>(),
+            )),
             paper: Mutex::new(ImageSlot::new(ImageUse::Paper, "watercolor paper")),
         }
     }
@@ -364,6 +381,35 @@ fn row(param: impl Fn(&str) -> f32, off: bool) -> RowUniform {
     }
 }
 
+impl Watercolor {
+    /// The paint pass's group 0: its uniform and this frame's variant
+    /// table, written first.
+    fn paint_bind(
+        &self,
+        frame: &StyleFrame<'_>,
+        rows: &[RowUniform],
+        slots: &[u32],
+    ) -> Arc<wgpu::BindGroup> {
+        let mut table = self.table.lock().unwrap_or_else(|e| e.into_inner());
+        table.upload(frame.device, frame.queue, rows, slots);
+        let [rows, slots] = table.entries(1);
+        frame.bind("Watercolor Uniform BG", table.generation(), || {
+            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Watercolor Uniform BG"),
+                layout: &self.paint_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.uniforms.as_entire_binding(),
+                    },
+                    rows,
+                    slots,
+                ],
+            })
+        })
+    }
+}
+
 impl StylePass for Watercolor {
     fn encode(
         &self,
@@ -373,21 +419,14 @@ impl StylePass for Watercolor {
         output: &wgpu::TextureView,
     ) {
         // The variant table: row 0 the scene's, then each entity variant
+        // (#740: every variant gets a row, every id a slot)
         let mut rows = vec![row(|n| frame.param(n), false)];
         let mut papers = vec![frame.option("paper_image").to_string()];
-        let mut slots = [0u32; MAX_IDS];
+        let mut ids = vec![0u16];
+        let mut slots = vec![0u32; frame.style_ids.len() + 1];
         let mut wash = frame.param("wash");
         for (id, v) in frame.variants() {
-            if rows.len() == MAX_VARIANTS || id as usize >= MAX_IDS {
-                if !self.warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                    tracing::warn!(
-                        "watercolor: more per-entity variants than the {} (or ids past \
-                         {MAX_IDS}) one frame holds; the rest are painted like the scene",
-                        MAX_VARIANTS - 1
-                    );
-                }
-                continue;
-            }
+            ids.push(id);
             if !v.off {
                 wash = wash.max(frame.variant_param(v, "wash"));
             }
@@ -411,6 +450,19 @@ impl StylePass for Watercolor {
         );
         for (r, name) in rows.iter_mut().zip(&papers) {
             r.image = (paper.found && *name == chosen) as u32 as f32;
+        }
+        // One paper a frame: the first entity naming another is said (#740)
+        if let Some(i) = papers
+            .iter()
+            .position(|n| super::pencil::names_image(n) && *n != chosen)
+        {
+            report_drop(
+                "watercolor",
+                "paper images",
+                1,
+                frame.style_ids.entity(ids[i]).unwrap_or("?"),
+                &format!("painted on procedural paper (the frame's is \"{chosen}\")"),
+            );
         }
         let with_mask = rows.len() > 1;
         let passthrough = !(frame.whole_frame() && frame.option("scope") != "entities");
@@ -455,7 +507,7 @@ impl StylePass for Watercolor {
         );
 
         // Pass 3: paint
-        let mut uniforms = PaintUniforms {
+        let uniforms = PaintUniforms {
             size: [frame.width as f32, frame.height as f32],
             pixels_per_point: frame.pixels_per_point.max(0.25),
             srgb: frame.srgb() as u32,
@@ -464,13 +516,7 @@ impl StylePass for Watercolor {
             near: frame.camera.near,
             far: frame.camera.far,
             paper_stats: [paper.stats.mean, paper.stats.spread, 0.0, 0.0],
-            rows: [RowUniform::zeroed(); MAX_VARIANTS],
-            slots: [[0; 4]; MAX_IDS / 4],
         };
-        uniforms.rows[..rows.len()].copy_from_slice(&rows);
-        for (i, slot) in slots.iter().enumerate() {
-            uniforms.slots[i / 4][i % 4] = *slot;
-        }
         frame
             .queue
             .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
@@ -480,7 +526,7 @@ impl StylePass for Watercolor {
             output,
             &self.paint_pipeline,
             &[
-                &frame.uniform("Watercolor Uniform BG", &self.uniform_bgl, &self.uniforms),
+                &self.paint_bind(frame, &rows, &slots),
                 &frame.sampled_input("Watercolor Paint Input BG", &self.sampled_bgl, input),
                 &frame.sampled(
                     "Watercolor Wash Texture BG",
@@ -503,7 +549,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<WashUniforms>(), 32);
         assert_eq!(
             std::mem::size_of::<PaintUniforms>(),
-            48 + MAX_VARIANTS * 80 + MAX_IDS / 4 * 16
+            48
         );
     }
 
