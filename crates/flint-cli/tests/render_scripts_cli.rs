@@ -1185,3 +1185,59 @@ fn a_failing_script_is_counted_once_reported_and_fails_a_strict_run() {
     ok(&clean);
     assert!(stderr(&clean).contains("[script] no errors"));
 }
+
+/// The HUD is drawn headless (#731): a UI document a script loads, shown and
+/// focused by the flags as a player's input would, is painted over the
+/// capture in the state the flags put it in, as the player paints it.
+#[test]
+fn a_ui_document_is_drawn_over_the_capture() {
+    let dir = project("ui_document");
+    std::fs::create_dir_all(dir.join("ui")).unwrap();
+    std::fs::write(dir.join("flint.toml"), "[project]\n").unwrap();
+    std::fs::write(
+        dir.join("scripts/tint.rhai"),
+        "load_ui(\"ui/card.ui.toml\");\nfn on_update() {}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("ui/card.ui.toml"),
+        "[ui]\nstyle = \"ui/card.style.toml\"\n\n[elements.card]\nanchor = \"center\"\nclass = \"card\"\nvisible = false\n\n[elements.go]\ntype = \"button\"\nparent = \"card\"\nclass = \"go\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("ui/card.style.toml"),
+        "[styles.card]\nwidth = 40\nheight = 30\n\n[styles.go]\nwidth = 40\nheight = 30\nbg_color = [0.0, 0.0, 1.0, 1.0]\n\n[styles.go.focus]\nbg_color = [0.0, 1.0, 0.0, 1.0]\n",
+    )
+    .unwrap();
+    let centre = |name: &str| {
+        let image = image::open(dir.join(name)).unwrap().to_rgba8();
+        let p = image.get_pixel(32, 24);
+        [p[0], p[1], p[2]]
+    };
+
+    let hidden = render(&dir, "hidden.png", &["--scripts"]);
+    if no_gpu(&hidden) {
+        return;
+    }
+    ok(&hidden);
+    assert!(
+        !stderr(&hidden).contains("HUD isn't drawn"),
+        "{}",
+        stderr(&hidden)
+    );
+    assert_ne!(centre("hidden.png"), [0, 0, 255], "a hidden card draws nothing");
+
+    ok(&render(&dir, "shown.png", &["--ui-show", "card"]));
+    assert_eq!(centre("shown.png"), [0, 0, 255], "the button, unfocused");
+
+    ok(&render(
+        &dir,
+        "focused.png",
+        &["--ui-show", "card", "--ui-focus", "go"],
+    ));
+    assert_eq!(centre("focused.png"), [0, 255, 0], "its focus table");
+
+    let wrong = render(&dir, "wrong.png", &["--ui-focus", "goo"]);
+    assert!(!wrong.status.success());
+    assert!(stderr(&wrong).contains("goo"), "{}", stderr(&wrong));
+}

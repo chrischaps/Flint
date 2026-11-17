@@ -162,6 +162,11 @@ pub mod codes {
     pub const BAD_INPUT_CONFIG: &str = "bad-input-config";
     /// A procgen spec a scene's model or texture is made from does not parse.
     pub const BAD_SPEC: &str = "bad-spec";
+    /// A UI document (`.ui.toml`) or the style file it names has a mistake
+    /// (#731): an unknown type, anchor, key, parent, class or style
+    /// property, or a value of the wrong shape, named with its element or
+    /// class. `load_ui` refuses the same document as a script error.
+    pub const BAD_UI: &str = "bad-ui";
     /// A procgen spec a scene names has a parameter its generator ignores
     /// (a warning) or a value it can't use (an error): a wrong type, out of
     /// range, not one of the choices, a required key missing (#718;
@@ -374,6 +379,11 @@ pub mod codes {
             BAD_SPEC,
             Severity::Error,
             "a procgen spec a scene's model or texture is made from does not parse",
+        ),
+        (
+            BAD_UI,
+            Severity::Error,
+            "a UI document (.ui.toml) or its style file has an unknown type, anchor, key, parent, class or property, or a value of the wrong shape",
         ),
         (
             SPEC_PARAM,

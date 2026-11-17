@@ -175,7 +175,10 @@ fn fold_script_time(mut args: RenderArgs) -> RenderArgs {
         args.clock.time = Some(t);
         args.clock.scripts = true;
     }
-    if args.clock.strict_scripts {
+    if args.clock.strict_scripts
+        || !args.clock.ui_show.is_empty()
+        || args.clock.ui_focus.is_some()
+    {
         args.clock.scripts = true;
     }
     args
@@ -2693,6 +2696,9 @@ struct Stage {
     style_dt: f32,
     /// A captured frame's inputs as data (#1089), for its `replay/`.
     replay_inputs: Option<flint_render::frame_replay::FrameInputsState>,
+    /// The HUD's painter when scripts run (#731): their draw calls and UI
+    /// documents over each capture, as the player draws them.
+    hud: Option<flint_player::HeadlessHud>,
 }
 
 impl Stage {
@@ -2931,12 +2937,60 @@ impl Stage {
         // Scripts (#8), as the player starts them once its models are loaded.
         let scripted = args.clock.scripts || timeline.is_some();
         game.set_scene_look(cell_look.as_deref());
+        // Their HUD's painter first (#731), so measure_text and the UI
+        // documents lay text out as it draws
+        let hud = scripted.then(|| {
+            flint_player::HeadlessHud::new(
+                &ctx.device,
+                &ctx.queue,
+                ctx.format,
+                flint_core::project::AssetScope::new(
+                    config.project.clone(),
+                    Path::new(&args.scene)
+                        .parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .unwrap_or(Path::new(".")),
+                ),
+            )
+        });
+        if let Some(hud) = &hud {
+            game.set_text_measurer(hud.measurer());
+        }
+        // The screen in points, as the player tells its scripts
         game.start_scripts(
             scripted,
             timeline,
-            (ctx.width as f32, ctx.height as f32),
+            (
+                ctx.width as f32 / pixels_per_point,
+                ctx.height as f32 / pixels_per_point,
+            ),
             renderer.post_process_config(),
         );
+        // A menu nothing opens without input (#731)
+        if scripted {
+            let (show, focus) = (&args.clock.ui_show, args.clock.ui_focus.as_deref());
+            let missing = game.with_ui(|ui| {
+                let mut missing = Vec::new();
+                for id in show.iter().map(String::as_str).chain(focus) {
+                    if !ui.exists(id) {
+                        missing.push(id.to_string());
+                    }
+                }
+                for id in show {
+                    ui.show(id);
+                }
+                if focus.is_some() {
+                    ui.focus(focus);
+                }
+                missing
+            });
+            if !missing.is_empty() {
+                anyhow::bail!(
+                    "--ui-show / --ui-focus: no UI document the scripts loaded has {}",
+                    missing.join(", ")
+                );
+            }
+        }
         // A capture that draws particles has them from here, so what the scripts
         // emit reaches them where it would in the player (#579), and they step
         // on the scripts' clock. One drawing them at --particle-time steps there.
@@ -3007,6 +3061,7 @@ impl Stage {
             pinned_boil,
             style_dt: FrameInputs::default().dt,
             replay_inputs: None,
+            hud,
         })
     }
 
@@ -3194,6 +3249,18 @@ impl Stage {
             &ctx.color_view,
             Some(self.game.world()),
         );
+
+        // The HUD over it, as the player draws it over its frame (#731)
+        if let Some(hud) = &mut self.hud {
+            hud.paint(
+                &ctx.device,
+                &ctx.queue,
+                &ctx.hud_view(),
+                [ctx.width, ctx.height],
+                self.pixels_per_point,
+                self.game.hud(),
+            );
+        }
 
         // Read back pixels
         let pixels =

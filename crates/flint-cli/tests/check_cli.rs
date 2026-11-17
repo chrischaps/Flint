@@ -395,6 +395,47 @@ fn a_clean_project_exits_zero() {
     );
 }
 
+/// A UI document with a bad `type` is an error naming the file and the
+/// element (#731), as `load_ui` refuses it; mended, the project is clean.
+#[test]
+fn a_bad_type_in_a_ui_document_names_its_file_and_element() {
+    let dir = project(
+        "ui_document",
+        &[
+            ("scenes/dock.scene.toml", CLEAN_SCENE),
+            (
+                "scripts/sign.rhai",
+                "fn on_init() { play_sound(\"audio/creak.ogg\"); }\n",
+            ),
+            ("audio/creak.ogg", ""),
+            ("models/boat.glb", ""),
+            (
+                "ui/pause.ui.toml",
+                "[ui]\nstyle = \"ui/pause.style.toml\"\n\n[elements.menu]\ntype = \"panel\"\n\n[elements.resume]\ntype = \"buton\"\nparent = \"menu\"\nclass = \"button\"\n",
+            ),
+            ("ui/pause.style.toml", "[styles.button]\nwidth = 200\n"),
+        ],
+    );
+    let doc = json(&flint(&dir, &["check", "--json"]));
+    let d = diagnostic(&doc, "bad-ui", None);
+    assert!(
+        d["file"].as_str().unwrap().ends_with("ui/pause.ui.toml"),
+        "{d:#}"
+    );
+    let message = d["message"].as_str().unwrap();
+    assert!(
+        message.contains("element `resume`: unknown type `buton`"),
+        "{message}"
+    );
+    assert_eq!(doc["valid"], false);
+
+    let layout = dir.join("ui/pause.ui.toml");
+    let text = std::fs::read_to_string(&layout).unwrap();
+    std::fs::write(&layout, text.replace("buton", "button")).unwrap();
+    let o = flint(&dir, &["check"]);
+    assert_eq!(o.status.code(), Some(0), "{}{}", stdout(&o), stderr(&o));
+}
+
 /// One scene: the scene and the files it names (its script's literals),
 /// and not the other scenes of the project.
 #[test]

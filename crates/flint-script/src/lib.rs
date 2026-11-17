@@ -543,6 +543,13 @@ impl ScriptSystem {
         self.engine.drain_world_texts()
     }
 
+    /// The data-driven UI documents (#731), for a host to show an element or
+    /// move focus as input would (`flint render --ui-show`, `--ui-focus`).
+    pub fn with_ui<R>(&mut self, f: impl FnOnce(&mut crate::ui::UiSystem) -> R) -> R {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        f(&mut c.ui_system)
+    }
+
     /// Generate draw commands from the data-driven UI system (unclipped)
     pub fn generate_ui_draw_commands(&mut self, screen_w: f32, screen_h: f32) -> Vec<DrawItem> {
         let mut c = crate::lock_or_recover(&self.engine.ctx);

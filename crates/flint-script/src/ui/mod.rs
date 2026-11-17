@@ -195,6 +195,18 @@ pub fn check_document(layout_path: &Path, root_dir: &Path) -> Vec<String> {
     }
 }
 
+/// [`check_document`] with each problem split into the file it is in (the
+/// layout or its style file) and what is wrong there.
+pub fn check_document_at(layout_path: &Path, root_dir: &Path) -> Vec<(PathBuf, String)> {
+    check_document(layout_path, root_dir)
+        .into_iter()
+        .map(|problem| match problem.split_once(": ") {
+            Some((file, what)) => (PathBuf::from(file), what.to_string()),
+            None => (layout_path.to_path_buf(), problem),
+        })
+        .collect()
+}
+
 impl UiDocument {
     /// Resolve layout if it was dropped or the screen size changed
     fn ensure_layout(

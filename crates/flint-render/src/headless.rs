@@ -110,7 +110,9 @@ impl HeadlessContext {
             dimension: wgpu::TextureDimension::D2,
             format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
+            // A HUD paints through the plain twin, as the player's does
+            // (`hud_view`, #731)
+            view_formats: &[format.remove_srgb_suffix()],
         });
         let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -203,6 +205,17 @@ impl HeadlessContext {
         staging_buffer.unmap();
 
         Ok(pixels)
+    }
+
+    /// A view of the colour target in its format without the sRGB suffix,
+    /// for an egui pass (#731): as the player's `RenderContext::hud_view`,
+    /// so a HUD blends in display space (#428).
+    pub fn hud_view(&self) -> wgpu::TextureView {
+        self.color_texture
+            .create_view(&wgpu::TextureViewDescriptor {
+                format: Some(self.format.remove_srgb_suffix()),
+                ..Default::default()
+            })
     }
 
     /// Aspect ratio of this context
