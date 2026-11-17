@@ -44,23 +44,51 @@ impl ScriptEngine {
             return true;
         }
         let script = self.scripts.get_mut(&entity).unwrap();
+        let recording = flint_core::profile::recording();
         // The callback's own site, `<source>:<callback>` (#1097), found
         // before the borrow `script::call`'s detail holds; nothing unless
         // the recorder records
-        let named = flint_core::profile::recording().then(|| script.trace_site(callback));
-        // Each script's call, by file: one a script a callback, never one
-        // per function the script calls (#1096)
+        let named = recording.then(|| script.trace_site(callback));
+        // Inside it, each function the callback calls (#1100), while its
+        // time is taken or the recorder records
+        let profiling = self.times.is_some() || recording;
+        // A callback called from inside another's call is the outer one's
+        let counting = profiling && crate::fn_times::begin(recording);
+        if profiling {
+            script.make_profiled(&self.engine);
+        }
+        let calls = match &script.profiled {
+            Some(Some(timed)) if profiling => timed,
+            _ => &script.calls,
+        };
+        // Each script's call, by file: one a script a callback (#1096)
         flint_core::scope!("script::call", script.file.as_str());
         // ... and inside it the callback by name, as its time is named,
         // so a trace reads `stall.rhai:on_update` under `script::call`
         let _named = named.map(flint_core::profile::Scope::enter);
+        // A timed function is two calls deep (its wrapper, then its body):
+        // twice the levels, so a recursion fails at the depth it would untimed
+        let levels = self.engine.max_call_levels();
+        if profiling {
+            self.engine.set_max_call_levels(levels.saturating_mul(2));
+        }
         let began = self.times.is_some().then(web_time::Instant::now);
-        let result =
-            self.engine
-                .call_fn::<rhai::Dynamic>(&mut script.scope, &script.calls, callback, args);
+        let result = self
+            .engine
+            .call_fn::<rhai::Dynamic>(&mut script.scope, calls, callback, args);
+        if profiling {
+            self.engine.set_max_call_levels(levels);
+        }
         if let (Some(times), Some(began)) = (&mut self.times, began) {
             let ms = began.elapsed().as_secs_f32() * 1000.0;
             times.callback(&script.source_path, callback, ms);
+        }
+        if counting {
+            crate::fn_times::end(&mut self.fn_took);
+            match &mut self.times {
+                Some(times) => times.functions(&script.source_path, callback, &mut self.fn_took),
+                None => self.fn_took.clear(),
+            }
         }
         match result {
             Ok(_) => true,

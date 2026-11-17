@@ -1345,6 +1345,11 @@ impl super::game_core::FrameHost for PlayerApp {
         if !times.is_empty() {
             self.stats.perf.record_scripts(&times);
         }
+        // ... and inside each callback, its functions (#1100)
+        let functions = self.core.script.take_function_times();
+        if !functions.is_empty() {
+            self.stats.perf.record_functions(&functions);
+        }
     }
 
     fn window_for_scripts(&mut self) {

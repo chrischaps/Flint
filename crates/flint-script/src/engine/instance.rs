@@ -50,6 +50,11 @@ pub struct ScriptInstance {
     /// Each callback's profiler site (`<source>:<callback>`, #1097), made
     /// the first time the callback runs while the recorder records.
     trace_sites: Vec<(String, &'static flint_core::profile::Site)>,
+    /// [`Self::calls`] with each function timed (#1100,
+    /// `fn_times::profiled`): made the first time a callback is called
+    /// while profiling, and again after `calls` is rebuilt. `Some(None)`:
+    /// made, and nothing to time (or it didn't compile).
+    pub(crate) profiled: Option<Option<AST>>,
 }
 
 impl ScriptInstance {
@@ -108,6 +113,18 @@ impl ScriptInstance {
             file,
             speaker: None,
             trace_sites: Vec::new(),
+            profiled: None,
+        }
+    }
+
+    /// Make [`Self::calls`]' timed copy, if it isn't made yet, with `engine`.
+    pub(crate) fn make_profiled(&mut self, engine: &rhai::Engine) {
+        if self.profiled.is_none() {
+            self.profiled = Some(crate::fn_times::profiled(
+                engine,
+                &self.calls,
+                &self.source_path,
+            ));
         }
     }
 
@@ -125,6 +142,7 @@ impl ScriptInstance {
     /// lending, or a reload copied new ones in): call on their values.
     pub(crate) fn top_level_ran(&mut self) {
         self.calls = callable(&self.ast, &self.global_reads, &self.scope);
+        self.profiled = None;
     }
 }
 

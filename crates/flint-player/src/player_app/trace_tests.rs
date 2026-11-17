@@ -20,16 +20,23 @@ use std::sync::Arc;
 
 const STEP: f64 = 1.0 / 60.0;
 
-/// Stalls 150 ms on the frame game time crosses 1.01 s (the start) and
-/// 3.01 s.
+/// Stalls 150 ms in a helper on the frame game time crosses 1.01 s (the
+/// start) and 3.01 s, and calls an engine function ten times a frame: what
+/// #1100 puts inside the callback's scope.
 const STALL: &str = r#"
+fn stall(seconds) {
+    let start = timestamp();
+    while start.elapsed < seconds { }
+}
+
 fn on_update() {
     let t = total_time();
     let before = t - delta_time();
+    let x = 0.0;
+    for i in 0..10 { x += clamp(i * 0.1, 0.0, 0.5); }
     for mark in [1.01, 3.01] {
         if before < mark && t >= mark {
-            let start = timestamp();
-            while start.elapsed < 0.15 { }
+            stall(0.15);
         }
     }
 }
@@ -180,6 +187,33 @@ fn a_hitchs_trace_holds_the_stalled_frame_under_its_scripts_scope() {
         t0 <= s0 && s1 <= t1,
         "tick {t0}..{t1} holds the script {s0}..{s1}"
     );
+
+    // Inside the callback (#1100): the helper that took the stall, and
+    // each call of the engine function, all in the callback's span
+    let in_stalled_frame = |name: &str| -> Vec<&Value> {
+        events(&trace)
+            .iter()
+            .filter(|e| {
+                e["name"] == name
+                    && e["tid"] == stalled["tid"]
+                    && e["args"]["frame"] == stalled["args"]["frame"]
+            })
+            .collect()
+    };
+    let helper = in_stalled_frame("stall.rhai:stall()");
+    assert_eq!(helper.len(), 1, "the helper, once: {header}");
+    let (h0, h1) = span(helper[0]);
+    assert!(
+        s0 <= h0 && h1 <= s1,
+        "on_update {s0}..{s1} holds stall() {h0}..{h1}"
+    );
+    assert!(h1 - h0 >= 150_000.0, "stall() took the stall: {h0}..{h1}");
+    let clamps = in_stalled_frame("clamp()");
+    assert_eq!(clamps.len(), 10, "each engine call is a scope");
+    for c in clamps {
+        let (c0, c1) = span(c);
+        assert!(s0 <= c0 && c1 <= s1, "on_update holds clamp() {c0}..{c1}");
+    }
 
     // The frames track has the stalled frame, and the hitches track marks
     // it, both spanning the script's scope (to a millisecond: the frame
