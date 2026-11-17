@@ -671,7 +671,7 @@ impl PlayerApp {
             .render_context
             .as_ref()
             .is_some_and(|c| c.presents_on_vblank());
-        let disabled = std::env::var("FLINT_PACING").is_ok_and(|v| v == "0");
+        let disabled = flint_core::env::PACING.flag() == Some(false);
         let period = (on_vblank && !disabled)
             .then(|| {
                 self.window

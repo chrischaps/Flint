@@ -253,6 +253,7 @@ pub struct PlayerArgs {
 #[derive(clap::Parser, Clone, Debug)]
 #[command(name = "flint-player")]
 #[command(about = "Flint game player - run scenes with physics and first-person controls")]
+#[command(after_help = flint_core::env::help_section(&flint_core::env::PLAYER_GROUPS))]
 pub struct PlayerCli {
     /// Play a game bundle made by `flint bundle` (#98) instead of the disk.
     /// Every read goes to its files; the scene is the bundle's start scene,

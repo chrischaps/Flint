@@ -57,6 +57,7 @@ const REPORT_TO_STDOUT: &str = "json";
 #[command(group(clap::ArgGroup::new("span").multiple(true).args(["time", "script_time", "mesh"])))]
 #[command(group(clap::ArgGroup::new("clock").multiple(true).args(["time", "script_time"])))]
 #[command(group(clap::ArgGroup::new("listing").args(["list_styles", "list_effects"])))]
+#[command(after_help = flint_core::env::help_section(&[flint_core::env::Group::Render]))]
 pub struct RenderArgs {
     /// Path to scene file
     #[arg(

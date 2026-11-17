@@ -54,7 +54,7 @@ macro_rules! wgsl {
 pub(crate) use wgsl;
 
 /// The variable that turns it on.
-pub const VAR: &str = "FLINT_STYLE_SHADER_DIR";
+pub const VAR: &str = flint_core::env::STYLE_SHADER_DIR.name;
 
 /// How many [`StyleSet::ensure`](super::StyleSet::ensure) calls (frames)
 /// pass between looks at the files' stamps: a quarter second at 60 fps.
@@ -118,9 +118,7 @@ mod imp {
         }
         let mut slot = DIR.write().unwrap_or_else(|e| e.into_inner());
         slot.get_or_insert_with(|| {
-            let dir = std::env::var_os(super::VAR)
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)?;
+            let dir = flint_core::env::STYLE_SHADER_DIR.path()?;
             if !flint_core::vfs::is_file(dir.join("invert.wgsl")) {
                 tracing::warn!(
                     "{}={}: no invert.wgsl there; it should name crates/flint-render/src/stylize",

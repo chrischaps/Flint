@@ -133,6 +133,11 @@ jobs:
       - name: flint script api --check-book
         run: cargo run -p flint-cli --no-default-features --bin flint -- script api --check-book
 
+      # The book's environment page (#715) against the table every FLINT_*
+      # switch is read through (flint_core::env). Fix it with `flint env --book`.
+      - name: flint env --check-book
+        run: cargo run -p flint-cli --no-default-features --bin flint -- env --check-book
+
       # The book's prose against the CLI (#375): every `--flag` on a `flint`
       # command line in the book and the CLAUDE.md files is one that
       # command's --help lists, every `[post_process.styles.<name>]` is a

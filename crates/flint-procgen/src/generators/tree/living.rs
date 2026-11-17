@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn pose_is_bit_identical_across_runs() {
         let spec = load("specs/examples/oak_tree.procgen.toml");
-        if std::env::var_os("FLINT_LIVING_PRINT_DIGEST").is_some() {
+        if flint_core::env::LIVING_PRINT_DIGEST.is_set() {
             println!("digest={:x}", pose_digest(&spec));
             return;
         }

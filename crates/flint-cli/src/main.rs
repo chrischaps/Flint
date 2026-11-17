@@ -8,7 +8,7 @@ mod output;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, bundle, check as check_cmd, dxc, edit_router, entity, examples, export, gen,
+    asset, bundle, check as check_cmd, dxc, edit_router, entity, env, examples, export, gen,
     gen_preview, init, legacy_names, music, play, prefab, preview, query, render, render_goldens,
     scene, schema, script, spike_rumble, spline_edit, style, terrain_edit, tex_edit, validate,
 };
@@ -116,6 +116,10 @@ enum Commands {
     /// The curated example scenes, from examples/index.toml: list them by
     /// topic, or --check that every one is indexed and validates
     Examples(examples::ExamplesArgs),
+
+    /// Every FLINT_* environment switch: what it accepts, what unset
+    /// means and its value now (--json); exits 1 on a value it can't take
+    Env(env::EnvArgs),
 
     /// Pack a game folder into .flintpack bundles for the web player
     Bundle(bundle::BundleArgs),
@@ -256,6 +260,7 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Validate(args) => validate::run(*args),
         Commands::Check(args) => check_cmd::run(*args),
         Commands::Examples(args) => examples::run(args),
+        Commands::Env(args) => env::run(args),
         Commands::Bundle(args) => bundle::run(args),
         Commands::Export(cmd) => export::run(cmd),
         Commands::Dxc(cmd) => dxc::run(cmd),
