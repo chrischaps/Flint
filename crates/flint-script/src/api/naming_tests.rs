@@ -23,6 +23,7 @@ pub(crate) const RENAMES: &[(&str, &str)] = &[
     ("camera_shake", "shake_camera"),
     ("camera_shake_stop", "stop_camera_shake"),
     ("camera_apply_shake", "apply_camera_shake"),
+    ("ui_set_value", "set_fill"),
 ];
 
 /// The deprecated forms that became an opts map on the base name.

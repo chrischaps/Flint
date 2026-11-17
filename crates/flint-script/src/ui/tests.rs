@@ -120,8 +120,9 @@ fn project() -> (TempProject, UiSystem, i64) {
     tp.write("ui/test.ui.toml", LAYOUT);
     tp.write("ui/test.style.toml", STYLE);
     let mut sys = UiSystem::new();
-    let h = sys.load("ui/test.ui.toml", tp.path());
-    assert!(h > 0, "load should succeed");
+    let h = sys
+        .load("ui/test.ui.toml", tp.path(), None)
+        .expect("load should succeed");
     (tp, sys, h)
 }
 
@@ -406,10 +407,11 @@ fn hit_uses_resolved_rect() {
 }
 
 #[test]
-fn load_missing_layout_returns_minus_one() {
+fn load_missing_layout_is_an_error_naming_it() {
     let tp = TempProject::new("missing");
     let mut sys = UiSystem::new();
-    assert_eq!(sys.load("ui/nope.ui.toml", tp.path()), -1);
+    let err = sys.load("ui/nope.ui.toml", tp.path(), None).unwrap_err();
+    assert!(err.contains("nope.ui.toml"), "{err}");
     assert!(sys.documents.is_empty());
 }
 
@@ -427,13 +429,15 @@ fn shared_tokens_via_string_and_tokens_file_keys() {
         tp.write(
             "ui/test.style.toml",
             &format!(
-                "{header}[styles.button]
+                "{header}[styles.root]
+[styles.header]
+[styles.button]
 color = \"$accent\"
 "
             ),
         );
         let mut sys = UiSystem::new();
-        assert!(sys.load("ui/test.ui.toml", tp.path()) > 0);
+        assert!(sys.load("ui/test.ui.toml", tp.path(), None).is_ok());
         assert_eq!(
             sys.documents[0].styles["button"].resolve().color,
             [1.0, 0.55, 0.15, 1.0],
@@ -448,10 +452,11 @@ fn style_without_tokens_still_loads() {
     tp.write("ui/test.ui.toml", LAYOUT);
     tp.write(
         "ui/test.style.toml",
-        "[styles.button]\nx = 1\ncolor = [1, 0, 0, 1]\n",
+        // Every class the layout names (a missing one is an error, #731)
+        "[styles.root]\n[styles.header]\n[styles.button]\nx = 1\ncolor = [1, 0, 0, 1]\n",
     );
     let mut sys = UiSystem::new();
-    assert!(sys.load("ui/test.ui.toml", tp.path()) > 0);
+    assert!(sys.load("ui/test.ui.toml", tp.path(), None).is_ok());
     assert!(sys.token("accent").is_none());
     let (_, st) = {
         sys.get_rect("button", 100.0, 100.0).unwrap();

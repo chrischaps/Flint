@@ -247,10 +247,23 @@ pub struct ClockArgs {
     /// Run the scene's scripts as flint-player does, one tick a --frame-step, so
     /// what they write to the world, the wooze field and Living Props is in the
     /// picture. random() is seeded and scripts run in the order of their entities'
-    /// names: same scene, same pixels. Sound, physics, the HUD and scene changes
-    /// don't run, and are named on stderr when a script asks for them
+    /// names: same scene, same pixels. The HUD is drawn over it as the player
+    /// draws it: on_draw_ui's draw calls and the UI documents scripts load (#731).
+    /// Sound, physics and scene changes don't run, and are named on stderr when a
+    /// script asks for them
     #[arg(long)]
     pub scripts: bool,
+
+    /// Show a UI document's element (and what is inside it) before the first
+    /// step, as a script's ui_show would: a menu nothing opens without input,
+    /// such as a pause menu. Repeatable. Implies --scripts
+    #[arg(long, value_name = "ELEMENT")]
+    pub ui_show: Vec<String>,
+
+    /// Give a UI document's element focus before the first step, as the arrows
+    /// or a pad would, so the capture shows its focused state. Implies --scripts
+    #[arg(long, value_name = "ELEMENT")]
+    pub ui_focus: Option<String>,
 
     /// Fail (exit 1) when any script failed, to load, to compile or at run
     /// time (#693), after writing the picture. Implies --scripts. Every

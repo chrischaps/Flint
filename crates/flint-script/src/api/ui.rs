@@ -14,16 +14,81 @@ pub(crate) fn register(api: &mut ScriptApi) {
 
     m.func(
         "load_ui",
-        "Load a UI layout document, a path from the project root.",
+        "Load a UI layout document, a path from the project root; this script hears its elements' on_ui.",
     )
     .arg("layout_path", Str)
-    .returns(Int, "a handle for unload_ui")
+    .returns(Int, "a handle for unload_ui; a layout or style file with a mistake is a script error naming the file and the element")
     .run(|call, (path,)| {
         let c = call.ctx();
         // A path from the project root (ADR 0114)
         let root = c.project_root_holding("load_ui", &path);
-        c.ui_system.load(&path, &root)
+        let owner = (c.current_entity.raw() != 0).then_some(c.current_entity);
+        let loaded = c.ui_system.load(&path, &root, owner);
+        loaded.map_err(|problems| call.error(problems))
     });
+
+    m.func(
+        "ui_focus",
+        "Give an element focus (\"\" for none): the arrows, a pad and ui_accept then work from it.",
+    )
+    .arg("element_id", Str)
+    .run(|call, (id,)| {
+        let id = (!id.is_empty()).then_some(id.as_str());
+        call.ctx().ui_system.focus(id);
+    });
+
+    m.func("ui_focused", "The element that has focus.")
+        .returns(Str, "its id, \"\" for none")
+        .run(|call, ()| {
+            call.ctx_ref()
+                .ui_system
+                .focused()
+                .unwrap_or_default()
+                .to_string()
+        });
+
+    m.func(
+        "ui_get_value",
+        "A slider's value, or the index of a list's selected item.",
+    )
+    .arg("element_id", Str)
+    .returns(Num, "0.0 for any other element")
+    .run(|call, (id,)| call.ctx_ref().ui_system.value(&id) as f64);
+
+    m.func(
+        "ui_set_slider",
+        "Set a slider's value, clamped to its min and max and snapped to its step.",
+    )
+    .arg("element_id", Str)
+    .arg("value", Num)
+    .run(|call, (id, value)| call.ctx().ui_system.set_value(&id, value as f32));
+
+    m.func(
+        "ui_select",
+        "Select a list's item by index (focusing it when the list has focus).",
+    )
+    .arg("element_id", Str)
+    .arg("index", Int)
+    .run(|call, (id, index)| call.ctx().ui_system.set_value(&id, index as f32));
+
+    m.func(
+        "ui_set_items",
+        "Give a list new items: a button of its item_class for each string, ids <list>.0, <list>.1, ...",
+    )
+    .arg("element_id", Str)
+    .arg("items", ArrayKind)
+    .run(|call, (id, items)| {
+        let items = items.into_iter().map(|d| d.to_string()).collect();
+        call.ctx().ui_system.set_items(&id, items);
+    });
+
+    m.func(
+        "ui_set_enabled",
+        "Let focus reach an element or not; a disabled one draws its class's disabled state.",
+    )
+    .arg("element_id", Str)
+    .arg("enabled", Bool)
+    .run(|call, (id, enabled)| call.ctx().ui_system.set_enabled(&id, enabled));
 
     m.func("unload_ui", "Unload a UI document load_ui returned.")
         .arg("handle", Int)
@@ -41,6 +106,14 @@ pub(crate) fn register(api: &mut ScriptApi) {
     m.func("ui_hide", "Hide an element.")
         .arg("element_id", Str)
         .run(|call, (id,)| call.ctx().ui_system.hide(&id));
+
+    m.func(
+        "ui_is_shown",
+        "Whether an element is drawn: it and every element it is inside visible.",
+    )
+    .arg("element_id", Str)
+    .returns(Bool, "false for an element no document has")
+    .run(|call, (id,)| call.ctx_ref().ui_system.is_shown(&id));
 
     m.func("ui_set_visible", "Show or hide an element.")
         .arg("element_id", Str)
