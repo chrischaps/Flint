@@ -55,11 +55,21 @@ impl PlayerApp {
             .into_iter()
             .map(str::to_string)
             .collect();
+        // The key that lists the debug keys, if the table has one on
+        // (`[debug_keys] enabled = false` or `keys = "none"` takes it off)
+        let table = self.debug_key_table();
+        let list_key = table
+            .entries
+            .iter()
+            .find(|e| e.action == super::debug_keys::SHOW_KEYS_ACTION)
+            .filter(|e| table.enabled && e.standing == flint_runtime::Standing::Active)
+            .map(|e| e.key_label());
         let line = controls_line(
             config,
             &self.input_layers.named_actions,
             &read,
             self.core.physics.has_player_entity(),
+            list_key.as_deref(),
         );
         if self.input_layers.said_controls.as_deref() == Some(line.as_str()) {
             return;
@@ -80,18 +90,20 @@ const CHARACTER_ACTIONS: [&str; 6] = [
     "sprint",
 ];
 
-/// `Controls: jump Space/Pad:South, steer A/D | Esc ..., F2 stats, ...`:
-/// each bound action the scene uses with its bindings' labels, then the
-/// player's own keys. An action is used when the game's layers name it
+/// `Controls: jump Space/Pad:South, steer A/D | Esc cursor/exit, F1 debug
+/// keys`: each bound action the scene uses with its bindings' labels, then
+/// the player's own keys. An action is used when the game's layers name it
 /// (`named`), a script reads it (`read`), or it is the character
 /// controller's and the scene has one (`first_person`, which the mouse
 /// turns too). A built-in nothing uses (`fire` in a racing game) is left
-/// out.
+/// out. `debug_keys` is the key that shows the debug-key list, when one
+/// does (the `keys` row of the table, F1 unless `[debug_keys]` moved it).
 pub(super) fn controls_line(
     config: &InputConfig,
     named: &BTreeSet<String>,
     read: &BTreeSet<String>,
     first_person: bool,
+    debug_keys: Option<&str>,
 ) -> String {
     let listed = |name: &str| {
         named.contains(name)
@@ -119,21 +131,24 @@ pub(super) fn controls_line(
         format!("Controls: {}", actions.join(", "))
     };
 
-    let mut keys = Vec::new();
+    let mut keys: Vec<String> = Vec::new();
     if first_person {
-        keys.push("mouse look");
+        keys.push("mouse look".into());
     }
     // A game that binds Escape has it, and the window doesn't close (#639)
     let escape = parse_key_code("Escape").is_some_and(|k| config.binds_key(k));
     if !escape {
-        keys.push("Esc cursor/exit");
+        keys.push("Esc cursor/exit".into());
     }
-    keys.push("F2 stats");
-    #[cfg(feature = "debug-hud")]
-    keys.extend(["F3 panels", "F4 effects"]);
-    keys.push("F11 fullscreen");
-    line.push_str(" | ");
-    line.push_str(&keys.join(", "));
+    // The rest of the player's keys are the debug-key table's, which this
+    // key lists over the game (#717)
+    if let Some(key) = debug_keys {
+        keys.push(format!("{key} debug keys"));
+    }
+    if !keys.is_empty() {
+        line.push_str(" | ");
+        line.push_str(&keys.join(", "));
+    }
     line
 }
 
@@ -171,7 +186,7 @@ mod tests {
         let game = kart();
         let named: BTreeSet<String> = game.actions.keys().cloned().collect();
         merged.actions.extend(game.actions);
-        let line = controls_line(&merged, &named, &BTreeSet::new(), false);
+        let line = controls_line(&merged, &named, &BTreeSet::new(), false, Some("F1"));
         assert!(
             line.starts_with(
                 "Controls: accelerate W/Pad:RightTrigger2, pause Escape, steer A/D/Pad:LeftStickX | "
@@ -181,10 +196,7 @@ mod tests {
         for gone in ["jump", "sprint", "move_forward", "mouse look", "Esc cursor"] {
             assert!(!line.contains(gone), "{gone} in {line}");
         }
-        assert!(
-            line.contains("F2 stats") && line.ends_with("F11 fullscreen"),
-            "{line}"
-        );
+        assert!(line.ends_with("| F1 debug keys"), "{line}");
     }
 
     /// The Overgrown Ruins' layer names only `pause`; its player walks on
@@ -198,11 +210,11 @@ mod tests {
         .unwrap();
         let named: BTreeSet<String> = game.actions.keys().cloned().collect();
         merged.actions.extend(game.actions);
-        let line = controls_line(&merged, &named, &BTreeSet::new(), true);
+        let line = controls_line(&merged, &named, &BTreeSet::new(), true, Some("F1"));
         assert!(
             line.starts_with(
                 "Controls: jump Space, move_backward S, move_forward W, move_left A, \
-                 move_right D, pause Escape, sprint LShift | mouse look, F2 stats"
+                 move_right D, pause Escape, sprint LShift | mouse look, F1 debug keys"
             ),
             "{line}"
         );
@@ -226,10 +238,10 @@ mod tests {
             .unwrap()
             .actions,
         );
-        let line = controls_line(&config, &named, &read, false);
+        let line = controls_line(&config, &named, &read, false, Some("F1"));
         assert!(
             line.starts_with(
-                "Controls: jump Space, move_left A, move_right D, toggle_help H | Esc cursor/exit"
+                "Controls: jump Space, move_left A, move_right D, toggle_help H | Esc cursor/exit, F1 debug keys"
             ),
             "{line}"
         );
@@ -238,9 +250,9 @@ mod tests {
     #[test]
     fn a_scene_that_reads_no_action_says_so() {
         let none = BTreeSet::new();
-        let line = controls_line(&InputConfig::built_in_defaults(), &none, &none, false);
+        let line = controls_line(&InputConfig::built_in_defaults(), &none, &none, false, None);
         assert!(
-            line.starts_with("Controls: the scene reads no actions | "),
+            line == "Controls: the scene reads no actions | Esc cursor/exit",
             "{line}"
         );
     }

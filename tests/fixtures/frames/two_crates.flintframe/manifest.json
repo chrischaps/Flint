@@ -1,0 +1,947 @@
+{
+  "format": "flintframe",
+  "version": 1,
+  "engine": {
+    "version": "0.1.0",
+    "commit": null,
+    "dirty": null
+  },
+  "written_by": "flint render",
+  "captured_at": "2026-11-17T01:15:46Z",
+  "scene": {
+    "path": "tests/fixtures/frames/two_crates.scene.toml",
+    "name": "Crate and Lantern",
+    "sha256": "eaf3604987a335ec1d99a138a4b5286591e1252a435f7aaa9b7902c346dc7702"
+  },
+  "frame": {
+    "index": null,
+    "game_time": null,
+    "dt": null,
+    "size": [
+      64,
+      36
+    ],
+    "scene_size": [
+      64,
+      36
+    ],
+    "render_scale": 1.0,
+    "msaa": 1,
+    "surface_format": "Rgba8UnormSrgb",
+    "adapter": "NVIDIA GeForce RTX 5070 Laptop GPU (DiscreteGpu, Vulkan)",
+    "backend": "Vulkan",
+    "present_mode": null,
+    "debug_mode": "Pbr",
+    "quality": {
+      "bloom": "true",
+      "fog": "true",
+      "msaa": "1",
+      "post_process": "true",
+      "render_scale": "1",
+      "render_scale_auto": "false",
+      "shadow_cascades": "3",
+      "shadow_distance": "200",
+      "shadow_resolution": "2048",
+      "shadows": "true",
+      "ssao": "true",
+      "ssao_samples": "64",
+      "volumetric": "true"
+    },
+    "post_process": {
+      "bloom_enabled": true,
+      "bloom_intensity": 0.03999999910593033,
+      "bloom_soft_threshold": 0.5,
+      "bloom_threshold": 1.0,
+      "boil_on": 2,
+      "chromatic_aberration": 0.0,
+      "desaturate": 0.0,
+      "dither_enabled": false,
+      "dither_intensity": 0.029999999329447746,
+      "dither_style": 0,
+      "dof_focus_distance": 10.0,
+      "dof_focus_range": 5.0,
+      "dof_strength": 0.0,
+      "edge_depth": 0.6000000238418579,
+      "edge_normal": 2.5,
+      "exposure": 1.0,
+      "film_grain": 0.0,
+      "fog_color": [
+        0.699999988079071,
+        0.75,
+        0.8199999928474426
+      ],
+      "fog_density": 0.019999999552965164,
+      "fog_enabled": false,
+      "fog_end": 100.0,
+      "fog_height_density": 0.0,
+      "fog_height_enabled": false,
+      "fog_height_falloff": 0.10000000149011612,
+      "fog_height_origin": 0.0,
+      "fog_start": 5.0,
+      "fog_tint_color": [
+        0.41999998688697815,
+        0.5,
+        0.6499999761581421
+      ],
+      "fog_tint_end": 1000.0,
+      "fog_tint_start": 100.0,
+      "fog_tint_strength": 0.0,
+      "fxaa": false,
+      "grade_gain": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "grade_gamma": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "grade_lift": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "motion_hold": 0.0,
+      "radial_blur": 0.0,
+      "ssao_bias": 0.02500000037252903,
+      "ssao_enabled": true,
+      "ssao_intensity": 1.0,
+      "ssao_radius": 0.5,
+      "ssao_samples": 64,
+      "tear": 0.0,
+      "tear_iris": false,
+      "tear_scale": 3.0,
+      "vignette_enabled": false,
+      "vignette_intensity": 0.30000001192092896,
+      "vignette_smoothness": 2.0,
+      "volumetric_decay": 0.9800000190734863,
+      "volumetric_density": 1.0,
+      "volumetric_enabled": false,
+      "volumetric_max_distance": 100.0,
+      "volumetric_samples": 32
+    },
+    "styles": [],
+    "gpu_frame_ms": 0.068863995,
+    "capturing": true
+  },
+  "stats": {
+    "fps": 0.0,
+    "frame_time_ms": 0.0,
+    "draw_calls": 3,
+    "triangles": 36,
+    "echo_draws": 0,
+    "entity_draws": 3,
+    "culled_draws": 0,
+    "lod_culled_draws": 0,
+    "skinned_draws": 0,
+    "terrain_draws": 0,
+    "terrain_total_chunks": 0,
+    "transparent_draws": 0,
+    "billboard_draws": 0,
+    "particle_draws": 0,
+    "particle_instances": 0,
+    "sprite_batches": 0,
+    "grass_instances": 0,
+    "grass_draw_calls": 0,
+    "shadow_draw_calls": 9,
+    "shadow_triangles": 108,
+    "gpu_frame_ms": 0.0,
+    "style_targets": 0,
+    "style_target_bytes": 0,
+    "full_size_targets": 0,
+    "resolution": [
+      64,
+      36
+    ],
+    "scene_resolution": [
+      64,
+      36
+    ]
+  },
+  "lights": {
+    "kept": [
+      {
+        "kind": "directional",
+        "entity": "sun",
+        "entity_id": 4,
+        "casts_shadow": true
+      }
+    ],
+    "left_out": [],
+    "default_lights": false
+  },
+  "targets": [
+    {
+      "id": "surface",
+      "format": "Rgba8UnormSrgb",
+      "size": [
+        64,
+        36
+      ],
+      "layers": 1,
+      "samples": 1,
+      "bytes": 9216
+    },
+    {
+      "id": "depth",
+      "format": "Depth32Float",
+      "size": [
+        64,
+        36
+      ],
+      "layers": 1,
+      "samples": 1,
+      "bytes": 9216
+    },
+    {
+      "id": "hdr_scene",
+      "format": "Rgba16Float",
+      "size": [
+        64,
+        36
+      ],
+      "layers": 1,
+      "samples": 1,
+      "bytes": 18432
+    },
+    {
+      "id": "ssao",
+      "format": "R8Unorm",
+      "size": [
+        64,
+        36
+      ],
+      "layers": 1,
+      "samples": 1,
+      "bytes": 2304
+    },
+    {
+      "id": "ssao_blur",
+      "format": "R8Unorm",
+      "size": [
+        64,
+        36
+      ],
+      "layers": 1,
+      "samples": 1,
+      "bytes": 2304
+    },
+    {
+      "id": "volumetric",
+      "format": "Rgba16Float",
+      "size": [
+        32,
+        18
+      ],
+      "layers": 1,
+      "samples": 1,
+      "bytes": 4608
+    },
+    {
+      "id": "volumetric_blur",
+      "format": "Rgba16Float",
+      "size": [
+        32,
+        18
+      ],
+      "layers": 1,
+      "samples": 1,
+      "bytes": 4608
+    },
+    {
+      "id": "bloom_mip_0",
+      "format": "Rgba16Float",
+      "size": [
+        32,
+        18
+      ],
+      "layers": 1,
+      "samples": 1,
+      "bytes": 4608
+    },
+    {
+      "id": "bloom_mip_1",
+      "format": "Rgba16Float",
+      "size": [
+        16,
+        9
+      ],
+      "layers": 1,
+      "samples": 1,
+      "bytes": 1152
+    },
+    {
+      "id": "shadow_map",
+      "format": "Depth32Float",
+      "size": [
+        128,
+        128
+      ],
+      "layers": 4,
+      "samples": 1,
+      "bytes": 262144
+    }
+  ],
+  "memory": {
+    "target_bytes": 318592,
+    "style_target_bytes": 0
+  },
+  "passes": [
+    {
+      "name": "Grass",
+      "ran": false,
+      "skipped": "no grass in the scene",
+      "timed": false,
+      "gpu_ms": null,
+      "reads": [],
+      "writes": [],
+      "render_passes": [],
+      "also": [],
+      "draws": [],
+      "culled": [],
+      "passes": [],
+      "images": []
+    },
+    {
+      "name": "Shadows",
+      "ran": true,
+      "skipped": null,
+      "timed": true,
+      "gpu_ms": 0.01152,
+      "reads": [],
+      "writes": [
+        "shadow_map"
+      ],
+      "render_passes": [],
+      "also": [],
+      "draws": [],
+      "culled": [],
+      "passes": [
+        {
+          "name": "Shadow cascade 0",
+          "ran": true,
+          "skipped": null,
+          "timed": false,
+          "gpu_ms": null,
+          "reads": [],
+          "writes": [
+            "shadow_map"
+          ],
+          "render_passes": [
+            "Shadow cascade 0"
+          ],
+          "also": [],
+          "draws": [
+            {
+              "entity": "crate",
+              "entity_id": 1,
+              "kind": "Static",
+              "layer": "Opaque static",
+              "blend": "opaque",
+              "vertex": "plain",
+              "pipeline": "shadow",
+              "mesh": "box",
+              "material": null,
+              "material_id": 0,
+              "triangles": 12,
+              "instances": 1,
+              "casts_shadow": true,
+              "double_sided": false,
+              "culled": null
+            },
+            {
+              "entity": "ground",
+              "entity_id": 2,
+              "kind": "Static",
+              "layer": "Opaque static",
+              "blend": "opaque",
+              "vertex": "plain",
+              "pipeline": "shadow",
+              "mesh": "box",
+              "material": null,
+              "material_id": 0,
+              "triangles": 12,
+              "instances": 1,
+              "casts_shadow": true,
+              "double_sided": false,
+              "culled": null
+            },
+            {
+              "entity": "lantern",
+              "entity_id": 3,
+              "kind": "Static",
+              "layer": "Opaque static",
+              "blend": "opaque",
+              "vertex": "plain",
+              "pipeline": "shadow",
+              "mesh": "box",
+              "material": null,
+              "material_id": 0,
+              "triangles": 12,
+              "instances": 1,
+              "casts_shadow": true,
+              "double_sided": false,
+              "culled": null
+            }
+          ],
+          "culled": [],
+          "passes": [],
+          "images": [
+            {
+              "target": "shadow_map",
+              "step": null,
+              "layer": 0,
+              "format": "Depth32Float",
+              "size": [
+                128,
+                128
+              ],
+              "file": "targets/02-shadow_cascade_0.exr",
+              "stored": "exr-f32"
+            }
+          ]
+        },
+        {
+          "name": "Shadow cascade 1",
+          "ran": true,
+          "skipped": null,
+          "timed": false,
+          "gpu_ms": null,
+          "reads": [],
+          "writes": [
+            "shadow_map"
+          ],
+          "render_passes": [
+            "Shadow cascade 1"
+          ],
+          "also": [],
+          "draws": [
+            {
+              "entity": "crate",
+              "entity_id": 1,
+              "kind": "Static",
+              "layer": "Opaque static",
+              "blend": "opaque",
+              "vertex": "plain",
+              "pipeline": "shadow",
+              "mesh": "box",
+              "material": null,
+              "material_id": 0,
+              "triangles": 12,
+              "instances": 1,
+              "casts_shadow": true,
+              "double_sided": false,
+              "culled": null
+            },
+            {
+              "entity": "ground",
+              "entity_id": 2,
+              "kind": "Static",
+              "layer": "Opaque static",
+              "blend": "opaque",
+              "vertex": "plain",
+              "pipeline": "shadow",
+              "mesh": "box",
+              "material": null,
+              "material_id": 0,
+              "triangles": 12,
+              "instances": 1,
+              "casts_shadow": true,
+              "double_sided": false,
+              "culled": null
+            },
+            {
+              "entity": "lantern",
+              "entity_id": 3,
+              "kind": "Static",
+              "layer": "Opaque static",
+              "blend": "opaque",
+              "vertex": "plain",
+              "pipeline": "shadow",
+              "mesh": "box",
+              "material": null,
+              "material_id": 0,
+              "triangles": 12,
+              "instances": 1,
+              "casts_shadow": true,
+              "double_sided": false,
+              "culled": null
+            }
+          ],
+          "culled": [],
+          "passes": [],
+          "images": [
+            {
+              "target": "shadow_map",
+              "step": null,
+              "layer": 1,
+              "format": "Depth32Float",
+              "size": [
+                128,
+                128
+              ],
+              "file": "targets/03-shadow_cascade_1.exr",
+              "stored": "exr-f32"
+            }
+          ]
+        },
+        {
+          "name": "Shadow cascade 2",
+          "ran": true,
+          "skipped": null,
+          "timed": false,
+          "gpu_ms": null,
+          "reads": [],
+          "writes": [
+            "shadow_map"
+          ],
+          "render_passes": [
+            "Shadow cascade 2"
+          ],
+          "also": [],
+          "draws": [
+            {
+              "entity": "crate",
+              "entity_id": 1,
+              "kind": "Static",
+              "layer": "Opaque static",
+              "blend": "opaque",
+              "vertex": "plain",
+              "pipeline": "shadow",
+              "mesh": "box",
+              "material": null,
+              "material_id": 0,
+              "triangles": 12,
+              "instances": 1,
+              "casts_shadow": true,
+              "double_sided": false,
+              "culled": null
+            },
+            {
+              "entity": "ground",
+              "entity_id": 2,
+              "kind": "Static",
+              "layer": "Opaque static",
+              "blend": "opaque",
+              "vertex": "plain",
+              "pipeline": "shadow",
+              "mesh": "box",
+              "material": null,
+              "material_id": 0,
+              "triangles": 12,
+              "instances": 1,
+              "casts_shadow": true,
+              "double_sided": false,
+              "culled": null
+            },
+            {
+              "entity": "lantern",
+              "entity_id": 3,
+              "kind": "Static",
+              "layer": "Opaque static",
+              "blend": "opaque",
+              "vertex": "plain",
+              "pipeline": "shadow",
+              "mesh": "box",
+              "material": null,
+              "material_id": 0,
+              "triangles": 12,
+              "instances": 1,
+              "casts_shadow": true,
+              "double_sided": false,
+              "culled": null
+            }
+          ],
+          "culled": [],
+          "passes": [],
+          "images": [
+            {
+              "target": "shadow_map",
+              "step": null,
+              "layer": 2,
+              "format": "Depth32Float",
+              "size": [
+                128,
+                128
+              ],
+              "file": "targets/04-shadow_cascade_2.exr",
+              "stored": "exr-f32"
+            }
+          ]
+        }
+      ],
+      "images": []
+    },
+    {
+      "name": "Scene",
+      "ran": true,
+      "skipped": null,
+      "timed": true,
+      "gpu_ms": 0.006816,
+      "reads": [
+        "shadow_map"
+      ],
+      "writes": [
+        "hdr_scene",
+        "depth"
+      ],
+      "render_passes": [
+        "Render Pass"
+      ],
+      "also": [
+        "Sky"
+      ],
+      "draws": [
+        {
+          "entity": "crate",
+          "entity_id": 1,
+          "kind": "Static",
+          "layer": "Opaque static",
+          "blend": "opaque",
+          "vertex": "plain",
+          "pipeline": "pbr",
+          "mesh": "box",
+          "material": null,
+          "material_id": 0,
+          "triangles": 12,
+          "instances": 1,
+          "casts_shadow": true,
+          "double_sided": false,
+          "culled": null
+        },
+        {
+          "entity": "ground",
+          "entity_id": 2,
+          "kind": "Static",
+          "layer": "Opaque static",
+          "blend": "opaque",
+          "vertex": "plain",
+          "pipeline": "pbr",
+          "mesh": "box",
+          "material": null,
+          "material_id": 0,
+          "triangles": 12,
+          "instances": 1,
+          "casts_shadow": true,
+          "double_sided": false,
+          "culled": null
+        },
+        {
+          "entity": "lantern",
+          "entity_id": 3,
+          "kind": "Static",
+          "layer": "Opaque static",
+          "blend": "opaque",
+          "vertex": "plain",
+          "pipeline": "pbr",
+          "mesh": "box",
+          "material": null,
+          "material_id": 0,
+          "triangles": 12,
+          "instances": 1,
+          "casts_shadow": true,
+          "double_sided": false,
+          "culled": null
+        }
+      ],
+      "culled": [],
+      "passes": [],
+      "images": [
+        {
+          "target": "hdr_scene",
+          "step": null,
+          "layer": null,
+          "format": "Rgba16Float",
+          "size": [
+            64,
+            36
+          ],
+          "file": "targets/05-hdr_scene.exr",
+          "stored": "exr-half"
+        },
+        {
+          "target": "depth",
+          "step": null,
+          "layer": null,
+          "format": "Depth32Float",
+          "size": [
+            64,
+            36
+          ],
+          "file": "targets/05-depth.exr",
+          "stored": "exr-f32"
+        }
+      ]
+    },
+    {
+      "name": "Fog veil",
+      "ran": false,
+      "skipped": "no fog reaches a translucent draw",
+      "timed": false,
+      "gpu_ms": null,
+      "reads": [],
+      "writes": [],
+      "render_passes": [],
+      "also": [],
+      "draws": [],
+      "culled": [],
+      "passes": [],
+      "images": []
+    },
+    {
+      "name": "Style mask",
+      "ran": false,
+      "skipped": "no style reads the entity mask",
+      "timed": false,
+      "gpu_ms": null,
+      "reads": [],
+      "writes": [],
+      "render_passes": [],
+      "also": [],
+      "draws": [],
+      "culled": [],
+      "passes": [],
+      "images": []
+    },
+    {
+      "name": "Style albedo",
+      "ran": false,
+      "skipped": "no style reads the albedo",
+      "timed": false,
+      "gpu_ms": null,
+      "reads": [],
+      "writes": [],
+      "render_passes": [],
+      "also": [],
+      "draws": [],
+      "culled": [],
+      "passes": [],
+      "images": []
+    },
+    {
+      "name": "Selection mask",
+      "ran": false,
+      "skipped": "nothing selected",
+      "timed": false,
+      "gpu_ms": null,
+      "reads": [],
+      "writes": [],
+      "render_passes": [],
+      "also": [],
+      "draws": [],
+      "culled": [],
+      "passes": [],
+      "images": []
+    },
+    {
+      "name": "SSAO",
+      "ran": true,
+      "skipped": null,
+      "timed": true,
+      "gpu_ms": 0.020672,
+      "reads": [
+        "depth"
+      ],
+      "writes": [
+        "ssao",
+        "ssao_blur"
+      ],
+      "render_passes": [],
+      "also": [],
+      "draws": [],
+      "culled": [],
+      "passes": [],
+      "images": [
+        {
+          "target": "ssao",
+          "step": null,
+          "layer": null,
+          "format": "R8Unorm",
+          "size": [
+            64,
+            36
+          ],
+          "file": "targets/10-ssao.png",
+          "stored": "png"
+        },
+        {
+          "target": "ssao_blur",
+          "step": null,
+          "layer": null,
+          "format": "R8Unorm",
+          "size": [
+            64,
+            36
+          ],
+          "file": "targets/10-ssao_blur.png",
+          "stored": "png"
+        }
+      ]
+    },
+    {
+      "name": "Volumetric",
+      "ran": false,
+      "skipped": "off ([post_process] volumetric_enabled = false)",
+      "timed": false,
+      "gpu_ms": null,
+      "reads": [],
+      "writes": [],
+      "render_passes": [],
+      "also": [],
+      "draws": [],
+      "culled": [],
+      "passes": [],
+      "images": []
+    },
+    {
+      "name": "Bloom",
+      "ran": true,
+      "skipped": null,
+      "timed": true,
+      "gpu_ms": 0.024096,
+      "reads": [
+        "hdr_scene"
+      ],
+      "writes": [
+        "bloom_mip_0",
+        "bloom_mip_1"
+      ],
+      "render_passes": [],
+      "also": [],
+      "draws": [],
+      "culled": [],
+      "passes": [],
+      "images": [
+        {
+          "target": "bloom_mip_0",
+          "step": "threshold",
+          "layer": null,
+          "format": "Rgba16Float",
+          "size": [
+            32,
+            18
+          ],
+          "file": "targets/12-bloom_mip_0-threshold.exr",
+          "stored": "exr-half"
+        },
+        {
+          "target": "bloom_mip_1",
+          "step": "down",
+          "layer": null,
+          "format": "Rgba16Float",
+          "size": [
+            16,
+            9
+          ],
+          "file": "targets/12-bloom_mip_1-down.exr",
+          "stored": "exr-half"
+        },
+        {
+          "target": "bloom_mip_0",
+          "step": "up",
+          "layer": null,
+          "format": "Rgba16Float",
+          "size": [
+            32,
+            18
+          ],
+          "file": "targets/12-bloom_mip_0-up.exr",
+          "stored": "exr-half"
+        }
+      ]
+    },
+    {
+      "name": "Composite",
+      "ran": true,
+      "skipped": null,
+      "timed": true,
+      "gpu_ms": 0.00576,
+      "reads": [
+        "hdr_scene",
+        "depth",
+        "bloom_mip_0",
+        "ssao_blur"
+      ],
+      "writes": [
+        "surface"
+      ],
+      "render_passes": [],
+      "also": [],
+      "draws": [],
+      "culled": [],
+      "passes": [],
+      "images": [
+        {
+          "target": "surface",
+          "step": null,
+          "layer": null,
+          "format": "Rgba8UnormSrgb",
+          "size": [
+            64,
+            36
+          ],
+          "file": "targets/13-surface.png",
+          "stored": "png"
+        }
+      ]
+    },
+    {
+      "name": "FXAA",
+      "ran": false,
+      "skipped": "off ([post_process] fxaa = false)",
+      "timed": false,
+      "gpu_ms": null,
+      "reads": [],
+      "writes": [],
+      "render_passes": [],
+      "also": [],
+      "draws": [],
+      "culled": [],
+      "passes": [],
+      "images": []
+    },
+    {
+      "name": "Selection outline",
+      "ran": false,
+      "skipped": "nothing selected",
+      "timed": false,
+      "gpu_ms": null,
+      "reads": [],
+      "writes": [],
+      "render_passes": [],
+      "also": [],
+      "draws": [],
+      "culled": [],
+      "passes": [],
+      "images": []
+    },
+    {
+      "name": "World lines",
+      "ran": false,
+      "skipped": "no world lines this frame",
+      "timed": false,
+      "gpu_ms": null,
+      "reads": [],
+      "writes": [],
+      "render_passes": [],
+      "also": [],
+      "draws": [],
+      "culled": [],
+      "passes": [],
+      "images": []
+    }
+  ],
+  "panels": [],
+  "capture": {
+    "images": 11,
+    "raw_bytes": 248448,
+    "file_bytes": 12537,
+    "untapped": [],
+    "record_ms": 0.1126,
+    "wait_ms": 0.018600000000000002,
+    "copy_out_ms": 0.1318,
+    "encode_ms": 5.8661
+  },
+  "cpu": null
+}

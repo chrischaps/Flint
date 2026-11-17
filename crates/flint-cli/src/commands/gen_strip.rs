@@ -239,14 +239,14 @@ pub fn run(
     let bar_rows = bar_segments(&skeleton.segments, clock.stagger).len() as u32;
     let layout = Layout::new(options.frames, options.columns, options.cell_size, bar_rows);
 
-    println!("Spec:       {}", spec.meta.name);
-    println!(
+    crate::output::say!("Spec:       {}", spec.meta.name);
+    crate::output::say!(
         "Living:     lineage {}: {} segments, {} leaf cards",
         living.lineage_seed,
         skeleton.segments.len(),
         skeleton.leaf_bindings.len()
     );
-    println!(
+    crate::output::say!(
         "Clock:      step {} s, glide {}, stagger {}",
         living.step,
         living.glide,
@@ -254,7 +254,7 @@ pub fn run(
     );
     let echoes = living.echoes.copies_placed(&living.echo_places);
     if !echoes.is_empty() {
-        println!(
+        crate::output::say!(
             "Echoes:     {} copies, out to {} of a step, alpha {}",
             echoes.len(),
             living.echoes.spread,
@@ -262,12 +262,14 @@ pub fn run(
         );
     }
     if animated {
-        println!(
+        crate::output::say!(
             "Strip:      {} frames at {} fps, {} px, as a GIF",
-            options.frames, options.fps, options.cell_size,
+            options.frames,
+            options.fps,
+            options.cell_size,
         );
     } else {
-        println!(
+        crate::output::say!(
             "Strip:      {} frames at {} fps, {} x {} cells of {} px, {} x {} px",
             options.frames,
             options.fps,
@@ -278,8 +280,18 @@ pub fn run(
             layout.height
         );
     }
+    let shown = output.display().to_string().replace('\\', "/");
     if dry_run {
-        println!("Output:     {}", output.display());
+        crate::output::say!("Output:     {}", output.display());
+        crate::output::when_json(|| {
+            serde_json::json!({
+                "dry_run": true,
+                "spec": spec.meta.name,
+                "output": shown,
+                "frames": options.frames,
+                "fps": options.fps,
+            })
+        });
         return Ok(());
     }
 
@@ -320,11 +332,19 @@ pub fn run(
     };
     if animated {
         gif_writer::write(&output, &frames, options.fps)?;
-        println!(
+        crate::output::say!(
             "Output:     {} ({:.1} s)",
             output.display(),
             started.elapsed().as_secs_f64()
         );
+        crate::output::when_json(|| {
+            serde_json::json!({
+                "spec": spec.meta.name,
+                "written": [shown],
+                "frames": options.frames,
+                "fps": options.fps,
+            })
+        });
         return Ok(());
     }
     let sheet = compose(spec, living, &options, &layout, &infos, &frames);
@@ -336,11 +356,21 @@ pub fn run(
     sheet
         .save_with_format(&output, image::ImageFormat::Png)
         .with_context(|| format!("failed to write {}", output.display()))?;
-    println!(
+    crate::output::say!(
         "Output:     {} ({:.1} s)",
         output.display(),
         started.elapsed().as_secs_f64()
     );
+    crate::output::when_json(|| {
+        serde_json::json!({
+            "spec": spec.meta.name,
+            "written": [shown],
+            "frames": options.frames,
+            "fps": options.fps,
+            "width": layout.width,
+            "height": layout.height,
+        })
+    });
     Ok(())
 }
 

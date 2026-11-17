@@ -19,21 +19,16 @@ use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use flint_import::{import_gltf, ImportResult, MeshBounds};
 use flint_render::model_loader::{self, ModelLoadConfig, ModelLoadResult};
-use flint_render::AcquireFrame;
-use flint_render::{
-    Camera, DebugMode, HeadlessContext, OrbitCameraController, RendererConfig, SceneRenderer,
+use flint_render::{Camera, DebugMode, OrbitCameraController, RendererConfig, SceneRenderer};
+use flint_viewer::host::{
+    self, CameraFlags, Editor, Flow, Gpu, HostOptions, InitCx, StillOptions, Target, Tick,
 };
-use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::Window;
 
 #[derive(clap::Args)]
 pub struct PreviewArgs {
@@ -142,12 +137,37 @@ fn hold_from_flag(flag: Option<f32>) -> (bool, f32) {
     }
 }
 
+/// `flint preview [model]`: the previewer in a window, or with `--render`
+/// a still through the editor host (#712).
 pub fn run(args: PreviewArgs) -> Result<()> {
-    if let Some(render_output) = &args.render {
-        run_headless(&args, render_output)
-    } else {
-        run_interactive(args)
-    }
+    let options = HostOptions {
+        width: args.width,
+        height: args.height,
+        camera: CameraFlags {
+            distance: args.distance,
+            yaw: args.yaw,
+            pitch: args.pitch,
+            target: args.target,
+            fov: args.fov,
+        },
+        auto_orbit: args.auto_orbit,
+    };
+    let still = StillOptions {
+        time: args.anim_time,
+    };
+    let Some(output) = args.render.clone() else {
+        return host::run(editor(args)?, options);
+    };
+    let img = host::render_still(&mut editor(args)?, &options, &still)?;
+    img.save(&output)
+        .context(format!("Failed to save image to {}", output))?;
+    crate::output::say!(
+        "Rendered {}x{} preview to {}",
+        img.width(),
+        img.height(),
+        output
+    );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -242,7 +262,7 @@ fn attach_sequence(
             .cloned()
             .unwrap_or(toml::Value::Table(Default::default())),
     };
-    println!(
+    crate::output::say!(
         "Sequence '{}': {:.2}s, {} events",
         ui.name,
         ui.duration,
@@ -638,7 +658,7 @@ fn register_animation_data(
                 }
                 for imported_clip in &import_result.skeletal_clips {
                     let clip = SkeletalClip::from_imported(imported_clip);
-                    println!(
+                    crate::output::say!(
                         "  Skeletal clip: {} ({:.1}s, {} tracks)",
                         clip.name,
                         clip.duration,
@@ -666,7 +686,7 @@ fn register_animation_data(
         if let Some(ref import_result) = loaded.import_result {
             for imported_clip in &import_result.node_clips {
                 let clip = NodeClip::from_imported(imported_clip);
-                println!(
+                crate::output::say!(
                     "  Node clip: {} ({:.1}s, {} tracks)",
                     clip.name,
                     clip.duration,
@@ -771,46 +791,17 @@ fn auto_fit_camera(bounds: &MeshBounds, camera: &mut Camera) {
     camera.pitch = 0.5; // ~30 degrees
 }
 
-fn apply_cli_overrides(camera: &mut Camera, args: &PreviewArgs) {
-    if let Some(d) = args.distance {
-        camera.distance = d;
-    }
-    if let Some(y) = args.yaw {
-        camera.yaw = y.to_radians();
-    }
-    if let Some(p) = args.pitch {
-        camera.pitch = p.to_radians();
-    }
-    if let Some(t) = args.target {
-        camera.target = Vec3::new(t[0], t[1], t[2]);
-    }
-    if let Some(f) = args.fov {
-        camera.fov = f;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Headless render mode
-// ---------------------------------------------------------------------------
-
-fn run_headless(args: &PreviewArgs, output_path: &str) -> Result<()> {
-    let img = render_image(args)?;
-    img.save(output_path)
-        .context(format!("Failed to save image to {}", output_path))?;
-
-    println!(
-        "Rendered {}x{} preview to {}",
-        args.width, args.height, output_path
-    );
-
-    Ok(())
-}
-
 /// `flint edit model.glb --render` without the file: the model, auto-framed
 /// on the default camera with no grid, at `width` x `height`. The refine
 /// previewer (`flint gen --refine`) shows Claude meshes through this.
 pub fn render_model(model: &Path, width: u32, height: u32) -> Result<image::RgbaImage> {
-    render_image(&PreviewArgs {
+    let options = HostOptions {
+        width,
+        height,
+        camera: CameraFlags::default(),
+        auto_orbit: false,
+    };
+    let mut app = editor(PreviewArgs {
         model: Some(model.to_string_lossy().into_owned()),
         render: None,
         width,
@@ -834,167 +825,8 @@ pub fn render_model(model: &Path, width: u32, height: u32) -> Result<image::Rgba
         pose_bones: Vec::new(),
         show_skeleton: false,
         motion_hold: None,
-    })
-}
-
-fn render_image(args: &PreviewArgs) -> Result<image::RgbaImage> {
-    let model_str = args
-        .model
-        .as_deref()
-        .context("A model path is required for headless rendering (--render)")?;
-    let model_path = PathBuf::from(model_str);
-
-    if !model_path.exists() {
-        anyhow::bail!("Model file not found: {}", model_path.display());
-    }
-
-    // Import to get bounds for auto-fit
-    let import_result =
-        import_gltf(&model_path).context("Failed to import model for bounds computation")?;
-    let bounds = import_result.bounds();
-
-    // Headless context
-    let ctx = pollster::block_on(HeadlessContext::new(args.width, args.height))
-        .context("Failed to create headless render context")?;
-
-    // Camera
-    let mut camera = Camera::new();
-    camera.aspect = ctx.aspect_ratio();
-    if let Some(b) = &bounds {
-        auto_fit_camera(b, &mut camera);
-    }
-    apply_cli_overrides(&mut camera, args);
-    camera.update_orbit();
-
-    // Renderer
-    let mut renderer = SceneRenderer::new_headless(
-        &ctx.device,
-        &ctx.queue,
-        ctx.format,
-        ctx.width,
-        ctx.height,
-        RendererConfig {
-            show_grid: !args.no_grid,
-            ..Default::default()
-        },
-    );
-
-    // Build world and load model
-    let (mut world, asset_name, entity_id) =
-        create_model_world(&model_path, args.anim_speed, FlintWorld::new());
-    let config = model_load_config(&model_path, &asset_name);
-    let load_result = model_loader::load_models_from_world(
-        &mut world,
-        &mut renderer,
-        &ctx.device,
-        &ctx.queue,
-        &config,
-    );
-
-    // Animation support for --anim-time / --layer / --sequence / --pose-bone
-    let sample_at = args
-        .anim_time
-        .or_else(|| (!args.layers.is_empty() || args.sequence.is_some()).then_some(0.0))
-        .filter(|_| !args.no_animate);
-    if sample_at.is_some() || !args.pose_bones.is_empty() || args.show_skeleton {
-        let mut animation = AnimationSystem::new();
-        let (anim_info, skeletal_entity_assets) = register_animation_data(
-            &load_result,
-            &mut animation,
-            &mut world,
-            entity_id,
-            args.clip.as_deref(),
-            args.anim_speed,
-            &args.layers,
-        );
-
-        let mut bone_pose = BonePose::new();
-        let problems = seed_bone_pose(&mut animation, &args.pose_bones, entity_id, &mut bone_pose);
-        if let Some(problem) = problems.first() {
-            anyhow::bail!("--pose-bone: {problem}");
-        }
-
-        if let (Some(anim_time), true) = (sample_at, anim_info.is_some()) {
-            // Sync and advance to the requested time
-            animation.sync_property_from_world(&world);
-            animation.sync_skeletal_from_world(&world);
-            animation.sync_node_from_world(&world);
-
-            let sequence = args.sequence.as_deref().and_then(|p| {
-                attach_sequence(p, &mut animation, &world, entity_id, args.sequence_loop)
-            });
-            if let Some(seq) = &sequence {
-                let eid = entity_id;
-                // Deterministic replay: sequence + skeletal tiers stepped
-                // together, not one big dt.
-                let fired =
-                    seek_sequence_in_world(seq, &mut animation, &mut world, eid, anim_time as f64);
-                println!(
-                    "Sampled sequence '{}' at t={:.3}s ({} events fired)",
-                    seq.name, anim_time, fired
-                );
-            } else {
-                // Use update() which handles all three tiers
-                let _ = flint_runtime::RuntimeSystem::update(
-                    &mut animation,
-                    &mut world,
-                    anim_time as f64,
-                );
-            }
-            println!("Sampled animation at t={:.3}s", anim_time);
-        }
-
-        // Upload bone matrices
-        for (eid, asset) in &skeletal_entity_assets {
-            if let Some(matrices) = animation.bone_matrices(eid) {
-                renderer.update_bone_matrices(&ctx.device, &ctx.queue, *eid, asset, matrices);
-            }
-        }
-
-        if args.show_skeleton {
-            if let Some(skel) = animation.skeleton(&entity_id) {
-                let contrib = animation.skeletal_layer_contribution(&entity_id);
-                let posed = animation.joint_offsets(&entity_id);
-                let mesh = skeleton_overlay_mesh(skel, LayerViz::LastWriter, contrib, posed);
-                renderer.debug_state_mut().show_skeleton = true;
-                renderer.set_skeleton_overlay(&ctx.device, &mesh);
-            }
-        }
-    }
-
-    // The frame's inputs and the world (#739): the post time --style-time
-    // holds, else 0
-    renderer.prepare(
-        &ctx.device,
-        &ctx.queue,
-        &world,
-        &flint_render::FrameInputs {
-            look_time: Some(args.style.look_time().unwrap_or(0.0)),
-            ..Default::default()
-        },
-    );
-    args.style.apply_to_renderer(&mut renderer, &ctx.device);
-    // A still is the first frame of its tick, so its pose is the live one;
-    // the whole-frame rate holds the post time styles read (#871)
-    if let Some(rate) = args.motion_hold {
-        let mut config = renderer.post_process_config().clone();
-        config.motion_hold = rate.max(0.0);
-        renderer.set_post_process_config(config);
-    }
-
-    // Render
-    renderer.render_to(
-        &ctx.device,
-        &ctx.queue,
-        &ctx.depth_view,
-        &camera,
-        &ctx.color_view,
-    );
-
-    // Read pixels and save
-    let pixels = pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
-    image::RgbaImage::from_raw(args.width, args.height, pixels)
-        .context("Failed to create image from pixel data")
+    })?;
+    host::render_still(&mut app, &options, &StillOptions::default())
 }
 
 // ---------------------------------------------------------------------------
@@ -1012,7 +844,9 @@ struct PreviewState {
     model_stats: Option<ModelStats>,
 }
 
-fn run_interactive(args: PreviewArgs) -> Result<()> {
+/// The model previewer, for [`flint_viewer::host`] to open in a window or
+/// draw as a `--render` still (#712).
+pub fn editor(args: PreviewArgs) -> Result<PreviewApp> {
     let mut state = PreviewState {
         world: FlintWorld::new(),
         asset_name: String::new(),
@@ -1051,49 +885,9 @@ fn run_interactive(args: PreviewArgs) -> Result<()> {
 
     let state = Arc::new(Mutex::new(state));
 
-    // File watcher for --watch mode
-    let _watcher = if args.watch {
-        if let Some(model_str) = &args.model {
-            let state_clone = Arc::clone(&state);
-            let (tx, rx) = std::sync::mpsc::channel();
-            let mut debouncer = new_debouncer(Duration::from_millis(500), tx)?;
-            let model_file = Path::new(model_str.as_str());
-
-            debouncer
-                .watcher()
-                .watch(model_file, RecursiveMode::NonRecursive)?;
-
-            std::thread::spawn(move || {
-                for result in rx {
-                    match result {
-                        Ok(_events) => {
-                            if let Ok(mut s) = state_clone.lock() {
-                                s.needs_reload = true;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("Watch error: {:?}", e);
-                        }
-                    }
-                }
-            });
-
-            println!("Watching for changes...");
-            Some(debouncer)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
-
-    let auto_orbit = args.auto_orbit;
     let (hold_on, hold_rate) = hold_from_flag(args.motion_hold);
 
-    let mut app = PreviewApp {
+    Ok(PreviewApp {
         state,
         window: None,
         render_context: None,
@@ -1103,7 +897,6 @@ fn run_interactive(args: PreviewArgs) -> Result<()> {
         args,
 
         orbit: OrbitCameraController::new(),
-        last_frame_time: Instant::now(),
 
         // Animation
         animation: AnimationSystem::new(),
@@ -1114,14 +907,8 @@ fn run_interactive(args: PreviewArgs) -> Result<()> {
 
         // egui overlay
         egui_ctx: egui::Context::default(),
-        egui_winit: None,
-        egui_renderer: None,
         show_ui: true,
-
-        // FPS tracking
-        frame_times: VecDeque::new(),
         fps: 0.0,
-        last_fps_update: Instant::now(),
         layer_viz: LayerViz::Off,
         solo_layer: None,
         muted_layers: Vec::new(),
@@ -1131,18 +918,14 @@ fn run_interactive(args: PreviewArgs) -> Result<()> {
         pose_dirty: false,
         hold_on,
         hold_rate,
-    };
-    app.orbit.auto_orbit = auto_orbit;
-
-    event_loop.run_app(&mut app)?;
-
-    Ok(())
+    })
 }
 
-struct PreviewApp {
+pub struct PreviewApp {
     state: Arc<Mutex<PreviewState>>,
     window: Option<Arc<Window>>,
-    render_context: Option<flint_render::RenderContext>,
+    /// The host's GPU (#712)
+    render_context: Option<Gpu>,
     scene_renderer: Option<SceneRenderer>,
     camera: Camera,
     initial_bounds: Option<MeshBounds>,
@@ -1150,7 +933,6 @@ struct PreviewApp {
 
     // Input
     orbit: OrbitCameraController,
-    last_frame_time: Instant,
 
     // Animation
     animation: AnimationSystem,
@@ -1180,58 +962,26 @@ struct PreviewApp {
 
     // egui overlay
     egui_ctx: egui::Context,
-    egui_winit: Option<egui_winit::State>,
-    egui_renderer: Option<egui_wgpu::Renderer>,
     show_ui: bool,
-
-    // FPS tracking
-    frame_times: VecDeque<Instant>,
+    /// The host's frames-a-second readout
     fps: f32,
-    last_fps_update: Instant,
 }
 
 impl PreviewApp {
-    fn initialize(&mut self, event_loop: &ActiveEventLoop) {
+    /// The window's or the still's GPU is here (#712). A still (no window)
+    /// poses the model only when asked to, as `--render` always has.
+    fn initialize(&mut self, cx: InitCx) -> Result<()> {
+        let still = cx.window.is_none();
         let has_model = self.state.lock().map(|s| s.has_model).unwrap_or(false);
-        let model_name = self
-            .state
-            .lock()
-            .ok()
-            .and_then(|s| {
-                s.model_path
-                    .as_ref()
-                    .and_then(|p| p.file_name().map(|f| f.to_string_lossy().to_string()))
-            })
-            .unwrap_or_default();
+        self.window = cx.window;
+        self.egui_ctx = cx.egui.clone();
+        let context = cx.gpu.clone();
+        self.camera.aspect = context.aspect();
 
-        let title = if has_model {
-            format!("Flint Preview \u{2014} {}", model_name)
-        } else {
-            "Flint Preview \u{2014} Drop a .glb/.gltf file".to_string()
-        };
-
-        let window = Arc::new(
-            event_loop
-                .create_window(
-                    Window::default_attributes()
-                        .with_title(&title)
-                        .with_inner_size(PhysicalSize::new(self.args.width, self.args.height)),
-                )
-                .expect("Failed to create window"),
-        );
-
-        let context = pollster::block_on(flint_render::RenderContext::new(window.clone()))
-            .expect("Failed to create render context");
-
-        self.camera.aspect = context.aspect_ratio();
-
-        let mut renderer = SceneRenderer::new(
-            &context,
-            RendererConfig {
-                show_grid: !self.args.no_grid,
-                ..Default::default()
-            },
-        );
+        let mut renderer = context.scene_renderer(RendererConfig {
+            show_grid: !self.args.no_grid,
+            ..Default::default()
+        });
         if self.args.show_skeleton {
             renderer.debug_state_mut().show_skeleton = true;
             self.layer_viz = LayerViz::LastWriter;
@@ -1256,8 +1006,17 @@ impl PreviewApp {
                     &config,
                 );
 
-                // Register animation data
-                if !self.args.no_animate {
+                // Register animation data: a still's only for a pose it
+                // was asked for (--anim-time, --layer, --sequence,
+                // --pose-bone, --show-skeleton)
+                let register = if still {
+                    self.still_sample_time().is_some()
+                        || !self.args.pose_bones.is_empty()
+                        || self.args.show_skeleton
+                } else {
+                    !self.args.no_animate
+                };
+                if register {
                     if let Some(eid) = entity_id {
                         let (info, skel_assets) = register_animation_data(
                             &load_result,
@@ -1270,16 +1029,21 @@ impl PreviewApp {
                         );
                         self.anim_info = info;
                         self.skeletal_entity_assets = skel_assets;
-                        for problem in seed_bone_pose(
+                        let problems = seed_bone_pose(
                             &mut self.animation,
                             &self.args.pose_bones,
                             eid,
                             &mut self.bone_pose,
-                        ) {
+                        );
+                        if let (true, Some(problem)) = (still, problems.first()) {
+                            anyhow::bail!("--pose-bone: {problem}");
+                        }
+                        for problem in problems {
                             tracing::warn!("--pose-bone: {problem}");
                         }
                         self.pose_dirty = true;
-                        if let Some(p) = self.args.sequence.clone() {
+                        // A still steps its sequence itself (`still`)
+                        if let (false, Some(p)) = (still, self.args.sequence.clone()) {
                             self.sequence = attach_sequence(
                                 &p,
                                 &mut self.animation,
@@ -1296,48 +1060,141 @@ impl PreviewApp {
             if let Some(b) = &self.initial_bounds {
                 auto_fit_camera(b, &mut self.camera);
             }
-            apply_cli_overrides(&mut self.camera, &self.args);
             self.camera.update_orbit();
         }
 
-        // Initialize egui
-        let egui_winit = egui_winit::State::new(
-            self.egui_ctx.clone(),
-            egui::ViewportId::ROOT,
-            &window,
-            Some(window.scale_factor() as f32),
-            None,
-            None,
-        );
-        let egui_renderer = egui_wgpu::Renderer::new(
-            &context.device,
-            context.config.format,
-            egui_wgpu::RendererOptions {
-                depth_stencil_format: None,
-                msaa_samples: 1,
-                dithering: false,
-                ..Default::default()
-            },
-        );
-        self.egui_winit = Some(egui_winit);
-        self.egui_renderer = Some(egui_renderer);
-
-        self.window = Some(window);
         self.render_context = Some(context);
         self.scene_renderer = Some(renderer);
         self.apply_motion_hold();
 
         if let Some(info) = &self.anim_info {
-            println!(
+            crate::output::say!(
                 "Animation: {} clip(s) found — {}",
                 info.clip_names.len(),
                 info.clip_names.join(", ")
             );
-            println!("  Tab=toggle UI  P=play/pause  ,/.=prev/next clip  +/-=speed  0=reset speed");
+            crate::output::say!(
+                "  Tab=toggle UI  P=play/pause  ,/.=prev/next clip  +/-=speed  0=reset speed"
+            );
             if self.args.sequence.is_some() {
-                println!("  R=restart sequence  Home=seek to 0  (Loop checkbox / --sequence-loop)");
+                crate::output::say!(
+                    "  R=restart sequence  Home=seek to 0  (Loop checkbox / --sequence-loop)"
+                );
             }
         }
+        Ok(())
+    }
+
+    /// The moment a still samples: `--anim-time`, else 0 when a layer or a
+    /// sequence was asked for; none under `--no-animate`.
+    fn still_sample_time(&self) -> Option<f32> {
+        self.args
+            .anim_time
+            .or_else(|| {
+                (!self.args.layers.is_empty() || self.args.sequence.is_some()).then_some(0.0)
+            })
+            .filter(|_| !self.args.no_animate)
+    }
+
+    /// `--render`'s pose and frame: the clip (or the sequence, replayed
+    /// deterministically) at the still's moment, the bones and skeleton
+    /// overlay uploaded, the post time `--style-time` holds, the styles and
+    /// the whole-frame hold.
+    fn pose_still(&mut self) -> Result<()> {
+        let (Some(ctx), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) else {
+            anyhow::bail!("the previewer has no GPU");
+        };
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("state poisoned"))?;
+        let Some(entity_id) = state.entity_id else {
+            anyhow::bail!("A model path is required for headless rendering (--render)");
+        };
+        let sample_at = self
+            .args
+            .anim_time
+            .or_else(|| {
+                (!self.args.layers.is_empty() || self.args.sequence.is_some()).then_some(0.0)
+            })
+            .filter(|_| !self.args.no_animate);
+        let animation = &mut self.animation;
+        let args = &self.args;
+        if sample_at.is_some() || !args.pose_bones.is_empty() || args.show_skeleton {
+            if let (Some(anim_time), true) = (sample_at, self.anim_info.is_some()) {
+                // Sync and advance to the requested time
+                animation.sync_property_from_world(&state.world);
+                animation.sync_skeletal_from_world(&state.world);
+                animation.sync_node_from_world(&state.world);
+
+                let sequence = args.sequence.as_deref().and_then(|p| {
+                    attach_sequence(p, animation, &state.world, entity_id, args.sequence_loop)
+                });
+                if let Some(seq) = &sequence {
+                    // Deterministic replay: sequence + skeletal tiers stepped
+                    // together, not one big dt.
+                    let fired = seek_sequence_in_world(
+                        seq,
+                        animation,
+                        &mut state.world,
+                        entity_id,
+                        anim_time as f64,
+                    );
+                    crate::output::say!(
+                        "Sampled sequence '{}' at t={:.3}s ({} events fired)",
+                        seq.name,
+                        anim_time,
+                        fired
+                    );
+                } else {
+                    // Use update() which handles all three tiers
+                    let _ = flint_runtime::RuntimeSystem::update(
+                        animation,
+                        &mut state.world,
+                        anim_time as f64,
+                    );
+                }
+                crate::output::say!("Sampled animation at t={:.3}s", anim_time);
+            }
+
+            // Upload bone matrices
+            for (eid, asset) in &self.skeletal_entity_assets {
+                if let Some(matrices) = animation.bone_matrices(eid) {
+                    renderer.update_bone_matrices(&ctx.device, &ctx.queue, *eid, asset, matrices);
+                }
+            }
+
+            if args.show_skeleton {
+                if let Some(skel) = animation.skeleton(&entity_id) {
+                    let contrib = animation.skeletal_layer_contribution(&entity_id);
+                    let posed = animation.joint_offsets(&entity_id);
+                    let mesh = skeleton_overlay_mesh(skel, LayerViz::LastWriter, contrib, posed);
+                    renderer.debug_state_mut().show_skeleton = true;
+                    renderer.set_skeleton_overlay(&ctx.device, &mesh);
+                }
+            }
+        }
+
+        // The frame's inputs and the world (#739): the post time --style-time
+        // holds, else 0
+        renderer.prepare(
+            &ctx.device,
+            &ctx.queue,
+            &state.world,
+            &flint_render::FrameInputs {
+                look_time: Some(args.style.look_time().unwrap_or(0.0)),
+                ..Default::default()
+            },
+        );
+        args.style.apply_to_renderer(renderer, &ctx.device);
+        // A still is the first frame of its tick, so its pose is the live one;
+        // the whole-frame rate holds the post time styles read (#871)
+        if let Some(rate) = args.motion_hold {
+            let mut config = renderer.post_process_config().clone();
+            config.motion_hold = rate.max(0.0);
+            renderer.set_post_process_config(config);
+        }
+        Ok(())
     }
 
     fn setup_animation_after_load(&mut self, load_result: &ModelLoadResult) {
@@ -1466,9 +1323,9 @@ impl PreviewApp {
             window.set_title(&format!("Flint Preview \u{2014} {}", file_name));
         }
 
-        println!("Loaded: {}", path.display());
+        crate::output::say!("Loaded: {}", path.display());
         if let Some(info) = &self.anim_info {
-            println!(
+            crate::output::say!(
                 "Animation: {} clip(s) — {}",
                 info.clip_names.len(),
                 info.clip_names.join(", ")
@@ -1544,7 +1401,7 @@ impl PreviewApp {
         }
         self.camera.update_orbit();
 
-        println!("Reloaded: {}", model_display);
+        crate::output::say!("Reloaded: {}", model_display);
     }
 
     /// Switch to a different animation clip by index
@@ -1580,7 +1437,7 @@ impl PreviewApp {
             }
         }
 
-        println!("Switched to clip: {}", clip_name);
+        crate::output::say!("Switched to clip: {}", clip_name);
     }
 
     /// Update the window title with animation playback info
@@ -1830,22 +1687,7 @@ impl PreviewApp {
     // egui overlay rendering
     // -----------------------------------------------------------------------
 
-    fn render_egui(&mut self, target_view: &wgpu::TextureView) {
-        let window = match &self.window {
-            Some(w) => w.clone(),
-            None => return,
-        };
-        let context = match &self.render_context {
-            Some(c) => c,
-            None => return,
-        };
-        let egui_winit = match &mut self.egui_winit {
-            Some(e) => e,
-            None => return,
-        };
-
-        let raw_input = egui_winit.take_egui_input(&window);
-
+    fn render_egui(&mut self, ui: &mut egui::Ui) {
         // Snapshot renderer state before closure (avoid borrow conflicts)
         let current_debug_mode = self
             .scene_renderer
@@ -2059,9 +1901,8 @@ impl PreviewApp {
         let mut seq_loop: Option<bool> = None;
         let mut new_hold: Option<(bool, f32)> = None;
 
-        // A real frame: its texture updates are uploaded below (#944)
-        #[allow(clippy::disallowed_methods)]
-        let mut full_output = self.egui_ctx.run_ui(raw_input, |ui| { let ctx = &ui.ctx().clone();
+        {
+            let ctx = &ui.ctx().clone();
             // ── Left panel: model info ──
             egui::Panel::left("preview_info_panel")
                 .default_size(220.0)
@@ -2133,7 +1974,13 @@ impl PreviewApp {
                                     .show(ui, |ui| {
                                         ui.set_min_width(ui.available_width());
                                         for &root_idx in &root_nodes {
-                                            render_node_tree(ui, &node_data, root_idx, 0, &joint_annot);
+                                            render_node_tree(
+                                                ui,
+                                                &node_data,
+                                                root_idx,
+                                                0,
+                                                &joint_annot,
+                                            );
                                         }
                                     });
                             });
@@ -2253,10 +2100,11 @@ impl PreviewApp {
                                 }
                                 if layer_viz != LayerViz::Off {
                                     ui.horizontal_wrapped(|ui| {
-                                        let swatch = |ui: &mut egui::Ui, c: [f32; 4], label: &str| {
-                                            ui.colored_label(to_color32(c), "\u{25a0}");
-                                            ui.label(label);
-                                        };
+                                        let swatch =
+                                            |ui: &mut egui::Ui, c: [f32; 4], label: &str| {
+                                                ui.colored_label(to_color32(c), "\u{25a0}");
+                                                ui.label(label);
+                                            };
                                         if !bone_pose.is_empty() {
                                             swatch(ui, POSED_COLOR, "posed");
                                         }
@@ -2265,7 +2113,11 @@ impl PreviewApp {
                                                 swatch(ui, BASE_COLOR, "base");
                                                 for (li, l) in layers.iter().enumerate() {
                                                     if l.is_active() {
-                                                        swatch(ui, layer_color(li), &format!("L{}", li + 1));
+                                                        swatch(
+                                                            ui,
+                                                            layer_color(li),
+                                                            &format!("L{}", li + 1),
+                                                        );
                                                     }
                                                 }
                                                 swatch(ui, REST_COLOR, "rest");
@@ -2819,74 +2671,7 @@ impl PreviewApp {
                             ));
                         });
                 });
-        });
-
-        // Apply mutations
-        egui_winit.handle_platform_output(&window, full_output.platform_output);
-
-        // Tessellate and render
-        let paint_jobs = self
-            .egui_ctx
-            .tessellate(full_output.shapes, full_output.pixels_per_point);
-
-        let screen_descriptor = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [context.config.width, context.config.height],
-            pixels_per_point: full_output.pixels_per_point,
-        };
-
-        let mut egui_renderer = self.egui_renderer.take().unwrap();
-
-        let mut encoder = context
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("egui Encoder"),
-            });
-
-        for (id, deltas) in &full_output.textures_delta.set {
-            for image_delta in deltas {
-                egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
-            }
         }
-
-        egui_renderer.update_buffers(
-            &context.device,
-            &context.queue,
-            &mut encoder,
-            &paint_jobs,
-            &screen_descriptor,
-        );
-
-        {
-            let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("egui Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-
-            let mut render_pass = render_pass.forget_lifetime();
-            egui_renderer.render(&mut render_pass, &paint_jobs, &screen_descriptor);
-        }
-
-        context.queue.submit(std::iter::once(encoder.finish()));
-
-        for id in &full_output.textures_delta.free {
-            egui_renderer.free_texture(id);
-        }
-        // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
-        full_output.textures_delta.clear();
-
-        self.egui_renderer = Some(egui_renderer);
 
         // Apply collected mutations to renderer/animation state
         if let Some(mode) = new_debug_mode {
@@ -3204,388 +2989,337 @@ fn render_node_tree(
     }
 }
 
-impl ApplicationHandler for PreviewApp {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_none() {
-            self.initialize(event_loop);
+impl Editor for PreviewApp {
+    fn title(&self) -> String {
+        let model_name = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|s| {
+                s.model_path
+                    .as_ref()
+                    .and_then(|p| p.file_name().map(|f| f.to_string_lossy().to_string()))
+            })
+            .unwrap_or_default();
+        if model_name.is_empty() {
+            "Flint Preview \u{2014} Drop a .glb/.gltf file".to_string()
+        } else {
+            format!("Flint Preview \u{2014} {}", model_name)
         }
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        // Forward events to egui first
-        if let Some(egui_winit) = &mut self.egui_winit {
-            if let Some(window) = &self.window {
-                let response = egui_winit.on_window_event(window, &event);
-                if response.consumed {
-                    return;
+    fn init(&mut self, cx: InitCx) -> Result<()> {
+        self.initialize(cx)
+    }
+
+    fn orbit(&mut self) -> Option<(&mut Camera, &mut OrbitCameraController)> {
+        Some((&mut self.camera, &mut self.orbit))
+    }
+
+    /// `--watch`: the model file
+    fn watched_files(&self) -> Vec<PathBuf> {
+        if !self.args.watch {
+            return Vec::new();
+        }
+        let model = self.state.lock().ok().and_then(|s| s.model_path.clone());
+        if model.is_some() {
+            crate::output::say!("Watching for changes...");
+        }
+        model.into_iter().collect()
+    }
+
+    fn on_file_changed(&mut self) {
+        if let Ok(mut s) = self.state.lock() {
+            s.needs_reload = true;
+        }
+    }
+
+    fn resized(&mut self, gpu: &Gpu) {
+        if let Some(renderer) = &mut self.scene_renderer {
+            renderer.resize_postprocess(&gpu.device, gpu.width, gpu.height);
+        }
+        self.render_context = Some(gpu.clone());
+    }
+
+    fn event(&mut self, event: &WindowEvent) -> Flow {
+        match event {
+            WindowEvent::DroppedFile(path) => {
+                self.load_model_file(path.clone());
+                Flow::Handled
+            }
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                match event.physical_key {
+                    PhysicalKey::Code(KeyCode::Escape) => return Flow::Exit,
+                    PhysicalKey::Code(KeyCode::Tab) => {
+                        self.show_ui = !self.show_ui;
+                    }
+                    PhysicalKey::Code(KeyCode::Space) => {
+                        // Reset camera to auto-fit
+                        if let Ok(state) = self.state.lock() {
+                            if let Some(model_path) = &state.model_path {
+                                if let Ok(r) = import_gltf(model_path) {
+                                    if let Some(b) = r.bounds() {
+                                        auto_fit_camera(&b, &mut self.camera);
+                                        self.camera.update_orbit();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Animation controls
+                    PhysicalKey::Code(KeyCode::KeyP) => {
+                        if self.anim_info.is_some() {
+                            self.anim_paused = !self.anim_paused;
+                            // Update playing state in ECS
+                            if let Ok(mut state) = self.state.lock() {
+                                if let Some(eid) = state.entity_id {
+                                    if let Some(mut components) =
+                                        state.world.get_components_mut(eid)
+                                    {
+                                        components.set_field(
+                                            comp::ANIMATOR,
+                                            "playing",
+                                            toml::Value::Boolean(!self.anim_paused),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    PhysicalKey::Code(KeyCode::KeyR) => {
+                        if self.sequence.is_some() {
+                            self.seek_sequence_to(0.0);
+                            crate::output::say!("Sequence restarted");
+                        }
+                    }
+                    PhysicalKey::Code(KeyCode::Home) => {
+                        if self.sequence.is_some() {
+                            self.seek_sequence_to(0.0);
+                        }
+                    }
+                    PhysicalKey::Code(KeyCode::Period) => {
+                        // Next clip
+                        if let Some(info) = &self.anim_info {
+                            let next = (info.current_clip_index + 1) % info.clip_names.len();
+                            self.switch_clip(next);
+                        }
+                    }
+                    PhysicalKey::Code(KeyCode::Comma) => {
+                        // Previous clip
+                        if let Some(info) = &self.anim_info {
+                            let prev = if info.current_clip_index == 0 {
+                                info.clip_names.len() - 1
+                            } else {
+                                info.current_clip_index - 1
+                            };
+                            self.switch_clip(prev);
+                        }
+                    }
+                    PhysicalKey::Code(KeyCode::Equal) => {
+                        // Increase speed (×1.5)
+                        if self.anim_info.is_some() {
+                            if let Ok(mut state) = self.state.lock() {
+                                if let Some(eid) = state.entity_id {
+                                    if let Some(mut components) =
+                                        state.world.get_components_mut(eid)
+                                    {
+                                        let current = components
+                                            .get(comp::ANIMATOR)
+                                            .and_then(|a| {
+                                                a.get("speed").and_then(|v| {
+                                                    v.as_float().or_else(|| {
+                                                        v.as_integer().map(|i| i as f64)
+                                                    })
+                                                })
+                                            })
+                                            .unwrap_or(1.0);
+                                        let new_speed = (current * 1.5).min(10.0);
+                                        components.set_field(
+                                            comp::ANIMATOR,
+                                            "speed",
+                                            toml::Value::Float(new_speed),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    PhysicalKey::Code(KeyCode::Minus) => {
+                        // Decrease speed (÷1.5)
+                        if self.anim_info.is_some() {
+                            if let Ok(mut state) = self.state.lock() {
+                                if let Some(eid) = state.entity_id {
+                                    if let Some(mut components) =
+                                        state.world.get_components_mut(eid)
+                                    {
+                                        let current = components
+                                            .get(comp::ANIMATOR)
+                                            .and_then(|a| {
+                                                a.get("speed").and_then(|v| {
+                                                    v.as_float().or_else(|| {
+                                                        v.as_integer().map(|i| i as f64)
+                                                    })
+                                                })
+                                            })
+                                            .unwrap_or(1.0);
+                                        let new_speed = (current / 1.5).max(0.1);
+                                        components.set_field(
+                                            comp::ANIMATOR,
+                                            "speed",
+                                            toml::Value::Float(new_speed),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    PhysicalKey::Code(KeyCode::Digit0) => {
+                        // Reset speed to 1.0
+                        if self.anim_info.is_some() {
+                            if let Ok(mut state) = self.state.lock() {
+                                if let Some(eid) = state.entity_id {
+                                    if let Some(mut components) =
+                                        state.world.get_components_mut(eid)
+                                    {
+                                        components.set_field(
+                                            comp::ANIMATOR,
+                                            "speed",
+                                            toml::Value::Float(1.0),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => return Flow::Pass,
                 }
+                Flow::Handled
+            }
+            _ => Flow::Pass,
+        }
+    }
+
+    fn update(&mut self, tick: Tick) {
+        self.fps = tick.fps;
+        let dt_secs = tick.dt as f64;
+
+        // Check for file-watch reload
+        self.check_reload();
+
+        // Update window title with animation status
+        if self.anim_info.is_some() {
+            self.update_title();
+        }
+
+        // Animation update
+        if self.anim_info.is_some() && !self.anim_paused {
+            if self.sequence.is_some() {
+                // Sequence writes animator fields; run it before the
+                // skeletal sync so they land this frame.
+                if let Ok(mut state) = self.state.lock() {
+                    self.animation.sync_sequences_from_world(&state.world);
+                    self.animation.advance_sequences(&mut state.world, dt_secs);
+                }
+                for cue in self.animation.drain_sequence_cues() {
+                    crate::output::say!("[sequence] cue '{}' at {:.2}s", cue.cue, cue.time);
+                }
+            }
+            if let Ok(state) = self.state.lock() {
+                // Sync from world picks up component changes (clip switches, speed, layers, etc.)
+                self.animation.sync_property_from_world(&state.world);
+                self.animation.sync_skeletal_from_world(&state.world);
+                self.animation.sync_node_from_world(&state.world);
+            }
+            self.apply_layer_mutes();
+            if let Ok(mut state) = self.state.lock() {
+                // Advance all animation tiers
+                self.animation
+                    .advance_property_and_write(&mut state.world, dt_secs);
+                self.animation.advance_skeletal(dt_secs);
+                // Retire finished blends/fades or they re-arm next frame
+                self.animation.write_back_skeletal(&mut state.world);
+                self.animation
+                    .advance_node_and_apply(&mut state.world, dt_secs);
+
+                self.anim_time_accumulator += dt_secs;
             }
         }
 
-        match event {
-            WindowEvent::CloseRequested => {
-                event_loop.exit();
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                // Let orbit controller track WASD/QE held state
-                self.orbit.handle_key_event(&event);
+        let motion_time = self.motion_time();
+        let Some(context) = &self.render_context else {
+            return;
+        };
+        let Some(renderer) = &mut self.scene_renderer else {
+            return;
+        };
 
-                if event.state == ElementState::Pressed {
-                    match event.physical_key {
-                        PhysicalKey::Code(KeyCode::Escape) => {
-                            event_loop.exit();
-                        }
-                        PhysicalKey::Code(KeyCode::Tab) => {
-                            self.show_ui = !self.show_ui;
-                        }
-                        PhysicalKey::Code(KeyCode::Space) => {
-                            // Reset camera to auto-fit
-                            if let Ok(state) = self.state.lock() {
-                                if let Some(model_path) = &state.model_path {
-                                    if let Ok(r) = import_gltf(model_path) {
-                                        if let Some(b) = r.bounds() {
-                                            auto_fit_camera(&b, &mut self.camera);
-                                            self.camera.update_orbit();
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // Animation controls
-                        PhysicalKey::Code(KeyCode::KeyP) => {
-                            if self.anim_info.is_some() {
-                                self.anim_paused = !self.anim_paused;
-                                // Update playing state in ECS
-                                if let Ok(mut state) = self.state.lock() {
-                                    if let Some(eid) = state.entity_id {
-                                        if let Some(mut components) =
-                                            state.world.get_components_mut(eid)
-                                        {
-                                            components.set_field(
-                                                comp::ANIMATOR,
-                                                "playing",
-                                                toml::Value::Boolean(!self.anim_paused),
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        PhysicalKey::Code(KeyCode::KeyR) => {
-                            if self.sequence.is_some() {
-                                self.seek_sequence_to(0.0);
-                                println!("Sequence restarted");
-                            }
-                        }
-                        PhysicalKey::Code(KeyCode::Home) => {
-                            if self.sequence.is_some() {
-                                self.seek_sequence_to(0.0);
-                            }
-                        }
-                        PhysicalKey::Code(KeyCode::Period) => {
-                            // Next clip
-                            if let Some(info) = &self.anim_info {
-                                let next = (info.current_clip_index + 1) % info.clip_names.len();
-                                self.switch_clip(next);
-                            }
-                        }
-                        PhysicalKey::Code(KeyCode::Comma) => {
-                            // Previous clip
-                            if let Some(info) = &self.anim_info {
-                                let prev = if info.current_clip_index == 0 {
-                                    info.clip_names.len() - 1
-                                } else {
-                                    info.current_clip_index - 1
-                                };
-                                self.switch_clip(prev);
-                            }
-                        }
-                        PhysicalKey::Code(KeyCode::KeyO) => {
-                            self.orbit.auto_orbit = !self.orbit.auto_orbit;
-                            println!(
-                                "Auto-orbit: {}",
-                                if self.orbit.auto_orbit { "ON" } else { "OFF" }
-                            );
-                        }
-                        PhysicalKey::Code(KeyCode::BracketRight) => {
-                            self.orbit.adjust_auto_orbit_speed(1.5);
-                            println!("Auto-orbit speed: {:.2} rad/s", self.orbit.auto_orbit_speed);
-                        }
-                        PhysicalKey::Code(KeyCode::BracketLeft) => {
-                            self.orbit.adjust_auto_orbit_speed(1.0 / 1.5);
-                            println!("Auto-orbit speed: {:.2} rad/s", self.orbit.auto_orbit_speed);
-                        }
-                        PhysicalKey::Code(KeyCode::Equal) => {
-                            // Increase speed (×1.5)
-                            if self.anim_info.is_some() {
-                                if let Ok(mut state) = self.state.lock() {
-                                    if let Some(eid) = state.entity_id {
-                                        if let Some(mut components) =
-                                            state.world.get_components_mut(eid)
-                                        {
-                                            let current = components
-                                                .get(comp::ANIMATOR)
-                                                .and_then(|a| {
-                                                    a.get("speed").and_then(|v| {
-                                                        v.as_float().or_else(|| {
-                                                            v.as_integer().map(|i| i as f64)
-                                                        })
-                                                    })
-                                                })
-                                                .unwrap_or(1.0);
-                                            let new_speed = (current * 1.5).min(10.0);
-                                            components.set_field(
-                                                comp::ANIMATOR,
-                                                "speed",
-                                                toml::Value::Float(new_speed),
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        PhysicalKey::Code(KeyCode::Minus) => {
-                            // Decrease speed (÷1.5)
-                            if self.anim_info.is_some() {
-                                if let Ok(mut state) = self.state.lock() {
-                                    if let Some(eid) = state.entity_id {
-                                        if let Some(mut components) =
-                                            state.world.get_components_mut(eid)
-                                        {
-                                            let current = components
-                                                .get(comp::ANIMATOR)
-                                                .and_then(|a| {
-                                                    a.get("speed").and_then(|v| {
-                                                        v.as_float().or_else(|| {
-                                                            v.as_integer().map(|i| i as f64)
-                                                        })
-                                                    })
-                                                })
-                                                .unwrap_or(1.0);
-                                            let new_speed = (current / 1.5).max(0.1);
-                                            components.set_field(
-                                                comp::ANIMATOR,
-                                                "speed",
-                                                toml::Value::Float(new_speed),
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        PhysicalKey::Code(KeyCode::Digit0) => {
-                            // Reset speed to 1.0
-                            if self.anim_info.is_some() {
-                                if let Ok(mut state) = self.state.lock() {
-                                    if let Some(eid) = state.entity_id {
-                                        if let Some(mut components) =
-                                            state.world.get_components_mut(eid)
-                                        {
-                                            components.set_field(
-                                                comp::ANIMATOR,
-                                                "speed",
-                                                toml::Value::Float(1.0),
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            WindowEvent::Resized(new_size) => {
-                if new_size.width > 0 && new_size.height > 0 {
-                    if let Some(context) = &mut self.render_context {
-                        context.resize(new_size);
-                        self.camera.aspect = context.aspect_ratio();
-                        if let Some(renderer) = &mut self.scene_renderer {
-                            renderer.resize_postprocess(
-                                &context.device,
-                                new_size.width,
-                                new_size.height,
-                            );
-                        }
-                    }
-                }
-            }
-            WindowEvent::DroppedFile(path) => {
-                self.load_model_file(path);
-            }
-            ref ev @ (WindowEvent::MouseInput { .. }
-            | WindowEvent::CursorMoved { .. }
-            | WindowEvent::MouseWheel { .. }) => {
-                self.orbit
-                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_egui());
-            }
-            WindowEvent::RedrawRequested => {
-                let now = Instant::now();
-                let dt_secs = self.last_frame_time.elapsed().as_secs_f64();
-                self.last_frame_time = now;
-
-                // Apply held keyboard orbit/zoom
-                self.orbit.update(&mut self.camera, dt_secs as f32);
-
-                // FPS tracking
-                self.frame_times.push_back(now);
-                while self
-                    .frame_times
-                    .front()
-                    .is_some_and(|t| now.duration_since(*t) > Duration::from_secs(1))
-                {
-                    self.frame_times.pop_front();
-                }
-                if now.duration_since(self.last_fps_update) > Duration::from_millis(250) {
-                    self.fps = self.frame_times.len() as f32;
-                    self.last_fps_update = now;
-                }
-
-                // Check for file-watch reload
-                self.check_reload();
-
-                // Update window title with animation status
-                if self.anim_info.is_some() {
-                    self.update_title();
-                }
-
-                // Animation update
-                if self.anim_info.is_some() && !self.anim_paused {
-                    if self.sequence.is_some() {
-                        // Sequence writes animator fields; run it before the
-                        // skeletal sync so they land this frame.
-                        if let Ok(mut state) = self.state.lock() {
-                            self.animation.sync_sequences_from_world(&state.world);
-                            self.animation.advance_sequences(&mut state.world, dt_secs);
-                        }
-                        for cue in self.animation.drain_sequence_cues() {
-                            println!("[sequence] cue '{}' at {:.2}s", cue.cue, cue.time);
-                        }
-                    }
-                    if let Ok(state) = self.state.lock() {
-                        // Sync from world picks up component changes (clip switches, speed, layers, etc.)
-                        self.animation.sync_property_from_world(&state.world);
-                        self.animation.sync_skeletal_from_world(&state.world);
-                        self.animation.sync_node_from_world(&state.world);
-                    }
-                    self.apply_layer_mutes();
-                    if let Ok(mut state) = self.state.lock() {
-                        // Advance all animation tiers
-                        self.animation
-                            .advance_property_and_write(&mut state.world, dt_secs);
-                        self.animation.advance_skeletal(dt_secs);
-                        // Retire finished blends/fades or they re-arm next frame
-                        self.animation.write_back_skeletal(&mut state.world);
-                        self.animation
-                            .advance_node_and_apply(&mut state.world, dt_secs);
-
-                        self.anim_time_accumulator += dt_secs;
-                    }
-                }
-
-                let motion_time = self.motion_time();
-                let context = match &self.render_context {
-                    Some(c) => c,
-                    None => return,
-                };
-                let renderer = match &mut self.scene_renderer {
-                    Some(r) => r,
-                    None => return,
-                };
-
-                // Bone upload + overlay run every frame (cheap) so a paused
-                // pose still reflects layer dials after a dt=0 re-pose.
-                // Under a hold the clip's time picks the frames they land
-                // on (#871), so it is stamped first.
-                renderer.set_motion_time(motion_time);
-                if self.anim_info.is_some() {
-                    for (entity_id, asset_name) in &self.skeletal_entity_assets {
-                        if let Some(matrices) = self.animation.bone_matrices(entity_id) {
-                            renderer.update_bone_matrices(
-                                &context.device,
-                                &context.queue,
-                                *entity_id,
-                                asset_name,
-                                matrices,
-                            );
-                        }
-                    }
-
-                    // Keep the armature overlay in step with the animated pose
-                    if renderer.debug_state().show_skeleton {
-                        if let Some(eid) = self.skeletal_entity_assets.keys().next() {
-                            if let Some(skel) = self.animation.skeleton(eid) {
-                                let contrib = self.animation.skeletal_layer_contribution(eid);
-                                let posed = self.animation.joint_offsets(eid);
-                                let mesh =
-                                    skeleton_overlay_mesh(skel, self.layer_viz, contrib, posed);
-                                renderer.set_skeleton_overlay(&context.device, &mesh);
-                            }
-                        }
-                    }
-                }
-
-                // The frame's inputs and the world (#739): held poses on the
-                // clip's clock, the post time standing still at 0
-                if let Ok(state) = self.state.lock() {
-                    renderer.prepare(
+        // Bone upload + overlay run every frame (cheap) so a paused
+        // pose still reflects layer dials after a dt=0 re-pose.
+        // Under a hold the clip's time picks the frames they land
+        // on (#871), so it is stamped first.
+        renderer.set_motion_time(motion_time);
+        if self.anim_info.is_some() {
+            for (entity_id, asset_name) in &self.skeletal_entity_assets {
+                if let Some(matrices) = self.animation.bone_matrices(entity_id) {
+                    renderer.update_bone_matrices(
                         &context.device,
                         &context.queue,
-                        &state.world,
-                        &flint_render::FrameInputs {
-                            time: motion_time,
-                            look_time: Some(0.0),
-                            grass_time: Some(0.0),
-                            ..Default::default()
-                        },
+                        *entity_id,
+                        asset_name,
+                        matrices,
                     );
                 }
+            }
 
-                let output = match context.surface.acquire() {
-                    Ok(o) => o,
-                    Err(
-                        flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated,
-                    ) => {
-                        let size = context.size;
-                        if let Some(ctx) = &mut self.render_context {
-                            ctx.resize(size);
-                        }
-                        return;
+            // Keep the armature overlay in step with the animated pose
+            if renderer.debug_state().show_skeleton {
+                if let Some(eid) = self.skeletal_entity_assets.keys().next() {
+                    if let Some(skel) = self.animation.skeleton(eid) {
+                        let contrib = self.animation.skeletal_layer_contribution(eid);
+                        let posed = self.animation.joint_offsets(eid);
+                        let mesh = skeleton_overlay_mesh(skel, self.layer_viz, contrib, posed);
+                        renderer.set_skeleton_overlay(&context.device, &mesh);
                     }
-                    Err(e) => {
-                        tracing::warn!("Surface error: {:?}", e);
-                        return;
-                    }
-                };
-
-                let view = output
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default());
-
-                let _ = renderer.render(context, &self.camera, &view);
-
-                // egui overlay
-                if self.show_ui {
-                    self.render_egui(&view);
-                }
-
-                if let Some(context) = &self.render_context {
-                    context.queue.present(output);
                 }
             }
-            _ => {}
+        }
+
+        // The frame's inputs and the world (#739): held poses on the
+        // clip's clock, the post time standing still at 0
+        if let Ok(state) = self.state.lock() {
+            renderer.prepare(
+                &context.device,
+                &context.queue,
+                &state.world,
+                &flint_render::FrameInputs {
+                    time: motion_time,
+                    look_time: Some(0.0),
+                    grass_time: Some(0.0),
+                    ..Default::default()
+                },
+            );
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
+    fn draw(&mut self, target: &Target) {
+        if let Some(renderer) = &mut self.scene_renderer {
+            target.render(renderer, &self.camera);
         }
+    }
+
+    fn show_ui(&self) -> bool {
+        self.show_ui
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        self.render_egui(ui);
+    }
+
+    /// `--render`: the model at `--anim-time` (or at 0 for `--layer` /
+    /// `--sequence`), posed, styled and held as the window would draw it.
+    fn still(&mut self, _options: &StillOptions) -> Result<Option<image::RgbaImage>> {
+        self.pose_still()?;
+        Ok(None)
     }
 }
 

@@ -52,7 +52,7 @@ SHOTS = {
 
 # The measuring pass: smaller, and with the shading boil off, since the boil
 # redraws every pixel 12 times a second and would move a crop of bare ground.
-MEASURE = ["--kuwahara-boil", "0", "--contour-boil", "0"]
+MEASURE = ["--set", "kuwahara.boil=0", "--set", "contour.boil=0"]
 # A control for the measure: the same shots with no grass at all.
 CONTROL = {"grass.enabled": "false"}
 

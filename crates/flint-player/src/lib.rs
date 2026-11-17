@@ -3,6 +3,7 @@
 //! This crate provides the `PlayerApp` application handler
 //! for running Flint scenes with physics and first-person controls.
 
+pub mod capture_args;
 pub mod extension;
 pub mod hitch_args;
 // Everything the player says, through tracing, as text or JSON lines (#716)
@@ -15,6 +16,7 @@ pub mod player_args;
 pub mod user_files;
 pub mod window_args;
 
+pub use capture_args::FrameCaptureArgs;
 pub use extension::{
     ExtensionAudio, ExtensionCtx, ExtensionGpu, KeyInput, MeshOptions, PlayerExtension,
     SoundOptions, Stage,

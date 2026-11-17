@@ -385,6 +385,8 @@ pub(super) struct Hud {
     /// What a debug key with nothing to act on said (#367), shown for a
     /// moment at the top of the window.
     pub(super) key_note: super::key_note::KeyNote,
+    /// The F1 card of the run's debug keys is showing (#717).
+    pub(super) key_table_open: bool,
 }
 
 impl Default for Hud {
@@ -407,6 +409,7 @@ impl Default for Hud {
             fonts_root: Default::default(),
             fonts_installed: false,
             key_note: Default::default(),
+            key_table_open: false,
         }
     }
 }
@@ -530,6 +533,7 @@ impl InputLayers {
                 game_id: String::new(),
                 actions: Default::default(),
                 touch_controls: None,
+                debug_keys: None,
             },
             pending_rebind: None,
             named_actions: Default::default(),
@@ -549,6 +553,9 @@ pub(super) struct Focus {
     pub(super) real_pad_slots: HashSet<u32>,
     /// The modifiers held now, real or scripted, for `PlayerExtension::on_key`.
     pub(super) key_modifiers: winit::keyboard::ModifiersState,
+    /// Keys held whose press was a debug key (#717): their repeats and
+    /// release don't reach the game either.
+    pub(super) debug_keys_held: HashSet<winit::keyboard::KeyCode>,
 }
 
 impl Default for Focus {
@@ -558,6 +565,7 @@ impl Default for Focus {
             window_focused: true,
             real_pad_slots: Default::default(),
             key_modifiers: Default::default(),
+            debug_keys_held: Default::default(),
         }
     }
 }

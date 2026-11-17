@@ -81,8 +81,10 @@ impl PlayerApp {
         self.start_scene_systems(entry)?;
         // The subsystems this scene uses, each told it is up
         self.subsystems_enter_scene();
-        // One line for what loaded and what went wrong, and one for the
-        // controls this scene binds (#716)
+        // A `[debug_keys]` name nothing has, or two actions on one key (#717)
+        self.say_debug_key_config();
+        // One line for what loaded and what went wrong (the line above's
+        // warnings included), and one for the controls this scene binds (#716)
         self.say_loaded();
         self.say_controls();
 

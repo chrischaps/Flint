@@ -109,12 +109,12 @@ fn each_variant_is_the_render_its_flags_make_alone() {
         &dir,
         "cmp.png",
         &[
-            "--exposure",
-            "1.5",
+            "--set",
+            "post.exposure=1.5",
             "--variant",
             "base:",
             "--variant",
-            "dark: --exposure 0.4",
+            "dark: --set post.exposure=0.4",
             "--variant",
             "flat: --no-shadows --no-postprocess",
             "--zoom",
@@ -127,11 +127,16 @@ fn each_variant_is_the_render_its_flags_make_alone() {
     ok(&o);
     // The variant's flags go after the base's, and the later one wins
     let plain = [
-        ("base", vec!["--exposure", "1.5"]),
-        ("dark", vec!["--exposure", "0.4"]),
+        ("base", vec!["--set", "post.exposure=1.5"]),
+        ("dark", vec!["--set", "post.exposure=0.4"]),
         (
             "flat",
-            vec!["--exposure", "1.5", "--no-shadows", "--no-postprocess"],
+            vec![
+                "--set",
+                "post.exposure=1.5",
+                "--no-shadows",
+                "--no-postprocess",
+            ],
         ),
     ];
     let mut frames = Vec::new();
@@ -193,7 +198,7 @@ flags = ["--no-shadows"]
             "--variants",
             file.to_str().unwrap(),
             "--variant",
-            "--exposure 0.5",
+            "--msaa 4",
             "--zoom",
             "16,16,48,40",
         ],
@@ -206,11 +211,11 @@ flags = ["--no-shadows"]
     for name in [
         "f.png",
         "f-shadows-off.png",
-        "f-exposure-0-5.png",
+        "f-msaa-4.png",
         "f-zoom.png",
         "f-zoom2.png",
         "f-shadows-off-zoom.png",
-        "f-exposure-0-5-zoom2.png",
+        "f-msaa-4-zoom2.png",
     ] {
         assert!(out.join(name).is_file(), "{name} missing");
     }
@@ -233,7 +238,7 @@ fn a_bad_variant_fails_before_anything_draws() {
         "bad.png",
         &[
             "--variant",
-            "ok: --exposure 2",
+            "ok: --set post.exposure=2",
             "--variant",
             "typo: --exposur 2",
         ],

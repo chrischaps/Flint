@@ -1,5 +1,6 @@
 //! CLI command implementations
 
+pub mod ai_costs;
 pub mod asset;
 pub mod asset_where;
 pub mod bundle;
@@ -9,8 +10,10 @@ pub mod common_args;
 pub mod dxc;
 pub mod edit_router;
 pub mod entity;
+pub mod env;
 pub mod examples;
 pub mod export;
+pub mod frame;
 pub mod frame_seq;
 pub mod gen;
 pub mod gen_ai;
@@ -38,8 +41,11 @@ pub mod prefab;
 pub mod preview;
 pub mod query;
 pub mod render;
+pub mod render_args;
+mod render_frame_dump;
 pub mod render_goldens;
 pub mod render_plan;
+pub mod render_post;
 pub mod render_report;
 pub mod render_suite;
 pub mod render_watch;
@@ -55,6 +61,7 @@ pub mod style;
 pub mod style_sheet;
 pub mod sweep;
 pub mod terrain_edit;
+pub mod terrain_gen;
 pub mod tex_edit;
 pub mod validate;
 pub mod validate_suite;

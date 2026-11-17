@@ -37,8 +37,9 @@ pub fn scaled_size(width: u32, height: u32, scale: f32) -> (u32, u32) {
 
 /// The scene's own depth buffer while it is drawn below the surface's size.
 pub(crate) struct ScaledDepth {
-    // Held so the view's texture lives as long as it
-    _texture: wgpu::Texture,
+    // Held so the view's texture lives as long as it, and described with
+    // the frame (#1084)
+    pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
 }
 
@@ -55,14 +56,14 @@ impl ScaledDepth {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                // Copied out by a frame capture (#1085)
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Self {
-            _texture: texture,
-            view,
-        }
+        Self { texture, view }
     }
 }
 

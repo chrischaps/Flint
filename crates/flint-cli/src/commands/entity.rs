@@ -6,10 +6,12 @@
 //! loaded first, so an edit that would leave the scene unloadable (a dangling
 //! `parent`, props a schema rejects) is refused before the file changes.
 
+use crate::output::{self, Answer};
 use anyhow::{Context, Result};
 use clap::Subcommand;
 use flint_scene::{load_scene, load_scene_text, SceneDocument, SceneFile};
 use flint_schema::{validate_component_data, SchemaRegistry};
+use serde_json::json;
 use std::path::Path;
 
 #[derive(Subcommand)]
@@ -206,8 +208,15 @@ fn create(
     }
 
     std::fs::write(scene_path, text)?;
-    println!("Created entity '{}' with archetype '{}'", name, archetype);
-    Ok(())
+    output::emit(&Answer::new(
+        format!("Created entity '{name}' with archetype '{archetype}'"),
+        json!({
+            "created": name,
+            "archetype": archetype,
+            "parent": parent,
+            "scene": scene_path,
+        }),
+    ))
 }
 
 /// `--props` as components, components and fields sorted by name so the same
@@ -243,9 +252,9 @@ fn list(scene_path: &str, format: &str, schemas: &[String]) -> Result<()> {
 
     let entities = world.all_entities();
 
-    match format {
+    match output::format_or_json(format) {
         "json" => {
-            println!("{}", serde_json::to_string_pretty(&entities)?);
+            output::document(&serde_json::to_value(&entities)?);
         }
         "toml" => {
             #[derive(serde::Serialize)]
@@ -306,16 +315,19 @@ fn delete(name: &str, scene_path: &str, recursive: bool, schemas: &[String]) -> 
         .context("Refusing to write: the scene would not load")?;
     std::fs::write(scene_path, text)?;
 
-    match doomed.len() {
-        1 => println!("Deleted entity '{}'", name),
-        n => println!(
+    let text = match doomed.len() {
+        1 => format!("Deleted entity '{name}'"),
+        n => format!(
             "Deleted entity '{}' and {} under it: {}",
             name,
             n - 1,
             doomed[..n - 1].join(", ")
         ),
-    }
-    Ok(())
+    };
+    output::emit(&Answer::new(
+        text,
+        json!({ "deleted": doomed, "scene": scene_path }),
+    ))
 }
 
 fn show(name: &str, scene_path: &str, format: &str, schemas: &[String]) -> Result<()> {
@@ -346,9 +358,9 @@ fn show(name: &str, scene_path: &str, format: &str, schemas: &[String]) -> Resul
         data: components.map(|c| c.data.clone()),
     };
 
-    match format {
+    match output::format_or_json(format) {
         "json" => {
-            println!("{}", serde_json::to_string_pretty(&details)?);
+            output::document(&serde_json::to_value(&details)?);
         }
         "toml" => {
             println!("{}", toml::to_string_pretty(&details)?);

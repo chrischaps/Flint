@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
 use flint_procgen::ProcGenSpec;
-use flint_procgen_ai::cost::{self, price_for, CostLedger, CostMeter, CostSummary};
+use flint_procgen_ai::cost::{self, CostMeter};
 use flint_procgen_ai::{AgentConfig, AnthropicAgent, Distance, MockAgent, ProcGenAgent, Report};
 use serde::Deserialize;
 
@@ -100,14 +100,13 @@ pub fn resolve_config(args: &GenArgs, project_file: &Path) -> Result<AgentConfig
     Ok(config)
 }
 
-/// The meter every call of this run goes through: the project ledger, and
-/// the `--max-cost` ceiling if one was given.
-pub fn build_meter(config: &AgentConfig, args: &GenArgs) -> Arc<CostMeter> {
-    let mut meter = CostMeter::new(&config.provider).with_ledger(CostLedger::open_default());
-    if let Some(max) = args.max_cost {
-        meter = meter.with_ceiling(max);
-    }
-    Arc::new(meter)
+/// The meter every call of this run goes through: the project's ledger and
+/// prices, and the `--max-cost` ceiling if one was given.
+pub fn build_meter(config: &AgentConfig, args: &GenArgs) -> Result<Arc<CostMeter>> {
+    Ok(Arc::new(super::ai_costs::meter(
+        &config.provider,
+        args.max_cost,
+    )?))
 }
 
 /// The agent for `config`, its calls going through `meter`. A Claude agent
@@ -356,7 +355,7 @@ fn describe_distance(d: &Distance) -> String {
     )
 }
 
-/// `ai: 3 calls, $0.0421 (ceiling $0.50) -> .flint/procgen_costs.json`.
+/// `ai: 3 calls, $0.0421 (ceiling $0.50) -> .flint/ai_costs.jsonl`.
 pub fn cost_line(meter: &CostMeter) -> String {
     let calls = meter.calls();
     if calls == 0 {
@@ -378,7 +377,9 @@ pub fn cost_line(meter: &CostMeter) -> String {
 /// could cost, without sending anything. Lines, so the caller picks the stream
 /// (`--report json` keeps stdout for the report).
 pub fn plan_lines(config: &AgentConfig, steps: Steps, args: &GenArgs) -> Vec<String> {
-    let (price, priced_as) = price_for(&config.provider, &config.model);
+    let (price, priced_as) = super::ai_costs::prices()
+        .unwrap_or_else(|_| cost::PriceTable::builtin())
+        .token_price(&config.provider, &config.model);
     let max_out = AnthropicAgent::DEFAULT_MAX_TOKENS;
     // A refine against a reference is measured, and may converse once per
     // refine round.
@@ -418,27 +419,6 @@ pub fn plan_lines(config: &AgentConfig, steps: Steps, args: &GenArgs) -> Vec<Str
     }
     lines.push("(nothing was sent; drop --dry-run to run the AI steps)".to_string());
     lines
-}
-
-/// `flint gen --cost-report [--since DATE]`.
-pub fn cost_report(ledger: &CostLedger, since: Option<&str>) -> Result<()> {
-    let since = since
-        .map(cost::parse_since)
-        .transpose()
-        .map_err(|e| anyhow!("{e}"))?;
-    let contents = ledger.read().map_err(|e| anyhow!("{e}"))?;
-    if !contents.skipped.is_empty() {
-        eprintln!(
-            "warning: {}: skipped {} unreadable line(s): {:?}",
-            ledger.path().display(),
-            contents.skipped.len(),
-            contents.skipped
-        );
-    }
-    let summary = CostSummary::from_entries(&contents.entries, since.as_deref());
-    print!("{}", summary.render());
-    println!("\nLedger: {}", ledger.path().display());
-    Ok(())
 }
 
 #[cfg(test)]
@@ -630,7 +610,7 @@ mod tests {
     fn anthropic_create_records_each_call_in_the_ledger() {
         let dir = std::env::temp_dir().join(format!("flint-gen-ai-ledger-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let ledger = CostLedger::new(dir.join("procgen_costs.json"));
+        let ledger = cost::CostLedger::new(dir.join("ai_costs.jsonl"));
         let meter = Arc::new(
             CostMeter::new("anthropic")
                 .with_ledger(ledger.clone())
@@ -679,12 +659,6 @@ mod tests {
     #[test]
     fn the_scripted_transport_is_a_transport() {
         let t: Box<dyn Transport> = Box::new(ScriptedTransport::new(vec![]));
-        assert!(t
-            .post(&flint_procgen_ai::HttpRequest {
-                url: String::new(),
-                headers: vec![],
-                body: String::new(),
-            })
-            .is_err());
+        assert!(t.send(&flint_procgen_ai::HttpRequest::get("")).is_err());
     }
 }

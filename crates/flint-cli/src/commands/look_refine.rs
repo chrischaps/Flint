@@ -25,7 +25,7 @@ use super::look::{self, Look};
 use super::look_measure::{self, DistanceReport, ImageMeasures, InkGrid, Metric, Reference};
 use super::sweep::{parse_value, Sweep, SweepKey};
 use anyhow::{bail, Context, Result};
-use flint_procgen_ai::cost::{CostLedger, CostMeter};
+use flint_procgen_ai::cost::CostMeter;
 use flint_procgen_ai::{AgentConfig, AnthropicAgent};
 use image::{RgbImage, RgbaImage};
 use serde::Serialize;
@@ -281,7 +281,7 @@ impl LookAgent for ClaudeLooks {
         let obj = flint_procgen_ai::http::extract_json_object(&reply.text)
             .with_context(|| format!("round {}: the reply wasn't a JSON object", ask.round))?;
         if let Some(o) = obj.get("observations").and_then(Json::as_str) {
-            println!("  claude: {o}");
+            crate::output::say!("  claude: {o}");
         }
         Ok(parse_candidates(obj.get("candidates")))
     }
@@ -544,7 +544,7 @@ pub fn run(
     } = draw(&best)?;
     let mut best_d = reference.distance(&best_img, best_ink.as_ref());
     let start = best_d.clone();
-    println!(
+    crate::output::say!(
         "Refine {} toward {reference_path} with {}, by {}: start {}",
         look.name,
         agent.name(),
@@ -590,7 +590,7 @@ pub fn run(
         log.rounds_run = round;
         if proposed.is_empty() {
             log.stopped = format!("round {round}: the agent proposed nothing");
-            println!("  {}", log.stopped);
+            crate::output::say!("  {}", log.stopped);
             break;
         }
         let first = log.tried.len();
@@ -602,7 +602,7 @@ pub fn run(
                 .iter()
                 .find_map(|e| e.apply(&mut table).err().map(|why| format!("{e}: {why}")));
             if let Some(why) = refused {
-                println!("  {:<40} refused: {why}", candidate.label());
+                crate::output::say!("  {:<40} refused: {why}", candidate.label());
                 log.tried.push(Tried {
                     round,
                     candidate,
@@ -615,7 +615,7 @@ pub fn run(
             }
             let frame = draw(&table)?;
             let d = reference.distance(&frame.image, frame.ink.as_ref());
-            println!("  {:<40} {}", candidate.label(), scored(&d));
+            crate::output::say!("  {:<40} {}", candidate.label(), scored(&d));
             let index = log.tried.len();
             log.tried.push(Tried {
                 round,
@@ -633,7 +633,7 @@ pub fn run(
             Some((index, table, frame, d)) if d.score < best_d.score - MIN_GAIN => {
                 log.tried[index].kept = true;
                 log.kept.extend(log.tried[index].candidate.edits.clone());
-                println!(
+                crate::output::say!(
                     "  round {round}: kept {} ({:.2} -> {:.2})",
                     log.tried[index].candidate.label(),
                     best_d.score,
@@ -653,7 +653,7 @@ pub fn run(
                     "round {round}: none of {tried} candidate(s) moved the distance below {:.2}",
                     best_d.score
                 );
-                println!("  {}", log.stopped);
+                crate::output::say!("  {}", log.stopped);
                 // A miss teaches the agent what doesn't work; give it
                 // another round with that history before stopping
                 misses += 1;
@@ -742,11 +742,7 @@ pub fn build_agent(
     model: Option<&str>,
     max_cost: Option<f64>,
 ) -> Result<(Box<dyn LookAgent>, Arc<CostMeter>)> {
-    let mut meter = CostMeter::new(provider).with_ledger(CostLedger::open_default());
-    if let Some(max) = max_cost {
-        meter = meter.with_ceiling(max);
-    }
-    let meter = Arc::new(meter);
+    let meter = Arc::new(super::ai_costs::meter(provider, max_cost)?);
     let agent: Box<dyn LookAgent> = match provider {
         "mock" => Box::new(TuneWalker),
         "anthropic" => {

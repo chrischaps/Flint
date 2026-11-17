@@ -396,7 +396,7 @@ fn each_setting_changes_what_is_drawn() {
     );
 
     // FLINT_QUALITY_PNG=<dir> writes the frames, to look at.
-    if let Ok(dir) = std::env::var("FLINT_QUALITY_PNG") {
+    if let Some(dir) = flint_core::env::QUALITY_PNG.path() {
         let frames = [
             ("base", &base),
             ("msaa", &msaa),
@@ -407,7 +407,7 @@ fn each_setting_changes_what_is_drawn() {
             ("one_cascade_40m", &one_near),
         ];
         for (name, px) in frames {
-            let path = format!("{dir}/{name}.png");
+            let path = dir.join(format!("{name}.png"));
             image::save_buffer(path, px, SIZE, SIZE, image::ColorType::Rgba8).unwrap();
         }
     }

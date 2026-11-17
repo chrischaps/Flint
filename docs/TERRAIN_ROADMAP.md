@@ -29,7 +29,7 @@ The terrain system provides heightmap-based outdoor environments with full autho
 - **Camera** — orbit controller with right-click drag
 - **Keyboard shortcuts** — Tab (toggle UI), 1/2/3 (mode switch), R (randomize seed), Ctrl+S (save), Ctrl+E (export), [/] (brush size)
 - **File watching** — auto-reloads spec on external edit
-- **Export** — saves heightmap and splat map as 16-bit and 8-bit PNG respectively
+- **Export** — saves heightmap and splat map as 16-bit and 8-bit PNG respectively; `flint gen x.terrain.toml -o dir/` writes the same bytes with no window (#719)
 
 ### Rendering (`flint-render`)
 

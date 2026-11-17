@@ -7,10 +7,12 @@
 //! - `RuntimeSystem` — what the player's per-frame systems share (called by type, no registry)
 //! - `pad` — the gamepad backend (gilrs, or a stand-in without `gamepad`)
 //! - `rumble` — a general pad rumble, `PadRumble` (#748)
+//! - `debug_keys` — the debug keys as a table, `[debug_keys]` in an input config (#717)
 #![cfg_attr(test, allow(clippy::disallowed_methods))] // unit tests read their files off the disk and assert on TOML as written; the lib build still holds the rules (#761)
 
 pub mod atomic_file;
 mod clock;
+pub mod debug_keys;
 mod event;
 mod event_bus;
 mod input;
@@ -22,6 +24,9 @@ mod system;
 pub mod touch_controls;
 
 pub use clock::GameClock;
+pub use debug_keys::{
+    Chord, DebugKey, DebugKeyEntry, DebugKeyGroup, DebugKeyTable, DebugKeysConfig, Standing,
+};
 pub use event::GameEvent;
 pub use event_bus::EventBus;
 pub use input::{binding_label, parse_key_code};

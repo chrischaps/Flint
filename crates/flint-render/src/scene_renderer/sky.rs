@@ -320,6 +320,8 @@ impl SkyRenderer {
             texture_bind_group,
         });
 
+        // The log is stderr: stdout is what a command answers with (#710).
+        // A `load` event the player counts into its summary (#716)
         tracing::debug!(target: "load", kind = "skybox", "Loaded skybox: {} ({}x{})", path.display(), width, height);
     }
 }

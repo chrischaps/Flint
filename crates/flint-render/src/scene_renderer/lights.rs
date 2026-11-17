@@ -67,6 +67,12 @@ pub(crate) struct LightState {
     /// than the shader takes (#682).
     points: Vec<Found<PointLight>>,
     spots: Vec<Found<SpotLight>>,
+    /// This frame's directional lights, strongest first: the first
+    /// `MAX_DIRECTIONAL_LIGHTS` are drawn. Kept (they were made anyway) for
+    /// a frame's description (#1084).
+    directionals: Vec<Found<DirectionalLight>>,
+    /// Where the camera the lights were last placed for stood.
+    placed_for: [f32; 3],
     /// The built-in key and fill stand in this frame.
     defaulted: bool,
     /// Lights already said to be past their type's cap, by name; and
@@ -97,6 +103,8 @@ impl LightState {
             sheen_override: None,
             points: Vec::new(),
             spots: Vec::new(),
+            directionals: Vec::new(),
+            placed_for: [0.0; 3],
             defaulted: true,
             cap_warned: BTreeSet::new(),
             said_fallback: false,
@@ -313,6 +321,7 @@ impl LightState {
             self.defaulted = true;
             self.points.clear();
             self.spots.clear();
+            self.directionals.clear();
             return;
         }
         self.defaulted = false;
@@ -345,6 +354,49 @@ impl LightState {
         self.uniforms.directional_count = directionals.len().min(MAX_DIRECTIONAL_LIGHTS) as u32;
         self.points = found.points;
         self.spots = found.spots;
+        self.directionals = directionals;
+    }
+
+    /// Which lights the last placed camera drew and which it left out
+    /// (#1084): `(kind, entity name, casts a shadow)`, then the left out as
+    /// `(kind, entity name)`, then whether the built-ins stood in.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn described(
+        &self,
+    ) -> (
+        Vec<(&'static str, String, bool)>,
+        Vec<(&'static str, String)>,
+        bool,
+    ) {
+        let mut kept = Vec::new();
+        let mut left = Vec::new();
+        if self.defaulted {
+            return (kept, left, true);
+        }
+        for (i, d) in self.directionals.iter().enumerate() {
+            if i < MAX_DIRECTIONAL_LIGHTS {
+                kept.push(("directional", d.name.clone(), i == 0));
+            } else {
+                left.push(("directional", d.name.clone()));
+            }
+        }
+        let (_, _, out) = nearest::<_, MAX_POINT_LIGHTS>(&self.points, self.placed_for);
+        for p in &self.points {
+            if out.contains(&p.name.as_str()) {
+                left.push(("point", p.name.clone()));
+            } else {
+                kept.push(("point", p.name.clone(), false));
+            }
+        }
+        let (_, _, out) = nearest::<_, MAX_SPOT_LIGHTS>(&self.spots, self.placed_for);
+        for s in &self.spots {
+            if out.contains(&s.name.as_str()) {
+                left.push(("spot", s.name.clone()));
+            } else {
+                kept.push(("spot", s.name.clone(), s.light.shadow > 0.5));
+            }
+        }
+        (kept, left, false)
     }
 
     /// Choose this camera's point and spot lights: all of them when they
@@ -354,6 +406,7 @@ impl LightState {
         if self.defaulted {
             return;
         }
+        self.placed_for = camera_pos;
         let (points, point_count, left_out) =
             nearest::<_, MAX_POINT_LIGHTS>(&self.points, camera_pos);
         for name in left_out {

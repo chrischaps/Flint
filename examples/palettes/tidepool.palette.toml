@@ -1,6 +1,6 @@
 # A palette any style can name (#276): `palette = "tidepool"` with
 # `color = "palette"` in [post_process.styles.ascii], or
-# `flint render <scene> --ascii --ascii-palette tidepool`.
+# `flint render <scene> --style ascii:palette=tidepool,color=palette`.
 #
 # match = "nearest" gives each cell the ink nearest its own hue (at full
 # value); "luminance" would treat the inks as a ladder, darkest first.

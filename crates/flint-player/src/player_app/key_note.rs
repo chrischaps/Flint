@@ -1,9 +1,8 @@
 //! What a debug key says when it has nothing to act on (#367): F3 in a scene
 //! with no panels, F4 with no renderer, the music keys with no session. The
 //! person who pressed the key is looking at the window, so the note shows
-//! there for a moment, and the console gets the same line (`[debug] F3: ...`,
-//! printed like the `[transition]` and `[script]` lines). It used to go to
-//! `tracing::info!`, which the player's log filter never prints.
+//! there for a moment, and the log gets the same line (`[debug] F3: ...`,
+//! at info under target `player`, which the player's filter shows, #716).
 //!
 //! One note at a time: a second key's note replaces the first. Its clock is
 //! egui's, so under `--frame-step` it runs on game time and a capture shows
@@ -19,7 +18,7 @@ pub(crate) struct KeyNote {
 }
 
 struct Shown {
-    key: &'static str,
+    key: String,
     text: String,
     /// egui time it was first painted; `None` until then, so a note said
     /// between frames gets its whole time on screen.
@@ -29,10 +28,10 @@ struct Shown {
 #[cfg_attr(not(feature = "debug-hud"), allow(dead_code))]
 impl KeyNote {
     /// Show `text` for `key` and print it to the console.
-    pub(crate) fn say(&mut self, key: &'static str, text: &str) {
+    pub(crate) fn say(&mut self, key: &str, text: &str) {
         tracing::info!(target: "player", "[debug] {key}: {text}");
         self.shown = Some(Shown {
-            key,
+            key: key.to_string(),
             text: text.to_string(),
             since: None,
         });
@@ -41,7 +40,9 @@ impl KeyNote {
     /// The note showing, as `(key, text)`.
     #[cfg(test)]
     pub(crate) fn showing(&self) -> Option<(&str, &str)> {
-        self.shown.as_ref().map(|s| (s.key, s.text.as_str()))
+        self.shown
+            .as_ref()
+            .map(|s| (s.key.as_str(), s.text.as_str()))
     }
 
     /// The note's strength at egui time `now` (1 held, falling to 0 over the
@@ -99,7 +100,7 @@ impl KeyNote {
                                 .inner_margin(egui::Margin::symmetric(6, 2))
                                 .show(ui, |ui| {
                                     ui.label(
-                                        egui::RichText::new(shown.key)
+                                        egui::RichText::new(&shown.key)
                                             .monospace()
                                             .size(12.0)
                                             .color(fade(255, 214, 140, 255)),
