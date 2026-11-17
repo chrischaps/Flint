@@ -365,7 +365,7 @@ mod stack_tests {
     /// 8 MB one, but the parser alone should never need it: a debug build's
     /// derived `augment_args` is one frame of about 8 KB a flag, and #708
     /// measured 1346 KB to parse any command line while `flint render` was
-    /// one struct of 130 flags (643 KB once each help heading was its own
+    /// one struct of 130 flags (about 600 KB once each help heading was its own
     /// struct). A stack overflow aborts the test binary, naming the thread.
     const WINDOWS_DEFAULT_STACK: usize = 1 << 20;
 
@@ -384,13 +384,14 @@ mod stack_tests {
 
     /// The least stack each command line parses on, by bisection (#708):
     /// `cargo test -p flint-cli --bin flint stack_use -- --ignored --nocapture`.
-    /// Each try is this test binary run again with `FLINT_STACK_PROBE_KB`,
+    /// Each try is this test binary run again with `STACK_PROBE_KB` (a
+    /// handshake with its own child, not a user switch, so not `FLINT_`),
     /// since an overflow aborts the process.
     #[test]
     #[ignore = "a measurement, run by hand"]
     fn stack_use() {
-        if let Ok(kb) = std::env::var("FLINT_STACK_PROBE_KB") {
-            let line = std::env::var("FLINT_STACK_PROBE_ARGS").unwrap();
+        if let Ok(kb) = std::env::var("STACK_PROBE_KB") {
+            let line = std::env::var("STACK_PROBE_ARGS").unwrap();
             let words: Vec<&str> = line.split_whitespace().collect();
             parse_on_stack(&words, kb.parse::<usize>().unwrap() << 10);
             return;
@@ -399,8 +400,8 @@ mod stack_tests {
         let fits = |line: &str, kb: usize| {
             std::process::Command::new(&exe)
                 .args(["--ignored", "--exact", "stack_tests::stack_use"])
-                .env("FLINT_STACK_PROBE_KB", kb.to_string())
-                .env("FLINT_STACK_PROBE_ARGS", line)
+                .env("STACK_PROBE_KB", kb.to_string())
+                .env("STACK_PROBE_ARGS", line)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status()
