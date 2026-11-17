@@ -146,7 +146,7 @@ fn many_frames_are_refused() {
     let run = render(&dir, &["--frames", "3", "--frame-dump", "f.json"]);
     assert!(!run.status.success());
     assert!(
-        String::from_utf8_lossy(&run.stderr).contains("--frame-dump describes one frame"),
+        String::from_utf8_lossy(&run.stderr).contains("--frame-capture record one frame"),
         "{}",
         String::from_utf8_lossy(&run.stderr)
     );

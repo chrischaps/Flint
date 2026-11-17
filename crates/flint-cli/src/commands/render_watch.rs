@@ -103,15 +103,16 @@ impl Watch {
         // Folders, each with all below it; then single files
         let mut dirs = vec![scene_dir];
         dirs.extend(custom::style_dirs(&assets));
-        if let Ok((_, schemas)) = super::common_args::load_schemas(Some(&args.scene), &args.schemas)
+        if let Ok((_, schemas)) =
+            super::common_args::load_schemas(Some(&args.scene), &args.debug.schemas)
         {
             dirs.extend(schemas.dirs.iter().cloned());
         }
         let mut files: Vec<PathBuf> = [
-            args.variants.as_deref(),
-            args.reference.as_deref(),
-            args.camera_path.as_deref(),
-            args.expression_timeline.as_deref(),
+            args.sweeps.variants.as_deref(),
+            args.measure.reference.as_deref(),
+            args.seq.camera_path.as_deref(),
+            args.clock.expression_timeline.as_deref(),
         ]
         .into_iter()
         .flatten()
@@ -324,16 +325,16 @@ struct Written {
 
 impl Written {
     fn of(args: &RenderArgs) -> Vec<Self> {
-        let report = args.report.as_deref().filter(|r| *r != "json");
+        let report = args.measure.report.as_deref().filter(|r| *r != "json");
         [
             Some(args.output.as_str()),
             report,
-            args.ascii_text.as_deref(),
-            args.ascii_text_ansi.as_deref(),
-            args.gpu_time_json.as_deref(),
-            args.frame_dump.as_deref(),
-            args.flip_json.as_deref(),
-            args.refine_out.as_deref(),
+            args.out.ascii_text.as_deref(),
+            args.out.ascii_text_ansi.as_deref(),
+            args.measure.gpu_time_json.as_deref(),
+            args.measure.frame_dump.as_deref(),
+            args.seq.flip_json.as_deref(),
+            args.refine.refine_out.as_deref(),
         ]
         .into_iter()
         .flatten()

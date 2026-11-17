@@ -8,7 +8,7 @@
 #   cargo run --bin flint -- render examples/ascii_silhouette.scene.toml --output bench.png --no-grid
 #
 # The whole frame in glyphs, for comparison:
-#   ... --ascii-scope screen
+#   ... --style ascii:scope=screen
 # The silhouette help off (the look before #288):
 #   ... --style ascii:outline=0,min_coverage=0
 

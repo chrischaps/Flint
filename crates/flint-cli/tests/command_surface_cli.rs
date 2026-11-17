@@ -30,7 +30,7 @@ fn top_level_help_lists_the_general_tools_plus_music_and_goldens() {
         listed,
         [
             "init", "entity", "scene", "query", "schema", "script", "edit", "validate", "check",
-            "examples", "bundle", "export", "music", "goldens", "prefab", "asset", "play",
+            "examples", "env", "bundle", "export", "music", "goldens", "prefab", "asset", "play",
             "playtest", "gen", "render", "dxc", "style",
         ],
         "a new top-level command belongs here only if it is a general tool"

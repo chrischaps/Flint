@@ -143,23 +143,9 @@ impl Heightmap {
 
     /// Export the heightmap as a 16-bit grayscale PNG.
     pub fn save_png(&self, path: &std::path::Path) -> Result<(), String> {
-        let mut buf = Vec::with_capacity((self.width * self.depth * 2) as usize);
-        for &h in &self.heights {
-            let val = (h.clamp(0.0, 1.0) * 65535.0) as u16;
-            buf.extend_from_slice(&val.to_be_bytes());
-        }
-
-        let file = std::fs::File::create(path)
-            .map_err(|e| format!("Failed to create '{}': {}", path.display(), e))?;
-        let w = std::io::BufWriter::new(file);
-
-        let encoder = image::codecs::png::PngEncoder::new(w);
-        use image::ImageEncoder;
-        encoder
-            .write_image(&buf, self.width, self.depth, image::ExtendedColorType::L16)
-            .map_err(|e| format!("PNG encode failed: {}", e))?;
-
-        Ok(())
+        let png = crate::bake::encode_heightmap_png(&self.heights, self.width, self.depth)?;
+        std::fs::write(path, png)
+            .map_err(|e| format!("Failed to write '{}': {}", path.display(), e))
     }
 
     fn get(&self, x: u32, z: u32) -> f32 {

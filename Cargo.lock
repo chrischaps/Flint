@@ -2031,6 +2031,7 @@ dependencies = [
  "ab_glyph",
  "bytemuck",
  "epaint_default_fonts",
+ "exr",
  "flint-asset",
  "flint-core",
  "flint-ecs",

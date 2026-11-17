@@ -12,218 +12,19 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
 
 ## `flint render` flags
 
-   ```bash
-   # Debug/post-processing flags:
-   #   --debug-mode wireframe|wireframe-overlay|normals|depth|uv|unlit|metalrough|style|edges
-   #                          (#308: one name->DebugMode table, common_args::DEBUG_MODES, that the
-   #                          parser and both render paths read; a new DebugMode needs a row, its test says so)
-   #                          (style = the entity style mask, #263: needs post-processing;
-   #                          prints and draws a legend of each id's hue, #309; runs mask_view
-   #                          alone, the scene's other styles suspended, #334)
-   #                          (edges = ASCII's edge passes, #349: pixels by source, cells by
-   #                          decision + length bar; ascii alone, on at defaults if absent;
-   #                          ascii_edge_view.wgsl; StyleFrame::debug_mode carries the mode)
-   #   --wireframe-overlay    --show-normals    --no-tonemapping
-   #   --select <entity>      (#602: the editor's selection outline round it and its subtree,
-   #                          drawn over the finished image; flint_render::selection_outline)
-   #   --no-shadows           --shadow-resolution 2048
-   #   --no-postprocess       --bloom-intensity 0.08  --bloom-threshold 1.0
-   #   --exposure 1.5         --ssao-radius 0.5       --ssao-intensity 1.0
-   #   --ssao-samples 64      (1-64; SSAO is the heaviest per-pixel pass — 16 is ~4x cheaper)
-   #   --fog-density 0.02     --fog-color 0.7,0.75,0.82  --fog-height-falloff 0.1
-   #   --dither-intensity 0.03   --desaturate 0.85
-   #   --dof 0.6  --dof-focus 10  --dof-range 5
-   #   --volumetric-density 1.0  --volumetric-samples 32
-   #   --kuwahara-radius 4       --kuwahara-sharpness 8.0
-   #   --kuwahara-hardness 8.0   --kuwahara-anisotropy 1.0
-   #   --contour  --contour-width 1.25  --contour-threshold 0.08  --contour-strength 0.9
-   #   --contour-luma 0.5  --contour-color 0.015,0.012,0.02  --contour-fade 30
-   #     (#599: shorthands for --style contour:width=1.25,... ; contour is a registered HDR style)
-   #   --kuwahara-boil 0.5  --contour-boil 1  --boil-on 2  --boil-time 0.5
-   #     (the boils are kuwahara:boil / contour:boil; boil_on stays a [post_process] key)
-   #     (shading boil, #214: boil needs the scene's [wooze]; --boil-time picks the drawing)
-   #   --motion-hold 12       (#405: [post_process] motion_hold, the whole frame on twos: drawn positions,
-   #                          poses and the post time on 12 Hz ticks; per entity, a motion_hold component.
-   #                          Also on flint play / flint-player. tests/render_motion_hold_cli.rs)
-   #   --oren-nayar 0.7          --sheen-strength 0.15  --sheen-color 1,0.9,0.8
-   #   --grade-lift 0.03,0.02,0.015  --grade-gamma 1,1,1  --grade-gain 1.04,1,0.94
-   #   --film-grain 0.03         --grain-time 0  --fxaa
-   #   --particle-time 2.0    (step emitters/effects deterministically before
-   #                           capture; default none = no particles. ADR 0068)
-   #   --anim-time 1.5        (#307: the scene's animation stepped to 1.5 s at 1/60 (or --frame-step)
-   #                           before capture, IK after each step; runs on with --time / --frames;
-   #                           default none = bind pose. flint_player::HeadlessAnimation; warns on a
-   #                           skinned animator with no `skeleton`. tests/render_anim_cli.rs)
-   #   --msaa 4               (1|4; default 1 keeps pixel gates single-sample.
-   #                           Also on flint-player. ADR 0058)
-   #   --render-scale 0.5     (scene at a fraction of the image, as the player's)
-   #   --gpu-time 240 [--gpu-time-json t.json]
-   #                          (#292: draw N frames with GPU timing, every frame kept raw
-   #                           (GpuTimer::record/flush), first tenth (max 30) dropped; prints
-   #                           min/p50/p90/max per pass + frame and the adapter/backend; the JSON
-   #                           adds mean and each pass's samples_ms. gpu_timer::spread)
-   #   --frame-dump frame.json
-   #                          (#1084, ADR 0126: the rendered frame's FrameDescription as JSON, through
-   #                           render_frame_dump.rs: arm() before the frame (describe_next_frame, the timer on
-   #                           and recording for it), write() after the read-back (finish + flush, the raw times
-   #                           laid on). Still path: column 0; stage path: the first cell's last capture.
-   #                           Refused with --frames/--mesh/--sweep; --report json carries `frame_dump`)
-   #   --mesh tree_a=out/oaks [--mesh tree_b='out/w*.glb'] [--sheet | -o x.gif --fps 4 | -o f-%03d.png]
-   #                          (#222: a frame per GLB on that entity, one renderer; natural order;
-   #                           multi-node GLBs baked flat, mesh_seq.rs; examples/mesh_sequence.scene.toml)
-   #   --frames 181 --frame-dt 0.0166667 --orbit 6.8755 | --camera-path cam.toml
-   #                          (#345: N frames on one renderer as out_0000.png...; temporal
-   #                           styles see consecutive frames; --flip-stats / --flip-json f.json
-   #                           count ASCII glyph flips and A-B-A reversals from its own grid,
-   #                           --no-images skips the PNGs; byte-identical run to run;
-   #                           --last-frame writes only the last frame, to -o itself, #478)
-   #   --ascii                (full-screen ASCII style, #265 = [post_process.styles.ascii])
-   #   --ascii-cell 8 --ascii-font builtin --ascii-ramp classic|blocks|minimal|detailed|quadrants|braille
-   #   --ascii-color source|tint|raw|mono|palette --ascii-tint 0.35,1,0.45 --ascii-background 0.15
-   #   --ascii-palette cga|cga-warm|cga16|phosphor|amber|mono|<palettes/name.palette.toml> (#276)
-   #                          (nearest inks match in OKLab; --style ascii:chroma=2,palette_dither=1
-   #                           pushes saturation and Bayer-mixes the two nearest inks, #320)
-   #   --ascii-ground dim|black|inverse  --ascii-glow 0.6
-   #   --ascii-text frame.txt  --ascii-text-ansi frame.ans
-   #                          (#317: the glyph grid as text, a line per cell row, cell for
-   #                           cell with the PNG; read a render instead of looking at it)
-   #   --ascii-scope screen|entities --ascii-grid screen|object
-   #                          (#266; a scene's ascii_style entities need no flag)
-   #   --ascii-brightness 0 --ascii-contrast 1 --ascii-ink 1 --ascii-dither 0 (#277)
-   #   --ascii-edges 1 --ascii-edge-threshold 0.5 --ascii-edge-max 3
-   #                          (#267 line glyphs on depth/crease/mask edges; the editor grid is a
-   #                           depth-free overlay since #346, never traced, but --no-grid keeps tone clean)
-   #                          (#348 corners: a drawn cell whose tensor coherence is under
-   #                           ascii:edge_corner=0.9 takes ┌ ├ ┼... from its neighbours' ─ │
-   #                           (ARM_GLYPHS, ascii_edge_corners.wgsl); a set's [edges] corners, else lines;
-   #                           #637: an unmarked ─/│ that ends beside a perpendicular one turns too,
-   #                           and a sub-threshold gap cell between a ─ and a │ ending at it draws
-   #                           their corner; staircases refused; edge_corner=0 turns all of it off)
-   #                          (#351 their ink: --style ascii:edge_ink=cell|color|hue,
-   #                           edge_color=#rrggbb,edge_tint=0..1; hue = the near side's own colour)
-   #   --pixels-per-point 2   (high-DPI scale factor; ASCII cells are in points)
-   #   --style ascii:cell=12,ramp=blocks   (#271: any registered style, keys checked
-   #                          against its descriptor; repeatable; `--style help`;
-   #                          also on `flint edit <model|effect> --render`)
-   #   --style pencil:spacing=5,direction=screen   (#273: hatching, contours, paper;
-   #                          direction surface|screen|tensor, seed, boil; examples/pencil_sketch)
-   #   --style pencil:reveal=0.5,reveal_shape=tear   (#406: any style shown inside a ragged
-   #                          region with an inked edge; tear|wipe|iris|panel, reveal_* keys in
-   #                          `--style help`'s last line; reveal 0 = the live frame byte for byte)
-   #   --style-time 1.5       (post time animated styles read; default 0)
-   #                          (#328: --style/--style-time also on flint play, flint-player and
-   #                           flint edit scene.toml, kept through transitions and hot reloads;
-   #                           the web's ?style=ascii:cell=12, repeatable)
-   #   --edge-depth 0.6 --edge-normal 2.5   (#301: the shared geometry edges' thresholds;
-   #                          `--style edges_view` shows them)
-   #   --list-styles [--json] (#303: every registered style, its stage, table, and each
-   #                          param's default/range/help; with a scene, its user styles too)
-   #   --list-effects [--json] (#741: every built-in post effect and its [post_process] keys,
-   #                          kind/default/range/help, from flint_schema::post_effects::EFFECTS;
-   #                          --sweep post.<key> refuses a value past the key's range)
-   #   --watch                (#432, commands/render_watch.rs: run, then write -o again on each save.
-   #                          Watches the scene's folder (recursive), custom::style_dirs, the schema dirs
-   #                          and the files flags name; the render's outputs (`Written`: -o and files named
-   #                          after it, --report, --ascii-text...) and editor scratch are no change, and a
-   #                          batch whose stamps were already drawn for is dropped (one save can be two
-   #                          batches). RenderHost lives for the run. A still or sweep stays in
-   #                          render::render after writing, in Watch::redraws: a batch of only style
-   #                          sources (flint_viewer::watch::StyleSources) -> reload_changed_for, then if no
-   #                          description changed custom::poll_files_now() and the `draw_and_write`
-   #                          closure again (each column's config set, history reset); anything else
-   #                          returns and the outer loop renders from scratch on the same device.
-   #                          Clocked renders, sequences and variants always render from scratch)
-   #   --look ascii_noir      (#279: a styles/<name>.look.toml preset merged over the scene's
-   #                          [post_process]; built-ins ascii_noir|matrix|ink_wash|graphite|watercolor|
-   #                          coloured_pencil|blueprint|charcoal (#391)|rotoscope (#404);
-   #                          `--look help` lists them with their tune sweeps. #356: a scene's
-   #                          `[post_process] look = "<name>"` goes UNDER its keys (loader records
-   #                          them in PostProcessDef::authored; flint_render::look::resolve, vfs reads);
-   #                          F4 -> Look and Rhai set_look/clear_look re-resolve; examples/looks.scene.toml)
-   #   --sweep ascii.cell=6,8,12   (one labelled contact sheet, a column per value; keys:
-   #                          <style>.<key>, post.<field> (`|` splits vectors), look=a,b,
-   #                          wooze.<knob> (#216; one Sweep type in commands/sweep.rs,
-   #                          one sheet in style_sheet.rs, #353; a render with clocks
-   #                          -- --time, wooze.*, --scripts, --report json, a living or
-   #                          [wooze] scene -- draws a Stage a cell, #487; it takes grids,
-   #                          crops, --reference, --report FILE, --ascii-text, --gpu-time, --frames
-   #                          and --ai-refine too, measures at one moment only, #596);
-   #                          cells 640x360 unless --width/--height. Cells are in points:
-   #                          --sweep-crop X,Y,W,H draws each at full size (1920x1080) and
-   #                          keeps a 1:1 region (pixels, or fractions when any value has a
-   #                          decimal point: sweep::Crop, #501; the sheet's header draws a
-   #                          style_sheet::Locator, the first frame whole with the region
-   #                          boxed), --sweep-scale full shrinks the whole frame;
-   #                          two --sweep flags make a grid, first across, second down, #358)
-   #   --variant "label: --flag v ..." (repeatable) | --variants v.toml   [--zoom X0,Y0,X1,Y1@N]
-   #                          (#291: any flags side by side: each variant = this command line + its
-   #                           flags (args_override_self; --style adds), one labelled sheet at -o,
-   #                           <out>-<label>.png each, nearest crops <out>-zoom.png; one process and
-   #                           GPU (RenderHost, imports memoized); commands/variants.rs; examples/variants/.
-   #                           main.rs / render_goldens fill RenderArgs::command_line for it)
-   #   --report m.json --reference ref.png   (#357: per column luma, near-black/white, edge
-   #                          density, ASCII ramp-step shares, #183's distance; `look_measure.rs`)
-   #   --reference-text ref.txt   (#495: the reference's --ascii-text grid; an ASCII frame is then
-   #                          scored by glyphs: mean colour + glyph coverage (earth mover's over cell
-   #                          ink, InkScale = atlas coverage / densest printable letter) + glyph layout
-   #                          (16x16 regions, cells shared by area); look_measure::Reference/InkGrid.
-   #                          Every DistanceReport lists `terms` (points sum to score) and `metric`.
-   #                          The grid reads back ONCE a frame (read_text takes it): read it once
-   #                          and share it, or --report + --ascii-text finds it gone)
-   #   --look x --reference ref.png --ai-refine [--ai-provider anthropic|mock --max-cost 0.5
-   #                          --refine-rounds 4 --refine-candidates 4 --refine-out f.look.toml]
-   #                          (agent proposes sweep-key edits, each rendered + measured, best kept
-   #                          while the distance falls; writes <look>_refined.look.toml + .json log
-   #                          + rounds sheet; calls via CostMeter; mock walks the look's tune)
-   #   --ascii-levels 4 --ascii-footprint 2 --ascii-no-edges --ascii-edge-depth 0.6
-   #   --ascii-edge-normal 2.5   (tone bands, tone footprint, edge sensitivity)
-   #   --time 3.5             (living props, wooze field and other clocks at that game time;
-   #                           byte-identical, and the same pixels as flint-player --frame-step
-   #                           at that time. No physics. --frame-step S names the step)
-   #   --scripts              (run the scene's scripts headless. A Stage's scene is a flint_player::HeadlessGame,
-   #                           #725: the player's GameCore stepped through game_core::step, the player's
-   #                           frame, with its LivingSubsystem (for_capture) for props and the field, with
-   #                           or without --scripts; seeded random(), no timestamp(), name-ordered; what
-   #                           can't be drawn is warned. Commands go through the core's dispatcher, #697:
-   #                           styles, tweens and boil tunes land on the renderer as asked, and style reads
-   #                           see them the next step; set_look waits for the capture
-   #                           (Stage::lay_script_requests), then the post overrides. Particles made at
-   #                           load step on the clock, Stage::step_particles_to; what a capture can't do
-   #                           is PRESENTATION_ONLY)
-   #   --script-time 3        (#371: --scripts --time 3 in one flag, folded into those two at the top of
-   #                           render::run_in, so goldens and variants get it; takes any TimeSpec, and
-   #                           --frame-step / --fps through the `clock` / `span` groups. A render that
-   #                           doesn't run a scene's scripts names them, a still too (scripts_not_run);
-   #                           goldens script-beat*: tests/fixtures/scenes/stylize_props_scripted)
-   #   --strict-scripts       (#693: implies --scripts (fold_script_time); exit 1 after the picture is written
-   #                           when any stage's game has a script error. run_stages merges every stage's
-   #                           ScriptErrors, prints summary() to stderr when scripted, and puts them in
-   #                           --report json as script_errors (render_report::ScriptErrorReport).
-   #                           tests/render_scripts_cli.rs a_failing_script_is_counted_once_*)
-   #   --expression-timeline f.json   (expression() fed on the render's clock; implies --scripts)
-   #   --time 0..4 --fps 12 -o x.gif   (a span as a GIF sharing one palette; a still pixel never flickers;
-   #                           frames wait on disk as deflated deltas, x.gif.frames~, so memory stays flat, #588;
-   #                           -o frames/f-%05d.png writes a PNG a frame instead; clocks run on to the span's end)
-   #   --time 2,5,9.5 -o x.png   (#614: moments of one run, simulated once, a still each as
-   #                           x_0000.png...; each byte-identical to --time <moment> alone on the step)
-   #   --sweep wooze.glide=0,0.25,0.5,1  (labelled columns; also .step .amplitude .jitter .preset;
-   #                           a preset is a wooze/<name>.wooze.toml first, species tables and all, #249)
-   #   --report json          (stdout: each living prop's lineage seed, pose indices, wooze values,
-   #                           and every species value with the layer that set it, #246)
-   # Note: --shadow-resolution defaults to 2048 (the renderer's construction
-   # default) and is a real control since the texel-size upload (ADR 0049).
-   #   --tear 0.5 --tear-scale 3 --tear-iris
-   #     (#746: [post_process] tear / tear_scale / tear_iris; a style with blend_source=tear
-   #      (--style matrix:blend_source=tear) or a prop's that follows it shows only in the holes)
-   #   --render-mode 1 --mode-mix 1.0 --mode-params 3,0,6,0
-   #     (DEPRECATED, one release, #746: flint_render::render_mode maps 1-6 onto the matrix,
-   #      blood, drunk, tron and underwater styles, the tear and FrameInputs::ocean_tint;
-   #      warns once; golden render-mode-shim-matrix holds it to the style)
-   ```
+**The list is `flint render --help`** (#708), grouped by heading: Output, Camera, Styles and post-processing, Quality and lighting, Time, Sequences, Sweep and variants, Measure and report, Refine a look, and Debug, lists, GPU and schemas. What a flag's values can be is asked of the binary too: `flint render --list-effects [--json]` (every `[post_process]` key with its kind, default and tuned range: each a `--set post.<key>=v`), `--list-styles --json` (every style and its keys: `--style <name>:k=v`, `--set <style>.<key>=v`; with a scene, its user styles too), `--look help` (every look and its tune sweeps) and `--style help`. Don't copy a flag list here again: it goes stale, and the help doesn't.
+
+- **`--set KEY=VALUE`** (#708, `commands/render_post.rs`), repeatable: `post.<key>=v` is a `[post_process]` key, checked against the effects' descriptors (`flint_schema::post_effects`, #741) at parse, kind and all (`post.fog_color=0.7,0.75,0.82`, `post.fxaa=true`; a value past the tuned range draws and warns), written with `PostProcessConfig::param_mut(..).set(..)`. `<style>.<key>=v` is a key of a style's table, written with `StyleSpec::apply_settings`, which leaves the style on or off as it was (`--style` turns it on; `enabled`/`on`/`off` are refused); the style is checked once the scene's user styles are registered, as `--style` is. The keys are `--sweep`'s, one value each, and a `--set` of a key a `--sweep` turns is refused. A render's post is built in one order (`render_post::post_process_config`): the scene's block, the look and a sweep column's `post.` value as a table, then `--no-postprocess`, the old flags, `--set` in the order given, and `--style` last. The stage path lays `apply_flags` (old flags and `--set`) again over a sweep column's preset `[boil]`.
+- **The per-effect flags** (`--bloom-intensity`, `--fog-*`, `--kuwahara-*`, `--contour*`, `--ascii*`, `--tear*`, `--fxaa`... 70 of them) are hidden aliases for one release (`render_post::LegacyPostArgs`, five flattened structs). Each is a `LegacyFlag`: the `--set`/`--style` words it stands for (`legacy_flags`, in main's old order, split where the deprecated `--render-mode` applied), which are what it applies, so a flag and its spelling are one config by construction; each prints `warning: <flag> <v> is `<words>` now (#708)` once a process. `render_post::tests::SPELLINGS` is every flag beside its spelling, with a test that each pair makes one config and one that every hidden flag has a row; #708 checked every row against main's mapping, copied in, before deleting it. The ASCII tuning flags (`--ascii-cell`, `-levels`, `-footprint`, `-edge-depth`, `-edge-normal`, `-no-edges`) tuned the style only when it was on; as `--set ascii.<key>` they write the key either way. `--ascii-text`, `--ascii-text-ansi`, `--pixels-per-point`, `--grain-time`, `--boil-time`, `--oren-nayar` and `--sheen-*` are not post keys and stay visible. Nothing in the repo spells an old flag but the three goldens that hold them to their spellings (`contour-flags-are-its-table`, `post-flags-are-set`, `ascii-flags-are-style-and-set`) and `tests/render_set_cli.rs`
+- **`RenderArgs` is a struct a heading** (`commands/render_args.rs`): `args.camera.distance`, `args.clock.time`, `args.seq.frames`, `args.sweeps.sweep`, `args.measure.report`, `args.shading.msaa`, `args.out.watch`, `args.refine`, `args.debug`, `args.legacy`; `scene`, `output`, `width`, `height`, `look`, `set`, `style` and `no_postprocess` are on it. A new flag goes in its heading's struct. It is for the stack: a debug build's derived `augment_args` is one frame of about 8 KB a flag, and the 130-flag struct needed 1346 KB to parse any `flint` command line, past Windows' 1 MB (about 600 KB now, 579 to 643 KB as top-level commands come and go; every `Commands` variant boxed, 1744 to 96 bytes, which moved nothing). `main.rs`'s `stack_tests::the_parser_fits_in_windows_default_stack` holds it, and `cargo test -p flint-cli --bin flint stack_use -- --ignored --nocapture` measures it. Keep a struct to a dozen or so flags
+- **`--frame-dump frame.json` and `--frame-capture out.flintframe`** (#1084, #1085, ADR 0126; `render_frame_dump.rs`, `args.measure.frame_dump` / `frame_capture`): the rendered frame's `FrameDescription` as JSON, and the same frame captured (`manifest.json` last, then `targets/NN-<target>.<ext>`). Both go through `arm()` before the frame (`describe_next_frame`, the timer on and recording for it; `capture_next_frame` with ctx's colour and depth textures, both `COPY_SRC`) and `write()` after the read-back (`Wanted` says which of the two). Still path: column 0; stage path: the first cell's last capture. Refused with `--frames`/`--mesh`/`--sweep`. With both, the JSON carries the capture's `capture` block; the last `-surface.png` is the -o PNG byte for byte (the same `image::save_buffer` encoder); `--report json` carries `frame_dump` and `frame_capture`. Test: `tests/render_frame_capture_cli.rs`
+- **What the help can't say** (the code behind a flag): `--debug-mode` is one name table, `common_args::DEBUG_MODES` (#308; `style` runs `mask_view` alone and prints a legend, #263/#309/#334; `edges` shows ASCII's edge passes, #349). `--select` draws `flint_render::selection_outline` over the finished image (#602). `--gpu-time` keeps every frame raw (`GpuTimer::record`/`flush`, `gpu_timer::spread`, #292). `--mesh` bakes a multi-node GLB flat (`mesh_seq.rs`, #222). `--frames` is byte-identical run to run, and `--flip-stats` counts from the style's own grid (#345, #478). `--anim-time` is `flint_player::HeadlessAnimation` (#307, `tests/render_anim_cli.rs`). `--motion-hold` (now `--set post.motion_hold=12`) is `tests/render_motion_hold_cli.rs` (#405). The deprecated `--render-mode` is `flint_render::render_mode` (#746; golden `render-mode-shim-matrix`). `--look` merges a look over the scene's block and a scene's own `look` goes under its keys (#279, #356, `flint_render::look::resolve`). `--report` and `--reference-text` measure in `look_measure.rs` (#357, #495); the ASCII grid reads back once a frame, so read it once and share it. `--ai-refine` goes through `CostMeter` (#357). `--sweep` is one `Sweep` type in `sweep.rs` and one sheet in `style_sheet.rs` (#353); a render with clocks draws a `Stage` a cell (#487, #596); `--sweep-crop` is `sweep::Crop` (#501); two `--sweep` make a grid (#358). `--variant` is `variants.rs` (#291: `args_override_self`; `--set` and `--style` add; `main.rs` and `render_goldens` fill `RenderArgs::command_line`). `--watch` is `render_watch.rs` (#432: what it watches, `Written`, `Watch::redraws` for a still or sweep, a full render otherwise). `--style` and `--style-time` are also on `flint play`, `flint-player` and `flint edit scene.toml`, kept through transitions and hot reloads, and the web's `?style=` (#328). `--sweep post.<key>` refuses a value past the key's tuned range, where `--set` warns. `--time` spans, lists and `--scripts` are the next section
 
 ## `flint render` over time
 
 - **`flint render` over time** (#216) -- `render.rs` loads a `Stage` per sweep column, each a world, renderer and clocks of its own. The world is a `flint_player::HeadlessGame` (#725): the player's game core, whose `LivingSubsystem::for_capture` is the player's living-prop step with no window and no budget (`ProcGenResolver::step_living_now`); props are resolved (`resolve_procgen`) only in a scene with `living_prop` entities, whose plain renders were empty before; every other scene's plain render stays byte-identical. To match the player it keeps the authored camera position (going through `update_orbit` rounds it, which changed 7,000 pixels at 1280 x 720) and draws no grid. `--screenshot-at` has a tolerance, since 210 steps of 1/60 sum to a hair under 3.5. Stdout is the JSON report's: flint-cli's tracing goes to stderr, and so do the load path's progress lines, so a new `println!` on that path breaks `--report json`. GIFs go through `gif_writer.rs`, one palette and transparent unchanged pixels, because `image`'s encoder shimmers still pixels. Not a new dep: `gif` and `color_quant` were in the tree through `image`
+- **Scripts in a capture** -- `--scripts` steps the `HeadlessGame` (the player's `GameCore` through `game_core::step`, with or without scripts; seeded `random()`, no `timestamp()`, name-ordered; what can't be drawn is warned). Commands go through the core's dispatcher (#697): styles, tweens and boil tunes land on the renderer as asked and style reads see them the next step; `set_look` waits for the capture (`Stage::lay_script_requests`), then the post overrides. Particles made at load step on the clock (`Stage::step_particles_to`); what a capture can't do is `PRESENTATION_ONLY`. `--script-time T` is `--scripts --time T`, folded at the top of `render::run_in` (`fold_script_time`, #371) so goldens and variants get it; a render that doesn't run a scene's scripts names them (`scripts_not_run`). `--strict-scripts` (#693) implies `--scripts`, exits 1 after the picture when any stage's game has a script error, and `run_stages` merges every stage's `ScriptErrors` into stderr's `summary()` and `--report json`'s `script_errors` (`tests/render_scripts_cli.rs`). `--expression-timeline` feeds `expression()` on the render's clock and implies `--scripts`
+- **Spans and moments** -- `--time 0..4 -o x.gif` shares one palette, so a still pixel never flickers; frames wait on disk as deflated deltas (`x.gif.frames~`), so memory stays flat (#588); `-o frames/f-%05d.png` writes a PNG a frame. `--time 2,5,9.5` is moments of one run, simulated once, each byte-identical to `--time <moment>` alone on the step (#614). `--sweep wooze.<knob>` columns: `.preset` is a `wooze/<name>.wooze.toml` first, species tables and all (#249). `--report json` is each living prop's lineage seed, pose indices, wooze values and every species value with the layer that set it (#246). `--shadow-resolution` defaults to 2048, the renderer's construction default, and is a real control since the texel-size upload (ADR 0049)
 
 ## `flint edit`
 
@@ -264,6 +65,11 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
                                                              #   contact sheet (hold-and-glide from the spec's step/glide/stagger,
                                                              #   mesh rebuilt per frame, one fixed camera; --frames 48 --fps 24
                                                              #   --columns N --cell-size 240; byte-identical per machine, #210)
+   flint gen examples/rolling_meadow.terrain.toml -o terrain/meadow.png  # #719: a terrain spec, no window: 16-bit
+                                                             #   heightmap there + meadow_splat.png beside it (-o dir/ -> <name>.png);
+                                                             #   commands/terrain_gen.rs, routed like a .glyphs.toml; takes -o, --seed,
+                                                             #   --strict (unknown keys fail), --dry-run, --json (seed, coverage, sha256s);
+                                                             #   refuses procgen flags. Same bytes as the editor's Ctrl+E (flint_terrain::bake)
    # --ai-model, --ai-iterations, --ai-generator,
    # --print-spec (spec alone on stdout), --save-spec. Every API call goes through
    # flint_procgen_ai::CostMeter: priced, appended to the JSON Lines ledger, and
@@ -341,6 +147,10 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
 ## `flint examples`
 
 - `flint examples [--topic t] [--json] [--check] [--dir d] [--schemas s]` (#763, `commands/examples.rs`): lists `examples/index.toml` (`[[example]] scene/topic/purpose`, unknown keys refused) grouped by topic in index order; `--dir` defaults to `examples/`, else `engine/examples/`. `--check` fails (exit 1, a `FAIL` line each) on a scene on disk with no entry (`dist/` skipped), an entry with no file, an empty topic or purpose, a duplicate, or a scene failing `validate::check` -- everything `flint validate` checks, but the scene is loaded even with no constraints, and style warnings count as failures. CI's headless job runs it. Test: `tests/examples_cli.rs`
+
+## `flint env`
+
+- `flint env [--json] [--group window|render|player|assets|tests] [--set]` (#715, `commands/env.rs`): every `FLINT_*` switch from `flint_core::env::ALL` (`crates/flint-core/CLAUDE.md`), a block per group, each with its value here, help, accepted forms and what unset means, and the warning its value would raise. Exits 1 when any set switch (of all of them, not only those shown) holds a value it doesn't take, so a perf script can run it first. A `Secret` (the provider keys) prints `(set)`. JSON: `valid`, `set`, `problems`, `switches[]` (`Status`: `name`, `group`, `kind`, `accepts`, `default`, `help`, `value`, `problem`). `--book [DIR]` writes `docs/book/src/cli-reference/environment.md` whole from `env::book_page()`; `--check-book` exits 1 when it's stale (CI's headless job, `scripts/ci.sh --full`). `flint render --help` ends with the render group (`after_help = env::help_section(..)` on `RenderArgs`), `flint play` and `flint-player` with `PLAYER_GROUPS`
 
 ## `flint script api` and `flint script check`
 

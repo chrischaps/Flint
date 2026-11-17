@@ -19,7 +19,7 @@ pub(crate) struct KeyNote {
 }
 
 struct Shown {
-    key: &'static str,
+    key: String,
     text: String,
     /// egui time it was first painted; `None` until then, so a note said
     /// between frames gets its whole time on screen.
@@ -29,10 +29,10 @@ struct Shown {
 #[cfg_attr(not(feature = "debug-hud"), allow(dead_code))]
 impl KeyNote {
     /// Show `text` for `key` and print it to the console.
-    pub(crate) fn say(&mut self, key: &'static str, text: &str) {
+    pub(crate) fn say(&mut self, key: &str, text: &str) {
         eprintln!("[debug] {key}: {text}");
         self.shown = Some(Shown {
-            key,
+            key: key.to_string(),
             text: text.to_string(),
             since: None,
         });
@@ -41,7 +41,9 @@ impl KeyNote {
     /// The note showing, as `(key, text)`.
     #[cfg(test)]
     pub(crate) fn showing(&self) -> Option<(&str, &str)> {
-        self.shown.as_ref().map(|s| (s.key, s.text.as_str()))
+        self.shown
+            .as_ref()
+            .map(|s| (s.key.as_str(), s.text.as_str()))
     }
 
     /// The note's strength at egui time `now` (1 held, falling to 0 over the
@@ -99,7 +101,7 @@ impl KeyNote {
                                 .inner_margin(egui::Margin::symmetric(6, 2))
                                 .show(ui, |ui| {
                                     ui.label(
-                                        egui::RichText::new(shown.key)
+                                        egui::RichText::new(&shown.key)
                                             .monospace()
                                             .size(12.0)
                                             .color(fade(255, 214, 140, 255)),

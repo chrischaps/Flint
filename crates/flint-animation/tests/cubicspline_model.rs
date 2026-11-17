@@ -8,7 +8,7 @@ use flint_animation::skeletal_sampler::sample_joint_track;
 
 #[test]
 fn real_cubicspline_model_stays_sane() {
-    let Ok(path) = std::env::var("FLINT_CUBIC_MODEL") else {
+    let Some(path) = flint_core::env::CUBIC_MODEL.path() else {
         eprintln!("FLINT_CUBIC_MODEL not set; skipping");
         return;
     };

@@ -77,6 +77,7 @@
 - [Script API Reference](reference/script-api.md)
 - [CLI Reference](cli-reference/overview.md)
   - [Music and Rhythm Commands](cli-reference/music.md)
+  - [Environment Switches](cli-reference/environment.md)
 - [File Formats](formats/overview.md)
 
 # Architecture

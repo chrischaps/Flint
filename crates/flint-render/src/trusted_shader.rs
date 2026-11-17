@@ -47,7 +47,7 @@ pub(crate) fn built_in_checks() -> wgpu::ShaderRuntimeChecks {
     static CHECKS: OnceLock<wgpu::ShaderRuntimeChecks> = OnceLock::new();
     *CHECKS.get_or_init(|| {
         let mut checks = wgpu::ShaderRuntimeChecks::checked();
-        if std::env::var("FLINT_SHADER_CHECKS").as_deref() != Ok("all") {
+        if flint_core::env::SHADER_CHECKS.choice() != Some("all") {
             checks.force_loop_bounding = false;
         }
         checks
@@ -75,7 +75,7 @@ mod tests {
     #[test]
     fn built_ins_keep_every_check_but_loop_bounding() {
         let c = built_in_checks();
-        let loop_bounding = std::env::var("FLINT_SHADER_CHECKS").as_deref() == Ok("all");
+        let loop_bounding = flint_core::env::SHADER_CHECKS.choice() == Some("all");
         assert_eq!(c.force_loop_bounding, loop_bounding);
         assert!(c.bounds_checks, "bounds checks stay on");
         assert!(c.int_div_checks, "division checks stay on");
