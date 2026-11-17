@@ -7,6 +7,7 @@ use super::builder::kind::{Entity, Int, Map, Num, Str};
 use super::builder::{CallResult, ScriptApi};
 use super::opts::read_opts;
 use flint_animation::animator::{self, LayerEdit};
+use flint_core::tween::Easing;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 
@@ -156,6 +157,23 @@ pub(crate) fn register(api: &mut ScriptApi) {
     .run(|call, (id, index, weight, duration)| {
         edit_anim_layer(call.world_mut()?, id, index, |layer| {
             layer.fade(weight, duration);
+        })
+    });
+
+    m.func(
+        "fade_anim_layer",
+        "Ramp a layer's weight over seconds, eased: linear, smooth, ease_in, ease_out or ease_in_out.",
+    )
+    .arg("id", Entity)
+    .arg("index", Int)
+    .arg("weight", Num)
+    .arg("duration", Num)
+    .arg("easing", Str)
+    .run(|call, (id, index, weight, duration, easing)| {
+        let easing =
+            Easing::from_name(&easing).ok_or_else(|| call.error(Easing::refusal(&easing)))?;
+        edit_anim_layer(call.world_mut()?, id, index, |layer| {
+            layer.fade_eased(weight, duration, easing);
         })
     });
 

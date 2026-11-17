@@ -34,6 +34,7 @@ pub mod quality;
 pub mod quat;
 pub mod step_clock;
 pub mod toml_util;
+pub mod tween;
 mod types;
 pub mod vfs;
 pub mod world_line;

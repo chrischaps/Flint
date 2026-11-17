@@ -256,6 +256,17 @@ pub enum ScriptCommand {
         /// `ease_in_out`
         easing: String,
     },
+    /// `tween`: ease a numeric component field (`path` is
+    /// `component.field`) to `target` over `seconds` of game time (#734).
+    /// The host steps it with the scripts and fires `tween_done` at the end;
+    /// a new tween of the same field replaces the old one.
+    Tween {
+        entity: EntityId,
+        path: String,
+        target: toml::Value,
+        seconds: f64,
+        easing: flint_core::tween::Easing,
+    },
     /// Take an entity's own style off again.
     ClearEntityStyle {
         entity: EntityId,

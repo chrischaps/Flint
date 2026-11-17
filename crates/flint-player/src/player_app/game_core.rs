@@ -65,6 +65,8 @@ pub struct GameCore {
     pub(crate) store: PersistentStore,
     /// Entity style tweens (#370), stepped with game time.
     pub(crate) style_tweens: super::style_commands::StyleTweens,
+    /// Scripts' `tween`s of component fields (#734), stepped with them.
+    pub(crate) field_tweens: flint_script::FieldTweens,
     /// The renderer's config generation the scripts' style reader was
     /// last made from (#372).
     pub(crate) style_reader_generation: Option<u64>,
@@ -107,6 +109,7 @@ impl GameCore {
             state_machine: super::subsystem::state_machine(),
             store: PersistentStore::new(),
             style_tweens: Default::default(),
+            field_tweens: Default::default(),
             style_reader_generation: None,
             #[cfg(feature = "procgen")]
             procgen_resolver: ProcGenResolver::new(),
@@ -571,18 +574,22 @@ impl GameCore {
         })
     }
 
-    /// Move the style tweens on by this frame's game time (#370), while
-    /// scripts run.
+    /// Move the style tweens (#370) and the field tweens (#734) on by this
+    /// frame's game time, while scripts run.
     fn step_style_tweens(&mut self) {
         if self.state_machine.active_config().runs(SCRIPTS) {
-            let step = self
-                .style_tweens
-                .step(&mut self.world, self.clock.delta_time);
+            let dt = self.clock.delta_time;
+            let step = self.style_tweens.step(&mut self.world, dt);
             for event in step.events {
                 self.events.push(event);
             }
             for message in step.failures {
                 tracing::warn!(target: "script", "{message}");
+            }
+            if !self.field_tweens.is_empty() {
+                for event in self.field_tweens.step(&mut self.world, dt) {
+                    self.events.push(event);
+                }
             }
         }
     }
@@ -1035,6 +1042,25 @@ impl ScriptHost for CoreCommands<'_> {
             )
         };
         self.style_applied(applied);
+    }
+
+    fn tween(
+        &mut self,
+        entity: EntityId,
+        path: String,
+        target: toml::Value,
+        seconds: f64,
+        easing: flint_core::tween::Easing,
+    ) {
+        let core = &mut *self.core;
+        let started =
+            (core.field_tweens).start(&mut core.world, entity, &path, &target, seconds, easing);
+        match started {
+            Ok(Some(done)) => core.events.push(done),
+            Ok(None) => {}
+            // The world changed between the call, which checked, and now
+            Err(message) => tracing::warn!(target: "script", "{message}"),
+        }
     }
 
     fn clear_entity_style(&mut self, entity: EntityId) {

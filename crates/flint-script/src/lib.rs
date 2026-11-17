@@ -28,6 +28,7 @@ mod reload_worker;
 pub mod style_reader;
 pub mod sync;
 pub mod testing;
+pub mod tween;
 pub mod ui;
 
 pub use context::MusicClock;
@@ -46,6 +47,7 @@ pub use module::{ModuleCommand, ScriptModule};
 pub use projector::{GroundField, Projector, ScreenPoint, View};
 pub use style_reader::{EntityStyle, StyleReader};
 use sync::ScriptSync;
+pub use tween::{FieldTweens, TWEEN_DONE};
 
 /// Top-level scripting system integrating engine, sync, and the game loop
 pub struct ScriptSystem {

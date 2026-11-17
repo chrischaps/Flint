@@ -414,8 +414,10 @@ impl PlayerApp {
         self.hud.draw_commands.clear();
         self.hud.world_texts.clear();
         self.loaded_chunks.clear();
-        // Style tweens name the old scene's entities (#370)
+        // Style tweens name the old scene's entities (#370), as field
+        // tweens do (#734)
         self.core.style_tweens.clear();
+        self.core.field_tweens.clear();
     }
 
     /// The registry for `scene`, after asking the one resolver (ADR 0114)
