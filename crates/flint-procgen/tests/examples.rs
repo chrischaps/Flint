@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use flint_procgen::{
-    lint_params, register_built_in_generators, GeneratorOutput, GeneratorRegistry, OutputKind,
+    register_built_in_generators, validate_params, GeneratorOutput, GeneratorRegistry, OutputKind,
     ProcGenSpec,
 };
 
@@ -65,7 +65,7 @@ fn every_example_is_strict_clean_and_generates_deterministically() {
             .unwrap_or_else(|| panic!("{file}: unknown generator {}", spec.generator));
 
         // What `flint gen --strict` refuses.
-        let issues = lint_params(&generator.param_schema(), &spec.params);
+        let issues = validate_params(&generator.param_schema(), &spec.params);
         assert!(issues.is_empty(), "{file}: {issues:?}");
 
         // A commented example: it opens by saying what it makes.
@@ -141,6 +141,64 @@ fn every_example_is_strict_clean_and_generates_deterministically() {
         meta_names.len(),
         "duplicate meta.name: {meta_names:?}"
     );
+}
+
+/// Every spec anywhere in the tree (examples, the games kept in the
+/// checkout, the AI templates, the cave game's) passes the one validator
+/// `flint gen`, `flint check` and the resolver share (#718): no key its
+/// generator ignores, no value it can't use.
+#[test]
+fn every_spec_in_the_tree_validates() {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if path.is_dir() {
+                let skipped = name.starts_with('.')
+                    || name.starts_with("target")
+                    || matches!(name.as_str(), "node_modules" | "dist");
+                if !skipped {
+                    walk(&path, out);
+                }
+            } else if name.ends_with(".procgen.toml") {
+                out.push(path);
+            }
+        }
+    }
+    let root = crate_dir().join("../..");
+    let mut specs = Vec::new();
+    walk(&root, &mut specs);
+    specs.sort();
+    assert!(specs.len() >= 50, "found only {} specs", specs.len());
+
+    let registry = GeneratorRegistry::with_built_ins();
+    let mut problems = Vec::new();
+    for path in &specs {
+        let shown = path
+            .strip_prefix(&root)
+            .unwrap_or(path)
+            .display()
+            .to_string();
+        let spec = match ProcGenSpec::from_file(path) {
+            Ok(spec) => spec,
+            Err(e) => {
+                problems.push(format!("{shown}: {e}"));
+                continue;
+            }
+        };
+        // A game's own generator (the cave game's `rock_v1`, #195) is the
+        // game's to check
+        let Some(generator) = registry.get(&spec.generator) else {
+            continue;
+        };
+        for issue in validate_params(&generator.param_schema(), &spec.params) {
+            problems.push(format!("{shown}: {issue}"));
+        }
+    }
+    assert!(problems.is_empty(), "\n{}", problems.join("\n"));
 }
 
 #[test]

@@ -28,7 +28,8 @@ use crate::measure::{self, Distance};
 use crate::mock::{bump_patch, fnv1a, props, registry, resolve_name, slug, unknown_generator};
 use crate::preview::Previewer;
 use crate::prompt::{self, Current};
-use crate::schema::{check_params, json_to_toml, prop_type, repair_params};
+use crate::schema::{json_to_toml, prop_type, repair_params};
+use flint_procgen::validate_params;
 
 /// The model used when a config names none.
 pub const DEFAULT_MODEL: &str = "claude-opus-5-5";
@@ -748,7 +749,7 @@ impl Ctx {
 
     /// Schema issues, then (if there are none) what generating them reveals.
     fn issues(&self, params: &toml::Value) -> Vec<String> {
-        let schema: Vec<String> = check_params(&self.schema, params)
+        let schema: Vec<String> = validate_params(&self.schema, params)
             .iter()
             .map(ToString::to_string)
             .collect();

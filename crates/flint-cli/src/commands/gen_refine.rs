@@ -34,8 +34,7 @@ impl MeshRenderPreviewer {
 
     /// The PNG `spec` renders to, or why it couldn't.
     pub fn render(&self, spec: &ProcGenSpec) -> Result<Vec<u8>> {
-        let mut registry = GeneratorRegistry::new();
-        flint_procgen::register_built_in_generators(&mut registry);
+        let registry = GeneratorRegistry::with_built_ins();
         let glb = match registry.generate_from_spec(spec)? {
             GeneratorOutput::Mesh(m) => export_glb::mesh_to_glb(&m)?,
             // Only the full-detail level: LODs would stack on one another.

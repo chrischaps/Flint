@@ -254,7 +254,11 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    # --print-spec (spec alone on stdout), --save-spec. Every API call goes through
    # flint_procgen_ai::CostMeter: priced, appended to the JSON Lines ledger, and
    # refused before sending if its worst case could pass --max-cost.
+   flint gen --list-generators [--json]                       # #718, commands/gen_catalog.rs; stdout only
+   flint gen --describe texture_v1 [--json | --markdown]      #   texture_v1: every op with op_schema + op_ports
    ```
+
+- **One spec validator** (#718): `flint_procgen::validate_params(schema, params) -> Vec<ParamIssue>` (`params.rs`) walks the schema at every depth (properties, named-table maps, `items`, a tagged `oneOf`) and reports ignored keys (`Unknown`, `Inapplicable`, `Deprecated`: warnings, `--strict` refuses) and values (`WrongType` with the range, `OutOfRange`, `NotInEnum` incl. a pipeline op's unknown `type`, `BadColor`, `MissingRequired`: `is_error()`, and `flint gen` bails before generating, dry runs included). Keys are paths (`ops[2].columns`); `schema_at` / `parse_path` find the property a path names. `lint_params` and flint-procgen-ai's `check_params` / `IssueKind` / its own `ParamIssue` are gone; the AI layer keeps `repair_params`, which now reaches nested keys and drops ignored ones. `check/scene.rs::spec_params` (under `Checks::schema`, so `flint validate` too) runs it on the spec behind each `model.asset` / `material.texture` / `sprite.texture` (`spec-param`, on the spec's file, the path as `field`, once a run a spec); `ProcGenResolver` warns once a spec on first use (`param_issues`). Every host resolves generators with `GeneratorRegistry::with_built_ins()` (built-ins + `mock`). Tests: `tests/gen_params_cli.rs`, `flint-procgen/tests/examples.rs::every_spec_in_the_tree_validates`
 
 ## Goldens and `flint goldens`
 

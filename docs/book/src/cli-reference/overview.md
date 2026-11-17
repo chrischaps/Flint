@@ -118,6 +118,7 @@ checked 2 scenes and 3 files: 6 errors, 1 warning
 | Every inline `particle_emitter` against the emitter's own reader: its keys, and that each value parses and resolves | `bad-emitter` |
 | The assets a scene names by kind, through the [one search](../concepts/assets.md): `model.asset`, `material.texture`, `sprite.texture`, `audio_source.file`, `script.source`, `terrain.heightmap` / `splat_map`, `grass_ground.mask`, `spline.file`, `particle_emitter.texture`, `[environment] skybox`, `[scene] input_config` | `missing-asset` |
 | The procgen spec behind a model or texture parses | `bad-spec` |
+| That spec's params fit its generator's schema, at every depth (`flint_procgen::validate_params`, what `flint gen` checks before generating; also `flint validate`) | `spec-param` |
 | The spline file behind a `spline.file` parses, its mistake placed by line and column | `bad-spline` |
 | The input config (the scene's, else `[project] input`, else `config/input.toml`) parses | `bad-input-config` |
 | Every other file a scene, prefab, particle effect, glyph set, chunk, user style or script names by path | `missing-file` |
@@ -814,7 +815,12 @@ flint gen specs/stone_wall.procgen.toml -o wall.png
 flint gen specs/oak_tree.procgen.toml --dry-run
 flint gen specs/oak_tree.procgen.toml --seed 42 -o tree.glb
 flint gen specs/oak_tree.procgen.toml --batch 10 --seed-start 0
+flint gen --list-generators                 # every generator a spec may name
+flint gen --describe tree_v1                # its parameters: type, range, default, what each does
+flint gen --describe texture_v1 --json      # the schema itself, and every pipeline op with its ports
 ```
+
+Before anything is generated, the spec's params are checked against its generator's schema at every depth (`ops[2].columns`, `materials.shell.roughness`): a value the generator can't use (wrong type, out of range, not a choice, a required key missing) stops the run naming the key and what it allows, and a key it would ignore is a warning.
 
 `flint gen` also previews a glyph set: `flint gen fonts/terminal.glyphs.toml -o sheet.png` writes the atlas, each ramp's ink and a specimen as one sheet, and `-o out/` writes the pieces as well. See [Glyph Atlas](../concepts/glyph-atlas.md#looking-at-a-set).
 
@@ -830,6 +836,10 @@ flint gen specs/oak_tree.procgen.toml --batch 10 --seed-start 0
 | `--force` | `false` | With `--register`, regenerate even if this spec + seed is stored |
 | `--validate` | `false` | Validate output after generation |
 | `--strict` | `false` | Treat warnings as failures |
+| `--list-generators` | `false` | List every generator: output, revision, parameter count, whether it can live (no spec) |
+| `--describe <generator>` | (none) | Print every parameter a generator reads, grouped by the mode that reads it; `texture_v1`'s ops too (no spec) |
+| `--json` | `false` | With `--list-generators` or `--describe`: one JSON document on stdout |
+| `--markdown` | `false` | With `--describe`: Markdown tables, as the flint-procgen README's catalog |
 | `--style-guide <path>` | (none) | Style guide TOML for validation constraints |
 | `--report <fmt>` | `human` | Validation report format: `human`, or `json` (one object per variant on stdout, with each check's `actual` and `limit`; human output moves to stderr). Requires `--validate` |
 

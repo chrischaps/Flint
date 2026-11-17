@@ -73,8 +73,7 @@ pub fn run(args: GenPreviewArgs) -> Result<()> {
     }
 
     // Build registry and resolve generator
-    let mut registry = GeneratorRegistry::new();
-    flint_procgen::register_built_in_generators(&mut registry);
+    let registry = GeneratorRegistry::with_built_ins();
 
     let generator = registry
         .get(&spec.generator)
@@ -1627,7 +1626,7 @@ fn params_to_save(
 ) -> toml::map::Map<String, toml::Value> {
     let mut params = params.clone();
     let table = toml::Value::Table(params.clone());
-    for issue in flint_procgen::lint_params(schema, &table) {
+    for issue in flint_procgen::validate_params(schema, &table) {
         if let flint_procgen::ParamIssue::Inapplicable { key, .. } = issue {
             params.remove(&key);
         }
@@ -1666,8 +1665,7 @@ mod tests {
         let before = std::fs::read_to_string(&path).unwrap();
 
         let mut spec = ProcGenSpec::from_file(&path).unwrap();
-        let mut registry = GeneratorRegistry::new();
-        flint_procgen::register_built_in_generators(&mut registry);
+        let registry = GeneratorRegistry::with_built_ins();
         let schema = registry.get(&spec.generator).unwrap().param_schema();
         let mut params = spec.params.as_table().unwrap().clone();
 

@@ -139,7 +139,7 @@ impl PebblesGenerator {
 
 ## 3. The `Generator` impl and its schema
 
-`param_schema` returns a JSON Schema for `[params]`, and it does more than document. The previewer builds its panel from it, `flint gen` checks specs against it (`lint_params`), and the README catalog is printed from it. Hold it to these rules:
+`param_schema` returns a JSON Schema for `[params]`, and it does more than document. The previewer builds its panel from it, `flint gen` checks specs against it (`validate_params`), and the README catalog is printed from it. Hold it to these rules:
 
 - **List every key the code reads**, and close the object with `"additionalProperties": false`, so a typo is reported instead of ignored.
 - **Give every key a `description`.** One sentence on what it does, with units, written for someone tuning it. The previewer shows it on hover, and a test fails without it (`every_built_in_parameter_is_described`).
@@ -242,7 +242,7 @@ A registry of your own, for tests or tools, takes it the same way:
 #         "properties": { "count": { "type": "integer", "description": "Pebbles" } },
 #         "additionalProperties": false }) }
 # }
-use flint_procgen::{lint_params, GeneratorRegistry};
+use flint_procgen::{validate_params, GeneratorRegistry};
 
 let mut registry = GeneratorRegistry::new();
 registry.register(Box::new(PebblesGenerator));
@@ -261,7 +261,7 @@ let spec = ProcGenSpec::parse(r#"
 
 // The spec uses only keys the schema knows...
 let schema = registry.get("pebbles_v1").unwrap().param_schema();
-assert!(lint_params(&schema, &spec.params).is_empty());
+assert!(validate_params(&schema, &spec.params).is_empty());
 // ...and the same seed gives the same image.
 let a = registry.generate_from_spec(&spec)?;
 let b = registry.generate_from_spec(&spec)?;

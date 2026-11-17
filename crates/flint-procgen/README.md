@@ -110,7 +110,7 @@ A spec can also have a `[living]` table, which makes it a prop that keeps drifti
 
 ## Generator catalog
 
-Every key, generated from the generators' own schemas by `cargo run -p flint-procgen --example param_catalog`. A test fails when this section and the schemas differ. "Only when" tables list keys that a mode ignores; `flint gen` warns about them, `--strict` refuses them, and the previewer hides them.
+Every key, generated from the generators' own schemas by `cargo run -p flint-procgen --example param_catalog`. A test fails when this section and the schemas differ. "Only when" tables list keys that a mode ignores; `flint gen` warns about them, `--strict` refuses them, and the previewer hides them. `flint gen --describe <generator> --markdown` prints one generator's part of this catalog (and, for `texture_v1`, every pipeline op's).
 
 <!-- catalog:begin -->
 ### `creature_v1` (mesh, written as GLB)
@@ -385,7 +385,7 @@ register_built_in_generators(&mut registry);
 
 // Keys the generator would ignore, before spending time on it.
 let schema = registry.get(&spec.generator).unwrap().param_schema();
-assert!(flint_procgen::lint_params(&schema, &spec.params).is_empty());
+assert!(flint_procgen::validate_params(&schema, &spec.params).is_empty());
 
 let maps = registry.generate_from_spec(&spec)?.into_image_set().unwrap();
 assert_eq!(maps.len(), 3); // color, normal, roughness
@@ -401,7 +401,8 @@ assert_eq!(registry.generate_from_spec(&spec)?.into_image_set().unwrap(), maps);
 | `src/spec.rs`, `src/seed.rs`, `src/rng.rs` | Spec parsing, seeds, the forkable RNG |
 | `src/generators/{tree,texture,creature}` | The built-in generators |
 | `src/algorithms/` | Noise (Perlin, simplex, Worley, FBM), L-systems, space colonization, mesh building and simplification |
-| `src/param_ui.rs` | Schema → editor fields, `lint_params`, this catalog |
+| `src/param_ui.rs` | Schema → editor fields, this catalog |
+| `src/params.rs` | `validate_params`: a spec's params against its generator's schema, at every depth (#718) |
 | `src/export_glb.rs`, `src/skinning.rs` | GLB export with LOD chains and skins |
 | `src/resolver.rs`, `src/cache.rs`, `src/queue.rs` | The player's spec resolver, memory cache and frame-budgeted queue |
 | `src/validate.rs` | Output validation against style-guide constraints |

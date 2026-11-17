@@ -741,7 +741,7 @@ pub fn op_param_schema(op_type: &str) -> serde_json::Value {
 /// The full, closed schema of one `[[params.ops]]` table of type `op_type`:
 /// its [`op_param_schema`] knobs plus the keys every op may carry (`type`,
 /// and `id` / `inputs` for graph wiring), with `"additionalProperties": false`
-/// so [`crate::lint_params`] reports a typo inside an op.
+/// so [`crate::validate_params`] reports a typo inside an op.
 pub fn op_schema(op_type: &str) -> serde_json::Value {
     let mut schema = op_param_schema(op_type);
     let props = schema["properties"]
@@ -766,7 +766,7 @@ pub fn op_schema(op_type: &str) -> serde_json::Value {
 }
 
 /// The schema of the `[[params.ops]]` array's items: one closed branch per
-/// op type, chosen by the op's `type` (see [`crate::lint_params`]).
+/// op type, chosen by the op's `type` (see [`crate::validate_params`]).
 pub fn ops_items_schema() -> serde_json::Value {
     let branches: Vec<serde_json::Value> = ALL_OP_TYPES.iter().map(|t| op_schema(t)).collect();
     serde_json::json!({
@@ -775,6 +775,14 @@ pub fn ops_items_schema() -> serde_json::Value {
         "discriminator": { "propertyName": "type" },
         "oneOf": branches
     })
+}
+
+/// The channels an op of `op_type` reads, writes and modifies, as the node
+/// editor draws its ports; `None` for a type that isn't an op. Read from the
+/// op built at its defaults (`flint gen --describe texture_v1` prints them).
+pub fn op_ports(op_type: &str) -> Option<OpPortInfo> {
+    let op = toml::Value::Table(op_default_params(op_type));
+    parse_op(&op, 0).ok().map(|op| op.port_info())
 }
 
 /// Return default parameter values for a given op type as a TOML map.
@@ -2182,7 +2190,7 @@ colour = "#000000"
 "##,
         );
         let schema = super::super::TextureGenerator.param_schema();
-        let shown: Vec<String> = crate::lint_params(&schema, &spec.params)
+        let shown: Vec<String> = crate::validate_params(&schema, &spec.params)
             .iter()
             .map(|i| i.to_string())
             .collect();
