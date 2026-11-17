@@ -54,6 +54,8 @@ pub struct ScriptEngine {
     /// host last took them: kept only while [`set_timing`](Self::set_timing)
     /// is on (the perf readout, Flint#120; every callback since #703).
     times: Option<output::Times>,
+    /// What a profiled callback's functions took (#1100), kept for its room
+    fn_took: Vec<crate::fn_times::Took>,
     /// Scripts' `random()` sequence, seeded once from the clock (#580)
     pub(crate) random: crate::random::ScriptRandom,
     /// What the declared API registered (ADR 0116); empty on the web
@@ -68,6 +70,8 @@ impl ScriptEngine {
         let mut engine = compiler();
         // print and debug to the log, never stdout (#703)
         output::route_speech(&mut engine, &ctx);
+        // What a profiled script's function wrappers open (#1100)
+        crate::fn_times::register(&mut engine);
 
         // Register all API functions
         let mut registry = api::ApiRegistry::default();
@@ -83,6 +87,7 @@ impl ScriptEngine {
             scripts: HashMap::new(),
             module_base: None,
             times: None,
+            fn_took: Vec::new(),
             random,
             registry,
             errors: crate::errors::ScriptErrors::new(),
@@ -358,6 +363,15 @@ impl ScriptEngine {
             .unwrap_or_default()
     }
 
+    /// What each callback's functions took since the last take (#1100):
+    /// see [`crate::ScriptSystem::take_function_times`].
+    pub fn take_function_times(&mut self) -> Vec<output::FnTime> {
+        self.times
+            .as_mut()
+            .map(output::Times::take_functions)
+            .unwrap_or_default()
+    }
+
     /// Whether [`set_timing`](Self::set_timing) is on.
     pub fn timing(&self) -> bool {
         self.times.is_some()
@@ -440,6 +454,8 @@ impl Default for ScriptEngine {
 mod callback_tests;
 #[cfg(test)]
 mod error_tests;
+#[cfg(test)]
+mod fn_time_tests;
 #[cfg(test)]
 mod hot_reload_tests;
 #[cfg(test)]

@@ -391,7 +391,7 @@ Open the file in [Perfetto](https://ui.perfetto.dev) (Open trace file) or `chrom
 
 | Track | What it holds |
 |---|---|
-| a thread (`main`, ...) | every `flint_core::scope!` that closed on it, nested, each with its `frame`, `depth` and detail. Each script callback is a scope of its own while recording, named as `--perf` names its time (`scripts/stall.rhai:on_update`), inside the `script::call` that carries its file as detail |
+| a thread (`main`, ...) | every `flint_core::scope!` that closed on it, nested, each with its `frame`, `depth` and detail. Each script callback is a scope of its own while recording, named as `--perf` names its time (`scripts/stall.rhai:on_update`), inside the `script::call` that carries its file as detail, and each function it calls is a scope inside it ([Inside a script](#inside-a-script)) |
 | `frames` | each frame, from one `RedrawRequested` to the next, with its `ms` |
 | `phases` | the player's ten phases (`input`, `scripts`, `physics`, ..., `acquire`, `present`) between their marks |
 | `gpu` | each pass the GPU timer measured. The GPU's clock isn't the CPU's, so a frame's passes are laid from its render phase's start, with the GPU's own durations |
@@ -400,7 +400,19 @@ Open the file in [Perfetto](https://ui.perfetto.dev) (Open trace file) or `chrom
 
 The header (Perfetto's **Info and stats**, or `otherData` in the file) names the reason, the scene, the adapter and backend, the build, the engine's commit, the look-back, each ring's size and which rings wrapped. `--trace` turns the GPU timer on, as F2 does, to fill the `gpu` track.
 
-The stall in `hitch_metronome` reads like this: a 100 ms `stall.rhai:on_update` inside that frame's `tick`, the `scripts` phase as long, and the frame and its hitch mark spanning both.
+The stall in `hitch_metronome` reads like this: a 100 ms `stall.rhai:on_update` inside that frame's `tick`, the `scripts` phase as long, and the frame and its hitch mark spanning both. Inside the callback is `stall.rhai:hold()`, the helper whose busy wait took the 100 ms.
+
+#### Inside a script
+
+A callback's time names the file, not the cause: a 12 ms `on_update` could be one slow loop or one engine function called 400 times. While a callback is timed (`--perf`, F2, `--hitch-log`, `--trace-on-hitch`) or the recorder records, every function it calls is timed as well (#1100):
+
+- **Engine functions** by name, every overload one record: `clamp()`, `raycast()`. In a trace each call is a scope inside the callback's, so 400 raycasts are 400 short bars.
+- **The script's own functions** as `<source>:<name>()`: `stall.rhai:hold()`. A function's time includes the engine calls it makes. Every level of a recursion counts as a call, but only the outermost call's time is added, so nothing is counted twice.
+- **Not timed, so their time stays with their caller's:** closures (`|x| x + 1`), functions that read `this`, the callbacks themselves (which have their own scope) and functions of an imported module (`import "menu"`).
+
+`--perf`'s worst-scripts list names each callback's slowest function in one frame of the window: `worst scripts: stall.rhai:on_update 0.33/100.1 (hold() 100.0)`, or `(raycast() x400 3.1)` when it was many calls. A host reads the same numbers from `ScriptSystem::take_function_times()`: one `FnTime` for each callback and function, with `calls`, `total_ms` and `worst_ms`.
+
+**What it costs.** With timing off, a script runs as it did before, and every engine function pays one thread-local flag read. In a release build, a script function call measured 387 to 392 ns with this change and 391 to 398 ns before it, and an engine call 246 to 250 ns against 251 to 256. With timing on, an engine call costs about 45 ns more (two clock reads) and a call of the script's own function about 0.48 µs more. A script called while timing runs on a copy of its functions in which each `fn f(a, b)` is a small wrapper that opens the timer and then calls the original body, so each call costs a second Rhai call. A helper called 400 times a frame therefore adds about 0.2 ms to that frame while it is timed, and the wrapper's share shows inside the callback's time, not the helper's. The wrapper also takes a call level, so a timed call runs with twice Rhai's call-level limit, and a deep recursion fails at the same depth either way (`cargo test -p flint-script --release --lib fn_call_cost -- --ignored --nocapture` measures it).
 
 **What it costs.** Each thread's ring is sized for its seconds at 32 768 scopes a second: 163 840 records, 6.6 MB a thread for the default 5 s, taken once at the thread's first scope. A frame with more than that many scopes a second shortens the look-back, and the header's `wrapped` and `scopes_from_ms` say so. Recording, a scope costs about 40 ns in a release build ([ADR 0128](https://github.com/chrischaps/Flint/blob/main/docs/adr/0128-one-scope-macro-two-sinks.md)), and the player's own tracks about 0.65 µs a frame. The tavern's 38 scopes a frame come to about 2 µs. A run with and without `--trace` on that scene couldn't tell the two apart: identical runs on a busy machine differed by more (3.6 to 4.5 ms a frame). Saving copies the window on the frame thread, about 1.8 ms for 24 000 scopes in release, then writes the JSON on a thread of its own. The GPU timer `--trace` turns on may cost more than the recorder: `--perf`, which turns on the same timing, read 0.3 to 0.6 ms a frame over plain runs on the tavern at 300 fps, inside that same noise. A default release build has none of it.
 
