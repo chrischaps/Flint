@@ -90,9 +90,9 @@ pub(crate) enum Cause {
         script: Option<(String, f32)>,
     },
     /// The frame was long but the player's work was not: the compositor,
-    /// the driver, the OS. `present_ms` is the present phase's share, the
-    /// wait for the swapchain.
-    Elsewhere { present_ms: f32 },
+    /// the driver, the OS. `acquire_ms` is the wait for a swapchain image
+    /// (#1123), `present_ms` the wait handing it back.
+    Elsewhere { acquire_ms: f32, present_ms: f32 },
 }
 
 // Read by the F2 graph and the hitch log (#1078, #1079); tested here.
@@ -102,6 +102,20 @@ impl Cause {
         match self {
             Cause::Player { .. } => "player",
             Cause::Elsewhere { .. } => "elsewhere",
+        }
+    }
+
+    /// The longer of the swapchain's two waits in an `elsewhere` hitch,
+    /// by name (`acquire`, `present`), and its ms; `None` for the
+    /// player's own. Read by the cause line and the F2 graph.
+    pub(crate) fn longer_wait(&self) -> Option<(&'static str, f32)> {
+        match *self {
+            Cause::Elsewhere {
+                acquire_ms,
+                present_ms,
+            } if acquire_ms > present_ms => Some(("acquire", acquire_ms)),
+            Cause::Elsewhere { present_ms, .. } => Some(("present", present_ms)),
+            Cause::Player { .. } => None,
         }
     }
 }
@@ -121,8 +135,12 @@ pub(crate) struct Hitch {
     pub judged_ms: f32,
     /// The median of the frames before it.
     pub median_ms: f32,
-    /// The player's work in it (every phase but `present`).
+    /// The player's work in it (every phase but `acquire` and `present`).
     pub player_ms: f32,
+    /// The GPU's busy time read back during it ([`Frame::gpu_ms`]: a frame
+    /// or two old), so a reader can tell a wait on the GPU from one on the
+    /// compositor; `None` while the GPU isn't timed.
+    pub gpu_ms: Option<f32>,
     /// Under vsync, how many refreshes it stood for (1 is on time).
     pub refreshes: Option<u32>,
     pub cause: Cause,
@@ -214,7 +232,8 @@ impl Hitch {
     /// What the hitch was, in a line: the engine's events when they
     /// account for it, else whose time it was (`script
     /// stall.rhai:on_update 80.1 ms`, `physics +41.0 ms`, `elsewhere,
-    /// present 30.2 ms`) with the events that didn't after it: `sync +9.1
+    /// acquire 515.6 ms` or `elsewhere, present 30.2 ms`, the longer of the
+    /// swapchain's waits, #1123) with the events that didn't after it: `sync +9.1
     /// ms (also: reload poll 1.2 ms)` (#1079, #1124: the exit report,
     /// `--perf`'s line, `?perf=1`, the hitch log).
     pub(crate) fn cause_line(&self) -> String {
@@ -241,7 +260,8 @@ impl Hitch {
     }
 
     /// Whose time the hitch was, in a line: the blamed script, else the
-    /// phase that grew most, else `elsewhere`.
+    /// phase that grew most, else `elsewhere` and the longer of the
+    /// swapchain's waits (#1123).
     fn whose_line(&self) -> String {
         if let Some((name, ms)) = self.blamed_script() {
             return format!("script {name} {ms:.1} ms");
@@ -250,7 +270,10 @@ impl Hitch {
             Cause::Player {
                 phase, phase_ms, ..
             } => format!("{} +{phase_ms:.1} ms", phase.label()),
-            Cause::Elsewhere { present_ms } => format!("elsewhere, present {present_ms:.1} ms"),
+            Cause::Elsewhere { .. } => {
+                let (wait, ms) = self.cause.longer_wait().unwrap_or(("present", 0.0));
+                format!("elsewhere, {wait} {ms:.1} ms")
+            }
         }
     }
 
@@ -450,6 +473,7 @@ impl HitchDetector {
             judged_ms: judged,
             median_ms: median,
             player_ms: frame.player_ms(),
+            gpu_ms: frame.gpu_ms,
             refreshes,
             cause,
         };
@@ -478,11 +502,12 @@ impl HitchDetector {
         let typical = self.median(before.clone().map(|i| frames[i].player_ms()));
         if frame.player_ms() - typical < excess * PLAYER_SHARE {
             return Cause::Elsewhere {
+                acquire_ms: frame.phases[Phase::Acquire as usize],
                 present_ms: frame.phases[Phase::Present as usize],
             };
         }
         let mut worst = (Phase::Input, f32::MIN);
-        for phase in Phase::ALL.into_iter().filter(|&p| p != Phase::Present) {
+        for phase in Phase::ALL.into_iter().filter(|p| !p.is_wait()) {
             let i = phase as usize;
             let grew = frame.phases[i] - self.median(before.clone().map(|j| frames[j].phases[i]));
             if grew > worst.1 {
@@ -723,7 +748,7 @@ mod tests {
         assert!((h.median_ms - HZ60_MS as f32).abs() < 0.01);
         assert_eq!(h.refreshes, None, "no vsync, no refreshes");
         assert!(
-            matches!(h.cause, Cause::Elsewhere { present_ms } if (present_ms - 0.2).abs() < 0.01),
+            matches!(h.cause, Cause::Elsewhere { present_ms, .. } if (present_ms - 0.2).abs() < 0.01),
             "{:?}",
             h.cause
         );

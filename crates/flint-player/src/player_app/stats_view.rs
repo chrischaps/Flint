@@ -121,6 +121,8 @@ mod graph {
             Phase::Input | Phase::AnimFx => Band::Other,
             Phase::Sync | Phase::Render => Band::Render,
             Phase::Hud | Phase::Present => Band::HudPresent,
+            // The wait for a swapchain image isn't the player's (#1123)
+            Phase::Acquire => Band::Elsewhere,
         }
     }
 
@@ -137,7 +139,8 @@ mod graph {
             phases += ms;
         }
         let ms = frame.judged_ms();
-        bands[Band::Elsewhere as usize] = (ms - phases).max(0.0);
+        // What no phase accounts for is elsewhere too, beside the acquire
+        bands[Band::Elsewhere as usize] += (ms - phases).max(0.0);
         GraphFrame {
             at: frame.at,
             wall_ms: frame.ms,
@@ -211,7 +214,7 @@ mod graph {
     /// report and `--perf` say it (#1128): `last 165 ms: style build
     /// ascii, 154.2 ms`, `last 117 ms: script stall.rhai:on_update 100.0
     /// ms`, `last 30 ms: render +14.0 ms` or `last 13 ms: elsewhere,
-    /// present 1.0 ms`. Written once a hitch, so its allocations are not
+    /// present 1.0 ms` (or `acquire`, the longer wait, #1123). Written once a hitch, so its allocations are not
     /// a frame's.
     pub(crate) fn write_cause(out: &mut String, h: &Hitch) {
         let _ = write!(out, "last {:.0} ms: {}", h.judged_ms, h.cause_line());
@@ -377,6 +380,7 @@ mod tests {
                 judged_ms,
                 median_ms: 16.7,
                 player_ms: 4.0,
+                gpu_ms: None,
                 refreshes: Some(3),
                 cause,
                 notes,
@@ -445,8 +449,27 @@ mod tests {
                     "last 55 ms: render +38.0 ms",
                 ),
                 (
-                    hitch(50.0, Cause::Elsewhere { present_ms: 44.0 }, vec![]),
+                    hitch(
+                        50.0,
+                        Cause::Elsewhere {
+                            acquire_ms: 0.5,
+                            present_ms: 44.0,
+                        },
+                        vec![],
+                    ),
                     "last 50 ms: elsewhere, present 44.0 ms",
+                ),
+                // The longer of the swapchain's two waits is named (#1123)
+                (
+                    hitch(
+                        50.0,
+                        Cause::Elsewhere {
+                            acquire_ms: 41.0,
+                            present_ms: 0.3,
+                        },
+                        vec![],
+                    ),
+                    "last 50 ms: elsewhere, acquire 41.0 ms",
                 ),
             ];
             for (h, said) in cases {
@@ -458,6 +481,24 @@ mod tests {
                     format!("last {:.0} ms: {}", h.judged_ms, h.cause_line())
                 );
             }
+        }
+
+        /// #1123: the acquire's wait is drawn as `Elsewhere`, with what no
+        /// phase accounts for, not as the renderer's.
+        #[test]
+        fn the_acquire_is_drawn_as_elsewhere() {
+            let mut f = Frame {
+                ms: 50.0,
+                ..Frame::default()
+            };
+            f.phases[Phase::Render as usize] = 3.0;
+            f.phases[Phase::Acquire as usize] = 40.0;
+            f.phases[Phase::Present as usize] = 1.0;
+            let g = graph_frame(&f, true);
+            assert_eq!(g.bands[Band::Render as usize], 3.0);
+            assert_eq!(g.bands[Band::HudPresent as usize], 1.0);
+            // 40 in the acquire and the 6 no phase holds
+            assert_eq!(g.bands[Band::Elsewhere as usize], 46.0);
         }
 
         /// The ticket's "no allocation for it while closed, none that grows
