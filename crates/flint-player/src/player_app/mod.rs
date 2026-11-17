@@ -27,6 +27,8 @@ mod egui_input;
 mod event_bus_tests;
 mod events;
 pub mod expression_feed;
+#[cfg(feature = "debug-hud")]
+mod expression_panel;
 #[cfg(test)]
 mod extension_hooks_tests;
 #[cfg(test)]
