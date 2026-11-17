@@ -737,8 +737,9 @@ fn parse_living(field: &str, values: &[String]) -> Result<SweepKey, String> {
                 echoes.alpha = number;
             }
         }
+        // `why` starts with the value: `3: must be from 0 to 1.82 steps, ...`
         if let Err((_, why)) = echoes.check() {
-            return Err(format!("--sweep living.echoes.{knob}={value}: {why}"));
+            return Err(format!("--sweep living.echoes.{knob}={why}"));
         }
     }
     Ok(SweepKey::Echoes {
