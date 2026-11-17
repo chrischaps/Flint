@@ -1,3 +1,0 @@
-### `--max-hitches-of`'s failure names that class's worst hitch (#1130)
-**What changed.** When `--max-hitches` or `--max-hitches-startup` fails a run that `--max-hitches-of player` or `elsewhere` narrowed, the failure line's `worst` and `causes:` now cover only that class. They used to cover every hitch, so a player gate could fail on an 18 ms `sync` frame and name a 48 ms `elsewhere` hitch, the class it was told to ignore, as the worst. The count was always right. The exit report's `[perf] hitches:` line is unchanged and still covers every class.
-**What to do.** Nothing. A tool that parses the failure line for the worst hitch now gets the gated class's.
