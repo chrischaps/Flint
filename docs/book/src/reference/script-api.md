@@ -626,7 +626,7 @@ What each function is for, with examples, is in [Scripting](../concepts/scriptin
 | Function | Returns | Description |
 |---|---|---|
 | `tune_living(knobs: map)` | — | Turn Living Props knobs: what a .wooze.toml holds as a map, or one species' own values with species: name. |
-| `tune_living(knobs: map, seconds: num)` | — | Turn Living Props knobs over some seconds: the continuous ones (step, glide, amplitude, jitter, echoes.spread, echoes.alpha, variance.amount, variance.steady, softness) ease there as `set_wooze` does; the rest switch at once. |
+| `tune_living(knobs: map, seconds: num)` | — | Turn Living Props knobs over some seconds: the continuous ones (step, glide, amplitude, jitter, echoes.spread, echoes.alpha, variance.amount, variance.steady, softness, `jitter_rate`) ease there as `set_wooze` does; the rest switch at once. |
 | `clear_living(species: str)` | — | Give all of a species' own values back to the layers below. |
 | `clear_living(species: str, keys: array)` | — | Give the keys named of a species' own values back to the layers below (\["step", "echoes.count"\]). |
 | `freeze_living(frozen: bool)` | — | Stop or start the clock everything woozy runs on; the game goes on. |

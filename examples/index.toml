@@ -319,6 +319,11 @@ topic = "living"
 purpose = "A held flame whose echoes widen and gather back over two seconds each, through tune_living(map, seconds) (#514)"
 
 [[example]]
+scene = "living_boil_rate.scene.toml"
+topic = "living"
+purpose = "A held flame whose boil doubles, halves and eases back to its spec's pace, through tune_living's jitter_rate (#529)"
+
+[[example]]
 scene = "living_compare.scene.toml"
 topic = "living"
 purpose = "One tree under two settings, twice: a spec beside a twin with species values of its own"

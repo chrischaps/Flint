@@ -2329,6 +2329,7 @@ fn thorny() -> LivingDefaults {
                 ..Default::default()
             },
             softness: None,
+            jitter_rate: None,
         },
     );
     defaults
@@ -2652,4 +2653,236 @@ fn a_copy_of_a_spec_under_a_new_name_grows_the_same_skeleton() {
         assert_eq!(props.prop(a.0).pose(step), props.prop(b.0).pose(step));
     }
     assert_eq!(props.species_of(b.0), "sapling_twin");
+}
+
+/// Every channel of a prop's boil as it shows now: each card turn.
+fn boil_now(props: &LivingProps, id: LivingPropId) -> Vec<f32> {
+    let prop = props.prop(id);
+    let jitter = prop.jitter().scaled(prop.wooze().jitter);
+    let t = prop.jitter_now();
+    (0..crate::living::JITTER_CHANNELS)
+        .map(|channel| jitter.card_turn(prop.stream, channel, t))
+        .collect()
+}
+
+/// A snapping boil on the spec's 0.125 s, big enough to read.
+const BOILING: &str = "jitter = { amplitude = 0.5, step = 0.125, glide = 0.0 }";
+
+/// For each channel, the seconds from now to its next change, frame by frame at
+/// 240 fps, ticking `resolver` through them.
+fn next_ticks(resolver: &mut ProcGenResolver, id: LivingPropId, seconds: f64) -> Vec<f64> {
+    let dt = 1.0 / 240.0;
+    let start = boil_now(resolver.living_props(), id);
+    let mut found: Vec<Option<f64>> = vec![None; start.len()];
+    for frame in 1..=(seconds / dt) as usize {
+        resolver.process_living(dt);
+        let now = boil_now(resolver.living_props(), id);
+        for (channel, at) in found.iter_mut().enumerate() {
+            if at.is_none() && now[channel] != start[channel] {
+                *at = Some(frame as f64 * dt);
+            }
+        }
+    }
+    found
+        .into_iter()
+        .map(|at| at.expect("every channel ticks"))
+        .collect()
+}
+
+#[test]
+fn an_untuned_boil_reads_the_props_clock_to_the_bit() {
+    // A scene that never sets a rate is byte-identical to one from before
+    // #529: its jitter reads the very seconds the props' clock holds, whatever
+    // the frame times, and so does one tuned to exactly 1.
+    let (mut resolver, id) = one_prop(BOILING, LivingDefaults::default());
+    let (mut tuned, tuned_id) = one_prop(BOILING, LivingDefaults::default());
+    tuned
+        .living_props_mut()
+        .tune_jitter_rate(LivingScope::All, 1.0);
+    let dts = [1.0 / 60.0, 1.0 / 144.0, 0.0331, 0.0, 1.0 / 7.0];
+    for frame in 0..400 {
+        let dt = dts[frame % dts.len()];
+        for r in [&mut resolver, &mut tuned] {
+            r.process_living(dt);
+            if frame % 50 == 0 {
+                r.living_props_mut().advance_beats(1.0, 0.5);
+            }
+        }
+    }
+    for (r, id) in [(&resolver, id), (&tuned, tuned_id)] {
+        let props = r.living_props();
+        assert_eq!(
+            props.prop(id).jitter_time().to_bits(),
+            props.time().to_bits()
+        );
+        assert_eq!(props.jitter_rate(id), 1.0);
+    }
+    assert_eq!(
+        boil_now(resolver.living_props(), id),
+        boil_now(tuned.living_props(), tuned_id)
+    );
+}
+
+#[test]
+fn a_jitter_rate_halves_and_doubles_how_often_the_cards_turn() {
+    // How many times each channel changes over four seconds at 240 fps, which
+    // is finer than any rate here ticks.
+    let changes = |rate: f32| {
+        let (mut resolver, id) = one_prop(BOILING, LivingDefaults::default());
+        resolver
+            .living_props_mut()
+            .tune_jitter_rate(LivingScope::All, rate);
+        let mut last = boil_now(resolver.living_props(), id);
+        let mut count = 0usize;
+        for _ in 0..960 {
+            resolver.process_living(1.0 / 240.0);
+            let now = boil_now(resolver.living_props(), id);
+            count += last.iter().zip(&now).filter(|(a, b)| a != b).count();
+            last = now;
+        }
+        count
+    };
+    let channels = crate::living::JITTER_CHANNELS;
+    // 4 s on a 0.125 s step is 32 ticks a channel; one more or less at the ends.
+    let near = |count: usize, ticks: usize| count.abs_diff(ticks * channels) <= channels;
+    let (normal, double, half) = (changes(1.0), changes(2.0), changes(0.5));
+    assert!(near(normal, 32), "{normal} at the spec's pace");
+    assert!(near(double, 64), "{double} at twice it");
+    assert!(near(half, 16), "{half} at half");
+    assert_eq!(changes(0.0), 0, "a rate of 0 holds the boil");
+}
+
+#[test]
+fn a_new_jitter_rate_takes_effect_at_each_cards_next_tick() {
+    // Two props on the same clocks, a second into play. One goes on at the
+    // spec's pace, the other at a new rate. At the change nothing moves, and
+    // each channel holds what it shows until its next tick, which comes after
+    // the time it had left over the rate.
+    for rate in [2.0f32, 0.5] {
+        let (mut steady, a) = one_prop(BOILING, LivingDefaults::default());
+        let (mut changed, b) = one_prop(BOILING, LivingDefaults::default());
+        for r in [&mut steady, &mut changed] {
+            for _ in 0..60 {
+                r.process_living(1.0 / 60.0);
+            }
+        }
+        let before = boil_now(changed.living_props(), b);
+        assert_eq!(before, boil_now(steady.living_props(), a));
+        changed
+            .living_props_mut()
+            .tune_jitter_rate(LivingScope::All, rate);
+        assert_eq!(
+            boil_now(changed.living_props(), b),
+            before,
+            "no card turns at the moment the rate changes"
+        );
+        let left = next_ticks(&mut steady, a, 1.0);
+        let now = next_ticks(&mut changed, b, 1.0);
+        for (left, now) in left.iter().zip(&now) {
+            let want = left / f64::from(rate);
+            // Within one 240 fps frame either way.
+            assert!(
+                (now - want).abs() <= 1.0 / 240.0 + 1e-9,
+                "x{rate}: ticked after {now} s, not {want} ({left} at the old pace)"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_jitter_rate_layers_like_softness_and_makes_no_pose() {
+    let mut resolver = grove(LivingDefaults {
+        jitter_rate: Some(1.5),
+        ..LivingDefaults::default()
+    });
+    let field = field("", &[]);
+    tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
+    let props = resolver.living_props_mut();
+    let read = |props: &LivingProps, i: usize| props.resolved(LivingPropId(i), None).jitter_rate;
+    assert_eq!(read(props, 0).value, 1.5, "the scene's");
+    assert_eq!(read(props, 0).layer, LivingLayer::Global);
+    assert_eq!(props.global_jitter_rate(), Some(1.5));
+
+    assert!(props.tune_jitter_rate(LivingScope::Species("thorn"), 0.5));
+    assert!(props.tune_jitter_rate(LivingScope::All, 2.0));
+    assert_eq!(props.jitter_rate(LivingPropId(0)), 2.0);
+    assert_eq!(props.jitter_rate(LivingPropId(2)), 0.5);
+    assert_eq!(read(props, 2).layer, LivingLayer::Species);
+    // Out of range is held to it, and not a number is the spec's pace.
+    assert!(props.tune_jitter_rate(LivingScope::All, 100.0));
+    assert_eq!(props.jitter_rate(LivingPropId(1)), JITTER_RATE_MAX);
+    assert!(props.tune_jitter_rate(LivingScope::All, f32::NAN));
+    assert_eq!(props.jitter_rate(LivingPropId(1)), 1.0);
+    assert!(!props.tune_jitter_rate(LivingScope::Species("fern"), 2.0));
+
+    // Each species' boil runs at its own rate from here.
+    props.tune_jitter_rate(LivingScope::All, 2.0);
+    let (t0, t2) = (
+        props.prop(LivingPropId(0)).jitter_time(),
+        props.prop(LivingPropId(2)).jitter_time(),
+    );
+    let made = props.stats().poses_made;
+    resolver.process_living(0.25);
+    let props = resolver.living_props_mut();
+    let moved =
+        |props: &LivingProps, i: usize, from: f64| props.prop(LivingPropId(i)).jitter_time() - from;
+    assert!((moved(props, 0, t0) - 0.5).abs() < 1e-9, "the grove's 2");
+    assert!(
+        (moved(props, 2, t2) - 0.125).abs() < 1e-9,
+        "the thorn's own 0.5"
+    );
+
+    // As loaded puts every layer back.
+    let layers = LivingLayers {
+        jitter_rates: vec![None; 4],
+        ..props.layers()
+    };
+    props.restore_layers(&layers);
+    assert_eq!(
+        props.jitter_rate(LivingPropId(0)),
+        1.0,
+        "the spec's pace again"
+    );
+    assert_eq!(read(props, 0).layer, LivingLayer::Spec);
+    assert_eq!(
+        props.jitter_rate(LivingPropId(2)),
+        0.5,
+        "a species' own stays"
+    );
+
+    // The boil is a pure function of its clock: a rate asks for no pose the
+    // props' own clock didn't, which a grove never tuned shows.
+    let mut untuned = grove(LivingDefaults::default());
+    tick_with(&mut untuned, &field, 0.0, 1.0 / 60.0);
+    let untuned_made = untuned.living_props().stats().poses_made;
+    untuned.process_living(0.25);
+    assert_eq!(
+        resolver.living_props().stats().poses_made - made,
+        untuned.living_props().stats().poses_made - untuned_made
+    );
+}
+
+#[test]
+fn an_echo_boils_at_its_props_rate_and_never_pops_through_a_change() {
+    // An echo reads the prop's jitter clock a fixed few seconds of it away, so
+    // a new rate is continuous for it too.
+    let extra = format!("{BOILING}\nechoes = {{ count = 2, spread = 1.0 }}");
+    let (mut resolver, id) = one_prop(&extra, LivingDefaults::default());
+    run(&mut resolver, 1.0, 1.0 / 60.0);
+    let echo_times = |props: &LivingProps| -> Vec<f64> {
+        let prop = props.prop(id);
+        (0..prop.echo_count())
+            .map(|e| prop.echo_jitter_time(e, prop.jitter_now()))
+            .collect()
+    };
+    let before = echo_times(resolver.living_props());
+    assert_eq!(before.len(), 2);
+    resolver
+        .living_props_mut()
+        .tune_jitter_rate(LivingScope::All, 2.0);
+    assert_eq!(echo_times(resolver.living_props()), before);
+    resolver.process_living(0.1);
+    for (after, before) in echo_times(resolver.living_props()).iter().zip(&before) {
+        assert!((after - before - 0.2).abs() < 1e-9, "{after} from {before}");
+    }
 }

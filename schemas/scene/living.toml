@@ -16,7 +16,8 @@ description = "A scene's [living] table: what it says about all its living props
 shadows = { type = "enum", values = ["blended", "drift"], description = "What the shadows follow: blended (what's drawn; the default) or drift (a slower pose with no stagger or jitter)" }
 stagger = { type = "enum", values = ["none", "per_level", "per_branch"], description = "How parts fall out of phase, over each spec's and each prop's own" }
 softness = { type = "f32", min = 0.0, max = 1.0, description = "How soft every prop's silhouette is, over each spec's: the body fades where it turns away from the eye. 0 is a hard edge" }
-species = { type = "table", description = "[living.species.<spec>]: one species' own values (amplitude, step, glide, jitter, stagger, softness, echoes, variance), over everything above a field at a time. Keyed by the spec's meta.name, which is what a living prop's model.asset names. flint validate checks each" }
+jitter_rate = { type = "f32", min = 0.0, max = 8.0, description = "How fast every prop's boil (leaf cards and shades) ticks, times each spec's jitter.step pace: 2 is twice as fast, 0.5 half, 0 holds it. Unset is 1" }
+species = { type = "table", description = "[living.species.<spec>]: one species' own values (amplitude, step, glide, jitter, stagger, softness, jitter_rate, echoes, variance), over everything above a field at a time. Keyed by the spec's meta.name, which is what a living prop's model.asset names. flint validate checks each" }
 
 [table.living.fields.echoes]
 type = "table"

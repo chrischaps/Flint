@@ -1,0 +1,86 @@
+# The boil's pace, live (#529): one held flame whose leaf cards flicker on the
+# jitter clock, a step of 0.125 s in its spec. examples/scripts/living_boil_rate.rhai
+# asks `tune_living` for a jitter rate, times that pace:
+#
+#   2.0 s: jitter_rate 2   (twice as fast, at once)
+#   4.0 s: jitter_rate 0.5 (half the spec's pace, at once)
+#   6.0 s: jitter_rate 1   (back to the spec's, eased over a second)
+#
+# No card turns at a change: the jitter clock moves on at the new rate from
+# where it stands, so each card holds what it shows until its next tick.
+#
+#   cargo run --bin flint-player -- examples/living_boil_rate.scene.toml
+#   cargo run --bin flint -- render examples/living_boil_rate.scene.toml --scripts --time 1.5..2.5 -o frames/f-%05d.png
+#
+# The spec is specs/examples/form_living.procgen.toml.
+
+[scene]
+name = "Living Boil Rate"
+version = "1.0"
+description = "A held flame whose boil doubles, halves and eases back to its spec's pace"
+
+[camera]
+position = [0.0, 0.75, 3.2]
+target = [0.0, 0.68, 0.0]
+fov = 36.0
+
+[environment]
+ambient_sky = [0.30, 0.34, 0.46]
+ambient_ground = [0.10, 0.08, 0.08]
+
+[post_process]
+exposure = 1.0
+bloom_enabled = true
+bloom_intensity = 0.06
+bloom_threshold = 1.1
+vignette_enabled = true
+vignette_intensity = 0.35
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.05, 0.07, 0.14, 1.0]
+horizon_color = [0.10, 0.09, 0.13, 1.0]
+haze_color = [0.14, 0.11, 0.14, 0.4]
+cloud_tint = [0.5, 0.45, 0.5, 0.5]
+cloud_coverage = 0.2
+sun_glow = 0.4
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 30, 0]
+[entities.sun.light]
+type = "directional"
+direction = [0.45, 0.6, 0.66]    # toward the light, over the camera's left shoulder
+color = [1.0, 0.84, 0.66]
+intensity = 2.4
+
+[entities.rim]
+[entities.rim.transform]
+position = [0, 30, 0]
+[entities.rim.light]
+type = "directional"
+direction = [-0.6, 0.35, -0.7]
+color = [0.55, 0.62, 0.95]
+intensity = 0.6
+
+[entities.ground]
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-20, -0.2, -20]
+max = [20, 0, 20]
+[entities.ground.material]
+color = [0.05, 0.045, 0.06, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+[entities.flame]
+[entities.flame.transform]
+position = [0.0, 0.0, 0.0]
+[entities.flame.model]
+asset = "form_living"
+[entities.flame.living_prop]
+phase_offset = 0.25
+
+[entities.director.script]
+source = "living_boil_rate.rhai"

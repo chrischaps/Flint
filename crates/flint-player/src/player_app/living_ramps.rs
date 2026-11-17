@@ -4,7 +4,8 @@
 //! one frame pops. So a timed tune splits in three. The grove's four clock
 //! knobs are the wooze field's, and ease on its own ramps, as `set_wooze`'s do.
 //! The other continuous knobs (each echo's spread and alpha, variance's
-//! amount and steady, softness, and a species' own clock) ease here, on a
+//! amount and steady, softness, the jitter rate, and a species' own clock) ease
+//! here, on a
 //! [`Ramp`] each: the field's own smoothstep, stepped on the living clock, so
 //! a freeze or a paused game state holds them where they are. The discrete
 //! ones (echo count, stagger, keep size, the boil) switch at the start, as
@@ -35,11 +36,12 @@ pub(crate) enum Eased {
     VarianceAmount,
     VarianceSteady,
     Softness,
+    JitterRate,
 }
 
 impl Eased {
     /// Every one, in the order a species table lists them.
-    pub(crate) const ALL: [Eased; 9] = [
+    pub(crate) const ALL: [Eased; 10] = [
         Eased::Amplitude,
         Eased::Step,
         Eased::Glide,
@@ -49,15 +51,17 @@ impl Eased {
         Eased::VarianceAmount,
         Eased::VarianceSteady,
         Eased::Softness,
+        Eased::JitterRate,
     ];
 
     /// The ones the whole grove's `[living]` holds: its clock is the field's.
-    pub(crate) const GROVE: [Eased; 5] = [
+    pub(crate) const GROVE: [Eased; 6] = [
         Eased::EchoSpread,
         Eased::EchoAlpha,
         Eased::VarianceAmount,
         Eased::VarianceSteady,
         Eased::Softness,
+        Eased::JitterRate,
     ];
 
     /// Its key, as `clear_living` names it.
@@ -72,6 +76,7 @@ impl Eased {
             Eased::VarianceAmount => "variance.amount",
             Eased::VarianceSteady => "variance.steady",
             Eased::Softness => "softness",
+            Eased::JitterRate => "jitter_rate",
         }
     }
 
@@ -99,6 +104,7 @@ impl Eased {
             Eased::VarianceAmount => variance.and_then(|v| v.amount),
             Eased::VarianceSteady => variance.and_then(|v| v.steady),
             Eased::Softness => def.softness,
+            Eased::JitterRate => def.jitter_rate,
         }
     }
 
@@ -116,6 +122,7 @@ impl Eased {
             Eased::VarianceAmount => variance.and_then(|v| v.amount.take()),
             Eased::VarianceSteady => variance.and_then(|v| v.steady.take()),
             Eased::Softness => def.softness.take(),
+            Eased::JitterRate => def.jitter_rate.take(),
         }
     }
 
@@ -133,6 +140,7 @@ impl Eased {
             Eased::VarianceAmount => &mut def.variance.get_or_insert_with(variance).amount,
             Eased::VarianceSteady => &mut def.variance.get_or_insert_with(variance).steady,
             Eased::Softness => &mut def.softness,
+            Eased::JitterRate => &mut def.jitter_rate,
         };
         *slot = Some(value);
     }
@@ -149,6 +157,7 @@ impl Eased {
             Eased::VarianceAmount => view.variance_amount.value,
             Eased::VarianceSteady => view.variance_steady.value,
             Eased::Softness => view.softness.value,
+            Eased::JitterRate => view.jitter_rate.value,
         }
     }
 }
@@ -157,6 +166,7 @@ impl Eased {
 fn grove_def(living: &LivingDef) -> LivingSpeciesDef {
     LivingSpeciesDef {
         softness: living.softness,
+        jitter_rate: living.jitter_rate,
         echoes: living.echoes,
         variance: living.variance,
         ..Default::default()
@@ -166,6 +176,7 @@ fn grove_def(living: &LivingDef) -> LivingSpeciesDef {
 fn grove_living(def: LivingSpeciesDef) -> LivingDef {
     LivingDef {
         softness: def.softness,
+        jitter_rate: def.jitter_rate,
         echoes: def.echoes,
         variance: def.variance,
         ..Default::default()
@@ -323,6 +334,7 @@ impl LivingSubsystem {
                 let mut def = grove_def(&tune.living);
                 eased.push((None, take_eased(&mut def, &Eased::GROVE)));
                 tune.living.softness = def.softness;
+                tune.living.jitter_rate = def.jitter_rate;
                 tune.living.echoes = def.echoes;
                 tune.living.variance = def.variance;
                 // A species no prop grows from keeps its values at once, and

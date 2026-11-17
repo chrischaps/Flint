@@ -124,6 +124,7 @@ pub(crate) fn species_table(over: &SpeciesOverride) -> LivingSpeciesDef {
         echoes: echoes_table(over.echoes),
         variance: variance_table(over.variance),
         softness: over.softness,
+        jitter_rate: over.jitter_rate,
     }
 }
 
@@ -144,7 +145,7 @@ fn variance_table(variance: VarianceOverride) -> Option<LivingVarianceDef> {
 }
 
 /// The keys [`PlayerApp::clear_living_species`] takes, each a knob or a group.
-pub const SPECIES_KEYS: [&str; 14] = [
+pub const SPECIES_KEYS: [&str; 15] = [
     "amplitude",
     "step",
     "glide",
@@ -159,6 +160,7 @@ pub const SPECIES_KEYS: [&str; 14] = [
     "variance.steady",
     "variance.keep_size",
     "softness",
+    "jitter_rate",
 ];
 
 /// One knob over some props (#247): the first one's value, whether they
@@ -188,6 +190,7 @@ pub(crate) struct LivingView {
     pub variance_steady: KnobRead<f32>,
     pub keep_size: KnobRead<bool>,
     pub softness: KnobRead<f32>,
+    pub jitter_rate: KnobRead<f32>,
 }
 
 /// One knob over `props`. For the whole grove, a prop whose species sets its
@@ -250,6 +253,7 @@ impl LivingView {
             variance_steady: read_knob(props, grove, variance.steady, |p| &p.variance_steady),
             keep_size: read_knob(props, grove, variance.keep_size, |p| &p.keep_size),
             softness: read_knob(props, grove, 0.0, |p| &p.softness),
+            jitter_rate: read_knob(props, grove, 1.0, |p| &p.jitter_rate),
         }
     }
 
@@ -276,6 +280,7 @@ impl LivingView {
                     keep_size: Some(self.keep_size.value),
                 }),
                 softness: Some(self.softness.value),
+                jitter_rate: Some(self.jitter_rate.value),
                 ..Default::default()
             },
             boil: Some(boil),
@@ -297,6 +302,7 @@ pub(crate) fn species_def_of(moved: &WoozePreset) -> LivingSpeciesDef {
         echoes: moved.living.echoes,
         variance: moved.living.variance,
         softness: moved.living.softness,
+        jitter_rate: moved.living.jitter_rate,
     }
 }
 
@@ -420,6 +426,9 @@ impl LivingSubsystem {
         }
         if out(view.softness.mixed, "softness") {
             knobs.living.softness = None;
+        }
+        if out(view.jitter_rate.mixed, "jitter_rate") {
+            knobs.living.jitter_rate = None;
         }
         (knobs, left_out)
     }
@@ -660,6 +669,7 @@ impl LivingSubsystem {
                 echoes: echoes_table(echoes),
                 variance: variance_table(variance),
                 softness: props.global_softness(),
+                jitter_rate: props.global_jitter_rate(),
                 species,
             },
             boil: Some(self.living_boil(ctx)),
@@ -938,7 +948,8 @@ pub(crate) fn tune_global(
     problems
 }
 
-/// Stagger, echoes, variance and softness. A field that's set goes to every prop, and one
+/// Stagger, echoes, variance, softness and the jitter rate. A field that's set
+/// goes to every prop, and one
 /// that isn't stays as each prop has it: moving echo `count` in a grove of
 /// several species leaves each its own `spread` and `alpha`.
 pub(crate) fn tune_props(
@@ -967,6 +978,9 @@ pub(crate) fn tune_props(
     props.tune_variance(LivingScope::All, variance);
     if let Some(softness) = super::living_props::softness_of(living.softness, &mut say) {
         props.tune_softness(LivingScope::All, softness);
+    }
+    if let Some(rate) = super::living_props::jitter_rate_of(living.jitter_rate, &mut say) {
+        props.tune_jitter_rate(LivingScope::All, rate);
     }
     problems
 }
@@ -1104,6 +1118,7 @@ pub(super) mod panel {
             variance_steady: view.variance_steady.mixed,
             keep_size: view.keep_size.mixed,
             softness: view.softness.mixed,
+            jitter_rate: view.jitter_rate.mixed,
         }
     }
 
@@ -1126,6 +1141,7 @@ pub(super) mod panel {
             (Knob::VarianceSteady, layers(&view.variance_steady)),
             (Knob::KeepSize, layers(&view.keep_size)),
             (Knob::Softness, layers(&view.softness)),
+            (Knob::JitterRate, layers(&view.jitter_rate)),
         ] {
             sources.set(knob, labels);
         }
@@ -1560,6 +1576,7 @@ pub(super) fn clear_species(
             "variance.steady" => over.variance.steady = None,
             "variance.keep_size" => over.variance.keep_size = None,
             "softness" => over.softness = None,
+            "jitter_rate" => over.jitter_rate = None,
             other => unknown.push(other.to_string()),
         }
     }

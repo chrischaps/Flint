@@ -408,6 +408,12 @@ The fast layer boils the leaf cards on a clock of its own, `jitter.step` and `ji
 
 `amplitude = 0`, or leaving `leaf_cards` out of `targets`, turns the layer off. It only reaches the player: `flint gen --strip` draws the slow layer.
 
+**Its pace, live** (Flint#529). `jitter_rate` runs the boil faster or slower than its spec's `jitter.step`, as a multiplier: 2 ticks twice as often, 0.5 half as often, 0 holds every card where it is, up to 8. Each prop's jitter reads a clock of its own that moves on by the frame's seconds times its rate, so a new rate changes how fast the clock runs from where it stands and never where it is: no card turns and no shade changes at the moment it's set, and each channel holds what it shows until its next tick, which comes after the time it had left over the rate. An echo reads that same clock a fixed few of its seconds away, so it stays the same many boil ticks behind at any rate. The pose clock (`step`, the wooze field's) doesn't move with it: a quickened form flickers faster, not wider. It's a run-time knob like softness: a scene's `[living] jitter_rate`, a species' own, a preset, the F3 panel's **jitter rate** slider and `tune_living(#{ living: #{ jitter_rate: 2.0 } })` (or eased, `tune_living(map, seconds)`) all set it through the same layers, and `--report json` gives each prop's with its layer. Unset is 1, and at 1 the jitter clock is the props' clock to the bit, so a scene that never says it draws as before. `examples/living_boil_rate.scene.toml` doubles, halves and eases a held flame's boil back:
+
+```bash
+flint render examples/living_boil_rate.scene.toml --scripts --time 1.5..4.5 --fps 48 -o frames/f-%05d.png
+```
+
 ### Shadows
 
 A tree's shadow follows what's drawn by default, stagger and leaf jitter included, at no extra cost. Whether a whole shadow boiling reads as life or as noise is a question for each scene, so `[living] shadows = "drift"` gives the shadow bones of its own: a slower pose at half the speed, with no stagger and no jitter. It adds about 0.05 ms a frame for 40 oaks.
@@ -601,7 +607,7 @@ A species is a spec, named by its `meta.name`, which is what a living prop's `mo
 | `entity` | A `living_prop` component | `stagger` only. `lineage_seed`, `pose_ring` and `phase_offset` are the entity's alone |
 | `global` | The scene's `[living]` and `[wooze]` globals, a preset it names, and any knob moved live for the whole grove | Everything |
 | `zone:<name>` | A `[[wooze.zone]]` where the prop stands | The clock's four knobs |
-| `species` | `[living.species.<spec>]` in the scene or a preset it names (the scene's own first), the panel at a species, or a script's `tune_living(#{ species: ... })` | The clock's four knobs, `stagger`, `echoes`, `variance`, `softness` |
+| `species` | `[living.species.<spec>]` in the scene or a preset it names (the scene's own first), the panel at a species, or a script's `tune_living(#{ species: ... })` | The clock's four knobs, `stagger`, `echoes`, `variance`, `softness`, `jitter_rate` |
 
 Each layer beats every one above it, a field at a time: a species that sets echo `count` still takes `spread` from the layers below. So a global knob does what it always did, and a species value survives it. Move `glide` on the [F3 panel](../guides/debug-panels.md#living-props-f3) and every tree takes it except a species that set its own. Pick a species under the panel's **Tuning**, or click one of its trees in the world, to move its own values, see the layer each one comes from, and clear them.
 

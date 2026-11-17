@@ -306,3 +306,58 @@ fn a_bad_value_is_named_and_left_alone() {
         "{problem}"
     );
 }
+
+/// #529: a script doubles the boil's pace at once and eases it to half, a
+/// species takes a rate of its own and gives it back, and every prop's jitter
+/// clock moves on at the rate the knob reads.
+#[test]
+fn the_jitter_rate_steps_eases_and_clears_and_the_boil_follows_it() {
+    let mut app = grove();
+    app.tick_procgen_for_test(1.0 / 60.0);
+    let jitter_times = |app: &mut PlayerApp| -> Vec<f64> {
+        let props = app.core.procgen_resolver.living_props();
+        props.props().iter().map(|p| p.jitter_time()).collect()
+    };
+    let rate = |app: &mut PlayerApp| app.living_view(None).jitter_rate.value;
+    assert_eq!(rate(&mut app), 1.0, "the spec's pace, with nothing said");
+
+    app.tune_living_from_script(map("[living]\njitter_rate = 2.0"))
+        .unwrap();
+    assert_eq!(rate(&mut app), 2.0);
+    let before = jitter_times(&mut app);
+    app.tick_procgen_for_test(0.1);
+    for (after, before) in jitter_times(&mut app).iter().zip(&before) {
+        assert!((after - before - 0.2).abs() < 1e-9, "{after} from {before}");
+    }
+
+    // Eased to half over a second: down a little each frame, there at the end.
+    app.tune_living_over(map("[living]\njitter_rate = 0.5"), 1.0)
+        .unwrap();
+    let mut last = rate(&mut app);
+    for frame in 0..60 {
+        app.tick_procgen_for_test(1.0 / 60.0);
+        let now = rate(&mut app);
+        assert!(
+            now <= last && last - now < 0.05,
+            "frame {frame}: {last} to {now}"
+        );
+        last = now;
+    }
+    assert_eq!(last, 0.5);
+    assert!(app.living().ramps.is_empty());
+
+    // A species' own beats the grove's, and clearing it gives the grove's back.
+    app.tune_living_from_script(map("species = \"sapling\"\njitter_rate = 4.0"))
+        .unwrap();
+    assert_eq!(rate(&mut app), 4.0);
+    app.clear_living_species("sapling", &["jitter_rate".to_string()])
+        .unwrap();
+    assert_eq!(rate(&mut app), 0.5);
+
+    // Out of range is named and changes nothing.
+    let problem = app
+        .tune_living_from_script(map("[living]\njitter_rate = 9.0"))
+        .unwrap_err();
+    assert!(problem.contains("jitter_rate = 9"), "{problem}");
+    assert_eq!(rate(&mut app), 0.5);
+}
