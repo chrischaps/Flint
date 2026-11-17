@@ -16,6 +16,8 @@ flint frame open captures/hitch_metronome-t3.101.flintframe --pass Scene --entit
 
 The window reads only the folder, the way `flint frame show` does: no scene, no schemas. A capture from another machine, an older engine or an issue opens the same. A `--frame-dump` file opens too, as passes and draws with no images. It opens on the finished frame. `--pass <name>` opens on a pass instead (`Bloom (2)` is the second bloom), `--target <id>` on one of its images, `--entity <name>` with an entity selected (any part of its name finds it), and `--wipe previous` or `--wipe final` with a wipe already drawn.
 
+A capture the player took while its scope recorder ran holds `trace.json` too, and opens with a second tab, the **Profiler**: the frames around the captured one as a strip, a flame chart and each scope's statistics. **P** switches between the tabs, and `--profile` opens on the profiler. A trace file opens on its own the same way ([Profiling: the flame view](profiling.md#the-flame-view)).
+
 On its own it shows what the frame did, as captured. A capture that holds its replay inputs can also be drawn again, step by step and with parts left out ([Replaying a frame](#replaying-a-frame)); that needs the scene, its assets and a GPU.
 
 ## The window

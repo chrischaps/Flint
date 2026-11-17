@@ -11,6 +11,11 @@
 //! draw limit of the scene pass or the one selected, hidden entities,
 //! passes off) draws the frame again and shows it in the capture's place.
 //!
+//! It also opens a scope trace (#1099): a player's `--trace` file alone, or
+//! the `trace.json` a capture taken while recording holds. A trace is the
+//! profiler tab (`profile.rs`): the frame strip, a flame chart of the frames
+//! chosen, and each scope's statistics; a capture with one has both tabs.
+//!
 //! - `model.rs`: the passes, draws and images as rows; stepping, finding
 //!   an entity, the table's filter and sort. No egui.
 //! - `timing.rs`: the bottom panel's bars and history, as data.
@@ -18,26 +23,32 @@
 //! - `viewer.rs` + `viewer.wgsl`: the image pane, drawn on the GPU through
 //!   an egui-wgpu paint callback.
 //! - `replay.rs`: the replay's worker thread and what it has drawn.
-//! - `ui.rs`: the window laid out.
+//! - `ui.rs`: the frame tab laid out.
+//! - `profile.rs`: the profiler tab, over `frame::trace`'s reader.
+//! - `window.rs`: the two tabs.
 //! - `host.rs`: a winit window, or one frame into a PNG (`--screenshot`).
 
 mod host;
 mod loader;
 mod model;
+mod profile;
 mod replay;
-mod timing;
+pub(crate) mod timing;
 mod ui;
 mod viewer;
+mod window;
 
 use super::read::Capture;
+use super::trace::Trace;
 use crate::output;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Args, ValueEnum};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Args)]
 pub struct OpenArgs {
-    /// The capture folder (or its manifest.json, or a --frame-dump file)
+    /// The capture folder (or its manifest.json, or a --frame-dump file),
+    /// or a scope trace (the .json `flint play --trace` writes)
     pub capture: PathBuf,
     /// Open on this pass (`Scene`, `Bloom (2)`); else the finished frame
     #[arg(long, value_name = "NAME")]
@@ -92,6 +103,40 @@ pub struct OpenArgs {
     /// reads
     #[arg(long, value_name = "X,Y", value_parser = parse_point, hide = true)]
     pub hover: Option<[f32; 2]>,
+    #[command(flatten)]
+    pub trace: TraceOpenArgs,
+}
+
+/// The profiler tab's flags (#1099), a heading of their own.
+#[derive(Args, Default)]
+#[command(next_help_heading = "Profiler (a trace)")]
+pub struct TraceOpenArgs {
+    /// Open on the profiler tab (a trace alone always does)
+    #[arg(long)]
+    pub profile: bool,
+    /// The trace's frames to choose: a frame number, `A..B`, `hitch` (the
+    /// capture's hitch, else the worst; the default) or `worst` (the
+    /// longest frame)
+    #[arg(long, value_name = "FRAME", value_parser = parse_frame_choice)]
+    pub trace_frame: Option<profile::FrameChoice>,
+    /// Choose a scope by name (or part of it): every call marked, its time
+    /// plotted across the trace
+    #[arg(long, value_name = "NAME")]
+    pub scope: Option<String>,
+    /// Tint each bar by how much longer its path took than in the trace's
+    /// median frame (C in the window)
+    #[arg(long)]
+    pub compare: bool,
+}
+
+impl TraceOpenArgs {
+    fn any(&self) -> bool {
+        self.profile || self.trace_frame.is_some() || self.scope.is_some() || self.compare
+    }
+}
+
+fn parse_frame_choice(s: &str) -> Result<profile::FrameChoice, String> {
+    profile::FrameChoice::parse(s)
 }
 
 fn parse_point(s: &str) -> Result<[f32; 2], String> {
@@ -117,8 +162,45 @@ impl OpenArgs {
     }
 }
 
+/// What `path` is: a trace file, or a capture and the trace it holds.
+fn open_path(path: &Path) -> Result<window::Opened> {
+    let shown = Capture::shown(path);
+    let named_json = path.is_file()
+        && path.file_name().is_some_and(|n| n != "manifest.json")
+        && path.extension().is_some_and(|e| e == "json");
+    if named_json {
+        let text = std::fs::read_to_string(path).with_context(|| format!("reading {shown}"))?;
+        if Trace::looks_like(&text) {
+            let trace = Trace::read(&text).with_context(|| shown.clone())?;
+            return Ok(window::Opened {
+                capture: None,
+                trace: Some((trace, shown)),
+                trace_problem: None,
+            });
+        }
+    }
+    let capture = Capture::open(path)?;
+    let (mut trace, mut trace_problem) = (None, None);
+    if let Some(file) = capture.description.trace.clone() {
+        let at = capture.dir.join(&file);
+        let at_shown = Capture::shown(&at);
+        match Trace::open(&at) {
+            Ok(t) => trace = Some((t, at_shown)),
+            Err(e) => {
+                tracing::warn!("the capture's trace: {e:#}");
+                trace_problem = Some(format!("its trace {file} didn't read: {e:#}"));
+            }
+        }
+    }
+    Ok(window::Opened {
+        capture: Some((capture, shown)),
+        trace,
+        trace_problem,
+    })
+}
+
 pub fn run(args: OpenArgs) -> Result<()> {
-    let capture = Capture::open(&args.capture)?;
+    let opened = open_path(&args.capture)?;
     let shown = Capture::shown(&args.capture);
     let start = ui::Start {
         pass: args.pass.clone(),
@@ -148,7 +230,27 @@ pub fn run(args: OpenArgs) -> Result<()> {
         scene: args.scene.clone(),
         schemas: args.schemas.clone(),
     };
-    if let Some(name) = &args.pass {
+    let frame_flags = args.pass.is_some()
+        || args.target.is_some()
+        || args.entity.is_some()
+        || args.wipe.is_some()
+        || start.replay.is_some();
+    if opened.capture.is_none() && frame_flags {
+        bail!(
+            "{shown} is a scope trace, not a frame capture: --pass, --target, --entity, \
+             --wipe and the replay flags are a capture's"
+        );
+    }
+    if opened.trace.is_none() && args.trace.any() {
+        let why = if opened.trace_problem.is_some() {
+            "its trace didn't read"
+        } else {
+            "it holds no trace (a player capture taken while recording does: \
+             `--capture-on-hitch --trace-seconds 5`)"
+        };
+        bail!("{shown} has no profiler tab: {why}");
+    }
+    if let (Some(name), Some((capture, _))) = (&args.pass, &opened.capture) {
         let model = model::Model::new(&capture.description);
         if model.find_pass(name).is_none() {
             let names: Vec<String> = model.passes.iter().map(|p| p.key.clone()).collect();
@@ -163,15 +265,26 @@ pub fn run(args: OpenArgs) -> Result<()> {
             args.scale
         );
     }
+    let launch = host::Launch {
+        opened,
+        start,
+        profile: profile::ProfileStart {
+            frame: args.trace.trace_frame.clone(),
+            scope: args.trace.scope.clone(),
+            compare: args.trace.compare,
+            capture_hitch: None,
+        },
+        on_profile: args.trace.profile,
+    };
     match &args.screenshot {
         Some(out) => {
             let size = [args.width.max(320), args.height.max(240)];
-            host::screenshot(capture, shown, start, size, args.scale, args.hover, out)?;
+            host::screenshot(launch, size, args.scale, args.hover, out)?;
             let written = out.display().to_string().replace('\\', "/");
             output::say!("wrote {written}");
             output::when_json(|| serde_json::json!({ "written": [written] }));
             Ok(())
         }
-        None => host::run_window(capture, shown, start, [args.width, args.height]),
+        None => host::run_window(launch, [args.width, args.height]),
     }
 }
