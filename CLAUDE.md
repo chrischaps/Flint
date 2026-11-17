@@ -75,6 +75,13 @@ Flint uses an **edit -> validate -> play** loop:
    ```
    More: `crates/flint-player/CLAUDE.md`.
 
+5. **`flint capture`** -- A shot list (`[[shot]]` scene, seconds, look, input script) captured as
+   deterministic frame sequences, each take a stepped `flint play`; `--verify` runs each twice and
+   names the frames that differ, `--encode mp4` with ffmpeg. More: `crates/flint-cli/CLAUDE.md`.
+   ```bash
+   flint capture showcase_game/trailer.shots.toml --verify --encode mp4
+   ```
+
 **For AI agents:** Before playing, rendering or bundling, `flint check <dir|scene> [--json]` is the pre-flight (#687): every problem of a project in one run, each with its file, entity, field, a hint and the paths tried, exit 1 on an error, scripts included (`flint script check` alone gives each script's mistakes as `file:line:col`, #694; `crates/flint-cli/CLAUDE.md`). Every command that opens no window takes the global `--json` (#710): exactly one JSON document on stdout, everything else on stderr, exit 1 on a failure with the report or an `{"error": ...}` document still on stdout; read answers from it, not from the text (`crates/flint-cli/CLAUDE.md`, "Output"). After visual changes, always run `flint render` to verify before moving on. The render command loads models (found by the project's one asset search: `models/` beside the scene, beside each directory up to the project root, then `engine/`; `flint asset where models <name> --scene <scene>` shows it), generates geometry, and computes the full transform hierarchy.
 
 ## Architecture
@@ -82,7 +89,7 @@ Flint uses an **edit -> validate -> play** loop:
 31-crate Cargo workspace (plus `tools/arch-analyzer`, a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph and the book's crate table, checked in CI). Every member but `flint-android` is a default member, so plain `cargo test` runs every desktop crate's tests (#758):
 
 ```
-flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, check, env, validate,
+flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, capture, check, env, validate,
   │                 examples, asset, render, style, gen, prefab, bundle, export, music, goldens, dxc
   │                 (`music`: validate, play, render, calibrate, chart play|replay, #709; hidden aliases: serve, preview,
   │                 gen-preview, spline-edit, terrain-edit, tex-edit, and for one release the old music names, spike-rumble)

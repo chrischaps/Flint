@@ -8,9 +8,10 @@ mod output;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, bundle, check as check_cmd, dxc, edit_router, entity, env, examples, export, gen,
-    gen_preview, init, legacy_names, music, play, prefab, preview, query, render, render_goldens,
-    scene, schema, script, spike_rumble, spline_edit, style, terrain_edit, tex_edit, validate,
+    asset, bundle, capture, check as check_cmd, dxc, edit_router, entity, env, examples, export,
+    gen, gen_preview, init, legacy_names, music, play, prefab, preview, query, render,
+    render_goldens, scene, schema, script, spike_rumble, spline_edit, style, terrain_edit,
+    tex_edit, validate,
 };
 
 #[derive(Parser)]
@@ -154,6 +155,10 @@ enum Commands {
     /// Play a scene with first-person controls and physics
     Play(play::PlayArgs),
 
+    /// Capture a shot list as deterministic frame sequences (each take a
+    /// stepped run of `flint play`), with --verify and --encode mp4
+    Capture(Box<capture::CaptureArgs>),
+
     /// Preview a 3D model file (GLB/glTF) with orbit camera
     #[command(hide = true)]
     Preview(preview::PreviewArgs),
@@ -268,6 +273,7 @@ fn run(cli: Cli) -> Result<()> {
         Commands::SpikeRumble(args) => spike_rumble::run(args),
         Commands::Goldens(args) => render_goldens::run_command(args),
         Commands::Play(args) => play::run(args),
+        Commands::Capture(args) => capture::run(*args),
         Commands::Prefab(cmd) => prefab::run(cmd),
         Commands::Asset(cmd) => asset::run(cmd),
         Commands::Edit(args) => edit_router::run(args),

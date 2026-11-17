@@ -33,6 +33,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint asset job list` | List all generation jobs |
 | `flint edit <file>` | Unified interactive editor (auto-detects file type) |
 | `flint play [scene]` | Play a scene with first-person controls and physics; with no scene, the project's default (`flint.toml`'s `[project] scene`) |
+| `flint capture <shots.toml>` | Capture a shot list as deterministic frame sequences, each take a stepped `flint play`; `--verify` runs each twice and names the frames that differ, `--encode mp4` ([Filming a Showcase](../guides/filming-a-showcase.md)) |
 | `flint render <scene>` | Render a scene to PNG (headless) |
 | `flint dxc status` | What DX12 compiles shaders with here, and why: DXC is linked into the binary ([DX12's shader compiler](#dx12s-shader-compiler)); `flint dxc notices` writes DXC's licence and notices for a Windows build you ship |
 | `flint goldens <file>.goldens.toml` | Render a list of scenes and gate each against its golden PNG; `--bless` rewrites them ([Golden Suites](../guides/headless-rendering.md#golden-suites)) |
@@ -430,6 +431,37 @@ cargo run --bin flint-player -- examples/phase4_runtime.scene.toml
 cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
   scenes/level_1.scene.toml
 ```
+
+## The `capture` Command
+
+Captures a shot list (`[capture]` and its `[[shot]]`s: a scene, `seconds`,
+optionally a look, a seed, an input script and several takes) as PNG frame
+sequences, each take one run of `flint play` with the clock stepped exactly
+one frame a frame, so a slow frame changes nothing on screen. The list's
+keys and what a take is: [Filming a Showcase](../guides/filming-a-showcase.md).
+
+```bash
+flint capture showcase_game/trailer.shots.toml
+flint capture showcase_game/trailer.shots.toml --verify --encode mp4
+flint capture tools/showcase/film.toml --shot 02_type --scale 0.5 --dry-run --json
+```
+
+### Capture Flags
+
+| Flag | Description |
+|------|-------------|
+| `--shot <id>` | Only this shot (repeatable) |
+| `--take <name>` | Only takes of this name (repeatable) |
+| `--scale <f>` | A fraction of each shot's size, keeping the point canvas |
+| `--width <w>`, `--height <h>` | One frame size for every shot |
+| `--out <dir>` | Where takes go (default: the list's `out`, else `captures/<list name>/` beside it) |
+| `--verify` | Capture each take twice and compare the runs; exit 1 when a frame differs |
+| `--tolerance <levels>` | With `--verify`: the largest 8-bit difference that still counts as the same |
+| `--encode mp4` | Also an MP4 a take (H.264, BT.709, no sound; needs ffmpeg on `PATH`) |
+| `--dry-run` | Print each take's frames and `flint play` command line; capture nothing |
+| `--schemas <dir>` | Schema directories for the player (repeatable; default: the scene's project's) |
+
+Words after `--` are added to every take's `flint play` command line.
 
 ## The `render` Command
 

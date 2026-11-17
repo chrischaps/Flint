@@ -1,6 +1,6 @@
 """Cut the showcase film together from its captured takes (#437, #593).
 
-    python tools/showcase/capture.py --cut master   # the takes a cut uses, at its size
+    python tools/showcase/cut.py master --capture   # the takes a cut uses, at its size
     python tools/showcase/music.py master           # its score, to the same list
     python tools/showcase/cut.py master             # master MP4, web MP4 + WebM, poster
     python tools/showcase/check_cut.py master       # every frame, the sound, the bars
@@ -19,7 +19,7 @@ same file its music is scored to (music.py): a [cut] table (size, fps, the
 bar grid, the titles' layout, the soundtrack) and its [[shot]]s in order,
 each a take of a beat from `start_s` seconds for a number of bars. The last
 shot's take runs on for `tail_bars` more, where the music rings out. This
-reads the frames capture.py wrote for the cut
+reads the frames `flint capture` wrote for the cut (`--capture` runs it)
 (`<out>/<cut>/<beat>/<take>/frame_NNNN.png`, frame 1 at t = 0), composes
 the titles over them in a worker pool and pipes every frame once to ffmpeg,
 which encodes the cut with its soundtrack (and, for the reel, each
@@ -71,7 +71,6 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from capture import load_cut  # noqa: E402
 
 ROOT = HERE.parents[1]
 
@@ -91,6 +90,20 @@ TAG_709 = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:rang
 
 
 # --- The cut ---------------------------------------------------------------
+
+def load_cut(name):
+    """A cut's file, tools/showcase/cuts/<name>.toml: [cut] and [[shot]]."""
+    path = HERE / "cuts" / f"{name}.toml"
+    if not path.exists():
+        have = sorted(p.stem for p in (HERE / "cuts").glob("*.toml"))
+        raise SystemExit(f"no cut {name!r} in tools/showcase/cuts/ (have {have})")
+    return tomllib.loads(path.read_text(encoding="utf-8"))
+
+
+def load_film():
+    """film.toml, the film's shot list for `flint capture` (#722)."""
+    return tomllib.loads((HERE / "film.toml").read_text(encoding="utf-8"))
+
 
 def load(name, scale):
     """The cut's file, with its frame size (and safe area) scaled for takes
@@ -137,8 +150,8 @@ def build_timeline(cut, takes):
         paths = [folder / f"frame_{first + k:04d}.png" for k in range(n + tail)]
         missing = [p for p in (paths[0], paths[-1]) if not p.exists()]
         if missing:
-            raise SystemExit(f"{what} needs {missing[0]}: python tools/showcase/capture.py "
-                             f"--cut {c['name']}")
+            raise SystemExit(f"{what} needs {missing[0]}: python tools/showcase/cut.py "
+                             f"{c['name']} --capture")
         # A take stepped at another rate would play at the wrong speed
         record = folder / "take.json"
         if record.exists():
@@ -148,7 +161,7 @@ def build_timeline(cut, takes):
                 raise SystemExit(
                     f"{folder} was captured {made.get('width')}x{made.get('height')} at "
                     f"{made.get('fps')} fps; the cut is {c['width']}x{c['height']} at {fps}: "
-                    f"python tools/showcase/capture.py --cut {c['name']} (or --scale here)")
+                    f"python tools/showcase/cut.py {c['name']} --capture (or --scale here)")
         shots.append({**shot, "take": take, "index": i, "first": len(frames), "frames": n,
                       "tail": tail})
         frames += paths
@@ -837,6 +850,122 @@ def make_poster(cut, takes, out_dir):
     return path
 
 
+# --- Capture ---------------------------------------------------------------
+#
+# `flint capture` (#722) shoots a shot list; a cut needs film.toml cut down
+# to what it uses, on its own terms: the cut's frame size, frame rate and
+# point canvas (`points_wide`), only the takes its shots use, each only as
+# far as its last shot reaches, into <out>/<cut>/ so a 1080x1920 take never
+# overwrites the master's.
+
+def cut_needs(cut, film):
+    """{(beat id, take name): seconds of the take the cut's shots reach}.
+    A take always starts at 0 (its script runs on game time from the
+    first frame) and runs to its furthest shot's last frame."""
+    c = cut["cut"]
+    bar = bar_seconds(c)
+    by_id = {b["id"]: b for b in film["shot"]}
+    needs = {}
+    tail = c.get("tail_bars", 0) * bar
+    for i, shot in enumerate(cut["shot"]):
+        beat = by_id.get(shot["beat"])
+        if beat is None:
+            raise SystemExit(f"cut shot names unknown beat {shot['beat']!r}")
+        take = shot.get("take", "main")
+        if take not in [t["name"] for t in beat.get("take") or [{"name": "main"}]]:
+            raise SystemExit(f"cut shot names unknown take {shot['beat']}/{take}")
+        end = shot["start_s"] + shot["bars"] * bar
+        if i == len(cut["shot"]) - 1:
+            end += tail  # the last take runs on under the tail
+        if end > beat["seconds"] + 1e-6:
+            raise SystemExit(f"shot {shot['beat']}/{take} runs to {end:.2f} s, past the "
+                             f"beat's {beat['seconds']} s")
+        key = (beat["id"], take)
+        needs[key] = max(needs.get(key, 0.0), end)
+    return needs
+
+
+def toml_str(v):
+    return json.dumps(v)  # a JSON string or number is TOML too
+
+
+def cut_shot_list(cut, film):
+    """The shot list `flint capture` shoots for `cut`, and where its takes
+    go. Paths are absolute: it is written beside the takes, not film.toml."""
+    c = cut["cut"]
+    needs = cut_needs(cut, film)
+    f = film["capture"]
+    out = Path(os.path.expanduser(f["out"])) / c["name"]
+    lines = [
+        f"# The takes cut {c['name']!r} uses (tools/showcase/cuts/{c['name']}.toml),",
+        "# written by tools/showcase/cut.py --capture from tools/showcase/film.toml.",
+        "",
+        "[capture]",
+        f"title = {toml_str(f.get('title', 'film') + ' (' + c['name'] + ')')}",
+        f"fps = {c.get('fps', f['fps'])}",
+        f"width = {c['width']}",
+        f"height = {c['height']}",
+        f"points_wide = {c.get('points_wide', f.get('points_wide', 1920))}",
+        f"out = {toml_str(out.as_posix())}",
+    ]
+    for beat in film["shot"]:
+        takes = [t for t in beat.get("take") or [{"name": "main"}]
+                 if (beat["id"], t["name"]) in needs]
+        if not takes:
+            continue
+        lines += ["", "[[shot]]", f"id = {toml_str(beat['id'])}",
+                  f"scene = {toml_str((HERE / beat['scene']).resolve().as_posix())}",
+                  f"seconds = {beat['seconds']}"]
+        if "title" in beat:
+            lines.append(f"title = {toml_str(beat['title'])}")
+        if beat.get("input"):
+            lines.append(f"input = {toml_str((HERE / beat['input']).resolve().as_posix())}")
+        for key in ("look", "seed"):
+            if key in beat:
+                lines.append(f"{key} = {toml_str(beat[key])}")
+        if beat.get("args"):
+            lines.append(f"args = {json.dumps(beat['args'])}")
+        for t in takes:
+            lines += ["", "[[shot.take]]", f"name = {toml_str(t['name'])}",
+                      f"seconds = {round(needs[(beat['id'], t['name'])], 6)}"]
+            for key in ("look", "seed"):
+                if key in t:
+                    lines.append(f"{key} = {toml_str(t[key])}")
+            if t.get("input"):
+                lines.append(f"input = {toml_str((HERE / t['input']).resolve().as_posix())}")
+            if t.get("args"):
+                lines.append(f"args = {json.dumps(t['args'])}")
+    return out, "\n".join(lines) + "\n"
+
+
+def flint_exe():
+    """$FLINT, else the release or debug build here, else `flint` on PATH."""
+    if os.environ.get("FLINT"):
+        return os.environ["FLINT"]
+    exe = "flint.exe" if os.name == "nt" else "flint"
+    target = Path(os.environ.get("CARGO_TARGET_DIR") or ROOT / "target")
+    for build in ("release", "debug"):
+        if (target / build / exe).exists():
+            return str(target / build / exe)
+    found = shutil.which("flint")
+    if not found:
+        raise SystemExit("no flint: cargo build --release --bin flint (or set FLINT)")
+    return found
+
+
+def capture(name, scale, flags):
+    """Write the cut's shot list beside its takes and shoot it with
+    `flint capture`; exits with its code."""
+    out, text = cut_shot_list(load_cut(name), load_film())
+    out.mkdir(parents=True, exist_ok=True)
+    shots = out / "shots.toml"
+    shots.write_text(text, encoding="utf-8", newline="\n")
+    subprocess.run([sys.executable, str(HERE / "build_scenes.py")], cwd=ROOT, check=True)
+    cmd = [flint_exe(), "capture", str(shots), "--scale", str(scale), *flags]
+    print(" ".join(cmd), flush=True)
+    sys.exit(subprocess.run(cmd, cwd=ROOT).returncode)
+
+
 # --- Main ------------------------------------------------------------------
 
 def main():
@@ -862,11 +991,20 @@ def main():
     ap.add_argument("--web-files", default="mp4,webm", help="which web files (mp4, webm)")
     ap.add_argument("--workers", type=int, default=max(2, min(8, (os.cpu_count() or 4) // 3)))
     ap.add_argument("--dry-run", action="store_true", help="print the timeline and stop")
+    ap.add_argument("--capture", action="store_true",
+                    help="capture the takes the cut uses with `flint capture`, at --scale "
+                    "(with --dry-run: its plan), and stop")
+    ap.add_argument("--verify", action="store_true",
+                    help="with --capture: each take twice, compared frame by frame")
     args = ap.parse_args()
+    if args.capture:
+        base_w = load_cut(args.cut)["cut"]["width"]
+        capture(args.cut, args.width / base_w if args.width else args.scale,
+                [f for f, on in (("--verify", args.verify), ("--dry-run", args.dry_run)) if on])
 
-    film_toml = tomllib.loads((HERE / "film.toml").read_text(encoding="utf-8"))
-    film = film_toml["film"]
-    titles = {b["id"]: b["title"] for b in film_toml["beat"]}
+    film_toml = load_film()
+    film = film_toml["capture"]
+    titles = {b["id"]: b["title"] for b in film_toml["shot"]}
     base = load_cut(args.cut)["cut"]
     scale = args.width / base["width"] if args.width else args.scale
     cut = load(args.cut, scale)

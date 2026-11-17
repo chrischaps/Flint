@@ -4,6 +4,8 @@ pub mod asset;
 pub mod asset_where;
 pub mod bundle;
 pub mod calibrate;
+pub mod capture;
+mod capture_compare;
 pub mod check;
 pub mod common_args;
 pub mod dxc;

@@ -74,3 +74,6 @@ arch-data.json
 
 # Python bytecode (tools/showcase)
 __pycache__/
+
+# What `flint capture` writes beside a shot list by default (#722)
+captures/

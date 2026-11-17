@@ -304,7 +304,7 @@ def main():
                     "webm, story_1 ...)")
     args = ap.parse_args()
 
-    film = tomllib.loads((HERE / "film.toml").read_text(encoding="utf-8"))["film"]
+    film = tomllib.loads((HERE / "film.toml").read_text(encoding="utf-8"))["capture"]
     folder = (Path(args.dir) if args.dir
               else Path(os.path.expanduser(film["out"])) / args.cut / "edit")
     record = folder / "edit.json"
