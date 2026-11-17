@@ -644,13 +644,17 @@ name = \"x\"
     /// #712's first done-when: one `initialize`. Every editor `flint edit`
     /// opens is a `flint_viewer::host::Editor`, and the host is the only
     /// place a window, a render context or egui's window state is made.
-    /// The play-chart window (`flint play-chart`) is no editor.
+    /// The play-chart window (`flint play-chart`) is no editor, and nor is
+    /// the frame debugger (`flint frame open`, #1088): it edits nothing,
+    /// orbits no camera and watches no file, and its `--screenshot` draws
+    /// the egui window itself, where the host's still draws a scene (#1202).
     #[test]
     fn every_editor_opens_through_the_one_host() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let allowed = [
             "flint-viewer/src/host.rs",
             "flint-cli/src/commands/play_chart_window.rs",
+            "flint-cli/src/commands/frame/open/host.rs",
         ];
         let mut found = Vec::new();
         let mut stack = vec![root.join("flint-cli/src"), root.join("flint-viewer/src")];
