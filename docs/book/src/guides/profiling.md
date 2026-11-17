@@ -420,6 +420,22 @@ A callback's time names the file, not the cause: a 12 ms `on_update` could be on
 
 **On the web**, with the recorder in the build, `?perf=1`'s panel has a **Save trace** button that downloads the look-back. The site's release build has no recorder, so the button isn't shown there. In a browser that isn't cross-origin isolated, `performance.now()` is coarsened, so short scopes read as 0 (docs/design/web.md).
 
+### Reading a trace from the CLI
+
+Perfetto shows a trace; `flint profile` answers questions of one in text, which is what an agent can read ([The `profile` Command](../cli-reference/overview.md#the-profile-command)):
+
+```bash
+flint profile explain traces/hitch_metronome-hitch-t3.000.json
+```
+
+```text
+frame 525 took 107.28 ms (median 4.57): stall.rhai:on_update 100.09 ms against its median 0.032, +100.06 of the frame's +102.71 ms excess
+  inside tick > run_scripts > script::update > script::on_update > script::call (examples/scripts/stall.rhai) on main
+  the hitch detector: script stall.rhai:on_update 100.1 ms (judged 108.33 ms against 4.17)
+```
+
+`explain` holds the slow frame against the trace's normal ones and names the deepest scope that carries its excess, or the phase when no scope does (a wait in `acquire`). `flint profile frame <trace> hitch` prints that frame's scope tree, `top` the scopes over the whole trace, and `diff <a> <b>` two traces' per-scope means and p90s with the deltas their frames' own spread can explain marked. Each reads only the file, so a trace attached to an issue reads the same anywhere, and each answers `--json`.
+
 ## Frame pacing
 
 A mean frame time hides uneven frames. `--exit-after N` prints two spreads beside the mean, both taken after the first 2 s:

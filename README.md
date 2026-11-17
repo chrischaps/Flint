@@ -6,6 +6,8 @@ Flint is a 3D game engine written from scratch in Rust, and the foundation under
 
 **Play it in the browser:** [play.chaps.dev](https://play.chaps.dev/) runs Flint games on WebAssembly and WebGPU, with no install.
 
+**Demos:** [flint-demos](https://github.com/chrischaps/flint-demos) holds whole scenes made with Flint, short films that play themselves and places to walk through, with the engine carried as a subtree.
+
 ![A moment in Starchild's clay world shown three ways: wireframe, surface directions and the finished image](https://chaps.dev/projects/flint/cover.jpg)
 
 ## Running it
