@@ -444,12 +444,16 @@ fn tpdf(u: f32) -> f32 {
 // this file (`postprocess::COMPOSITE_WGSL`). The tear itself is drawn by
 // the styles that follow it and the style mask, not here (#746).
 
-@fragment
-fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
-    let uv = in.uv;
-
-    let center = vec2<f32>(0.5, 0.5);
-    let dir_from_center = uv - center;
+// What the lens makes of the HDR picture at `uv`: the radial blur, then
+// depth of field. Chromatic aberration reads red and blue through this at
+// its offsets, so all three channels go through the same blurs; it read
+// them from the sharp source once, and wherever DoF or the radial blur
+// spread a bright surface, green spread with it and red and blue didn't
+// (#1156: emissive edges ringed green). textureSampleLevel throughout: the
+// HDR target has one mip, so it reads what textureSample did, and the
+// gathers are free to run from non-uniform control flow.
+fn lens(uv: vec2<f32>) -> vec3<f32> {
+    let dir_from_center = uv - vec2<f32>(0.5, 0.5);
     let dist = length(dir_from_center);
 
     // ── Radial Blur (8-tap, center stays sharp, edges blur) ──
@@ -458,19 +462,19 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
         let blur_str = params.radial_blur * dist * 0.04;
         let blur_dir = normalize(dir_from_center + vec2<f32>(0.0001, 0.0001)) * blur_str;
         var acc = vec3<f32>(0.0);
-        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir * -3.5).rgb;
-        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir * -2.5).rgb;
-        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir * -1.5).rgb;
-        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir * -0.5).rgb;
-        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir *  0.5).rgb;
-        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir *  1.5).rgb;
-        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir *  2.5).rgb;
-        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir *  3.5).rgb;
+        acc += textureSampleLevel(hdr_texture, hdr_sampler, uv + blur_dir * -3.5, 0.0).rgb;
+        acc += textureSampleLevel(hdr_texture, hdr_sampler, uv + blur_dir * -2.5, 0.0).rgb;
+        acc += textureSampleLevel(hdr_texture, hdr_sampler, uv + blur_dir * -1.5, 0.0).rgb;
+        acc += textureSampleLevel(hdr_texture, hdr_sampler, uv + blur_dir * -0.5, 0.0).rgb;
+        acc += textureSampleLevel(hdr_texture, hdr_sampler, uv + blur_dir *  0.5, 0.0).rgb;
+        acc += textureSampleLevel(hdr_texture, hdr_sampler, uv + blur_dir *  1.5, 0.0).rgb;
+        acc += textureSampleLevel(hdr_texture, hdr_sampler, uv + blur_dir *  2.5, 0.0).rgb;
+        acc += textureSampleLevel(hdr_texture, hdr_sampler, uv + blur_dir *  3.5, 0.0).rgb;
         let blurred = acc / 8.0;
         let blur_mix = smoothstep(0.1, 0.7, dist) * params.radial_blur;
-        color = mix(textureSample(hdr_texture, hdr_sampler, uv).rgb, blurred, clamp(blur_mix, 0.0, 1.0));
+        color = mix(textureSampleLevel(hdr_texture, hdr_sampler, uv, 0.0).rgb, blurred, clamp(blur_mix, 0.0, 1.0));
     } else {
-        color = textureSample(hdr_texture, hdr_sampler, uv).rgb;
+        color = textureSampleLevel(hdr_texture, hdr_sampler, uv, 0.0).rgb;
     }
 
     // ── Depth of Field (single-pass CoC-weighted disc gather) ──
@@ -494,12 +498,27 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
             color = mix(color, acc / wsum, center_coc);
         }
     }
+    return color;
+}
+
+@fragment
+fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
+    let uv = in.uv;
+
+    let center = vec2<f32>(0.5, 0.5);
+    let dir_from_center = uv - center;
+    let dist = length(dir_from_center);
+
+    var color = lens(uv);
 
     // ── Chromatic Aberration (R/B offset radially, G stays) ──
+    // Red and blue through the same lens as green (see `lens`). With no
+    // blur on, lens() is one plain read, so this costs what it always did;
+    // under DoF it is the gather three times, while both are on.
     if (params.chromatic_aberration > 0.001) {
         let offset = dir_from_center * params.chromatic_aberration * 0.012;
-        let r = textureSample(hdr_texture, hdr_sampler, uv + offset).r;
-        let b = textureSample(hdr_texture, hdr_sampler, uv - offset).b;
+        let r = lens(uv + offset).r;
+        let b = lens(uv - offset).b;
         color = vec3<f32>(r, color.g, b);
     }
 
