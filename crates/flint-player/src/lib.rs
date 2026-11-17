@@ -40,6 +40,7 @@ pub use player_app::headless_animation::HeadlessAnimation;
 pub use player_app::headless_game::{
     apply_look, HeadlessGame, LookRequest, ScriptLook, Skipped, PRESENTATION_ONLY, SCRIPT_SEED,
 };
+pub use player_app::input_checks::CheckOutcome;
 pub use player_app::input_script::{Applied, InputScript, PointerEvent, ScriptEvent};
 #[cfg(not(target_arch = "wasm32"))]
 pub use player_app::inspect::InspectListener;
@@ -50,6 +51,11 @@ pub use player_app::living_props::{
     apply_preset as apply_living_preset, boil_at, species_problems, wanted_by as living_wanted,
     wooze_of_scene,
 };
+pub use player_app::playtest::{
+    run as playtest, Ended as PlaytestEnded, Failure as PlaytestFailure, PlaytestOptions,
+    PlaytestReport, DEFAULT_STEP as PLAYTEST_STEP,
+};
+pub use player_app::playtest_warnings::warning_layer as playtest_warning_layer;
 #[cfg(feature = "procgen")]
 pub use player_app::procgen_assets::GpuSink;
 pub use player_app::render_scale::{RenderScaleSetting, WEB_DPR_CAP};

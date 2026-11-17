@@ -97,6 +97,11 @@ impl ScriptHost for PlayerApp {
         distances: Option<(f32, f32)>,
         rolloff: Option<f32>,
     ) {
+        // As `play_sound`: with no device there's nothing to say (#714
+        // found it warning on every call in a silent run)
+        if !self.audio.engine.is_available() {
+            return;
+        }
         let pos = FlintVec3::new(position.0 as f32, position.1 as f32, position.2 as f32);
         if let Err(e) = self.audio.engine.play_keyed_at(
             handle,

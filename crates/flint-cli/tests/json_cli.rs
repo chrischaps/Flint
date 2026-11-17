@@ -201,6 +201,10 @@ fn every_command_answers_with_one_json_document() {
     assert_eq!(check["valid"], true);
     run("validate");
     assert_eq!(ok(&dir, &["validate", scene])["valid"], true);
+    // A second of the scaffold played headless (#714)
+    run("playtest");
+    let played = ok(&dir, &["playtest", scene, "--exit-after", "1"]);
+    assert_eq!(played["passed"], true, "{played:#}");
     run("query");
     assert!(ok(&dir, &["query", "entities", "--scene", scene]).is_array());
 

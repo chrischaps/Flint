@@ -63,6 +63,15 @@ impl PlayerApp {
                 return Some(failure);
             }
         }
+        // An input script's expect or wait that failed (#714)
+        if let Some(failure) = self
+            .capture
+            .input_script
+            .as_ref()
+            .and_then(|s| super::input_checks::failure(s.outcomes()))
+        {
+            return Some(failure);
+        }
         // A capture asked for and never written (#1086)
         if let Some(failure) = self.frame_captures.failure() {
             return Some(failure);
@@ -78,6 +87,26 @@ impl PlayerApp {
         input_config_override: Option<String>,
         scene_input_config: Option<String>,
     ) -> Self {
+        Self::with_audio(
+            world,
+            scene_path,
+            fullscreen,
+            input_config_override,
+            scene_input_config,
+            AudioSystem::new(),
+        )
+    }
+
+    /// [`new`](Self::new) with its sound given: `AudioSystem::silent()`
+    /// for a run that must open no device (a headless playtest, #714).
+    pub fn with_audio(
+        world: FlintWorld,
+        scene_path: String,
+        fullscreen: bool,
+        input_config_override: Option<String>,
+        scene_input_config: Option<String>,
+        audio: AudioSystem,
+    ) -> Self {
         // The profiler's client, before the first scope (ADR 0109). Tracy's
         // viewer connects to it while the game runs; starting it twice is
         // harmless.
@@ -89,7 +118,7 @@ impl PlayerApp {
         Self {
             core: super::GameCore::new(world, scene_path, project),
             input: InputState::new(),
-            audio: AudioSystem::new(),
+            audio,
             launch: LaunchOptions {
                 fullscreen,
                 ..Default::default()

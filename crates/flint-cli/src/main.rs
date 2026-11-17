@@ -9,8 +9,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
     asset, bundle, capture, check as check_cmd, dxc, edit_router, entity, env, examples, export,
-    frame, gen, gen_preview, init, legacy_names, music, play, prefab, preview, query, render,
-    render_goldens, scene, schema, script, spike_rumble, spline_edit, style, terrain_edit,
+    frame, gen, gen_preview, init, legacy_names, music, play, playtest, prefab, preview, query,
+    render, render_goldens, scene, schema, script, spike_rumble, spline_edit, style, terrain_edit,
     tex_edit, validate,
 };
 
@@ -142,6 +142,9 @@ enum Commands {
     /// Play a scene with first-person controls and physics
     Play(Box<play::PlayArgs>),
 
+    /// Play a scene headless on a fixed clock with an input script and the
+    /// scripts' test_* calls; a JSON report, exit 1 on a failure
+    Playtest(Box<playtest::PlaytestArgs>),
     /// Capture a shot list as deterministic frame sequences (each take a
     /// stepped run of `flint play`), with --verify and --encode mp4
     Capture(Box<capture::CaptureArgs>),
@@ -210,6 +213,31 @@ fn main() -> std::process::ExitCode {
     // `flint-player` says, as its `--log-format` and `--quiet` ask (#716)
     match &cli.command {
         Commands::Play(play) => flint_player::logging::init(&play.player.log),
+        // A playtest is the player with no window: the player's filter and
+        // load summary, and the count of the engine's warnings its report
+        // holds, whatever RUST_LOG shows (#714)
+        Commands::Playtest(_) => {
+            use tracing_subscriber::layer::SubscriberExt as _;
+            use tracing_subscriber::util::SubscriberInitExt as _;
+            use tracing_subscriber::Layer as _;
+            let filter =
+                tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                    tracing_subscriber::EnvFilter::new(
+                        flint_player::logging::LogArgs::default().default_filter(),
+                    )
+                });
+            tracing_subscriber::registry()
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        // Stdout is the report's, under --json
+                        .with_writer(std::io::stderr)
+                        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+                        .with_filter(filter),
+                )
+                .with(flint_player::logging::tally_layer())
+                .with(flint_player::playtest_warning_layer())
+                .init();
+        }
         _ => {
             tracing_subscriber::fmt()
                 .with_env_filter(
@@ -266,6 +294,7 @@ fn run(cli: Cli) -> Result<()> {
         Commands::SpikeRumble(args) => spike_rumble::run(*args),
         Commands::Goldens(args) => render_goldens::run_command(*args),
         Commands::Play(args) => play::run(*args),
+        Commands::Playtest(args) => playtest::run(*args),
         Commands::Capture(args) => capture::run(*args),
         Commands::Prefab(cmd) => prefab::run(*cmd),
         Commands::Asset(cmd) => asset::run(*cmd),
