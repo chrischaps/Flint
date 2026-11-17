@@ -120,6 +120,7 @@ impl PlayerApp {
             tracing::warn!(target: "transition", "Chunk '{}' already loaded, skipping", chunk_id);
             return;
         }
+        flint_core::scope!("load_chunk", chunk_id);
         let _note =
             flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::ChunkLoad, || {
                 format!("{chunk_id} ({path})")
@@ -321,6 +322,7 @@ impl PlayerApp {
     /// it was read from and why, and makes the run end non-zero
     /// (`run_failure`, #723). Returns whether the new scene was entered.
     pub(super) fn execute_scene_transition(&mut self, target_scene: &str) -> bool {
+        flint_core::scope!("scene_transition", target_scene);
         // One frame does all of it: a frame note (#1077), with the models,
         // textures, scripts and pipelines it loaded noted inside it
         let _note = flint_core::frame_notes::begin(

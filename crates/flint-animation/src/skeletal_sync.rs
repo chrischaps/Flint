@@ -339,6 +339,9 @@ impl SkeletalSync {
     /// Advance all skeletal playbacks and compute bone matrices.
     /// Handles crossfade blending when `blend_target` is set.
     pub fn advance_and_compute(&mut self, dt: f64) {
+        // Sampling, crossfades, layers and the bone matrices, for every
+        // skinned entity: one scope, the count its detail (#1096)
+        flint_core::scope!("animation::sample_and_skin", self.states.len());
         let entity_ids: Vec<EntityId> = self.states.keys().copied().collect();
 
         for entity_id in entity_ids {

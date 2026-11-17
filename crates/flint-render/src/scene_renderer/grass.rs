@@ -671,6 +671,7 @@ impl SceneRenderer {
         camera: &Camera,
         time: f32,
     ) {
+        flint_core::scope!("grass_compute");
         let config = match &self.grass.config {
             Some(c) if c.enabled => c.clone(),
             _ => return,

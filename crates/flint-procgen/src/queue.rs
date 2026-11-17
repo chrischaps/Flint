@@ -142,6 +142,7 @@ impl ProcGenQueue {
             return Vec::new();
         }
 
+        flint_core::scope!("procgen::queue", self.pending.len());
         // Reprioritize if camera moved significantly
         let dx = camera_pos[0] - self.last_camera_pos[0];
         let dy = camera_pos[1] - self.last_camera_pos[1];

@@ -577,6 +577,7 @@ impl SceneRenderer {
         tonemapping_u32: u32,
         camera: &Camera,
     ) {
+        flint_core::scope!("update_per_frame_uniforms", self.draws.len());
         // Blended draws back to front for this camera (each entity's echoes
         // keep their order)
         self.draws.sort_blended(camera_pos);
@@ -773,7 +774,10 @@ impl SceneRenderer {
             put(&draw.transform, &uniforms, None);
         }
 
-        arena.upload(queue);
+        {
+            flint_core::scope!("upload_transforms");
+            arena.upload(queue);
+        }
         self.draw_bind_cache.arena = arena;
     }
 
@@ -1154,6 +1158,7 @@ impl SceneRenderer {
     /// the scene pass's draws past it are set aside, counted as
     /// `log_scene_draws` lists them. Nothing without one.
     pub(super) fn cut_draws_to_limit(&mut self) {
+        flint_core::scope!("cut_draws_to_limit");
         let terrain = &self.terrain.draws;
         let frustum = self.camera_frustum.as_ref();
         let grass = self.grass.drawing && self.pipelines.grass.is_some();
@@ -1684,6 +1689,7 @@ impl SceneRenderer {
             let from_style = source.id != crate::stylize::input_id::HDR;
             // A captured frame reads each step's mip as it's written (#1085):
             // the upsample writes over the downsample's
+            flint_core::scope!("encode_part", "Bloom");
             let scope = scopes.begin(encoder, "Bloom");
             if scopes.taps.is_some() {
                 pp.run_bloom(

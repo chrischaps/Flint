@@ -19,6 +19,7 @@ impl Heightmap {
     /// Load a heightmap from a grayscale PNG file.
     /// Values are normalized to [0..1] regardless of bit depth.
     pub fn from_png(path: &Path) -> Result<Self, String> {
+        flint_core::scope!("terrain::heightmap", path);
         let fail = |e: &dyn std::fmt::Display| {
             format!("Failed to load heightmap '{}': {}", path.display(), e)
         };

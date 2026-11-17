@@ -487,6 +487,11 @@ impl DrawList {
         &mut self.layers[layer.index()]
     }
 
+    /// How many items there are, in every layer.
+    pub fn len(&self) -> usize {
+        self.layers.iter().map(Vec::len).sum()
+    }
+
     /// Every item, in layer order.
     pub fn iter(&self) -> impl Iterator<Item = &DrawItem> + Clone {
         self.layers.iter().flatten()
@@ -545,6 +550,7 @@ impl DrawList {
     /// by squared distance from `camera` (stable, so equally far items keep
     /// their order: an entity's parts, an entity's echoes).
     pub fn sort_blended(&mut self, camera: [f32; 3]) {
+        flint_core::scope!("sort_blended");
         let distance = |p: [f32; 3]| {
             let (dx, dy, dz) = (p[0] - camera[0], p[1] - camera[1], p[2] - camera[2]);
             dx * dx + dy * dy + dz * dz

@@ -185,6 +185,8 @@ impl WorkletStream {
                     return;
                 };
                 let out = link.take();
+                // The frame's commands posted to the worklet (#1096)
+                flint_core::scope!("audio::post", out.batch.len());
                 for l in out.loads {
                     let samples = js_sys::Float32Array::from(&l.samples[..]);
                     worklet.load(l.id, l.sample_rate, l.channels, samples);

@@ -303,6 +303,7 @@ pub fn upload_blends(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
 ) {
+    flint_core::scope!("living::blend_upload");
     upload_props(resolver.living_props_mut(), frame, renderer, device, queue);
 }
 
@@ -320,8 +321,50 @@ pub fn upload_props(
     }
     let started = web_time::Instant::now();
     let mut writes = 0;
+    // The props, then their echoes: two loops, so a profiler can tell the
+    // halves apart without a scope a prop (#1096). Each prop's echoes read
+    // only that prop, so the order across props changes nothing.
+    {
+        flint_core::scope!("living::blend_props", props.props().len());
+        for i in 0..props.props().len() {
+            writes += upload_prop(props, LivingPropId(i), frame, renderer, device, queue);
+        }
+    }
+    flint_core::scope!("living::blend_echoes");
     for i in 0..props.props().len() {
         let id = LivingPropId(i);
+        let entity = props.prop(id).entity();
+        for echo in 0..props.prop(id).echo_count() {
+            if let Some(first) = props.blend_echo(id, echo, frame) {
+                let opacity = props.prop(id).echo(echo).opacity;
+                renderer.write_entity_echo_bones(
+                    device,
+                    queue,
+                    entity,
+                    echo,
+                    opacity,
+                    first,
+                    &frame.bones,
+                );
+                writes += 1;
+            }
+        }
+    }
+    props.record_blend(started.elapsed().as_secs_f64() * 1e3, writes);
+}
+
+/// One prop's own blend (not its echoes'): its bones, shadow bones, echo
+/// count and blend, tints and softness. Returns how many buffers it wrote.
+fn upload_prop(
+    props: &mut LivingProps,
+    id: LivingPropId,
+    frame: &mut BlendFrame,
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> u64 {
+    let mut writes = 0;
+    {
         let blend = props.blend_prop(id, frame);
         if let Some(count) = blend.echo_count {
             renderer.set_entity_echo_count(blend.entity, count);
@@ -347,23 +390,8 @@ pub fn upload_props(
                 renderer.set_entity_part_softness(blend.entity, part, softness);
             }
         }
-        for echo in 0..props.prop(id).echo_count() {
-            if let Some(first) = props.blend_echo(id, echo, frame) {
-                let opacity = props.prop(id).echo(echo).opacity;
-                renderer.write_entity_echo_bones(
-                    device,
-                    queue,
-                    blend.entity,
-                    echo,
-                    opacity,
-                    first,
-                    &frame.bones,
-                );
-                writes += 1;
-            }
-        }
     }
-    props.record_blend(started.elapsed().as_secs_f64() * 1e3, writes);
+    writes
 }
 
 /// Read an entity's `living_prop` component into a request for `spec_name`.
@@ -512,6 +540,7 @@ pub fn resolve(
 /// Send up finished lineages: the mesh once, and rest bones for each prop. One
 /// that couldn't be made leaves a placeholder under its name.
 pub fn apply_lineages(done: &[LineageDone], sink: &mut dyn AssetSink) {
+    flint_core::scope!("living::upload_lineages", done.len());
     for lineage in done {
         match &lineage.rig {
             Ok(rig) => {

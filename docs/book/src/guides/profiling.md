@@ -321,9 +321,18 @@ The browser's WebGPU makes each debug group a call of its own, so the web player
 
 Build the player with `--features profile` (a game binary passes it on: `profile = ["flint-player/profile"]`) and run [Tracy's viewer](https://github.com/wolfpld/tracy/releases) beside it. The viewer finds the game on this machine and shows each frame as a stack of scopes on a timeline ([ADR 0109](https://github.com/chrischaps/Flint/blob/main/docs/adr/0109-tracy-frame-profiler.md)):
 
-- `tick`, the game's step: `run_extension_pre_updates`, `publish_style_reader`, `tick_fixed_physics`, `sound`, `animate`, `tick_procgen`, `poll_user_styles`, and the renderer's `prepare` with `update_from_world` inside it;
-- `render`, the drawing: the renderer's `encode_to` with `render_shadow_pass`, `render_main_pass` and `render_postprocess` inside it, then `render_hud`;
+- `tick`, the game's step, with each [phase](#the-perf-line)'s systems beneath it ([#1096](https://github.com/chrischaps/Flint/issues/1096)):
+  - input: `poll_devices`, `frame_history`, `input_script`, `collect_game_events`, `advance_transition` (with `scene_transition`, by the scene it goes to, when one runs) and `run_extension_pre_updates`;
+  - scripts: `run_scripts` holds `publish_style_reader` and `script::update`, which holds `script::hot_reload_poll` (`script::poll_scripts`, `script::poll_ui`), `script::discover`, `script::events` and one scope a callback kind (`script::on_init`, `script::on_update`...), each with a `script::call` for each script it calls, named by its file;
+  - physics: `tick_fixed_physics`, with `physics::character` and a `physics::fixed_update` for each fixed step, holding `physics::sync_in`, `physics::step` (Rapier's, its detail the body count) and `physics::sync_out`;
+  - script UI: `dispatch_commands`, `call_draw_uis` (`script::on_draw_ui`) and `collect_script_ui` (`script::ui_layout`);
+  - anim/fx: `sound` (`audio::decode_queue`, `audio::triggers`, `audio::update` with `audio::sync_sources` and `audio::pan`), `animate` (`animation::update`, a scope for each of its tiers, `animation::sample_and_skin` inside `animation::skeletal`), `upload_bones` and `after_animation` (`publish_bone_probes`, `animation::ik`, `particles::sync`, `particles::simulate`);
+  - sync: `tick_procgen` (`procgen::queue`, `procgen::generate` by spec), `subsystems` by stage (living props' `living::tick` with `living::fill_rings`, then `living::blend_props` and `living::blend_echoes`), and `sync_renderer`: `poll_user_styles`, `particles::pack` and the renderer's `prepare` with `update_from_world` inside it, a scope a step of the extraction (`extract::entities` is the walk, with the entity count) and `particles::upload`;
+- `render`, the drawing: `sync_debug_panels`, `acquire` (the wait for the swapchain's image), the renderer's `encode_to` (`cull_lod`, `upload_lights`, `grass_compute`, `render_shadow_pass`, `cull_frustum`, `update_per_frame_uniforms` with `sort_blended` and `upload_transforms`, `render_main_pass`, `encode_fog_veil`, `encode_style_mask`, `encode_style_albedo`, `render_postprocess` with an `encode_part` for each effect and style part by its label, `render_world_lines`), then `render_hud` (`egui_run`, `egui_tessellate`, `egui_upload`, `egui_encode`), `submit`, `frame_submitted` and `present`;
+- whenever they happen, the loads, each named by its file or asset: `enter_scene`, `load_chunk`, `load_models`, `import_model`, `upload_model`, `load_texture` (`decode_image`, `mip_chain`, `upload_texture`), `script::compile`, `audio::decode`, `load_terrain` (`terrain::heightmap`, `terrain::generate`), and `build_pipeline` by its label;
 - wgpu's own scopes, from the same `profiling` crate.
+
+A loop gets one scope, never one an entity or a draw, and where it helps the count is its detail. In the Overgrown Ruins a frame holds about 110 scopes.
 
 Each `RedrawRequested` ends a frame for Tracy, so its frame graph is the player's.
 
@@ -331,7 +340,7 @@ The client listens on loopback only, so there's no firewall prompt, and it keeps
 
 ### One scope, two profilers
 
-The engine marks a scope with `flint_core::scope!` ([ADR 0128](https://github.com/chrischaps/Flint/blob/main/docs/adr/0128-one-scope-macro-two-sinks.md)). One line reaches Tracy, under the `profile` feature, and Flint's own recorder, a ring of the last few thousand scopes per thread that a run can save after a hitch has already happened. The recorder is compiled into every debug build and into a release build with the **`trace`** feature (`trace = ["flint-player/trace"]` in a game's binary); a default release build has none of it. Compiled in, it records nothing until something turns it on, and until then a scope costs about a nanosecond in release and 6 ns in a debug build. Recording, a scope costs about 40 ns in release.
+The engine marks a scope with `flint_core::scope!` ([ADR 0128](https://github.com/chrischaps/Flint/blob/main/docs/adr/0128-one-scope-macro-two-sinks.md)). One line reaches Tracy, under the `profile` feature, and Flint's own recorder, a ring of the last few thousand scopes per thread that a run can save after a hitch has already happened. The recorder is compiled into every debug build and into a release build with the **`trace`** feature (`trace = ["flint-player/trace"]` in a game's binary); a default release build has none of it. Compiled in, it records nothing until something turns it on, and until then a scope costs about a nanosecond in release and 6 ns in a debug build. Recording, a scope costs about 35 ns in release, and 55 ns with a file name as its detail (`cargo test -p flint-core --release --features trace --lib scope_cost -- --ignored --nocapture` measures it). At the Ruins' 110 scopes a frame that is about 5 µs.
 
 Three names sit close together, so to keep them apart:
 
@@ -358,7 +367,7 @@ fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
 }
 ```
 
-A text detail (`flint_core::scope!("load_level", path)`) is copied into the recording, so keep it to scopes that run rarely, not to loops. A game's older `profiling::scope!` and `#[profiling::function]` still reach Tracy, but not the recorder.
+A text detail (`flint_core::scope!("load_level", path)`, a `&str`, a `String` or a `&Path`) is copied into the recording, so keep it to scopes that run rarely, not to loops. A `&Path` is turned into text only while the scope records. A game's older `profiling::scope!` and `#[profiling::function]` still reach Tracy, but not the recorder.
 
 ## Frame pacing
 

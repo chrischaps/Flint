@@ -205,6 +205,8 @@ thread_local! {
 /// names it by `label`.
 pub(crate) fn timed<R>(label: &str, build: impl FnOnce() -> R) -> R {
     use flint_core::frame_notes::{self, NoteKind};
+    // A pipeline build, by label: rare, and a likely hitch (#1096)
+    flint_core::scope!("build_pipeline", label);
     frame_notes::timed(
         NoteKind::PipelineBuild,
         || label.to_string(),

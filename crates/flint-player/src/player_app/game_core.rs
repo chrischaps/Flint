@@ -366,6 +366,7 @@ pub(crate) fn step<H: FrameHost + ?Sized>(host: &mut H) {
     // draw), then what it asked, then what it drew
     {
         let core = host.core();
+        flint_core::scope!("call_draw_uis");
         core.script.call_draw_uis(&mut core.world);
     }
     dispatch(host);
@@ -410,6 +411,7 @@ pub(crate) fn run_stage<H: FrameHost + ?Sized>(
     policy: Option<&StateConfig>,
 ) {
     if !host.core().subsystems.is_empty() {
+        flint_core::scope!("subsystems", stage.label());
         let (core, lent) = host.lend();
         core.with_subsystems(lent, policy, |subsystems, ctx| {
             subsystems.update(stage, ctx)
@@ -460,6 +462,7 @@ impl GameCore {
     /// released. Always collected: input is processed while paused, so
     /// pause/unpause keybinds work.
     fn collect_game_events(&mut self, input: &InputState) -> Vec<GameEvent> {
+        flint_core::scope!("collect_game_events");
         let mut game_events = self.events.drain();
         if let Some(log) = &mut self.event_log {
             for event in &game_events {
@@ -498,6 +501,7 @@ impl GameCore {
     /// input and events, the clock), then `on_update` unless the game state
     /// pauses scripts.
     fn run_scripts(&mut self, config: &StateConfig, events: &[GameEvent], lent: Lent<'_>) {
+        flint_core::scope!("run_scripts");
         self.publish_style_reader(lent.renderer.as_deref());
         let camera = &*lent.camera;
         self.script
@@ -578,6 +582,7 @@ impl GameCore {
     /// frame's game time, while scripts run.
     fn step_style_tweens(&mut self) {
         if self.state_machine.active_config().runs(SCRIPTS) {
+            flint_core::scope!("step_style_tweens");
             let dt = self.clock.delta_time;
             let step = self.style_tweens.step(&mut self.world, dt);
             for event in step.events {
@@ -675,10 +680,14 @@ impl GameCore {
 
     /// Bone probes, IK, then the particles.
     fn after_animation(&mut self, config: &StateConfig) {
+        flint_core::scope!("after_animation");
         // Publish bone_probe joints: model-local joint positions written
         // into the component right after the pose computation, so scripts
         // read this frame's pose (e.g. seat_camera following the eye).
-        super::headless_animation::publish_bone_probes(&self.animation, &mut self.world);
+        {
+            flint_core::scope!("publish_bone_probes");
+            super::headless_animation::publish_bone_probes(&self.animation, &mut self.world);
+        }
 
         // Two-bone IK (ADR 0070): pin chain tips to their targets now that
         // scripts, physics and animation have all posed the world; the
@@ -773,6 +782,7 @@ pub(crate) fn dispatch_commands<H: FrameHost + ?Sized>(
     host: &mut H,
     mut commands: Vec<ScriptCommand>,
 ) {
+    flint_core::scope!("dispatch_commands", commands.len());
     commands.retain(|command| !host.refuses(command));
     if !host.core().subsystems.is_empty() && !commands.is_empty() {
         let (core, lent) = host.lend();
