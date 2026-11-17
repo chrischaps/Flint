@@ -318,7 +318,7 @@ fn drawn_depth(v: f32) -> bool {
     v < 1.0 && v > 0.0
 }
 
-/// The composite's ACES fit (`composite_shader.wgsl`'s `aces_filmic`).
+/// The composite's ACES fit (`aces_filmic`, flint-render's `tonemap.wgsl`).
 pub(crate) fn aces(x: f32) -> f32 {
     let (a, b, c, d, e) = (2.51, 0.03, 2.43, 0.59, 0.14);
     ((x * (a * x + b)) / (x * (c * x + d) + e)).clamp(0.0, 1.0)

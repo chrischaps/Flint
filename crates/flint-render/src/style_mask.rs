@@ -1580,11 +1580,11 @@ impl StyleMaskPass {
         );
         let pbr = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Veil PBR Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SCENE.into()),
         });
         let skinned = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Style Veil Skinned Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("skinned_shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SKINNED.into()),
         });
         let veil_static = veil_pipeline(
             device,

@@ -2,13 +2,14 @@
 // Renders geometry from light perspective for shadow mapping.
 // Includes a skinned variant that applies bone matrices before world transform.
 
-struct ShadowUniforms {
+// One draw's (shadow::ShadowDrawUniforms); the cascades' are lights.wgsl's
+struct ShadowDrawUniforms {
     light_view_proj: mat4x4<f32>,
     model: mat4x4<f32>,
 };
 
 @group(0) @binding(0)
-var<uniform> shadow: ShadowUniforms;
+var<uniform> shadow: ShadowDrawUniforms;
 
 // Bind group 1: Bone matrices for skinned shadow pass
 @group(1) @binding(0)

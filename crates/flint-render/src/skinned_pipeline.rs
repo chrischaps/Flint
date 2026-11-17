@@ -46,7 +46,7 @@ impl SkinnedPipeline {
     ) -> Self {
         let shader = device.create_trusted_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Skinned PBR Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("skinned_shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(crate::wgsl_sources::SKINNED.into()),
         });
 
         // Bind group 3: Bone matrices storage buffer (vertex shader only)
