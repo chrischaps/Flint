@@ -195,6 +195,7 @@ fn two_renderers_draw_same_named_user_styles_from_two_folders() {
     for round in 0..3 {
         let d = target.draw(device, queue, &mut dark, &world);
         let l = target.draw(device, queue, &mut light, &world);
+        eprintln!("round {round}: dark renderer drew {d}, light renderer drew {l}");
         assert!(near(d, 0.25), "round {round}: the dark renderer drew {d}");
         assert!(near(l, 0.75), "round {round}: the light renderer drew {l}");
         let l = target.draw(device, queue, &mut light, &world);

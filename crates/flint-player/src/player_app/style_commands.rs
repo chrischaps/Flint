@@ -253,6 +253,7 @@ impl StyleTweens {
     /// there tears the frame open). It moves from the next frame; a new
     /// tween of the same setting replaces the old one, and no time to ease
     /// over sets it now.
+    #[allow(clippy::too_many_arguments)]
     pub fn tween_post(
         &mut self,
         config: &mut PostProcessConfig,

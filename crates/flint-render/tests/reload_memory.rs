@@ -2,7 +2,8 @@
 //! bytes while one user style's `.shader.toml` is saved and reloaded 500
 //! times stop growing once `bind_cache::retire`'s capped log is full. Before #742 each reload
 //! leaked the descriptor, its lists and every string in them, and the
-//! bind-cache names. Its own binary,
+//! bind-cache names: 437 KB after 500 reloads of this style, about 850 B
+//! each (ADR 0129, Measured). Its own binary,
 //! since the counting allocator is the process's.
 
 use std::alloc::{GlobalAlloc, Layout, System};

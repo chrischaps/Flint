@@ -102,6 +102,25 @@ What followed from that:
   reused names a different install to anything that kept the number (the
   pipeline cache's scope); a generation can't be reused.
 
+## Measured
+
+Live heap bytes while one user style (one parameter, one option of three
+choices) is saved and hot-reloaded 500 times, counted by a global allocator
+(`crates/flint-render/tests/reload_memory.rs`; main at f92f10a0 run with
+the same loop through its free functions; debug build, 2026-11-17):
+
+| Reloads | Before (main) | After |
+|---|---|---|
+| 25 | 24,290 B | 3,080 B |
+| 100 | 96,960 B | 12,296 B |
+| 250 | 224,460 B | 12,296 B |
+| 500 | 436,960 B | 12,296 B |
+
+Before, each reload kept about 850 bytes for good. After, what grows is
+`bind_cache::retire`'s log (four names a reload, capped at 256), full by the
+64th reload; from there a reload keeps nothing. The test fails if reloads 100
+to 500 leave a kilobyte more.
+
 ## Consequences
 
 - Two renderers in one process draw two user styles of one name from two

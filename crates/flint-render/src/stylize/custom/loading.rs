@@ -286,6 +286,8 @@ impl StyleRegistry {
     /// folder: call it a few times a second, not every frame. On the web it
     /// does nothing.
     pub fn reload_changed_for(&mut self, scope: &AssetScope) -> Reload {
+        // Filled natively; the web returns it empty
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut reload = Reload::default();
         #[cfg(not(target_arch = "wasm32"))]
         {
