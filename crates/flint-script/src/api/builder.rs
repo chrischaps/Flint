@@ -357,6 +357,15 @@ impl<'f, K: Kinds> Func<'f, K> {
         B: Fn(NativeCallContext, &mut [&mut Dynamic]) -> RhaiResult + Send + Sync + 'static,
     {
         let name = self.name;
+        // Every signature of the name is one record while a callback is
+        // profiled (#1100); off, one flag read
+        let id = crate::fn_times::engine_fn(name);
+        let body = Arc::new(
+            move |nctx: NativeCallContext, args: &mut [&mut Dynamic]| -> RhaiResult {
+                let _timed = crate::fn_times::enter(id);
+                body(nctx, args)
+            },
+        );
         // Rhai looks a call up by its arguments' exact types first, then
         // tries every mix of `Dynamic` in their place (2^n lookups for n
         // parameters). The exact twin (floats for `Num`, ints for `Entity`)
@@ -1135,9 +1144,11 @@ macro_rules! kinds_tuple {
                 F: Fn(&mut Call<'_>, Self::Out) -> R + Send + Sync + 'static,
                 R: ScriptReturn,
             {
+                let id = crate::fn_times::engine_fn(name);
                 engine.register_fn(
                     name,
                     move |nctx: NativeCallContext, $($a: $K::Typed),*| -> RhaiResult {
+                        let _timed = crate::fn_times::enter(id);
                         let mut guard = crate::lock_or_recover(&ctx);
                         let mut call = Call::new(&mut guard, name, nctx.call_position());
                         let out = ($(

@@ -44,6 +44,7 @@ pub mod play_suite;
 pub mod playtest;
 pub mod prefab;
 pub mod preview;
+pub mod profile;
 pub mod query;
 pub mod render;
 pub mod render_args;

@@ -100,6 +100,40 @@ pub(crate) struct ScriptTime {
     pub name: String,
     pub mean: f32,
     pub max: f32,
+    /// The function that took longest in one of the callback's frames in
+    /// the window (#1100): a helper of the script's (`slow_helper()`) or
+    /// an engine function (`raycast()`), with its calls that frame.
+    pub worst_fn: Option<WorstFn>,
+}
+
+/// A callback's slowest function in one frame (#1100).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct WorstFn {
+    /// `slow_helper()`, without the callback's own file; `raycast()`
+    pub name: String,
+    pub calls: u32,
+    pub ms: f32,
+}
+
+impl WorstFn {
+    /// `slow_helper() 99.8` or `raycast() x400 3.1`: the calls when more
+    /// than one.
+    fn part(&self) -> String {
+        match self.calls {
+            1 => format!("{} {:.1}", self.name, self.ms),
+            n => format!("{} x{n} {:.1}", self.name, self.ms),
+        }
+    }
+}
+
+/// The slowest function seen in a callback, and when (#1100).
+#[derive(Debug, Clone)]
+struct SeenFn {
+    callback: String,
+    function: &'static str,
+    calls: u32,
+    ms: f32,
+    at: Instant,
 }
 
 /// How many scripts the readout names, worst first.
@@ -145,6 +179,9 @@ pub(crate) struct PerfRecorder {
     /// The scope recorder's look-back and its saves (#1097), while the
     /// player records: `--trace`, `--trace-on-hitch`, the `save_trace` key.
     pub(crate) trace: Option<Box<super::trace::Tracer>>,
+    /// Each callback's slowest function in one frame of the window (#1100),
+    /// one a callback, while scripts are timed.
+    worst_fns: Vec<SeenFn>,
 }
 
 impl Default for PerfRecorder {
@@ -157,6 +194,7 @@ impl Default for PerfRecorder {
             gpu_wanted: false,
             shown_at: None,
             trace: None,
+            worst_fns: Vec::new(),
         }
     }
 }
@@ -236,6 +274,63 @@ impl PerfRecorder {
         }
     }
 
+    /// What this frame's callbacks spent in each function
+    /// (`ScriptSystem::take_function_times`, #1100): each callback's
+    /// slowest is kept while it is the window's slowest.
+    pub(crate) fn record_functions(&mut self, times: &[flint_script::FnTime]) {
+        self.record_functions_at(times, Instant::now());
+    }
+
+    fn record_functions_at(&mut self, times: &[flint_script::FnTime], now: Instant) {
+        if !self.recording() {
+            return;
+        }
+        let window = std::time::Duration::from_secs_f64(WINDOW_SECS);
+        for t in times {
+            let seen = SeenFn {
+                callback: String::new(),
+                function: t.function,
+                calls: t.calls,
+                ms: t.total_ms,
+                at: now,
+            };
+            match self.worst_fns.iter_mut().find(|w| w.callback == t.callback) {
+                Some(w) if w.ms <= t.total_ms || now.duration_since(w.at) > window => {
+                    *w = SeenFn {
+                        callback: std::mem::take(&mut w.callback),
+                        ..seen
+                    };
+                }
+                Some(_) => {}
+                None => self.worst_fns.push(SeenFn {
+                    callback: t.callback.clone(),
+                    ..seen
+                }),
+            }
+        }
+    }
+
+    /// `callback`'s slowest function in the window, named without the
+    /// callback's own file.
+    fn worst_fn(&self, callback: &str, now: Instant) -> Option<WorstFn> {
+        let window = std::time::Duration::from_secs_f64(WINDOW_SECS);
+        let w = self
+            .worst_fns
+            .iter()
+            .find(|w| w.callback == callback && now.duration_since(w.at) <= window)?;
+        let file = callback.rsplit_once(':').map_or("", |(file, _)| file);
+        let name = w
+            .function
+            .strip_prefix(file)
+            .and_then(|rest| rest.strip_prefix(':'))
+            .unwrap_or(w.function);
+        Some(WorstFn {
+            name: name.to_string(),
+            calls: w.calls,
+            ms: w.ms,
+        })
+    }
+
     /// `present()` returned at `now`.
     pub(crate) fn presented_at(&mut self, now: Instant) {
         if self.recording() {
@@ -288,6 +383,7 @@ impl PerfRecorder {
 
     /// The window so far, or `None` before the first whole frame.
     pub(crate) fn summary(&self) -> Option<PerfSummary> {
+        let now = Instant::now();
         let window = self.window();
         let ms: Vec<f32> = window.clone().map(|f| f.ms).collect();
         let frames = Spread::of(&ms)?;
@@ -320,6 +416,7 @@ impl PerfRecorder {
                     name: script_name(path),
                     mean: sum / n,
                     max,
+                    worst_fn: self.worst_fn(path, now),
                 }
             })
             .filter(|s| s.max > 0.0)
@@ -627,6 +724,10 @@ pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
         line("scripts                    mean   max   (worst first)".to_string());
         for sc in &s.scripts {
             line(format!("  {:<24}{:5.2} {:5.1}", sc.name, sc.mean, sc.max));
+            // Where its worst frame went (#1100)
+            if let Some(f) = &sc.worst_fn {
+                line(format!("    in {}", f.part()));
+            }
         }
     }
     line(String::new());
@@ -708,7 +809,11 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
             "worst scripts: {}",
             s.scripts
                 .iter()
-                .map(|sc| format!("{} {:.2}/{:.1}", sc.name, sc.mean, sc.max))
+                .map(|sc| match &sc.worst_fn {
+                    // The callback's slowest function in a frame (#1100)
+                    Some(f) => format!("{} {:.2}/{:.1} ({})", sc.name, sc.mean, sc.max, f.part()),
+                    None => format!("{} {:.2}/{:.1}", sc.name, sc.mean, sc.max),
+                })
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -1193,6 +1298,50 @@ mod tests {
         assert!((s.scripts[0].max - 40.0).abs() < 0.01);
         assert_eq!(s.scripts[1].name, "weather.rhai:on_update");
         assert!((s.scripts[1].mean - 0.75).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_slow_script_names_its_slowest_function() {
+        let fn_time = |function, calls, total_ms| flint_script::FnTime {
+            callback: "scripts/whale.rhai:on_update".to_string(),
+            function,
+            calls,
+            total_ms,
+            worst_ms: total_ms,
+        };
+        let mut rec = PerfRecorder::new(false);
+        let mut t = rec.start;
+        let now = Instant::now();
+        for i in 0..10 {
+            rec.begin_frame_at(t);
+            let spike = if i == 4 { 40.0 } else { 0.1 };
+            rec.record_scripts(&[("scripts/whale.rhai:on_update".to_string(), spike + 3.0)]);
+            rec.record_functions_at(
+                &[
+                    fn_time("scripts/whale.rhai:sing()", 1, spike),
+                    fn_time("raycast()", 400, 3.0),
+                ],
+                now,
+            );
+            t += ms(16.0);
+        }
+        rec.begin_frame_at(t);
+        let s = rec.summary().unwrap();
+        let worst = s.scripts[0].worst_fn.as_ref().unwrap();
+        assert_eq!(worst.name, "sing()", "named without its own file");
+        assert!((worst.ms - 40.0).abs() < 0.01);
+        let c = PerfContext::default();
+        let line = summary_line(&s, &c);
+        assert!(
+            line.contains("worst scripts: whale.rhai:on_update 7.09/43.0 (sing() 40.0)"),
+            "{line}"
+        );
+
+        // Once the window has passed it, the next frame's slowest is named
+        let later = now + std::time::Duration::from_secs_f64(WINDOW_SECS + 1.0);
+        rec.record_functions_at(&[fn_time("raycast()", 400, 3.0)], later);
+        let w = rec.worst_fn("scripts/whale.rhai:on_update", later).unwrap();
+        assert_eq!(w.part(), "raycast() x400 3.0");
     }
 
     #[test]

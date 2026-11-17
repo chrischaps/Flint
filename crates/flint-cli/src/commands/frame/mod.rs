@@ -29,7 +29,7 @@ pub mod open;
 pub(crate) mod read;
 pub(crate) mod replay;
 mod show;
-mod table;
+pub(crate) mod table;
 pub(crate) mod trace;
 
 use anyhow::Result;

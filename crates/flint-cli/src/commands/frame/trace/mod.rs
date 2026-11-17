@@ -1,6 +1,8 @@
 //! A scope trace read back (#1099): the Chrome trace-event JSON the
 //! player's recorder writes (ADR 0128, #1097), as data the profiler tab
-//! and the CLI can ask questions of.
+//! asks questions of. `flint profile` (#1098) reads the same files with a
+//! reader of its own, `commands/profile/read.rs`; the two landed side by
+//! side and are not yet one.
 //!
 //! The file is a list of events. A thread's scopes are `"ph":"X"` events
 //! with `args: { frame, depth, detail? }`, on a track (`tid`) named by a
