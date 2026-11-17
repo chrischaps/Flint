@@ -872,7 +872,7 @@ Words after `--` are added to every take's `flint play` command line.
 Render a scene to a PNG image without opening a window:
 
 ```bash
-flint render examples/phase3_showcase.scene.toml --output hero.png
+flint render examples/showcase_tavern.scene.toml --output hero.png
 flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
 ```
 

@@ -2,7 +2,7 @@
 
 A technique is proved only in motion. *Understudy* is a 28-second film made in Flint to test whether the rotoscoped-sketch pieces work together (epic #402). A wooden drawing mannequin waits in a clearing at dusk beside an easel with a blank page. It walks to the page and touches it, the picture tears open there, and it walks into a world traced in pencil, where it moves on twos as the lines do. Then the live world is wiped back over it, and a last panel draws the mannequin in pencil, stroke by stroke: it came back, mostly.
 
-The scene is `examples/understudy.scene.toml`, with two scripts: `scripts/understudy.rhai` (the beats, the walk and the camera) and `scripts/understudy_hud.rhai` (the panels' ink and the captions). The engine supplies these pieces, and the rest is scene and script:
+The scene is `demos/understudy/understudy.scene.toml` in the [Flint demos](https://github.com/chrischaps/flint-demos) repository, with two scripts beside it: `scripts/understudy.rhai` (the beats, the walk and the camera) and `scripts/understudy_hud.rhai` (the panels' ink and the captions). The engine supplies these pieces, and the rest is scene and script:
 
 | Piece | What it does here | Reference |
 |---|---|---|
@@ -17,7 +17,7 @@ The scene is `examples/understudy.scene.toml`, with two scripts: `scripts/unders
   <source src="../images/understudy.mp4" type="video/mp4">
 </video>
 
-*The whole loop at 960x540. Captured with `flint-player examples/understudy.scene.toml --width 1280 --height 720 --frame-step 0.0416667 --screenshot-every 0.0416667 --screenshot frames/f.png --exit-after 28.05 --pixels-per-point 1` on an RTX 4070, and encoded with ffmpeg. Nothing in it is played by hand.*
+*The whole loop at 960x540. Captured, from the demos repository, with `flint-player demos/understudy/understudy.scene.toml --width 1280 --height 720 --frame-step 0.0416667 --screenshot-every 0.0416667 --screenshot frames/f.png --exit-after 28.05 --pixels-per-point 1` on an RTX 4070, and encoded with ffmpeg. Nothing in it is played by hand.*
 
 ## The beats
 
