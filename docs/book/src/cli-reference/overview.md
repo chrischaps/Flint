@@ -931,7 +931,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--expression-timeline <file>` | (none) | Feed scripts' `expression()` and `on_expression` from a JSON timeline on the render's clock. Implies `--scripts` |
 | `--strict-scripts` | `false` | Exit 1, after writing the picture, when any script failed to load, to compile or while running (#693). Implies `--scripts`. Either way a scripted render prints each error once with its count, and `--report json` lists them as `script_errors` |
 | `--fps <n>` | `12` | With a `--time` span: GIF frames per second of game time, up to 50 |
-| `--sweep <knob=a,b,...>` | (none) | The same moment once per value, as labelled columns: `wooze.glide=0,0.25,0.5,1`. Takes `wooze.amplitude`, `.step`, `.glide`, `.jitter`, `.preset` |
+| `--sweep <knob=a,b,...>` | (none) | The same moment once per value, as labelled columns: `wooze.glide=0,0.25,0.5,1`. Takes `wooze.amplitude`, `.step`, `.glide`, `.jitter`, `.preset`, and the scene's `[living] echoes` as `living.echoes.count`, `.spread`, `.alpha` (#531) |
 | `--report json` | (none) | One JSON object on stdout: each living prop's lineage seed, pose indices, the wooze values it read, and every species value with the layer that set it, and `script_errors`, each script error of the run with its entity, callback, line and count. Everything else moves to stderr |
 | `--oren-nayar <f32>` | `0` | Oren-Nayar diffuse blend (0 = Lambert, 1 = full); see [Lighting](../concepts/lighting.md) |
 | `--sheen-strength <f32>` | `0` | Charlie-sheen rim strength (keep at or below about 0.3) |

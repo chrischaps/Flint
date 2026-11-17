@@ -8,6 +8,7 @@
 //! --sweep post.exposure=0.8,1.2           a [post_process] field (`|` splits vectors)
 //! --sweep ascii.cell=6,8,12               any registered style's param or option
 //! --sweep wooze.glide=0,0.25,0.5,1        a Living Props wooze knob (#216)
+//! --sweep living.echoes.spread=0,0.9,1.8  the scene's `[living] echoes` (#531)
 //! ```
 //!
 //! What a key means is decided here, before a scene loads or a GPU wakes, so a
@@ -15,7 +16,10 @@
 //! post or style column changes the `[post_process]` it draws with
 //! ([`Sweep::column_def`], [`Sweep::column_style`]); a wooze column lays
 //! [`Sweep::wooze_table`] over the scene's `[wooze]`, and so draws through
-//! `render.rs`'s stages, a world and renderer a column (#487). The sheet the
+//! `render.rs`'s stages, a world and renderer a column (#487); an echoes column
+//! is written into its own copy of the scene's `[living]` table
+//! ([`SweepGrid::lay_living`]) before its stage loads, so it draws what a scene
+//! with that table draws. The sheet the
 //! columns land on is [`super::style_sheet::compose`] for every family.
 
 use super::look::{did_you_mean, find, overlay, Look};
@@ -34,6 +38,9 @@ pub enum SweepKey {
     /// `wooze.<knob>=...`: one of the scene's global wooze values (#216), as
     /// `WoozeField::set_global` names it.
     Wooze { knob: String },
+    /// `living.echoes.<knob>=...`: one field of the scene's `[living] echoes`
+    /// table (#531), as a scene would write it.
+    Echoes { knob: String },
 }
 
 /// `--sweep KEY=V1,V2,...`, parsed and checked.
@@ -54,6 +61,9 @@ pub const CELL_SIZE: (u32, u32) = (640, 360);
 /// The knobs `wooze.<knob>` can turn.
 pub const WOOZE_KNOBS: [&str; 5] = ["amplitude", "step", "glide", "jitter", "preset"];
 
+/// The fields `living.echoes.<knob>` can turn: `[living] echoes`' own.
+pub const ECHO_KNOBS: [&str; 3] = ["count", "spread", "alpha"];
+
 /// `clap`'s value parser for `--sweep`.
 pub fn parse_sweep(spec: &str) -> Result<Sweep, String> {
     Sweep::parse(spec)
@@ -65,8 +75,8 @@ impl Sweep {
     pub fn parse(spec: &str) -> Result<Self, String> {
         let (key, values) = spec.split_once('=').ok_or_else(|| {
             format!(
-                "expected KEY=V1,V2,... (got '{spec}'): e.g. ascii.cell=6,8,12 or \
-                 wooze.glide=0,0.25,0.5,1"
+                "expected KEY=V1,V2,... (got '{spec}'): e.g. ascii.cell=6,8,12, \
+                 wooze.glide=0,0.25,0.5,1 or living.echoes.spread=0,0.9,1.8"
             )
         })?;
         let key = key.trim();
@@ -96,12 +106,14 @@ impl Sweep {
             parse_post(field, &values)?
         } else if let Some(knob) = key.strip_prefix("wooze.") {
             parse_wooze(knob, &values)?
+        } else if let Some(field) = key.strip_prefix("living.") {
+            parse_living(field, &values)?
         } else if let Some((style, k)) = key.split_once('.') {
             parse_style(key, style, k, &values)?
         } else {
             return Err(format!(
-                "--sweep: '{key}' is not look, post.<field>, <style>.<key> or wooze.<knob> \
-                 (e.g. ascii.cell; `--style help` lists the keys)"
+                "--sweep: '{key}' is not look, post.<field>, <style>.<key>, wooze.<knob> or \
+                 living.echoes.<knob> (e.g. ascii.cell; `--style help` lists the keys)"
             ));
         };
         Ok(Self { key, values })
@@ -114,15 +126,18 @@ impl Sweep {
             SweepKey::Style { style, key } => format!("{style}.{key}"),
             SweepKey::Post { field } => format!("post.{field}"),
             SweepKey::Wooze { knob } => format!("wooze.{knob}"),
+            SweepKey::Echoes { knob } => format!("living.echoes.{knob}"),
         }
     }
 
     /// What column `i` is labelled with on the sheet: its value, or for a wooze
-    /// number the knob and its value (`glide 0.25`), as #216's sheets were.
+    /// number the knob and its value (`glide 0.25`), as #216's sheets were,
+    /// and an echoes field the same way (`spread 0.9`).
     pub fn label(&self, i: usize) -> String {
         let value = &self.values[i];
         match &self.key {
             SweepKey::Wooze { knob } if knob != "preset" => format!("{knob} {value}"),
+            SweepKey::Echoes { knob } => format!("{knob} {value}"),
             _ => value.clone(),
         }
     }
@@ -173,6 +188,21 @@ impl Sweep {
         Some(table)
     }
 
+    /// The `[living] echoes` field column `i` of an echoes sweep sets, and its
+    /// value as a scene would write it: `count` an integer, the others floats.
+    /// `None` for a sweep of anything else.
+    pub fn echoes_field(&self, i: usize) -> Option<(&str, toml::Value)> {
+        let SweepKey::Echoes { knob } = &self.key else {
+            return None;
+        };
+        let text = &self.values[i];
+        let value = match knob.as_str() {
+            "count" => toml::Value::Integer(text.parse().ok()?),
+            _ => toml::Value::Float(text.parse().ok()?),
+        };
+        Some((knob, value))
+    }
+
     /// Said when columns `i` and `i + 1` came out the same, pixel for pixel: the
     /// sweep showed nothing, and a reader would otherwise think it showed "no
     /// difference". What usually explains it depends on what was swept.
@@ -181,6 +211,14 @@ impl Sweep {
             SweepKey::Wooze { .. } => {
                 "nothing on screen is reading this knob at this moment, or a zone is keeping \
                  it off these values"
+            }
+            SweepKey::Echoes { knob } if knob == "count" => {
+                "every copy the added echoes would draw has faded to nothing at this spread \
+                 and alpha"
+            }
+            SweepKey::Echoes { .. } => {
+                "no living prop draws echoes here: a count of 0, in the scene's [living] \
+                 echoes or every spec's, leaves nothing for spread or alpha to change"
             }
             SweepKey::Style { .. } => {
                 "the style is off, nothing it draws reads this key, or the style clamps both \
@@ -354,6 +392,39 @@ impl SweepGrid {
             .map(|(s, i)| format!("{} = {}", s.name(), s.values[i]))
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    /// Whether either axis turns a field of the scene's `[living]` table.
+    pub fn is_living(&self) -> bool {
+        self.axes(0, 0)
+            .iter()
+            .any(|(s, _)| matches!(s.key, SweepKey::Echoes { .. }))
+    }
+
+    /// Write the cell's `[living]` values into a scene's tables (#531): each
+    /// echoes axis's field into `[living] echoes`, the table and its `echoes`
+    /// made when the scene has none, every other field left as the scene
+    /// wrote it. The cell then draws what a scene with that table draws,
+    /// since everything downstream reads `[living]` from these tables.
+    pub fn lay_living(&self, column: usize, row: usize, tables: &mut toml::Table) {
+        for (sweep, i) in self.axes(column, row) {
+            let Some((knob, value)) = sweep.echoes_field(i) else {
+                continue;
+            };
+            let living = tables
+                .entry("living")
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            // A [living] that isn't a table was refused when the scene settled
+            let Some(living) = living.as_table_mut() else {
+                continue;
+            };
+            let echoes = living
+                .entry("echoes")
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            if let Some(echoes) = echoes.as_table_mut() {
+                echoes.insert(knob.to_string(), value);
+            }
+        }
     }
 
     /// The first wooze knob either axis turns.
@@ -633,6 +704,49 @@ fn parse_wooze(knob: &str, values: &[String]) -> Result<SweepKey, String> {
     })
 }
 
+/// `living.<field>`: `[living] echoes`' fields (#531), each value held to
+/// what a spec's echoes take (`EchoConfig::check`), so no column draws a value
+/// the props would refuse.
+fn parse_living(field: &str, values: &[String]) -> Result<SweepKey, String> {
+    let Some(knob) = field
+        .strip_prefix("echoes.")
+        .filter(|k| ECHO_KNOBS.contains(k))
+    else {
+        return Err(format!(
+            "--sweep: can't sweep 'living.{field}': it takes living.echoes.{}",
+            ECHO_KNOBS.join(", living.echoes.")
+        ));
+    };
+    for value in values {
+        let mut echoes = flint_procgen::EchoConfig::default();
+        if knob == "count" {
+            echoes.count = value.parse().map_err(|_| {
+                format!("--sweep: living.echoes.count takes whole numbers, and '{value}' isn't")
+            })?;
+        } else {
+            let number = value
+                .parse::<f32>()
+                .ok()
+                .filter(|n| n.is_finite())
+                .ok_or_else(|| {
+                    format!("--sweep: living.echoes.{knob} takes numbers, and '{value}' isn't")
+                })?;
+            if knob == "spread" {
+                echoes.spread = number;
+            } else {
+                echoes.alpha = number;
+            }
+        }
+        // `why` starts with the value: `3: must be from 0 to 1.82 steps, ...`
+        if let Err((_, why)) = echoes.check() {
+            return Err(format!("--sweep living.echoes.{knob}={why}"));
+        }
+    }
+    Ok(SweepKey::Echoes {
+        knob: knob.to_string(),
+    })
+}
+
 fn parse_style(key: &str, style: &str, k: &str, values: &[String]) -> Result<SweepKey, String> {
     for value in values {
         // `StyleSpec` refuses a value past its param's range (#355), which
@@ -762,6 +876,83 @@ mod tests {
         assert!(parse_sweep("wooze.glide=0,dreamy")
             .unwrap_err()
             .contains("'dreamy'"));
+    }
+
+    /// #531: an echoes field parses, labels like a wooze knob and is written
+    /// into the scene's `[living] echoes` as a scene would write it.
+    #[test]
+    fn an_echoes_sweep_is_written_into_the_living_table() {
+        let spread = parse_sweep("living.echoes.spread=0,0.9,1.8").unwrap();
+        assert_eq!(spread.name(), "living.echoes.spread");
+        assert_eq!(spread.label(1), "spread 0.9");
+        assert_eq!(spread.wooze_knob(), None, "no wooze knob");
+        assert_eq!(spread.column_style(0), None, "and no style");
+        let count = parse_sweep("living.echoes.count=0,3").unwrap();
+        assert_eq!(
+            count.echoes_field(1),
+            Some(("count", toml::Value::Integer(3)))
+        );
+
+        // Over a scene's table: the column's field, the scene's others kept
+        let grid = SweepGrid::new(&[spread]).unwrap().unwrap();
+        assert!(grid.is_living());
+        let mut tables: toml::Table = toml::from_str(
+            "[living]\nstagger = \"none\"\nsoftness = 0.3\nechoes = { count = 2, spread = 0.2 }",
+        )
+        .unwrap();
+        grid.lay_living(1, 0, &mut tables);
+        let scene: toml::Table = toml::from_str(
+            "[living]\nstagger = \"none\"\nsoftness = 0.3\nechoes = { count = 2, spread = 0.9 }",
+        )
+        .unwrap();
+        assert_eq!(tables, scene, "what a scene with spread = 0.9 says");
+
+        // A scene with no [living] gets one holding only the field
+        let mut bare = toml::Table::new();
+        grid.lay_living(2, 0, &mut bare);
+        let expected: toml::Table = toml::from_str("[living]\nechoes = { spread = 1.8 }").unwrap();
+        assert_eq!(bare, expected);
+
+        // In a grid, each axis writes its own field
+        let grid = SweepGrid::new(&[
+            parse_sweep("living.echoes.alpha=0.1,0.4").unwrap(),
+            parse_sweep("living.echoes.count=1,6").unwrap(),
+        ])
+        .unwrap()
+        .unwrap();
+        let mut both = toml::Table::new();
+        grid.lay_living(1, 1, &mut both);
+        let expected: toml::Table =
+            toml::from_str("[living]\nechoes = { alpha = 0.4, count = 6 }").unwrap();
+        assert_eq!(both, expected);
+        assert!(!SweepGrid::new(&[parse_sweep("wooze.glide=0,1").unwrap()])
+            .unwrap()
+            .unwrap()
+            .is_living());
+    }
+
+    #[test]
+    fn a_bad_echoes_sweep_says_what_was_wrong() {
+        let unknown = parse_sweep("living.echoes.width=1,2").unwrap_err();
+        assert!(unknown.contains("living.echoes.spread"), "{unknown}");
+        assert!(parse_sweep("living.softness=0,1")
+            .unwrap_err()
+            .contains("living.echoes.count"));
+        assert!(parse_sweep("living.echoes.count=1,2.5")
+            .unwrap_err()
+            .contains("whole numbers"));
+        assert!(parse_sweep("living.echoes.count=-1,2").is_err());
+        let many = parse_sweep("living.echoes.count=1,40").unwrap_err();
+        assert!(many.contains("at most 16"), "{many}");
+        let wide = parse_sweep("living.echoes.spread=0,3").unwrap_err();
+        assert!(wide.contains("faded to nothing"), "{wide}");
+        let bright = parse_sweep("living.echoes.alpha=0.2,1.5").unwrap_err();
+        assert!(bright.contains("[0.0, 1.0]"), "{bright}");
+        assert!(parse_sweep("living.echoes.alpha=0.2,NaN")
+            .unwrap_err()
+            .contains("takes numbers"));
+        let s = parse_sweep("living.echoes.spread=0.5,0.5").unwrap();
+        assert!(s.identical_warning(0).contains("count of 0"));
     }
 
     #[test]

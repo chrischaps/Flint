@@ -57,8 +57,10 @@ impl Edit {
         let value = parse_value(&self.value);
         match sweep.key {
             SweepKey::Look => return Err("`look` can't be an edit; edit its keys".into()),
-            SweepKey::Wooze { .. } => {
-                return Err("wooze knobs belong to the scene, not a look".into())
+            SweepKey::Wooze { .. } | SweepKey::Echoes { .. } => {
+                return Err(
+                    "wooze knobs and [living] echoes belong to the scene, not a look".into(),
+                )
             }
             SweepKey::Post { field } => {
                 table.insert(field, value);
@@ -226,7 +228,7 @@ fn current_value(table: &toml::Table, key: &SweepKey) -> Option<toml::Value> {
     match key {
         SweepKey::Post { field } => table.get(field).cloned(),
         SweepKey::Style { style, key } => table.get("styles")?.get(style)?.get(key).cloned(),
-        SweepKey::Look | SweepKey::Wooze { .. } => None,
+        SweepKey::Look | SweepKey::Wooze { .. } | SweepKey::Echoes { .. } => None,
     }
 }
 
