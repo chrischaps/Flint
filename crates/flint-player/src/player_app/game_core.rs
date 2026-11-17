@@ -84,6 +84,10 @@ pub struct GameCore {
     /// The script modules the game's extensions declared (#754): enabled
     /// for the whole run, beside the subsystems'.
     pub(crate) extension_modules: Vec<&'static str>,
+    /// Every named event of the run with its game time (`fire_event` and
+    /// the engine's own), for an input script's `expect event` / `wait
+    /// event` (#714). `None`, and nothing kept, unless the run has checks.
+    pub event_log: Option<Vec<(f64, String)>>,
 }
 
 impl GameCore {
@@ -110,6 +114,7 @@ impl GameCore {
             commands_warned: Default::default(),
             fixed_steps: 0,
             extension_modules: Vec::new(),
+            event_log: None,
         }
     }
 }
@@ -453,6 +458,13 @@ impl GameCore {
     /// pause/unpause keybinds work.
     fn collect_game_events(&mut self, input: &InputState) -> Vec<GameEvent> {
         let mut game_events = self.events.drain();
+        if let Some(log) = &mut self.event_log {
+            for event in &game_events {
+                if let GameEvent::Custom { name, .. } = event {
+                    log.push((self.clock.total_time, name.clone()));
+                }
+            }
+        }
         for action in input.actions_just_pressed() {
             game_events.push(GameEvent::ActionPressed(action));
         }
@@ -637,7 +649,7 @@ impl GameCore {
         let cues = self.animation.drain_sequence_cues();
         if !cues.is_empty() {
             for cue in &cues {
-                println!(
+                eprintln!(
                     "[sequence] {:?} '{}' cue '{}' at {:.2}s",
                     cue.entity_id, cue.sequence, cue.cue, cue.time
                 );
@@ -914,7 +926,7 @@ impl CoreCommands<'_> {
         if self.quiet {
             tracing::info!("{line}");
         } else {
-            println!("{line}");
+            eprintln!("{line}");
         }
     }
 }

@@ -99,6 +99,8 @@ flint-animation = { workspace = true }
 flint-particles = { workspace = true }
 flint-terrain = { workspace = true }
 flint-script = { workspace = true }
+# An input script's `expect` and `wait` lines are its conditions (#714)
+flint-query = { workspace = true }
 rhai = { workspace = true }
 profiling = { workspace = true }
 tracy-client = { workspace = true, optional = true, features = ["only-localhost", "ondemand"] }

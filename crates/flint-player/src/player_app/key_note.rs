@@ -30,7 +30,7 @@ struct Shown {
 impl KeyNote {
     /// Show `text` for `key` and print it to the console.
     pub(crate) fn say(&mut self, key: &'static str, text: &str) {
-        println!("[debug] {key}: {text}");
+        eprintln!("[debug] {key}: {text}");
         self.shown = Some(Shown {
             key,
             text: text.to_string(),

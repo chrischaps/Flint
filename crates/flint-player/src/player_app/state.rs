@@ -114,6 +114,13 @@ pub struct LaunchOptions {
     /// run time, fails (`PlayerApp::run_failure`), so a headless run of a
     /// broken game can't exit 0.
     pub strict_scripts: bool,
+    /// Keep the `persist_*` store in memory only: read no save and write
+    /// none (#714: a playtest starts from no save, and leaves none).
+    pub saves_in_memory: bool,
+    /// The screen scripts see, in points, when there is no window (#714:
+    /// a playtest's `screen_width()` is its `--width`, not egui's
+    /// placeholder). `None` keeps egui's.
+    pub headless_screen: Option<(f32, f32)>,
 }
 
 impl Default for LaunchOptions {
@@ -141,6 +148,8 @@ impl Default for LaunchOptions {
             compare: None,
             compare_at_start: None,
             strict_scripts: false,
+            saves_in_memory: false,
+            headless_screen: None,
         }
     }
 }

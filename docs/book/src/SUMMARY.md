@@ -58,6 +58,7 @@
 - [Writing Constraints](guides/writing-constraints.md)
 - [Importing Assets](guides/importing-assets.md)
 - [Headless Rendering](guides/headless-rendering.md)
+- [Playtesting](guides/playtesting.md)
 - [Stylized Rendering](guides/stylized-rendering.md)
 - [Filming a Showcase](guides/filming-a-showcase.md)
 - [AI Agent Workflow](guides/ai-agent-workflow.md)

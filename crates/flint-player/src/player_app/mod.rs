@@ -40,7 +40,9 @@ mod hitch_watch;
 mod hold_tests;
 mod hud_render;
 mod init;
+pub mod input_checks;
 mod input_config;
+mod input_probe;
 pub mod input_script;
 mod key_note;
 #[cfg(feature = "living")]
@@ -61,6 +63,8 @@ mod missing_features;
 mod pacing;
 mod perf;
 mod persist;
+pub mod playtest;
+pub mod playtest_warnings;
 #[cfg(feature = "procgen")]
 pub mod procgen_assets;
 mod quality;

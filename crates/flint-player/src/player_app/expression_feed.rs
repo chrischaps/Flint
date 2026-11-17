@@ -562,14 +562,14 @@ impl ExpressionFeed {
         let mut feed = Self::default();
         if let Some(path) = timeline {
             let t = ExpressionTimeline::load(path)?;
-            println!("Expression timeline: {path} ({} events)", t.len());
+            eprintln!("Expression timeline: {path} ({} events)", t.len());
             feed.timeline = Some(t);
         }
         if let Some(addr) = listen {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let l = ExpressionListener::bind(addr)?;
-                println!(
+                eprintln!(
                     "Expression listening on {} (one JSON object per line)",
                     l.local_addr()
                 );

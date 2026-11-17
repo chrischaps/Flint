@@ -397,7 +397,7 @@ impl LivingSubsystem {
                 ),
                 Err(problem) => problem,
             };
-            println!("[living] {said}");
+            eprintln!("[living] {said}");
             self.tune.status = Some(said);
             if split {
                 self.split_living(ctx, true);
@@ -422,7 +422,7 @@ impl LivingSubsystem {
         };
         let (a, b) = self.living_ab_picks(ctx);
         match self.compare_living(ctx, &a, &b) {
-            Ok(()) => println!(
+            Ok(()) => eprintln!(
                 "[living] comparing A ({}) with B ({}){}",
                 side_label(&a),
                 side_label(&b),

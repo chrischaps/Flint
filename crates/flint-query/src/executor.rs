@@ -41,6 +41,23 @@ fn filter_entities(
     }
 }
 
+/// Whether one entity meets a condition, as a query's `where` asks of each
+/// (#714: `flint playtest`'s `expect <entity> <condition>`).
+pub fn entity_matches(world: &FlintWorld, entity: &EntityInfo, condition: &Condition) -> bool {
+    matches_condition(entity, condition, world)
+}
+
+/// The value an entity's field holds, as a condition reads it (a string, a
+/// number or a boolean), or `None` when it has none: what a failed
+/// `expect` reports it found.
+pub fn field_value(world: &FlintWorld, entity: &EntityInfo, field: &str) -> Option<QueryValue> {
+    get_field_value(entity, field, world).map(|v| match v {
+        FieldValue::String(s) => QueryValue::String(s),
+        FieldValue::Number(n) => QueryValue::Number(n),
+        FieldValue::Bool(b) => QueryValue::Boolean(b),
+    })
+}
+
 fn matches_condition(entity: &EntityInfo, condition: &Condition, world: &FlintWorld) -> bool {
     let field_value = get_field_value(entity, &condition.field, world);
 
@@ -95,6 +112,11 @@ fn extract_toml_value(value: &toml::Value, path: &[&str]) -> Option<FieldValue> 
         toml::Value::Table(table) => table
             .get(path[0])
             .and_then(|v| extract_toml_value(v, &path[1..])),
+        // A vector's element by its axis: `transform.position.y` (#714)
+        toml::Value::Array(items) => {
+            let i = ["x", "y", "z", "w"].iter().position(|a| *a == path[0])?;
+            items.get(i).and_then(|v| extract_toml_value(v, &path[1..]))
+        }
         _ => None,
     }
 }
@@ -114,6 +136,18 @@ enum FieldValue {
     String(String),
     Number(f64),
     Bool(bool),
+}
+
+/// Whether `found` stands in `op` to `want`, as a condition compares a
+/// field's value: strings by `==`, `!=` and `contains`, numbers by all six
+/// comparisons, booleans by `==` and `!=`; two kinds never match.
+pub fn compare(found: &QueryValue, op: &Operator, want: &QueryValue) -> bool {
+    let field = match found {
+        QueryValue::String(s) => FieldValue::String(s.clone()),
+        QueryValue::Number(n) => FieldValue::Number(*n),
+        QueryValue::Boolean(b) => FieldValue::Bool(*b),
+    };
+    compare_values(&field, op, want)
 }
 
 fn compare_values(field: &FieldValue, op: &Operator, query: &QueryValue) -> bool {
@@ -193,6 +227,54 @@ mod tests {
         } else {
             panic!("Expected Entities result");
         }
+    }
+
+    /// #714: one condition asked of one entity, a vector's axis read by
+    /// name, and the value found for a report
+    #[test]
+    fn one_entity_one_condition_and_a_vector_axis() {
+        let mut world = setup_test_world();
+        let id = world.get_id("door1").unwrap();
+        world.get_components_mut(id).unwrap().set(
+            "transform",
+            toml::toml! { position = [1.0, 2.5, -3.0] }.into(),
+        );
+        let door = world
+            .all_entities()
+            .into_iter()
+            .find(|e| e.name == "door1")
+            .unwrap();
+        let cond = |s: &str| crate::parse_condition(s).unwrap();
+        assert!(entity_matches(&world, &door, &cond("door.locked == true")));
+        assert!(!entity_matches(
+            &world,
+            &door,
+            &cond("door.locked == false")
+        ));
+        assert!(entity_matches(
+            &world,
+            &door,
+            &cond("transform.position.y > 2")
+        ));
+        assert!(entity_matches(
+            &world,
+            &door,
+            &cond("transform.position.z < -2.5")
+        ));
+        assert!(!entity_matches(
+            &world,
+            &door,
+            &cond("transform.position.w == 0")
+        ));
+        assert_eq!(
+            field_value(&world, &door, "transform.position.y").map(|v| v.to_string()),
+            Some("2.5".into())
+        );
+        assert_eq!(
+            cond("door.style == 'hinged'").to_string(),
+            "door.style == 'hinged'"
+        );
+        assert!(crate::parse_condition("door.locked == true and x == 1").is_err());
     }
 
     #[test]

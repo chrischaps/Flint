@@ -32,6 +32,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint asset job list` | List all generation jobs |
 | `flint edit <file>` | Unified interactive editor (auto-detects file type) |
 | `flint play [scene]` | Play a scene with first-person controls and physics; with no scene, the project's default (`flint.toml`'s `[project] scene`) |
+| `flint playtest <scene>` | Play a scene headless on a fixed clock, with an input script's `expect` / `wait` lines and the scripts' `test_*` calls; one JSON report, the same bytes every run, exit 1 on a failure ([Playtesting](../guides/playtesting.md)) |
 | `flint render <scene>` | Render a scene to PNG (headless) |
 | `flint dxc status` | What DX12 compiles shaders with here, and why: DXC is linked into the binary ([DX12's shader compiler](#dx12s-shader-compiler)); `flint dxc notices` writes DXC's licence and notices for a Windows build you ship |
 | `flint goldens <file>.goldens.toml` | Render a list of scenes and gate each against its golden PNG; `--bless` rewrites them ([Golden Suites](../guides/headless-rendering.md#golden-suites)) |
@@ -287,7 +288,16 @@ An input script plays its events at set game times. `#` starts a comment:
 9.5   tap     Enter
 10.0  look    40 -10             # raw mouse motion, for mouse-look
 10.5  look    300 0 1.5          # spread over 1.5 s
+11.0  expect  door door.open == true          # ask the game (flint-query's conditions)
+11.0  wait    player transform.position.z > 9 within 5   # hold what follows until it holds
 ```
+
+`expect` and `wait` ask the game rather than play into it: an `expect`
+once at its time, a `wait` every frame until it holds, holding back the
+lines after it (they then play that much later). A failed one is printed
+with the exit report and makes the run exit 1. Their forms (an entity's
+field, `entities where`, `persist`, `log`, `event`) are in
+[Playtesting](../guides/playtesting.md), which is where they are most use.
 
 `pull` sets an analog button's travel, as a real pad's trigger sends it: a
 `gamepad_button` binding to `RightTrigger2` reads 0.6, not the 0 or 1 that
@@ -429,6 +439,34 @@ cargo run --bin flint-player -- examples/phase4_runtime.scene.toml
 cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
   scenes/level_1.scene.toml
 ```
+
+## The `playtest` Command
+
+Play a scene with no window, GPU or sound device, on a fixed clock, and
+report whether it passed: every `expect` and `wait` of the input script,
+every `test_assert`, `test_fail` and `test_pass` of the scripts, every script
+error with its file and line, and the engine's warnings, as one JSON document
+that two runs write byte for byte. Exit 1 on any failure. The whole story is
+[Playtesting](../guides/playtesting.md).
+
+```bash
+flint playtest examples/phase4_runtime.scene.toml     --input-script examples/playtests/phase4_runtime.playtest.txt --exit-after 8
+flint playtest scenes/level1.scene.toml --timeout 30 --strict --dump player --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--input-script <file>` | Keys, pads and the pointer, and `expect` / `wait` lines that check the game |
+| `--exit-after <s>` | End at this game time, passing if nothing failed (10 when neither this nor `--timeout` is given) |
+| `--timeout <s>` | End at this game time as a failure: the run should have ended itself (`test_pass()`, `test_fail()`, `quit_game()`) |
+| `--frame-step <s>` | Game seconds a frame (default 1/60) |
+| `--seed <n>` | `random()`'s seed (default: every stepped run's) |
+| `--strict` | A warning while the scene loads fails the run, and so does anything `flint check` finds in the scene |
+| `--dump <entity>` | Put the entity's components at the end in the report (repeatable) |
+| `--report <file>` | Write the JSON report to this file as well |
+| `--timings` | Wall-clock times in the report (two runs then differ) |
+| `--width <w>`, `--height <h>` | The screen scripts see, in points (1280 x 720) |
+| `--schemas <dir>` | Schema directories (repeatable); without it, the project's |
 
 ## The `render` Command
 

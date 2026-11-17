@@ -387,6 +387,14 @@ impl PlayerApp {
     /// saved over.
     pub(super) fn load_persistent_store(&mut self) {
         self.refresh_project();
+        if self.launch.saves_in_memory {
+            // No backend: nothing read, `save_persistent_store` writes nothing
+            self.core
+                .store
+                .set_game_version(self.core.project.save_version);
+            tracing::info!("persist: saves are kept in memory for this run");
+            return;
+        }
         let files = SaveFiles::locate(
             &self.core.project,
             &self.core.scene_path,
@@ -1158,9 +1166,9 @@ fn on_init() {
         app.flush_persistent_store(true, "exit");
 
         let said = log.lock().unwrap().clone();
-        println!("--- script output ---");
+        eprintln!("--- script output ---");
         for line in &said {
-            println!("{line}");
+            eprintln!("{line}");
         }
         assert_eq!(
             said,
@@ -1175,9 +1183,9 @@ fn on_init() {
             ]
         );
         let on_disk = files_under(&saves);
-        println!("--- kart/saves ---");
+        eprintln!("--- kart/saves ---");
         for (name, text) in &on_disk {
-            println!("{name}:\n{text}");
+            eprintln!("{name}:\n{text}");
         }
         assert_eq!(
             on_disk,

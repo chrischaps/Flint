@@ -360,7 +360,7 @@ impl SkeletalSync {
             // "the animation is stuck on one frame" with nothing else to
             // explain it. Say so rather than render a statue in silence.
             if !playing {
-                println!(
+                eprintln!(
                     "WARNING: entity {:?} has animator clip '{}' but playing=false and \
                      autoplay=false — it will hold its first frame. Check that `playing`/\
                      `autoplay` are under [entities.<name>.animator].",

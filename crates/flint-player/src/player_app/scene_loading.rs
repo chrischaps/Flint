@@ -179,7 +179,7 @@ pub(super) fn register_skeletal_data(
     load_result: &model_loader::ModelLoadResult,
     animation: &mut AnimationSystem,
 ) {
-    register_skeletal_data_saying(load_result, animation, &mut |line| println!("{line}"));
+    register_skeletal_data_saying(load_result, animation, &mut |line| eprintln!("{line}"));
 }
 
 /// [`register_skeletal_data`], each clip it registers told to `say` rather
@@ -247,7 +247,7 @@ pub(super) fn register_node_animation_data(
     load_result: &model_loader::ModelLoadResult,
     animation: &mut AnimationSystem,
 ) {
-    register_node_animation_data_saying(load_result, animation, &mut |line| println!("{line}"));
+    register_node_animation_data_saying(load_result, animation, &mut |line| eprintln!("{line}"));
 }
 
 /// [`register_node_animation_data`], telling `say` what it registers.
@@ -304,7 +304,7 @@ pub(super) fn load_audio_from_world(
         };
         match result {
             Err(e) => tracing::warn!("Failed to load audio '{}': {:?}", name, e),
-            Ok(()) if !queue => println!("Loaded audio: {}", name),
+            Ok(()) if !queue => eprintln!("Loaded audio: {}", name),
             Ok(()) => {}
         }
     };
@@ -400,7 +400,7 @@ pub(super) fn load_animations_from_world(
     animation: &mut AnimationSystem,
 ) {
     load_animations_saying(project, scene_path, animation, &mut |line| {
-        println!("{line}")
+        eprintln!("{line}")
     });
 }
 
@@ -437,7 +437,7 @@ pub(super) fn load_sequences_from_world(
     animation: &mut AnimationSystem,
 ) {
     load_sequences_saying(project, scene_path, animation, &mut |line| {
-        println!("{line}")
+        eprintln!("{line}")
     });
 }
 
@@ -477,7 +477,7 @@ pub(super) fn load_sprite_animations_from_world(
     animation: &mut AnimationSystem,
 ) {
     load_sprite_animations_saying(project, scene_path, animation, &mut |line| {
-        println!("{line}")
+        eprintln!("{line}")
     });
 }
 

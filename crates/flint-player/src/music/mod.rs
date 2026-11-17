@@ -97,7 +97,7 @@ pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
         #[cfg(feature = "rhythm")]
         return Some(Box::new(rhythm::RhythmSubsystem::new(base, comp, ctx)));
         #[cfg(not(feature = "rhythm"))]
-        println!(
+        eprintln!(
             "[music] this player is built without the `rhythm` feature: the suite plays, \
              its chart isn't judged"
         );
@@ -267,7 +267,7 @@ impl MusicSubsystem {
                     }
                 }
                 let buses: Vec<&str> = self.manifest.buses_in_order().map(|(n, _)| n).collect();
-                println!(
+                eprintln!(
                     "[music] suite '{}' playing: {} bus(es) ({}), {}",
                     self.manifest.id,
                     buses.len(),
@@ -288,7 +288,7 @@ impl MusicSubsystem {
     fn stop(&mut self) {
         if let Some(mut session) = self.session.take() {
             session.stop(STOP_FADE_MS);
-            println!("[music] suite '{}' stopped", self.manifest.id);
+            eprintln!("[music] suite '{}' stopped", self.manifest.id);
         }
     }
 

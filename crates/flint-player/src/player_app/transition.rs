@@ -57,7 +57,7 @@ impl PlayerApp {
                 let target = target_scene.clone();
                 let elapsed = elapsed + self.core.clock.delta_time as f32;
                 let over = if !self.core.script.can_complete_transition() {
-                    println!("[transition] No script completes transitions: loading now");
+                    eprintln!("[transition] No script completes transitions: loading now");
                     true
                 } else if elapsed >= TRANSITION_PHASE_TIMEOUT {
                     tracing::warn!(
@@ -91,7 +91,7 @@ impl PlayerApp {
                 self.transition_phase = if self.core.script.can_complete_transition() {
                     TransitionPhase::Entering { elapsed: 0.0 }
                 } else {
-                    println!("[transition] Transition complete");
+                    eprintln!("[transition] Transition complete");
                     TransitionPhase::Idle
                 };
             }
@@ -99,7 +99,7 @@ impl PlayerApp {
                 let elapsed = elapsed + self.core.clock.delta_time as f32;
                 self.transition_phase = if !self.core.script.can_complete_transition() {
                     // A hot reload took the call out
-                    println!("[transition] Transition complete");
+                    eprintln!("[transition] Transition complete");
                     TransitionPhase::Idle
                 } else if elapsed >= TRANSITION_PHASE_TIMEOUT {
                     tracing::warn!(
@@ -283,7 +283,7 @@ impl PlayerApp {
             .script
             .initialize_entities(&mut self.core.world, &spawned_ids);
 
-        println!(
+        eprintln!(
             "[chunk] Loaded '{}' ({} entities) at offset ({}, {})",
             chunk_id,
             spawned_ids.len(),
@@ -302,7 +302,7 @@ impl PlayerApp {
                 self.core.script.remove_entity(*id);
                 let _ = self.core.world.despawn(*id);
             }
-            println!("[chunk] Unloaded '{}' ({} entities)", chunk_id, count);
+            eprintln!("[chunk] Unloaded '{}' ({} entities)", chunk_id, count);
         } else {
             tracing::warn!("Chunk '{}' not loaded, cannot unload", chunk_id);
         }
@@ -345,12 +345,12 @@ impl PlayerApp {
         if let Err(e) = self.enter_scene(super::scene_entry::SceneEntry::Transition) {
             tracing::warn!("[transition] {e:#}");
         }
-        println!("[transition] Scene loaded: {}", self.core.scene_path);
+        eprintln!("[transition] Scene loaded: {}", self.core.scene_path);
         true
     }
 
     fn teardown_current_scene(&mut self) {
-        println!("[transition] Unloading current scene...");
+        eprintln!("[transition] Unloading current scene...");
 
         // Call on_scene_exit on all scripts
         {
@@ -430,7 +430,7 @@ impl PlayerApp {
     /// The error names the target as written, the path it was read from
     /// and why it failed.
     fn read_scene(&mut self, target_scene: &str) -> Result<NextScene, String> {
-        println!("[transition] Loading scene: {}", target_scene);
+        eprintln!("[transition] Loading scene: {}", target_scene);
 
         // Resolve scene path relative to current scene
         let path = resolve_scene_path(&self.core.project, &self.core.scene_path, target_scene);

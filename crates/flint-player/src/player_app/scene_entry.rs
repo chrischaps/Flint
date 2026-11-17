@@ -172,7 +172,7 @@ impl PlayerApp {
             &self.core.project,
             &self.core.scene_path,
         ) {
-            println!("{line}");
+            eprintln!("{line}");
         }
         #[cfg(feature = "procgen")]
         super::procgen_assets::resolve_scene(

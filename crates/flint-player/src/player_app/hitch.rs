@@ -957,7 +957,7 @@ mod tests {
             std::hint::black_box(&_note);
         }
         let unheard_ns = unheard.elapsed().as_secs_f64() * 1e9 / frames as f64;
-        println!(
+        eprintln!(
             "always-on recording: {us:.2} us a frame ({:.4} ms); one Instant::now {:.0} ns; off: {:.0} ns a frame (the present's own Instant::now included); notes: a take {take_ns:.1} ns, a note no one hears {unheard_ns:.1} ns",
             us / 1000.0,
             now_us * 1000.0,

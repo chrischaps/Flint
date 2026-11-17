@@ -832,6 +832,9 @@ pub struct ScriptCallContext {
     /// How long after it is mixed a sound is heard, seconds, where the
     /// platform says (the browser), for `audio_output_latency`.
     pub audio_output_latency: Option<f64>,
+    /// What `test_assert`, `test_fail`, `test_pass` and `test_log` said
+    /// (#714), for the whole run: a scene change keeps it.
+    pub test: crate::testing::TestRecord,
 }
 
 // SAFETY: ScriptCallContext is only accessed from the main thread within
@@ -928,6 +931,7 @@ impl ScriptCallContext {
             opts_warned: HashSet::new(),
             audio_positions: std::collections::HashMap::new(),
             audio_output_latency: None,
+            test: Default::default(),
         }
     }
 

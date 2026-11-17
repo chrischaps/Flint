@@ -396,7 +396,7 @@ impl LivingSubsystem {
             C::Freeze { frozen } => self.tune.frozen = *frozen,
             C::Step => self.step_living(),
             C::SavePreset { name } => match self.save_living_preset(ctx, name) {
-                Ok(path) => println!("[living] saved {}", path.display()),
+                Ok(path) => eprintln!("[living] saved {}", path.display()),
                 Err(problem) => {
                     tracing::warn!(target: "script", "save_living_preset: {problem}");
                 }
@@ -407,7 +407,7 @@ impl LivingSubsystem {
                 }
             }
             C::Commit => match self.commit_living(ctx) {
-                Ok(said) => println!("[living] {said}"),
+                Ok(said) => eprintln!("[living] {said}"),
                 Err(problem) => tracing::warn!(target: "script", "commit_living: {problem}"),
             },
             C::Compare { a, b } => {

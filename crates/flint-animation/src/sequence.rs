@@ -419,7 +419,7 @@ impl SequenceSync {
             if wanted.is_empty() {
                 self.stop(&entity_id);
             } else if !self.play(entity_id, &wanted) {
-                println!(
+                eprintln!(
                     "WARNING: entity {:?} asked for unknown sequence '{}'{}",
                     entity_id,
                     wanted,

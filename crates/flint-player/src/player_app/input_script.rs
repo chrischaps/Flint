@@ -31,7 +31,15 @@
 //! 10.1  drag   1 200 480 0.4      # finger 1 slides there over 0.4 s
 //! 10.2  touch  2 1150 620         # a second finger, at the same time
 //! 11.0  lift   2                  # finger 2 up
+//! 12.0  expect door door.open == true          # what the run should show
+//! 12.0  wait   player transform.position.z > 9 within 5
 //! ```
+//!
+//! `expect` and `wait` (#714) ask the game, in flint-query's conditions,
+//! rather than play into it: an `expect` once at its time, a `wait` every
+//! frame until it holds, holding back the lines after it. Their forms and
+//! how a host answers are in [`super::input_checks`]; how each came out is
+//! [`InputScript::outcomes`].
 //!
 //! Fingers (`touch`, `drag`, `lift`) arrive as winit's `WindowEvent::Touch`
 //! and take a real finger's path: the on-screen touch controls first
@@ -55,6 +63,7 @@
 //! real mouse's: it reaches the game only while the cursor is captured and
 //! no text field has focus (ADR 0110).
 
+use super::input_checks::{self, Check, CheckOutcome, NoProbe, Probe};
 use flint_core::vfs;
 use flint_runtime::{parse_key_code, InputState};
 use winit::dpi::PhysicalPosition;
@@ -195,6 +204,8 @@ enum Action {
     /// Finger to (x, y), at once or gliding over the seconds given.
     FingerMove(u64, f64, f64, f64),
     FingerUp(u64),
+    /// An `expect` or `wait` line (#714).
+    Check(Box<Check>),
 }
 
 /// Raw motion spread over a span of game time.
@@ -252,6 +263,17 @@ pub struct InputScript {
     sweeps: Vec<Sweep>,
     /// Fingers down, where the script last put each, and any glide.
     fingers: std::collections::BTreeMap<u64, ((f64, f64), Option<Glide>)>,
+    /// How much later than written every line now plays: what the `wait`s
+    /// so far waited (#714).
+    delay: f64,
+    /// When the `wait` at `next` began, while it waits, and the time its
+    /// `event` counts from: when the check before it settled, so `tap KeyE`
+    /// then `wait event door_opened` sees an event the tap caused at once.
+    waiting_since: Option<(f64, f64)>,
+    /// The game time the last `expect` or `wait` settled at (0 before any).
+    last_checked: f64,
+    /// How each `expect` and `wait` came out, in the order settled.
+    outcomes: Vec<CheckOutcome>,
 }
 
 fn parse_mouse_button(name: &str) -> Option<MouseButton> {
@@ -378,6 +400,11 @@ impl InputScript {
                     }
                     events.push((t, Action::Look(dx, dy, over)));
                 }
+                "expect" | "wait" => {
+                    let check = input_checks::parse(n + 1, after_words(line, 2), f[1] == "wait")
+                        .map_err(|e| bad(&e.to_string()))?;
+                    events.push((t, Action::Check(Box::new(check))));
+                }
                 "touch" | "drag" | "lift" => {
                     let id: u64 = f[2].parse().map_err(|_| bad("bad finger id"))?;
                     if f[1] == "lift" {
@@ -427,13 +454,63 @@ impl InputScript {
     ///   decides who gets the click or the scroll. A glide's steps don't
     ///   hold them back.
     pub fn apply(&mut self, now: f64, input: &mut InputState) -> Applied {
+        self.apply_probed(now, input, &NoProbe)
+    }
+
+    /// Whether the script has `expect` or `wait` lines.
+    pub fn has_checks(&self) -> bool {
+        self.events
+            .iter()
+            .any(|(_, a)| matches!(a, Action::Check(_)))
+    }
+
+    /// How each `expect` and `wait` line came out so far, in the order
+    /// they were settled.
+    pub fn outcomes(&self) -> &[CheckOutcome] {
+        &self.outcomes
+    }
+
+    /// The run is over at `now`: every `expect` or `wait` not yet settled
+    /// fails, as not reached or still waiting.
+    pub fn finish(&mut self, now: f64) {
+        for i in self.next..self.events.len() {
+            let (t, Action::Check(check)) = &self.events[i] else {
+                continue;
+            };
+            let waiting = i == self.next && self.waiting_since.is_some();
+            let why = if waiting {
+                format!("still waiting when the run ended at {now:.2} s")
+            } else {
+                format!("not reached: the run ended at {now:.2} s")
+            };
+            self.outcomes.push(CheckOutcome {
+                line: check.line,
+                verb: check.verb(),
+                text: check.text.clone(),
+                due: t + self.delay,
+                passed: false,
+                at: now,
+                found: String::new(),
+                why: Some(why),
+            });
+        }
+        self.next = self.events.len();
+        self.waiting_since = None;
+    }
+
+    /// [`apply`](Self::apply), with `probe` answering the `expect` and
+    /// `wait` lines due.
+    pub fn apply_probed(&mut self, now: f64, input: &mut InputState, probe: &dyn Probe) -> Applied {
         let mut out = Applied::default();
         let mut pressed_keys: Vec<KeyCode> = Vec::new();
         let mut pressed_buttons: Vec<String> = Vec::new();
         let mut pressed_mouse: Vec<MouseButton> = Vec::new();
         let mut fingers_down: Vec<u64> = Vec::new();
         let mut jumped = false;
-        while let Some((t, action)) = self.events.get(self.next) {
+        while let Some((written, action)) = self.events.get(self.next) {
+            // Every line plays as much later as the waits before it waited
+            let due = written + self.delay;
+            let t = &due;
             if *t > now {
                 break;
             }
@@ -549,6 +626,44 @@ impl InputScript {
                         }
                     }
                 }
+                Action::Check(check) => {
+                    let last_checked = self.last_checked;
+                    let (started, since) = match check.wait {
+                        Some(_) => *self.waiting_since.get_or_insert((due, last_checked)),
+                        None => (due, 0.0),
+                    };
+                    let reading = probe.read(&check.subject, since);
+                    let settled = |passed: bool, why: Option<String>| CheckOutcome {
+                        line: check.line,
+                        verb: check.verb(),
+                        text: check.text.clone(),
+                        due,
+                        passed,
+                        at: now,
+                        found: reading.found.clone(),
+                        why,
+                    };
+                    match check.wait {
+                        None => {
+                            let why = (!reading.holds).then(|| "did not hold".to_string());
+                            self.outcomes.push(settled(reading.holds, why));
+                        }
+                        Some(_) if reading.holds => {
+                            self.outcomes.push(settled(true, None));
+                            // The lines after it play as much later
+                            self.delay += now - due;
+                            self.waiting_since = None;
+                        }
+                        Some(within) if now + 1e-9 >= started + within => {
+                            let why = format!("timed out after {within} s");
+                            self.outcomes.push(settled(false, Some(why)));
+                            self.delay += now - due;
+                            self.waiting_since = None;
+                        }
+                        // Still waiting: nothing after it plays yet
+                        Some(_) => break,
+                    }
+                }
                 Action::FingerUp(id) => {
                     // As a key: a finger down this frame lifts next frame.
                     if fingers_down.contains(id) {
@@ -559,6 +674,9 @@ impl InputScript {
                             .push(ScriptEvent::Touch(*id, TouchPhase::Ended, at.0, at.1));
                     }
                 }
+            }
+            if matches!(action, Action::Check(_)) {
+                self.last_checked = now;
             }
             self.next += 1;
         }
@@ -612,6 +730,78 @@ mod tests {
     use PointerEvent::{Moved, Pressed, Released};
 
     const LEFT: MouseButton = MouseButton::Left;
+
+    /// A probe whose one fact turns true at a game time
+    struct DoorOpensAt(f64, std::cell::Cell<f64>);
+
+    impl super::input_checks::Probe for DoorOpensAt {
+        fn read(
+            &self,
+            subject: &super::input_checks::Subject,
+            _: f64,
+        ) -> super::input_checks::Reading {
+            let open = self.1.get() >= self.0;
+            let super::input_checks::Subject::Entity { condition, .. } = subject else {
+                panic!("{subject:?}");
+            };
+            super::input_checks::Reading {
+                holds: condition.value.as_bool() == Some(open),
+                found: format!("door.open = {open}"),
+            }
+        }
+    }
+
+    /// #714: a wait holds back the lines after it, which then play as much
+    /// later as it waited; one that times out fails and lets them go
+    #[test]
+    fn a_wait_holds_the_lines_after_it_and_a_timeout_fails() {
+        let mut s = InputScript::parse(
+            "0.5 expect door door.open == true
+             1.0 wait door door.open == true within 3
+             1.0 down KeyW
+             1.5 expect door door.open == true
+             2.0 wait door door.open == false within 0.5
+             9.0 expect door door.open == true
+",
+        )
+        .unwrap();
+        assert!(s.has_checks());
+        let probe = DoorOpensAt(2.0, std::cell::Cell::new(0.0));
+        let mut input = InputState::new();
+        let mut pressed_at = None;
+        let mut now = 0.0;
+        while now < 5.0 {
+            probe.1.set(now);
+            let applied = s.apply_probed(now, &mut input, &probe);
+            if pressed_at.is_none() && applied.keys_pressed().contains(&KeyCode::KeyW) {
+                pressed_at = Some(now);
+            }
+            now += 0.25;
+        }
+        s.finish(now);
+        // The door opened at 2.0: the wait from 1.0 held then, so KeyW
+        // (written at 1.0) went down at 2.0, a second late
+        assert_eq!(pressed_at, Some(2.0));
+        let got: Vec<(usize, bool, f64)> = s
+            .outcomes()
+            .iter()
+            .map(|o| (o.line, o.passed, o.due))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (1, false, 0.5),
+                (2, true, 1.0),
+                (4, true, 2.5),
+                (5, false, 3.0),
+                (6, false, 10.5),
+            ]
+        );
+        let why: Vec<Option<&str>> = s.outcomes().iter().map(|o| o.why.as_deref()).collect();
+        assert_eq!(why[0], Some("did not hold"));
+        assert_eq!(why[3], Some("timed out after 0.5 s"));
+        assert!(why[4].unwrap().starts_with("not reached"), "{why:?}");
+    }
 
     #[test]
     fn parses_and_orders_events() {

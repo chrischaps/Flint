@@ -27,6 +27,7 @@ pub mod random;
 mod reload_worker;
 pub mod style_reader;
 pub mod sync;
+pub mod testing;
 pub mod ui;
 
 pub use context::MusicClock;
@@ -93,6 +94,22 @@ impl ScriptSystem {
     /// end.
     pub fn errors(&self) -> &ScriptErrors {
         self.engine.errors()
+    }
+
+    /// What the scripts' `test_*` calls said so far (#714): assertions by
+    /// place, the first `test_pass` / `test_fail`, and `test_log`'s values.
+    /// A copy: the record lives in the script context.
+    pub fn test_record(&self) -> testing::TestRecord {
+        crate::lock_or_recover(&self.engine.ctx).test.clone()
+    }
+
+    /// Whether a script has called `test_pass()` or `test_fail()`, without
+    /// copying the record: a playtest asks every frame.
+    pub fn test_decided(&self) -> bool {
+        crate::lock_or_recover(&self.engine.ctx)
+            .test
+            .verdict
+            .is_some()
     }
 
     pub fn new() -> Self {

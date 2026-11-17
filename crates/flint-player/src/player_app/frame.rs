@@ -33,7 +33,7 @@ impl PlayerApp {
         let rect = self.hud.egui_ctx.content_rect();
         let egui_size = (rect.width(), rect.height());
         let Some(window) = &self.window else {
-            return egui_size;
+            return self.launch.headless_screen.unwrap_or(egui_size);
         };
         let size = window.inner_size();
         let ppp = self
@@ -337,6 +337,17 @@ impl PlayerApp {
         for line in self.core.script.errors().summary() {
             eprintln!("{line}");
         }
+        // The input script's expect and wait lines (#714): what's left is
+        // not reached, then a line each that failed
+        let now = self.core.clock.total_time;
+        if let Some(script) = &mut self.capture.input_script {
+            if script.has_checks() {
+                script.finish(now);
+                for line in super::input_checks::summary(script.outcomes()) {
+                    eprintln!("{line}");
+                }
+            }
+        }
     }
 
     /// Decide whether this frame should be written to disk, and to where.
@@ -478,8 +489,14 @@ impl PlayerApp {
         // Scripted input due by now (`--input-script`), before anything reads it.
         // Keys and the pointer go the way a real keyboard's and mouse's do:
         // egui first (ADR 0082, 0097), then the debug keys (H9) and InputState.
+        // Its `expect` and `wait` lines (#714) ask the game as it stands
+        // before this frame's step.
         if let Some(script) = &mut self.capture.input_script {
-            let applied = script.apply(self.core.clock.total_time, &mut self.input);
+            if self.core.event_log.is_none() && script.has_checks() {
+                self.core.event_log = Some(Vec::new());
+            }
+            let probe = super::input_probe::CoreProbe(&self.core);
+            let applied = script.apply_probed(self.core.clock.total_time, &mut self.input, &probe);
             for event in applied.events {
                 self.scripted_event(event);
             }
