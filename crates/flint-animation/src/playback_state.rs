@@ -1,4 +1,6 @@
-//! Unified playback state for skeletal and node animation clips
+//! The one playback state for property, node and skeletal clips
+
+use std::collections::HashSet;
 
 /// How an animation layer composes onto the pose beneath it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -81,41 +83,22 @@ impl AnimLayer {
         !self.clip.is_empty()
     }
 
-    /// Serialize to the TOML table shape used by `animator.layers`.
-    pub fn to_toml(&self) -> toml::Value {
-        let mut t = toml::map::Map::new();
-        t.insert("clip".into(), toml::Value::String(self.clip.clone()));
-        t.insert("weight".into(), toml::Value::Float(self.weight as f64));
-        t.insert(
-            "mode".into(),
-            toml::Value::String(self.mode.as_str().into()),
-        );
-        t.insert("mask".into(), toml::Value::String(self.mask.clone()));
-        t.insert("speed".into(), toml::Value::Float(self.speed));
-        if self.fade_duration > 0.0 {
-            t.insert(
-                "fade_target".into(),
-                toml::Value::Float(self.fade_target as f64),
-            );
-            t.insert(
-                "fade_duration".into(),
-                toml::Value::Float(self.fade_duration as f64),
-            );
-        }
-        toml::Value::Table(t)
-    }
-
-    // Read from one `animator.layers` entry by `crate::animator::layer`,
-    // through the typed view (ADR 0115).
+    // Read from, and written to, one `animator.layers` entry in
+    // `crate::animator`, which holds every animator key (#733).
 }
 
-/// Per-entity clip playback state shared by skeletal and node animation.
-///
-/// Tracks current time, speed, looping, and crossfade blending parameters.
+/// One entity's clip playback, the one state every `animator` sync keeps:
+/// property clips (`AnimationSync`), node clips (`NodeSync`) and skinned
+/// clips (`SkeletalSync`). What the animator asks of it is applied by
+/// [`crate::animator::Animator::apply_to`], with one rule set for all three
+/// (#733); the fields only a kind uses (the crossfade and layers are
+/// skeletal, fired events are property clips') stay empty in the others.
 #[derive(Debug, Clone)]
 pub struct ClipPlaybackState {
     pub clip_name: String,
+    /// Seconds into the clip
     pub time: f64,
+    /// Multiplier on time (1 normal, negative plays backwards)
     pub speed: f64,
     pub looping: bool,
     pub playing: bool,
@@ -125,15 +108,31 @@ pub struct ClipPlaybackState {
     pub blend_duration: f32,
     /// Time elapsed in the current blend
     pub blend_elapsed: f32,
-    /// Legacy single additive layer clip (mirror of `animator.layer_clip`).
-    /// When `animator.layers` is empty this becomes `layers[0]`.
-    pub layer_clip: String,
-    /// Legacy additive layer strength (0 = off, 1 = full)
-    pub layer_weight: f32,
-    /// Legacy layer playback time
-    pub layer_time: f64,
-    /// Ordered animation layers, composed after base + crossfade.
+    /// Ordered animation layers, composed after base + crossfade. A legacy
+    /// `layer_clip` / `layer_weight` pair is read as `layers[0]`.
     pub layers: Vec<AnimLayer>,
+    /// The runtime changed `clip_name` or `playing` (a one-shot ended, a
+    /// crossfade settled, `autoplay` started a clip whose `playing` is
+    /// false) and the animator doesn't say so yet. Until the sync publishes
+    /// them ([`crate::animator::publish`]) `apply_to` leaves the two alone,
+    /// or it would read the stale values as a `play_clip` / `stop_clip`.
+    pub(crate) unpublished: bool,
+    /// Property clips' events fired this pass (by time bits), so each fires
+    /// once a loop.
+    pub(crate) fired_events: HashSet<u64>,
+}
+
+/// What one [`ClipPlaybackState::advance_time`] did to the clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Advanced {
+    /// Paused: the clock stood still.
+    Held,
+    /// Moved within the clip.
+    Moved,
+    /// A looping clip went past an end and wrapped.
+    Wrapped,
+    /// A one-shot reached the end it plays toward and stopped there.
+    Finished,
 }
 
 impl ClipPlaybackState {
@@ -145,12 +144,76 @@ impl ClipPlaybackState {
             looping,
             playing,
             blend_target: String::new(),
-            blend_duration: 0.3,
+            blend_duration: crate::animator::DEFAULT_BLEND_SECONDS,
             blend_elapsed: 0.0,
-            layer_clip: String::new(),
-            layer_weight: 1.0,
-            layer_time: 0.0,
             layers: Vec::new(),
+            unpublished: false,
+            fired_events: HashSet::new(),
         }
+    }
+
+    /// Whether the runtime changed `clip_name` or `playing` since the
+    /// animator was last told.
+    pub fn is_unpublished(&self) -> bool {
+        self.unpublished
+    }
+
+    /// Clear fired event tracking so events can fire again on replay.
+    pub fn clear_fired_events(&mut self) {
+        self.fired_events.clear();
+    }
+
+    /// Move the clock `dt * speed` seconds through a clip of `duration`:
+    /// a looping clip wraps, a one-shot stops at the end it plays toward
+    /// (which the animator must then be told). The one clock every kind of
+    /// clip runs on.
+    pub fn advance_time(&mut self, duration: f64, dt: f64) -> Advanced {
+        if !self.playing {
+            return Advanced::Held;
+        }
+        self.time += dt * self.speed;
+        if self.looping {
+            if duration <= 0.0 {
+                return Advanced::Moved;
+            }
+            if self.time >= duration {
+                self.time %= duration;
+            } else if self.time < 0.0 {
+                self.time = duration - (-self.time % duration);
+            } else {
+                return Advanced::Moved;
+            }
+            self.fired_events.clear();
+            return Advanced::Wrapped;
+        }
+        if self.time >= duration {
+            self.time = duration;
+        } else if self.time < 0.0 {
+            self.time = 0.0;
+        } else {
+            return Advanced::Moved;
+        }
+        self.playing = false;
+        self.unpublished = true;
+        Advanced::Finished
+    }
+}
+
+/// Where a clip starts for its direction of play: 0, or its end when the
+/// speed is negative (played backwards from 0 it would end at once).
+pub fn start_time(duration: f64, speed: f64) -> f64 {
+    if speed < 0.0 {
+        duration
+    } else {
+        0.0
+    }
+}
+
+/// Whether a non-looping clip stands at the end it plays toward.
+pub fn has_finished(time: f64, duration: f64, speed: f64) -> bool {
+    if speed < 0.0 {
+        time <= 0.0
+    } else {
+        time >= duration
     }
 }

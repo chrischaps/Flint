@@ -9,8 +9,9 @@
 pub mod animator;
 pub mod blend;
 pub mod clip;
+#[cfg(test)]
+mod clip_rules_tests;
 pub mod ik_pass;
-pub mod layer_edit;
 pub mod loader;
 pub mod node_clip;
 pub mod node_sync;
