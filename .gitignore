@@ -29,7 +29,8 @@ nul
 # Test screenshots and render output
 screenshots/
 renders/
-# Frame captures for the frame debugger (#1086): renders of a game's content
+# Frame captures for the frame debugger (#1086): renders of a game's content;
+# and what `flint capture` writes beside a shot list by default (#722)
 captures/
 # What a `flint render` with no --output writes to the working directory,
 # one frame or a sequence (#760)

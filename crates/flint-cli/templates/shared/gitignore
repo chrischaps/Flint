@@ -2,7 +2,9 @@
 /dist/
 /save/
 /screenshots/
-/captures/
+# Frame captures (the player's, at the root) and `flint capture`'s takes
+# (beside a shot list unless it names an `out`)
+captures/
 .flint/procgen-cache/
 .flint/input.user.toml
 .flint/viewer-edits.jsonl
