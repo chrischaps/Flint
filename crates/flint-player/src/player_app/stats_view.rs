@@ -174,9 +174,12 @@ mod graph {
             let first = ring.partition_point(|f| f.end() < horizon);
             let oldest = ring.get(first).map_or(0, |f| f.index);
             // Both run oldest first, so one walk marks every hitch.
+            // The tools' own hitches (#1129) stand as tall bars with no mark:
+            // the counters leave them out, so the marks do too
             let mut hitches = detector
                 .hitches()
                 .iter()
+                .filter(|h| !h.cause.is_tooling())
                 .map(|h| h.index)
                 .skip_while(|&i| i < oldest)
                 .peekable();
@@ -218,6 +221,10 @@ mod graph {
     /// a frame's.
     pub(crate) fn write_cause(out: &mut String, h: &Hitch) {
         let _ = write!(out, "last {:.0} ms: {}", h.judged_ms, h.cause_line());
+        // The tools' own cost (#1129): named, and said not to count
+        if h.cause.is_tooling() {
+            out.push_str(", not counted");
+        }
     }
 }
 #[cfg(test)]
@@ -499,6 +506,34 @@ mod tests {
             assert_eq!(g.bands[Band::HudPresent as usize], 1.0);
             // 40 in the acquire and the 6 no phase holds
             assert_eq!(g.bands[Band::Elsewhere as usize], 46.0);
+        }
+
+        #[test]
+        fn the_overlays_own_hitch_is_named_as_not_counted() {
+            use super::super::super::hitch::HitchNote;
+            use flint_core::frame_notes::{FrameNote, NoteKind};
+            let tooling = Hitch {
+                index: 3,
+                at: 1.0,
+                game_time: 1.0,
+                ms: 110.0,
+                judged_ms: 110.0,
+                median_ms: 16.7,
+                player_ms: 104.0,
+                gpu_ms: None,
+                refreshes: None,
+                cause: Cause::Tooling { tool_ms: 104.0 },
+                notes: vec![HitchNote {
+                    note: FrameNote::new(NoteKind::StatsOverlay, "opened", Some(104.0)),
+                    frame_before: false,
+                }],
+            };
+            let mut out = String::new();
+            write_cause(&mut out, &tooling);
+            assert_eq!(
+                out,
+                "last 110 ms: stats overlay opened, 104.0 ms, not counted"
+            );
         }
 
         /// The ticket's "no allocation for it while closed, none that grows

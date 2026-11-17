@@ -31,6 +31,13 @@
 //! phase and script callback are named. Otherwise the time went elsewhere:
 //! the compositor, the driver, the present wait, the OS.
 //!
+//! Before either, a hitch is **tooling** when the player's own tools noted
+//! at least half its excess on the frame (#1129, `NoteKind::is_tooling`): a
+//! screenshot read back and written, the F2 overlay opening. Those are
+//! kept, logged and named like any hitch, but counted apart from the game's
+//! (`HitchCounts::tooling`), so a tool never reports its own cost as the
+//! game's and no gate fails a run for its screenshots.
+//!
 //! Whose time says nothing of why. A hitch also keeps the frame notes
 //! (#1077, `flint_core::frame_notes`) of its frame and the frame before,
 //! since GPU work lands a frame late: a model loaded, a pipeline built, a
@@ -104,21 +111,27 @@ pub(crate) enum Cause {
     /// the driver, the OS. `acquire_ms` is the wait for a swapchain image
     /// (#1123), `present_ms` the wait handing it back.
     Elsewhere { acquire_ms: f32, present_ms: f32 },
+    /// The player's own tools looking at the game account for the excess
+    /// (#1129): a screenshot read back and written, the F2 overlay's first
+    /// layout. `tool_ms` is what the frame's tooling notes timed. It is
+    /// the tools' cost, not the game's: counted apart, never gated.
+    Tooling { tool_ms: f32 },
 }
 
 // Read by the F2 graph and the hitch log (#1078, #1079); tested here.
 impl Cause {
-    /// `player` or `elsewhere`, for a log line.
+    /// `player`, `elsewhere` or `tooling`, for a log line.
     pub(crate) fn label(&self) -> &'static str {
         match self {
             Cause::Player { .. } => "player",
             Cause::Elsewhere { .. } => "elsewhere",
+            Cause::Tooling { .. } => "tooling",
         }
     }
 
     /// The longer of the swapchain's two waits in an `elsewhere` hitch,
     /// by name (`acquire`, `present`), and its ms; `None` for the
-    /// player's own. Read by the cause line and the F2 graph.
+    /// player's own, or its tools'. Read by the cause line and the F2 graph.
     pub(crate) fn longer_wait(&self) -> Option<(&'static str, f32)> {
         match *self {
             Cause::Elsewhere {
@@ -126,8 +139,14 @@ impl Cause {
                 present_ms,
             } if acquire_ms > present_ms => Some(("acquire", acquire_ms)),
             Cause::Elsewhere { present_ms, .. } => Some(("present", present_ms)),
-            Cause::Player { .. } => None,
+            Cause::Player { .. } | Cause::Tooling { .. } => None,
         }
+    }
+
+    /// Whether the hitch was its tools' (#1129) rather than the game's
+    /// (the player's work, or elsewhere).
+    pub(crate) fn is_tooling(&self) -> bool {
+        matches!(self, Cause::Tooling { .. })
     }
 }
 
@@ -248,6 +267,11 @@ impl Hitch {
     /// ms (also: reload poll 1.2 ms)` (#1079, #1124: the exit report,
     /// `--perf`'s line, `?perf=1`, the hitch log).
     pub(crate) fn cause_line(&self) -> String {
+        // The tools' own cost names the tool alone: `screenshot
+        // shots/look_0003.png, 92.5 ms` (#1129)
+        if self.cause.is_tooling() {
+            return self.tooling_line();
+        }
         let top = self.top_events();
         if self.events_explain(&top) {
             return self.likely_cause();
@@ -285,6 +309,30 @@ impl Hitch {
                 let (wait, ms) = self.cause.longer_wait().unwrap_or(("present", 0.0));
                 format!("elsewhere, {wait} {ms:.1} ms")
             }
+            // `cause_line` names a tooling hitch's notes before asking this
+            Cause::Tooling { tool_ms } => format!("tooling {tool_ms:.1} ms"),
+        }
+    }
+
+    /// The tools' notes on the hitch's own frame, as its cause: `screenshot
+    /// shots/look_0003.png, 92.5 ms`, `stats overlay opened, 104.0 ms`.
+    fn tooling_notes(&self) -> impl Iterator<Item = &FrameNote> {
+        self.notes
+            .iter()
+            .filter(|n| !n.frame_before && n.note.depth == 0 && n.note.kind.is_tooling())
+            .map(|n| &n.note)
+    }
+
+    fn tooling_line(&self) -> String {
+        let line = self
+            .tooling_notes()
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        if line.is_empty() {
+            "tooling".to_string()
+        } else {
+            line
         }
     }
 
@@ -308,6 +356,13 @@ impl Hitch {
     /// the hitch, else the script (`script stall.rhai:on_update`), the
     /// phase (`physics`) or `elsewhere`.
     pub(crate) fn cause_key(&self) -> String {
+        if self.cause.is_tooling() {
+            return self
+                .tooling_notes()
+                .next()
+                .map_or("tooling", |n| n.kind.label())
+                .to_string();
+        }
         let top = self.top_events();
         if self.events_explain(&top) {
             return top[0].note.kind.label().to_string();
@@ -318,6 +373,7 @@ impl Hitch {
         match &self.cause {
             Cause::Player { phase, .. } => phase.label().to_string(),
             Cause::Elsewhere { .. } => "elsewhere".to_string(),
+            Cause::Tooling { .. } => "tooling".to_string(),
         }
     }
 }
@@ -343,7 +399,11 @@ pub(crate) struct HitchCounts {
     pub frames: u64,
     /// The wall time they cover, seconds.
     pub secs: f64,
+    /// The game's hitches: the player's and elsewhere, not the tools'.
     pub hitches: u64,
+    /// Hitches the player's own tools made ([`Cause::Tooling`]): counted
+    /// here, and in nothing else (rates, clean stretches, since last).
+    pub tooling: u64,
     /// The longest judged frame's wall time, ms.
     pub worst_ms: f32,
     /// Seconds from the end of the last hitch to the end of the newest
@@ -489,9 +549,15 @@ impl HitchDetector {
             cause,
         };
         let s = &mut self.session;
-        s.hitches += 1;
-        s.longest_clean_secs = s.longest_clean_secs.max(hitch.at - clean_from);
-        self.clean_from = Some(frame.end());
+        if hitch.cause.is_tooling() {
+            // The tools' cost: kept for the log and the graph's line, but
+            // the game's stretch with no hitch goes on through it
+            s.tooling += 1;
+        } else {
+            s.hitches += 1;
+            s.longest_clean_secs = s.longest_clean_secs.max(hitch.at - clean_from);
+            self.clean_from = Some(frame.end());
+        }
         if self.hitches.len() == HITCHES_KEPT {
             self.hitches.pop_front();
         }
@@ -510,6 +576,19 @@ impl HitchDetector {
     ) -> Cause {
         let frames = history.frames();
         let frame = &frames[at];
+        // The player's own tools first (#1129): a screenshot's read-back
+        // lands in `present` and would read as elsewhere, the F2 overlay's
+        // first layout in `hud`. Only the frame's own notes: the tools
+        // wait for their work, so none of it lands a frame late.
+        let tool_ms: f32 = frame
+            .notes
+            .iter()
+            .filter(|n| n.depth == 0 && n.kind.is_tooling())
+            .filter_map(|n| n.ms)
+            .sum();
+        if tool_ms >= excess * PLAYER_SHARE {
+            return Cause::Tooling { tool_ms };
+        }
         let typical = self.median(before.clone().map(|i| frames[i].player_ms()));
         if frame.player_ms() - typical < excess * PLAYER_SHARE {
             return Cause::Elsewhere {
@@ -570,10 +649,14 @@ impl HitchDetector {
         let clean_from = self.clean_from.unwrap_or(self.judged_to);
         c.longest_clean_secs = c.longest_clean_secs.max(self.judged_to - clean_from);
         c.since_last_secs = self
-            .hitches
-            .back()
+            .last_of_game()
             .map(|h| self.judged_to - (h.at + h.ms as f64 / 1000.0));
         c
+    }
+
+    /// The newest hitch that was the game's, not its tools'.
+    pub(crate) fn last_of_game(&self) -> Option<&Hitch> {
+        self.hitches.iter().rev().find(|h| !h.cause.is_tooling())
     }
 
     /// The counts over the frames `history` holds now (about the last ten
@@ -606,6 +689,10 @@ impl HitchDetector {
         };
         let mut clean_from = from;
         for h in self.hitches.iter().filter(|h| h.at >= from) {
+            if h.cause.is_tooling() {
+                c.tooling += 1;
+                continue;
+            }
             c.hitches += 1;
             c.longest_clean_secs = c.longest_clean_secs.max(h.at - clean_from);
             clean_from = h.at + h.ms as f64 / 1000.0;
@@ -1382,5 +1469,91 @@ mod tests {
         assert_eq!(run.frame(slow), 0, "the capture's own frame");
         assert_eq!(run.frame(slow), 1, "the same frame uncaptured is a hitch");
         assert_eq!(run.detector.session().hitches, 1);
+    }
+
+    /// A screenshot's read-back lands in `present`, so its frame would read
+    /// as time spent elsewhere (#1129): its note makes it the tools'.
+    fn screenshot_frame() -> F {
+        F {
+            present: 90.0,
+            ..steady(100.0)
+        }
+    }
+
+    #[test]
+    fn a_screenshot_hitch_is_the_tools_and_names_its_file() {
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(120, steady(HZ60_MS));
+        frame_notes::note(
+            NoteKind::Screenshot,
+            || "shots/look_0003.png".into(),
+            Some(88.0),
+        );
+        assert_eq!(run.frame(screenshot_frame()), 1, "still a long frame");
+        let h = run.detector.last().unwrap().clone();
+        assert_eq!(h.cause, Cause::Tooling { tool_ms: 88.0 });
+        assert_eq!(h.cause.label(), "tooling");
+        assert_eq!(h.cause_line(), "screenshot shots/look_0003.png, 88.0 ms");
+        assert_eq!(h.cause_key(), "screenshot");
+
+        // Counted apart: the game's count, rate and clean stretch go on
+        run.frames(60, steady(HZ60_MS));
+        let s = run.detector.session();
+        assert_eq!((s.hitches, s.tooling), (0, 1));
+        assert_eq!(s.since_last_secs, None, "no hitch of the game's yet");
+        assert!((s.longest_clean_secs - s.secs).abs() < 0.05, "{s:?}");
+        let w = run.detector.window(&run.history);
+        assert_eq!((w.hitches, w.tooling), (0, 1));
+        assert!(run.detector.last_of_game().is_none());
+
+        // The same frame with no note is a hitch elsewhere, the game's
+        assert_eq!(run.frame(screenshot_frame()), 1);
+        let h = run.detector.last().unwrap();
+        assert!(matches!(h.cause, Cause::Elsewhere { .. }), "{:?}", h.cause);
+        assert_eq!(run.detector.session().hitches, 1);
+        frame_notes::listen(false);
+    }
+
+    #[test]
+    fn a_small_tool_note_on_a_real_stall_leaves_the_stall_the_games() {
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(120, steady(HZ60_MS));
+        // A 2 ms screenshot in a frame a script held for 150 ms
+        frame_notes::note(NoteKind::Screenshot, || "shot.png".into(), Some(2.0));
+        let stall = F {
+            scripts: 150.0,
+            ..steady(160.0)
+        };
+        assert_eq!(run.frame(stall), 1);
+        let h = run.detector.last().unwrap();
+        assert!(
+            matches!(
+                h.cause,
+                Cause::Player {
+                    phase: Phase::Scripts,
+                    ..
+                }
+            ),
+            "{:?}",
+            h.cause
+        );
+        assert_eq!(run.detector.session().hitches, 1);
+        // The F2 overlay's first frame, timed as the HUD pass it was
+        run.frames(60, steady(HZ60_MS));
+        frame_notes::note(NoteKind::StatsOverlay, || "opened".into(), Some(95.0));
+        let hud = F {
+            render: 97.0,
+            ..steady(100.0)
+        };
+        assert_eq!(run.frame(hud), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "stats overlay opened, 95.0 ms");
+        assert_eq!(run.detector.session().hitches, 1, "not the game's");
+        assert_eq!(run.detector.session().tooling, 1);
+        frame_notes::listen(false);
     }
 }

@@ -292,6 +292,13 @@ impl PlayerApp {
         self.capture.last_frame_time = Some(self.core.clock.total_time);
         if let Some(path) = self.capture_path_due() {
             flint_core::scope!("screenshot");
+            // The read-back waits on the GPU and the PNG is written here, on
+            // the frame: noted, so the hitch it makes names it rather than
+            // reading as time elsewhere (#1129)
+            let _shot = flint_core::frame_notes::begin(
+                flint_core::frame_notes::NoteKind::Screenshot,
+                || flint_core::project::shown(&path),
+            );
             match self.write_screenshot(&output.texture, &path) {
                 Ok(()) => self.capture.written += 1,
                 Err(reason) => {
@@ -867,6 +874,21 @@ impl PlayerApp {
 
     fn render_hud(&mut self, target_view: &wgpu::TextureView, encoder: &mut wgpu::CommandEncoder) {
         flint_core::scope!("render_hud");
+        // The first pass to draw an F2 view lays out what it shows and
+        // uploads the glyphs that takes: the pass is timed as a note, so a
+        // hitch it makes names the overlay rather than the game's HUD (#1129)
+        let opened = self.stats.view.is_open() && self.stats.view != self.stats.drawn_view;
+        self.stats.drawn_view = self.stats.view;
+        let view = self.stats.view;
+        let _overlay = opened.then(|| {
+            flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::StatsOverlay, || {
+                match view {
+                    super::StatsView::Graph => "opened (graph)",
+                    _ => "opened",
+                }
+                .to_string()
+            })
+        });
         // Lazy-load any sprite textures referenced by draw commands
         // (must happen before egui_winit borrow)
         self.load_pending_sprites();
