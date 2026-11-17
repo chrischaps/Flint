@@ -674,6 +674,8 @@ impl ScriptSystem {
     /// `measure_text` / `measure_text_ex`.
     pub fn set_text_measurer(&mut self, f: Option<context::TextMeasurer>) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
+        // UI documents lay their labels out with it too (#731)
+        c.ui_system.set_measurer(f.clone());
         c.text_measurer = f;
     }
 }

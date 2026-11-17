@@ -18,6 +18,8 @@
 name = "The Rusty Flint Tavern — Showcase"
 version = "2.0"
 description = "The tavern, painted: pause menu, HUD, a watchful stranger and a hidden passage"
+# Escape and a pad's Start open the pause menu (examples/ui/pause.ui.toml)
+input_config = "examples/input_showcase.toml"
 
 # From beside the posts, across the room to the hearth; the strange wall
 # is the cold stone just right of it, the first moonlit window beyond.

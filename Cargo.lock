@@ -2144,6 +2144,7 @@ dependencies = [
  "flint-terrain",
  "rhai",
  "toml",
+ "toml_edit 0.22.27",
  "tracing",
  "tracing-subscriber",
  "web-time",

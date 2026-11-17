@@ -1,16 +1,15 @@
 version = 1
 game_id = "showcase"
 
+# Escape and a pad's Start open and close the pause menu. With Escape the
+# game's, the window stays open on it (#639): the menu's Quit button is the
+# way out (#659). Inside the menu the engine's own ui_* actions move focus
+# and press buttons (#731).
 [actions.pause]
 kind = "button"
 [[actions.pause.bindings]]
 type = "key"
 code = "Escape"
-
-# With Escape the game's, the pause screen's way out (#659): Q, read only
-# while paused, calls quit_game().
-[actions.quit]
-kind = "button"
-[[actions.quit.bindings]]
-type = "key"
-code = "KeyQ"
+[[actions.pause.bindings]]
+type = "gamepad_button"
+button = "Start"

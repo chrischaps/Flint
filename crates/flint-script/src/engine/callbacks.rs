@@ -102,12 +102,51 @@ impl ScriptEngine {
         }
     }
 
-    /// Call on_draw_ui() for all scripts that define it
+    /// The UI documents' input (#731), then on_draw_ui() for all scripts
+    /// that define it. Both run paused or not, so a pause menu works: this
+    /// frame's input moves focus and presses buttons, and what happened is
+    /// `on_ui(element_id, event)` on the script that loaded each document,
+    /// before any `on_draw_ui`.
     pub fn call_draw_uis(&mut self, world: &mut FlintWorld) {
         let _world_scope = self.lend(world);
 
+        self.route_ui();
         for entity_id in self.in_order(|s| s.defines(Callback::DrawUi)) {
             self.call(entity_id, cb::ON_DRAW_UI, ());
+        }
+    }
+
+    /// Route this frame's input through the UI documents and deliver what
+    /// it did. A script's answer can make more (`ui_focus` in `on_ui` is a
+    /// `blur` and a `focus`): those are delivered too, up to a few rounds a
+    /// frame, the rest the next frame. A document loaded outside any
+    /// script's call is heard by every script that defines `on_ui`.
+    fn route_ui(&mut self) {
+        {
+            let mut c = crate::lock_or_recover(&self.ctx);
+            let c = &mut *c;
+            let screen = (c.screen_width, c.screen_height);
+            c.ui_system
+                .route_snapshot(&c.input, c.mouse_pos_logical, screen, c.delta_time);
+        }
+        for _round in 0..4 {
+            let events = crate::lock_or_recover(&self.ctx).ui_system.take_events();
+            if events.is_empty() {
+                return;
+            }
+            let everyone = self.in_order(|s| s.defines(Callback::Ui));
+            for event in events {
+                let hearers = match event.owner {
+                    Some(owner) => vec![owner],
+                    None => everyone.clone(),
+                };
+                for entity_id in hearers {
+                    if self.defines(entity_id, |s| s.defines(Callback::Ui)) {
+                        let args = (event.element.clone(), event.event.to_string());
+                        self.call(entity_id, cb::ON_UI, args);
+                    }
+                }
+            }
         }
     }
 
