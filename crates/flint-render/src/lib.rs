@@ -80,7 +80,9 @@ pub use glyph_atlas::{
 };
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
 pub use gpu_select::{list_adapters, no_adapter_hint, set_gpu_override};
-pub use gpu_timer::{GpuPassTime, GpuScope, GpuSpread, GpuTimer, GpuTimings, PassSpread};
+pub use gpu_timer::{
+    GpuPassTime, GpuScope, GpuSpread, GpuTimer, GpuTimings, PassSpread, TracedGpuFrame, TracedPass,
+};
 pub use gpu_wait::{gpu_wait_timeout, wait_for_gpu};
 pub use grass_pipeline::{GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu};
 pub use ground_fog::GroundFog;

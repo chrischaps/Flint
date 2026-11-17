@@ -291,6 +291,11 @@ mod web {
         app.set_frame_rate(args.fps);
         if let Some(gpu) = args.perf {
             app.enable_perf(gpu);
+            // The scope recorder's look-back, which the readout's Save
+            // trace downloads (#1097), in a build that has the recorder
+            if flint_core::profile::COMPILED_IN {
+                app.trace_scopes(flint_player::TraceSetup::default());
+            }
         }
         app.audio.set_old_mix(args.old_mix);
         app.apply_scene_settings(&loaded.scene_file);

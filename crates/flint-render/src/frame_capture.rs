@@ -99,6 +99,10 @@ pub struct FrameDescription {
     /// What a reader should know about this frame, a line each: a Living
     /// Props split, GPU timing that didn't arrive.
     pub notes: Vec<String>,
+    /// The scope recorder's look-back around the frame (#1097), a Chrome
+    /// trace-event JSON file in the capture's folder (`trace.json`), when
+    /// the player was recording.
+    pub trace: Option<String>,
 }
 
 impl Default for FrameDescription {
@@ -122,6 +126,7 @@ impl Default for FrameDescription {
             cpu: None,
             replay: None,
             notes: Vec::new(),
+            trace: None,
         }
     }
 }

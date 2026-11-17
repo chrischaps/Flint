@@ -143,6 +143,7 @@ impl PlayerApp {
         // either is up. Timing the game turned on stays on after.
         if self.stats.view == super::StatsView::Full
             || (self.stats.perf.readout && self.stats.perf.gpu_wanted)
+            || self.stats.perf.trace.is_some()
         {
             if !renderer.gpu_timing() {
                 self.stats.gpu_timing =
@@ -233,9 +234,23 @@ impl PlayerApp {
                 self.frame_captures
                     .record_replay(renderer, device, &mut encoder, &self.core.world);
             }
+            // The recorder's GPU track (#1097): this frame's scopes carry
+            // its index, to be laid beside it when they come back
+            let tracing = flint_core::profile::COMPILED_IN && self.stats.perf.trace.is_some();
+            if let (true, Some(timer)) = (tracing, renderer.gpu_timer_mut()) {
+                timer.trace(true);
+                timer.set_frame_tag(flint_core::profile::frame() as u64);
+            }
             renderer.encode_gpu_timings(&context.device, &mut encoder);
             context.queue.submit(std::iter::once(encoder.finish()));
             renderer.frame_submitted();
+            if let (true, Some(trace), Some(timer)) = (
+                tracing,
+                self.stats.perf.trace.as_deref_mut(),
+                renderer.gpu_timer_mut(),
+            ) {
+                trace.tracks.gpu(timer.take_traced());
+            }
             // The GPU time read back this frame, for the frame history
             self.stats.perf.gpu_ms(renderer.take_gpu_frame_ms());
             #[cfg(not(target_arch = "wasm32"))]
@@ -275,6 +290,8 @@ impl PlayerApp {
                 ) {
                     self.stats.perf.capturing();
                 }
+                // A capture handed to its writer gets the trace beside it
+                self.traces_into_captures();
             }
         }
         self.say_frame_captures();
@@ -537,6 +554,8 @@ impl PlayerApp {
         }
         // Frame captures (#1086): a hitch just found, a time reached
         self.frame_capture_triggers(found);
+        // `--trace-on-hitch` (#1097), a few frames after it
+        self.trace_triggers(found);
         if self
             .launch
             .hold_at

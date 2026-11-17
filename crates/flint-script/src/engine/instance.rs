@@ -47,6 +47,9 @@ pub struct ScriptInstance {
     /// The file and entity its `print`s name (#703), made at its first call
     /// and again after it is renamed.
     pub(crate) speaker: Option<std::sync::Arc<super::output::Speaker>>,
+    /// Each callback's profiler site (`<source>:<callback>`, #1097), made
+    /// the first time the callback runs while the recorder records.
+    trace_sites: Vec<(String, &'static flint_core::profile::Site)>,
 }
 
 impl ScriptInstance {
@@ -72,6 +75,18 @@ impl ScriptInstance {
             .unwrap_or_else(super::output::Speaker::nobody)
     }
 
+    /// `callback`'s scope for the recorder: `scripts/hud.rhai:on_draw_ui`,
+    /// the name its `--perf` time goes under. Asked only while the
+    /// recorder records; after a callback's first time it is a lookup.
+    pub(crate) fn trace_site(&mut self, callback: &str) -> &'static flint_core::profile::Site {
+        if let Some((_, site)) = self.trace_sites.iter().find(|(c, _)| c == callback) {
+            return site;
+        }
+        let site = flint_core::profile::site_named(&format!("{}:{callback}", self.source_path));
+        self.trace_sites.push((callback.to_string(), site));
+        site
+    }
+
     pub fn new(ast: AST, source_path: String) -> Self {
         let defines = scan(&ast, &source_path);
         let completes_transition = may_complete_transition(&ast);
@@ -92,6 +107,7 @@ impl ScriptInstance {
             entity_name: String::new(),
             file,
             speaker: None,
+            trace_sites: Vec::new(),
         }
     }
 

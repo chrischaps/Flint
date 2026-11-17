@@ -153,26 +153,134 @@ pub fn finish_frame() {
 #[cfg(any(debug_assertions, feature = "trace"))]
 pub use recorder::*;
 
+/// The recorder's file format, Chrome trace-event JSON (#1097). Plain
+/// data and text, in every build, so a host writes one code path and asks
+/// [`COMPILED_IN`] (a constant: without the recorder the optimizer drops
+/// the path).
+pub mod chrome;
+
+/// A scope copied out of a ring by `snapshot`, in nanoseconds from the
+/// recorder's epoch.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TakenScope {
+    pub name: &'static str,
+    /// Where `scope!` was written; empty for a site named at run time.
+    pub file: &'static str,
+    pub line: u32,
+    pub start_ns: u64,
+    pub dur_ns: u64,
+    pub frame: u32,
+    pub depth: u16,
+    pub detail: Option<TakenDetail>,
+}
+
+/// A taken scope's detail.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TakenDetail {
+    Count(u64),
+    Text(String),
+}
+
+/// One thread's scopes, as `snapshot` copied them, oldest first by when
+/// they closed.
+#[derive(Clone, Debug, Default)]
+pub struct ThreadScopes {
+    pub thread: String,
+    pub scopes: Vec<TakenScope>,
+    /// Records the ring held, copied or not.
+    pub held: usize,
+    /// Records pushed since the ring was made.
+    pub written: u64,
+    /// Its capacity; `None` keeps every record.
+    pub capacity: Option<usize>,
+}
+
+impl ThreadScopes {
+    /// Whether the ring has overwritten anything: then its oldest held
+    /// record is where the thread's record begins.
+    pub fn wrapped(&self) -> bool {
+        self.written > self.held as u64
+    }
+}
+
 #[cfg(not(any(debug_assertions, feature = "trace")))]
 pub use off::*;
 
-/// The recorder's half is compiled out of this build.
+/// The recorder's half is compiled out of this build: the same names, each
+/// nothing, so a host needs no `cfg` of its own.
 #[cfg(not(any(debug_assertions, feature = "trace")))]
 mod off {
     /// Whether the recorder is in this build.
     pub const COMPILED_IN: bool = false;
 
+    /// Records a ring holds by default, as the recorder's build says.
+    pub const DEFAULT_RING_CAPACITY: usize = 1 << 16;
+
+    /// Nothing to size: the recorder is not in this build.
+    pub fn set_ring_capacity(_records: usize) {}
+
+    pub fn ring_capacity() -> usize {
+        0
+    }
+
+    /// Always 0: no frames are counted without the recorder.
+    pub fn frame() -> u32 {
+        0
+    }
+
+    /// Nothing recorded, nothing to copy.
+    pub fn snapshot(_since_ns: Option<u64>) -> Vec<super::ThreadScopes> {
+        Vec::new()
+    }
+
+    /// The recorder's clock, which this build has none of.
+    pub mod clock {
+        use web_time::Instant;
+
+        pub fn instant_ns(_at: Instant) -> u64 {
+            0
+        }
+
+        pub fn now_ns() -> u64 {
+            0
+        }
+    }
+
     /// Does nothing: the recorder is not in this build.
     pub fn set_recording(_on: bool) {}
 
+    /// Always false: the recorder is not in this build.
+    #[inline(always)]
     pub fn recording() -> bool {
         false
+    }
+
+    /// A scope named at run time ([`site_named`]): nothing in this build.
+    pub struct Scope;
+
+    impl Scope {
+        #[inline(always)]
+        pub fn enter(_site: &'static super::Site) -> Scope {
+            Scope
+        }
+    }
+
+    /// The one site of a name made at run time. With no recorder in the
+    /// build there is nothing to name, so every name is one empty site;
+    /// callers ask only while [`recording`], which is never here.
+    pub fn site_named(_name: &str) -> &'static super::Site {
+        static NONE: super::Site = super::Site {
+            name: "",
+            file: "",
+            line: 0,
+        };
+        &NONE
     }
 }
 
 #[cfg(any(debug_assertions, feature = "trace"))]
 mod recorder {
-    use super::{DetailValue, ScopeDetail, Site};
+    use super::{DetailValue, ScopeDetail, Site, TakenDetail, TakenScope, ThreadScopes};
     use std::cell::Cell;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
@@ -196,17 +304,45 @@ mod recorder {
         RECORDING.store(on, Ordering::Relaxed);
     }
 
+    #[inline]
     pub fn recording() -> bool {
         RECORDING.load(Ordering::Relaxed)
     }
 
     /// The records a thread's ring will hold, for rings not yet made: set it
-    /// before recording starts.
+    /// before recording starts. `0` keeps every record (a whole session,
+    /// `--trace-seconds 0`): the ring and its text then grow without bound.
     pub fn set_ring_capacity(records: usize) {
-        RING_CAPACITY.store(
-            records.clamp(1, u32::MAX as usize) as u32,
-            Ordering::Relaxed,
-        );
+        RING_CAPACITY.store(records.min(u32::MAX as usize) as u32, Ordering::Relaxed);
+    }
+
+    /// What [`set_ring_capacity`] last said: the records a new thread's
+    /// ring holds, `0` for every record.
+    pub fn ring_capacity() -> usize {
+        RING_CAPACITY.load(Ordering::Relaxed) as usize
+    }
+
+    /// The site of a scope named at run time (a script's callback, #1097),
+    /// made once a name and kept for the run: a name made at run time
+    /// can't be a `static` as `scope!`'s literal is. Ask only while
+    /// [`recording`]: it takes a lock and, the first time, allocates.
+    pub fn site_named(name: &str) -> &'static Site {
+        use std::collections::HashMap;
+        static SITES: OnceLock<Mutex<HashMap<String, &'static Site>>> = OnceLock::new();
+        let mut sites = SITES
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(site) = sites.get(name) {
+            return site;
+        }
+        let site: &'static Site = Box::leak(Box::new(Site {
+            name: Box::leak(name.to_owned().into_boxed_str()),
+            file: "",
+            line: 0,
+        }));
+        sites.insert(name.to_owned(), site);
+        site
     }
 
     pub(super) fn next_frame() {
@@ -254,6 +390,17 @@ mod recorder {
         /// Fixes the epoch, if it isn't yet. `set_recording` calls it.
         pub fn start() {
             epoch();
+        }
+
+        /// `at` as nanoseconds from the epoch (0 before it): how a host
+        /// puts its own instants on the scopes' timeline.
+        pub fn instant_ns(at: Instant) -> u64 {
+            at.saturating_duration_since(epoch().instant).as_nanos() as u64
+        }
+
+        /// Nanoseconds from the epoch to now, on `Instant`'s clock.
+        pub fn now_ns() -> u64 {
+            instant_ns(Instant::now())
         }
 
         /// Ticks now.
@@ -341,9 +488,11 @@ mod recorder {
     }
 
     /// One thread's records, the oldest overwritten first. Its memory is
-    /// taken once, at its first record.
+    /// taken once, at its first record. A ring made with capacity 0 keeps
+    /// every record instead, and grows.
     pub struct Ring {
         thread: String,
+        /// Records held; 0 for every record.
         cap: usize,
         records: Vec<Record>,
         next: usize,
@@ -356,7 +505,7 @@ mod recorder {
         fn new(thread: String, cap: usize) -> Self {
             Ring {
                 thread,
-                cap: cap.max(1),
+                cap,
                 records: Vec::new(),
                 next: 0,
                 written: 0,
@@ -370,7 +519,21 @@ mod recorder {
             &self.thread
         }
 
+        /// The records it holds at most; `None` for every record.
+        pub fn capacity(&self) -> Option<usize> {
+            (self.cap > 0).then_some(self.cap)
+        }
+
+        fn unbounded(&self) -> bool {
+            self.cap == 0
+        }
+
         fn push(&mut self, r: Record) {
+            if self.unbounded() {
+                self.records.push(r);
+                self.written += 1;
+                return;
+            }
             if self.records.len() < self.cap {
                 if self.records.capacity() == 0 {
                     self.records.reserve_exact(self.cap);
@@ -387,6 +550,16 @@ mod recorder {
         }
 
         fn push_text(&mut self, s: &str) -> Detail {
+            if self.unbounded() {
+                let len = s.len().min(u16::MAX as usize);
+                let at = self.text.len() as u64;
+                self.text.extend_from_slice(&s.as_bytes()[..len]);
+                self.text_written += len as u64;
+                return Detail::Text {
+                    at,
+                    len: len as u16,
+                };
+            }
             if self.text.is_empty() {
                 self.text.resize(TEXT_CAPACITY, 0);
             }
@@ -404,7 +577,7 @@ mod recorder {
 
         /// The records held, oldest first.
         pub fn records(&self) -> impl Iterator<Item = &Record> {
-            let (older, newer) = if self.records.len() < self.cap {
+            let (older, newer) = if self.unbounded() || self.records.len() < self.cap {
                 (&self.records[..], &self.records[..0])
             } else {
                 let (newer, older) = self.records.split_at(self.next);
@@ -419,6 +592,10 @@ mod recorder {
             match r.detail {
                 Detail::None => None,
                 Detail::Count(n) => Some(n.to_string()),
+                Detail::Text { at, len } if self.unbounded() => {
+                    let bytes = &self.text[at as usize..at as usize + len as usize];
+                    Some(String::from_utf8_lossy(bytes).into_owned())
+                }
                 Detail::Text { at, len } => {
                     if self.text_written - at > TEXT_CAPACITY as u64 {
                         return None;
@@ -435,6 +612,58 @@ mod recorder {
         pub fn written(&self) -> u64 {
             self.written
         }
+
+        /// Records it holds now.
+        pub fn held(&self) -> usize {
+            self.records.len()
+        }
+
+        /// What a detail is, for a copy that outlives the ring.
+        fn taken_detail(&self, r: &Record) -> Option<TakenDetail> {
+            match r.detail {
+                Detail::None => None,
+                Detail::Count(n) => Some(TakenDetail::Count(n)),
+                Detail::Text { .. } => self.detail(r).map(TakenDetail::Text),
+            }
+        }
+    }
+
+    /// A copy of every thread's scopes that closed at or after `since_ns`
+    /// (nanoseconds from the epoch; `None` for all), each ring locked only
+    /// while it is copied. The rings keep recording. The copy is
+    /// proportional to what it takes, not to the ring: a five-second
+    /// window of the player's 16 scopes is about 5 000 records.
+    pub fn snapshot(since_ns: Option<u64>) -> Vec<ThreadScopes> {
+        let k = clock::ns_per_tick();
+        let mut out = Vec::new();
+        with_rings(|ring| {
+            let mut scopes = Vec::new();
+            for r in ring.records() {
+                let start_ns = r.start_ns(k);
+                let dur_ns = r.dur_ns(k);
+                if since_ns.is_some_and(|since| start_ns + dur_ns < since) {
+                    continue;
+                }
+                scopes.push(TakenScope {
+                    name: r.site.name,
+                    file: r.site.file,
+                    line: r.site.line,
+                    start_ns,
+                    dur_ns,
+                    frame: r.frame,
+                    depth: r.depth,
+                    detail: ring.taken_detail(r),
+                });
+            }
+            out.push(ThreadScopes {
+                thread: ring.thread.clone(),
+                scopes,
+                held: ring.held(),
+                written: ring.written,
+                capacity: ring.capacity(),
+            });
+        });
+        out
     }
 
     fn rings() -> &'static Mutex<Vec<Arc<Mutex<Ring>>>> {
@@ -579,6 +808,24 @@ mod recorder {
         }
 
         #[test]
+        fn a_ring_of_capacity_zero_keeps_every_record_and_its_text() {
+            let mut ring = Ring::new("t".into(), 0);
+            let mut r = record_at(0);
+            r.detail = ring.push_text("models/oak.glb");
+            ring.push(r);
+            let filler = "x".repeat(TEXT_CAPACITY);
+            ring.push_text(&filler);
+            for start in 1..100_000 {
+                ring.push(record_at(start));
+            }
+            assert_eq!(ring.held(), 100_000);
+            assert_eq!(ring.capacity(), None);
+            let first = ring.records().next().unwrap();
+            assert_eq!(first.start, 0, "oldest first");
+            assert_eq!(ring.detail(first).as_deref(), Some("models/oak.glb"));
+        }
+
+        #[test]
         fn text_overwritten_since_reads_as_none() {
             let mut ring = Ring::new("t".into(), 4);
             let first = ring.push_text("models/oak.glb");
@@ -653,6 +900,38 @@ mod tests {
             assert_eq!(calls, 1);
         });
         assert_eq!(seen, vec![("once", 0, Some("1".to_string()))]);
+    }
+
+    #[test]
+    fn a_snapshot_takes_the_scopes_that_closed_in_its_window() {
+        set_recording(true);
+        std::thread::Builder::new()
+            .name("profile-window".into())
+            .spawn(|| {
+                {
+                    crate::scope!("before");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                let since = clock::now_ns();
+                {
+                    crate::scope!("after", 3u32);
+                }
+                {
+                    let named = site_named("scripts/a.rhai:on_update");
+                    assert!(std::ptr::eq(named, site_named("scripts/a.rhai:on_update")));
+                    let _s = Scope::enter(named);
+                }
+                let taken = snapshot(Some(since));
+                let mine = taken.iter().find(|t| t.thread == "profile-window").unwrap();
+                let names: Vec<_> = mine.scopes.iter().map(|s| s.name).collect();
+                assert_eq!(names, vec!["after", "scripts/a.rhai:on_update"]);
+                assert_eq!(mine.scopes[0].detail, Some(TakenDetail::Count(3)));
+                assert_eq!(mine.held, 3);
+                assert!(!mine.wrapped());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]

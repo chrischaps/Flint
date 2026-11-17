@@ -142,6 +142,9 @@ pub(crate) struct PerfRecorder {
     pub gpu_wanted: bool,
     /// When the readout was last drawn, so it is drawn twice a second.
     pub shown_at: Option<Instant>,
+    /// The scope recorder's look-back and its saves (#1097), while the
+    /// player records: `--trace`, `--trace-on-hitch`, the `save_trace` key.
+    pub(crate) trace: Option<Box<super::trace::Tracer>>,
 }
 
 impl Default for PerfRecorder {
@@ -153,6 +156,7 @@ impl Default for PerfRecorder {
             readout: false,
             gpu_wanted: false,
             shown_at: None,
+            trace: None,
         }
     }
 }
@@ -202,14 +206,26 @@ impl PerfRecorder {
         // record to put them on (#1077); otherwise each is a flag read
         flint_core::frame_notes::listen(self.recording());
         if self.recording() {
-            self.history.begin_frame();
+            let now = Instant::now();
+            self.history.begin_frame_at(now);
+            if let (true, Some(trace)) = (flint_core::profile::COMPILED_IN, &mut self.trace) {
+                trace.tracks.frame_began(now);
+            }
         }
     }
 
     /// The end of `phase`, now.
     pub(crate) fn mark(&mut self, phase: Phase) {
-        if self.recording() {
-            self.history.mark(phase);
+        if !self.recording() {
+            return;
+        }
+        let now = Instant::now();
+        let began = self.history.mark_at(phase, now);
+        // The phase on the trace's own track (#1097), where it ran
+        if let (true, Some(trace), Some(began)) =
+            (flint_core::profile::COMPILED_IN, &mut self.trace, began)
+        {
+            trace.tracks.phase(phase, began, now);
         }
     }
 

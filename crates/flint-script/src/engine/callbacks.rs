@@ -45,6 +45,10 @@ impl ScriptEngine {
         }
         let began = self.times.is_some().then(web_time::Instant::now);
         let script = self.scripts.get_mut(&entity).unwrap();
+        // The callback as a scope of the recorder's, named as its time is
+        // (#1097); nothing unless it records
+        let _scope = flint_core::profile::recording()
+            .then(|| flint_core::profile::Scope::enter(script.trace_site(callback)));
         let result =
             self.engine
                 .call_fn::<rhai::Dynamic>(&mut script.scope, &script.calls, callback, args);
