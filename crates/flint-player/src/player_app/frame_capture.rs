@@ -925,9 +925,10 @@ fn write(job: Job) -> Result<Written, String> {
 }
 
 /// The checkout's commit at `root` and whether its tracked files changed,
-/// where git can say.
+/// where git can say: a capture's `engine.commit` and `engine.dirty`. The
+/// player's writer and `flint render --frame-capture` both ask it (#1208).
 #[cfg(not(target_arch = "wasm32"))]
-fn git_state(root: &Path) -> (Option<String>, Option<bool>) {
+pub fn git_state(root: &Path) -> (Option<String>, Option<bool>) {
     let git = |args: &[&str]| {
         std::process::Command::new("git")
             .arg("-C")

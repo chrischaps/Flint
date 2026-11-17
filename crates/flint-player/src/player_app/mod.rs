@@ -28,7 +28,7 @@ mod extension_hooks_tests;
 mod extension_tests;
 pub mod fonts;
 mod frame;
-mod frame_capture;
+pub(crate) mod frame_capture;
 #[cfg(test)]
 mod frame_capture_tests;
 mod frame_history;
