@@ -52,6 +52,13 @@ pub struct Timing {
     pub cpu_ms: Option<f32>,
     /// Why there are no CPU phases, when there are none.
     pub cpu_missing: Option<String>,
+    /// Why there is no frame history, when there is none.
+    pub history_missing: String,
+    /// The CPU side (phases, scripts, history, hitch) is the captured
+    /// frame's, shown beside a replay's GPU times (#1208): a replay draws
+    /// the frame again and runs no game loop, so these describe the frame
+    /// it draws.
+    pub cpu_of_captured: bool,
     /// The timed top-level passes, in order.
     pub gpu: Vec<Segment>,
     /// The GPU frame's time (the timer's whole frame).
@@ -82,11 +89,46 @@ impl Timing {
                 }
             }
         }
+        t.lay_cpu(d);
+        t
+    }
+
+    /// A replay's timing (#1208): its own GPU passes, and the CPU side of
+    /// the capture it replays, which describes the frame being drawn.
+    pub fn replaying(mut self, captured: &FrameDescription) -> Self {
+        self.cpu.clear();
+        self.scripts.clear();
+        self.cpu_ms = None;
+        self.cpu_missing = None;
+        self.history.clear();
+        self.captured = None;
+        self.hitch = None;
+        self.lay_cpu(captured);
+        self.cpu_of_captured = true;
+        self
+    }
+
+    /// The CPU side of `d`: its phases, scripts, history and hitch, or why
+    /// it has none.
+    fn lay_cpu(&mut self, d: &FrameDescription) {
+        let t = self;
+        let replay = d.written_by.as_deref() == Some("flint frame replay");
+        t.history_missing = if replay {
+            "no frame history: a replay draws one frame; the capture it replays keeps the frames around it"
+        } else {
+            "no frame history: the player's captures keep the frames around theirs"
+        }
+        .into();
         let Some(cpu) = &d.cpu else {
             t.cpu_missing = Some(
-                "no CPU phases: a capture from `flint render` has none, the player's do".into(),
+                if replay {
+                    "no CPU phases: a replay draws the frame again with no game loop;                      the capture it replays has the frame's, if the player wrote it"
+                } else {
+                    "no CPU phases: a capture from `flint render` has none, the player's do"
+                }
+                .into(),
             );
-            return t;
+            return;
         };
         match &cpu.frame {
             Some(f) => {
@@ -138,7 +180,6 @@ impl Timing {
             }
             t.hitch = Some(line);
         }
-        t
     }
 
     /// The history's span, seconds.
@@ -218,6 +259,58 @@ mod tests {
     fn a_render_capture_says_why_it_has_no_cpu_times() {
         let t = Timing::new(&FrameDescription::default(), &[]);
         assert!(t.cpu.is_empty() && t.history.is_empty() && t.gpu.is_empty());
+        assert!(t.cpu_missing.unwrap().contains("flint render"));
+    }
+
+    /// A player's capture with a history of two frames, the last captured.
+    fn player_capture() -> FrameDescription {
+        let mut d = FrameDescription::default();
+        let window = vec![cpu_frame(10, 16.0, false), cpu_frame(11, 17.0, false)];
+        d.written_by = Some("flint-player".into());
+        d.cpu = Some(CpuDescription {
+            frame: Some(window[1].clone()),
+            window,
+            ..Default::default()
+        });
+        d
+    }
+
+    #[test]
+    fn a_replay_opened_alone_says_it_runs_no_game_loop() {
+        let d = FrameDescription {
+            written_by: Some("flint frame replay".into()),
+            ..Default::default()
+        };
+        let t = Timing::new(&d, &[]);
+        let why = t.cpu_missing.unwrap();
+        assert!(why.contains("a replay"), "{why}");
+        assert!(!why.contains("flint render"), "{why}");
+        assert!(t.history_missing.contains("a replay"));
+        assert!(!t.cpu_of_captured);
+    }
+
+    #[test]
+    fn a_replay_shown_for_a_player_capture_keeps_the_captured_cpu_side() {
+        let captured = player_capture();
+        let mut replayed = FrameDescription {
+            written_by: Some("flint frame replay".into()),
+            ..Default::default()
+        };
+        replayed.frame.gpu_frame_ms = Some(3.5);
+        let t = Timing::new(&replayed, &[]).replaying(&captured);
+        assert!(t.cpu_of_captured);
+        assert_eq!(t.cpu_missing, None);
+        assert_eq!(t.cpu_ms, Some(17.0));
+        assert_eq!(t.history.len(), 2);
+        assert_eq!(t.captured, Some(1));
+        assert_eq!(t.gpu_ms, Some(3.5), "the GPU side is the replay's own");
+        // A replay of a render capture has the render's reason, which is
+        // about the frame replayed and true
+        let render = FrameDescription {
+            written_by: Some("flint render".into()),
+            ..Default::default()
+        };
+        let t = Timing::new(&replayed, &[]).replaying(&render);
         assert!(t.cpu_missing.unwrap().contains("flint render"));
     }
 

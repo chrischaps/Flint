@@ -4,10 +4,13 @@
 description = "Collision shape attached to the entity's rigidbody"
 
 [component.collider.fields]
-shape = { type = "enum", values = ["box", "sphere", "capsule", "cylinder", "sprite"], default = "box", description = "Collision shape type ('sprite' auto-sizes from sprite component)" }
-size = { type = "vec3", default = [1, 1, 1], description = "Shape dimensions (width/height/depth for box, diameter for sphere/capsule, [diameter, height] for a Y-axis cylinder)" }
+shape = { type = "enum", values = ["box", "sphere", "capsule", "cylinder", "sprite", "mesh", "convex"], default = "box", description = "Collision shape type ('sprite' auto-sizes from sprite component; 'mesh' is the triangles of `model`, else the entity's `model.asset`, made 'convex' on a dynamic body; 'convex' is their hull). Every shape takes the entity's world scale" }
+size = { type = "vec3", default = [1, 1, 1], description = "Shape dimensions before the entity's scale (width/height/depth for box, diameter for sphere/capsule, [diameter, height] for a Y-axis cylinder; a mesh with no triangles is a box of this size)" }
+model = { type = "asset", kind = "models", description = "The model file a 'mesh' or 'convex' collider takes its triangles from, when not the entity's own `model.asset` (a low-poly collision model, say)" }
 is_sensor = { type = "bool", default = false, description = "Sensor colliders detect overlap but don't create contacts" }
 friction = { type = "f32", default = 0.5, min = 0.0, max = 1.0, description = "Surface friction coefficient" }
 restitution = { type = "f32", default = 0.0, min = 0.0, max = 1.0, description = "Bounciness (0 = no bounce, 1 = perfect bounce)" }
 offset = { type = "vec3", default = [0, 0, 0], description = "Collider centre offset in the entity local frame (added to the bounds centre)" }
 rotation = { type = "vec3", default = [0, 0, 0], description = "Collider rotation offset, Euler degrees (e.g. [0, 0, 90] lays a cylinder on its side as a wheel)" }
+layer = { type = "string", default = "default", description = "The collision layer the collider is on: `default`, or one of the project's `[project.physics] layers` in flint.toml" }
+mask = { type = "array", element = "string", description = "The layers it meets; every layer when unsaid. Two colliders touch (or a sensor fires) only when each one's mask holds the other's layer" }

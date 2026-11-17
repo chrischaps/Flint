@@ -8,7 +8,7 @@
 //! `encode_style_mask` and `encode_style_albedo`: each is a selector over
 //! the frame's one draw list (#737), and the state holds no draws of its own.
 
-use super::{Blend, Draw, SceneRenderer};
+use super::{Blend, Draw, DrawItem, SceneRenderer, SteppedPass};
 use crate::camera::Camera;
 use crate::postprocess::PostProcessConfig;
 use crate::style_albedo::StyleAlbedoPass;
@@ -120,6 +120,15 @@ impl SceneRenderer {
         depth_key: crate::bind_cache::DepthKey,
     ) {
         self.style_mask.veiled = false;
+        // A replay stepping the mask (#1204): its styled draws past the limit
+        let (state, terrain, frustum) = (
+            &self.style_mask,
+            &self.terrain.draws,
+            self.camera_frustum.as_ref(),
+        );
+        self.draws.cut_pass(SteppedPass::StyleMask, |item| {
+            item.drawn() && mask_draw(item, state, terrain, frustum).is_some()
+        });
         let Some(resources) = &self.postprocess_resources else {
             return;
         };
@@ -166,72 +175,18 @@ impl SceneRenderer {
             resources.height,
         );
         let ids = &self.style_mask.by_entity;
-        let blends = &self.style_mask.blend_by_entity;
-        let torn = &self.style_mask.torn_entities;
-        let torn_of =
-            |e: &Option<flint_core::EntityId>| e.as_ref().is_some_and(|e| torn.contains(e));
         let id_of = |e: &Option<flint_core::EntityId>| e.as_ref().and_then(|e| ids.get(e).copied());
-        let blend_of = |e: &Option<flint_core::EntityId>| {
-            e.as_ref()
-                .and_then(|e| blends.get(e).copied())
-                .unwrap_or(1.0)
-        };
-        // The mask's selector: every item of a styled entity this camera
-        // draws, in list order. Terrain comes first (#310), and the props on
-        // it after: each fragment's depth test decides who owns a pixel
-        // anyway. Styled blended meshes come last, back to front as the
-        // scene drew them (#310): they write no depth, so the depth test
-        // keeps them behind the opaques in front of them and nothing else,
-        // and where one shows, it is the nearest styled surface and its id
-        // replaces what's behind. A styled glass is a lens, drawing what's
-        // seen through it in its style.
         let frustum = self.camera_frustum.as_ref();
         let mut draws = Vec::new();
         if !ids.is_empty() {
-            draws.extend(self.draws.drawn().filter_map(|item| {
-                let id = id_of(&item.entity)?;
-                let (vertex_buffer, index_buffer, index_count, transform_bind_group, bones) =
-                    match &item.draw {
-                        Draw::Terrain(n) => {
-                            let d = self.terrain.draws.get(*n as usize)?;
-                            if frustum.is_some_and(|f| !f.aabb_visible(d.aabb_min, d.aabb_max)) {
-                                return None;
-                            }
-                            let (v, i, t) =
-                                (&d.vertex_buffer, &d.index_buffer, &d.transform_bind_group);
-                            (v, i, d.index_count, t, None)
-                        }
-                        Draw::Static(d) if !d.is_wireframe => (
-                            &*d.vertex_buffer,
-                            &*d.index_buffer,
-                            d.index_count,
-                            &*d.transform_bind_group,
-                            None,
-                        ),
-                        Draw::Skinned(d) => (
-                            &*d.vertex_buffer,
-                            &*d.index_buffer,
-                            d.index_count,
-                            &*d.transform_bind_group,
-                            Some(&*d.bone_bind_group),
-                        ),
-                        Draw::Static(_) => return None,
-                        // A styled billboard isn't masked yet (#1011)
-                        Draw::Billboard(_) => return None,
-                        // A styled entity's echoes and particles stay unmasked
-                        Draw::Echo(_) | Draw::Particles(_) => return None,
-                    };
-                Some(crate::style_mask::MaskDraw {
-                    vertex_buffer,
-                    index_buffer,
-                    index_count,
-                    transform_bind_group,
-                    bones,
-                    id,
-                    blend: blend_of(&item.entity),
-                    torn: torn_of(&item.entity),
-                })
-            }));
+            draws.extend(
+                self.draws
+                    .drawn()
+                    .filter(|item| self.draws.within(item, SteppedPass::StyleMask))
+                    .filter_map(|item| {
+                        mask_draw(item, &self.style_mask, &self.terrain.draws, frustum)
+                    }),
+            );
         }
         // The veil's selector (#290): what's in front of them, every item
         // that blends and isn't styled itself, drawn as its coverage
@@ -340,45 +295,15 @@ impl SceneRenderer {
             Some((view, _)) if self.pipelines.samples() > 1 => (view, self.pipelines.samples()),
             _ => (depth_view, 1),
         };
-        // The albedo's selector: opaque meshes with a plain vertex stage
+        // A replay stepping the albedo (#1204): its meshes past the limit
+        self.draws.cut_pass(SteppedPass::StyleAlbedo, |item| {
+            item.drawn() && albedo_mesh(item).is_some()
+        });
         let meshes: Vec<crate::style_albedo::AlbedoMesh<'_>> = self
             .draws
             .drawn()
-            .filter(|item| item.blend == Blend::Opaque && item.wooze().is_none())
-            .filter_map(|item| {
-                let (vertex_buffer, index_buffer, index_count, t, m, bones) = match &item.draw {
-                    Draw::Static(d) if !d.is_wireframe => (
-                        &d.vertex_buffer,
-                        &d.index_buffer,
-                        d.index_count,
-                        &d.transform_bind_group,
-                        &d.material_bind_group,
-                        None,
-                    ),
-                    Draw::Skinned(d) => (
-                        &d.vertex_buffer,
-                        &d.index_buffer,
-                        d.index_count,
-                        &d.transform_bind_group,
-                        &d.material_bind_group,
-                        Some(&*d.bone_bind_group),
-                    ),
-                    // Terrain and billboards read as no mesh
-                    Draw::Static(_)
-                    | Draw::Terrain(_)
-                    | Draw::Billboard(_)
-                    | Draw::Echo(_)
-                    | Draw::Particles(_) => return None,
-                };
-                Some(crate::style_albedo::AlbedoMesh {
-                    vertex_buffer,
-                    index_buffer,
-                    index_count,
-                    transform_bind_group: t,
-                    material_bind_group: m,
-                    bones,
-                })
-            })
+            .filter(|item| self.draws.within(item, SteppedPass::StyleAlbedo))
+            .filter_map(albedo_mesh)
             .collect();
         let layouts = crate::style_albedo::AlbedoLayouts {
             transform: &self.layouts.transform_bind_group_layout,
@@ -461,4 +386,152 @@ impl SceneRenderer {
         self.postprocess_resources.is_some()
             && crate::stylize::any_uses_mask(&self.postprocess_config, &self.style_mask.ids)
     }
+
+    /// Log the style mask's styled draws (#1204): the same selector
+    /// ([`mask_draw`]) over the same drawn items, with those a replay's
+    /// limit set aside beside them. The veil drawn with them is `also`.
+    pub(super) fn log_style_mask_draws(&self, pass: &mut crate::frame_capture::LoggedPass) {
+        let frustum = self.camera_frustum.as_ref();
+        if !self.style_mask.by_entity.is_empty() {
+            for item in self.draws.drawn() {
+                let Some(d) = mask_draw(item, &self.style_mask, &self.terrain.draws, frustum)
+                else {
+                    continue;
+                };
+                let name = if d.bones.is_some() {
+                    "style mask skinned"
+                } else {
+                    "style mask"
+                };
+                if self.draws.within(item, SteppedPass::StyleMask) {
+                    pass.draws.push(self.logged_draw(item, None, name));
+                } else {
+                    pass.culled
+                        .push(self.logged_draw(item, Some("past the draw limit"), name));
+                }
+            }
+        }
+        if self.style_mask.veiled {
+            pass.pass.also.push("Veil".into());
+        }
+    }
+
+    /// Log the style albedo's meshes (#1204), as
+    /// [`log_style_mask_draws`](Self::log_style_mask_draws) logs the mask's.
+    pub(super) fn log_style_albedo_draws(&self, pass: &mut crate::frame_capture::LoggedPass) {
+        for item in self.draws.drawn() {
+            let Some(m) = albedo_mesh(item) else {
+                continue;
+            };
+            let name = if m.bones.is_some() {
+                "style albedo skinned"
+            } else {
+                "style albedo"
+            };
+            if self.draws.within(item, SteppedPass::StyleAlbedo) {
+                pass.draws.push(self.logged_draw(item, None, name));
+            } else {
+                pass.culled
+                    .push(self.logged_draw(item, Some("past the draw limit"), name));
+            }
+        }
+    }
+}
+
+/// The mask's selector: what it draws `item` as, if anything. Every item of
+/// a styled entity this camera draws, in list order. Terrain comes first
+/// (#310), and the props on it after: each fragment's depth test decides
+/// who owns a pixel anyway. Styled blended meshes come last, back to front
+/// as the scene drew them (#310): they write no depth, so the depth test
+/// keeps them behind the opaques in front of them and nothing else, and
+/// where one shows, it is the nearest styled surface and its id replaces
+/// what's behind. A styled glass is a lens, drawing what's seen through it
+/// in its style. Whether the camera draws it is the caller's to ask.
+fn mask_draw<'a>(
+    item: &'a DrawItem,
+    state: &StyleMaskState,
+    terrain: &'a [crate::terrain_pipeline::TerrainDrawCall],
+    frustum: Option<&crate::frustum::Frustum>,
+) -> Option<crate::style_mask::MaskDraw<'a>> {
+    let entity = item.entity.as_ref()?;
+    let id = state.by_entity.get(entity).copied()?;
+    let (vertex_buffer, index_buffer, index_count, transform_bind_group, bones) = match &item.draw {
+        Draw::Terrain(n) => {
+            let d = terrain.get(*n as usize)?;
+            if frustum.is_some_and(|f| !f.aabb_visible(d.aabb_min, d.aabb_max)) {
+                return None;
+            }
+            let (v, i, t) = (&d.vertex_buffer, &d.index_buffer, &d.transform_bind_group);
+            (v, i, d.index_count, t, None)
+        }
+        Draw::Static(d) if !d.is_wireframe => (
+            &*d.vertex_buffer,
+            &*d.index_buffer,
+            d.index_count,
+            &*d.transform_bind_group,
+            None,
+        ),
+        Draw::Skinned(d) => (
+            &*d.vertex_buffer,
+            &*d.index_buffer,
+            d.index_count,
+            &*d.transform_bind_group,
+            Some(&*d.bone_bind_group),
+        ),
+        Draw::Static(_) => return None,
+        // A styled billboard isn't masked yet (#1011)
+        Draw::Billboard(_) => return None,
+        // A styled entity's echoes and particles stay unmasked
+        Draw::Echo(_) | Draw::Particles(_) => return None,
+    };
+    Some(crate::style_mask::MaskDraw {
+        vertex_buffer,
+        index_buffer,
+        index_count,
+        transform_bind_group,
+        bones,
+        id,
+        blend: state.blend_by_entity.get(entity).copied().unwrap_or(1.0),
+        torn: state.torn_entities.contains(entity),
+    })
+}
+
+/// The albedo's selector: opaque meshes with a plain vertex stage; terrain
+/// and billboards read as no mesh. Whether the camera draws it is the
+/// caller's to ask.
+fn albedo_mesh(item: &DrawItem) -> Option<crate::style_albedo::AlbedoMesh<'_>> {
+    if item.blend != Blend::Opaque || item.wooze().is_some() {
+        return None;
+    }
+    let (vertex_buffer, index_buffer, index_count, t, m, bones) = match &item.draw {
+        Draw::Static(d) if !d.is_wireframe => (
+            &d.vertex_buffer,
+            &d.index_buffer,
+            d.index_count,
+            &d.transform_bind_group,
+            &d.material_bind_group,
+            None,
+        ),
+        Draw::Skinned(d) => (
+            &d.vertex_buffer,
+            &d.index_buffer,
+            d.index_count,
+            &d.transform_bind_group,
+            &d.material_bind_group,
+            Some(&*d.bone_bind_group),
+        ),
+        Draw::Static(_)
+        | Draw::Terrain(_)
+        | Draw::Billboard(_)
+        | Draw::Echo(_)
+        | Draw::Particles(_) => return None,
+    };
+    Some(crate::style_albedo::AlbedoMesh {
+        vertex_buffer,
+        index_buffer,
+        index_count,
+        transform_bind_group: t,
+        material_bind_group: m,
+        bones,
+    })
 }

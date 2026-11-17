@@ -25,7 +25,10 @@
 //! (#1077, `flint_core::frame_notes`) of its frame and the frame before,
 //! since GPU work lands a frame late: a model loaded, a pipeline built, a
 //! transition. [`Hitch::likely_cause`] names them, or says
-//! [`NO_ENGINE_EVENT`].
+//! [`NO_ENGINE_EVENT`]. [`Hitch::cause_line`] names them as the cause only
+//! when their times cover half the frame's excess, the rule a script is
+//! blamed by; otherwise whose time it was comes first and the notes follow
+//! as `(also: ..)` (#1124).
 
 use super::frame_history::FrameHistory;
 use super::perf::{script_name, Phase};
@@ -146,22 +149,17 @@ const CAUSES_NAMED: usize = 3;
 
 // Read by the hitch log, the report and the readouts (#1079)
 impl Hitch {
-    /// The notes that say what the engine was doing (not a clock stall,
-    /// which is the long frame itself).
+    /// The notes that say what the engine was doing: not a clock stall or
+    /// the physics steps, which are the long frame itself
+    /// ([`NoteKind::is_symptom`](flint_core::frame_notes::NoteKind::is_symptom)).
     pub(crate) fn engine_events(&self) -> impl Iterator<Item = &HitchNote> {
         self.notes.iter().filter(|n| !n.note.kind.is_symptom())
     }
 
-    /// The engine's events as a cause, in a line: the outermost notes
-    /// (a transition, not each model it loaded), this frame's first, then
-    /// by time, longest first; `no engine event` when there are none.
-    /// `model load models/crate.glb, 41.2 ms; pipeline build pbr, 9.0 ms
-    /// (frame before)`
-    pub(crate) fn likely_cause(&self) -> String {
+    /// The outermost engine events (a transition, not each model it
+    /// loaded), this frame's first, then by time, longest first.
+    fn top_events(&self) -> Vec<&HitchNote> {
         let mut top: Vec<&HitchNote> = self.engine_events().filter(|n| n.note.depth == 0).collect();
-        if top.is_empty() {
-            return NO_ENGINE_EVENT.to_string();
-        }
         top.sort_by(|a, b| {
             a.frame_before.cmp(&b.frame_before).then(
                 b.note
@@ -170,32 +168,81 @@ impl Hitch {
                     .total_cmp(&a.note.ms.unwrap_or(-1.0)),
             )
         });
-        let mut line = top
-            .iter()
-            .take(CAUSES_NAMED)
-            .map(|n| {
-                if n.frame_before {
-                    format!("{} (frame before)", n.note)
-                } else {
-                    n.note.to_string()
+        top
+    }
+
+    /// How far the frame ran past the median of the frames before it, ms.
+    fn excess_ms(&self) -> f32 {
+        (self.judged_ms - self.median_ms).max(0.0)
+    }
+
+    /// Whether the engine's events account for the hitch (#1124): together
+    /// they took at least half of its excess, the share a script must take
+    /// to be blamed. A 1.2 ms reload poll in a frame 10 ms over doesn't.
+    /// A note that wasn't timed can't be weighed, so it is named, as before.
+    fn events_explain(&self, top: &[&HitchNote]) -> bool {
+        if top.is_empty() {
+            return false;
+        }
+        if top.iter().any(|n| n.note.ms.is_none()) {
+            return true;
+        }
+        let ms: f32 = top.iter().filter_map(|n| n.note.ms).sum();
+        ms >= self.excess_ms() * PLAYER_SHARE
+    }
+
+    /// The engine's events in a line, whether or not they account for the
+    /// hitch ([`cause_line`](Self::cause_line) decides that): the
+    /// outermost notes, this frame's first, then longest first; `no engine
+    /// event` when there are none.
+    /// `model load models/crate.glb, 41.2 ms; pipeline build pbr, 9.0 ms
+    /// (frame before)`
+    pub(crate) fn likely_cause(&self) -> String {
+        let top = self.top_events();
+        if top.is_empty() {
+            return NO_ENGINE_EVENT.to_string();
+        }
+        named(&top, |n| {
+            if n.frame_before {
+                format!("{} (frame before)", n.note)
+            } else {
+                n.note.to_string()
+            }
+        })
+    }
+
+    /// What the hitch was, in a line: the engine's events when they
+    /// account for it, else whose time it was (`script
+    /// stall.rhai:on_update 80.1 ms`, `physics +41.0 ms`, `elsewhere,
+    /// present 30.2 ms`) with the events that didn't after it: `sync +9.1
+    /// ms (also: reload poll 1.2 ms)` (#1079, #1124: the exit report,
+    /// `--perf`'s line, `?perf=1`, the hitch log).
+    pub(crate) fn cause_line(&self) -> String {
+        let top = self.top_events();
+        if self.events_explain(&top) {
+            return self.likely_cause();
+        }
+        let mut line = self.whose_line();
+        if !top.is_empty() {
+            // Short: the kind and its time, not the file or the label
+            let also = named(&top, |n| {
+                let mut s = n.note.kind.label().to_string();
+                if let Some(ms) = n.note.ms {
+                    s.push_str(&format!(" {ms:.1} ms"));
                 }
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
-        if top.len() > CAUSES_NAMED {
-            line.push_str(&format!("; {} more", top.len() - CAUSES_NAMED));
+                if n.frame_before {
+                    s.push_str(" the frame before");
+                }
+                s
+            });
+            line.push_str(&format!(" (also: {also})"));
         }
         line
     }
 
-    /// What the hitch was, in a line: the engine's events when it noted
-    /// any, else whose time it was: `script stall.rhai:on_update 80.1 ms`,
-    /// `physics +41.0 ms`, `elsewhere, present 30.2 ms` (#1079: the exit
-    /// report, `--perf`'s line, `?perf=1`).
-    pub(crate) fn cause_line(&self) -> String {
-        if self.engine_events().any(|n| n.note.depth == 0) {
-            return self.likely_cause();
-        }
+    /// Whose time the hitch was, in a line: the blamed script, else the
+    /// phase that grew most, else `elsewhere`.
+    fn whose_line(&self) -> String {
         if let Some((name, ms)) = self.blamed_script() {
             return format!("script {name} {ms:.1} ms");
         }
@@ -222,22 +269,14 @@ impl Hitch {
     }
 
     /// The cause with no times in it, so hitches of one cause count
-    /// together: the kind of the engine's first event (`model load`), else
-    /// the script (`script stall.rhai:on_update`), the phase (`physics`)
-    /// or `elsewhere`.
+    /// together, by [`cause_line`](Self::cause_line)'s rule: the kind of
+    /// the engine's first event (`model load`) when the events account for
+    /// the hitch, else the script (`script stall.rhai:on_update`), the
+    /// phase (`physics`) or `elsewhere`.
     pub(crate) fn cause_key(&self) -> String {
-        let mut top: Vec<&HitchNote> = self.engine_events().filter(|n| n.note.depth == 0).collect();
-        // This frame's before the frame before's, the longest first
-        top.sort_by(|a, b| {
-            a.frame_before.cmp(&b.frame_before).then(
-                b.note
-                    .ms
-                    .unwrap_or(-1.0)
-                    .total_cmp(&a.note.ms.unwrap_or(-1.0)),
-            )
-        });
-        if let Some(first) = top.first() {
-            return first.note.kind.label().to_string();
+        let top = self.top_events();
+        if self.events_explain(&top) {
+            return top[0].note.kind.label().to_string();
         }
         if let Some((name, _)) = self.blamed_script() {
             return format!("script {name}");
@@ -247,6 +286,20 @@ impl Hitch {
             Cause::Elsewhere { .. } => "elsewhere".to_string(),
         }
     }
+}
+
+/// The first [`CAUSES_NAMED`] notes, each as `name` says, then "N more".
+fn named(top: &[&HitchNote], name: impl Fn(&HitchNote) -> String) -> String {
+    let mut line = top
+        .iter()
+        .take(CAUSES_NAMED)
+        .map(|n| name(n))
+        .collect::<Vec<_>>()
+        .join("; ");
+    if top.len() > CAUSES_NAMED {
+        line.push_str(&format!("; {} more", top.len() - CAUSES_NAMED));
+    }
+    line
 }
 
 /// The counts over a span of frames.
@@ -562,8 +615,12 @@ mod tests {
         wall: f64,
         input: f64,
         scripts: f64,
+        physics: f64,
+        sync: f64,
         render: f64,
         present: f64,
+        /// Fixed physics steps run (0: none said).
+        steps: u32,
     }
 
     fn steady(wall: f64) -> F {
@@ -573,6 +630,7 @@ mod tests {
             scripts: 1.0,
             render: 2.0,
             present: 0.2,
+            ..F::default()
         }
     }
 
@@ -602,6 +660,8 @@ mod tests {
             for (phase, d) in [
                 (Phase::Input, f.input),
                 (Phase::Scripts, f.scripts),
+                (Phase::Physics, f.physics),
+                (Phase::Sync, f.sync),
                 (Phase::Render, f.render),
                 (Phase::Present, f.present),
             ] {
@@ -611,6 +671,7 @@ mod tests {
             let times: Vec<(String, f32)> =
                 scripts.iter().map(|(n, ms)| (n.to_string(), *ms)).collect();
             h.record_scripts(&times);
+            h.fixed_steps(f.steps);
             self.t += ms(f.wall);
             // The next frame's start closes this one; its tick measures it.
             h.begin_frame_at(self.t);
@@ -1030,6 +1091,153 @@ mod tests {
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].kind, NoteKind::PhysicsSteps);
         assert_eq!(notes[0].to_string(), "physics steps 2 fixed steps");
+    }
+
+    /// #1124, from #1080's log: debug Woozy Grove at 36 fps, a 446 ms frame
+    /// whose render waited 410.7 ms on the swapchain. The frame before ran
+    /// two fixed steps, as every frame at 36 fps does, and the clock saw
+    /// the stall: both are the long frame, not its cause.
+    /// `{"frame":43,"ms":445.97,"median_ms":33.33,"phase":"render",
+    /// "phase_ms":410.74,"cause":"physics steps 2 fixed steps (frame
+    /// before)"}`
+    #[test]
+    fn a_render_stall_after_two_physics_steps_is_the_renders() {
+        use flint_core::frame_notes::NoteKind;
+        let mut run = Run::new(None);
+        let grove = F {
+            wall: 33.33,
+            input: 0.3,
+            scripts: 1.0,
+            physics: 2.0,
+            sync: 2.0,
+            render: 25.0,
+            present: 2.0,
+            steps: 2,
+        };
+        run.frames(120, grove);
+        let stall = F {
+            wall: 445.97,
+            render: 25.0 + 410.74,
+            steps: 1,
+            ..grove
+        };
+        assert_eq!(run.frame(stall), 1);
+        let h = run.detector.last().unwrap();
+        let kinds: Vec<_> = h
+            .notes
+            .iter()
+            .map(|n| (n.note.kind, n.frame_before))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                (NoteKind::ClockStall, false),
+                (NoteKind::PhysicsSteps, true)
+            ],
+            "both kept on the hitch"
+        );
+        assert_eq!(h.cause_line(), "render +410.7 ms");
+        assert_eq!(h.cause_key(), "render");
+        assert_eq!(h.likely_cause(), NO_ENGINE_EVENT);
+    }
+
+    /// #1124, from #1080's log: release Woozy Grove, a 14.9 ms frame among
+    /// 4.17 ms ones whose sync grew 9.1 ms, with a 1.2 ms reload poll in
+    /// it. The poll is a seventh of the excess: named after, not as, the
+    /// cause.
+    /// `{"frame":645,"ms":14.9,"median_ms":4.17,"phase":"sync",
+    /// "phase_ms":9.07,"cause":"reload poll 0 scripts watched, 1.2 ms"}`
+    #[test]
+    fn a_sync_stall_is_not_blamed_on_a_quick_reload_poll() {
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        let grove = F {
+            wall: 4.17,
+            input: 0.1,
+            scripts: 0.3,
+            physics: 0.2,
+            sync: 0.5,
+            render: 1.5,
+            present: 1.0,
+            steps: 1,
+        };
+        run.frames(120, grove);
+        frame_notes::note(
+            NoteKind::ReloadPoll,
+            || "0 scripts watched".into(),
+            Some(1.25),
+        );
+        let slow = F {
+            wall: 14.9,
+            sync: 0.5 + 9.07,
+            ..grove
+        };
+        assert_eq!(run.frame(slow), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "sync +9.1 ms (also: reload poll 1.2 ms)");
+        assert_eq!(h.cause_key(), "sync");
+        // The notes in a line are still there for whoever asks
+        assert_eq!(h.likely_cause(), "reload poll 0 scripts watched, 1.2 ms");
+        frame_notes::listen(false);
+    }
+
+    /// A note that does account for its hitch is still the cause: a model
+    /// load of 70 ms in a frame 83 ms over, a transition of 90 ms. A note
+    /// of the frame before that doesn't is named after, marked so.
+    #[test]
+    fn a_note_that_covers_half_the_hitch_is_its_cause() {
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(120, steady(HZ60_MS));
+        frame_notes::note(
+            NoteKind::ModelLoad,
+            || "models/crate.glb".into(),
+            Some(70.0),
+        );
+        let load = F {
+            sync: 70.0,
+            ..steady(100.0)
+        };
+        assert_eq!(run.frame(load), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "model load models/crate.glb, 70.0 ms");
+        assert_eq!(h.cause_key(), "model load");
+
+        // Several notes count together: two pipelines of 25 ms in a 60 ms
+        // render stall
+        run.frames(60, steady(HZ60_MS));
+        for label in ["bloom", "ssao"] {
+            frame_notes::note(NoteKind::PipelineBuild, || label.into(), Some(25.0));
+        }
+        let build = F {
+            render: 62.0,
+            ..steady(HZ60_MS + 60.0)
+        };
+        assert_eq!(run.frame(build), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(
+            h.cause_line(),
+            "pipeline build bloom, 25.0 ms; pipeline build ssao, 25.0 ms"
+        );
+
+        // A 3 ms pipeline the frame before, under a 40 ms render stall
+        run.frames(60, steady(HZ60_MS));
+        frame_notes::note(NoteKind::PipelineBuild, || "pbr".into(), Some(3.0));
+        run.frame(steady(HZ60_MS));
+        let stall = F {
+            render: 42.0,
+            ..steady(60.0)
+        };
+        assert_eq!(run.frame(stall), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(
+            h.cause_line(),
+            "render +40.0 ms (also: pipeline build 3.0 ms the frame before)"
+        );
+        assert_eq!(h.cause_key(), "render");
+        frame_notes::listen(false);
     }
 
     #[test]

@@ -371,7 +371,17 @@ fn from_here(path: &Path) -> PathBuf {
 /// `bad-manifest` that says why.
 fn project_of(path: &Path) -> (Project, Vec<Diagnostic>) {
     match Project::for_path(path) {
-        Ok(project) => (project, Vec::new()),
+        // The manifest's `[audio.buses]` too (#730), which the player reads
+        // at start and keeps its buses when it doesn't
+        Ok(project) => {
+            let buses = match flint_player::Buses::for_project(&project) {
+                Ok(_) => Vec::new(),
+                Err(e) => vec![Diagnostic::error(codes::BAD_MANIFEST, e.to_string())
+                    .file(from_here(&project.manifest_path()))
+                    .hint("the game plays with the built-in buses, sfx and music")],
+            };
+            (project, buses)
+        }
         Err(e) => (
             Project::for_scene(path),
             vec![Diagnostic::error(codes::BAD_MANIFEST, e.to_string())
@@ -426,6 +436,22 @@ impl Report {
 
 /// Run `checks` over `subject`, through the vfs that is current: the disk,
 /// or a bundle's files inside `vfs::scoped`.
+/// A UI document's problems (#731), each a `bad-ui` on its file: what
+/// `load_ui` would refuse, with the style file it names. Its paths are from
+/// the project root, as a script's `load_ui` path is.
+fn ui_document(path: &Path) -> Vec<Diagnostic> {
+    let dir = path.parent().unwrap_or(Path::new(""));
+    let root = flint_core::project::Project::for_scene(path).root_for(dir);
+    flint_script::ui::check_document_at(path, &root)
+        .into_iter()
+        .map(|(file, message)| {
+            Diagnostic::error(codes::BAD_UI, message)
+                .file(file)
+                .hint("load_ui refuses this document, naming the same element")
+        })
+        .collect()
+}
+
 pub fn run(subject: &Subject, checks: Checks) -> Report {
     let mut found = subject.preliminary.clone();
     let mut allowed = 0;
@@ -484,6 +510,10 @@ pub fn run(subject: &Subject, checks: Checks) -> Report {
     }
     if checks.files {
         found.extend(references::check(subject, &files));
+        // Every UI document, as load_ui reads it (#731)
+        for key in files.iter().filter(|key| key.ends_with(".ui.toml")) {
+            found.extend(ui_document(&subject.path(key)));
+        }
     }
     let mut scripts_read = Vec::new();
     if checks.scripts {

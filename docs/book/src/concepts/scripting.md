@@ -44,6 +44,7 @@ Scripts define behavior through callback functions. The engine detects which cal
 | `fn on_init()` | Once, when the script is first loaded. |
 | `fn on_update()` | Every frame the game isn't paused; `delta_time()` is the frame's step. |
 | `fn on_draw_ui()` | Every frame after `on_update`, paused or not: the HUD's draw calls. |
+| `fn on_ui(element_id, event)` | Something happened to an element of a UI document this script loaded: focus, blur, activate, change or back; paused or not, before `on_draw_ui`. |
 | `fn on_collision(other_id)` | This entity collided with another. |
 | `fn on_collision_exit(other_id)` | A contact with another entity ended. |
 | `fn on_trigger_enter(other_id)` | Another entity entered this trigger volume. |
@@ -167,7 +168,7 @@ Every number in the Entity API takes an integer as well as a float: `set_positio
 
 Any other transform field goes through `set_field`, e.g. `set_field(id, "transform", "scale", [2.0, 1.0, 2.0])`; `set_position`, `set_rotation` and `set_scale` are that with the numbers checked for you.
 
-A function given an entity that isn't there does nothing, and says so once. `get_entity` returns `-1` for a name it can't find (an entity a scene builder hasn't made yet, say), and every function with an entity parameter (the Entity API, `play_clip` and the rest of the Animation API, `audio_position`, `set_velocity_2d`, `get_velocity_2d`, `move_character`, `get_collider_extents`, `camera_follow`, the Sprite API, the screen-UI setters `set_text`, `set_text_color`, `ui_set_value`, `set_anchor` and `set_anchor_offset`, the particle emitter calls, the Style API's entity functions and the Spline API) given it, or a despawned id, logs a warning the first time for each script and function: `seeded_stars.rhai: line 17: set_position(-1, ...) did nothing: there is no entity -1 (-1 is what get_entity returns for a name it can't find)`. A setter that queues work for the engine, like `set_velocity_2d`, `emit_burst` or `set_entity_style`, queues nothing. A getter returns its empty value as well (`#{}`, `()`, `""`, `false`, `0`; `get_parent` gives `-1`, `audio_position` `-1.0` and `distance` the largest float), and warns too. `entity_exists(id)` never warns: test with it where a missing entity is expected.
+A function given an entity that isn't there does nothing, and says so once. `get_entity` returns `-1` for a name it can't find (an entity a scene builder hasn't made yet, say), and every function with an entity parameter (the Entity API, `play_clip` and the rest of the Animation API, `audio_position`, `set_velocity_2d`, `get_velocity_2d`, `move_character`, `get_collider_extents`, `camera_follow`, the Sprite API, the screen-UI setters `set_text`, `set_text_color`, `set_fill`, `set_anchor` and `set_anchor_offset`, the particle emitter calls, the Style API's entity functions and the Spline API) given it, or a despawned id, logs a warning the first time for each script and function: `seeded_stars.rhai: line 17: set_position(-1, ...) did nothing: there is no entity -1 (-1 is what get_entity returns for a name it can't find)`. A setter that queues work for the engine, like `set_velocity_2d`, `emit_burst` or `set_entity_style`, queues nothing. A getter returns its empty value as well (`#{}`, `()`, `""`, `false`, `0`; `get_parent` gives `-1`, `audio_position` `-1.0` and `distance` the largest float), and warns too. `entity_exists(id)` never warns: test with it where a missing entity is expected.
 
 #### Lists come in name order
 
@@ -301,7 +302,7 @@ Audio functions produce deferred commands that the player processes after the sc
 | Function | Returns | Description |
 |---|---|---|
 | `play_sound(name: str)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound at full volume, not placed in the world. |
-| `play_sound(name: str, volume_or_opts: any)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound, not placed in the world: a volume (0..1), or a map of any of volume, pitch, looping (until `stop_sound`), bus (sfx or music). |
+| `play_sound(name: str, volume_or_opts: any)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound, not placed in the world: a volume (0..1), or a map of any of volume, pitch, looping (until `stop_sound`), bus (sfx, music or one the game declares). |
 | `play_sound(name: str, volume: num, pitch: num)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound at a volume and a pitch multiplier, not placed in the world. |
 | `play_sound_at(name: str, x: num, y: num, z: num, volume_or_opts: any)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound at a point: a volume, or a map of any of volume, pitch, looping, bus, `min_distance`, `max_distance`, rolloff. |
 | `play_sound_at(name: str, x: num, y: num, z: num, volume: num, pitch: num)` | `int`: its handle, for `stop_sound` and `set_sound_volume` | Play a sound at a point, at a volume and a pitch multiplier. |
@@ -631,14 +632,17 @@ Rhai's own `print(x)` and `debug(x)` go to the same log, at info level, naming t
 
 Physics functions provide raycasting and camera access for combat, line-of-sight checks, and interaction targeting:
 
-<!-- script-api:begin raycast move_character get_collider_extents set_joint_target get_joint_target get_joint_position get_camera_position get_camera_direction set_camera_position set_camera_target set_camera_fov set_camera_orthographic set_camera_ortho_height set_camera_roll -->
+<!-- script-api:begin raycast collision_layers move_character get_collider_extents set_joint_target get_joint_target get_joint_position get_camera_position get_camera_direction set_camera_position set_camera_target set_camera_fov set_camera_orthographic set_camera_ortho_height set_camera_roll -->
 <!-- Generated by `flint script api --book` from the engine's declarations (crates/flint-script/src/api/, or the ScriptModule of a feature that owns its module): edit the doc there, not here. CI's headless job runs --check-book. -->
 
 | Function | Returns | Description |
 |---|---|---|
 | `raycast(ox: num, oy: num, oz: num, dx: num, dy: num, dz: num, max_dist: num)` | `map`: `#{entity, distance, point_x, point_y, point_z, normal_x, normal_y, normal_z}`, or () for no hit or no physics | The nearest collider a ray meets, the calling entity's own excluded. |
-| `move_character(id: entity, dx: num, dy: num, dz: num)` | `map`: `#{x, y, z, grounded}`: where it ended up; () with no physics, transform or character collider | Move a character's collider by a step, sliding along what it hits, from where the entity stands now. |
-| `get_collider_extents(id: entity)` | `map`: `#{shape: "box", half_x, half_y, half_z}`, `#{shape: "sphere", radius}` or `#{shape: "capsule"\|"cylinder", radius, half_height}`; () with no collider or no physics | The shape and size of an entity's collider. |
+| `raycast(ox: num, oy: num, oz: num, dx: num, dy: num, dz: num, max_dist: num, mask: any)` | `map`: `#{entity, distance, point_x, point_y, point_z, normal_x, normal_y, normal_z}`, or () for no hit or no physics | The nearest collider on a layer of \`mask\` (a layer's name or an array of names) a ray meets, the calling entity's own excluded. |
+| `collision_layers()` | `array`: their names, \`default\` first; empty with no physics | The collision layers colliders and masks may name: \`default\`, then the project's. |
+| `move_character(id: entity, dx: num, dy: num, dz: num)` | `map`: `#{x, y, z, grounded}`: where it ended up; () with no physics, transform or character collider | Move a character's collider by a step, sliding along what its collider's mask meets, from where the entity stands now. |
+| `move_character(id: entity, dx: num, dy: num, dz: num, mask: any)` | `map`: `#{x, y, z, grounded}`: where it ended up; () with no physics, transform or character collider | Move a character's collider by a step, sliding along what is on a layer of \`mask\` (a layer's name or an array of names) in place of its collider's mask. |
+| `get_collider_extents(id: entity)` | `map`: `#{shape: "box", half_x, half_y, half_z}`, `#{shape: "sphere", radius}`, `#{shape: "capsule"\|"cylinder", radius, half_height}` or `#{shape: "mesh"\|"convex", half_x, half_y, half_z, centre_x, centre_y, centre_z}` (its box); () with no collider or no physics | The shape and size of an entity's collider. |
 | `set_joint_target(id: entity, value: num)` | — | Set the joint's motor target: degrees for a hinge or spherical, metres for prismatic. |
 | `get_joint_target(id: entity)` | `num`: 0 when it has none | The joint's motor target. |
 | `get_joint_position(id: entity)` | `num`: the coordinate, or () when there is no physics or no such joint | The simulated joint coordinate from its rest pose: hinge degrees or prismatic metres. |
@@ -661,6 +665,15 @@ The `raycast()` function automatically excludes the calling entity's collider fr
 | `distance` | `f64` | Distance from origin to hit point |
 | `point_x`, `point_y`, `point_z` | `f64` | World-space hit position |
 | `normal_x`, `normal_y`, `normal_z` | `f64` | Surface normal at hit point |
+
+An eighth argument filters the ray by [collision layer](physics-and-runtime.md#collision-layers): a layer's name or an array of names from the project's `[project.physics] layers`. The ray meets only colliders on one of them, whatever their own masks; an empty array meets nothing, and a name that is no layer is a script error naming the nearest. `raycast_2d` takes the mask sixth and `move_character` fifth, in place of the character collider's own mask:
+
+```rhai
+// A hitscan that passes through triggers and pickups
+let hit = raycast(eye.x, eye.y, eye.z, aim.x, aim.y, aim.z, 80.0, ["world", "enemy"]);
+// Is there a wall between the guard and the player, other guards aside?
+let blocked = type_of(raycast(gx, gy, gz, dx, dy, dz, dist, "world")) != "()";
+```
 
 `raycast()` meets physics colliders. To meet what's drawn, the runtime meshes a host uploaded as ray targets (see [Rendering: Runtime meshes](rendering.md#runtime-meshes)), use `raycast_meshes` and `screen_to_mesh` ([ADR 0105](https://github.com/chrischaps/Flint/blob/main/docs/adr/0105-rays-against-drawn-meshes.md)). They need no physics, meet the drawn triangles from either side, and answer with the same fields as `raycast()`, the normal turned back toward the ray's origin:
 
@@ -738,6 +751,7 @@ For sprite games the physics world is a flat plane. These mirror the 3D calls ab
 |---|---|---|
 | `overlap_rect(x: num, y: num, w: num, h: num)` | `array`: their ids, in name order; empty with no physics | Every entity whose 2D collider overlaps a rectangle on the sprite plane. |
 | `raycast_2d(ox: num, oy: num, dx: num, dy: num, max_dist: num)` | `map`: `#{entity, distance, point_x, point_y, normal_x, normal_y}`, or () for no hit or no physics | The nearest 2D collider a ray on the sprite plane meets, the calling entity's own excluded. |
+| `raycast_2d(ox: num, oy: num, dx: num, dy: num, max_dist: num, mask: any)` | `map`: `#{entity, distance, point_x, point_y, normal_x, normal_y}`, or () for no hit or no physics | The nearest 2D collider on a layer of \`mask\` (a layer's name or an array of names) a ray on the sprite plane meets, the calling entity's own excluded. |
 | `set_velocity_2d(id: entity, vx: num, vy: num)` | — | Set a 2D body's velocity, applied after the script batch. |
 | `get_velocity_2d(id: entity)` | `map`: `#{vx, vy}`, or () when it has no 2D body or there is no physics | A 2D body's velocity. |
 
@@ -1530,11 +1544,19 @@ Load and manipulate TOML-defined UI documents at runtime:
 
 | Function | Returns | Description |
 |---|---|---|
-| `load_ui(layout_path: str)` | `int`: a handle for `unload_ui` | Load a UI layout document, a path from the project root. |
+| `load_ui(layout_path: str)` | `int`: a handle for `unload_ui`; a layout or style file with a mistake is a script error naming the file and the element | Load a UI layout document, a path from the project root; this script hears its elements' `on_ui`. |
+| `ui_focus(element_id: str)` | — | Give an element focus ("" for none): the arrows, a pad and `ui_accept` then work from it. |
+| `ui_focused()` | `str`: its id, "" for none | The element that has focus. |
+| `ui_get_value(element_id: str)` | `num`: 0.0 for any other element | A slider's value, or the index of a list's selected item. |
+| `ui_set_slider(element_id: str, value: num)` | — | Set a slider's value, clamped to its min and max and snapped to its step. |
+| `ui_select(element_id: str, index: int)` | — | Select a list's item by index (focusing it when the list has focus). |
+| `ui_set_items(element_id: str, items: array)` | — | Give a list new items: a button of its `item_class` for each string, ids \<list\>.0, \<list\>.1, ... |
+| `ui_set_enabled(element_id: str, enabled: bool)` | — | Let focus reach an element or not; a disabled one draws its class's disabled state. |
 | `unload_ui(handle: int)` | — | Unload a UI document `load_ui` returned. |
 | `ui_set_text(element_id: str, text: str)` | — | Set an element's text. |
 | `ui_show(element_id: str)` | — | Show an element. |
 | `ui_hide(element_id: str)` | — | Hide an element. |
+| `ui_is_shown(element_id: str)` | `bool`: false for an element no document has | Whether an element is drawn: it and every element it is inside visible. |
 | `ui_set_visible(element_id: str, visible: bool)` | — | Show or hide an element. |
 | `ui_set_color(element_id: str, r: num, g: num, b: num, a: num)` | — | Set an element's text colour, 0..1. |
 | `ui_set_bg_color(element_id: str, r: num, g: num, b: num, a: num)` | — | Set an element's background colour, 0..1. |
@@ -1556,7 +1578,7 @@ Older scenes place HUD elements as entities with `screen_anchor`, `ui_text` and 
 
 | Function | Returns | Description |
 |---|---|---|
-| `ui_set_value(id: entity, value: num)` | — | Set an entity's `ui_fill` value (a bar's fill, 0..1). |
+| `set_fill(id: entity, value: num)` | — | Set an entity's `ui_fill` value (a bar's fill, 0..1). |
 | `set_text(id: entity, text: str)` | — | Set an entity's `ui_text` text. |
 | `set_text_color(id: entity, r: num, g: num, b: num, a: num)` | — | Set an entity's `ui_text` colour, 0..1. |
 | `set_anchor(id: entity, anchor: str)` | — | Set an entity's `screen_anchor` anchor ("top-left", "center", "bottom-right", ...). |
@@ -1894,15 +1916,34 @@ text = "Lap 1/3"
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `type` | string | `"panel"` | Element type: `panel`, `text`, `rect`, `circle`, `image` |
-| `anchor` | string | `"top-left"` | Screen anchor for root elements (see below) |
+| `type` | string | `"panel"` | Element type: `panel`, `text`, `rect`, `circle`, `image`, and the controls `button`, `list`, `slider` ([Focus and input](#focus-and-input)) |
+| `anchor` | string | `"top-left"` | A root's point on the screen; a child's in its parent's content box, which takes it out of the parent's stack (see below) |
 | `parent` | string | --- | Parent element ID (child inherits position from parent) |
 | `class` | string | `""` | Style class name from the companion `.style.toml` |
-| `text` | string | `""` | Default text content (for `text` elements) |
-| `src` | string | `""` | Image source path (for `image` elements) |
-| `visible` | bool | `true` | Initial visibility |
+| `text` | string | `""` | Default text content (a `text`'s, a `button`'s label) |
+| `src` | string | `""` | Image source path (`image` only) |
+| `visible` | bool | `true` | Initial visibility. A hidden element hides everything inside it |
+| `focusable` | bool | `true` for `button`, `slider` | Whether focus can land on it |
+| `enabled` | bool | `true` | A disabled control is skipped by focus and drawn in its class's `disabled` state |
+| `autofocus` | bool | `false` | Takes focus when it is shown and nothing has focus: give a menu's first button this |
+| `nav_up`, `nav_down`, `nav_left`, `nav_right` | string | --- | The element that direction goes to from here, overriding the layout |
+| `value` | float | `0` | A `slider`'s value; a `list`'s selected index |
+| `min`, `max`, `step` | float | `0`, `1`, a tenth of the range | A `slider`'s range, and how far left and right move it |
+| `items` | array of strings | --- | A `list`'s items: a button of `item_class` is made for each, ids `<list>.0`, `<list>.1`, ... |
+| `item_class`, `wrap` | string, bool | `""`, `true` | The class each made item takes; whether the arrows wrap from the last item to the first (`list` only) |
+
+`[ui]` holds `style` (the style file, a path from the project root) and an optional `name`.
 
 **Anchor points:** `top-left`, `top-center`, `top-right`, `center-left`, `center`, `center-right`, `bottom-left`, `bottom-center`, `bottom-right`
+
+**Order.** Elements are drawn, and siblings stack, in the order the file writes them (#731; before, `toml`'s sorted tables made it alphabetical by id).
+
+**Mistakes are errors.** An unknown `type`, `anchor`, key or `[ui]` key, a key of another type (`items` on a `button`), a `parent` or `nav_*` that names no element, parents that loop, a `class` the style file has no `[styles.<name>]` for, an unknown style property or a value of the wrong shape for one: each is a problem naming the file and the element (or class), and `load_ui` is then a script error listing every problem of the document at once. `flint check` reports the same as `bad-ui`, for every `.ui.toml` in the project, without running anything:
+
+```text
+ui/pause.ui.toml: 1 error
+  error[bad-ui]: element `resume`: unknown type `buton` (types: panel, text, rect, circle, image, button, list, slider)
+```
 
 #### File Format: `.style.toml`
 
@@ -1954,10 +1995,31 @@ y = 10
 | `layer` | int | `0` | Render layer (negative = behind, positive = in front) |
 | `padding` | [l,t,r,b] | `[0,0,0,0]` | Interior padding (left, top, right, bottom) |
 | `uv` | [u0,v0,u1,v1] | `[0,0,1,1]` | Sub-rectangle of an `image` element's texture in 0--1 space (sprite-sheet cells, atlases) |
-| `layout` | string | `"stack"` | Child flow: `stack` (vertical) or `horizontal` |
+| `layout` | string | `"stack"` | Child flow: `stack` (vertical; `vertical` is the same) or `horizontal` |
 | `margin_bottom` | float | `0` | Space below element in flow layout |
+| `border_color`, `border_width` | [r,g,b,a], float | `[1,1,1,1]`, `0` | An outline round a panel, button, list or slider; on while `border_width` is above 0 |
+| `knob_color` | [r,g,b,a] | `[1,1,1,1]` | A slider's knob, drawn when `radius` is above 0 (its track is `bg_color`, its fill `color`) |
 
 Colour arrays may be `[r, g, b]` (alpha 1) or `[r, g, b, a]`.
+
+**Sizes from the text.** A `text` or `button` with no `width` or `height` takes its label's size, measured with the font the HUD draws it in (the same measurer as `measure_text`), and a button adds its `padding` (or half its font size round the label, with none). A button's label is centred in its box unless its class says `text_align`. Controls take their laid-out height in a stack; the older types advance by their class's `height`, as before.
+
+**States.** A class's sub-table named for a state goes over it while the element is in that state: `focus` (it has focus), `pressed` (a mouse button or finger holds it down) and `disabled`, laid in that order:
+
+```toml
+[styles.button]
+width = 320
+height = 46
+bg_color = [0.12, 0.09, 0.05, 0.9]
+color = [0.88, 0.82, 0.7, 1.0]
+
+[styles.button.focus]
+bg_color = [0.95, 0.78, 0.42, 1.0]
+color = [0.1, 0.07, 0.03, 1.0]
+
+[styles.button.pressed]
+bg_color = [0.78, 0.58, 0.28, 1.0]
+```
 
 #### Style Tokens
 
@@ -2034,75 +2096,102 @@ draw_rect(10.0, 10.0, 40.0, 4.0, accent[0], accent[1], accent[2], accent[3]);
 if ui_hit("start_button", mouse_x, mouse_y) && is_action_just_pressed("click") { start(); }
 ```
 
-An unknown property name logs one warning per (element, property) and is ignored; a `load_ui` failure returns `-1` and logs the resolved path together with the parse error.
+An unknown property name in `ui_set_style` logs one warning per (element, property) and is ignored. A layout or style file `load_ui` can't read, or one with a mistake, is a script error at the call naming the file and the element ([above](#file-format-uitoml)); hot reload of such a file warns and keeps the last good document.
 
-#### Example: Menu with Data-Driven UI
+#### Focus and input
+
+One element across every loaded document has focus. The engine moves it, presses buttons and turns sliders from the player's input, while the game runs and while a state pauses the scripts, so a pause menu needs no input code of its own:
+
+| Input | What it does |
+|---|---|
+| `ui_up`, `ui_down`, `ui_left`, `ui_right` (the arrows, a pad's d-pad and left stick) | Focus moves to the nearest shown, enabled, focusable element that way in the same document, unless the element names that direction's target (`nav_down = "quit"`). Inside a `list`, along its `layout` it steps to the next item, wrapping at the ends. On a `slider`, left and right step its value. Held, a direction repeats after 0.4 s, every 0.12 s |
+| `ui_accept` (Enter, Space, a pad's south button) | Activates the focused button |
+| `ui_back` (Backspace, a pad's east button) | A `back` on the focused element |
+| The mouse | Moving over a control focuses it; a click on a button (pressed and released over it) activates it; pressing a slider sets it from the pointer and dragging moves it |
+| Touch | A touch on a control focuses and presses it, a tap on a button activates it, a finger on a slider drags it |
+
+The six actions are in every game's input config (`flint_runtime::InputConfig::built_in_defaults`); a game binds them differently in its own config like any action. Escape is left out on purpose: a game that binds Escape keeps the window open on it, so a game that wants Escape for `ui_back` (or for its pause action) binds it itself.
+
+**Nothing focused, the directions do nothing**, so a game's movement keys never wake a menu the player can't see. A menu takes focus by an `autofocus` element being shown, by `ui_focus(id)`, or by the pointer. Focus on an element that is hidden, disabled or unloaded lets go at the next frame.
+
+What happens reaches the script that loaded the document as **`on_ui(element_id, event)`**, before its `on_draw_ui`, paused or not:
+
+| Event | When |
+|---|---|
+| `focus`, `blur` | Focus arrived at or left the element |
+| `activate` | A button was pressed by `ui_accept`, a click or a tap |
+| `change` | A slider's value moved, or a list's selection did (its `ui_get_value` is the new index) |
+| `back` | `ui_back` while the element had focus |
+
+A list's made items report the list's id, and `ui_get_value(list)` is the item's index; a button written as a list's child reports its own id. `ui_focus`, `ui_set_slider`, `ui_select`, `ui_set_items` and `ui_set_enabled` set the same state from a script (table above).
+
+#### Example: a pause menu
+
+The showcase's pause menu (`examples/ui/pause.ui.toml`, `examples/ui/pause.style.toml`, `examples/scripts/showcase_controller.rhai`) works with the keyboard, a pad, the mouse and touch. Its three buttons:
 
 ```toml
-# ui/main_menu.ui.toml
-[ui]
-name = "Main Menu"
-style = "ui/main_menu.style.toml"
-
-[elements.title]
-type = "text"
-anchor = "top-center"
-class = "title"
-text = "MY GAME"
-
-[elements.menu_panel]
+[elements.card]
 type = "panel"
+parent = "pause_menu"
 anchor = "center"
-class = "menu-container"
+class = "card"
 
-[elements.btn_play]
-type = "text"
-parent = "menu_panel"
-class = "menu-item"
-text = "Play"
+[elements.resume]
+type = "button"
+parent = "card"
+class = "button"
+text = "Resume"
+autofocus = true
 
-[elements.btn_quit]
-type = "text"
-parent = "menu_panel"
-class = "menu-item"
+[elements.restart]
+type = "button"
+parent = "card"
+class = "button"
+text = "Restart"
+
+[elements.quit]
+type = "button"
+parent = "card"
+class = "button"
 text = "Quit"
 ```
 
-```rust
-// scripts/menu.rhai
-let menu_handle = 0;
-let selected = 0;
+And the menu's whole share of the script (the file also registers the `paused` state and blurs the scene behind the menu), with the engine's `scripts/lib/menu.rhai` (`toggle_pause` shows the panel and pushes the `paused` state, or hides it and pops it):
 
-fn on_init() {
-    menu_handle = load_ui("ui/main_menu.ui.toml");
+```rhai
+import "menu" as menu;
+load_ui("examples/ui/pause.ui.toml");
+
+fn on_draw_ui() {
+    if is_action_just_pressed("pause") { menu::toggle_pause("pause_menu"); }
 }
 
-fn on_update() {
-    // Highlight selected item
-    if selected == 0 {
-        ui_set_color("btn_play", 1.0, 0.85, 0.2, 1.0);
-        ui_set_color("btn_quit", 0.6, 0.6, 0.6, 1.0);
-    } else {
-        ui_set_color("btn_play", 0.6, 0.6, 0.6, 1.0);
-        ui_set_color("btn_quit", 1.0, 0.85, 0.2, 1.0);
-    }
-
-    if is_action_just_pressed("move_forward") { selected = 0; }
-    if is_action_just_pressed("move_backward") { selected = 1; }
-
-    if is_action_just_pressed("interact") {
-        if selected == 0 { load_scene("scenes/level1.scene.toml"); }
-    }
+fn on_ui(id, event) {
+    if event == "back" || id == "resume" && event == "activate" { menu::toggle_pause("pause_menu"); }
+    if id == "restart" && event == "activate" { menu::toggle_pause("pause_menu"); reload_scene(); }
+    if id == "quit" && event == "activate" { quit_game(); }
 }
 ```
 
-#### When to Use Each UI Approach
+`scripts/lib/menu.rhai` also has `menu::open(panel, first)`, `menu::close(panel)`, `menu::is_open(panel)`, `menu::toggle(panel)` and `menu::chosen(list, items)`. A game finds it with `import "menu"` through the [one search](assets.md): the engine's own `scripts/lib/` is the last place looked.
 
-| Approach | Best For |
-|----------|----------|
-| **Data-driven** (`.ui.toml` + `.style.toml`) | Menus, HUD panels, dialog boxes, score displays --- anything with stable structure |
-| **Procedural** (`draw_*` API) | Crosshairs, damage flashes, debug overlays, dynamic effects --- anything computed per-frame |
-| **Both together** | Load a HUD layout for structure, use `draw_*` for dynamic overlays on top |
+**Seeing it without a window.** `flint render --scripts` draws the HUD as the player draws it: `on_draw_ui`'s draw calls and the UI documents. A menu nothing opens without input is shown with `--ui-show`, and `--ui-focus` gives an element focus, so its `focus` state is in the picture:
+
+```bash
+flint render examples/showcase_tavern.scene.toml --ui-show pause_menu --ui-focus restart -o pause.png
+```
+
+#### When to use each UI system
+
+A script has three ways to put UI on the screen. They draw into the same HUD pass and mix freely; each is the right one for a different kind of thing.
+
+| System | Use it for | Not for |
+|---|---|---|
+| **UI documents** (`.ui.toml` + `.style.toml`, `load_ui`, `ui_*`, `on_ui`) | Anything a player navigates or reads as a layout: menus, pause screens, settings with sliders, dialogs, track or level select (a `list`), and HUD panels with a stable structure. The engine gives it focus, keyboard, pad, mouse and touch, a checked file format (`flint check`'s `bad-ui`) and a headless picture (`flint render --scripts --ui-show`) | Shapes that change every frame |
+| **Immediate drawing** (`draw_*` in `on_draw_ui`) | What is computed each frame: crosshairs, damage flashes, minimaps, speed lines, meters that bend, debug overlays, a fade. Nothing persists between frames and nothing takes input | Menus: every game would rebuild focus and navigation by hand |
+| **Entity screen UI** (`screen_anchor`, `ui_text`, `ui_fill` components; `set_text`, `set_text_color`, `set_anchor`, `set_anchor_offset`, `set_fill`) | A label or bar that belongs to an entity in a scene file and is authored there: a sprite game's score, a health bar drawn in the scene's own sprite font (`ui_text.font`, the [glyph atlas](glyph-atlas.md)) | Anything interactive |
+
+A HUD is often two of them: a document for its frame and labels, `draw_*` for the needle that moves. A menu is a document, always. The entity setters were the `ui_` family's until #731: `ui_set_value(id, v)` is now `set_fill(id, v)` (the old name works for one release, deprecated), so every `ui_` function is a UI document's.
 
 ## Checking your scripts
 

@@ -7,9 +7,14 @@ mod alloc_count;
 #[cfg(test)]
 mod asset_search_tests;
 mod camera_cut;
+#[cfg(test)]
+mod collider_mesh_tests;
+mod collider_meshes;
 // The load summary and controls line a scene says when it comes up (#716)
 #[cfg(test)]
 mod capture_gate_tests;
+#[cfg(test)]
+mod character_input_tests;
 #[cfg(all(test, feature = "debug-hud"))]
 mod component_panel_tests;
 mod console;
@@ -28,7 +33,7 @@ mod extension_hooks_tests;
 mod extension_tests;
 pub mod fonts;
 mod frame;
-mod frame_capture;
+pub(crate) mod frame_capture;
 #[cfg(test)]
 mod frame_capture_tests;
 mod frame_history;
@@ -38,6 +43,8 @@ pub mod frame_rate;
 pub mod game_core;
 pub mod headless_animation;
 pub mod headless_game;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod headless_hud;
 mod hitch;
 #[cfg(test)]
 mod hitch_log_tests;
@@ -84,6 +91,8 @@ mod scene_entry;
 mod scene_entry_tests;
 pub(crate) mod scene_loading;
 mod schemas;
+#[cfg(test)]
+mod script_bus_tests;
 pub mod script_commands;
 #[cfg(feature = "debug-hud")]
 mod script_error_card;

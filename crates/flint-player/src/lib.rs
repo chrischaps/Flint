@@ -21,7 +21,7 @@ pub use extension::{
     ExtensionAudio, ExtensionCtx, ExtensionGpu, KeyInput, MeshOptions, PlayerExtension,
     SoundOptions, Stage,
 };
-pub use flint_audio::Bus;
+pub use flint_audio::{Bus, Buses};
 pub use flint_core::quality::{GpuInfo, QualitySettings, QualityValue};
 pub use flint_geometry::ray_mesh::{RayHit, RayMesh, RayScene};
 pub use flint_render::{
@@ -35,11 +35,15 @@ pub use hitch_args::{HitchArgs, HitchClass, HitchGate};
 pub use player_app::expression_feed::ExpressionListener;
 pub use player_app::expression_feed::{ExpressionFeed, ExpressionTimeline, TimedState};
 pub use player_app::fonts::project_font_definitions;
+#[cfg(not(target_arch = "wasm32"))]
+pub use player_app::frame_capture::git_state;
 pub use player_app::frame_rate::FrameRateSetting;
 pub use player_app::headless_animation::HeadlessAnimation;
 pub use player_app::headless_game::{
     apply_look, HeadlessGame, LookRequest, ScriptLook, Skipped, PRESENTATION_ONLY, SCRIPT_SEED,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use player_app::headless_hud::HeadlessHud;
 pub use player_app::input_checks::CheckOutcome;
 pub use player_app::input_script::{Applied, InputScript, PointerEvent, ScriptEvent};
 #[cfg(not(target_arch = "wasm32"))]

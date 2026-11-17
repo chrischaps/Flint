@@ -1,0 +1,581 @@
+# ================================================================
+#  THE SIEVE: COLLISION LAYERS, MESH COLLIDERS, SCALE (#729)
+# ================================================================
+#
+#  A glass tray on the `glass` layer, whose mask meets only `default`.
+#  Amber balls (default) land in it; blue balls on the `ghost` layer
+#  fall straight through to the slate below, and no contact is made.
+#  On the right, a barrel lying in its cradle, whose collider is its
+#  model's own triangles (`shape = "mesh"`, from TOML alone, drawn at 0.9
+#  scale): green balls land on its staves where they are drawn and roll
+#  off the curve, as no box would let them. A crate drawn from a 2 m cube
+#  at 0.45 scale holds a white ball on its drawn lid: each collider is the
+#  size it is drawn.
+#
+#  The layers are the checkout's, in the root flint.toml:
+#    [project.physics] layers = ["glass", "ghost"]
+#
+#  Check:  flint-player examples/collision_layers.scene.toml \
+#            --frame-step 0.0166667 --screenshot a.png --screenshot-at 5
+# ================================================================
+
+[scene]
+name = "The Sieve"
+version = "1.0"
+description = "Collision layers sort two kinds of ball; a barrel's mesh collider and a scaled crate hold theirs at their drawn size"
+
+[camera]
+position = [6.8, 5.2, 8.6]
+target = [0.9, 1.1, -0.3]
+fov = 42.0
+
+[environment]
+ambient_sky = [0.42, 0.46, 0.55]
+ambient_ground = [0.16, 0.14, 0.12]
+
+# The slate: default layer, meets everything
+[entities.floor]
+[entities.floor.transform]
+position = [0.000, -0.100, 0.000]
+[entities.floor.bounds]
+min = [-8.000, -0.100, -6.000]
+max = [8.000, 0.100, 6.000]
+[entities.floor.material]
+color = [0.22, 0.23, 0.26, 1.0]
+roughness = 0.9
+[entities.floor.rigidbody]
+body_type = "static"
+[entities.floor.collider]
+shape = "box"
+size = [16.000, 0.200, 12.000]
+
+[entities.tray_n]
+[entities.tray_n.transform]
+position = [-1.000, 0.150, -1.750]
+[entities.tray_n.bounds]
+min = [-2.600, -0.150, -0.080]
+max = [2.600, 0.150, 0.080]
+[entities.tray_n.material]
+color = [0.3, 0.31, 0.35, 1.0]
+roughness = 0.8
+[entities.tray_n.rigidbody]
+body_type = "static"
+[entities.tray_n.collider]
+shape = "box"
+size = [5.200, 0.300, 0.160]
+
+[entities.tray_s]
+[entities.tray_s.transform]
+position = [-1.000, 0.150, 1.750]
+[entities.tray_s.bounds]
+min = [-2.600, -0.150, -0.080]
+max = [2.600, 0.150, 0.080]
+[entities.tray_s.material]
+color = [0.3, 0.31, 0.35, 1.0]
+roughness = 0.8
+[entities.tray_s.rigidbody]
+body_type = "static"
+[entities.tray_s.collider]
+shape = "box"
+size = [5.200, 0.300, 0.160]
+
+[entities.tray_e]
+[entities.tray_e.transform]
+position = [1.550, 0.150, 0.000]
+[entities.tray_e.bounds]
+min = [-0.080, -0.150, -1.750]
+max = [0.080, 0.150, 1.750]
+[entities.tray_e.material]
+color = [0.3, 0.31, 0.35, 1.0]
+roughness = 0.8
+[entities.tray_e.rigidbody]
+body_type = "static"
+[entities.tray_e.collider]
+shape = "box"
+size = [0.160, 0.300, 3.500]
+
+[entities.tray_w]
+[entities.tray_w.transform]
+position = [-3.550, 0.150, 0.000]
+[entities.tray_w.bounds]
+min = [-0.080, -0.150, -1.750]
+max = [0.080, 0.150, 1.750]
+[entities.tray_w.material]
+color = [0.3, 0.31, 0.35, 1.0]
+roughness = 0.8
+[entities.tray_w.rigidbody]
+body_type = "static"
+[entities.tray_w.collider]
+shape = "box"
+size = [0.160, 0.300, 3.500]
+
+# The glass: on `glass`, meeting only `default`, so `ghost` passes through
+[entities.glass_floor]
+[entities.glass_floor.transform]
+position = [-1.000, 1.800, 0.000]
+[entities.glass_floor.bounds]
+min = [-2.200, -0.040, -1.200]
+max = [2.200, 0.040, 1.200]
+[entities.glass_floor.material]
+color = [0.62, 0.86, 0.9, 1.0]
+roughness = 0.15
+[entities.glass_floor.rigidbody]
+body_type = "static"
+[entities.glass_floor.collider]
+shape = "box"
+size = [4.400, 0.080, 2.400]
+layer = "glass"
+mask = ["default"]
+
+[entities.glass_n]
+[entities.glass_n.transform]
+position = [-1.000, 1.980, -1.160]
+[entities.glass_n.bounds]
+min = [-2.200, -0.140, -0.040]
+max = [2.200, 0.140, 0.040]
+[entities.glass_n.material]
+color = [0.62, 0.86, 0.9, 1.0]
+roughness = 0.15
+[entities.glass_n.rigidbody]
+body_type = "static"
+[entities.glass_n.collider]
+shape = "box"
+size = [4.400, 0.280, 0.080]
+layer = "glass"
+mask = ["default"]
+
+[entities.glass_s]
+[entities.glass_s.transform]
+position = [-1.000, 1.980, 1.160]
+[entities.glass_s.bounds]
+min = [-2.200, -0.140, -0.040]
+max = [2.200, 0.140, 0.040]
+[entities.glass_s.material]
+color = [0.62, 0.86, 0.9, 1.0]
+roughness = 0.15
+[entities.glass_s.rigidbody]
+body_type = "static"
+[entities.glass_s.collider]
+shape = "box"
+size = [4.400, 0.280, 0.080]
+layer = "glass"
+mask = ["default"]
+
+[entities.glass_e]
+[entities.glass_e.transform]
+position = [1.160, 1.980, 0.000]
+[entities.glass_e.bounds]
+min = [-0.040, -0.140, -1.200]
+max = [0.040, 0.140, 1.200]
+[entities.glass_e.material]
+color = [0.62, 0.86, 0.9, 1.0]
+roughness = 0.15
+[entities.glass_e.rigidbody]
+body_type = "static"
+[entities.glass_e.collider]
+shape = "box"
+size = [0.080, 0.280, 2.400]
+layer = "glass"
+mask = ["default"]
+
+[entities.glass_w]
+[entities.glass_w.transform]
+position = [-3.160, 1.980, 0.000]
+[entities.glass_w.bounds]
+min = [-0.040, -0.140, -1.200]
+max = [0.040, 0.140, 1.200]
+[entities.glass_w.material]
+color = [0.62, 0.86, 0.9, 1.0]
+roughness = 0.15
+[entities.glass_w.rigidbody]
+body_type = "static"
+[entities.glass_w.collider]
+shape = "box"
+size = [0.080, 0.280, 2.400]
+layer = "glass"
+mask = ["default"]
+
+# Amber: default layer. Blue: `ghost`, meeting `default` and each other
+[entities.amber_00]
+[entities.amber_00.transform]
+position = [-2.652, 3.059, -0.641]
+scale = [0.34, 0.34, 0.34]
+[entities.amber_00.model]
+asset = "Sphere"
+[entities.amber_00.material]
+color = [0.95, 0.62, 0.18, 1.0]
+roughness = 0.35
+[entities.amber_00.rigidbody]
+body_type = "dynamic"
+[entities.amber_00.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+
+[entities.ghost_01]
+[entities.ghost_01.transform]
+position = [-1.557, 3.117, -0.515]
+scale = [0.34, 0.34, 0.34]
+[entities.ghost_01.model]
+asset = "Sphere"
+[entities.ghost_01.material]
+color = [0.25, 0.48, 0.95, 1.0]
+roughness = 0.35
+[entities.ghost_01.rigidbody]
+body_type = "dynamic"
+[entities.ghost_01.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+layer = "ghost"
+mask = ["default", "ghost"]
+
+[entities.amber_02]
+[entities.amber_02.transform]
+position = [-0.536, 3.153, -0.701]
+scale = [0.34, 0.34, 0.34]
+[entities.amber_02.model]
+asset = "Sphere"
+[entities.amber_02.material]
+color = [0.95, 0.62, 0.18, 1.0]
+roughness = 0.35
+[entities.amber_02.rigidbody]
+body_type = "dynamic"
+[entities.amber_02.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+
+[entities.ghost_03]
+[entities.ghost_03.transform]
+position = [0.594, 3.126, -0.576]
+scale = [0.34, 0.34, 0.34]
+[entities.ghost_03.model]
+asset = "Sphere"
+[entities.ghost_03.material]
+color = [0.25, 0.48, 0.95, 1.0]
+roughness = 0.35
+[entities.ghost_03.rigidbody]
+body_type = "dynamic"
+[entities.ghost_03.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+layer = "ghost"
+mask = ["default", "ghost"]
+
+[entities.ghost_04]
+[entities.ghost_04.transform]
+position = [-2.798, 3.684, 0.618]
+scale = [0.34, 0.34, 0.34]
+[entities.ghost_04.model]
+asset = "Sphere"
+[entities.ghost_04.material]
+color = [0.25, 0.48, 0.95, 1.0]
+roughness = 0.35
+[entities.ghost_04.rigidbody]
+body_type = "dynamic"
+[entities.ghost_04.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+layer = "ghost"
+mask = ["default", "ghost"]
+
+[entities.amber_05]
+[entities.amber_05.transform]
+position = [-1.536, 3.687, 0.511]
+scale = [0.34, 0.34, 0.34]
+[entities.amber_05.model]
+asset = "Sphere"
+[entities.amber_05.material]
+color = [0.95, 0.62, 0.18, 1.0]
+roughness = 0.35
+[entities.amber_05.rigidbody]
+body_type = "dynamic"
+[entities.amber_05.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+
+[entities.ghost_06]
+[entities.ghost_06.transform]
+position = [-0.595, 3.642, 0.697]
+scale = [0.34, 0.34, 0.34]
+[entities.ghost_06.model]
+asset = "Sphere"
+[entities.ghost_06.material]
+color = [0.25, 0.48, 0.95, 1.0]
+roughness = 0.35
+[entities.ghost_06.rigidbody]
+body_type = "dynamic"
+[entities.ghost_06.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+layer = "ghost"
+mask = ["default", "ghost"]
+
+[entities.amber_07]
+[entities.amber_07.transform]
+position = [0.687, 3.674, 0.618]
+scale = [0.34, 0.34, 0.34]
+[entities.amber_07.model]
+asset = "Sphere"
+[entities.amber_07.material]
+color = [0.95, 0.62, 0.18, 1.0]
+roughness = 0.35
+[entities.amber_07.rigidbody]
+body_type = "dynamic"
+[entities.amber_07.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+
+[entities.amber_08]
+[entities.amber_08.transform]
+position = [-2.622, 4.275, -0.499]
+scale = [0.34, 0.34, 0.34]
+[entities.amber_08.model]
+asset = "Sphere"
+[entities.amber_08.material]
+color = [0.95, 0.62, 0.18, 1.0]
+roughness = 0.35
+[entities.amber_08.rigidbody]
+body_type = "dynamic"
+[entities.amber_08.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+
+[entities.ghost_09]
+[entities.ghost_09.transform]
+position = [-1.684, 4.188, -0.661]
+scale = [0.34, 0.34, 0.34]
+[entities.ghost_09.model]
+asset = "Sphere"
+[entities.ghost_09.material]
+color = [0.25, 0.48, 0.95, 1.0]
+roughness = 0.35
+[entities.ghost_09.rigidbody]
+body_type = "dynamic"
+[entities.ghost_09.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+layer = "ghost"
+mask = ["default", "ghost"]
+
+[entities.amber_10]
+[entities.amber_10.transform]
+position = [-0.515, 4.108, -0.554]
+scale = [0.34, 0.34, 0.34]
+[entities.amber_10.model]
+asset = "Sphere"
+[entities.amber_10.material]
+color = [0.95, 0.62, 0.18, 1.0]
+roughness = 0.35
+[entities.amber_10.rigidbody]
+body_type = "dynamic"
+[entities.amber_10.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+
+[entities.ghost_11]
+[entities.ghost_11.transform]
+position = [0.670, 4.218, -0.480]
+scale = [0.34, 0.34, 0.34]
+[entities.ghost_11.model]
+asset = "Sphere"
+[entities.ghost_11.material]
+color = [0.25, 0.48, 0.95, 1.0]
+roughness = 0.35
+[entities.ghost_11.rigidbody]
+body_type = "dynamic"
+[entities.ghost_11.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+layer = "ghost"
+mask = ["default", "ghost"]
+
+[entities.ghost_12]
+[entities.ghost_12.transform]
+position = [-2.789, 4.740, 0.645]
+scale = [0.34, 0.34, 0.34]
+[entities.ghost_12.model]
+asset = "Sphere"
+[entities.ghost_12.material]
+color = [0.25, 0.48, 0.95, 1.0]
+roughness = 0.35
+[entities.ghost_12.rigidbody]
+body_type = "dynamic"
+[entities.ghost_12.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+layer = "ghost"
+mask = ["default", "ghost"]
+
+[entities.amber_13]
+[entities.amber_13.transform]
+position = [-1.577, 4.764, 0.483]
+scale = [0.34, 0.34, 0.34]
+[entities.amber_13.model]
+asset = "Sphere"
+[entities.amber_13.material]
+color = [0.95, 0.62, 0.18, 1.0]
+roughness = 0.35
+[entities.amber_13.rigidbody]
+body_type = "dynamic"
+[entities.amber_13.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+
+[entities.ghost_14]
+[entities.ghost_14.transform]
+position = [-0.407, 4.778, 0.481]
+scale = [0.34, 0.34, 0.34]
+[entities.ghost_14.model]
+asset = "Sphere"
+[entities.ghost_14.material]
+color = [0.25, 0.48, 0.95, 1.0]
+roughness = 0.35
+[entities.ghost_14.rigidbody]
+body_type = "dynamic"
+[entities.ghost_14.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+layer = "ghost"
+mask = ["default", "ghost"]
+
+[entities.amber_15]
+[entities.amber_15.transform]
+position = [0.575, 4.739, 0.539]
+scale = [0.34, 0.34, 0.34]
+[entities.amber_15.model]
+asset = "Sphere"
+[entities.amber_15.material]
+color = [0.95, 0.62, 0.18, 1.0]
+roughness = 0.35
+[entities.amber_15.rigidbody]
+body_type = "dynamic"
+[entities.amber_15.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+
+# A barrel whose collider is its model's triangles, at its drawn scale.
+# barrel.glb is 1.93 m tall from -0.96 m; at 0.9 its base sits on the slate
+[entities.barrel]
+[entities.barrel.transform]
+position = [3.6, 0.867, 0.2]
+scale = [0.9, 0.9, 0.9]
+[entities.barrel.model]
+asset = "barrel"
+[entities.barrel.rigidbody]
+body_type = "static"
+[entities.barrel.collider]
+shape = "mesh"
+friction = 0.9
+
+# A crate from the 2 m Cube drawn at 0.45: a 0.9 m box, and so its collider
+[entities.crate]
+[entities.crate.transform]
+position = [3.4, 0.45, -2.5]
+scale = [0.45, 0.45, 0.45]
+[entities.crate.model]
+asset = "Cube"
+[entities.crate.material]
+color = [0.70, 0.52, 0.34, 1.0]
+roughness = 0.7
+[entities.crate.rigidbody]
+body_type = "static"
+[entities.crate.collider]
+shape = "box"
+size = [2, 2, 2]
+
+[entities.lid_0]
+[entities.lid_0.transform]
+position = [3.600, 3.000, 0.200]
+scale = [0.3, 0.3, 0.3]
+[entities.lid_0.model]
+asset = "Sphere"
+[entities.lid_0.material]
+color = [0.35, 0.85, 0.45, 1.0]
+roughness = 0.35
+[entities.lid_0.rigidbody]
+body_type = "dynamic"
+[entities.lid_0.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+
+[entities.lid_1]
+[entities.lid_1.transform]
+position = [3.850, 3.700, 0.050]
+scale = [0.3, 0.3, 0.3]
+[entities.lid_1.model]
+asset = "Sphere"
+[entities.lid_1.material]
+color = [0.35, 0.85, 0.45, 1.0]
+roughness = 0.35
+[entities.lid_1.rigidbody]
+body_type = "dynamic"
+[entities.lid_1.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+
+[entities.lid_2]
+[entities.lid_2.transform]
+position = [3.400, 4.400, 0.400]
+scale = [0.3, 0.3, 0.3]
+[entities.lid_2.model]
+asset = "Sphere"
+[entities.lid_2.material]
+color = [0.35, 0.85, 0.45, 1.0]
+roughness = 0.35
+[entities.lid_2.rigidbody]
+body_type = "dynamic"
+[entities.lid_2.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+
+[entities.crate_top]
+[entities.crate_top.transform]
+position = [3.400, 2.600, -2.500]
+scale = [0.3, 0.3, 0.3]
+[entities.crate_top.model]
+asset = "Sphere"
+[entities.crate_top.material]
+color = [0.95, 0.95, 0.92, 1.0]
+roughness = 0.35
+[entities.crate_top.rigidbody]
+body_type = "dynamic"
+[entities.crate_top.collider]
+shape = "sphere"
+size = [1, 1, 1]
+friction = 0.8
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [-0.45, 0.75, 0.48]
+color = [1.0, 0.95, 0.88]
+intensity = 1.25
+
+[entities.fill]
+[entities.fill.transform]
+position = [-6, 5, 7]
+[entities.fill.light]
+type = "point"
+color = [0.55, 0.7, 1.0]
+intensity = 9.0
+range = 25.0

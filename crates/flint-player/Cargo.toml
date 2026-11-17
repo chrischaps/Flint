@@ -122,6 +122,8 @@ tracing-subscriber = { workspace = true }
 # run_headless_frame: every test's egui frame clears its texture updates
 # (#944), whatever features the tests build with.
 flint-debug-ui = { workspace = true }
+# The browser's mixer, fed what a scene's scripts sent (#730's bus test).
+flint-audio-worklet = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 log = { workspace = true }

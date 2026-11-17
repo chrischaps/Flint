@@ -105,9 +105,12 @@ impl NoteKind {
 
     /// Whether a note of this kind tells what a long frame *was* rather
     /// than what made it long: a clock stall is the long frame itself, seen
-    /// by the clock. A hitch's cause leaves these out.
+    /// by the clock, and extra physics steps are the clock paying back the
+    /// game time a long frame before owed (#1124: named for 410 ms render
+    /// stalls). The steps' own cost is the physics phase's, which a hitch
+    /// names by phase. A hitch's cause leaves these out.
     pub fn is_symptom(self) -> bool {
-        matches!(self, NoteKind::ClockStall)
+        matches!(self, NoteKind::ClockStall | NoteKind::PhysicsSteps)
     }
 }
 

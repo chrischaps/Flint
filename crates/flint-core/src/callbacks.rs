@@ -74,6 +74,8 @@ callbacks! {
         "Every frame the game isn't paused; delta_time() is the frame's step.";
     DrawUi, ON_DRAW_UI = "on_draw_ui"()
         "Every frame after on_update, paused or not: the HUD's draw calls.";
+    Ui, ON_UI = "on_ui"("element_id", "event")
+        "Something happened to an element of a UI document this script loaded: focus, blur, activate, change or back; paused or not, before on_draw_ui.";
     Collision, ON_COLLISION = "on_collision"("other_id")
         "This entity collided with another.";
     CollisionExit, ON_COLLISION_EXIT = "on_collision_exit"("other_id")

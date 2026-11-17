@@ -29,6 +29,9 @@ flint-terrain = { workspace = true }
 # needs the AST's statements. It only makes Rhai's own types public.
 rhai = { workspace = true, features = ["internals"] }
 toml = { workspace = true }
+# The order a `.ui.toml` writes its elements in (#731): `toml::Table`
+# sorts its keys. Already in the tree under `toml`.
+toml_edit = { workspace = true }
 tracing = { workspace = true }
 # What `test_log` records, as a playtest's report holds it (#714)
 serde_json = { workspace = true }

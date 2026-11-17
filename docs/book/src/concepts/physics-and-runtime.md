@@ -39,11 +39,13 @@ Four component schemas define physics properties:
 - `mode_2d`: lock to the XY plane (Z = 0, Z rotation only)
 
 **Collider** (`collider.toml`) --- defines the collision shape:
-- `shape`: `"box"`, `"sphere"`, `"capsule"`, `"cylinder"` (Y axis, `size = [diameter, height]`), or `"sprite"` (auto-sized from the `sprite` component)
-- `size`: dimensions of the collision volume
+- `shape`: `"box"`, `"sphere"`, `"capsule"`, `"cylinder"` (Y axis, `size = [diameter, height]`), `"sprite"` (auto-sized from the `sprite` component), `"mesh"` (the triangles of the entity's model) or `"convex"` (their hull); see [Mesh and convex colliders](#mesh-and-convex-colliders)
+- `size`: dimensions of the collision volume, before the entity's scale
+- `model`: the model a `mesh` or `convex` takes its triangles from, when not the entity's own `model.asset`
 - `friction`, `restitution`: surface response
 - `is_sensor`: detect overlaps without producing contacts
 - `offset`, `rotation`: collider pose relative to the entity (added to the `bounds` centre; `rotation = [0, 0, 90]` lays a cylinder on its side as a wheel)
+- `layer`, `mask`: the collision layer it is on and the layers it meets; see [Collision layers](#collision-layers)
 
 **Joint** (`joint.toml`) --- attaches this entity's body to another with a Rapier impulse joint (see [Joints](#joints)):
 - `type`: `"hinge"`, `"prismatic"`, `"spherical"`, or `"fixed"`
@@ -55,7 +57,13 @@ Four component schemas define physics properties:
 - `contacts_enabled`: let the two jointed bodies collide
 
 **Character Controller** (`character_controller.toml`) --- first-person movement parameters:
-- `move_speed`, `jump_force`, `height`, `radius`, `camera_mode`
+- `move_speed` (5), `jump_force` (6), `sprint_multiplier` (1.6, while `sprint` is held)
+- `start_yaw`: the facing the scene starts with, degrees about +Y (0 faces +Z, 90 faces +X)
+- `look_sensitivity` (0.172 degrees per unit of raw mouse motion) and `pitch_limit` (80 degrees from level)
+- `gravity_scale` (1, times the physics world's gravity), `step_height` (0.5, the tallest ledge walked up; 0 turns it off), `snap_to_ground` (0.2; 0 turns it off)
+- `height` (the eye sits at 0.85 of it), and `radius` and `camera_mode`, which nothing reads yet
+
+Mouse look and the jump press are taken once a frame, and the walk once a fixed step. So a turn is the same at 30, 60 or 144 frames a second, and a jump pressed on a frame that runs no physics step still jumps at the next one.
 
 The **player** archetype (`player.toml`) bundles these together with a `transform` for a ready-to-use player entity.
 
@@ -155,9 +163,12 @@ Rules that follow from the implementation:
   back as a local `position` and `rotation_quat` against the parent's world
   matrix. Kinematic bodies follow their world matrix every fixed step, so a
   script posing the root drags jointed children along.
-- **Unit scale on the physics chain.** Anchors, axes and collider offsets are
-  entity-local only when every entity from the body up to the root has unit
-  scale. The engine warns once per entity otherwise.
+- **Scale is the collider's.** A body is rigid, so an entity's world scale
+  (its own and its ancestors') stretches its collider and its collider's
+  `offset`, and a dynamic child of a scaled parent is written back in the
+  parent's scaled frame. A joint's `anchor` stays metres along the entity's
+  axes, its scale not applied; a scaled jointed body is warned about once.
+  See [Scaled colliders](#scaled-colliders).
 - **Units are degrees and metres in TOML.** Hinge and spherical targets and
   limits are degrees, prismatic ones metres; the engine converts to Rapier's
   radians internally. `motor_target = 0` is the rest pose the joint was
@@ -177,9 +188,115 @@ driven spherical motor, and a cylinder wheel.
 
 ![Joint test bench at rest: pendulum anchor and bob on the left, slider base and block in the middle, gimbal base and pod on the right, wheel on the floor](../images/joint-test-bench.png)
 
+## Scaled colliders
+
+A collider is the size its entity is drawn: `size` is multiplied by the
+entity's world scale, and so are `offset` and the `bounds` centre (points in
+the entity's frame). A crate drawn at `scale = [3, 3, 3]` with
+`size = [1, 1, 1]` is a 3 m box.
+
+A uniform scale is exact for every shape. A non-uniform one is exact for a
+box with no `collider.rotation`, a capsule or cylinder scaled alike in x and
+z (and unrotated), and any `mesh` or `convex`. For the rest (a stretched
+sphere, a rotated box) the shape takes the nearest it can, the largest axis
+for a sphere, and the engine warns once for the entity. A sheared matrix is
+still placed by its rotation alone, with a warning.
+
+A collider is made when its body is: a script's `set_scale` afterwards does
+not resize it.
+
+## Mesh and convex colliders
+
+`shape = "mesh"` makes the collider from the triangles of the entity's
+model, from TOML alone:
+
+```toml
+[entities.ruin.model]
+asset = "ruin_wall"
+
+[entities.ruin.rigidbody]
+body_type = "static"
+
+[entities.ruin.collider]
+shape = "mesh"
+```
+
+The player reads the model's file (the same search the renderer uses,
+`flint asset where models ruin_wall`) without its textures, places every
+mesh node's triangles where they draw, takes only the nearest level of
+detail, and hands them to physics before the bodies are made. A model of
+several nodes, which the renderer expands into children, gives all of them.
+Several entities of one model and one scale share one shape.
+
+- **`convex`** is the triangles' hull: what a dynamic body should use.
+  Rapier makes no contacts between two triangle meshes, so a dynamic body's
+  `mesh` is made `convex`, with a warning.
+- **`collider.model`** names a different model for the triangles, such as a
+  low-poly collision model beside a detailed drawn one, or one for an entity
+  that draws nothing.
+- **No triangles** (no model, a file that isn't found, a model made at
+  runtime by procgen) is a box of `size`, with a warning naming the entity.
+- `collider.offset` and `rotation` move and turn the triangles, and the
+  entity's scale stretches them, exactly.
+- `get_collider_extents(id)` gives a mesh's or hull's box:
+  `#{shape: "mesh", half_x, half_y, half_z, centre_x, centre_y, centre_z}`.
+
+Terrain and swept splines make their own triangle colliders and need none of
+this.
+
+## Collision layers
+
+A game names its layers once, in its `flint.toml`:
+
+```toml
+[project.physics]
+layers = ["world", "player", "enemy", "pickup", "bullet", "trigger"]
+```
+
+`default` is always the first layer, so 31 more fit. A collider is on one
+layer (`collider.layer`, `default` when unsaid) and meets the layers in its
+`mask` (every layer when unsaid). Two colliders touch, and a sensor fires,
+only when **each one's mask holds the other's layer**, so one side's mask is
+enough to keep two apart:
+
+```toml
+# The player walks through pickups and never fires its own bullets' contacts
+[entities.player.collider]
+shape = "capsule"
+size = [0.6, 1.8, 0.6]
+layer = "player"
+mask = ["default", "world", "enemy", "trigger"]
+
+# Bullets hit the world and enemies, and pass through triggers and each other
+[entities.bullet.collider]
+shape = "sphere"
+size = [0.1, 0.1, 0.1]
+layer = "bullet"
+mask = ["world", "enemy"]
+```
+
+A collider that names no layer is on `default` and meets everything, as
+every collider did before layers. A name that is no layer is reported once
+(with the nearest) and read as `default` in `layer`, or left out of a
+`mask`. Terrain and spline colliders are on `default`, or on the layer their
+entity's `collider` table names. Layers are read when the body is made.
+
+`examples/collision_layers.scene.toml` is the bench: a glass tray on `glass`
+whose mask meets only `default` holds the amber balls while the blue ones, on
+`ghost`, fall through it; beside it, green balls land on a barrel's
+`shape = "mesh"` collider where its staves are drawn and roll off the curve,
+and a white ball rests on a crate drawn at 0.45 scale.
+
+![The sieve at 1.6 s: amber balls in the glass tray, blue balls fallen through it into the tray below, green balls rolling off the barrel's curved side, a white ball on the scaled crate](../images/collision-layers-sieve.png)
+
+The character controller and a script's `move_character` meet what the
+character's collider meets: a player whose mask leaves out `pickup` walks
+through pickups. `move_character(id, dx, dy, dz, mask)` moves against the
+layers of `mask` instead.
+
 ## Raycasting
 
-The physics system provides raycasting for line-of-sight checks, hitscan weapons, and interaction targeting. `PhysicsWorld::raycast()` casts a ray through the Rapier collision world and returns the first hit:
+The physics system provides raycasting for line-of-sight checks, hitscan weapons, and interaction targeting. `PhysicsSystem::raycast()` casts a ray through the Rapier collision world and returns the first hit, and `raycast_masked()` meets only the colliders on a layer of a `LayerMask` (`PhysicsSystem::layer_mask(&["world", "enemy"])`):
 
 ```rust
 pub struct EntityRaycastHit {
@@ -190,9 +307,9 @@ pub struct EntityRaycastHit {
 }
 ```
 
-The function resolves Rapier collider handles back to Flint `EntityId`s through the collider-to-entity map maintained by `PhysicsSync`. An optional `exclude_entity` parameter lets callers exclude a specific entity (typically the shooter) from the results.
+The function resolves Rapier collider handles back to Flint `EntityId`s through the collider-to-entity map maintained by `PhysicsSync` (a map each way, so a hit or a contact finds its entity at once). An optional `exclude_entity` parameter lets callers exclude a specific entity (typically the shooter) from the results. A ray is on every layer: a collider's own mask doesn't keep it from a ray, only the ray's mask does.
 
-Raycasting is exposed to scripts via the `raycast()` function --- see [Scripting: Physics API](scripting.md#physics-api) for the script-level interface and examples.
+Raycasting is exposed to scripts via the `raycast()` function, whose eighth argument is a mask: a layer's name or an array of names (`raycast(x, y, z, dx, dy, dz, 50.0, ["world", "enemy"])`; an unknown name is a script error naming the nearest). `collision_layers()` lists the names. See [Scripting: Physics API](scripting.md#physics-api) for the script-level interface and examples.
 
 ## Input System
 

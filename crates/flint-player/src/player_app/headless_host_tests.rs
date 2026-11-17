@@ -89,6 +89,10 @@ fn one_of_each(entity: EntityId) -> Vec<ScriptCommand> {
             volume: 0.5,
             fade: 0.0,
         },
+        C::SetBusVolume {
+            bus: s("voice"),
+            volume: 0.5,
+        },
         C::FireEvent {
             name: s("bell"),
             data: toml::Value::Boolean(true),

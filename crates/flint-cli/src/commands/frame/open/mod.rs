@@ -8,8 +8,8 @@
 //! times and the frame history along the bottom. It shows what was
 //! captured until R asks for a replay (#1089, `replay.rs`): then the scene
 //! loads on a worker thread and each change of the replay's controls (the
-//! scene pass's draw limit, hidden entities, passes off) draws the frame
-//! again and shows it in the capture's place.
+//! draw limit of the scene pass or the one selected, hidden entities,
+//! passes off) draws the frame again and shows it in the capture's place.
 //!
 //! - `model.rs`: the passes, draws and images as rows; stepping, finding
 //!   an entity, the table's filter and sort. No egui.
@@ -71,7 +71,9 @@ pub struct OpenArgs {
     /// Replay it without this entity (repeatable; implies --replay)
     #[arg(long, value_name = "NAME")]
     pub hide: Vec<String>,
-    /// Replay it with the scene pass stopped after N draws (implies --replay)
+    /// Replay it with a pass stopped after N draws: the --pass shown, when
+    /// it is a shadow layer or a style mask or albedo, else the scene pass
+    /// (implies --replay)
     #[arg(long, value_name = "N")]
     pub draws: Option<usize>,
     /// Replay it without this pass (repeatable; implies --replay)
@@ -133,7 +135,13 @@ pub fn run(args: OpenArgs) -> Result<()> {
             || args.outline.is_some())
         .then(|| crate::commands::render::replay_host::Controls {
             hidden: args.hide.clone(),
-            scene_draws: args.draws,
+            // `--draws` steps the `--pass` shown, when it can be stepped
+            pass: args
+                .draws
+                .and(args.pass.as_deref())
+                .filter(|p| flint_render::SteppedPass::from_name(p).is_some())
+                .map(String::from),
+            draws: args.draws,
             skip: args.skip.clone(),
             outline: args.outline.clone(),
         }),

@@ -145,6 +145,7 @@ checked 2 scenes and 3 files: 6 errors, 1 warning
 | Every inline `particle_emitter` against the emitter's own reader: its keys, and that each value parses and resolves | `bad-emitter` |
 | The assets a scene names by kind, through the [one search](../concepts/assets.md): `model.asset`, `material.texture`, `sprite.texture`, `audio_source.file`, `script.source`, `terrain.heightmap` / `splat_map`, `grass_ground.mask`, `spline.file`, `particle_emitter.texture`, `[environment] skybox`, `[scene] input_config` | `missing-asset` |
 | The procgen spec behind a model or texture parses | `bad-spec` |
+| Every UI document (`.ui.toml`) and its style file, as `load_ui` reads them: types, anchors, keys, parents, classes, style properties and their values | `bad-ui` |
 | That spec's params fit its generator's schema, at every depth (`flint_procgen::validate_params`, what `flint gen` checks before generating; also `flint validate`) | `spec-param` |
 | The spline file behind a `spline.file` parses, its mistake placed by line and column | `bad-spline` |
 | The input config (the scene's, else `[project] input`, else `config/input.toml`) parses | `bad-input-config` |
@@ -241,10 +242,10 @@ Frame
   shadow draws 9 -> 6 (-3)
 
 Draws by entity
-  removed  lantern in Shadow cascade 0: 1 draw (shadow)
-  removed  lantern in Shadow cascade 1: 1 draw (shadow)
-  removed  lantern in Shadow cascade 2: 1 draw (shadow)
-  removed  lantern in Scene: 1 draw (pbr)
+  removed  lantern in Shadow cascade 0: 1 draw: shadow
+  removed  lantern in Shadow cascade 1: 1 draw: shadow
+  removed  lantern in Shadow cascade 2: 1 draw: shadow
+  removed  lantern in Scene: 1 draw: pbr
 
 Images (5 of 11 the same)
   image                                     differing     of     max  diff
@@ -291,17 +292,18 @@ The pass is named as `--passes` lists it (`Scene`, `Bloom`, `Shadow cascade 1`, 
 | `--width`, `--height` | The window's size in points (1600 x 1000); a screenshot's in pixels |
 | `--scale <x>` | A screenshot's pixels per point |
 | `--replay` | Draw the frame again as it opens (R in the window): needs the capture's `replay/`, the scene and a GPU |
-| `--draws <n>`, `--hide <name>`, `--skip <pass>`, `--outline <name>` | Replay it with the scene pass stopped after N draws, without an entity, without a pass, with an entity's pixels outlined (each implies `--replay`; `--hide` and `--skip` repeat). A screenshot waits for the replay |
+| `--draws <n>`, `--hide <name>`, `--skip <pass>`, `--outline <name>` | Replay it with a pass stopped after N draws (the `--pass` shown when it is a shadow layer, `Style mask` or `Style albedo`, else the scene pass), without an entity, without a pass, with an entity's pixels outlined (each implies `--replay`; `--hide` and `--skip` repeat). A screenshot waits for the replay |
 | `--scene <file>`, `--schemas <dir>` | The replay's scene, when it isn't where the capture says, and its schema directories |
 
 ### `flint frame replay`
 
-`flint frame replay <capture>` draws a captured frame again ([Replaying a frame](../guides/frame-debugger.md#replaying-a-frame)): the authored scene loaded as `flint render` loads it, the captured world laid over it by entity name, the renderer's state put back, no game step run. It writes the replayed frame as a capture, which every other `frame` view reads, and says whether its final image and its scene pass's image are byte-identical with the captured ones, or in how many pixels they differ and what the capture draws fresh. Each asset is checked against its recorded hash; a missing or changed one is named and the frame still drawn. A capture with no `replay/` is refused, saying so. `--json` carries `identical`, `final` and `scene` (`pixels`, `differing`), `assets` (each `same`, `moved`, `changed` or `missing`), `notes`, `fresh_only`, `refused` and `skippable`.
+`flint frame replay <capture>` draws a captured frame again ([Replaying a frame](../guides/frame-debugger.md#replaying-a-frame)): the authored scene loaded as `flint render` loads it, the captured world laid over it by entity name, the renderer's state put back, no game step run. It writes the replayed frame as a capture, which every other `frame` view reads, and says whether its final image and its scene pass's image are byte-identical with the captured ones, or in how many pixels they differ and what the capture draws fresh. Each asset is checked against its recorded hash; a missing or changed one is named and the frame still drawn. A capture with no `replay/` is refused, saying so. `--json` carries `identical`, `final` and `scene` (`pixels`, `differing`), `pass` (the stepped pass's own images, summed, when it isn't the scene's) and `pass_draws` (how many draws the capture's stepped pass has), `assets` (each `same`, `moved`, `changed` or `missing`), `notes`, `fresh_only`, `refused` and `skippable`.
 
 | Flag | What it does |
 |------|--------------|
 | `--out <dir>` | Where the replay goes (default: beside the capture, `<name>.replay.flintframe`) |
-| `--draws <n>` | Stop the scene pass after its first N draws, counted as `flint frame show --draws --pass Scene` lists them |
+| `--draws <n>` | Stop a pass after its first N draws, counted as `flint frame show --draws --pass <name>` lists them: the scene pass, or the one `--pass` names |
+| `--pass <name>` | The pass `--draws` steps (#1204): `Scene` (the default), `Shadow cascade 0` to `2`, `Spot shadow`, `Style mask` or `Style albedo`. Every other pass draws whole; a shadow layer's grass isn't counted. Another name is refused before the scene loads, naming these |
 | `--hide <name>` | Draw the frame without this entity in any pass (repeatable) |
 | `--skip <pass>` | Draw the frame without this pass: `Shadows`, `SSAO`, `Volumetric`, `Bloom`, `FXAA`, `Fog veil`, or a style's (repeatable). The text answer lists what this capture takes |
 | `--outline <name>` | Mark this entity's pixels with the selection outline |
@@ -453,7 +455,8 @@ adapter, no window) also exits 1 now, from `flint play` too.
 | `--perf` | Print a perf line every 10 s: frame p50/p99/max, each phase's CPU time (mean/max), each pass's GPU time where the adapter can time, draws and triangles. The same line the web page's `?perf=1` copies, so a desktop and a browser can be set side by side |
 | `--no-hot-reload` | Don't watch the game's files: scripts, UI documents, user styles, glyph sets and palettes load once and never reload, and nothing polls the disk (#633) |
 | `--capture-frame-at <secs>` | Capture the frame at this game time for the frame debugger (#1086): a `<scene>-t<secs>.flintframe/` folder under `--capture-dir` with every pass's image, the frame's passes, draws and GPU times, the frame history around it and what a replay needs. Repeatable. With `--frame-step` two runs write the same folder apart from its timings. The run exits 1 when a time is never reached or a capture can't be written ([Capturing from the running player](../guides/profiling.md#capturing-from-the-running-player)) |
-| `--capture-on-hitch[=N]` | Capture the frame after each of the run's first N hitches (default 1). A hitch is over by the time it is found, so the capture is the next frame, and the manifest's `cpu` holds the hitch, its cause and the frame history around it. Turns the frame history and script timing on, as `--hitch-log` does |
+| `--capture-on-hitch[=N]` | Capture the frame after each of the run's first N hitches past the start (default 1). Hitches in the first 2 s of game time are passed over, as the exit report and `--max-hitches` set them apart (#1207); the first one passed over is said on the console. A hitch is over by the time it is found, so the capture is the next frame, and the manifest's `cpu` holds the hitch, its cause and the frame history around it. Turns the frame history and script timing on, as `--hitch-log` does |
+| `--capture-on-hitch-startup` | Let `--capture-on-hitch` take the hitches of the first 2 s too, when the load is what you're chasing. Needs `--capture-on-hitch` |
 | `--capture-dir <dir>` | Where frame captures go: by default `captures/` at the project's root. Shift+F2 and an input script's `capture frame` write there too |
 | `--strict-scripts` | Exit 1 when any script failed, to load, to compile or while running (#693). Without it script errors are still counted and `--exit-after` prints them, a line each with its count ([When a script fails while running](../concepts/scripting.md#when-a-script-fails-while-running)) |
 

@@ -449,3 +449,5 @@ pub(crate) mod test_support;
 mod tests;
 #[cfg(test)]
 mod top_level_tests;
+#[cfg(test)]
+mod ui_tests;

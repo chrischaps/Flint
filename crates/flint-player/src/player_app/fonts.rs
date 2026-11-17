@@ -365,6 +365,42 @@ pub fn resolve_font_id(
     }
 }
 
+/// Scripts' `measure_text`, and the UI documents' layout (#731), laid out
+/// with the font stack `ctx` draws the HUD with. Until `ready` says egui's
+/// fonts are built (its first pass), and for a family the definitions
+/// don't have, it estimates or falls back instead of panicking; `None` is a
+/// context whose fonts are known to be built (a headless HUD's).
+pub fn text_measurer(
+    ctx: egui::Context,
+    ready: Option<Arc<std::sync::atomic::AtomicBool>>,
+) -> flint_script::context::TextMeasurer {
+    Arc::new(
+        move |text: &str, size: f32, font: Option<&str>, spacing: f32| {
+            if ready
+                .as_ref()
+                .is_some_and(|r| !r.load(std::sync::atomic::Ordering::Relaxed))
+            {
+                let chars = text.chars().count() as f32;
+                return (chars * size * 0.6 + spacing * (chars - 1.0).max(0.0), size);
+            }
+            ctx.fonts_mut(|f| {
+                let family = font
+                    .map(|n| egui::FontFamily::Name(n.into()))
+                    .filter(|fam| f.definitions().families.contains_key(fam))
+                    .unwrap_or(egui::FontFamily::Proportional);
+                let job = text_layout_job(
+                    text,
+                    egui::FontId::new(size, family),
+                    egui::Color32::WHITE,
+                    spacing,
+                );
+                let galley = f.layout_job(job);
+                (galley.size().x, galley.size().y)
+            })
+        },
+    )
+}
+
 /// The one layout-job builder shared by the HUD renderer and `measure_text`:
 /// single line, no wrapping, optional extra letter spacing.
 pub fn text_layout_job(

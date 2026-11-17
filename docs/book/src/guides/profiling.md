@@ -182,9 +182,10 @@ INFO player: [debug] capture: capturing the frame at t=2.00 s to captures/tavern
 INFO player: [capture] wrote captures/tavern_hub-t2.004.flintframe: 18 images from 8 passes, 5.9 MB
 ```
 
-- **Triggers.** `--capture-frame-at <secs>` (repeatable), **Shift+F2** while playing (the player's `capture_frame` debug key, which `[debug_keys]` can move; the note at the top of the window names the folder), `capture frame` in an `--input-script`, and `--capture-on-hitch[=N]` for the first N hitches. `flint play` takes the same flags. Captures go to `--capture-dir`, or `captures/` at the project's root, which `.gitignore` leaves out: a capture holds renders of a game's content.
+- **Triggers.** `--capture-frame-at <secs>` (repeatable), **Shift+F2** while playing (the player's `capture_frame` debug key, which `[debug_keys]` can move; the note at the top of the window names the folder), `capture frame` in an `--input-script`, and `--capture-on-hitch[=N]` for the first N hitches past the start. `flint play` takes the same flags. Captures go to `--capture-dir`, or `captures/` at the project's root, which `.gitignore` leaves out: a capture holds renders of a game's content.
 - **The folder** is the one `flint render --frame-capture` writes, named `<scene>-t<game time>.flintframe`. The player adds its own `UI` pass at the end, the HUD drawn over the frame, with the presented image. It also adds `trigger` (why), `scene` (path, `[scene] name`, SHA-256), `engine` (version, the checkout's commit and whether it had changes), `captured_at`, `frame.index`, `frame.game_time` and `frame.dt`, and `cpu`: the frame history's record of the frame and the second of frames before it, each with its phases, script callbacks, notes, physics steps and GPU time.
 - **A hitch can't be captured itself.** It is over by the time the detector judges it, because its clock comes in on the next tick. So `--capture-on-hitch` captures the frame after it. The manifest's `cpu.hitch` holds the hitch: its frame, ms, the median it stood out from, `player` or `elsewhere`, and the cause line the hitch log writes. Its record in `cpu.window` (`"hitch": true`) shows what it cost by phase. The images show the scene one frame later.
+- **Startup hitches are passed over.** The first 2 s of game time are loading's: scripts warming up, physics catching up, the first pipeline compiles. The exit report counts them on their own line, the hitch log marks them `startup` and `--max-hitches` doesn't hold them against a run ([Finding a hitch](#finding-a-hitch)), so `--capture-on-hitch` skips them too, and its N captures go to hitches from t = 2 s on. The first one it skips is said on the console (`[capture] passed over a startup hitch at t=1.32 s ...`). To capture the load itself, add `--capture-on-hitch-startup`.
 - **Replay inputs** go under `replay/` (ADR 0126 decision 4), for the replay to come (#1089). `world.toml` is every entity by name in a scene's encoding. `inputs.json` holds every `FrameInputs` field, the whole camera, the drawn config's styles, the quality, MSAA, render scale, debug mode, the selected entity, motion holds' kept matrices and ticks, part tints and softness, and the palette and particle indexes. `skinning.bin` holds every bone, shadow and echo palette, read back from the GPU. `particles.bin` is the packed particle stream as drawn. The manifest's `replay.assets` lists each model and texture by path and SHA-256, never a copy. `replay.fresh_only` lists what a replay will draw fresh for this frame (ASCII's history, a user style's history targets, runtime meshes, grass and terrain edits).
 - **Two stepped runs give the same capture.** With `--frame-step`, two runs of the tavern wrote byte-identical images and replay files, and manifests that differ only in their timings.
 - **It never waits on the frame.** The capture is armed for one frame, and its copies go into that frame's one submission. The frames after poll the read-back, and a writer thread copies it out, encodes it and writes the folder on a quarter of the machine's cores, manifest last. One capture is in flight at a time, and a request made meanwhile waits for it. The capturing frame and every frame until the writer takes over are marked `capturing` in the frame history, and the hitch detector passes over them, so the capture isn't counted as the hitch it may cause. The writing still shares the machine: in a debug build, small hitches showed in the hot-reload poll while a capture was written to disk.
@@ -389,7 +390,17 @@ A note made inside another, such as a model inside a transition or a pipeline in
 | `physics steps` | a frame that ran more than one fixed step |
 | `clock stall` | a frame over 250 ms, which pacing passed through as it was |
 
-A `clock stall` is the long frame itself, so it is kept on the hitch but is no cause. Notes are made only on the player's frame thread and only while the history records. Otherwise each call site costs a flag read, about 1 ns. Collecting a frame's notes costs 2 to 3 ns. The F2 graph and the hitch log are what show them.
+A `clock stall` is the long frame itself, so it is kept on the hitch but is no cause. Neither is `physics steps`: extra fixed steps are the clock paying back the game time a long frame before owed, and their own cost is the `physics` phase's, which the hitch names by phase.
+
+The notes are named as a hitch's cause only when their times together cover at least half of its excess over the median, the rule a script callback is blamed by. Otherwise whose time it was comes first, and the notes follow it by kind and time:
+
+```text
+scene transition b.scene.toml, 151.2 ms
+sync +9.1 ms (also: reload poll 1.2 ms)
+render +40.0 ms (also: pipeline build 3.0 ms the frame before)
+```
+
+A note with no time (none of the engine's today) can't be weighed, so it is named. Notes are made only on the player's frame thread and only while the history records. Otherwise each call site costs a flag read, about 1 ns. Collecting a frame's notes costs 2 to 3 ns. The F2 graph and the hitch log are what show them.
 
 `FLINT_HITCH_FACTOR` (at least 1, default 2) and `FLINT_HITCH_FLOOR_MS` (default 8) change the thresholds.
 
@@ -414,7 +425,7 @@ A bar is split into the frame's phases, grouped into six bands, bottom up:
 
 The colours are Okabe and Ito's palette, which stays distinguishable under the common colour-vision deficiencies. Vermillion is kept for hitches. The line across the graph is the display's refresh period, labelled in ms and fps, and the fainter one is twice that. The top of the graph eases to fit the tallest bar and falls back slowly once a spike has scrolled off. It never sits below about twice the budget, and it stops at 250 ms, so a scene load doesn't flatten everything for seconds.
 
-The graph is quiet when nothing is wrong. A bar within its refresh is drawn dim, a bar past it brightens as it gets later, and a hitch is drawn at full colour with a vermillion mark over it and a faint band behind it. Under the graph are the session's hitches, hitches a minute, the worst frame, and how long since the last hitch. The count turns vermillion for a couple of seconds after a hitch, then fades back to grey. The line below says what the last hitch was: `last 100 ms: stall.rhai:on_update took 100` when a script took it, `last 30 ms: render +14` for another phase of the player's work, and `last 13 ms: elsewhere, present 1` when it wasn't the player's. Scripts are timed while F2 is open, as under `--perf`, so a script hitch names its callback.
+The graph is quiet when nothing is wrong. A bar within its refresh is drawn dim, a bar past it brightens as it gets later, and a hitch is drawn at full colour with a vermillion mark over it and a faint band behind it. Under the graph are the session's hitches, hitches a minute, the worst frame, and how long since the last hitch. The count turns vermillion for a couple of seconds after a hitch, then fades back to grey. The line below says what the last hitch was, in the same words as the hitch log, the exit report and `--perf` (see [Finding a hitch](#finding-a-hitch)): `last 269 ms: style build ascii, 255.2 ms` when the engine noted what it was doing, `last 117 ms: script stall.rhai:on_update 100.0 ms` when a script took it, `last 30 ms: render +14.0 ms` for another phase of the player's work, and `last 13 ms: elsewhere, present 1.0 ms` when it wasn't the player's. Scripts are timed while F2 is open, as under `--perf`, so a script hitch names its callback.
 
 Press F2 again for the graph alone, in a corner, small enough to leave on while playing:
 
@@ -465,7 +476,7 @@ The perf line's count includes the start's hitches; the exit report below sets t
 | `phase`, `phase_ms` | the phase that grew most, and by how much (`player` only) |
 | `script`, `script_ms` | the script callback that took longest (`player` only) |
 | `present_ms` | the `present` phase's share (`elsewhere` only) |
-| `cause` | the line the report and the perf line name it by: the engine's notes when it has any, else the script, the phase or `elsewhere` |
+| `cause` | the line the report and the perf line name it by: the engine's notes when they cover half the hitch, else the script, the phase or `elsewhere`, with the notes after it as `(also: ..)` |
 | `notes` | the frame notes of its frame and the frame before, each with `kind`, `detail`, `ms`, `depth` and `frame_before` |
 | `before_ms`, `after_ms` | the eight frames either side, oldest first |
 

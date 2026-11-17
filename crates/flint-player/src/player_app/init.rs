@@ -853,7 +853,7 @@ impl PlayerApp {
     /// answer when it differs: at the first load, and after a transition,
     /// which may cross into another project's root (or a `flint.toml` may
     /// have changed under a long session). `--project` pins one answer.
-    pub(super) fn refresh_project(&mut self) {
+    pub(crate) fn refresh_project(&mut self) {
         let next = flint_core::project::Project::for_scene(Path::new(&self.core.scene_path));
         if next != self.core.project {
             tracing::info!(
@@ -862,6 +862,19 @@ impl PlayerApp {
                 next.found.describe()
             );
             self.core.project = next;
+        }
+        self.declare_audio_buses();
+    }
+
+    /// The mixer's buses from the project's `flint.toml` `[audio.buses]`
+    /// (#730). The engine applies a table once, so this is free at every
+    /// scene of one project and keeps the volumes set since; a project
+    /// with another table adds its buses. A manifest that doesn't read is
+    /// said and the buses stay as they are.
+    pub(crate) fn declare_audio_buses(&mut self) {
+        match flint_audio::Buses::for_project(&self.core.project) {
+            Ok(buses) => self.audio.engine.set_buses(&buses),
+            Err(e) => tracing::error!(target: "load", "audio buses: {e}"),
         }
     }
 
@@ -909,30 +922,11 @@ impl PlayerApp {
     /// yet) and for families not installed in the *active* definitions,
     /// the closure degrades gracefully instead of panicking.
     pub(super) fn install_text_measurer(&mut self) {
-        let ctx = self.hud.egui_ctx.clone();
-        let ready = self.hud.egui_fonts_ready.clone();
-        self.core.script.set_text_measurer(Some(Arc::new(
-            move |text: &str, size: f32, font: Option<&str>, spacing: f32| {
-                if !ready.load(std::sync::atomic::Ordering::Relaxed) {
-                    let chars = text.chars().count() as f32;
-                    return (chars * size * 0.6 + spacing * (chars - 1.0).max(0.0), size);
-                }
-                ctx.fonts_mut(|f| {
-                    let family = font
-                        .map(|n| egui::FontFamily::Name(n.into()))
-                        .filter(|fam| f.definitions().families.contains_key(fam))
-                        .unwrap_or(egui::FontFamily::Proportional);
-                    let job = super::fonts::text_layout_job(
-                        text,
-                        egui::FontId::new(size, family),
-                        egui::Color32::WHITE,
-                        spacing,
-                    );
-                    let galley = f.layout_job(job);
-                    (galley.size().x, galley.size().y)
-                })
-            },
-        )));
+        let measurer = super::fonts::text_measurer(
+            self.hud.egui_ctx.clone(),
+            Some(self.hud.egui_fonts_ready.clone()),
+        );
+        self.core.script.set_text_measurer(Some(measurer));
     }
 
     /// Load a sprite texture for UI rendering. Called lazily when a draw_sprite
