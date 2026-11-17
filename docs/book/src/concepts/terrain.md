@@ -93,6 +93,21 @@ Splat maps can be painted manually in any image editor that supports RGBA channe
 - **Steep slopes / high peaks** --- rock (blue channel)
 - **Very low areas** --- sand (alpha channel)
 
+## Generating Terrain From a Spec
+
+A `.terrain.toml` spec describes both maps as a recipe: `[geometry]` (size, height and resolution), a list of `[[height_layers]]` run in order (`op = "noise"`, `"flatten"` or `"erosion"`), and `[[splat_rules]]` that paint each layer by height, slope and noise. `examples/rolling_meadow.terrain.toml` is one. Shape it by eye in the terrain editor (`flint edit x.terrain.toml`), or bake it from the command line:
+
+```bash
+flint gen examples/rolling_meadow.terrain.toml -o terrain/meadow.png   # heightmap + terrain/meadow_splat.png
+flint gen examples/rolling_meadow.terrain.toml -o terrain/             # terrain/rolling_meadow.png + _splat.png
+flint gen examples/rolling_meadow.terrain.toml --seed 12 --dry-run     # what it would write
+flint gen examples/rolling_meadow.terrain.toml -o terrain/ --json      # seed, coverage, each file's SHA-256
+```
+
+The heightmap is a 16-bit greyscale PNG and the splat map an RGBA8 PNG at the same resolution; point the `terrain` component's `heightmap` and `splat_map` at them. Both are the bytes the editor's Ctrl+E export writes, and the same spec and seed bake the same bytes every run. The summary says how much of the ground each layer covers, named by its texture's `label`.
+
+A key nothing reads is reported with its path and the key it was probably meant to be (``height_layers[1].octave: unknown key in `height_layers[1]`; did you mean `octaves`?``), as is a splat rule for a layer past 3. With `--strict` either is an error, before anything is written.
+
 ## Texture Tiling
 
 Layer textures are **tiled** across the terrain surface based on world position, not the terrain UV. The `texture_tile` field controls how many times the texture repeats per 100 world units:

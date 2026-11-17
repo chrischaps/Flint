@@ -2,6 +2,7 @@
 //! Supports an optional spline editor mode for interactive track editing.
 
 use crate::edits::FieldEdits;
+use crate::host::{self, Editor, Flow, Gpu, HostOptions, InitCx, Target, Tick};
 use crate::panels::transform_gizmo::apply_gizmo_delta;
 use crate::panels::{
     CameraView, DiagnosticsPanel, EntityInspector, GizmoAction, GizmoMode, RenderStats, SceneTree,
@@ -11,16 +12,15 @@ use crate::picking::{build_pick_targets, pick_entity};
 use crate::spline_editor::{DragMode, SplineEditor, SplineEditorConfig};
 use crate::undo::{EditAction, UndoCommand, UndoStack};
 use crate::watch::StyleSources;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_core::components as comp;
 use flint_ecs::FlintWorld;
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::shallow_wooze::{GrassWooze, ShallowWooze};
-use flint_render::AcquireFrame;
 use flint_render::{
-    post_process_config_from_def, Camera, FrameInputs, PostProcessConfig, RenderContext,
-    RendererConfig, SceneBinding, SceneRenderer,
+    post_process_config_from_def, Camera, FrameInputs, PostProcessConfig, RendererConfig,
+    SceneBinding, SceneRenderer,
 };
 use flint_scene::{load_scene, load_scene_after, CameraDef, PostProcessDef, SceneDocument};
 use flint_schema::{SchemaDirs, SchemaRegistry};
@@ -30,12 +30,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::Window;
 
 struct ViewerState {
     world: FlintWorld,
@@ -94,6 +91,19 @@ impl Default for ViewerWindow {
     }
 }
 
+impl ViewerWindow {
+    /// The host's options for this window: its size, the camera flags
+    /// left to the scene's framing.
+    pub fn host_options(&self) -> HostOptions {
+        HostOptions {
+            width: self.width,
+            height: self.height,
+            camera: Default::default(),
+            auto_orbit: false,
+        }
+    }
+}
+
 /// What the viewer loads for a scene: the schemas and constraints of every
 /// directory the one resolver names (ADR 0114: `--schemas` flags if given,
 /// else the project manifest's list, else `schemas/` in the working
@@ -105,7 +115,7 @@ pub fn load_schemas(
 ) -> Result<(SchemaRegistry, ConstraintRegistry, SchemaDirs)> {
     let (registry, dirs) = SchemaRegistry::resolve(Some(Path::new(scene_path)), schemas)?;
     if dirs.dirs.is_empty() {
-        println!("Warning: No schemas directories found");
+        eprintln!("Warning: No schemas directories found");
     }
     let mut constraints = ConstraintRegistry::new();
     for dir in &dirs.dirs {
@@ -174,6 +184,26 @@ pub fn run(
     style: ViewerStyle,
     window: ViewerWindow,
 ) -> Result<()> {
+    let options = window.host_options();
+    host::run(
+        viewer(
+            scene_path, watch, schemas, inspector, auto_orbit, style, window,
+        )?,
+        options,
+    )
+}
+
+/// The scene viewer on `scene_path`, for [`crate::host`] to open in a
+/// window or draw as a `--render` still (#712).
+pub fn viewer(
+    scene_path: &str,
+    watch: bool,
+    schemas: &[String],
+    inspector: bool,
+    auto_orbit: bool,
+    style: ViewerStyle,
+    window: ViewerWindow,
+) -> Result<ViewerApp> {
     let (registry, constraint_registry, schema_dirs) = load_schemas(scene_path, schemas)?;
 
     let binding = scene_binding(scene_path);
@@ -183,8 +213,8 @@ pub fn run(
     // Living props' tables: checked, and the preset [wooze] names filled in (#686)
     flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))?;
 
-    println!("Loaded scene: {}", scene_file.scene.name);
-    println!("Entities: {}", world.entity_count());
+    eprintln!("Loaded scene: {}", scene_file.scene.name);
+    eprintln!("Entities: {}", world.entity_count());
 
     // Parse the scene file as an editable document for structure-preserving saves
     let scene_doc = SceneDocument::from_file(scene_path).ok();
@@ -205,16 +235,13 @@ pub fn run(
         environment: scene_file.environment.clone(),
     }));
 
-    let _watcher = if watch {
+    let watcher = if watch {
         let watcher = watch_scene(scene_path, &schema_dirs.dirs, &state)?;
-        println!("Watching for changes in scene and related assets...");
+        eprintln!("Watching for changes in scene and related assets...");
         Some(watcher)
     } else {
         None
     };
-
-    let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = ViewerApp::new(state, inspector);
     app.auto_orbit = auto_orbit;
@@ -223,9 +250,8 @@ pub fn run(
     app.motion_hold = style.motion_hold.map(|rate| rate.max(0.0));
     app.window_opts = window;
     app.scene_binding = Some(binding);
-    event_loop.run_app(&mut app)?;
-
-    Ok(())
+    app._watcher = watcher;
+    Ok(app)
 }
 
 /// Run the viewer with a pre-built world (no file loading or hot-reload).
@@ -238,7 +264,7 @@ pub fn run_with_world(
 ) -> Result<()> {
     let constraint_registry = ConstraintRegistry::default();
 
-    println!("Entities: {}", world.entity_count());
+    eprintln!("Entities: {}", world.entity_count());
 
     let state = Arc::new(Mutex::new(ViewerState {
         world,
@@ -253,13 +279,8 @@ pub fn run_with_world(
         environment: None,
     }));
 
-    let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
-
-    let mut app = ViewerApp::new(state, inspector);
-    event_loop.run_app(&mut app)?;
-
-    Ok(())
+    let app = ViewerApp::new(state, inspector);
+    host::run(app, ViewerWindow::default().host_options())
 }
 
 /// Run the viewer in editor mode with a spline editor configuration.
@@ -271,14 +292,30 @@ pub fn run_editor(
     editor_config: SplineEditorConfig,
     window: ViewerWindow,
 ) -> Result<()> {
+    let options = window.host_options();
+    host::run(
+        track_editor(scene_path, watch, schemas, editor_config, window)?,
+        options,
+    )
+}
+
+/// The viewer in editor mode with a spline editor configuration, for
+/// [`crate::host`] (#712).
+pub fn track_editor(
+    scene_path: &str,
+    watch: bool,
+    schemas: &[String],
+    editor_config: SplineEditorConfig,
+    window: ViewerWindow,
+) -> Result<ViewerApp> {
     let (registry, constraint_registry, schema_dirs) = load_schemas(scene_path, schemas)?;
 
     let binding = scene_binding(scene_path);
     let (world, mut scene_file) = load_scene(scene_path, &registry)?;
     flint_procgen::settle_scene(&mut scene_file, std::path::Path::new(scene_path))?;
 
-    println!("Loaded scene: {}", scene_file.scene.name);
-    println!("Entities: {}", world.entity_count());
+    eprintln!("Loaded scene: {}", scene_file.scene.name);
+    eprintln!("Entities: {}", world.entity_count());
 
     let state = Arc::new(Mutex::new(ViewerState {
         world,
@@ -297,31 +334,28 @@ pub fn run_editor(
         environment: scene_file.environment.clone(),
     }));
 
-    let _watcher = if watch {
+    let watcher = if watch {
         let watcher = watch_scene(scene_path, &schema_dirs.dirs, &state)?;
-        println!("Watching for changes...");
+        eprintln!("Watching for changes...");
         Some(watcher)
     } else {
         None
     };
 
-    let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
-
     let editor = SplineEditor::from_config(editor_config);
     let mut app = ViewerApp::new_editor(state, editor);
     app.window_opts = window;
     app.scene_binding = Some(binding);
-    event_loop.run_app(&mut app)?;
-
-    Ok(())
+    app._watcher = watcher;
+    Ok(app)
 }
 
 /// The main viewer application
 pub struct ViewerApp {
     state: Arc<Mutex<ViewerState>>,
     window: Option<Arc<Window>>,
-    render_context: Option<RenderContext>,
+    /// The host's GPU (#712)
+    render_context: Option<Gpu>,
     scene_renderer: Option<SceneRenderer>,
     camera: Camera,
 
@@ -335,8 +369,6 @@ pub struct ViewerApp {
 
     // egui state
     egui_ctx: egui::Context,
-    egui_winit: Option<egui_winit::State>,
-    egui_renderer: Option<egui_wgpu::Renderer>,
     show_inspector: bool,
 
     // Panel state
@@ -455,6 +487,8 @@ pub struct ViewerApp {
     /// The scene as the renderer binds it (#739): made when its user styles
     /// were registered, bound at load and at each hot reload.
     scene_binding: Option<SceneBinding>,
+    /// `--watch`'s watcher, alive as long as the viewer
+    _watcher: Option<Debouncer<RecommendedWatcher>>,
 }
 
 /// The style settings a scene authors: its `[post_process.styles]`, or
@@ -618,8 +652,6 @@ impl ViewerApp {
             modifiers: ModifiersState::empty(),
             held_orbit_keys: std::collections::HashSet::new(),
             egui_ctx: egui::Context::default(),
-            egui_winit: None,
-            egui_renderer: None,
             show_inspector,
             scene_tree: SceneTree::new(),
             entity_inspector: EntityInspector::new(),
@@ -671,6 +703,7 @@ impl ViewerApp {
             grass_wooze: Default::default(),
             frame_dt: 1.0 / 60.0,
             scene_binding: None,
+            _watcher: None,
         }
     }
 
@@ -688,8 +721,6 @@ impl ViewerApp {
             modifiers: ModifiersState::empty(),
             held_orbit_keys: std::collections::HashSet::new(),
             egui_ctx: egui::Context::default(),
-            egui_winit: None,
-            egui_renderer: None,
             show_inspector: true,
             scene_tree: SceneTree::new(),
             entity_inspector: EntityInspector::new(),
@@ -741,6 +772,7 @@ impl ViewerApp {
             grass_wooze: Default::default(),
             frame_dt: 1.0 / 60.0,
             scene_binding: None,
+            _watcher: None,
         }
     }
 
@@ -776,31 +808,13 @@ impl ViewerApp {
         }
     }
 
-    fn initialize(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
-        let title = if self.editor.is_some() {
-            "Flint Track Editor"
-        } else {
-            "Flint Viewer"
-        };
-
-        let window_attrs = Window::default_attributes()
-            .with_title(title)
-            .with_inner_size(PhysicalSize::new(
-                self.window_opts.width.max(1),
-                self.window_opts.height.max(1),
-            ));
-
-        let window = Arc::new(
-            event_loop
-                .create_window(window_attrs)
-                .context("Failed to create viewer window")?,
-        );
-        self.window = Some(window.clone());
-
-        let render_context = pollster::block_on(RenderContext::new(window.clone()))
-            .context("Failed to initialize viewer render context")?;
-
-        self.camera.aspect = render_context.aspect_ratio();
+    /// The window's or the still's GPU is here (#712): the scene staged on
+    /// it, the authored post-processing applied.
+    fn initialize(&mut self, cx: InitCx) -> Result<()> {
+        let render_context = cx.gpu.clone();
+        self.window = cx.window;
+        self.egui_ctx = cx.egui.clone();
+        self.camera.aspect = render_context.aspect();
 
         // Standard viewer: open on the scene's authored [camera] framing
         if self.editor.is_none() {
@@ -835,35 +849,10 @@ impl ViewerApp {
 
         self.camera.update_orbit();
 
-        // Initialize egui
-        let egui_winit = egui_winit::State::new(
-            self.egui_ctx.clone(),
-            egui::ViewportId::ROOT,
-            &window,
-            Some(window.scale_factor() as f32),
-            None,
-            None,
-        );
-
-        // For the plain view egui draws into (RenderContext::hud_view, #428)
-        let egui_renderer = egui_wgpu::Renderer::new(
-            &render_context.device,
-            render_context.hud_format,
-            egui_wgpu::RendererOptions {
-                depth_stencil_format: None,
-                msaa_samples: 1,
-                dithering: false,
-                ..Default::default()
-            },
-        );
-
-        let mut scene_renderer = SceneRenderer::new(
-            &render_context,
-            RendererConfig {
-                show_grid: self.window_opts.grid,
-                ..Default::default()
-            },
-        );
+        let mut scene_renderer = render_context.scene_renderer(RendererConfig {
+            show_grid: self.window_opts.grid,
+            ..Default::default()
+        });
 
         // Load models and update meshes from world
         {
@@ -908,7 +897,9 @@ impl ViewerApp {
                     &self.style_specs,
                     self.motion_hold,
                 ));
-                println!("Scene [post_process] applied (F4 > Authored post toggles scene/default)");
+                eprintln!(
+                    "Scene [post_process] applied (F4 > Authored post toggles scene/default)"
+                );
             } else if !self.style_specs.is_empty() || self.motion_hold.is_some() {
                 let config = scene_renderer.post_process_config().clone();
                 scene_renderer.set_post_process_config(with_flags(
@@ -918,10 +909,10 @@ impl ViewerApp {
                 ));
             }
             if !self.style_specs.is_empty() {
-                println!("--style applied: {}", self.style_specs.join(" "));
+                eprintln!("--style applied: {}", self.style_specs.join(" "));
             }
             if let Some(rate) = self.motion_hold {
-                println!("--motion-hold applied: the whole frame drawn {rate} times a second");
+                eprintln!("--motion-hold applied: the whole frame drawn {rate} times a second");
             }
             // The F4 style editor marks edits against these (#268)
             self.render_panel
@@ -935,7 +926,7 @@ impl ViewerApp {
                 state.scene_post.as_ref().and_then(|d| d.look.as_deref()),
             );
             if let Some(look) = state.scene_post.as_ref().and_then(|d| d.look.as_deref()) {
-                println!("Scene look: {look} (F4 -> Look switches it)");
+                eprintln!("Scene look: {look} (F4 -> Look switches it)");
             }
             // ...and writes a style back into the file (#364)
             self.render_panel.set_scene_file(
@@ -958,8 +949,6 @@ impl ViewerApp {
 
         self.render_context = Some(render_context);
         self.scene_renderer = Some(scene_renderer);
-        self.egui_winit = Some(egui_winit);
-        self.egui_renderer = Some(egui_renderer);
 
         Ok(())
     }
@@ -981,34 +970,15 @@ impl ViewerApp {
         self.violation_count = self.violation_messages.len();
     }
 
-    fn render(&mut self) {
-        if self.render_context.is_none() || self.scene_renderer.is_none() || self.window.is_none() {
+    /// The frame before it is drawn: the camera's snap, the panels' last
+    /// edits, the boil, the particles, then the frame's inputs (#739).
+    fn frame_update(&mut self) {
+        if self.render_context.is_none() || self.scene_renderer.is_none() {
             return;
         }
 
         // Animate camera snap transitions
         self.animate_camera();
-
-        let output = match self.render_context.as_ref().unwrap().surface.acquire() {
-            Ok(output) => output,
-            Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => return,
-            Err(e) => {
-                tracing::warn!("Surface error: {:?}", e);
-                return;
-            }
-        };
-
-        // The scene into the sRGB view, egui into the plain one, as the
-        // player does: egui's translucent panels blend in display space
-        // there, so the style-error card and the F4 panels look the same in
-        // both hosts (#428).
-        let (view, hud_view) = {
-            let context = self.render_context.as_ref().unwrap();
-            (
-                context.frame_view(&output.texture),
-                context.hud_view(&output.texture),
-            )
-        };
 
         self.render_stats.record_frame();
 
@@ -1031,16 +1001,14 @@ impl ViewerApp {
         // Particles: step, pack, upload (ADR 0068)
         self.tick_particles();
 
-        // The frame's inputs and the world (#739), then the 3D scene
+        // The frame's inputs and the world (#739)
         self.prepare_frame();
-        {
-            let context = self.render_context.as_ref().unwrap();
-            let renderer = self.scene_renderer.as_mut().unwrap();
-            renderer.render(context, &self.camera, &view).ok();
-        }
+    }
 
-        // Always render egui overlay (gizmo is always visible, panels are conditional)
-        let (gizmo_action, menu_actions) = self.render_egui(&hud_view);
+    /// The panels over the frame (the gizmo is always drawn), then what
+    /// they asked for.
+    fn frame_ui(&mut self, ui: &mut egui::Ui) {
+        let (gizmo_action, menu_actions) = self.render_egui(ui);
 
         // Rendering & Effects menu actions that need &mut self (deferred out
         // of the egui closure's disjoint field borrows)
@@ -1100,8 +1068,6 @@ impl ViewerApp {
         }
         // A gizmo drag's frames edit the world as it moves
         self.refresh_dirty();
-
-        self.render_context.as_ref().unwrap().queue.present(output);
     }
 
     /// The scene as the renderer binds it: the one made when its user styles
@@ -1517,10 +1483,7 @@ impl ViewerApp {
         }
     }
 
-    fn render_egui(
-        &mut self,
-        target_view: &wgpu::TextureView,
-    ) -> (Option<GizmoAction>, RenderMenuActions) {
+    fn render_egui(&mut self, ui: &mut egui::Ui) -> (Option<GizmoAction>, RenderMenuActions) {
         // DoF follow readout for the Rendering & Effects menu: computed up
         // front — it borrows all of self, which must end before the field
         // borrows below.
@@ -1557,22 +1520,6 @@ impl ViewerApp {
                 .collect()
         };
 
-        // Extract references to disjoint fields to satisfy the borrow checker
-        let window = match &self.window {
-            Some(w) => w.clone(),
-            None => return (None, RenderMenuActions::default()),
-        };
-        let context = match &self.render_context {
-            Some(c) => c,
-            None => return (None, RenderMenuActions::default()),
-        };
-        let egui_winit = match &mut self.egui_winit {
-            Some(e) => e,
-            None => return (None, RenderMenuActions::default()),
-        };
-
-        let raw_input = egui_winit.take_egui_input(&window);
-
         // Snapshot camera state for gizmo (avoids holding &self.camera across the closure)
         let cam_view = CameraView::from_camera(&self.camera);
 
@@ -1603,7 +1550,7 @@ impl ViewerApp {
                 s.fps = render_stats.fps();
                 s.frame_time_ms = if s.fps > 0.0 { 1000.0 / s.fps } else { 0.0 };
                 if let Some(ctx) = &self.render_context {
-                    s.resolution = [ctx.config.width, ctx.config.height];
+                    s.resolution = [ctx.width, ctx.height];
                 }
                 s
             })
@@ -1611,7 +1558,7 @@ impl ViewerApp {
             None
         };
 
-        let mut gizmo_action = None;
+        let gizmo_action;
         let mut menu_actions = RenderMenuActions::default();
         let mut panel_actions: Vec<SplinePanelAction> = Vec::new();
         let mut inspector_edits: Vec<EditAction> = Vec::new();
@@ -1624,9 +1571,7 @@ impl ViewerApp {
         let mut style_errors = flint_render::stylize::custom::errors();
         style_errors.extend(flint_render::stylize::dev_shader::errors());
 
-        // A real frame: its texture updates are uploaded below (#944)
-        #[allow(clippy::disallowed_methods)]
-        let mut full_output = self.egui_ctx.run_ui(raw_input, |ui| {
+        {
             let ctx = &ui.ctx().clone();
             flint_debug_ui::paint_style_errors(ctx, &style_errors, 0.0);
             if show_panels {
@@ -1936,7 +1881,7 @@ impl ViewerApp {
             if let Some(ref s) = overlay_stats {
                 render_stats_overlay(ctx, s);
             }
-        });
+        }
 
         // Process spline panel actions outside the egui closure
         for action in panel_actions {
@@ -1984,71 +1929,6 @@ impl ViewerApp {
         if gizmo_drag_just_ended {
             self.gizmo_drag_ended = true;
         }
-
-        egui_winit.handle_platform_output(&window, full_output.platform_output);
-
-        let paint_jobs = self
-            .egui_ctx
-            .tessellate(full_output.shapes, full_output.pixels_per_point);
-
-        let screen_descriptor = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [context.config.width, context.config.height],
-            pixels_per_point: full_output.pixels_per_point,
-        };
-
-        let mut egui_renderer = self.egui_renderer.take().unwrap();
-
-        let mut encoder = context
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("egui Encoder"),
-            });
-
-        for (id, deltas) in &full_output.textures_delta.set {
-            for image_delta in deltas {
-                egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
-            }
-        }
-
-        egui_renderer.update_buffers(
-            &context.device,
-            &context.queue,
-            &mut encoder,
-            &paint_jobs,
-            &screen_descriptor,
-        );
-
-        {
-            let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("egui Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-
-            let mut render_pass = render_pass.forget_lifetime();
-            egui_renderer.render(&mut render_pass, &paint_jobs, &screen_descriptor);
-        }
-
-        context.queue.submit(std::iter::once(encoder.finish()));
-
-        for id in &full_output.textures_delta.free {
-            egui_renderer.free_texture(id);
-        }
-        // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
-        full_output.textures_delta.clear();
-
-        self.egui_renderer = Some(egui_renderer);
 
         (gizmo_action, menu_actions)
     }
@@ -2333,8 +2213,8 @@ impl ViewerApp {
         let targets = build_pick_targets(&st.world);
         drop(st);
 
-        let vw = context.config.width as f32;
-        let vh = context.config.height as f32;
+        let vw = context.width as f32;
+        let vh = context.height as f32;
 
         if let Some((entity_id, _dist)) =
             pick_entity(x as f32, y as f32, vw, vh, &self.camera, &targets)
@@ -2527,7 +2407,7 @@ impl ViewerApp {
     /// Get screen size from render context.
     fn screen_size(&self) -> [f32; 2] {
         if let Some(ctx) = &self.render_context {
-            [ctx.config.width as f32, ctx.config.height as f32]
+            [ctx.width as f32, ctx.height as f32]
         } else {
             [
                 self.window_opts.width as f32,
@@ -2705,40 +2585,37 @@ impl ViewerApp {
     }
 }
 
-impl ApplicationHandler for ViewerApp {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_none() {
-            // The user style and glyph set polls ask a watcher thread from
-            // here on, never the disk in a frame (#633)
-            flint_core::file_watch::start();
-            if let Err(e) = self.initialize(event_loop) {
-                tracing::error!("Failed to initialize viewer: {e:#}");
-                event_loop.exit();
-            }
+impl Editor for ViewerApp {
+    fn title(&self) -> String {
+        if self.editor.is_some() {
+            "Flint Track Editor".into()
+        } else {
+            "Flint Viewer".into()
         }
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn init(&mut self, cx: InitCx) -> Result<()> {
+        self.initialize(cx)
+    }
+
+    /// The viewer drives its own orbit camera (picking, the gizmo and the
+    /// view cube share its mouse), so the host only sets and sizes it.
+    fn camera(&mut self) -> Option<&mut Camera> {
+        Some(&mut self.camera)
+    }
+
+    /// Shortcuts that win over a focused panel.
+    fn early_event(&mut self, event: &WindowEvent) -> Flow {
         let is_editor = self.editor.is_some();
 
         // Track modifier keys
-        if let WindowEvent::ModifiersChanged(mods) = &event {
+        if let WindowEvent::ModifiersChanged(mods) = event {
             self.modifiers = mods.state();
         }
 
-        // Handle gizmo input priority: if gizmo is hovered/dragging, suppress camera orbit
-        // but still let egui process the event for gizmo interaction
-        let gizmo_active = self.transform_gizmo.is_dragging() || self.transform_gizmo.is_hovered();
-
         // Handle Tab and other global shortcuts before egui can consume them.
         if let WindowEvent::KeyboardInput {
-            event: ref key_event,
-            ..
+            event: key_event, ..
         } = event
         {
             if key_event.state == ElementState::Pressed && !key_event.repeat {
@@ -2746,7 +2623,7 @@ impl ApplicationHandler for ViewerApp {
                     // In editor mode, handle editor-specific keys first
                     if let PhysicalKey::Code(code) = key_event.physical_key {
                         if self.handle_editor_key(code) {
-                            return;
+                            return Flow::Handled;
                         }
                     }
                 } else {
@@ -2759,29 +2636,29 @@ impl ApplicationHandler for ViewerApp {
                                     "Inspector: {}",
                                     if self.show_inspector { "ON" } else { "OFF" }
                                 );
-                                return;
+                                return Flow::Handled;
                             }
                             KeyCode::KeyZ
                                 if self.modifiers.control_key() && self.modifiers.shift_key() =>
                             {
                                 // Ctrl+Shift+Z = redo
                                 self.redo();
-                                return;
+                                return Flow::Handled;
                             }
                             KeyCode::KeyZ if self.modifiers.control_key() => {
                                 // Ctrl+Z = undo
                                 self.undo();
-                                return;
+                                return Flow::Handled;
                             }
                             KeyCode::KeyY if self.modifiers.control_key() => {
                                 // Ctrl+Y = redo
                                 self.redo();
-                                return;
+                                return Flow::Handled;
                             }
                             KeyCode::KeyS if self.modifiers.control_key() => {
                                 // Ctrl+S = save scene
                                 self.save();
-                                return;
+                                return Flow::Handled;
                             }
                             // W/E/R = gizmo mode shortcuts, but ONLY while an
                             // entity is selected (the gizmo doesn't exist
@@ -2795,28 +2672,28 @@ impl ApplicationHandler for ViewerApp {
                                     && self.scene_tree.selected_entity().is_some() =>
                             {
                                 self.transform_gizmo.mode = GizmoMode::Translate;
-                                return;
+                                return Flow::Handled;
                             }
                             KeyCode::KeyE
                                 if self.modifiers.is_empty()
                                     && self.scene_tree.selected_entity().is_some() =>
                             {
                                 self.transform_gizmo.mode = GizmoMode::Rotate;
-                                return;
+                                return Flow::Handled;
                             }
                             KeyCode::KeyR
                                 if self.modifiers.is_empty()
                                     && self.scene_tree.selected_entity().is_some() =>
                             {
                                 self.transform_gizmo.mode = GizmoMode::Scale;
-                                return;
+                                return Flow::Handled;
                             }
                             // Ctrl+R = Reload
                             KeyCode::KeyR if self.modifiers.control_key() => {
                                 if let Ok(mut state) = self.state.lock() {
                                     state.needs_reload = true;
                                 }
-                                return;
+                                return Flow::Handled;
                             }
                             _ => {}
                         }
@@ -2825,35 +2702,14 @@ impl ApplicationHandler for ViewerApp {
             }
         }
 
-        // Let egui handle the event first
-        if let Some(egui_winit) = &mut self.egui_winit {
-            if let Some(window) = &self.window {
-                let response = egui_winit.on_window_event(window, &event);
-                if response.consumed {
-                    return;
-                }
-            }
-        }
+        Flow::Pass
+    }
 
+    fn event(&mut self, event: &WindowEvent) -> Flow {
+        let is_editor = self.editor.is_some();
+        // Handle gizmo input priority: if gizmo is hovered/dragging, suppress camera orbit
+        let gizmo_active = self.transform_gizmo.is_dragging() || self.transform_gizmo.is_hovered();
         match event {
-            WindowEvent::CloseRequested => {
-                event_loop.exit();
-            }
-
-            WindowEvent::Resized(new_size) => {
-                if let Some(context) = &mut self.render_context {
-                    context.resize(new_size);
-                    self.camera.aspect = context.aspect_ratio();
-                    if let Some(renderer) = &mut self.scene_renderer {
-                        renderer.resize_postprocess(
-                            &context.device,
-                            new_size.width,
-                            new_size.height,
-                        );
-                    }
-                }
-            }
-
             WindowEvent::KeyboardInput { event, .. } => {
                 // Track WASD/QE held state for keyboard orbit
                 if let PhysicalKey::Code(code) = event.physical_key {
@@ -2889,13 +2745,13 @@ impl ApplicationHandler for ViewerApp {
                         PhysicalKey::Code(KeyCode::Escape)
                             if !self.transform_gizmo.is_dragging() =>
                         {
-                            event_loop.exit();
+                            return Flow::Exit;
                         }
 
                         PhysicalKey::Code(KeyCode::Space) if !is_editor => {
                             self.camera = Camera::new();
                             if let Some(context) = &self.render_context {
-                                self.camera.aspect = context.aspect_ratio();
+                                self.camera.aspect = context.aspect();
                             }
                             // Back to the authored framing (viewer default if
                             // the scene has no [camera] block)
@@ -2937,7 +2793,7 @@ impl ApplicationHandler for ViewerApp {
                 }
             }
 
-            WindowEvent::MouseInput { state, button, .. } => {
+            &WindowEvent::MouseInput { state, button, .. } => {
                 if is_editor {
                     if state == ElementState::Pressed {
                         self.handle_editor_mouse_press(button);
@@ -2965,7 +2821,7 @@ impl ApplicationHandler for ViewerApp {
                 }
             }
 
-            WindowEvent::CursorMoved { position, .. } => {
+            &WindowEvent::CursorMoved { position, .. } => {
                 if is_editor {
                     self.handle_editor_cursor_moved(position);
                 } else {
@@ -2992,7 +2848,7 @@ impl ApplicationHandler for ViewerApp {
                 }
             }
 
-            WindowEvent::MouseWheel { delta, .. } => {
+            &WindowEvent::MouseWheel { delta, .. } => {
                 let scroll = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 100.0,
@@ -3000,19 +2856,31 @@ impl ApplicationHandler for ViewerApp {
                 self.camera.zoom(scroll);
             }
 
-            WindowEvent::RedrawRequested => {
-                self.check_reload();
-                self.render();
-            }
-
             _ => {}
+        }
+        Flow::Handled
+    }
+
+    fn resized(&mut self, gpu: &Gpu) {
+        if let Some(renderer) = &mut self.scene_renderer {
+            renderer.resize_postprocess(&gpu.device, gpu.width, gpu.height);
+        }
+        self.render_context = Some(gpu.clone());
+    }
+
+    fn update(&mut self, _tick: Tick) {
+        self.check_reload();
+        self.frame_update();
+    }
+
+    fn draw(&mut self, target: &Target) {
+        if let Some(renderer) = &mut self.scene_renderer {
+            target.render(renderer, &self.camera);
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        self.frame_ui(ui);
     }
 }
 

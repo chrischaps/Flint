@@ -38,7 +38,7 @@ fn run_view(path: &str, schemas: &[String], prefix_override: Option<&str>) -> Re
     // Load schemas
     let (registry, schema_dirs) = super::common_args::load_schemas(Some(path), schemas)?;
     if schema_dirs.dirs.is_empty() {
-        println!("Warning: No schemas directories found");
+        eprintln!("Warning: No schemas directories found");
     }
 
     // Read and parse the prefab file

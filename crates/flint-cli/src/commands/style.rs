@@ -72,11 +72,9 @@ pub struct PreludeArgs {
 
 #[derive(Args)]
 pub struct ListArgs {
-    /// A scene (or the folder holding it) whose styles/ to include
+    /// A scene (or the folder holding it) whose styles/ to include (the
+    /// global --json prints the list as JSON)
     pub scene: Option<PathBuf>,
-    /// Print the list as JSON
-    #[arg(long)]
-    pub json: bool,
 }
 
 pub fn run(cmd: StyleCommands) -> Result<()> {
@@ -130,14 +128,24 @@ fn new(args: NewArgs) -> Result<()> {
         .with_context(|| format!("writing {}", toml_path.display()))?;
     std::fs::write(&wgsl_path, &files.wgsl)
         .with_context(|| format!("writing {}", wgsl_path.display()))?;
-    println!("wrote {}", toml_path.display());
-    println!("wrote {}", wgsl_path.display());
     // What it is now: the template checks, so this is the first green light
     custom::check_file(&toml_path).map_err(anyhow::Error::msg)?;
-    println!("ok: {name} checks. Next:");
-    println!("  flint style check {}", toml_path.display());
-    println!("  flint render <scene> --style {name}:amount=1");
-    Ok(())
+    let next = [
+        format!("flint style check {}", toml_path.display()),
+        format!("flint render <scene> --style {name}:amount=1"),
+    ];
+    let written = [shown(&toml_path), shown(&wgsl_path)];
+    let text = format!(
+        "wrote {}\nwrote {}\nok: {name} checks. Next:\n  {}\n  {}",
+        toml_path.display(),
+        wgsl_path.display(),
+        next[0],
+        next[1]
+    );
+    crate::output::emit(&crate::output::Answer::new(
+        text,
+        serde_json::json!({ "name": name, "written": written, "next": next }),
+    ))
 }
 
 /// The `.shader.toml` files `paths` names: files as given, folders' own
@@ -170,23 +178,37 @@ fn style_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 fn check(args: CheckArgs) -> Result<()> {
     let files = style_files(&args.paths)?;
     let mut failed = 0;
+    let mut checked = Vec::new();
     for file in &files {
         match custom::check_file(file) {
             Ok(report) => {
                 for warning in &report.warnings {
                     eprintln!("{warning}");
                 }
-                println!("ok: {}", file.display());
+                crate::output::say!("ok: {}", file.display());
+                checked.push(serde_json::json!({
+                    "file": shown(file),
+                    "ok": true,
+                    "warnings": report.warnings.iter().map(|w| w.to_string()).collect::<Vec<_>>(),
+                }));
             }
             Err(e) => {
                 eprintln!("error: {e}");
                 failed += 1;
+                checked.push(serde_json::json!({
+                    "file": shown(file),
+                    "ok": false,
+                    "error": e.to_string(),
+                }));
             }
         }
     }
+    crate::output::when_json(
+        || serde_json::json!({ "valid": failed == 0, "failed": failed, "styles": checked }),
+    );
     if failed > 0 {
         eprintln!("{failed} of {} styles failed", files.len());
-        std::process::exit(1);
+        return Err(crate::output::failed());
     }
     Ok(())
 }
@@ -208,13 +230,23 @@ fn prelude(args: PreludeArgs) -> Result<()> {
                 )
             })?,
     };
-    if args.composed {
+    let text = if args.composed {
         let path = &source.passes[pass].wgsl_path;
         let user =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        print!("{}", custom::compose_pass(&source, pass, &user).text);
+        custom::compose_pass(&source, pass, &user).text
     } else {
-        print!("{}", custom::prelude_pass(&source, pass));
+        custom::prelude_pass(&source, pass)
+    };
+    if crate::output::json() {
+        crate::output::document(&serde_json::json!({
+            "file": shown(&args.file),
+            "pass": source.passes[pass].name,
+            "composed": args.composed,
+            "wgsl": text,
+        }));
+    } else {
+        print!("{text}");
     }
     Ok(())
 }
@@ -237,13 +269,15 @@ fn list(args: ListArgs) -> Result<()> {
             eprintln!("warning: {message}");
         }
     }
-    if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&catalog::catalog_in(&assets))?
-        );
+    if crate::output::json() {
+        crate::output::document(&serde_json::to_value(catalog::catalog_in(&assets))?);
     } else {
         print!("{}", catalog::catalog_text_in(&assets));
     }
     Ok(())
+}
+
+/// A path as the JSON spells it: `/` on every platform.
+fn shown(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
 }

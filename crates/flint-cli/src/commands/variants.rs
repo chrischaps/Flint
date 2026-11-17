@@ -5,8 +5,8 @@
 //! ```text
 //! flint render examples/ascii_entities.scene.toml -o cmp.png \
 //!     --variant "as authored:" \
-//!     --variant "full screen: --ascii-scope screen" \
-//!     --variant "object grid: --ascii-grid object" \
+//!     --variant "full screen: --style ascii:scope=screen" \
+//!     --variant "object grid: --style ascii:grid=object" \
 //!     --zoom 800,380,1120,560@3
 //! ```
 //!
@@ -267,7 +267,7 @@ impl Zoom {
 ///
 /// [[variant]]
 /// label = "full screen"
-/// flags = "--ascii-scope screen"                    # or ["--ascii-scope", "screen"]
+/// flags = "--style ascii:scope=screen"             # or ["--style", "ascii:scope=screen"]
 /// ```
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -490,12 +490,12 @@ impl Outputs {
 
 /// The labelled sheet of every variant, and a sheet of each zoom.
 pub fn run(args: &RenderArgs, host: &mut RenderHost) -> Result<()> {
-    let mut loaded = match &args.variants {
+    let mut loaded = match &args.sweeps.variants {
         Some(path) => load_file(Path::new(path))?,
         None => Loaded::default(),
     };
-    loaded.variants.extend(args.variant.iter().cloned());
-    loaded.zooms.extend(args.zoom.iter().copied());
+    loaded.variants.extend(args.sweeps.variant.iter().cloned());
+    loaded.zooms.extend(args.sweeps.zoom.iter().copied());
     let Loaded {
         title,
         zooms,
@@ -504,7 +504,7 @@ pub fn run(args: &RenderArgs, host: &mut RenderHost) -> Result<()> {
     if variants.is_empty() {
         bail!(
             "--variants {}: the file lists no [[variant]]",
-            args.variants.as_deref().unwrap_or("")
+            args.sweeps.variants.as_deref().unwrap_or("")
         );
     }
     if variants.len() > MAX_VARIANTS {
@@ -532,7 +532,10 @@ pub fn run(args: &RenderArgs, host: &mut RenderHost) -> Result<()> {
         words.push(path.clone().into_os_string());
         let mut render = parse_render(words)
             .with_context(|| format!("variant '{}' ({})", variant.label, variant.flags_text()))?;
-        if render.variants.is_some() || !render.variant.is_empty() || !render.zoom.is_empty() {
+        if render.sweeps.variants.is_some()
+            || !render.sweeps.variant.is_empty()
+            || !render.sweeps.zoom.is_empty()
+        {
             bail!(
                 "variant '{}': a variant's flags can't hold --variant, --variants or --zoom",
                 variant.label
@@ -645,7 +648,7 @@ pub fn run(args: &RenderArgs, host: &mut RenderHost) -> Result<()> {
     sheet
         .save(&args.output)
         .with_context(|| format!("writing {}", args.output))?;
-    println!(
+    crate::output::say!(
         "Wrote {} variants as one {}x{} sheet to {} (each variant's frame beside it as {})",
         variants.len(),
         sheet.width(),
@@ -654,6 +657,10 @@ pub fn run(args: &RenderArgs, host: &mut RenderHost) -> Result<()> {
         outputs.file("<label>").display()
     );
 
+    let mut written = vec![args.output.replace('\\', "/")];
+    for slug in &slugs {
+        written.push(path_text(&outputs.file(slug)));
+    }
     for (k, zoom) in zooms.iter().enumerate() {
         let suffix = Outputs::zoom_suffix(k);
         let crops: Vec<RgbaImage> = frames.iter().map(|f| zoom.crop(f)).collect();
@@ -680,15 +687,29 @@ pub fn run(args: &RenderArgs, host: &mut RenderHost) -> Result<()> {
         sheet
             .save(&path)
             .with_context(|| format!("writing {}", path.display()))?;
-        println!(
+        crate::output::say!(
             "Wrote zoom {} as a {}x{} sheet to {}",
             zoom.describe(),
             sheet.width(),
             sheet.height(),
             path.display()
         );
+        written.push(path_text(&path));
     }
+    crate::output::when_json(|| {
+        serde_json::json!({
+            "scene": scene_name,
+            "output": args.output,
+            "variants": variants.iter().map(|v| v.label.clone()).collect::<Vec<_>>(),
+            "written": written,
+        })
+    });
     Ok(())
+}
+
+/// A path as the JSON spells it: `/` on every platform.
+fn path_text(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
 }
 
 /// Render each variant on `host`'s GPU and read its frame back.
@@ -700,7 +721,7 @@ fn draw_all(
     let n = variants.len();
     let mut frames = Vec::with_capacity(n);
     for (i, ((render, path), variant)) in parsed.into_iter().zip(variants).enumerate() {
-        println!(
+        crate::output::say!(
             "[{}/{n}] {}: {}",
             i + 1,
             variant.label,

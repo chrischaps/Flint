@@ -23,10 +23,11 @@ use super::gen_strip::{self, StripOptions};
 /// reads: the spec (`--print-spec`) or the JSON report (`--report json`, #185).
 static HUMAN_TO_STDERR: AtomicBool = AtomicBool::new(false);
 
-/// `println!` for the human lines; see [`HUMAN_TO_STDERR`].
+/// `println!` for the human lines; see [`HUMAN_TO_STDERR`]. The global
+/// `--json` sends them to stderr too (`crate::output`).
 macro_rules! say {
     ($($t:tt)*) => {
-        if HUMAN_TO_STDERR.load(Ordering::Relaxed) {
+        if HUMAN_TO_STDERR.load(Ordering::Relaxed) || crate::output::stdout_reserved() {
             eprintln!($($t)*)
         } else {
             println!($($t)*)
@@ -50,12 +51,13 @@ pub enum ReportFormat {
         .args(["ai_assist", "ai_refine", "ai_create"])
         .multiple(true)
 ))]
-#[command(group(ArgGroup::new("catalog").args(["list_generators", "describe"])))]
 pub struct GenArgs {
     /// Path to a .procgen.toml spec file (not needed with --ai-create,
     /// --cost-report, --list-generators or --describe), or a .glyphs.toml
     /// glyph set to preview: its atlas, ramps and a specimen as one sheet
-    /// (-o x.png) or every piece (-o dir/)
+    /// (-o x.png) or every piece (-o dir/), or a .terrain.toml to bake: its
+    /// 16-bit heightmap (-o x.png, or <name>.png in -o dir/) and x_splat.png
+    /// beside it
     #[arg(required_unless_present_any = ["ai_create", "cost_report", "list_generators", "describe"])]
     pub spec: Option<String>,
 
@@ -79,19 +81,11 @@ pub struct GenArgs {
     )]
     pub describe: Option<String>,
 
-    /// With --list-generators or --describe: one JSON document on stdout
-    /// (--describe: the schema itself, and texture_v1's ops)
-    #[arg(long, requires = "catalog", help_heading = "Generators")]
-    pub json: bool,
-
     /// With --describe: the parameters as Markdown tables, as the
-    /// flint-procgen README's catalog prints them
-    #[arg(
-        long,
-        requires = "describe",
-        conflicts_with = "json",
-        help_heading = "Generators"
-    )]
+    /// flint-procgen README's catalog prints them. (The global --json gives
+    /// either catalog as one JSON document: --describe's is the schema
+    /// itself, and texture_v1's ops.)
+    #[arg(long, requires = "describe", help_heading = "Generators")]
     pub markdown: bool,
 
     /// Ask the AI agent to review the spec (interpret) and then improve it
@@ -177,8 +171,9 @@ pub struct GenArgs {
     #[arg(long, value_name = "USD", value_parser = parse_usd, help_heading = "Cost tracking")]
     pub max_cost: Option<f64>,
 
-    /// Print what AI calls have cost, from .flint/procgen_costs.json: total,
-    /// per provider, per model, per spec
+    /// Print what AI calls have cost, from the project's .flint/ai_costs.jsonl
+    /// (procgen, looks and assets): total, per provider, per model, per spec
+    /// or asset
     #[arg(long, help_heading = "Cost tracking")]
     pub cost_report: bool,
 
@@ -317,34 +312,26 @@ fn parse_format(s: &str) -> std::result::Result<String, String> {
 }
 
 fn parse_usd(s: &str) -> std::result::Result<f64, String> {
-    let v: f64 = s
-        .trim()
-        .trim_start_matches('$')
-        .parse()
-        .map_err(|_| format!("'{s}' isn't an amount in USD (e.g. 0.50)"))?;
-    if !v.is_finite() || v < 0.0 {
-        return Err(format!("--max-cost must be a non-negative amount, not {s}"));
-    }
-    Ok(v)
+    super::ai_costs::parse_usd(s)
 }
 
 pub fn run(args: GenArgs) -> Result<()> {
+    // The global --json (#710) asks for either catalog as one document
+    let as_json = crate::output::json();
     if args.list_generators {
-        return gen_catalog::list(&GeneratorRegistry::with_built_ins(), args.json);
+        return gen_catalog::list(&GeneratorRegistry::with_built_ins(), as_json);
     }
     if let Some(name) = &args.describe {
-        let format = match (args.json, args.markdown) {
-            (true, _) => gen_catalog::Format::Json,
-            (_, true) => gen_catalog::Format::Markdown,
-            _ => gen_catalog::Format::Text,
+        let format = match (as_json, args.markdown) {
+            (true, true) => bail!("--markdown and --json each choose the form: give one"),
+            (true, false) => gen_catalog::Format::Json,
+            (false, true) => gen_catalog::Format::Markdown,
+            (false, false) => gen_catalog::Format::Text,
         };
         return gen_catalog::describe(&GeneratorRegistry::with_built_ins(), name, format);
     }
     if args.cost_report {
-        return gen_ai::cost_report(
-            &flint_procgen_ai::CostLedger::open_default(),
-            args.since.as_deref(),
-        );
+        return super::ai_costs::cost_report(&super::ai_costs::ledger(), args.since.as_deref());
     }
     if args
         .spec
@@ -353,8 +340,21 @@ pub fn run(args: GenArgs) -> Result<()> {
     {
         return super::glyph_preview::run(&args);
     }
-    let json = args.report == Some(ReportFormat::Json);
+    if args
+        .spec
+        .as_deref()
+        .is_some_and(super::terrain_gen::is_terrain_spec)
+    {
+        return super::terrain_gen::run(&args);
+    }
+    // `--report json` is a JSON line a variant; the global --json is one
+    // document for the run, with each variant's report in it
+    let document = crate::output::json();
+    let json = args.report == Some(ReportFormat::Json) && !document;
     HUMAN_TO_STDERR.store(args.print_spec || json, Ordering::Relaxed);
+    if document && args.print_spec {
+        bail!("--print-spec prints the spec as TOML on stdout: drop --json, or --save-spec <path>");
+    }
 
     let steps = gen_ai::Steps::of(&args);
     let loaded = match &args.spec {
@@ -375,16 +375,18 @@ pub fn run(args: GenArgs) -> Result<()> {
         if args.dry_run {
             // With --print-spec a dry run has no spec to print, so the plan
             // keeps stdout; only the JSON report needs it kept clear.
-            for line in gen_ai::plan_lines(&config, steps, &args) {
-                if json {
+            let plan = gen_ai::plan_lines(&config, steps, &args);
+            for line in &plan {
+                if json || document {
                     eprintln!("{line}");
                 } else {
                     println!("{line}");
                 }
             }
+            crate::output::when_json(|| serde_json::json!({ "dry_run": true, "plan": plan }));
             return Ok(());
         }
-        let meter = gen_ai::build_meter(&config, &args);
+        let meter = gen_ai::build_meter(&config, &args)?;
         let agent = gen_ai::build_agent(config, meter.clone(), args.refine_rounds)?;
         gen_ai::run_steps(&args, agent.as_ref(), &meter, loaded)?
     } else {
@@ -535,6 +537,22 @@ pub fn run(args: GenArgs) -> Result<()> {
                 living.pose_ring
             );
         }
+        crate::output::when_json(|| {
+            serde_json::json!({
+                "dry_run": true,
+                "spec": spec.meta.name,
+                "generator": spec.generator,
+                "seed": describe_seed(&spec),
+                "output": kind_noun(kind),
+                "format": format,
+                "estimate": {
+                    "vertices": cost.estimated_vertices,
+                    "triangles": cost.estimated_triangles,
+                    "texture_bytes": cost.estimated_texture_bytes,
+                    "generation_ms": cost.estimated_generation_ms,
+                },
+            })
+        });
         return Ok(());
     }
 
@@ -592,6 +610,8 @@ pub fn run(args: GenArgs) -> Result<()> {
 
     let (mut generated, mut cached) = (0u32, 0u32);
     let mut validation_failed = false;
+    // Under --json, each variant as the document lists it
+    let mut made: Vec<serde_json::Value> = Vec::new();
     for (i, (seed, out_path)) in variants.iter().enumerate() {
         let seed = *seed;
         let tag = batch_total
@@ -635,22 +655,31 @@ pub fn run(args: GenArgs) -> Result<()> {
                             if k == 1 { "" } else { "s" }
                         ),
                     }
+                    let mut validation = serde_json::Value::Null;
                     if args.validate {
                         say!("  validation skipped for a cached result (--force regenerates)");
+                        let line = VariantReport {
+                            spec: &spec.meta.name,
+                            seed,
+                            output: out_path.display().to_string(),
+                            verdict: Verdict::Skipped,
+                            reason: Some("cached result; --force regenerates"),
+                            passed: 0,
+                            warnings: 0,
+                            failed: 0,
+                            report: &ValidationReport { checks: Vec::new() },
+                        };
                         if json {
-                            emit_json(&VariantReport {
-                                spec: &spec.meta.name,
-                                seed,
-                                output: out_path.display().to_string(),
-                                verdict: Verdict::Skipped,
-                                reason: Some("cached result; --force regenerates"),
-                                passed: 0,
-                                warnings: 0,
-                                failed: 0,
-                                report: &ValidationReport { checks: Vec::new() },
-                            })?;
+                            emit_json(&line)?;
                         }
+                        validation = serde_json::to_value(&line)?;
                     }
+                    made.push(serde_json::json!({
+                        "seed": seed,
+                        "output": shown_path(out_path),
+                        "cached": true,
+                        "validation": validation,
+                    }));
                     cached += 1;
                     continue;
                 }
@@ -668,6 +697,7 @@ pub fn run(args: GenArgs) -> Result<()> {
 
         let (output, files) = generate_one(&seed_spec, &registry, out_path)?;
         generated += 1;
+        let mut validation = serde_json::Value::Null;
 
         if let (Some(store), Some(sh)) = (&store, &spec_hash) {
             let prov = store.register(&seed_spec, sh, seed, revision, kind, &files)?;
@@ -684,31 +714,55 @@ pub fn run(args: GenArgs) -> Result<()> {
                 args.style_guide.as_deref(),
                 args.strict,
             )?;
+            let line = VariantReport {
+                spec: &spec.meta.name,
+                seed,
+                output: out_path.display().to_string(),
+                verdict: if passed { Verdict::Pass } else { Verdict::Fail },
+                reason: None,
+                passed: report.count_passed(),
+                warnings: report.count_warnings(),
+                failed: report.count_failed(),
+                report: &report,
+            };
             if json {
-                emit_json(&VariantReport {
-                    spec: &spec.meta.name,
-                    seed,
-                    output: out_path.display().to_string(),
-                    verdict: if passed { Verdict::Pass } else { Verdict::Fail },
-                    reason: None,
-                    passed: report.count_passed(),
-                    warnings: report.count_warnings(),
-                    failed: report.count_failed(),
-                    report: &report,
-                })?;
+                emit_json(&line)?;
             }
+            validation = serde_json::to_value(&line)?;
             validation_failed |= !passed;
         }
+        made.push(serde_json::json!({
+            "seed": seed,
+            "output": shown_path(out_path),
+            "cached": false,
+            "files": files.iter().map(|f| shown_path(&f.path)).collect::<Vec<_>>(),
+            "validation": validation,
+        }));
     }
 
     if batch_total.is_some() {
         say!();
         say!("Batch complete: {generated} generated, {cached} cached");
     }
+    crate::output::when_json(|| {
+        serde_json::json!({
+            "spec": spec.meta.name,
+            "generator": spec.generator,
+            "generated": generated,
+            "cached": cached,
+            "valid": !validation_failed,
+            "variants": made,
+        })
+    });
     if validation_failed {
-        std::process::exit(1);
+        return Err(crate::output::failed());
     }
     Ok(())
+}
+
+/// A path as the JSON spells it: `/` on every platform.
+fn shown_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
 }
 
 /// Create a copy of the spec with a fixed seed.

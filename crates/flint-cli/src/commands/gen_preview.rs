@@ -4,10 +4,8 @@
 //! (for texture generators), plus an auto-generated parameter editor panel.
 //! Parameters are derived from each generator's `param_schema()` JSON Schema.
 
-use flint_render::AcquireFrame;
-use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -20,16 +18,14 @@ use flint_procgen::{
     ProcGenSpec, SeedConfig, SeedMode,
 };
 use flint_render::{
-    Camera, DebugMode, OrbitCameraController, RenderContext, RendererConfig, SceneRenderer,
-    Vertex as RenderVertex,
+    Camera, DebugMode, OrbitCameraController, RendererConfig, SceneRenderer, Vertex as RenderVertex,
 };
-use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
-use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
+use flint_viewer::host::{
+    self, Editor, Flow, Gpu, HostOptions, InitCx, StillOptions, Target, Tick,
+};
 use winit::event::{ElementState, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::Window;
 
 // ─── CLI args ───────────────────────────────────────────────────────────────
 
@@ -59,7 +55,33 @@ pub struct GenPreviewArgs {
     pub auto_orbit: bool,
 }
 
+/// `flint gen-preview <spec>`: the previewer in a window.
 pub fn run(args: GenPreviewArgs) -> Result<()> {
+    let options = HostOptions {
+        width: args.width,
+        height: args.height,
+        camera: Default::default(),
+        auto_orbit: args.auto_orbit,
+    };
+    host::run(editor(args)?, options)
+}
+
+/// Whether the spec at `path` makes images (a texture generator) rather
+/// than a mesh: `flint edit` takes no camera flags for one (#712).
+pub fn draws_images(path: &Path) -> Result<bool> {
+    let spec = ProcGenSpec::from_file(path)
+        .with_context(|| format!("failed to load spec from {}", path.display()))?;
+    let mut registry = GeneratorRegistry::new();
+    flint_procgen::register_built_in_generators(&mut registry);
+    let generator = registry
+        .get(&spec.generator)
+        .with_context(|| format!("unknown generator '{}'", spec.generator))?;
+    Ok(generator.output_kind() == flint_procgen::OutputKind::Image)
+}
+
+/// The procgen previewer for `args.spec`, for [`flint_viewer::host`] to
+/// open in a window or draw as a `--render` still.
+pub fn editor(args: GenPreviewArgs) -> Result<GenPreviewApp> {
     let spec_path = PathBuf::from(&args.spec);
     let mut spec = ProcGenSpec::from_file(&spec_path)
         .with_context(|| format!("failed to load spec from {}", spec_path.display()))?;
@@ -88,44 +110,13 @@ pub fn run(args: GenPreviewArgs) -> Result<()> {
         _ => toml::map::Map::new(),
     };
 
-    // File watcher
-    let reload_flag = Arc::new(Mutex::new(false));
-    let _watcher = {
-        let flag = Arc::clone(&reload_flag);
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut debouncer = new_debouncer(Duration::from_millis(500), tx)?;
-        debouncer
-            .watcher()
-            .watch(spec_path.as_ref(), RecursiveMode::NonRecursive)?;
-        std::thread::spawn(move || {
-            for result in rx {
-                match result {
-                    Ok(_) => {
-                        if let Ok(mut f) = flag.lock() {
-                            *f = true;
-                        }
-                    }
-                    Err(e) => tracing::warn!("Watch error: {:?}", e),
-                }
-            }
-        });
-        Some(debouncer)
-    };
-
-    let auto_orbit = args.auto_orbit;
-
-    let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
-
-    let mut app = GenPreviewApp {
+    Ok(GenPreviewApp {
         spec,
         spec_path,
         registry,
         field_specs,
         param_schema: schema,
         output_kind,
-        reload_flag,
-        _watcher,
 
         // Param editor
         params: initial_params,
@@ -154,22 +145,13 @@ pub fn run(args: GenPreviewArgs) -> Result<()> {
         render_context: None,
         scene_renderer: None,
         camera: Camera::new(),
-
-        // Input
         orbit: OrbitCameraController::new(),
-        last_frame_time: Instant::now(),
 
         // egui
         egui_ctx: egui::Context::default(),
-        egui_winit: None,
-        egui_renderer: None,
         egui_textures: Vec::new(),
         show_ui: true,
-
-        // FPS
-        frame_times: VecDeque::new(),
         fps: 0.0,
-        last_fps_update: Instant::now(),
 
         // LOD
         lod_count: 0,
@@ -180,16 +162,12 @@ pub fn run(args: GenPreviewArgs) -> Result<()> {
 
         // Status message
         status_message: None,
-    };
-    app.orbit.auto_orbit = auto_orbit;
-
-    event_loop.run_app(&mut app)?;
-    Ok(())
+    })
 }
 
 // ─── App state ──────────────────────────────────────────────────────────────
 
-struct GenPreviewApp {
+pub struct GenPreviewApp {
     spec: ProcGenSpec,
     spec_path: PathBuf,
     registry: GeneratorRegistry,
@@ -198,9 +176,6 @@ struct GenPreviewApp {
     param_schema: serde_json::Value,
     #[allow(dead_code)]
     output_kind: flint_procgen::OutputKind,
-    reload_flag: Arc<Mutex<bool>>,
-    #[allow(dead_code)]
-    _watcher: Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>>,
 
     // Param editor
     params: toml::map::Map<String, toml::Value>,
@@ -223,28 +198,20 @@ struct GenPreviewApp {
     gen_time_ms: f64,
     last_world: Option<FlintWorld>,
 
-    // Window / GPU
+    // Window / GPU (the host's, #712)
     args: GenPreviewArgs,
     window: Option<Arc<Window>>,
-    render_context: Option<RenderContext>,
+    render_context: Option<Gpu>,
     scene_renderer: Option<SceneRenderer>,
     camera: Camera,
-
-    // Input
     orbit: OrbitCameraController,
-    last_frame_time: Instant,
 
     // egui
     egui_ctx: egui::Context,
-    egui_winit: Option<egui_winit::State>,
-    egui_renderer: Option<egui_wgpu::Renderer>,
     egui_textures: Vec<(String, egui::TextureHandle)>,
     show_ui: bool,
-
-    // FPS
-    frame_times: VecDeque<Instant>,
+    /// The host's frames-a-second readout
     fps: f32,
-    last_fps_update: Instant,
 
     // LOD
     lod_count: usize,
@@ -260,59 +227,6 @@ struct GenPreviewApp {
 // ─── Initialization ─────────────────────────────────────────────────────────
 
 impl GenPreviewApp {
-    fn initialize(&mut self, event_loop: &ActiveEventLoop) {
-        let title = format!("Flint Gen Preview \u{2014} {}", self.spec.meta.name);
-
-        let window = Arc::new(
-            event_loop
-                .create_window(
-                    Window::default_attributes()
-                        .with_title(&title)
-                        .with_inner_size(PhysicalSize::new(self.args.width, self.args.height)),
-                )
-                .expect("Failed to create window"),
-        );
-
-        let context = pollster::block_on(RenderContext::new(window.clone()))
-            .expect("Failed to create render context");
-
-        self.camera.aspect = context.aspect_ratio();
-
-        let renderer = SceneRenderer::new(
-            &context,
-            RendererConfig {
-                show_grid: !self.args.no_grid,
-                ..Default::default()
-            },
-        );
-
-        // egui
-        let egui_winit = egui_winit::State::new(
-            self.egui_ctx.clone(),
-            egui::ViewportId::ROOT,
-            &window,
-            Some(window.scale_factor() as f32),
-            None,
-            None,
-        );
-        let egui_renderer = egui_wgpu::Renderer::new(
-            &context.device,
-            context.config.format,
-            egui_wgpu::RendererOptions {
-                depth_stencil_format: None,
-                msaa_samples: 1,
-                dithering: false,
-                ..Default::default()
-            },
-        );
-        self.egui_winit = Some(egui_winit);
-        self.egui_renderer = Some(egui_renderer);
-
-        self.window = Some(window);
-        self.render_context = Some(context);
-        self.scene_renderer = Some(renderer);
-    }
-
     // ─── Generation ─────────────────────────────────────────────────────
 
     fn regenerate(&mut self) {
@@ -597,6 +511,8 @@ impl GenPreviewApp {
 
     // ─── File watching ──────────────────────────────────────────────────
 
+    /// The spec changed on disk (the host's watch): read it again, unless
+    /// the change was this editor's own save.
     fn check_file_reload(&mut self) {
         // Skip if watcher is paused (after save)
         if let Some(until) = self.watcher_paused_until {
@@ -606,17 +522,7 @@ impl GenPreviewApp {
             self.watcher_paused_until = None;
         }
 
-        let needs_reload = self
-            .reload_flag
-            .lock()
-            .map(|mut f| {
-                let v = *f;
-                *f = false;
-                v
-            })
-            .unwrap_or(false);
-
-        if needs_reload {
+        {
             match ProcGenSpec::from_file(&self.spec_path) {
                 Ok(new_spec) => {
                     // Update params from disk
@@ -854,20 +760,7 @@ impl GenPreviewApp {
 
     // ─── egui parameter panel ───────────────────────────────────────────
 
-    fn render_egui(&mut self, target_view: &wgpu::TextureView) {
-        let window = match &self.window {
-            Some(w) => w.clone(),
-            None => return,
-        };
-        let context = match &self.render_context {
-            Some(c) => c,
-            None => return,
-        };
-        let egui_winit = match &mut self.egui_winit {
-            Some(ew) => ew,
-            None => return,
-        };
-
+    fn render_egui(&mut self, ui: &mut egui::Ui) {
         // Snapshot state for the closure
         let mut params = self.params.clone();
         let field_specs = self.field_specs.clone();
@@ -896,10 +789,7 @@ impl GenPreviewApp {
         let mut want_reset = false;
         let mut want_randomize = false;
 
-        let raw_input = egui_winit.take_egui_input(&window);
-        // A real frame: its texture updates are uploaded below (#944)
-        #[allow(clippy::disallowed_methods)]
-        let mut full_output = self.egui_ctx.run_ui(raw_input, |ui| {
+        {
             // Left side panel — parameter editor
             egui::Panel::left("param_panel")
                 .default_size(320.0)
@@ -1138,73 +1028,7 @@ impl GenPreviewApp {
                         });
                     });
             }
-        });
-
-        // Tessellate and render egui (before applying mutations — egui_winit borrow ends here)
-        egui_winit.handle_platform_output(&window, full_output.platform_output);
-
-        let paint_jobs = self
-            .egui_ctx
-            .tessellate(full_output.shapes, full_output.pixels_per_point);
-
-        let screen_descriptor = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [context.config.width, context.config.height],
-            pixels_per_point: full_output.pixels_per_point,
-        };
-
-        let mut egui_renderer = self.egui_renderer.take().unwrap();
-
-        let mut encoder = context
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("egui Encoder"),
-            });
-
-        for (id, deltas) in &full_output.textures_delta.set {
-            for image_delta in deltas {
-                egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
-            }
         }
-
-        egui_renderer.update_buffers(
-            &context.device,
-            &context.queue,
-            &mut encoder,
-            &paint_jobs,
-            &screen_descriptor,
-        );
-
-        {
-            let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("egui Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-
-            let mut render_pass = render_pass.forget_lifetime();
-            egui_renderer.render(&mut render_pass, &paint_jobs, &screen_descriptor);
-        }
-
-        context.queue.submit(std::iter::once(encoder.finish()));
-
-        for id in &full_output.textures_delta.free {
-            egui_renderer.free_texture(id);
-        }
-        // Applied above: egui 0.36 asserts when a delta drops unhandled (#944)
-        full_output.textures_delta.clear();
-
-        self.egui_renderer = Some(egui_renderer);
 
         // Apply deferred mutations (after egui_winit borrow is released)
         if dirty {
@@ -1254,314 +1078,225 @@ impl GenPreviewApp {
     }
 }
 
-// ─── ApplicationHandler ─────────────────────────────────────────────────────
+// ─── The host's editor (#712) ───────────────────────────────────────────────
 
-impl ApplicationHandler for GenPreviewApp {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_none() {
-            self.initialize(event_loop);
-        }
+impl Editor for GenPreviewApp {
+    fn title(&self) -> String {
+        format!("Flint Gen Preview \u{2014} {}", self.spec.meta.name)
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        // Forward to egui first
-        if let Some(egui_winit) = &mut self.egui_winit {
-            if let Some(window) = &self.window {
-                let response = egui_winit.on_window_event(window, &event);
-                if response.consumed {
-                    return;
+    fn init(&mut self, cx: InitCx) -> Result<()> {
+        self.camera.aspect = cx.gpu.aspect();
+        self.scene_renderer = Some(cx.gpu.scene_renderer(RendererConfig {
+            show_grid: !self.args.no_grid,
+            ..Default::default()
+        }));
+        self.egui_ctx = cx.egui.clone();
+        self.window = cx.window;
+        self.render_context = Some(cx.gpu.clone());
+        // The first generation frames the camera, under the camera flags
+        self.regenerate();
+        Ok(())
+    }
+
+    fn orbit(&mut self) -> Option<(&mut Camera, &mut OrbitCameraController)> {
+        Some((&mut self.camera, &mut self.orbit))
+    }
+
+    fn watched_files(&self) -> Vec<PathBuf> {
+        vec![self.spec_path.clone()]
+    }
+
+    fn on_file_changed(&mut self) {
+        self.check_file_reload();
+    }
+
+    fn resized(&mut self, gpu: &Gpu) {
+        if let Some(renderer) = &mut self.scene_renderer {
+            renderer.resize_postprocess(&gpu.device, gpu.width, gpu.height);
+        }
+        self.render_context = Some(gpu.clone());
+    }
+
+    fn event(&mut self, event: &WindowEvent) -> Flow {
+        let WindowEvent::KeyboardInput { event, .. } = event else {
+            return Flow::Pass;
+        };
+        if event.state != ElementState::Pressed {
+            return Flow::Pass;
+        }
+        match event.physical_key {
+            PhysicalKey::Code(KeyCode::Escape) => return Flow::Exit,
+            PhysicalKey::Code(KeyCode::Tab) => {
+                self.show_ui = !self.show_ui;
+            }
+            PhysicalKey::Code(KeyCode::KeyR) => {
+                self.current_seed = random_seed();
+                self.mark_dirty();
+            }
+            PhysicalKey::Code(KeyCode::KeyS)
+                if !event.repeat && event.state == ElementState::Pressed =>
+            {
+                let mods = self.egui_ctx.input(|i| i.modifiers);
+                if mods.command && mods.shift {
+                    // Save As (Ctrl+Shift+S)
+                    self.save_spec_as();
+                } else if mods.command {
+                    // Save spec (Ctrl+S)
+                    self.save_spec();
                 }
             }
-        }
-
-        match event {
-            WindowEvent::CloseRequested => {
-                event_loop.exit();
+            PhysicalKey::Code(KeyCode::KeyE)
+                if !event.repeat && event.state == ElementState::Pressed =>
+            {
+                // Export output (Ctrl+E)
+                if self.egui_ctx.input(|i| i.modifiers.command) {
+                    self.export_output();
+                }
             }
-
-            WindowEvent::Resized(physical_size) => {
-                if let Some(ctx) = &mut self.render_context {
-                    ctx.resize(physical_size);
-                    self.camera.aspect = ctx.aspect_ratio();
-                    if let Some(renderer) = &mut self.scene_renderer {
-                        renderer.resize_postprocess(
-                            &ctx.device,
-                            physical_size.width,
-                            physical_size.height,
+            PhysicalKey::Code(KeyCode::Space) => {
+                // Reset camera / texture view
+                if let Some(mesh) = &self.last_mesh {
+                    let mesh_clone = mesh.clone();
+                    self.auto_fit_to_mesh(&mesh_clone);
+                }
+                self.texture_zoom = 1.0;
+                self.texture_offset = [0.0, 0.0];
+            }
+            PhysicalKey::Code(KeyCode::KeyT) => {
+                if !self.last_images.is_empty() {
+                    self.texture_tiled = !self.texture_tiled;
+                }
+            }
+            PhysicalKey::Code(KeyCode::F1) => {
+                if let Some(renderer) = &mut self.scene_renderer {
+                    let next = renderer.debug_state().mode.next();
+                    renderer.set_debug_mode(next);
+                    println!("Debug mode: {}", next.label());
+                    if let (Some(world), Some(context)) = (&self.last_world, &self.render_context) {
+                        renderer.prepare(
+                            &context.device,
+                            &context.queue,
+                            world,
+                            &flint_render::FrameInputs::default(),
                         );
                     }
                 }
             }
-
-            WindowEvent::KeyboardInput { event, .. } => {
-                // Let orbit controller track WASD/QE held state
-                self.orbit.handle_key_event(&event);
-
-                if event.state == ElementState::Pressed {
-                    match event.physical_key {
-                        PhysicalKey::Code(KeyCode::Escape) => {
-                            event_loop.exit();
-                        }
-                        PhysicalKey::Code(KeyCode::Tab) => {
-                            self.show_ui = !self.show_ui;
-                        }
-                        PhysicalKey::Code(KeyCode::KeyR) => {
-                            self.current_seed = random_seed();
-                            self.mark_dirty();
-                        }
-                        PhysicalKey::Code(KeyCode::KeyS)
-                            if !event.repeat && event.state == ElementState::Pressed =>
-                        {
-                            let mods = self.egui_ctx.input(|i| i.modifiers);
-                            if mods.command && mods.shift {
-                                // Save As (Ctrl+Shift+S)
-                                self.save_spec_as();
-                            } else if mods.command {
-                                // Save spec (Ctrl+S)
-                                self.save_spec();
-                            }
-                        }
-                        PhysicalKey::Code(KeyCode::KeyE)
-                            if !event.repeat && event.state == ElementState::Pressed =>
-                        {
-                            // Export output (Ctrl+E)
-                            if self.egui_ctx.input(|i| i.modifiers.command) {
-                                self.export_output();
-                            }
-                        }
-                        PhysicalKey::Code(KeyCode::Space) => {
-                            // Reset camera / texture view
-                            if let Some(mesh) = &self.last_mesh {
-                                let mesh_clone = mesh.clone();
-                                self.auto_fit_to_mesh(&mesh_clone);
-                            }
-                            self.texture_zoom = 1.0;
-                            self.texture_offset = [0.0, 0.0];
-                        }
-                        PhysicalKey::Code(KeyCode::KeyT) => {
-                            if !self.last_images.is_empty() {
-                                self.texture_tiled = !self.texture_tiled;
-                            }
-                        }
-                        PhysicalKey::Code(KeyCode::F1) => {
-                            if let Some(renderer) = &mut self.scene_renderer {
-                                let next = renderer.debug_state().mode.next();
-                                renderer.set_debug_mode(next);
-                                println!("Debug mode: {}", next.label());
-                                if let (Some(world), Some(context)) =
-                                    (&self.last_world, &self.render_context)
-                                {
-                                    renderer.prepare(
-                                        &context.device,
-                                        &context.queue,
-                                        world,
-                                        &flint_render::FrameInputs::default(),
-                                    );
-                                }
-                            }
-                        }
-                        PhysicalKey::Code(KeyCode::F2) => {
-                            if let Some(renderer) = &mut self.scene_renderer {
-                                let mode =
-                                    if renderer.debug_state().mode == DebugMode::WireframeOverlay {
-                                        DebugMode::Pbr
-                                    } else {
-                                        DebugMode::WireframeOverlay
-                                    };
-                                renderer.set_debug_mode(mode);
-                                println!("Debug mode: {}", mode.label());
-                                if let (Some(world), Some(context)) =
-                                    (&self.last_world, &self.render_context)
-                                {
-                                    renderer.prepare(
-                                        &context.device,
-                                        &context.queue,
-                                        world,
-                                        &flint_render::FrameInputs::default(),
-                                    );
-                                }
-                            }
-                        }
-                        PhysicalKey::Code(KeyCode::F3) => {
-                            if let Some(renderer) = &mut self.scene_renderer {
-                                let on = renderer.toggle_normal_arrows();
-                                println!("Normal arrows: {}", if on { "ON" } else { "OFF" });
-                                if let (Some(world), Some(context)) =
-                                    (&self.last_world, &self.render_context)
-                                {
-                                    renderer.prepare(
-                                        &context.device,
-                                        &context.queue,
-                                        world,
-                                        &flint_render::FrameInputs::default(),
-                                    );
-                                }
-                            }
-                        }
-                        PhysicalKey::Code(KeyCode::F4) => {
-                            if let Some(renderer) = &mut self.scene_renderer {
-                                let on = renderer.toggle_skeleton_overlay();
-                                println!("Skeleton overlay: {}", if on { "ON" } else { "OFF" });
-                            }
-                            self.update_skeleton_overlay();
-                        }
-                        PhysicalKey::Code(KeyCode::KeyO) => {
-                            self.orbit.auto_orbit = !self.orbit.auto_orbit;
-                            println!(
-                                "Auto-orbit: {}",
-                                if self.orbit.auto_orbit { "ON" } else { "OFF" }
-                            );
-                        }
-                        PhysicalKey::Code(KeyCode::BracketRight) => {
-                            self.orbit.adjust_auto_orbit_speed(1.5);
-                            println!("Auto-orbit speed: {:.2} rad/s", self.orbit.auto_orbit_speed);
-                        }
-                        PhysicalKey::Code(KeyCode::BracketLeft) => {
-                            self.orbit.adjust_auto_orbit_speed(1.0 / 1.5);
-                            println!("Auto-orbit speed: {:.2} rad/s", self.orbit.auto_orbit_speed);
-                        }
-                        _ => {}
+            PhysicalKey::Code(KeyCode::F2) => {
+                if let Some(renderer) = &mut self.scene_renderer {
+                    let mode = if renderer.debug_state().mode == DebugMode::WireframeOverlay {
+                        DebugMode::Pbr
+                    } else {
+                        DebugMode::WireframeOverlay
+                    };
+                    renderer.set_debug_mode(mode);
+                    println!("Debug mode: {}", mode.label());
+                    if let (Some(world), Some(context)) = (&self.last_world, &self.render_context) {
+                        renderer.prepare(
+                            &context.device,
+                            &context.queue,
+                            world,
+                            &flint_render::FrameInputs::default(),
+                        );
                     }
                 }
             }
-
-            ref ev @ (WindowEvent::MouseInput { .. }
-            | WindowEvent::CursorMoved { .. }
-            | WindowEvent::MouseWheel { .. }) => {
-                self.orbit
-                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_egui());
-            }
-
-            WindowEvent::RedrawRequested => {
-                let now = Instant::now();
-                let dt = self.last_frame_time.elapsed().as_secs_f32();
-                self.last_frame_time = now;
-
-                // Apply held keyboard orbit/zoom
-                self.orbit.update(&mut self.camera, dt);
-
-                // Texture zoom via Q/E keys (same keys as 3D zoom)
-                if !self.last_images.is_empty() {
-                    let zoom_speed = 2.0;
-                    if self.orbit.is_key_held(KeyCode::KeyE) {
-                        self.texture_zoom = (self.texture_zoom * (1.0 + zoom_speed * dt)).min(20.0);
+            PhysicalKey::Code(KeyCode::F3) => {
+                if let Some(renderer) = &mut self.scene_renderer {
+                    let on = renderer.toggle_normal_arrows();
+                    println!("Normal arrows: {}", if on { "ON" } else { "OFF" });
+                    if let (Some(world), Some(context)) = (&self.last_world, &self.render_context) {
+                        renderer.prepare(
+                            &context.device,
+                            &context.queue,
+                            world,
+                            &flint_render::FrameInputs::default(),
+                        );
                     }
-                    if self.orbit.is_key_held(KeyCode::KeyQ) {
-                        self.texture_zoom = (self.texture_zoom * (1.0 - zoom_speed * dt)).max(0.1);
-                    }
-                }
-
-                // FPS tracking
-                self.frame_times.push_back(now);
-                while self
-                    .frame_times
-                    .front()
-                    .is_some_and(|t| now.duration_since(*t) > Duration::from_secs(1))
-                {
-                    self.frame_times.pop_front();
-                }
-                if now.duration_since(self.last_fps_update) > Duration::from_millis(250) {
-                    self.fps = self.frame_times.len() as f32;
-                    self.last_fps_update = now;
-                }
-
-                // File watcher
-                self.check_file_reload();
-
-                // Debounced regeneration
-                if self.should_regenerate() {
-                    self.regenerate();
-                }
-
-                let context = match &self.render_context {
-                    Some(c) => c,
-                    None => return,
-                };
-
-                let output = match context.surface.acquire() {
-                    Ok(o) => o,
-                    Err(
-                        flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated,
-                    ) => {
-                        let size = context.size;
-                        if let Some(ctx) = &mut self.render_context {
-                            ctx.resize(size);
-                        }
-                        return;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Surface error: {:?}", e);
-                        return;
-                    }
-                };
-
-                let view = output
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default());
-
-                // 3D render (mesh mode)
-                if self.last_mesh.is_some() {
-                    if let Some(renderer) = &mut self.scene_renderer {
-                        let _ = renderer.render(context, &self.camera, &view);
-                    }
-                } else {
-                    // Clear to dark gray for texture-only mode
-                    let context = self.render_context.as_ref().unwrap();
-                    let mut encoder =
-                        context
-                            .device
-                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                label: Some("Clear Encoder"),
-                            });
-                    {
-                        let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("Clear Pass"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: &view,
-                                resolve_target: None,
-                                depth_slice: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                                        r: 0.12,
-                                        g: 0.12,
-                                        b: 0.14,
-                                        a: 1.0,
-                                    }),
-                                    store: wgpu::StoreOp::Store,
-                                },
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                            multiview_mask: None,
-                        });
-                    }
-                    context.queue.submit(std::iter::once(encoder.finish()));
-                }
-
-                // egui overlay
-                if self.show_ui {
-                    self.render_egui(&view);
-                }
-
-                if let Some(context) = &self.render_context {
-                    context.queue.present(output);
                 }
             }
+            PhysicalKey::Code(KeyCode::F4) => {
+                if let Some(renderer) = &mut self.scene_renderer {
+                    let on = renderer.toggle_skeleton_overlay();
+                    println!("Skeleton overlay: {}", if on { "ON" } else { "OFF" });
+                }
+                self.update_skeleton_overlay();
+            }
+            _ => return Flow::Pass,
+        }
+        Flow::Handled
+    }
 
-            _ => {}
+    fn update(&mut self, tick: Tick) {
+        self.fps = tick.fps;
+        // Texture zoom via Q/E keys (same keys as 3D zoom)
+        if !self.last_images.is_empty() {
+            let zoom_speed = 2.0;
+            if self.orbit.is_key_held(KeyCode::KeyE) {
+                self.texture_zoom = (self.texture_zoom * (1.0 + zoom_speed * tick.dt)).min(20.0);
+            }
+            if self.orbit.is_key_held(KeyCode::KeyQ) {
+                self.texture_zoom = (self.texture_zoom * (1.0 - zoom_speed * tick.dt)).max(0.1);
+            }
+        }
+        // Debounced regeneration
+        if self.should_regenerate() {
+            self.regenerate();
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
+    fn draw(&mut self, target: &Target) {
+        match (&self.last_mesh, &mut self.scene_renderer) {
+            (Some(_), Some(renderer)) => target.render(renderer, &self.camera),
+            // Texture-only mode: dark grey behind the texture tabs
+            _ => target.clear([0.12, 0.12, 0.14]),
         }
+    }
+
+    fn show_ui(&self) -> bool {
+        self.show_ui
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        self.render_egui(ui);
+    }
+
+    /// A mesh is drawn as the window shows it; a texture generator's
+    /// images are the still, side by side in the order the tabs list them.
+    fn still(&mut self, _options: &StillOptions) -> Result<Option<image::RgbaImage>> {
+        if self.last_mesh.is_none() && self.last_images.is_empty() {
+            anyhow::bail!("'{}' generated nothing to draw", self.spec_path.display());
+        }
+        if self.last_images.is_empty() {
+            return Ok(None);
+        }
+        let (width, height) = self
+            .render_context
+            .as_ref()
+            .map_or((1, 1), |gpu| (gpu.width, gpu.height));
+        let images: Vec<image::RgbaImage> = self
+            .last_images
+            .iter()
+            .filter_map(|img| image::RgbaImage::from_raw(img.width, img.height, img.pixels.clone()))
+            .collect();
+        Ok(Some(host::image_sheet(
+            &images,
+            width,
+            height,
+            [31, 31, 36],
+        )))
+    }
+
+    fn still_note(&self) -> Option<String> {
+        (!self.last_images.is_empty()).then(|| {
+            let names: Vec<String> = self
+                .last_images
+                .iter()
+                .map(|img| format!("{:?}", img.channel_semantics))
+                .collect();
+            format!("images, left to right: {}", names.join(", "))
+        })
     }
 }
 
@@ -1690,8 +1425,8 @@ mod tests {
         assert_eq!(ProcGenSpec::parse(&after).unwrap().params, spec.params);
 
         // The old save's output (toml::to_string_pretty), for comparison.
-        if let Ok(out) = std::env::var("FLINT_194_SAVE_DIR") {
-            let out = Path::new(&out);
+        if let Some(out) = flint_core::env::SAVE_194_DIR.path() {
+            let out = out.as_path();
             std::fs::write(out.join("before.toml"), &before).unwrap();
             std::fs::write(out.join("after_new.toml"), &after).unwrap();
             std::fs::write(

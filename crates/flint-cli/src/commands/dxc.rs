@@ -41,6 +41,7 @@ pub fn run(cmd: DxcCommands) -> Result<()> {
     match cmd {
         DxcCommands::Status => {
             status();
+            crate::output::when_json(status_json);
             Ok(())
         }
         DxcCommands::Notices(args) => notices(args),
@@ -50,22 +51,41 @@ pub fn run(cmd: DxcCommands) -> Result<()> {
 fn status() {
     match gpu_select::static_dxc() {
         Some(linked) => {
-            println!(
+            crate::output::say!(
                 "linked: DXC {} (microsoft/DirectXShaderCompiler {}), from release {}",
-                linked.version, linked.commit, linked.release
+                linked.version,
+                linked.commit,
+                linked.release
             );
             for line in linked.build_info.lines().skip(1) {
-                println!("  {line}");
+                crate::output::say!("  {line}");
             }
         }
-        None => println!(
+        None => crate::output::say!(
             "linked: no (flint-render's `static-dxc` links DXC on x86_64 Windows with MSVC only)"
         ),
     }
     if let Ok(asked) = std::env::var("WGPU_DX12_COMPILER") {
-        println!("WGPU_DX12_COMPILER={asked}");
+        crate::output::say!("WGPU_DX12_COMPILER={asked}");
     }
-    println!("DX12 shaders: {}", gpu_select::dx12_shaders());
+    crate::output::say!("DX12 shaders: {}", gpu_select::dx12_shaders());
+}
+
+/// `flint dxc status` as one document.
+fn status_json() -> serde_json::Value {
+    let linked = gpu_select::static_dxc().map(|linked| {
+        serde_json::json!({
+            "version": linked.version,
+            "commit": linked.commit,
+            "release": linked.release,
+            "build_info": linked.build_info,
+        })
+    });
+    serde_json::json!({
+        "linked": linked,
+        "wgpu_dx12_compiler": std::env::var("WGPU_DX12_COMPILER").ok(),
+        "dx12_shaders": gpu_select::dx12_shaders().to_string(),
+    })
 }
 
 fn notices(args: NoticesArgs) -> Result<()> {
@@ -74,12 +94,18 @@ fn notices(args: NoticesArgs) -> Result<()> {
     };
     let text = notices_text(linked.version, linked.commit, linked.notices);
     match args.to {
+        None if crate::output::json() => {
+            crate::output::document(&serde_json::json!({ "notices": text }));
+        }
         None => print!("{text}"),
         Some(dir) => {
             std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
             let path = dir.join(NOTICES_FILE);
             std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
-            println!("wrote {}", path.display());
+            crate::output::say!("wrote {}", path.display());
+            crate::output::when_json(
+                || serde_json::json!({ "written": [path.display().to_string().replace('\\', "/")] }),
+            );
         }
     }
     Ok(())

@@ -235,7 +235,7 @@ The same levers are available headlessly, and CLI values win over the scene bloc
 
 ```bash
 flint render scene.toml --oren-nayar 0.7 --sheen-strength 0.15 --sheen-color 1,0.9,0.8 \
-    --grade-gain 1.04,1,0.94 --ssao-samples 16
+    --set post.grade_gain=1.04,1,0.94 --set post.ssao_samples=16
 ```
 
 ## Runtime Control

@@ -20,7 +20,8 @@
 #   cargo run --bin flint-player -- examples/motion_hold.scene.toml --frame-step 0.0208333 --screenshot-every 0.0208333 --screenshot frames/f.png --exit-after 2
 #   cargo run --bin flint -- render examples/motion_hold.scene.toml --no-grid --anim-time 0 --time 0..2 --fps 24 -o twos.gif
 #
-# --motion-hold 12 on any of the three puts the whole frame on twos, the
+# --set post.motion_hold=12 on flint render (--motion-hold 12 on flint play
+# and flint-player) puts the whole frame on twos, the
 # smooth pendulum and the post time included (`flint render` runs no
 # physics, so there the pendulums hang still). Book: concepts/stylize-passes.md
 

@@ -31,13 +31,11 @@ pub fn run(
     let result = execute_query(&world, &query);
 
     // Format output
-    let output = match format {
-        "json" => format_json(&result),
-        "toml" => format_toml(&result),
+    match crate::output::format_or_json(format) {
+        "json" => crate::output::document_text(&format_json(&result)),
+        "toml" => println!("{}", format_toml(&result)),
         _ => anyhow::bail!("Unknown format: {}", format),
-    };
-
-    println!("{}", output);
+    }
 
     Ok(())
 }

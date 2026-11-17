@@ -48,10 +48,6 @@ pub struct CheckArgs {
     #[arg(default_value = ".")]
     pub path: PathBuf,
 
-    /// Print one JSON document instead of text, in `flint check`'s shape
-    #[arg(long)]
-    pub json: bool,
-
     /// Schema directories (repeatable), for loading the scenes whose
     /// scripts are checked. Without it: the project's, as `flint check`
     #[arg(long, action = clap::ArgAction::Append)]
@@ -63,10 +59,6 @@ pub struct CheckArgs {
 
 #[derive(clap::Args)]
 pub struct ApiArgs {
-    /// Print one JSON document instead of text
-    #[arg(long)]
-    pub json: bool,
-
     /// Only functions (and callbacks) whose name or module contains this,
     /// ignoring case
     #[arg(long, value_name = "TEXT")]
@@ -77,13 +69,13 @@ pub struct ApiArgs {
     /// chapters, then report calls in the chapters that name no function.
     /// DIR is the book (the folder holding `src/`); default `docs/book`
     #[arg(long, value_name = "DIR", num_args = 0..=1, default_missing_value = "docs/book",
-          conflicts_with_all = ["json", "filter", "check_book"])]
+          conflicts_with_all = ["filter", "check_book"])]
     pub book: Option<PathBuf>,
 
     /// As --book, but write nothing: exit 1 when a generated page or region
     /// is stale or a chapter calls a function that isn't there (CI)
     #[arg(long, value_name = "DIR", num_args = 0..=1, default_missing_value = "docs/book",
-          conflicts_with_all = ["json", "filter"])]
+          conflicts_with_all = ["filter"])]
     pub check_book: Option<PathBuf>,
 }
 
@@ -97,22 +89,10 @@ pub fn run(cmd: ScriptCommands) -> Result<()> {
 /// `flint script check`.
 fn check(args: &CheckArgs) -> Result<()> {
     let report = check_report(args)?;
-    let text = if args.json {
-        let mut text = serde_json::to_string_pretty(&check_json(&report))?;
-        text.push('\n');
-        text
-    } else {
-        check_text(&report)
-    };
-    use std::io::Write;
-    match std::io::stdout().lock().write_all(text.as_bytes()) {
-        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => return Err(e.into()),
-        _ => {}
-    }
-    if report.has_errors() {
-        std::process::exit(1);
-    }
-    Ok(())
+    crate::output::emit(
+        &crate::output::Answer::new(check_text(&report), check_json(&report))
+            .failed_if(report.has_errors()),
+    )
 }
 
 /// What `flint script check` finds, without printing it.
@@ -219,13 +199,11 @@ fn api(args: &ApiArgs) -> Result<()> {
     let listing = flint_player::script_system().api_listing();
     let filter = args.filter.as_deref().map(str::to_lowercase);
     let listing = filtered(listing, filter.as_deref());
-    let text = if args.json {
-        serde_json::to_string_pretty(&to_json(&listing))?
-            + "
-"
-    } else {
-        to_text(&listing)
-    };
+    if crate::output::json() {
+        crate::output::document(&to_json(&listing));
+        return Ok(());
+    }
+    let text = to_text(&listing);
     // `flint script api | head` closes the pipe early: not an error
     use std::io::Write;
     match std::io::stdout().lock().write_all(text.as_bytes()) {
@@ -262,7 +240,7 @@ fn book_cmd(dir: &Path, check: bool) -> Result<()> {
         if check {
             eprintln!("stale: {}", shown(path));
         } else {
-            println!("wrote {}", shown(path));
+            crate::output::say!("wrote {}", shown(path));
         }
     }
     for g in &outcome.ghosts {
@@ -289,17 +267,31 @@ fn book_cmd(dir: &Path, check: bool) -> Result<()> {
             shown(&dir.join(book::ALLOW))
         );
     }
+    crate::output::when_json(|| {
+        json!({
+            "book": shown(dir),
+            "check": check,
+            "stale": outcome.stale.iter().map(|p| shown(p)).collect::<Vec<_>>(),
+            "ghosts": outcome.ghosts.iter().map(|g| json!({
+                "file": shown(&dir.join("src").join(&g.file)),
+                "line": g.line,
+                "name": g.name,
+                "problem": g.problem,
+            })).collect::<Vec<_>>(),
+            "valid": !stale && outcome.ghosts.is_empty(),
+        })
+    });
     if stale || !outcome.ghosts.is_empty() {
-        std::process::exit(1);
+        return Err(crate::output::failed());
     }
     if check {
-        println!(
+        crate::output::say!(
             "the book matches the script API ({} functions, {} callbacks)",
             listing.declared.len(),
             listing.callbacks.len()
         );
     } else if outcome.stale.is_empty() {
-        println!("the book's script API text was already up to date");
+        crate::output::say!("the book's script API text was already up to date");
     }
     Ok(())
 }

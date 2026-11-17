@@ -50,6 +50,10 @@ impl PlayerApp {
                 return Some(failure);
             }
         }
+        // A capture asked for and never written (#1086)
+        if let Some(failure) = self.frame_captures.failure() {
+            return Some(failure);
+        }
         // `--max-hitches` and `--max-hitches-startup` (#1079)
         self.stats.watch.failure()
     }
@@ -95,6 +99,7 @@ impl PlayerApp {
             post: Default::default(),
             audio_vfs_generation: flint_core::vfs::generation(),
             capture: CaptureConfig::default(),
+            frame_captures: Default::default(),
             outcome: Default::default(),
             #[cfg(test)]
             test_gpu: None,
@@ -620,7 +625,7 @@ impl PlayerApp {
             .then(|| procgen_disk_config(&self.core.project, &scene_dir))
             .flatten()
         {
-            println!("[procgen] disk cache: {}", disk.dir.display());
+            tracing::debug!(target: "load", "[procgen] disk cache: {}", disk.dir.display());
             self.use_procgen_disk(disk);
         }
     }
@@ -710,12 +715,17 @@ impl PlayerApp {
             self.scene.input_config.as_deref(),
             self.input_layers.config_override.as_deref(),
         );
+        // What the scene's own layers bind, for the controls line (#716)
+        self.input_layers.named_actions.clear();
 
         if let Some(path) = &paths.game_default {
             if vfs::exists(path) {
                 let cfg = InputConfig::load_from_file(path).with_context(|| {
                     format!("failed to load game input config '{}'", path.display())
                 })?;
+                self.input_layers
+                    .named_actions
+                    .extend(cfg.actions.keys().cloned());
                 self.input
                     .merge_bindings(cfg)
                     .context("failed to merge game input config")?;
@@ -748,6 +758,9 @@ impl PlayerApp {
                 let cfg = InputConfig::load_from_file(path).with_context(|| {
                     format!("failed to load CLI input config '{}'", path.display())
                 })?;
+                self.input_layers
+                    .named_actions
+                    .extend(cfg.actions.keys().cloned());
                 self.input
                     .merge_bindings(cfg)
                     .context("failed to merge CLI input config")?;
@@ -916,7 +929,7 @@ impl PlayerApp {
                         egui::TextureOptions::LINEAR,
                     );
                     self.hud.textures.insert(name.to_string(), tex_handle);
-                    println!("Loaded UI sprite: {}", name);
+                    tracing::debug!(target: "load", kind = "ui_sprite", "Loaded UI sprite: {}", name);
                     return true;
                 }
                 Err(e) => format!("UI sprite '{name}': {}: {e}", path.display()),
@@ -957,7 +970,7 @@ impl PlayerApp {
 }
 
 /// Where the procgen disk tier goes for a scene in `scene_dir` (#181):
-/// `FLINT_PROCGEN_CACHE=<dir>` if set (`0`, `off` or empty: no disk tier),
+/// `FLINT_PROCGEN_CACHE=<dir>` if set (`0`, `off`, `false`, `no`: no disk tier),
 /// else `.flint/procgen-cache/` at the scene's project root
 /// (`Project::root_for`, ADR 0114), so every scene of a project shares one
 /// cache and the `.flint/` it makes marks the root that was already in use.
@@ -966,11 +979,12 @@ fn procgen_disk_config(
     project: &flint_core::project::Project,
     scene_dir: &Path,
 ) -> Option<flint_procgen::DiskCacheConfig> {
-    if let Ok(value) = std::env::var("FLINT_PROCGEN_CACHE") {
-        return match value.trim() {
-            "" | "0" | "off" | "false" => None,
-            dir => Some(flint_procgen::DiskCacheConfig::new(dir)),
-        };
+    match flint_core::env::PROCGEN_CACHE.get() {
+        Some(flint_core::env::Value::Off) => return None,
+        Some(flint_core::env::Value::Path(dir)) => {
+            return Some(flint_procgen::DiskCacheConfig::new(dir))
+        }
+        _ => {}
     }
     Some(flint_procgen::DiskCacheConfig::in_project(
         &project.root_for(scene_dir),

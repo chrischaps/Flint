@@ -325,7 +325,7 @@ mod imp {
                     });
                 if let Err(e) = spawned {
                     // Nothing is watched, so nothing reloads; the game runs
-                    eprintln!("[hot reload] couldn't start the file watcher: {e}");
+                    tracing::warn!("[hot reload] couldn't start the file watcher: {e}");
                 }
                 Self { known }
             }

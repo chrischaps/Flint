@@ -10,6 +10,7 @@
 //!                [--frame-step <secs>] [--input-script <file>]
 //!                [--expression-timeline <file>] [--expression-listen <ip:port>]
 //!                [--hitch-log <file>] [--max-hitches <n>]
+//!                [--capture-frame-at <secs>] [--capture-on-hitch[=<n>]]
 //!   flint-player --bundle <game.flintpack> [scene.toml]
 //!
 //! Every flag but `--bundle` is `flint_player::PlayerArgs`, which `flint
@@ -25,14 +26,9 @@ use anyhow::Result;
 use clap::Parser;
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                // `script=info`: what scripts print, and the script system's
-                // reloads and transitions (#703)
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,script=info")),
-        )
-        .init();
-
-    flint_player::PlayerCli::parse().run()
+    let cli = flint_player::PlayerCli::parse();
+    // Everything the player says, to stderr, as `--log-format` and
+    // `--quiet` ask (#716)
+    flint_player::logging::init(&cli.args.log);
+    cli.run()
 }

@@ -397,10 +397,11 @@ fn neon_numeral_golden() {
         );
     }
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/text-halo-neon-60.png");
-    if std::env::var_os("FLINT_BLESS").is_some() || !path.exists() {
+    let bless = flint_core::env::BLESS.flag() == Some(true);
+    if bless || !path.exists() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         rgb.save(&path).unwrap();
-        if std::env::var_os("FLINT_BLESS").is_none() {
+        if !bless {
             panic!(
                 "no golden at {}: wrote one, check it and commit it",
                 path.display()

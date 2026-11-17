@@ -69,6 +69,7 @@
 - [Player Extensions](guides/player-extensions.md)
 - [Debug Panels](guides/debug-panels.md)
 - [Profiling](guides/profiling.md)
+  - [The Frame Debugger](guides/frame-debugger.md)
 - [Particle Editor](guides/particle-editor.md)
 
 # Reference
@@ -76,6 +77,7 @@
 - [Script API Reference](reference/script-api.md)
 - [CLI Reference](cli-reference/overview.md)
   - [Music and Rhythm Commands](cli-reference/music.md)
+  - [Environment Switches](cli-reference/environment.md)
 - [File Formats](formats/overview.md)
 
 # Architecture

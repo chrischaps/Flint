@@ -12,6 +12,7 @@
 //! - **Grid** ([`TilingGridPattern`]) — manufactured tiles, bricks, panels
 
 mod cell_memo;
+pub mod descriptor;
 pub mod field;
 pub mod grid;
 pub mod maps;
@@ -23,6 +24,7 @@ pub mod pipeline;
 pub mod voronoi;
 pub mod voronoi_util;
 
+pub use descriptor::{op_reference_markdown, OpDescriptor, OpParams, ParamDesc, ParamKind};
 pub use field::TextureField;
 pub use grid::{TilingGridParams, TilingGridPattern};
 pub use maps::{derive_maps, TextureMapParams};

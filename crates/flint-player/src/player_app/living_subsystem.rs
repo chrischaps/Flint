@@ -10,13 +10,11 @@
 
 use super::living_props;
 use super::subsystem::{
-    EncodeCtx, ExitReport, FrameCtx, KeyPress, PlayerInput, ReportCtx, SceneCtx, Stage, StageCtx,
-    Subsystem,
+    EncodeCtx, ExitReport, FrameCtx, PlayerInput, ReportCtx, SceneCtx, Stage, StageCtx, Subsystem,
 };
 use flint_render::shallow_wooze::{self, GrassWooze, ShallowWooze};
 use flint_render::FrameInputs;
 use flint_script::context::ScriptCommand;
-use winit::keyboard::KeyCode;
 
 /// Living props' and the wooze field's state for one scene.
 #[derive(Default)]
@@ -396,7 +394,7 @@ impl LivingSubsystem {
             C::Freeze { frozen } => self.tune.frozen = *frozen,
             C::Step => self.step_living(),
             C::SavePreset { name } => match self.save_living_preset(ctx, name) {
-                Ok(path) => println!("[living] saved {}", path.display()),
+                Ok(path) => tracing::info!(target: "player", "[living] saved {}", path.display()),
                 Err(problem) => {
                     tracing::warn!(target: "script", "save_living_preset: {problem}");
                 }
@@ -407,7 +405,7 @@ impl LivingSubsystem {
                 }
             }
             C::Commit => match self.commit_living(ctx) {
-                Ok(said) => println!("[living] {said}"),
+                Ok(said) => tracing::info!(target: "player", "[living] {said}"),
                 Err(problem) => tracing::warn!(target: "script", "commit_living: {problem}"),
             },
             C::Compare { a, b } => {
@@ -464,33 +462,34 @@ impl Subsystem for LivingSubsystem {
         self.command(command, ctx)
     }
 
-    fn on_key(&mut self, key: KeyPress, ctx: &mut StageCtx) -> bool {
-        // Living Props A/B (#238): F5 freezes the living clock, F6 flips
-        // between the two presets, F7 splits the view between them. F6 and
-        // F7 start a comparison of the panel's picks if none is running.
-        match key.code {
-            KeyCode::F5 => self.toggle_living_freeze(ctx),
-            KeyCode::F6 => self.living_ab_key(ctx, false),
-            KeyCode::F7 => self.living_ab_key(ctx, true),
-            // Pick a living prop (#248): F8 the one at the view centre, as with
-            // the cursor captured, and Shift+F8 the next by name, for a click
-            // that missed. A scripted Escape lets go, as a real one does first.
+    fn debug_keys(&self) -> &'static [flint_runtime::DebugKey] {
+        super::subsystem::living::DEBUG_KEYS.keys
+    }
+
+    fn on_debug_key(&mut self, action: &str, key: &str, ctx: &mut StageCtx) {
+        // Living Props A/B (#238): freeze the living clock, flip between the
+        // two presets, split the view between them. Flip and split start a
+        // comparison of the panel's picks if none is running.
+        match action {
+            "living_freeze" => self.toggle_living_freeze(ctx),
+            "living_flip" => self.living_ab_key(ctx, false),
+            "living_split" => self.living_ab_key(ctx, true),
+            // Pick a living prop (#248): the one at the view centre, as with
+            // the cursor captured, or the next by name, for a click that
+            // missed.
             #[cfg(feature = "debug-hud")]
-            KeyCode::F8 => {
-                if key.shift {
-                    self.pick_next_living(ctx, true);
-                } else if !self.pick_living_at_centre(ctx) {
-                    ctx.note.say("F8", "no living prop at the view centre");
+            "living_pick" => {
+                if !self.pick_living_at_centre(ctx) {
+                    ctx.note.say(key, "no living prop at the view centre");
                 }
             }
             #[cfg(feature = "debug-hud")]
-            KeyCode::Escape => {
-                self.living_let_go(ctx);
+            "living_pick_next" => {
+                self.pick_next_living(ctx, true);
             }
             _ => {}
         }
-        // The player's own debug keys don't use these
-        false
+        let _ = key;
     }
 
     fn on_input(&mut self, input: PlayerInput, ctx: &mut StageCtx) -> bool {

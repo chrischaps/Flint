@@ -171,6 +171,18 @@ impl PlayerApp {
                 }
             }
         }
+        // A frame capture (#1086): the renderer describes this frame and
+        // copies each pass's targets as it goes
+        #[cfg(not(target_arch = "wasm32"))]
+        let capture_adapter = self
+            .frame_captures
+            .armed()
+            .then(|| context.adapter.get_info());
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(info) = &capture_adapter {
+            let targets = super::frame_capture::Targets::of(context, &output.texture, info);
+            self.frame_captures.arm(renderer, &targets);
+        }
         // A scene of comic panels draws each panel's camera, submitting all
         // but the last itself (#880, ADR 0120); one view is one submission
         renderer.encode_frame_to(
@@ -210,12 +222,60 @@ impl PlayerApp {
         let hud_view = context.hud_view(&output.texture);
         self.render_hud(&hud_view, &mut encoder);
         if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
+            // A captured frame's HUD and bone palettes, in its encoder (#1086)
+            #[cfg(not(target_arch = "wasm32"))]
+            if capture_adapter.is_some() {
+                let device = &context.device;
+                self.frame_captures
+                    .host_pass(renderer, device, &mut encoder, &output.texture);
+                self.frame_captures
+                    .record_replay(renderer, device, &mut encoder, &self.core.world);
+            }
             renderer.encode_gpu_timings(&context.device, &mut encoder);
             context.queue.submit(std::iter::once(encoder.finish()));
             renderer.frame_submitted();
             // The GPU time read back this frame, for the frame history
             self.stats.perf.gpu_ms(renderer.take_gpu_frame_ms());
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                if let Some(info) = &capture_adapter {
+                    let targets = super::frame_capture::Targets::of(context, &output.texture, info);
+                    let facts = super::frame_capture::FrameFacts {
+                        world: &self.core.world,
+                        camera: &self.camera,
+                        particles: self
+                            .particles_render_enabled
+                            .then_some(&self.core.particles.sync),
+                        scene_path: &self.core.scene_path,
+                        project: &self.core.project,
+                        index: self
+                            .stats
+                            .perf
+                            .recording()
+                            .then(|| self.stats.perf.under_way_index()),
+                        game_time: self.core.clock.total_time,
+                        dt: self.core.clock.delta_time,
+                    };
+                    if let Some(line) = self.frame_captures.submitted(renderer, &targets, &facts) {
+                        self.hud.key_note.say("capture", &line);
+                    }
+                    self.stats.perf.capturing();
+                }
+                // A capture on its way back: polled, never waited on
+                let timed = self.core.script.timing();
+                if self.frame_captures.poll(
+                    renderer,
+                    &context.device,
+                    &context.queue,
+                    &self.stats.perf,
+                    self.stats.hitches.hitches(),
+                    timed,
+                ) {
+                    self.stats.perf.capturing();
+                }
+            }
         }
+        self.say_frame_captures();
         self.perf_mark(super::perf::Phase::Hud);
 
         // Capture the composited frame (scene + HUD) before it is presented.
@@ -281,7 +341,12 @@ impl PlayerApp {
         let frames = self.capture.perf_frames;
         if frames > 0 {
             let avg_ms = self.capture.perf_time * 1000.0 / frames as f64;
-            eprintln!(
+            // The run's figures as fields too, for `--log-format json` (#716)
+            tracing::info!(
+                target: "report",
+                frames,
+                avg_ms = (avg_ms * 100.0).round() / 100.0,
+                fps = (10_000.0 / avg_ms).round() / 10.0,
                 "[perf] {frames} frames over {:.2} s after t={:.0}: avg {avg_ms:.2} ms/frame ({:.1} fps)",
                 self.capture.perf_time,
                 super::PERF_SKIP_SECS,
@@ -289,15 +354,15 @@ impl PlayerApp {
             );
             // How even they were: a mean hides bursts (#406).
             if let Some(dt) = self.capture.perf_pacing.dt() {
-                eprintln!("[perf] dt: {dt}");
+                tracing::info!(target: "report", "[perf] dt: {dt}");
             }
             if let Some(present) = self.capture.perf_pacing.present() {
-                eprintln!("[perf] present to present: {present}");
+                tracing::info!(target: "report", "[perf] present to present: {present}");
             }
             // The F2 overlay's main figures, averaged, so a capture
             // can compare draw counts and culling headlessly (H9).
             let avg = |sum: u64| sum as f64 / frames as f64;
-            eprintln!(
+            tracing::info!(target: "report",
                 "[perf] avg per frame: {:.0} draw calls ({:.0} entity draws, {:.0} culled, {:.0} of them by LOD), {:.0} triangles, {:.0} in shadows",
                 avg(self.capture.perf_draws),
                 avg(self.capture.perf_entity_draws),
@@ -315,7 +380,7 @@ impl PlayerApp {
                     .render_context
                     .as_ref()
                     .map(|c| c.present_mode_in_use());
-                eprintln!(
+                tracing::info!(target: "report",
                     "[perf] avg GPU {gpu_ms:.2} ms/frame over {gpu_frames} timed frames{}",
                     super::perf::gpu_vsync_note(present, gpu_ms as f32, avg_ms as f32)
                 );
@@ -327,15 +392,15 @@ impl PlayerApp {
         if self.stats.perf.recording() {
             self.stats.watch.finish();
             for line in self.stats.watch.report() {
-                eprintln!("{line}");
+                tracing::info!(target: "report", "{line}");
             }
         }
         for line in self.subsystem_report() {
-            eprintln!("{line}");
+            tracing::info!(target: "report", "{line}");
         }
         // Every script error of the run, each once with its count (#693)
         for line in self.core.script.errors().summary() {
-            eprintln!("{line}");
+            tracing::info!(target: "report", "{line}");
         }
     }
 
@@ -445,17 +510,20 @@ impl PlayerApp {
         // Advance game clock. Its tick measured the frame just closed: that
         // is the history's newest frame, which is judged now (#1076).
         self.core.clock.tick();
+        let mut found = 0;
         if self.stats.perf.recording() {
             self.stats
                 .perf
                 .clock_ticked(super::frame_history::ClockSample::of(&self.core.clock));
             self.stats.perf.game_time(self.core.clock.total_time);
-            let found = self.stats.hitches.observe(&self.stats.perf);
+            found = self.stats.hitches.observe(&self.stats.perf);
             // The hitch log, the exit report's counts and the gate (#1079)
             self.stats
                 .watch
                 .observe(found, &self.stats.hitches, &self.stats.perf);
         }
+        // Frame captures (#1086): a hitch just found, a time reached
+        self.frame_capture_triggers(found);
         if self
             .launch
             .hold_at
@@ -721,6 +789,14 @@ impl PlayerApp {
             boil_on: renderer.post_process_config().boil_on,
         };
         self.core.subsystems.frame_inputs(&frame, &mut inputs);
+        // A frame being captured keeps what it was drawn with (#1086)
+        if self.frame_captures.take_for_frame() {
+            self.frame_captures
+                .keep_inputs(flint_render::frame_replay::FrameInputsState::of(
+                    &inputs,
+                    &self.core.world,
+                ));
+        }
         renderer.prepare(&context.device, &context.queue, &self.core.world, &inputs);
         // Next frame's scripts cast against what this one draws (ADR 0105).
         self.core.script.set_ray_scene(renderer.ray_scene());
@@ -752,6 +828,8 @@ impl PlayerApp {
         // Lazy-load any sprite textures referenced by draw commands
         // (must happen before egui_winit borrow)
         self.load_pending_sprites();
+        // The F1 card's table (#717), while the subsystems are here to ask
+        let key_table = self.hud.key_table_open.then(|| self.debug_key_table());
 
         let Some(window) = &self.window else { return };
         let Some(context) = &self.render_context else {
@@ -941,7 +1019,11 @@ impl PlayerApp {
 
             // On the web, above the page's wordmark in the same corner
             // (index.html's `.mark`, two lines at bottom 20px; #415)
-            // A debug key's note (#367), over everything
+            // The debug keys' card (F1, #717), and a debug key's note (#367)
+            // over everything
+            if let Some(table) = &key_table {
+                super::debug_keys::paint_key_table(ctx, table);
+            }
             key_note.paint(ctx, 16.0);
 
             #[cfg(feature = "debug-hud")]

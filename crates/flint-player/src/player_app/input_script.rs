@@ -31,7 +31,12 @@
 //! 10.1  drag   1 200 480 0.4      # finger 1 slides there over 0.4 s
 //! 10.2  touch  2 1150 620         # a second finger, at the same time
 //! 11.0  lift   2                  # finger 2 up
+//! 12.0  capture frame              # capture the next frame (#1086)
 //! ```
+//!
+//! `capture frame` asks the player to capture the next frame for the frame
+//! debugger (#1086), as the debug key does: a `.flintframe` folder under
+//! `--capture-dir`, or `captures/` at the project's root.
 //!
 //! Fingers (`touch`, `drag`, `lift`) arrive as winit's `WindowEvent::Touch`
 //! and take a real finger's path: the on-screen touch controls first
@@ -119,6 +124,8 @@ pub enum ScriptEvent {
     Look(f64, f64),
     /// A finger (`touch`, `drag`, `lift`): id, phase and window pixels.
     Touch(u64, TouchPhase, f64, f64),
+    /// `capture frame` (#1086): capture the next frame. The line's time.
+    Capture(f64),
 }
 
 /// What one frame of the script did, beyond writing `InputState`.
@@ -195,6 +202,8 @@ enum Action {
     /// Finger to (x, y), at once or gliding over the seconds given.
     FingerMove(u64, f64, f64, f64),
     FingerUp(u64),
+    /// `capture frame` (#1086), at the line's time.
+    Capture(f64),
 }
 
 /// Raw motion spread over a span of game time.
@@ -399,6 +408,10 @@ impl InputScript {
                     }
                     events.push((t, Action::FingerMove(id, x, y, over)));
                 }
+                "capture" => match f[2] {
+                    "frame" => events.push((t, Action::Capture(t))),
+                    _ => return Err(bad("capture takes `frame`")),
+                },
                 _ => return Err(bad("unknown verb")),
             }
         }
@@ -514,6 +527,7 @@ impl InputScript {
                         .push(ScriptEvent::Pointer(PointerEvent::Released(*b)));
                 }
                 Action::Text(text) => out.events.push(ScriptEvent::Text(text.clone())),
+                Action::Capture(at) => out.events.push(ScriptEvent::Capture(*at)),
                 Action::Look(dx, dy, over) => {
                     if *over > 0.0 {
                         self.sweeps.push(Sweep {
@@ -705,6 +719,27 @@ gamepad = "any"
         s.apply(2.0, &mut input);
         assert_eq!(input.action_value("zoom_in"), 0.0, "let go");
         assert!(InputScript::parse("0 pull RightTrigger2").is_err());
+    }
+
+    #[test]
+    fn capture_frame_asks_on_its_frame() {
+        let mut script = InputScript::parse(
+            "1.5 capture frame
+",
+        )
+        .unwrap();
+        let mut input = InputState::new();
+        assert!(script.apply(1.4, &mut input).events.is_empty());
+        assert_eq!(
+            script.apply(1.5, &mut input).events,
+            vec![ScriptEvent::Capture(1.5)]
+        );
+        assert!(script.apply(1.6, &mut input).events.is_empty());
+        assert!(InputScript::parse(
+            "1 capture pixels
+"
+        )
+        .is_err());
     }
 
     #[test]

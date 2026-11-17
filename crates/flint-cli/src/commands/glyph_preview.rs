@@ -27,13 +27,17 @@ pub fn run(args: &GenArgs) -> Result<()> {
     refuse_procgen_flags(args)?;
     let path = Path::new(spec);
     let set = GlyphSet::load(path).with_context(|| format!("failed to load {spec}"))?;
-    let say = |line: String| println!("{line}");
-    for line in summary(&set) {
-        say(line);
+    let say = |line: String| crate::output::say!("{line}");
+    let lines = summary(&set);
+    for line in &lines {
+        say(line.clone());
     }
     if args.dry_run {
+        crate::output::when_json(|| serde_json::json!({ "dry_run": true, "summary": lines }));
         return Ok(());
     }
+    let shown = |file: &Path| file.display().to_string().replace('\\', "/");
+    let mut written: Vec<String> = Vec::new();
 
     let sheet = compose_sheet(&set, spec);
     match Target::of(args.output.as_deref(), set.name()) {
@@ -41,6 +45,7 @@ pub fn run(args: &GenArgs) -> Result<()> {
             ensure_parent(&file)?;
             save(&sheet, &file)?;
             say(format!("wrote {}", file.display()));
+            written.push(shown(&file));
         }
         Target::Folder(dir) => {
             std::fs::create_dir_all(&dir)
@@ -76,9 +81,11 @@ pub fn run(args: &GenArgs) -> Result<()> {
             }
             for file in wrote {
                 say(format!("wrote {}", file.display()));
+                written.push(shown(&file));
             }
         }
     }
+    crate::output::when_json(|| serde_json::json!({ "summary": lines, "written": written }));
     Ok(())
 }
 

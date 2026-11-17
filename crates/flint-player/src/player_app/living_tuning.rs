@@ -1454,7 +1454,7 @@ pub(super) mod panel {
                         Ok(path) => saved_message(self, ctx, &name, &path),
                         Err(problem) => format!("Couldn't save: {problem}"),
                     };
-                    println!("[living] {said}");
+                    tracing::info!(target: "player", "[living] {said}");
                     self.tune.status = Some(said);
                     self.tune.preset_names = None;
                 }
@@ -1463,7 +1463,7 @@ pub(super) mod panel {
                         Ok(said) => said,
                         Err(problem) => format!("Couldn't commit: {problem}"),
                     };
-                    println!("[living] {said}");
+                    tracing::info!(target: "player", "[living] {said}");
                     self.tune.status = Some(said);
                 }
                 LivingPanelAction::Load(name) => {

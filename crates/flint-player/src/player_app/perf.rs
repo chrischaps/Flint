@@ -832,7 +832,7 @@ impl super::PlayerApp {
                 // FLINT_PERF_LOG if set, since a device's log can drop it.
                 #[cfg(target_os = "android")]
                 log::info!("{line}");
-                if let Ok(path) = std::env::var("FLINT_PERF_LOG") {
+                if let Some(path) = flint_core::env::PERF_LOG.path() {
                     use std::io::Write;
                     if let Ok(mut f) = std::fs::OpenOptions::new()
                         .create(true)
@@ -842,7 +842,7 @@ impl super::PlayerApp {
                         let _ = writeln!(f, "{line}");
                     }
                 }
-                eprintln!("{line}");
+                tracing::info!(target: "perf", "{line}");
             }
         }
     }

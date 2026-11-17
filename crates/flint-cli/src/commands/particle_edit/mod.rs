@@ -17,24 +17,18 @@ mod save;
 mod sim;
 mod ui;
 
-use flint_render::AcquireFrame;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Args;
 use flint_particles::{load_effect_from_file, ParticleEffect};
-use flint_render::{
-    Camera, HeadlessContext, OrbitCameraController, RenderContext, RendererConfig, SceneRenderer,
-};
-use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
-use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
+use flint_render::{Camera, OrbitCameraController, RendererConfig, SceneRenderer};
+use flint_viewer::host::{Editor, Flow, Gpu, InitCx, StillOptions, Target, Tick};
 use winit::event::{ElementState, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::Window;
 
 use sim::PreviewSim;
 
@@ -78,14 +72,17 @@ pub struct ParticleEditArgs {
 
 // ─── Entry ──────────────────────────────────────────────────────────────────
 
-pub fn run(args: ParticleEditArgs) -> Result<()> {
+/// The particle editor for `args.file` (made from `--preset` when it
+/// isn't there), for [`flint_viewer::host`] to open in a window or draw as a
+/// `--render` still (#712).
+pub fn editor(args: ParticleEditArgs) -> Result<ParticleEditApp> {
     let path = PathBuf::from(&args.file);
     let effect = if path.exists() {
         load_effect_from_file(&path).map_err(|e| anyhow::anyhow!(e))?
     } else {
         let preset = args.preset.as_deref().unwrap_or("sparks");
         let fx = presets::bootstrap(&path, preset)?;
-        println!(
+        crate::output::say!(
             "Created new particle effect '{}' from the '{}' preset at {}",
             fx.name,
             preset,
@@ -94,34 +91,17 @@ pub fn run(args: ParticleEditArgs) -> Result<()> {
         fx
     };
 
-    if let Some(out) = &args.render {
-        return run_headless(&args, &path, &effect, out);
-    }
-    run_interactive(args, path, effect)
+    Ok(editor_for(args, path, effect))
 }
 
-fn default_camera(args: &ParticleEditArgs, aspect: f32) -> Camera {
+/// The editor's own framing; the host lays the camera flags over it.
+fn default_camera(aspect: f32) -> Camera {
     let mut camera = Camera::new();
     camera.aspect = aspect;
     camera.target = flint_core::Vec3::new(0.0, 1.0, 0.0);
     camera.distance = 6.0;
     camera.pitch = 20.0f32.to_radians();
     camera.yaw = 35.0f32.to_radians();
-    if let Some(d) = args.distance {
-        camera.distance = d;
-    }
-    if let Some(y) = args.yaw {
-        camera.yaw = y.to_radians();
-    }
-    if let Some(p) = args.pitch {
-        camera.pitch = p.to_radians();
-    }
-    if let Some(t) = args.target {
-        camera.target = flint_core::Vec3::new(t[0], t[1], t[2]);
-    }
-    if let Some(f) = args.fov {
-        camera.fov = f;
-    }
     camera.update_orbit();
     camera
 }
@@ -131,70 +111,6 @@ fn effect_dir(path: &Path) -> PathBuf {
         .filter(|p| !p.as_os_str().is_empty())
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."))
-}
-
-// ─── Headless ───────────────────────────────────────────────────────────────
-
-fn run_headless(
-    args: &ParticleEditArgs,
-    path: &Path,
-    effect: &ParticleEffect,
-    output: &str,
-) -> Result<()> {
-    let ctx = pollster::block_on(HeadlessContext::new(args.width, args.height))
-        .context("Failed to create headless render context")?;
-    let camera = default_camera(args, ctx.aspect_ratio());
-    let mut renderer = SceneRenderer::new_headless(
-        &ctx.device,
-        &ctx.queue,
-        ctx.format,
-        ctx.width,
-        ctx.height,
-        RendererConfig {
-            show_grid: !args.no_grid,
-            ..Default::default()
-        },
-    );
-
-    let mut sim = PreviewSim::new();
-    sim.rebuild(effect, &[], None);
-    sim.load_textures(&mut renderer, &ctx.device, &ctx.queue, &effect_dir(path));
-    let t = args.anim_time.unwrap_or(1.0).max(0.0);
-    sim.seek(t);
-    sim.upload(
-        &mut renderer,
-        &ctx.device,
-        &ctx.queue,
-        camera.position_array(),
-        args.style.look_time(),
-    );
-
-    args.style.apply_to_renderer(&mut renderer, &ctx.device);
-    renderer.render_to(
-        &ctx.device,
-        &ctx.queue,
-        &ctx.depth_view,
-        &camera,
-        &ctx.color_view,
-    );
-    let pixels = pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
-    let img = image::RgbaImage::from_raw(args.width, args.height, pixels)
-        .context("Failed to create image from pixel data")?;
-    if let Some(parent) = Path::new(output).parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).ok();
-        }
-    }
-    img.save(output)
-        .with_context(|| format!("Failed to save image to {output}"))?;
-    println!(
-        "Rendered '{}' at t = {:.2}s ({} particles alive) → {}",
-        effect.name,
-        t,
-        sim.alive(),
-        output
-    );
-    Ok(())
 }
 
 // ─── Interactive ────────────────────────────────────────────────────────────
@@ -300,54 +216,23 @@ pub struct ParticleEditApp {
     show_ui: bool,
     gizmo_hash: u64,
 
-    // Window / GPU
+    // Window / GPU (the host's, #712)
     window: Option<Arc<Window>>,
-    render_context: Option<RenderContext>,
+    render_context: Option<Gpu>,
     scene_renderer: Option<SceneRenderer>,
     camera: Camera,
     orbit: OrbitCameraController,
-    last_frame_time: Instant,
 
     // egui
     egui_ctx: egui::Context,
-    egui_winit: Option<egui_winit::State>,
-    egui_renderer: Option<egui_wgpu::Renderer>,
 
     // Watch / save
-    reload_flag: Arc<Mutex<bool>>,
-    _watcher: Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>>,
     watcher_paused_until: Option<Instant>,
     pub status: Option<(String, Instant)>,
     quit_armed: Option<Instant>,
 }
 
-fn run_interactive(args: ParticleEditArgs, path: PathBuf, effect: ParticleEffect) -> Result<()> {
-    let reload_flag = Arc::new(Mutex::new(false));
-    let watcher = {
-        let flag = Arc::clone(&reload_flag);
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut debouncer = new_debouncer(Duration::from_millis(400), tx)?;
-        debouncer
-            .watcher()
-            .watch(path.as_ref(), RecursiveMode::NonRecursive)?;
-        std::thread::spawn(move || {
-            for result in rx {
-                match result {
-                    Ok(_) => {
-                        if let Ok(mut f) = flag.lock() {
-                            *f = true;
-                        }
-                    }
-                    Err(e) => tracing::warn!("Watch error: {:?}", e),
-                }
-            }
-        });
-        Some(debouncer)
-    };
-
-    let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
-
+fn editor_for(args: ParticleEditArgs, path: PathBuf, effect: ParticleEffect) -> ParticleEditApp {
     let loop_end = effect.preview_length().max(1.0);
     let views = vec![
         EmitterView {
@@ -356,9 +241,8 @@ fn run_interactive(args: ParticleEditArgs, path: PathBuf, effect: ParticleEffect
         };
         effect.emitters.len()
     ];
-    let auto_orbit = args.auto_orbit;
     let show_grid = !args.no_grid;
-    let mut app = ParticleEditApp {
+    ParticleEditApp {
         args,
         path,
         saved: effect.clone(),
@@ -389,77 +273,38 @@ fn run_interactive(args: ParticleEditArgs, path: PathBuf, effect: ParticleEffect
         scene_renderer: None,
         camera: Camera::new(),
         orbit: OrbitCameraController::new(),
-        last_frame_time: Instant::now(),
         egui_ctx: egui::Context::default(),
-        egui_winit: None,
-        egui_renderer: None,
-        reload_flag,
-        _watcher: watcher,
         watcher_paused_until: None,
         status: None,
         quit_armed: None,
-    };
-    app.orbit.auto_orbit = auto_orbit;
-    event_loop.run_app(&mut app)?;
-    Ok(())
+    }
 }
 
 impl ParticleEditApp {
-    fn initialize(&mut self, event_loop: &ActiveEventLoop) {
-        let title = format!("Flint Particles \u{2014} {}", self.effect.name);
-        let window = Arc::new(
-            event_loop
-                .create_window(
-                    Window::default_attributes()
-                        .with_title(&title)
-                        .with_inner_size(PhysicalSize::new(self.args.width, self.args.height)),
-                )
-                .expect("Failed to create window"),
-        );
-        let context = pollster::block_on(RenderContext::new(window.clone()))
-            .expect("Failed to create render context");
-        self.camera = default_camera(&self.args, context.aspect_ratio());
-
-        let mut renderer = SceneRenderer::new(
-            &context,
-            RendererConfig {
-                show_grid: self.show_grid,
-                ..Default::default()
-            },
-        );
-        renderer.set_clear_color(self.backdrop.color());
-
-        let egui_winit = egui_winit::State::new(
-            self.egui_ctx.clone(),
-            egui::ViewportId::ROOT,
-            &window,
-            Some(window.scale_factor() as f32),
-            None,
-            None,
-        );
-        let egui_renderer = egui_wgpu::Renderer::new(
-            &context.device,
-            context.config.format,
-            egui_wgpu::RendererOptions {
-                depth_stencil_format: None,
-                msaa_samples: 1,
-                dithering: false,
-                ..Default::default()
-            },
-        );
-
-        self.sim.load_textures(
-            &mut renderer,
-            &context.device,
-            &context.queue,
-            &effect_dir(&self.path),
-        );
-
-        self.egui_winit = Some(egui_winit);
-        self.egui_renderer = Some(egui_renderer);
-        self.window = Some(window);
+    /// The window's or the still's GPU is here (#712). A still keeps the
+    /// renderer's clear colour, as `--render` always has.
+    fn initialize(&mut self, cx: InitCx) -> Result<()> {
+        let still = cx.window.is_none();
+        let context = cx.gpu.clone();
+        self.camera = default_camera(context.aspect());
+        let mut renderer = context.scene_renderer(RendererConfig {
+            show_grid: self.show_grid,
+            ..Default::default()
+        });
+        if !still {
+            renderer.set_clear_color(self.backdrop.color());
+            self.sim.load_textures(
+                &mut renderer,
+                &context.device,
+                &context.queue,
+                &effect_dir(&self.path),
+            );
+        }
+        self.egui_ctx = cx.egui.clone();
+        self.window = cx.window;
         self.render_context = Some(context);
         self.scene_renderer = Some(renderer);
+        Ok(())
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
@@ -599,14 +444,8 @@ impl ParticleEditApp {
         }
     }
 
+    /// The file changed on disk (the host's watch), unless by our own save.
     fn check_file_reload(&mut self) {
-        let flagged = self.reload_flag.lock().map(|f| *f).unwrap_or(false);
-        if !flagged {
-            return;
-        }
-        if let Ok(mut f) = self.reload_flag.lock() {
-            *f = false;
-        }
         if let Some(until) = self.watcher_paused_until {
             if Instant::now() < until {
                 return;
@@ -873,194 +712,196 @@ fn unique_name(effect: &ParticleEffect, base: &str) -> String {
 
 // ─── winit ──────────────────────────────────────────────────────────────────
 
-impl ApplicationHandler for ParticleEditApp {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_none() {
-            self.initialize(event_loop);
-        }
+impl Editor for ParticleEditApp {
+    fn title(&self) -> String {
+        format!("Flint Particles \u{2014} {}", self.effect.name)
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        if let (Some(egui_winit), Some(window)) = (&mut self.egui_winit, &self.window) {
-            let response = egui_winit.on_window_event(window, &event);
-            if response.consumed {
-                return;
-            }
+    fn init(&mut self, cx: InitCx) -> Result<()> {
+        self.initialize(cx)
+    }
+
+    fn orbit(&mut self) -> Option<(&mut Camera, &mut OrbitCameraController)> {
+        Some((&mut self.camera, &mut self.orbit))
+    }
+
+    fn watched_files(&self) -> Vec<PathBuf> {
+        vec![self.path.clone()]
+    }
+
+    fn on_file_changed(&mut self) {
+        self.check_file_reload();
+    }
+
+    fn resized(&mut self, gpu: &Gpu) {
+        if let Some(r) = &mut self.scene_renderer {
+            r.resize_postprocess(&gpu.device, gpu.width, gpu.height);
         }
+        self.render_context = Some(gpu.clone());
+    }
 
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => {
-                if let Some(ctx) = &mut self.render_context {
-                    ctx.resize(size);
-                    self.camera.aspect = ctx.aspect_ratio();
-                    if let Some(r) = &mut self.scene_renderer {
-                        r.resize_postprocess(&ctx.device, size.width, size.height);
+    /// Every key is the editor's own (O, `[` and `]` too: they set the
+    /// playback speed unless the turntable is on).
+    fn event(&mut self, event: &WindowEvent) -> Flow {
+        let WindowEvent::KeyboardInput { event, .. } = event else {
+            return Flow::Pass;
+        };
+        if event.state != ElementState::Pressed || event.repeat {
+            return Flow::Handled;
+        }
+        if self.egui_ctx.egui_wants_keyboard_input() {
+            return Flow::Handled;
+        }
+        let mods = self.egui_ctx.input(|i| i.modifiers);
+        let mut a = UiActions::default();
+        match event.physical_key {
+            PhysicalKey::Code(KeyCode::Escape) => {
+                if self.is_dirty() {
+                    match self.quit_armed {
+                        Some(t) if t.elapsed() < Duration::from_secs(3) => {
+                            return Flow::Exit;
+                        }
+                        _ => {
+                            self.quit_armed = Some(Instant::now());
+                            self.set_status("Unsaved changes — press Escape again to quit");
+                        }
+                    }
+                } else {
+                    return Flow::Exit;
+                }
+            }
+            PhysicalKey::Code(KeyCode::Space) => a.toggle_play = true,
+            PhysicalKey::Code(KeyCode::KeyR) if mods.command => a.reload = true,
+            PhysicalKey::Code(KeyCode::KeyR) => a.restart = true,
+            PhysicalKey::Code(KeyCode::Home) => a.seek = Some(0.0),
+            PhysicalKey::Code(KeyCode::End) => a.seek = Some(self.play.loop_end),
+            PhysicalKey::Code(KeyCode::ArrowLeft) => {
+                let step = if mods.shift { 0.1 } else { sim::FIXED_DT };
+                a.seek = Some((self.sim.time() - step).max(0.0));
+                self.play.playing = false;
+            }
+            PhysicalKey::Code(KeyCode::ArrowRight) => {
+                let step = if mods.shift { 0.1 } else { sim::FIXED_DT };
+                a.seek = Some(self.sim.time() + step);
+                self.play.playing = false;
+            }
+            PhysicalKey::Code(KeyCode::KeyL) => a.set_loop = Some(!self.play.looping),
+            PhysicalKey::Code(KeyCode::BracketLeft) => {
+                if self.orbit.auto_orbit {
+                    self.orbit.adjust_auto_orbit_speed(0.5);
+                } else {
+                    a.set_speed = Some(self.play.speed * 0.5);
+                }
+            }
+            PhysicalKey::Code(KeyCode::BracketRight) => {
+                if self.orbit.auto_orbit {
+                    self.orbit.adjust_auto_orbit_speed(2.0);
+                } else {
+                    a.set_speed = Some(self.play.speed * 2.0);
+                }
+            }
+            PhysicalKey::Code(KeyCode::KeyO) => a.toggle_orbit = true,
+            PhysicalKey::Code(KeyCode::KeyG) => a.toggle_grid = true,
+            PhysicalKey::Code(KeyCode::KeyX) => a.toggle_gizmos = true,
+            PhysicalKey::Code(KeyCode::KeyB) => a.cycle_backdrop = true,
+            PhysicalKey::Code(KeyCode::KeyH) => self.show_ui = !self.show_ui,
+            PhysicalKey::Code(KeyCode::KeyS) if mods.command => a.save = true,
+            PhysicalKey::Code(KeyCode::KeyZ) if mods.command && mods.shift => a.redo = true,
+            PhysicalKey::Code(KeyCode::KeyZ) if mods.command => a.undo = true,
+            PhysicalKey::Code(KeyCode::KeyY) if mods.command => a.redo = true,
+            PhysicalKey::Code(KeyCode::KeyD) if mods.command => {
+                if let Some(i) = self.selected {
+                    if let Some(em) = self.effect.emitters.get(i).cloned() {
+                        self.snapshot_for_edit();
+                        let mut copy = em;
+                        copy.name = unique_name(&self.effect, &copy.name);
+                        self.effect.emitters.insert(i + 1, copy);
+                        a.structural = true;
+                        a.select = Some(Some(i + 1));
                     }
                 }
             }
-            WindowEvent::KeyboardInput { event, .. } => {
-                self.orbit.handle_key_event(&event);
-                if event.state != ElementState::Pressed || event.repeat {
-                    return;
-                }
-                if self.egui_ctx.egui_wants_keyboard_input() {
-                    return;
-                }
-                let mods = self.egui_ctx.input(|i| i.modifiers);
-                let mut a = UiActions::default();
-                match event.physical_key {
-                    PhysicalKey::Code(KeyCode::Escape) => {
-                        if self.is_dirty() {
-                            match self.quit_armed {
-                                Some(t) if t.elapsed() < Duration::from_secs(3) => {
-                                    event_loop.exit()
-                                }
-                                _ => {
-                                    self.quit_armed = Some(Instant::now());
-                                    self.set_status("Unsaved changes — press Escape again to quit");
-                                }
-                            }
-                        } else {
-                            event_loop.exit();
-                        }
+            PhysicalKey::Code(KeyCode::Delete) => {
+                if let Some(i) = self.selected {
+                    if self.effect.emitters.len() > 1 && i < self.effect.emitters.len() {
+                        self.snapshot_for_edit();
+                        self.effect.emitters.remove(i);
+                        self.views.remove(i);
+                        a.structural = true;
                     }
-                    PhysicalKey::Code(KeyCode::Space) => a.toggle_play = true,
-                    PhysicalKey::Code(KeyCode::KeyR) if mods.command => a.reload = true,
-                    PhysicalKey::Code(KeyCode::KeyR) => a.restart = true,
-                    PhysicalKey::Code(KeyCode::Home) => a.seek = Some(0.0),
-                    PhysicalKey::Code(KeyCode::End) => a.seek = Some(self.play.loop_end),
-                    PhysicalKey::Code(KeyCode::ArrowLeft) => {
-                        let step = if mods.shift { 0.1 } else { sim::FIXED_DT };
-                        a.seek = Some((self.sim.time() - step).max(0.0));
-                        self.play.playing = false;
-                    }
-                    PhysicalKey::Code(KeyCode::ArrowRight) => {
-                        let step = if mods.shift { 0.1 } else { sim::FIXED_DT };
-                        a.seek = Some(self.sim.time() + step);
-                        self.play.playing = false;
-                    }
-                    PhysicalKey::Code(KeyCode::KeyL) => a.set_loop = Some(!self.play.looping),
-                    PhysicalKey::Code(KeyCode::BracketLeft) => {
-                        if self.orbit.auto_orbit {
-                            self.orbit.adjust_auto_orbit_speed(0.5);
-                        } else {
-                            a.set_speed = Some(self.play.speed * 0.5);
-                        }
-                    }
-                    PhysicalKey::Code(KeyCode::BracketRight) => {
-                        if self.orbit.auto_orbit {
-                            self.orbit.adjust_auto_orbit_speed(2.0);
-                        } else {
-                            a.set_speed = Some(self.play.speed * 2.0);
-                        }
-                    }
-                    PhysicalKey::Code(KeyCode::KeyO) => a.toggle_orbit = true,
-                    PhysicalKey::Code(KeyCode::KeyG) => a.toggle_grid = true,
-                    PhysicalKey::Code(KeyCode::KeyX) => a.toggle_gizmos = true,
-                    PhysicalKey::Code(KeyCode::KeyB) => a.cycle_backdrop = true,
-                    PhysicalKey::Code(KeyCode::KeyH) => self.show_ui = !self.show_ui,
-                    PhysicalKey::Code(KeyCode::KeyS) if mods.command => a.save = true,
-                    PhysicalKey::Code(KeyCode::KeyZ) if mods.command && mods.shift => a.redo = true,
-                    PhysicalKey::Code(KeyCode::KeyZ) if mods.command => a.undo = true,
-                    PhysicalKey::Code(KeyCode::KeyY) if mods.command => a.redo = true,
-                    PhysicalKey::Code(KeyCode::KeyD) if mods.command => {
-                        if let Some(i) = self.selected {
-                            if let Some(em) = self.effect.emitters.get(i).cloned() {
-                                self.snapshot_for_edit();
-                                let mut copy = em;
-                                copy.name = unique_name(&self.effect, &copy.name);
-                                self.effect.emitters.insert(i + 1, copy);
-                                a.structural = true;
-                                a.select = Some(Some(i + 1));
-                            }
-                        }
-                    }
-                    PhysicalKey::Code(KeyCode::Delete) => {
-                        if let Some(i) = self.selected {
-                            if self.effect.emitters.len() > 1 && i < self.effect.emitters.len() {
-                                self.snapshot_for_edit();
-                                self.effect.emitters.remove(i);
-                                self.views.remove(i);
-                                a.structural = true;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-                self.apply_actions(a);
-            }
-            WindowEvent::MouseInput { .. }
-            | WindowEvent::CursorMoved { .. }
-            | WindowEvent::MouseWheel { .. } => {
-                let over_ui = self.egui_ctx.is_pointer_over_egui();
-                self.orbit.handle_event(&event, &mut self.camera, over_ui);
-            }
-            WindowEvent::RedrawRequested => {
-                let now = Instant::now();
-                let dt = self.last_frame_time.elapsed().as_secs_f32().min(0.1);
-                self.last_frame_time = now;
-                self.orbit.update(&mut self.camera, dt);
-                self.follow_selected_emitter(dt);
-
-                self.check_file_reload();
-                let pointer_down = self.egui_ctx.input(|i| i.pointer.any_down());
-                self.commit_pending_undo(pointer_down);
-                self.tick(dt);
-                self.refresh_gizmo();
-
-                let Some(context) = &self.render_context else {
-                    return;
-                };
-                let output = match context.surface.acquire() {
-                    Ok(o) => o,
-                    Err(
-                        flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated,
-                    ) => {
-                        let size = context.size;
-                        if let Some(ctx) = &mut self.render_context {
-                            ctx.resize(size);
-                        }
-                        return;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Surface error: {:?}", e);
-                        return;
-                    }
-                };
-                let view = output
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default());
-
-                if let Some(renderer) = &mut self.scene_renderer {
-                    self.sim.upload(
-                        renderer,
-                        &context.device,
-                        &context.queue,
-                        self.camera.position_array(),
-                        None,
-                    );
-                    let _ = renderer.render(context, &self.camera, &view);
-                }
-
-                if self.show_ui {
-                    let actions = ui::render_egui(self, &view);
-                    self.apply_actions(actions);
-                    self.center_in_viewport();
-                } else if self.camera.ndc_offset != [0.0, 0.0] {
-                    self.camera.ndc_offset = [0.0, 0.0];
-                }
-                if let Some(context) = &self.render_context {
-                    context.queue.present(output);
                 }
             }
             _ => {}
         }
+        self.apply_actions(a);
+        Flow::Handled
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(w) = &self.window {
-            w.request_redraw();
+    fn update(&mut self, tick: Tick) {
+        let dt = tick.dt.min(0.1);
+        self.follow_selected_emitter(dt);
+        let pointer_down = self.egui_ctx.input(|i| i.pointer.any_down());
+        self.commit_pending_undo(pointer_down);
+        self.tick(dt);
+        self.refresh_gizmo();
+        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
+            self.sim.upload(
+                renderer,
+                &context.device,
+                &context.queue,
+                self.camera.position_array(),
+                None,
+            );
         }
+        if !self.show_ui && self.camera.ndc_offset != [0.0, 0.0] {
+            self.camera.ndc_offset = [0.0, 0.0];
+        }
+    }
+
+    fn draw(&mut self, target: &Target) {
+        if let Some(renderer) = &mut self.scene_renderer {
+            target.render(renderer, &self.camera);
+        }
+    }
+
+    fn show_ui(&self) -> bool {
+        self.show_ui
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        let actions = ui::render_egui(self, ui);
+        self.apply_actions(actions);
+        self.center_in_viewport();
+    }
+
+    /// `--render`: the effect simulated to `--anim-time` (1 s if not
+    /// given) in the editor's fixed steps, every emitter on.
+    fn still(&mut self, options: &StillOptions) -> Result<Option<image::RgbaImage>> {
+        let (Some(renderer), Some(ctx)) = (&mut self.scene_renderer, &self.render_context) else {
+            anyhow::bail!("the particle editor has no GPU");
+        };
+        self.sim.rebuild(&self.effect, &[], None);
+        self.sim
+            .load_textures(renderer, &ctx.device, &ctx.queue, &effect_dir(&self.path));
+        let t = options.time.unwrap_or(1.0).max(0.0);
+        self.sim.seek(t);
+        self.sim.upload(
+            renderer,
+            &ctx.device,
+            &ctx.queue,
+            self.camera.position_array(),
+            self.args.style.look_time(),
+        );
+        self.args.style.apply_to_renderer(renderer, &ctx.device);
+        Ok(None)
+    }
+
+    fn still_note(&self) -> Option<String> {
+        Some(format!(
+            "'{}' at t = {:.2}s ({} particles alive)",
+            self.effect.name,
+            self.sim.time(),
+            self.sim.alive()
+        ))
     }
 }

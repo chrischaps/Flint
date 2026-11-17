@@ -18,6 +18,20 @@ pub(crate) const SCRIPT_MODULES: &[&dyn flint_script::ScriptModule] =
 #[cfg(not(feature = "music"))]
 pub(crate) const SCRIPT_MODULES: &[&dyn flint_script::ScriptModule] = &[];
 
+/// Its debug keys (#717): a charted session's guide, map and forced fail
+/// (`music::rhythm::RhythmSubsystem`). A suite with no chart has none, and
+/// with no session playing a chart the keys are the game's.
+pub(crate) const DEBUG_KEYS: flint_runtime::DebugKeyGroup = flint_runtime::DebugKeyGroup {
+    owner: "music",
+    when: "a scene whose music_session has a chart",
+    keys: KEYS,
+};
+
+#[cfg(all(feature = "rhythm", feature = "debug-hud"))]
+const KEYS: &[flint_runtime::DebugKey] = crate::music::rhythm::DEBUG_KEYS;
+#[cfg(not(all(feature = "rhythm", feature = "debug-hud")))]
+const KEYS: &[flint_runtime::DebugKey] = &[];
+
 /// The subsystem for the scene being entered, if it has a `music_session`.
 #[cfg(feature = "music")]
 pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
@@ -29,7 +43,7 @@ pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
 #[cfg(not(feature = "music"))]
 pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     if let Some(line) = crate::player_app::missing_features::music_line(ctx.world) {
-        println!("{line}");
+        tracing::warn!(target: "load", "{line}");
     }
     None
 }
