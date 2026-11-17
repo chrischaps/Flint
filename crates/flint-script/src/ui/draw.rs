@@ -175,8 +175,8 @@ fn text_command(text: &str, rect: ResolvedRect, y: f32, style: &ResolvedStyle) -
         style::TextAlign::Right if rect.w > 0.0 => (rect.x + rect.w, 2u8),
         _ => (rect.x, 0u8),
     };
-    let stroke =
-        (style.stroke_width > 0.0).then(|| (faded(style.stroke_color, opacity), style.stroke_width));
+    let stroke = (style.stroke_width > 0.0)
+        .then(|| (faded(style.stroke_color, opacity), style.stroke_width));
     DrawCommand::Text {
         x: text_x,
         y,
@@ -188,7 +188,10 @@ fn text_command(text: &str, rect: ResolvedRect, y: f32, style: &ResolvedStyle) -
         stroke,
         font: style.font.clone(),
         letter_spacing: style.letter_spacing,
-        shadow: style.shadow.map(|(sc, dx, dy)| (faded(sc, opacity), dx, dy)),
-        glow: (style.glow_radius > 0.0).then(|| (faded(style.glow_color, opacity), style.glow_radius)),
+        shadow: style
+            .shadow
+            .map(|(sc, dx, dy)| (faded(sc, opacity), dx, dy)),
+        glow: (style.glow_radius > 0.0)
+            .then(|| (faded(style.glow_color, opacity), style.glow_radius)),
     }
 }

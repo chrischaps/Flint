@@ -982,7 +982,7 @@ mod tests {
                 "{code} is not kebab-case"
             );
         }
-        assert_eq!(seen.len(), 52);
+        assert_eq!(seen.len(), 53);
     }
 
     /// A problem in a scene-level table names the table as its header is

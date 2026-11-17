@@ -524,7 +524,10 @@ impl UiSystem {
             if idx < self.documents.len() {
                 let doc = self.documents.remove(idx);
                 for held in [&mut self.interaction.focus, &mut self.interaction.pressed] {
-                    if held.as_deref().is_some_and(|id| doc.find_element(id).is_some()) {
+                    if held
+                        .as_deref()
+                        .is_some_and(|id| doc.find_element(id).is_some())
+                    {
                         *held = None;
                     }
                 }

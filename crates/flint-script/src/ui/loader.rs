@@ -69,7 +69,9 @@ pub fn parse_layout(content: &str, shown: &str) -> Result<Layout, Vec<String>> {
 
     for key in doc.keys() {
         if key != "ui" && key != "elements" {
-            problem(format!("unknown table `{key}` (a layout has [ui] and [elements.<id>])"));
+            problem(format!(
+                "unknown table `{key}` (a layout has [ui] and [elements.<id>])"
+            ));
         }
     }
 
@@ -81,7 +83,12 @@ pub fn parse_layout(content: &str, shown: &str) -> Result<Layout, Vec<String>> {
                     match (key.as_str(), value.as_str()) {
                         ("style", Some(s)) => style = s.to_string(),
                         ("style", None) => problem("[ui] style is a path, a string".into()),
-                        _ => problem(format!("[ui]: unknown key `{key}` (it has `style`)")),
+                        // A title for the reader; nothing draws it
+                        ("name", Some(_)) => {}
+                        ("name", None) => problem("[ui] name is a string".into()),
+                        _ => problem(format!(
+                            "[ui]: unknown key `{key}` (it has `style` and `name`)"
+                        )),
                     }
                 }
             }

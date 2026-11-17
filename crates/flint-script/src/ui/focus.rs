@@ -110,9 +110,9 @@ impl UiInput {
                 state.held = None;
             }
         }
-        let moved = state.last_pointer.is_some_and(|p| {
-            (p.0 - pointer.0).abs() > 0.5 || (p.1 - pointer.1).abs() > 0.5
-        });
+        let moved = state
+            .last_pointer
+            .is_some_and(|p| (p.0 - pointer.0).abs() > 0.5 || (p.1 - pointer.1).abs() > 0.5);
         state.last_pointer = Some(pointer);
         let to_points = |(x, y): (f64, f64)| (x as f32 * screen.0, y as f32 * screen.1);
         Self {
@@ -150,12 +150,10 @@ impl UiDocument {
 
 impl UiSystem {
     fn locate(&self, id: &str) -> Option<At> {
-        self.documents.iter().enumerate().find_map(|(d, doc)| {
-            doc.elements
-                .iter()
-                .position(|e| e.id == id)
-                .map(|i| (d, i))
-        })
+        self.documents
+            .iter()
+            .enumerate()
+            .find_map(|(d, doc)| doc.elements.iter().position(|e| e.id == id).map(|i| (d, i)))
     }
 
     fn element(&self, (d, i): At) -> &UiElement {
@@ -309,7 +307,9 @@ impl UiSystem {
 
     /// A slider's value or a list's selected index; 0 for anything else.
     pub fn value(&self, id: &str) -> f32 {
-        self.locate(id).map(|at| self.element(at).value).unwrap_or(0.0)
+        self.locate(id)
+            .map(|at| self.element(at).value)
+            .unwrap_or(0.0)
     }
 
     /// Give a list new items, each a button of its `item_class`.
@@ -478,9 +478,9 @@ impl UiSystem {
 
         // Focus on what can't hold it any more lets go
         if let Some(f) = self.interaction.focus.clone() {
-            let keeps = self
-                .locate(&f)
-                .is_some_and(|(d, i)| self.documents[d].takes_focus(&self.documents[d].elements[i]));
+            let keeps = self.locate(&f).is_some_and(|(d, i)| {
+                self.documents[d].takes_focus(&self.documents[d].elements[i])
+            });
             if !keeps {
                 self.focus(None);
             }
@@ -521,7 +521,10 @@ impl UiSystem {
             }
         } else if !self.pointer.touch_press && self.interaction.pressed.is_some() {
             if input.mouse_down {
-                if let Some(at) = pointer_state_dragging.as_deref().and_then(|d| self.locate(d)) {
+                if let Some(at) = pointer_state_dragging
+                    .as_deref()
+                    .and_then(|d| self.locate(d))
+                {
                     self.drag_to(at, input.pointer.0);
                 }
             } else {
@@ -548,7 +551,10 @@ impl UiSystem {
         }
         if self.pointer.touch_press {
             if let (Some(at), Some(&p)) = (
-                self.pointer.dragging.as_deref().and_then(|d| self.locate(d)),
+                self.pointer
+                    .dragging
+                    .as_deref()
+                    .and_then(|d| self.locate(d)),
                 input.touches.first(),
             ) {
                 self.drag_to(at, p.0);
@@ -567,7 +573,12 @@ impl UiSystem {
 
         // Keys and pads
         if let Some(dir) = input.nav {
-            if let Some(at) = self.interaction.focus.as_deref().and_then(|f| self.locate(f)) {
+            if let Some(at) = self
+                .interaction
+                .focus
+                .as_deref()
+                .and_then(|f| self.locate(f))
+            {
                 let e = self.element(at);
                 if e.element_type == ElementType::Slider && dir.is_horizontal() {
                     let step = e.effective_step();
@@ -579,7 +590,12 @@ impl UiSystem {
                 }
             }
         }
-        if let Some(at) = self.interaction.focus.as_deref().and_then(|f| self.locate(f)) {
+        if let Some(at) = self
+            .interaction
+            .focus
+            .as_deref()
+            .and_then(|f| self.locate(f))
+        {
             if input.accept {
                 self.activate(at, &mut done);
             }

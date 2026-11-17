@@ -215,6 +215,7 @@ The codes are stable: a code keeps its meaning, and a new kind of problem gets a
 | `not-a-child` | error | an `ik_two_bone.tip` that is not a child of the entity naming it, so the chain is never solved |
 | `scene-load` | error | the scene parses and the engine still cannot build it |
 | `bad-spec` | error | the procgen spec a model or texture is made from does not parse |
+| `bad-ui` | error | a UI document (`.ui.toml`) or the style file it names has an unknown type, anchor, key, parent, class or style property, or a value of the wrong shape, named with its element or class; `load_ui` refuses the same document ([Scripting](scripting.md#file-format-uitoml)) |
 | `spec-param` | error or warning | a parameter of that spec, named by its path (`ops[2].columns`) as the field: an error for a value its generator can't use (wrong type, out of range, not one of the choices or a colour, a required key missing), a warning for a key it ignores (unknown, for another mode, deprecated); the file is the spec's |
 | `bad-spline` | error | a `.spline.toml` a scene's `spline.file` names does not parse, placed by line and column; at load, also a `spline_mesh.profile` that is no polygon |
 | `bad-emitter` | error | an inline `particle_emitter` has a key the emitter doesn't read or a value it can't use (a curve or range of the wrong form, a zero lifetime, an unknown shape), named by entity and key; it replaces the schema's `unknown-field`, `bad-type` and `bad-enum-value` for that component, since the emitter reads more keys and forms than the schema lists |

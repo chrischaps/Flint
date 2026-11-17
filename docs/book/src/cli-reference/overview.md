@@ -144,6 +144,7 @@ checked 2 scenes and 3 files: 6 errors, 1 warning
 | Every inline `particle_emitter` against the emitter's own reader: its keys, and that each value parses and resolves | `bad-emitter` |
 | The assets a scene names by kind, through the [one search](../concepts/assets.md): `model.asset`, `material.texture`, `sprite.texture`, `audio_source.file`, `script.source`, `terrain.heightmap` / `splat_map`, `grass_ground.mask`, `spline.file`, `particle_emitter.texture`, `[environment] skybox`, `[scene] input_config` | `missing-asset` |
 | The procgen spec behind a model or texture parses | `bad-spec` |
+| Every UI document (`.ui.toml`) and its style file, as `load_ui` reads them: types, anchors, keys, parents, classes, style properties and their values | `bad-ui` |
 | That spec's params fit its generator's schema, at every depth (`flint_procgen::validate_params`, what `flint gen` checks before generating; also `flint validate`) | `spec-param` |
 | The spline file behind a `spline.file` parses, its mistake placed by line and column | `bad-spline` |
 | The input config (the scene's, else `[project] input`, else `config/input.toml`) parses | `bad-input-config` |

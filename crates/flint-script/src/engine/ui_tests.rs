@@ -13,7 +13,9 @@ use test_support::scripted;
 
 /// The repository's file at `rel`, from this crate.
 fn repo_file(rel: &str) -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(rel);
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(rel);
     #[allow(clippy::disallowed_methods)] // a test reads the checkout
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
@@ -60,8 +62,8 @@ fn the_showcase_pause_menu_works_from_keys_and_touch() {
         engine.set_module_base("scripts/lib".into());
         let mut world = FlintWorld::new();
         let id = scripted(&mut world, "game_controller", "showcase_controller.rhai");
-        let source = vfs::read_to_string(Path::new("examples/scripts/showcase_controller.rhai"))
-            .unwrap();
+        let source =
+            vfs::read_to_string(Path::new("examples/scripts/showcase_controller.rhai")).unwrap();
         let ast = engine.compile(&source).unwrap();
         engine.add_script(id, ast, "showcase_controller.rhai".into());
 
@@ -81,7 +83,9 @@ fn the_showcase_pause_menu_works_from_keys_and_touch() {
         frame(&mut engine, &mut world, pressing(&["ui_accept"]));
         let commands = engine.drain_commands();
         assert!(
-            commands.iter().any(|c| matches!(c, ScriptCommand::QuitGame)),
+            commands
+                .iter()
+                .any(|c| matches!(c, ScriptCommand::QuitGame)),
             "Quit pressed: {commands:?}"
         );
         assert!(engine.errors.is_empty(), "{:?}", engine.errors);
@@ -92,8 +96,10 @@ fn the_showcase_pause_menu_works_from_keys_and_touch() {
             .get_rect("resume", 1280.0, 720.0)
             .unwrap();
         let mut tap = InputSnapshot::default();
-        tap.touch_taps
-            .push((((x + w / 2.0) / 1280.0) as f64, ((y + h / 2.0) / 720.0) as f64));
+        tap.touch_taps.push((
+            ((x + w / 2.0) / 1280.0) as f64,
+            ((y + h / 2.0) / 720.0) as f64,
+        ));
         frame(&mut engine, &mut world, tap);
         assert!(!shown(&engine, "pause_menu"));
         // Input is routed before the scripts answer it, so focus lets go of
@@ -117,6 +123,9 @@ fn a_bad_layout_is_a_script_error_naming_the_file_and_element() {
         frame(&mut engine, &mut world, InputSnapshot::default());
         let errors = format!("{:?}", engine.errors);
         assert!(errors.contains("ui/bad.ui.toml"), "{errors}");
-        assert!(errors.contains("element `go`: unknown type `buttn`"), "{errors}");
+        assert!(
+            errors.contains("element `go`: unknown type `buttn`"),
+            "{errors}"
+        );
     });
 }

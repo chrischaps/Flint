@@ -175,9 +175,7 @@ fn fold_script_time(mut args: RenderArgs) -> RenderArgs {
         args.clock.time = Some(t);
         args.clock.scripts = true;
     }
-    if args.clock.strict_scripts
-        || !args.clock.ui_show.is_empty()
-        || args.clock.ui_focus.is_some()
+    if args.clock.strict_scripts || !args.clock.ui_show.is_empty() || args.clock.ui_focus.is_some()
     {
         args.clock.scripts = true;
     }

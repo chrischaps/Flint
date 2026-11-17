@@ -89,7 +89,10 @@ fn load_error(layout: &str, style: &str) -> String {
 
 fn pause(f: impl FnOnce(&mut UiSystem)) {
     with_ui(
-        &[("ui/a.ui.toml", PAUSE), ("ui/pause.style.toml", PAUSE_STYLE)],
+        &[
+            ("ui/a.ui.toml", PAUSE),
+            ("ui/pause.style.toml", PAUSE_STYLE),
+        ],
         f,
     );
 }
@@ -98,10 +101,16 @@ fn frame(ui: &mut UiSystem, input: UiInput) -> Vec<(String, &'static str)> {
     ui.route(&input, SCREEN);
     ui.take_events()
         .into_iter()
-        .map(|UiEvent { element, event, owner: o }| {
-            assert_eq!(o, Some(owner()), "events go to the script that loaded it");
-            (element, event)
-        })
+        .map(
+            |UiEvent {
+                 element,
+                 event,
+                 owner: o,
+             }| {
+                assert_eq!(o, Some(owner()), "events go to the script that loaded it");
+                (element, event)
+            },
+        )
         .collect()
 }
 
@@ -134,10 +143,7 @@ fn ev(id: &str, event: &'static str) -> (String, &'static str) {
 
 #[test]
 fn a_bad_type_is_an_error_naming_the_file_and_the_element() {
-    let err = load_error(
-        "[elements.title]\ntype = \"buton\"\n",
-        "",
-    );
+    let err = load_error("[elements.title]\ntype = \"buton\"\n", "");
     assert!(err.contains("ui/a.ui.toml"), "{err}");
     assert!(err.contains("element `title`"), "{err}");
     assert!(err.contains("unknown type `buton`"), "{err}");
@@ -151,9 +157,15 @@ fn every_mistake_in_a_layout_is_named_at_once() {
         "[styles.x]\ncolour = [1, 0, 0]\nfont_size = \"big\"\n[styles.x.focus]\nbg = 1\n",
     );
     // Each of the style file's mistakes, with its class (and state)
-    assert!(err.contains("class `x`: unknown style property `colour`"), "{err}");
+    assert!(
+        err.contains("class `x`: unknown style property `colour`"),
+        "{err}"
+    );
     assert!(err.contains("`font_size` takes a number"), "{err}");
-    assert!(err.contains("class `x`, focus: unknown style property `bg`"), "{err}");
+    assert!(
+        err.contains("class `x`, focus: unknown style property `bg`"),
+        "{err}"
+    );
 
     let err = load_error(
         r#"
@@ -287,7 +299,10 @@ fn the_mouse_hovers_to_focus_and_clicks_to_activate() {
             mouse_down: true,
             ..Default::default()
         };
-        assert!(frame(ui, down).is_empty(), "a press alone activates nothing");
+        assert!(
+            frame(ui, down).is_empty(),
+            "a press alone activates nothing"
+        );
         let up = UiInput {
             pointer: at,
             ..Default::default()
@@ -439,8 +454,8 @@ fn a_slider_steps_with_left_and_right_and_follows_a_drag() {
 
 #[test]
 fn a_held_direction_repeats() {
-    use crate::context::InputSnapshot;
     use super::focus::{PointerState, REPEAT_AFTER, REPEAT_EVERY};
+    use crate::context::InputSnapshot;
     let mut state = PointerState::default();
     let mut snap = InputSnapshot::default();
     snap.actions_pressed.insert("ui_down".into());

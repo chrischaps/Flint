@@ -158,9 +158,9 @@ impl HeadlessHud {
                         [w as usize, h as usize],
                         rgba.as_raw(),
                     );
-                    let handle =
-                        self.ctx
-                            .load_texture(name, image, egui::TextureOptions::LINEAR);
+                    let handle = self
+                        .ctx
+                        .load_texture(name, image, egui::TextureOptions::LINEAR);
                     self.textures.insert(name.clone(), handle);
                 }
                 Err(problem) => {

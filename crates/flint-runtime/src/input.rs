@@ -258,15 +258,27 @@ fn ui_actions() -> Vec<(&'static str, Vec<Binding>)> {
         ),
         (
             "ui_down",
-            vec![key("ArrowDown"), pad("DPadDown"), stick("LeftStickY", Negative)],
+            vec![
+                key("ArrowDown"),
+                pad("DPadDown"),
+                stick("LeftStickY", Negative),
+            ],
         ),
         (
             "ui_left",
-            vec![key("ArrowLeft"), pad("DPadLeft"), stick("LeftStickX", Negative)],
+            vec![
+                key("ArrowLeft"),
+                pad("DPadLeft"),
+                stick("LeftStickX", Negative),
+            ],
         ),
         (
             "ui_right",
-            vec![key("ArrowRight"), pad("DPadRight"), stick("LeftStickX", Positive)],
+            vec![
+                key("ArrowRight"),
+                pad("DPadRight"),
+                stick("LeftStickX", Positive),
+            ],
         ),
         (
             "ui_accept",

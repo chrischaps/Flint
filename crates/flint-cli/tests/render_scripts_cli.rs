@@ -1225,7 +1225,11 @@ fn a_ui_document_is_drawn_over_the_capture() {
         "{}",
         stderr(&hidden)
     );
-    assert_ne!(centre("hidden.png"), [0, 0, 255], "a hidden card draws nothing");
+    assert_ne!(
+        centre("hidden.png"),
+        [0, 0, 255],
+        "a hidden card draws nothing"
+    );
 
     ok(&render(&dir, "shown.png", &["--ui-show", "card"]));
     assert_eq!(centre("shown.png"), [0, 0, 255], "the button, unfocused");
