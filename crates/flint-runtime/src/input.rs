@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use web_time::Instant;
 
+use crate::debug_keys::DebugKeysConfig;
 use crate::touch_controls::{TouchControls, TouchControlsConfig};
 use winit::keyboard::KeyCode;
 
@@ -77,6 +78,10 @@ pub struct InputConfig {
     /// has the block replaces the whole of an earlier one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub touch_controls: Option<TouchControlsConfig>,
+    /// The debug keys' rebinds and switch (#717): `[debug_keys]`. A later
+    /// layer's `enabled` and each action it names win.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug_keys: Option<DebugKeysConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,17 +273,27 @@ impl InputConfig {
             game_id: "flint".into(),
             actions,
             touch_controls: None,
+            debug_keys: None,
         }
     }
 
     /// Whether any action binds `key`. The player asks this of Escape: a
     /// game that binds it gets it, and the window doesn't close (#639).
     pub fn binds_key(&self, key: KeyCode) -> bool {
-        self.actions.values().any(|action| {
-            action.bindings.iter().any(
-                |b| matches!(b, Binding::Key { code, .. } if parse_key_code(code) == Some(key)),
-            )
-        })
+        self.action_binding_key(key).is_some()
+    }
+
+    /// The first action (by name) that binds `key`, if any. A debug key
+    /// on it stands aside for the game (#717).
+    pub fn action_binding_key(&self, key: KeyCode) -> Option<&str> {
+        self.actions
+            .iter()
+            .find(|(_, action)| {
+                action.bindings.iter().any(
+                    |b| matches!(b, Binding::Key { code, .. } if parse_key_code(code) == Some(key)),
+                )
+            })
+            .map(|(name, _)| name.as_str())
     }
 
     pub fn from_toml_str(content: &str) -> Result<Self> {
@@ -318,6 +333,9 @@ impl InputConfig {
         }
         if let Some(touch) = &self.touch_controls {
             touch.validate().map_err(FlintError::RuntimeError)?;
+        }
+        if let Some(debug_keys) = &self.debug_keys {
+            debug_keys.validate().map_err(FlintError::RuntimeError)?;
         }
         Ok(())
     }
@@ -474,6 +492,12 @@ impl InputState {
         if let Some(touch) = overlay.touch_controls {
             self.touch_controls.set_config(Some(touch.clone()));
             self.config.touch_controls = Some(touch);
+        }
+        if let Some(debug_keys) = overlay.debug_keys {
+            self.config
+                .debug_keys
+                .get_or_insert_with(Default::default)
+                .merge(debug_keys);
         }
         self.last_frame_pressed_actions
             .retain(|action| self.config.actions.contains_key(action));

@@ -272,6 +272,8 @@ All of these compile only with the player's `debug-hud` cargo feature (on by def
 | `\` (backslash) | **Manifest Map**: a full-width bottom strip of the whole suite, with sections, bar ruler, tempo changes, re-entry points, a playhead and this run's judged pulses and seams ([ADR 0037](https://github.com/chrischaps/Flint/blob/main/docs/adr/0037-manifest-map-timeline-panel.md)) |
 | `F9` | **Force fail**: trigger the full rewind, seam and reassembly without playing down to it. Routed through the ordinary trigger path so it exercises the real failure code |
 
+They are the `music_guide`, `manifest_map` and `music_force_fail` debug keys: an input config's [`[debug_keys]`](physics-and-runtime.md#debug-keys) moves them, and in a scene with no charted session (or where the game binds the key) they are ordinary keys.
+
 With no gamepad visible, a debug-hud build arms a **keyboard fallback** ([ADR 0064](https://github.com/chrischaps/Flint/blob/main/docs/adr/0064-debug-keyboard-fallback-for-music-sessions.md), debug keyboard input fallback): arrow keys are `lean`, Space is `pulse`. Prototype verbs only; it is a plumbing check, not a feel surface.
 
 ## Workflow

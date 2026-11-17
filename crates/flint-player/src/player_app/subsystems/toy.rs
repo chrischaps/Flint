@@ -17,6 +17,18 @@ pub(crate) const POLICY: Option<&str> = None;
 /// with a toy.
 pub(crate) const SCRIPT_MODULES: &[&dyn flint_script::ScriptModule] = &[&ToyModule];
 
+/// Its debug key (#717): F12 says how many frames it has heard, in a scene
+/// with a toy; anywhere else F12 is the game's.
+pub(crate) const DEBUG_KEYS: flint_runtime::DebugKeyGroup = flint_runtime::DebugKeyGroup {
+    owner: "toy",
+    when: "a scene with a [toy] table",
+    keys: &[flint_runtime::DebugKey {
+        action: "toy_frames",
+        key: "F12",
+        does: "Say how many frames the toy has heard",
+    }],
+};
+
 /// What the toy hands its module's functions: the frames it has heard.
 #[derive(Debug, Default)]
 struct ToyFrames(u32);
@@ -70,6 +82,42 @@ impl Subsystem for Toy {
             ctx.script.set_module_state(ToyFrames(self.frames));
         }
     }
+
+    fn debug_keys(&self) -> &'static [flint_runtime::DebugKey] {
+        DEBUG_KEYS.keys
+    }
+
+    fn on_debug_key(&mut self, _action: &str, key: &str, ctx: &mut StageCtx) {
+        ctx.note.say(key, &format!("{} frames", self.frames));
+    }
+}
+
+/// The toy's F12 is a debug key only in a scene with a toy (#717): there it
+/// is dispatched and never reaches the game's input, and `--list-keys`'
+/// table says it is live; in a scene without one the game gets F12.
+#[test]
+fn the_toys_key_is_live_only_in_a_scene_with_a_toy() {
+    use winit::keyboard::KeyCode;
+    let mut files = MemorySource::new();
+    files.insert("toys/flint.toml", "");
+    files.insert("toys/scenes/with.scene.toml", "[scene]\nname = \"With\"\n\n[toy]\n");
+    files.insert("toys/scenes/without.scene.toml", "[scene]\nname = \"Without\"\n");
+    vfs::scoped(Arc::new(files), || {
+        let mut app = app_in("toys/scenes/with.scene.toml");
+        app.tick();
+        let live = |app: &PlayerApp| {
+            let table = app.debug_key_table();
+            table.entries.iter().find(|e| e.action == "toy_frames").unwrap().live
+        };
+        assert!(live(&app));
+        assert!(app.handle_debug_key(KeyCode::F12), "the toy's");
+        assert_eq!(app.hud.key_note.showing(), Some(("F12", "1 frames")));
+        assert!(!app.input.is_key_down(KeyCode::F12));
+
+        let mut app = app_in("toys/scenes/without.scene.toml");
+        assert!(!live(&app), "listed, but not live");
+        assert!(!app.handle_debug_key(KeyCode::F12), "the game's");
+    });
 }
 
 fn app_in(scene: &str) -> PlayerApp {
