@@ -225,6 +225,69 @@ fn default_config_version() -> u32 {
     1
 }
 
+/// The actions a UI document's focus reads (#731, flint-script's
+/// `ui::focus`), in every game unless its config binds them otherwise: the
+/// arrows, a pad's d-pad and left stick move focus; Enter, Space and a pad's
+/// south button activate; Backspace and the east button go back. Escape is
+/// left out: a game that binds Escape keeps the window open on it (#639),
+/// so binding it here would change every game's Escape; a game that wants
+/// it binds `ui_back` to it itself.
+fn ui_actions() -> Vec<(&'static str, Vec<Binding>)> {
+    let key = |code: &str| Binding::Key {
+        code: code.into(),
+        scale: 1.0,
+    };
+    let pad = |button: &str| Binding::GamepadButton {
+        button: button.into(),
+        gamepad: GamepadSelector::Any,
+    };
+    let stick = |axis: &str, direction: AxisDirection| Binding::GamepadAxis {
+        axis: axis.into(),
+        gamepad: GamepadSelector::Any,
+        deadzone: default_deadzone(),
+        scale: 1.0,
+        invert: false,
+        threshold: Some(0.5),
+        direction: Some(direction),
+    };
+    use AxisDirection::{Negative, Positive};
+    vec![
+        (
+            "ui_up",
+            vec![key("ArrowUp"), pad("DPadUp"), stick("LeftStickY", Positive)],
+        ),
+        (
+            "ui_down",
+            vec![
+                key("ArrowDown"),
+                pad("DPadDown"),
+                stick("LeftStickY", Negative),
+            ],
+        ),
+        (
+            "ui_left",
+            vec![
+                key("ArrowLeft"),
+                pad("DPadLeft"),
+                stick("LeftStickX", Negative),
+            ],
+        ),
+        (
+            "ui_right",
+            vec![
+                key("ArrowRight"),
+                pad("DPadRight"),
+                stick("LeftStickX", Positive),
+            ],
+        ),
+        (
+            "ui_accept",
+            vec![key("Enter"), key("NumpadEnter"), key("Space"), pad("South")],
+        ),
+        ("ui_back", vec![key("Backspace"), pad("East")]),
+    ]
+}
+
 fn default_scale() -> f32 {
     1.0
 }
@@ -268,6 +331,15 @@ impl InputConfig {
                 }],
             },
         );
+        for (action, binding) in ui_actions() {
+            actions.insert(
+                action.into(),
+                ActionConfig {
+                    kind: ActionKind::Button,
+                    bindings: binding,
+                },
+            );
+        }
         Self {
             version: default_config_version(),
             game_id: "flint".into(),
@@ -1588,6 +1660,28 @@ pub fn parse_key_code(code: &str) -> Option<KeyCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every game has the UI's actions (#731) from the keys, the d-pad,
+    /// the stick and the face buttons, and none of them takes Escape.
+    #[test]
+    fn the_ui_actions_come_from_keys_and_a_pad() {
+        let mut input = InputState::new();
+        input.process_gamepad_button_down(0, "DPadDown");
+        assert!(input.is_action_just_pressed("ui_down"));
+        input.process_gamepad_button_down(0, "South");
+        assert!(input.is_action_just_pressed("ui_accept"));
+        input.process_gamepad_button_down(0, "East");
+        assert!(input.is_action_just_pressed("ui_back"));
+        input.process_key_down(KeyCode::ArrowUp);
+        assert!(input.is_action_just_pressed("ui_up"));
+        input.process_key_down(KeyCode::Enter);
+        assert!(input.is_action_just_pressed("ui_accept"));
+        input.end_frame();
+        input.process_gamepad_axis(0, "LeftStickX", 0.9);
+        assert!(input.is_action_just_pressed("ui_right"));
+        assert!(!input.is_action_pressed("ui_left"));
+        assert!(!InputConfig::built_in_defaults().binds_key(KeyCode::Escape));
+    }
 
     #[test]
     fn binds_key_sees_a_games_escape() {

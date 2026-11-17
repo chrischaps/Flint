@@ -7,8 +7,18 @@
 //!
 //! A frame is a hitch when its time is over **both** `factor` times the
 //! median of the frames before it (default 2x) **and** that median plus
-//! `floor_ms` (default 8 ms). The factor alone cries wolf at high frame
+//! `floor_ms` (default 24 ms). The factor alone cries wolf at high frame
 //! rates (a 4 ms frame among 2 ms ones), the floor alone at low ones.
+//!
+//! The floor is a time, not a count of refreshes (#1109), because what a
+//! player sees is how long the picture held. On a 60 Hz display one missed
+//! refresh (16.7 ms late) is no hitch and two (33.3 ms) are, and 24 ms sits
+//! between them, so there the rule is what the factor made it. A faster
+//! display needs the same delay, not the same count: at 240 Hz, three
+//! refreshes are 12.5 ms against a 4.2 ms median, two missed refreshes of
+//! 4.2 ms that nobody sees, and the shortest hitch is seven (29.2 ms). The
+//! floor was 8 ms until then, and at 240 Hz half of what it counted was
+//! frames under 16.7 ms (`docs/design/hitching-1080.md`).
 //!
 //! The time judged is how long the frame stood on screen: where the clock
 //! paces to vsync, the paced time, so Fifo letting frames through 6, 6, 6,
@@ -25,7 +35,10 @@
 //! (#1077, `flint_core::frame_notes`) of its frame and the frame before,
 //! since GPU work lands a frame late: a model loaded, a pipeline built, a
 //! transition. [`Hitch::likely_cause`] names them, or says
-//! [`NO_ENGINE_EVENT`].
+//! [`NO_ENGINE_EVENT`]. [`Hitch::cause_line`] names them as the cause only
+//! when their times cover half the frame's excess, the rule a script is
+//! blamed by; otherwise whose time it was comes first and the notes follow
+//! as `(also: ..)` (#1124).
 
 use super::frame_history::FrameHistory;
 use super::perf::{script_name, Phase};
@@ -49,7 +62,8 @@ const PLAYER_SHARE: f32 = 0.5;
 pub(crate) struct HitchThresholds {
     /// Over this many times the rolling median.
     pub factor: f32,
-    /// And over the median by at least this, ms.
+    /// And over the median by at least this, ms: a delay on screen, the
+    /// same at every refresh rate.
     pub floor_ms: f32,
 }
 
@@ -57,7 +71,7 @@ impl Default for HitchThresholds {
     fn default() -> Self {
         Self {
             factor: 2.0,
-            floor_ms: 8.0,
+            floor_ms: 24.0,
         }
     }
 }
@@ -87,9 +101,9 @@ pub(crate) enum Cause {
         script: Option<(String, f32)>,
     },
     /// The frame was long but the player's work was not: the compositor,
-    /// the driver, the OS. `present_ms` is the present phase's share, the
-    /// wait for the swapchain.
-    Elsewhere { present_ms: f32 },
+    /// the driver, the OS. `acquire_ms` is the wait for a swapchain image
+    /// (#1123), `present_ms` the wait handing it back.
+    Elsewhere { acquire_ms: f32, present_ms: f32 },
 }
 
 // Read by the F2 graph and the hitch log (#1078, #1079); tested here.
@@ -99,6 +113,20 @@ impl Cause {
         match self {
             Cause::Player { .. } => "player",
             Cause::Elsewhere { .. } => "elsewhere",
+        }
+    }
+
+    /// The longer of the swapchain's two waits in an `elsewhere` hitch,
+    /// by name (`acquire`, `present`), and its ms; `None` for the
+    /// player's own. Read by the cause line and the F2 graph.
+    pub(crate) fn longer_wait(&self) -> Option<(&'static str, f32)> {
+        match *self {
+            Cause::Elsewhere {
+                acquire_ms,
+                present_ms,
+            } if acquire_ms > present_ms => Some(("acquire", acquire_ms)),
+            Cause::Elsewhere { present_ms, .. } => Some(("present", present_ms)),
+            Cause::Player { .. } => None,
         }
     }
 }
@@ -118,8 +146,12 @@ pub(crate) struct Hitch {
     pub judged_ms: f32,
     /// The median of the frames before it.
     pub median_ms: f32,
-    /// The player's work in it (every phase but `present`).
+    /// The player's work in it (every phase but `acquire` and `present`).
     pub player_ms: f32,
+    /// The GPU's busy time read back during it ([`Frame::gpu_ms`]: a frame
+    /// or two old), so a reader can tell a wait on the GPU from one on the
+    /// compositor; `None` while the GPU isn't timed.
+    pub gpu_ms: Option<f32>,
     /// Under vsync, how many refreshes it stood for (1 is on time).
     pub refreshes: Option<u32>,
     pub cause: Cause,
@@ -146,22 +178,17 @@ const CAUSES_NAMED: usize = 3;
 
 // Read by the hitch log, the report and the readouts (#1079)
 impl Hitch {
-    /// The notes that say what the engine was doing (not a clock stall,
-    /// which is the long frame itself).
+    /// The notes that say what the engine was doing: not a clock stall or
+    /// the physics steps, which are the long frame itself
+    /// ([`NoteKind::is_symptom`](flint_core::frame_notes::NoteKind::is_symptom)).
     pub(crate) fn engine_events(&self) -> impl Iterator<Item = &HitchNote> {
         self.notes.iter().filter(|n| !n.note.kind.is_symptom())
     }
 
-    /// The engine's events as a cause, in a line: the outermost notes
-    /// (a transition, not each model it loaded), this frame's first, then
-    /// by time, longest first; `no engine event` when there are none.
-    /// `model load models/crate.glb, 41.2 ms; pipeline build pbr, 9.0 ms
-    /// (frame before)`
-    pub(crate) fn likely_cause(&self) -> String {
+    /// The outermost engine events (a transition, not each model it
+    /// loaded), this frame's first, then by time, longest first.
+    fn top_events(&self) -> Vec<&HitchNote> {
         let mut top: Vec<&HitchNote> = self.engine_events().filter(|n| n.note.depth == 0).collect();
-        if top.is_empty() {
-            return NO_ENGINE_EVENT.to_string();
-        }
         top.sort_by(|a, b| {
             a.frame_before.cmp(&b.frame_before).then(
                 b.note
@@ -170,32 +197,83 @@ impl Hitch {
                     .total_cmp(&a.note.ms.unwrap_or(-1.0)),
             )
         });
-        let mut line = top
-            .iter()
-            .take(CAUSES_NAMED)
-            .map(|n| {
-                if n.frame_before {
-                    format!("{} (frame before)", n.note)
-                } else {
-                    n.note.to_string()
+        top
+    }
+
+    /// How far the frame ran past the median of the frames before it, ms.
+    fn excess_ms(&self) -> f32 {
+        (self.judged_ms - self.median_ms).max(0.0)
+    }
+
+    /// Whether the engine's events account for the hitch (#1124): together
+    /// they took at least half of its excess, the share a script must take
+    /// to be blamed. A 1.2 ms reload poll in a frame 10 ms over doesn't.
+    /// A note that wasn't timed can't be weighed, so it is named, as before.
+    fn events_explain(&self, top: &[&HitchNote]) -> bool {
+        if top.is_empty() {
+            return false;
+        }
+        if top.iter().any(|n| n.note.ms.is_none()) {
+            return true;
+        }
+        let ms: f32 = top.iter().filter_map(|n| n.note.ms).sum();
+        ms >= self.excess_ms() * PLAYER_SHARE
+    }
+
+    /// The engine's events in a line, whether or not they account for the
+    /// hitch ([`cause_line`](Self::cause_line) decides that): the
+    /// outermost notes, this frame's first, then longest first; `no engine
+    /// event` when there are none.
+    /// `model load models/crate.glb, 41.2 ms; pipeline build pbr, 9.0 ms
+    /// (frame before)`
+    pub(crate) fn likely_cause(&self) -> String {
+        let top = self.top_events();
+        if top.is_empty() {
+            return NO_ENGINE_EVENT.to_string();
+        }
+        named(&top, |n| {
+            if n.frame_before {
+                format!("{} (frame before)", n.note)
+            } else {
+                n.note.to_string()
+            }
+        })
+    }
+
+    /// What the hitch was, in a line: the engine's events when they
+    /// account for it, else whose time it was (`script
+    /// stall.rhai:on_update 80.1 ms`, `physics +41.0 ms`, `elsewhere,
+    /// acquire 515.6 ms` or `elsewhere, present 30.2 ms`, the longer of the
+    /// swapchain's waits, #1123) with the events that didn't after it: `sync +9.1
+    /// ms (also: reload poll 1.2 ms)` (#1079, #1124: the exit report,
+    /// `--perf`'s line, `?perf=1`, the hitch log).
+    pub(crate) fn cause_line(&self) -> String {
+        let top = self.top_events();
+        if self.events_explain(&top) {
+            return self.likely_cause();
+        }
+        let mut line = self.whose_line();
+        if !top.is_empty() {
+            // Short: the kind and its time, not the file or the label
+            let also = named(&top, |n| {
+                let mut s = n.note.kind.label().to_string();
+                if let Some(ms) = n.note.ms {
+                    s.push_str(&format!(" {ms:.1} ms"));
                 }
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
-        if top.len() > CAUSES_NAMED {
-            line.push_str(&format!("; {} more", top.len() - CAUSES_NAMED));
+                if n.frame_before {
+                    s.push_str(" the frame before");
+                }
+                s
+            });
+            line.push_str(&format!(" (also: {also})"));
         }
         line
     }
 
-    /// What the hitch was, in a line: the engine's events when it noted
-    /// any, else whose time it was: `script stall.rhai:on_update 80.1 ms`,
-    /// `physics +41.0 ms`, `elsewhere, present 30.2 ms` (#1079: the exit
-    /// report, `--perf`'s line, `?perf=1`).
-    pub(crate) fn cause_line(&self) -> String {
-        if self.engine_events().any(|n| n.note.depth == 0) {
-            return self.likely_cause();
-        }
+    /// Whose time the hitch was, in a line: the blamed script, else the
+    /// phase that grew most, else `elsewhere` and the longer of the
+    /// swapchain's waits (#1123).
+    fn whose_line(&self) -> String {
         if let Some((name, ms)) = self.blamed_script() {
             return format!("script {name} {ms:.1} ms");
         }
@@ -203,7 +281,10 @@ impl Hitch {
             Cause::Player {
                 phase, phase_ms, ..
             } => format!("{} +{phase_ms:.1} ms", phase.label()),
-            Cause::Elsewhere { present_ms } => format!("elsewhere, present {present_ms:.1} ms"),
+            Cause::Elsewhere { .. } => {
+                let (wait, ms) = self.cause.longer_wait().unwrap_or(("present", 0.0));
+                format!("elsewhere, {wait} {ms:.1} ms")
+            }
         }
     }
 
@@ -222,22 +303,14 @@ impl Hitch {
     }
 
     /// The cause with no times in it, so hitches of one cause count
-    /// together: the kind of the engine's first event (`model load`), else
-    /// the script (`script stall.rhai:on_update`), the phase (`physics`)
-    /// or `elsewhere`.
+    /// together, by [`cause_line`](Self::cause_line)'s rule: the kind of
+    /// the engine's first event (`model load`) when the events account for
+    /// the hitch, else the script (`script stall.rhai:on_update`), the
+    /// phase (`physics`) or `elsewhere`.
     pub(crate) fn cause_key(&self) -> String {
-        let mut top: Vec<&HitchNote> = self.engine_events().filter(|n| n.note.depth == 0).collect();
-        // This frame's before the frame before's, the longest first
-        top.sort_by(|a, b| {
-            a.frame_before.cmp(&b.frame_before).then(
-                b.note
-                    .ms
-                    .unwrap_or(-1.0)
-                    .total_cmp(&a.note.ms.unwrap_or(-1.0)),
-            )
-        });
-        if let Some(first) = top.first() {
-            return first.note.kind.label().to_string();
+        let top = self.top_events();
+        if self.events_explain(&top) {
+            return top[0].note.kind.label().to_string();
         }
         if let Some((name, _)) = self.blamed_script() {
             return format!("script {name}");
@@ -247,6 +320,20 @@ impl Hitch {
             Cause::Elsewhere { .. } => "elsewhere".to_string(),
         }
     }
+}
+
+/// The first [`CAUSES_NAMED`] notes, each as `name` says, then "N more".
+fn named(top: &[&HitchNote], name: impl Fn(&HitchNote) -> String) -> String {
+    let mut line = top
+        .iter()
+        .take(CAUSES_NAMED)
+        .map(|n| name(n))
+        .collect::<Vec<_>>()
+        .join("; ");
+    if top.len() > CAUSES_NAMED {
+        line.push_str(&format!("; {} more", top.len() - CAUSES_NAMED));
+    }
+    line
 }
 
 /// The counts over a span of frames.
@@ -397,6 +484,7 @@ impl HitchDetector {
             judged_ms: judged,
             median_ms: median,
             player_ms: frame.player_ms(),
+            gpu_ms: frame.gpu_ms,
             refreshes,
             cause,
         };
@@ -425,11 +513,12 @@ impl HitchDetector {
         let typical = self.median(before.clone().map(|i| frames[i].player_ms()));
         if frame.player_ms() - typical < excess * PLAYER_SHARE {
             return Cause::Elsewhere {
+                acquire_ms: frame.phases[Phase::Acquire as usize],
                 present_ms: frame.phases[Phase::Present as usize],
             };
         }
         let mut worst = (Phase::Input, f32::MIN);
-        for phase in Phase::ALL.into_iter().filter(|&p| p != Phase::Present) {
+        for phase in Phase::ALL.into_iter().filter(|p| !p.is_wait()) {
             let i = phase as usize;
             let grew = frame.phases[i] - self.median(before.clone().map(|j| frames[j].phases[i]));
             if grew > worst.1 {
@@ -562,8 +651,12 @@ mod tests {
         wall: f64,
         input: f64,
         scripts: f64,
+        physics: f64,
+        sync: f64,
         render: f64,
         present: f64,
+        /// Fixed physics steps run (0: none said).
+        steps: u32,
     }
 
     fn steady(wall: f64) -> F {
@@ -573,6 +666,7 @@ mod tests {
             scripts: 1.0,
             render: 2.0,
             present: 0.2,
+            ..F::default()
         }
     }
 
@@ -602,6 +696,8 @@ mod tests {
             for (phase, d) in [
                 (Phase::Input, f.input),
                 (Phase::Scripts, f.scripts),
+                (Phase::Physics, f.physics),
+                (Phase::Sync, f.sync),
                 (Phase::Render, f.render),
                 (Phase::Present, f.present),
             ] {
@@ -611,6 +707,7 @@ mod tests {
             let times: Vec<(String, f32)> =
                 scripts.iter().map(|(n, ms)| (n.to_string(), *ms)).collect();
             h.record_scripts(&times);
+            h.fixed_steps(f.steps);
             self.t += ms(f.wall);
             // The next frame's start closes this one; its tick measures it.
             h.begin_frame_at(self.t);
@@ -662,7 +759,7 @@ mod tests {
         assert!((h.median_ms - HZ60_MS as f32).abs() < 0.01);
         assert_eq!(h.refreshes, None, "no vsync, no refreshes");
         assert!(
-            matches!(h.cause, Cause::Elsewhere { present_ms } if (present_ms - 0.2).abs() < 0.01),
+            matches!(h.cause, Cause::Elsewhere { present_ms, .. } if (present_ms - 0.2).abs() < 0.01),
             "{:?}",
             h.cause
         );
@@ -802,26 +899,100 @@ mod tests {
 
     #[test]
     fn both_the_factor_and_the_floor_must_be_passed() {
-        // 2 ms frames: a 6 ms one is 3x, but only 4 ms over: no hitch.
+        // 2 ms frames: a 20 ms one is 10x, but only 18 ms over: no hitch.
         let mut run = Run::new(None);
         let quick = F {
             wall: 2.0,
             ..F::default()
         };
         run.frames(120, quick);
-        assert_eq!(run.frame(F { wall: 6.0, ..quick }), 0);
         assert_eq!(
             run.frame(F {
-                wall: 11.0,
+                wall: 20.0,
+                ..quick
+            }),
+            0
+        );
+        assert_eq!(
+            run.frame(F {
+                wall: 27.0,
                 ..quick
             }),
             1
         );
-        // 50 ms frames: 60 is 10 over but not 2x.
+        // 50 ms frames: 80 is 30 over but not 2x.
         let mut run = Run::new(None);
         run.frames(120, steady(50.0));
-        assert_eq!(run.frame(steady(60.0)), 0);
+        assert_eq!(run.frame(steady(80.0)), 0);
         assert_eq!(run.frame(steady(101.0)), 1);
+    }
+
+    const HZ240_MS: f64 = 1000.0 / 240.0;
+
+    /// #1109: a 240 Hz panel under a busy machine. Every so often a frame
+    /// stands three refreshes (12.5 ms), now and then four or five (16.7,
+    /// 20.8): a delay of two to four refreshes of 4.2 ms that no one sees,
+    /// and no hitch. The rule with the old 8 ms floor counted every one.
+    /// A 100 ms stall among them still is one, and says so in refreshes.
+    #[test]
+    fn at_240_hz_three_refresh_frames_are_not_hitches() {
+        let late = [3.0, 3.0, 4.0, 3.0, 5.0];
+        let series = |run: &mut Run| {
+            let mut found = 0;
+            for i in 0..2400 {
+                // One late frame in about every 23, the others on time
+                let wall = if i % 23 == 11 {
+                    late[(i / 23) % late.len()] * HZ240_MS
+                } else {
+                    HZ240_MS
+                };
+                found += run.frame(steady(wall));
+            }
+            found
+        };
+        let mut run = Run::new(Some(HZ240_MS));
+        assert_eq!(series(&mut run), 0);
+        let s = run.detector.session();
+        assert_eq!(s.hitches, 0);
+        // The late frames are still counted, as the refreshes they missed
+        assert!(s.missed_refreshes > 200, "{s:?}");
+
+        assert_eq!(run.frame(steady(100.0)), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.refreshes, Some(24));
+        assert!((h.median_ms - HZ240_MS as f32).abs() < 0.01, "{h:?}");
+
+        // What #1109 saw: the same series judged with the 8 ms floor
+        let mut old = Run::new(Some(HZ240_MS));
+        old.detector.thresholds.floor_ms = 8.0;
+        assert!(series(&mut old) > 80);
+    }
+
+    /// The floor is a delay, so the shortest hitch is about the same length
+    /// on every display, and on a 60 Hz one it is what it always was: two
+    /// missed refreshes, where the factor puts it.
+    #[test]
+    fn the_shortest_hitch_is_about_as_long_at_every_refresh_rate() {
+        let shortest = |hz: f64| {
+            let period = 1000.0 / hz;
+            (2..40)
+                .find(|&n| {
+                    let mut run = Run::new(Some(period));
+                    run.frames(120, steady(period));
+                    run.frame(steady(n as f64 * period)) == 1
+                })
+                .map(|n| (n, n as f64 * period))
+                .unwrap()
+        };
+        assert_eq!(shortest(60.0).0, 3, "two missed refreshes at 60 Hz");
+        for hz in [60.0, 75.0, 90.0, 120.0, 144.0, 165.0, 240.0, 360.0] {
+            let (n, ms) = shortest(hz);
+            assert!(
+                (27.0..=50.0).contains(&ms),
+                "{hz} Hz: the shortest hitch is {n} refreshes, {ms:.1} ms"
+            );
+        }
+        assert_eq!(shortest(240.0).0, 7);
     }
 
     #[test]
@@ -1030,6 +1201,156 @@ mod tests {
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].kind, NoteKind::PhysicsSteps);
         assert_eq!(notes[0].to_string(), "physics steps 2 fixed steps");
+    }
+
+    /// #1124, from #1080's log: debug Woozy Grove at 36 fps, a 446 ms frame
+    /// whose render waited 410.7 ms on the swapchain. The frame before ran
+    /// two fixed steps, as every frame at 36 fps does, and the clock saw
+    /// the stall: both are the long frame, not its cause.
+    /// `{"frame":43,"ms":445.97,"median_ms":33.33,"phase":"render",
+    /// "phase_ms":410.74,"cause":"physics steps 2 fixed steps (frame
+    /// before)"}`
+    #[test]
+    fn a_render_stall_after_two_physics_steps_is_the_renders() {
+        use flint_core::frame_notes::NoteKind;
+        let mut run = Run::new(None);
+        let grove = F {
+            wall: 33.33,
+            input: 0.3,
+            scripts: 1.0,
+            physics: 2.0,
+            sync: 2.0,
+            render: 25.0,
+            present: 2.0,
+            steps: 2,
+        };
+        run.frames(120, grove);
+        let stall = F {
+            wall: 445.97,
+            render: 25.0 + 410.74,
+            steps: 1,
+            ..grove
+        };
+        assert_eq!(run.frame(stall), 1);
+        let h = run.detector.last().unwrap();
+        let kinds: Vec<_> = h
+            .notes
+            .iter()
+            .map(|n| (n.note.kind, n.frame_before))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                (NoteKind::ClockStall, false),
+                (NoteKind::PhysicsSteps, true)
+            ],
+            "both kept on the hitch"
+        );
+        assert_eq!(h.cause_line(), "render +410.7 ms");
+        assert_eq!(h.cause_key(), "render");
+        assert_eq!(h.likely_cause(), NO_ENGINE_EVENT);
+    }
+
+    /// #1124, from #1080's log: release Woozy Grove, a 14.9 ms frame among
+    /// 4.17 ms ones whose sync grew 9.1 ms, with a 1.2 ms reload poll in
+    /// it. The poll is a seventh of the excess: named after, not as, the
+    /// cause.
+    /// `{"frame":645,"ms":14.9,"median_ms":4.17,"phase":"sync",
+    /// "phase_ms":9.07,"cause":"reload poll 0 scripts watched, 1.2 ms"}`
+    #[test]
+    fn a_sync_stall_is_not_blamed_on_a_quick_reload_poll() {
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        // The line was logged on the 8 ms floor; at 24 (#1109) a frame
+        // 10.7 ms over is no hitch. The cause line is what's tested here.
+        run.detector.thresholds.floor_ms = 8.0;
+        let grove = F {
+            wall: 4.17,
+            input: 0.1,
+            scripts: 0.3,
+            physics: 0.2,
+            sync: 0.5,
+            render: 1.5,
+            present: 1.0,
+            steps: 1,
+        };
+        run.frames(120, grove);
+        frame_notes::note(
+            NoteKind::ReloadPoll,
+            || "0 scripts watched".into(),
+            Some(1.25),
+        );
+        let slow = F {
+            wall: 14.9,
+            sync: 0.5 + 9.07,
+            ..grove
+        };
+        assert_eq!(run.frame(slow), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "sync +9.1 ms (also: reload poll 1.2 ms)");
+        assert_eq!(h.cause_key(), "sync");
+        // The notes in a line are still there for whoever asks
+        assert_eq!(h.likely_cause(), "reload poll 0 scripts watched, 1.2 ms");
+        frame_notes::listen(false);
+    }
+
+    /// A note that does account for its hitch is still the cause: a model
+    /// load of 70 ms in a frame 83 ms over, a transition of 90 ms. A note
+    /// of the frame before that doesn't is named after, marked so.
+    #[test]
+    fn a_note_that_covers_half_the_hitch_is_its_cause() {
+        use flint_core::frame_notes::{self, NoteKind};
+        frame_notes::listen(true);
+        let mut run = Run::new(None);
+        run.frames(120, steady(HZ60_MS));
+        frame_notes::note(
+            NoteKind::ModelLoad,
+            || "models/crate.glb".into(),
+            Some(70.0),
+        );
+        let load = F {
+            sync: 70.0,
+            ..steady(100.0)
+        };
+        assert_eq!(run.frame(load), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.cause_line(), "model load models/crate.glb, 70.0 ms");
+        assert_eq!(h.cause_key(), "model load");
+
+        // Several notes count together: two pipelines of 25 ms in a 60 ms
+        // render stall
+        run.frames(60, steady(HZ60_MS));
+        for label in ["bloom", "ssao"] {
+            frame_notes::note(NoteKind::PipelineBuild, || label.into(), Some(25.0));
+        }
+        let build = F {
+            render: 62.0,
+            ..steady(HZ60_MS + 60.0)
+        };
+        assert_eq!(run.frame(build), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(
+            h.cause_line(),
+            "pipeline build bloom, 25.0 ms; pipeline build ssao, 25.0 ms"
+        );
+
+        // A 3 ms pipeline the frame before, under a 40 ms render stall
+        run.frames(60, steady(HZ60_MS));
+        frame_notes::note(NoteKind::PipelineBuild, || "pbr".into(), Some(3.0));
+        run.frame(steady(HZ60_MS));
+        let stall = F {
+            render: 42.0,
+            ..steady(60.0)
+        };
+        assert_eq!(run.frame(stall), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(
+            h.cause_line(),
+            "render +40.0 ms (also: pipeline build 3.0 ms the frame before)"
+        );
+        assert_eq!(h.cause_key(), "render");
+        frame_notes::listen(false);
     }
 
     #[test]

@@ -8,18 +8,20 @@ use flint_core::components as comp;
 pub(crate) fn register(api: &mut ScriptApi) {
     let mut m = api.module("screen_ui");
 
-    m.func(
-        "ui_set_value",
-        "Set an entity's ui_fill value (a bar's fill, 0..1).",
-    )
-    .arg("id", Entity)
-    .arg("value", Num)
-    .run(|call, (id, value)| {
-        if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
-            comps.set_field(comp::UI_FILL, "value", toml::Value::Float(value));
-        }
-        Ok(())
-    });
+    // `ui_` is the data-driven UI's family (#731): the entity's fill
+    // setter was renamed, the old name kept for one release
+    for (name, old) in [("set_fill", None), ("ui_set_value", Some("use set_fill"))] {
+        m.func(name, "Set an entity's ui_fill value (a bar's fill, 0..1).")
+            .deprecated(old)
+            .arg("id", Entity)
+            .arg("value", Num)
+            .run(|call, (id, value)| {
+                if let Some(mut comps) = call.world_mut()?.get_components_mut(id) {
+                    comps.set_field(comp::UI_FILL, "value", toml::Value::Float(value));
+                }
+                Ok(())
+            });
+    }
 
     m.func("set_text", "Set an entity's ui_text text.")
         .arg("id", Entity)

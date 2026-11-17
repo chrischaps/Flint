@@ -41,7 +41,7 @@ fn on_update() {
 
         let fill_id = get_entity("health_fill");
         if fill_id >= 0 {
-            ui_set_value(fill_id, health);
+            set_fill(fill_id, health);
         }
     }
 
@@ -51,7 +51,7 @@ fn on_update() {
         health = 1.0;
         let fill_id = get_entity("health_fill");
         if fill_id >= 0 {
-            ui_set_value(fill_id, health);
+            set_fill(fill_id, health);
         }
     }
 

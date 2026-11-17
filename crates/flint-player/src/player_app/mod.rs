@@ -43,6 +43,8 @@ pub mod frame_rate;
 pub mod game_core;
 pub mod headless_animation;
 pub mod headless_game;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod headless_hud;
 mod hitch;
 #[cfg(test)]
 mod hitch_log_tests;

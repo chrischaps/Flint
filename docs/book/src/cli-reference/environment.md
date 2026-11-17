@@ -33,7 +33,7 @@ A value a switch doesn't accept is said once, as a warning naming the forms it t
 |---|---|---|---|
 | `FLINT_FRAME_HISTORY` | 1\|on\|true\|yes or 0\|off\|false\|no | the build's frame-history feature (on) | Record every frame for the F2 frame history |
 | `FLINT_HITCH_FACTOR` | a number of at least 1 | 2 | A frame is a hitch over this many times the rolling median frame time |
-| `FLINT_HITCH_FLOOR_MS` | a number of at least 0 | 8 | ...and at least this many milliseconds over it |
+| `FLINT_HITCH_FLOOR_MS` | a number of at least 0 | 24 | ...and at least this many milliseconds over it, at any refresh rate |
 | `FLINT_PERF_LOG` | a path | stderr only | Also append each perf summary line to this file (Android sets it beside a perf profile) |
 | `FLINT_SHADOWS` | 1\|on\|true\|yes or 0\|off\|false\|no | on | 0 starts with the shadow pass off; the same as --quality shadows=off, which overrides it |
 | `FLINT_SHADOW_RES` | a whole number from 256 to 4096 | 2048 | Each shadow cascade's map, texels on a side; the same as --quality shadow_resolution=, which overrides it |

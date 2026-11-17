@@ -1,0 +1,148 @@
+# The showcase pause menu's look (#731): lamplight brass on smoked glass,
+# the tavern HUD's gold and umber. A button's `focus` and `pressed` tables
+# go over it while it has focus or a pointer holds it.
+
+[tokens]
+gold = [0.95, 0.85, 0.5, 1.0]
+brass = [0.7, 0.55, 0.25, 0.5]
+brass_faint = [0.7, 0.55, 0.25, 0.25]
+parchment = [0.88, 0.82, 0.7, 1.0]
+umber = [0.1, 0.07, 0.03, 1.0]
+
+[styles.veil]
+width_pct = 100
+height_pct = 100
+bg_color = [0.0, 0.0, 0.0, 0.55]
+layer = 5
+
+# The corners: 30 points of brass, 40 in from each edge
+[styles.corner_h_tl]
+x = 40
+y = 40
+width = 30
+height = 2
+thickness = 0
+color = "$brass_faint"
+layer = 5
+
+[styles.corner_v_tl]
+x = 40
+y = 40
+width = 2
+height = 30
+thickness = 0
+color = "$brass_faint"
+layer = 5
+
+[styles.corner_h_tr]
+x = -40
+y = 40
+width = 30
+height = 2
+thickness = 0
+color = "$brass_faint"
+layer = 5
+
+[styles.corner_v_tr]
+x = -40
+y = 40
+width = 2
+height = 30
+thickness = 0
+color = "$brass_faint"
+layer = 5
+
+[styles.corner_h_bl]
+x = 40
+y = -40
+width = 30
+height = 2
+thickness = 0
+color = "$brass_faint"
+layer = 5
+
+[styles.corner_v_bl]
+x = 40
+y = -40
+width = 2
+height = 30
+thickness = 0
+color = "$brass_faint"
+layer = 5
+
+[styles.corner_h_br]
+x = -40
+y = -40
+width = 30
+height = 2
+thickness = 0
+color = "$brass_faint"
+layer = 5
+
+[styles.corner_v_br]
+x = -40
+y = -40
+width = 2
+height = 30
+thickness = 0
+color = "$brass_faint"
+layer = 5
+
+[styles.card]
+width = 400
+height_auto = true
+padding = [40, 30, 40, 30]
+bg_color = [0.06, 0.045, 0.03, 0.82]
+border_color = "$brass"
+border_width = 1
+rounding = 10
+layer = 5
+
+[styles.title]
+width = 320
+height = 58
+font_size = 46
+letter_spacing = 6
+text_align = "center"
+color = "$gold"
+shadow = [2, 2, 0.0, 0.0, 0.0, 0.6]
+layer = 6
+
+[styles.rule]
+x = 90
+width = 140
+height = 2
+margin_bottom = 24
+thickness = 0
+color = "$brass"
+layer = 6
+
+[styles.button]
+width = 320
+height = 46
+margin_bottom = 10
+font_size = 20
+letter_spacing = 1
+rounding = 6
+color = "$parchment"
+bg_color = [0.12, 0.09, 0.05, 0.9]
+border_color = "$brass_faint"
+border_width = 1
+layer = 6
+
+[styles.button.focus]
+color = "$umber"
+bg_color = [0.95, 0.78, 0.42, 1.0]
+border_color = "$gold"
+
+[styles.button.pressed]
+bg_color = [0.78, 0.58, 0.28, 1.0]
+
+[styles.hint]
+y = 14
+width = 320
+height = 18
+font_size = 13
+text_align = "center"
+color = [0.8, 0.75, 0.65, 0.55]
+layer = 6

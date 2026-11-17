@@ -4,7 +4,7 @@
 //! Analogous to `SkeletalSync` but writes to child entity transforms instead of
 //! computing bone matrices for GPU skinning.
 
-use crate::animator::Animator;
+use crate::animator::{self, Animator};
 use crate::node_clip::NodeClip;
 use crate::playback_state::ClipPlaybackState;
 use crate::skeletal_clip::{JointProperty, JointTrack};
@@ -68,8 +68,9 @@ impl NodeSync {
     }
 
     /// Scan the world for entities with `animator` (but no `skeleton`) that are
-    /// registered in `node_maps`. Creates playback states for newly discovered entities.
-    /// Detects clip/speed/blend changes for existing entities.
+    /// registered in `node_maps`: start a playback for each new one, and
+    /// follow the animator on the tracked ones ([`Animator::apply_to`], the
+    /// rules property and skeletal clips follow too).
     pub fn sync_from_world(&mut self, world: &FlintWorld) {
         for &entity_id in world.entities_with_component(comp::ANIMATOR) {
             // Must be registered in our node_maps
@@ -87,67 +88,13 @@ impl NodeSync {
                 continue;
             }
             let animator = Animator::of(world, entity_id);
-
-            // If already tracked, check for clip changes and blend_target changes
+            let clips = &self.clips;
+            let duration_of = |name: &str| clips.get(name).map(|c| c.duration);
             if let Some(state) = self.states.get_mut(&entity_id) {
-                // Check if clip name changed (e.g. script called play_clip)
-                let ecs_clip = animator.clip.to_string();
-                let ecs_playing = animator.playing;
-                let ecs_speed = animator.speed;
-                let ecs_looping = animator.looping;
-
-                // Clip changed — reset playback
-                if !ecs_clip.is_empty()
-                    && ecs_clip != state.clip_name
-                    && self.clips.contains_key(&ecs_clip)
-                {
-                    state.clip_name = ecs_clip;
-                    state.time = 0.0;
-                    state.playing = ecs_playing;
-                    state.speed = ecs_speed;
-                    state.looping = ecs_looping;
-                    state.blend_target.clear();
-                    state.blend_elapsed = 0.0;
-                    continue;
-                }
-
-                // Sync playing/speed/loop state
-                state.playing = ecs_playing;
-                state.speed = ecs_speed;
-                state.looping = ecs_looping;
-
-                // Check for blend_target changes
-                let ecs_blend_target = animator.blend_target.to_string();
-                let ecs_blend_duration = animator.blend_duration;
-
-                if !ecs_blend_target.is_empty()
-                    && ecs_blend_target != state.blend_target
-                    && self.clips.contains_key(&ecs_blend_target)
-                {
-                    state.blend_target = ecs_blend_target;
-                    state.blend_duration = ecs_blend_duration;
-                    state.blend_elapsed = 0.0;
-                }
-                continue;
+                animator.apply_to(state, duration_of);
+            } else if let Some(state) = animator.start(duration_of) {
+                self.states.insert(entity_id, state);
             }
-
-            // New entity — create playback state
-            let clip_name = animator.clip.to_string();
-
-            if clip_name.is_empty() || !self.clips.contains_key(&clip_name) {
-                continue;
-            }
-
-            let mut state = NodePlaybackState::new(
-                clip_name,
-                animator.speed,
-                animator.looping,
-                animator.starts_playing(),
-            );
-            state.blend_target = animator.blend_target.to_string();
-            state.blend_duration = animator.blend_duration;
-
-            self.states.insert(entity_id, state);
         }
     }
 
@@ -181,25 +128,11 @@ impl NodeSync {
                 continue;
             };
 
-            // Advance time
-            if state.playing {
-                state.time += dt * state.speed;
-
-                if state.looping {
-                    if clip.duration > 0.0 {
-                        if state.time >= clip.duration {
-                            state.time %= clip.duration;
-                        } else if state.time < 0.0 {
-                            state.time = clip.duration - (-state.time % clip.duration);
-                        }
-                    }
-                } else if state.time >= clip.duration {
-                    state.time = clip.duration;
-                    state.playing = false;
-                } else if state.time < 0.0 {
-                    state.time = 0.0;
-                    state.playing = false;
-                }
+            state.advance_time(clip.duration, dt);
+            // A one-shot's end, an autoplay's start: say so, or the next
+            // sync reads the animator's stale `playing` as a script's.
+            if let Some(mut components) = world.get_components_mut(entity_id) {
+                animator::publish(state, &mut components);
             }
 
             // Sample and apply each node track

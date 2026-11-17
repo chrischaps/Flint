@@ -1,7 +1,8 @@
 //! Bridges ECS `animator` components to the animation player
 
-use crate::animator::Animator;
-use crate::player::{advance, AnimationPlayer, PlaybackState};
+use crate::animator::{self, Animator};
+use crate::playback_state::ClipPlaybackState;
+use crate::player::{advance, AnimationPlayer};
 use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -10,7 +11,7 @@ use std::collections::HashMap;
 /// Manages per-entity playback states, syncing between TOML components and the player.
 #[derive(Default)]
 pub struct AnimationSync {
-    states: HashMap<EntityId, PlaybackState>,
+    states: HashMap<EntityId, ClipPlaybackState>,
 }
 
 impl AnimationSync {
@@ -30,53 +31,24 @@ impl AnimationSync {
         self.states.len()
     }
 
-    /// Scan the world for entities with an `animator` component and create
-    /// `PlaybackState` entries for any new ones. For already-tracked entities,
-    /// detect clip/playing/speed changes written by scripts.
+    /// The playback driving an entity's property clip
+    pub fn playback_state(&self, entity_id: &EntityId) -> Option<&ClipPlaybackState> {
+        self.states.get(entity_id)
+    }
+
+    /// Scan the world for entities with an `animator` component: start a
+    /// playback for each new one whose clip is a property clip, and follow
+    /// the animator on the tracked ones ([`Animator::apply_to`], the rules
+    /// node and skeletal clips follow too).
     pub fn sync_from_world(&mut self, world: &FlintWorld, player: &AnimationPlayer) {
+        let duration_of = |name: &str| player.get_clip(name).map(|c| c.duration);
         for &entity_id in world.entities_with_component(comp::ANIMATOR) {
             let animator = Animator::of(world, entity_id);
-            let clip_name = animator.clip.to_string();
-
-            if clip_name.is_empty() || !player.has_clip(&clip_name) {
-                continue;
-            }
-
-            let speed = animator.speed;
-            let looping = animator.looping;
-            let ecs_playing = animator.starts_playing();
-
-            // For already-tracked entities, detect changes from scripts
             if let Some(state) = self.states.get_mut(&entity_id) {
-                // Clip changed → switch clip, reset playback
-                if state.clip_name != clip_name {
-                    state.clip_name = clip_name;
-                    state.time = 0.0;
-                    state.playing = true;
-                    state.looping = looping;
-                    state.speed = speed;
-                    state.clear_fired_events();
-                } else {
-                    // ECS says play but we're stopped → restart
-                    if ecs_playing && !state.playing {
-                        state.playing = true;
-                        state.time = 0.0;
-                        state.clear_fired_events();
-                    }
-                    // Sync speed changes
-                    if (state.speed - speed).abs() > 1e-9 {
-                        state.speed = speed;
-                    }
-                    // Sync loop changes
-                    state.looping = looping;
-                }
-                continue;
+                animator.apply_to(state, duration_of);
+            } else if let Some(state) = animator.start(duration_of) {
+                self.states.insert(entity_id, state);
             }
-
-            self.states.insert(
-                entity_id,
-                PlaybackState::new(clip_name, speed, looping, ecs_playing),
-            );
         }
     }
 
@@ -87,7 +59,6 @@ impl AnimationSync {
                 continue;
             };
 
-            let was_playing = state.playing;
             let Some(result) = advance(state, clip, dt) else {
                 continue;
             };
@@ -97,11 +68,9 @@ impl AnimationSync {
                 continue;
             };
 
-            // If the clip just finished (non-looping), write playing=false back to ECS
-            // so sync_from_world won't see a stale playing=true and restart it
-            if was_playing && !state.playing {
-                components.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(false));
-            }
+            // A one-shot that just ended, an autoplay's start: say so, or
+            // the next sync reads the stale `playing` as a script's.
+            animator::publish(state, &mut components);
 
             for (i, track) in clip.tracks.iter().enumerate() {
                 if i >= result.samples.len() {

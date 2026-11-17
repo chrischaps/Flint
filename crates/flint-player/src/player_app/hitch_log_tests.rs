@@ -272,3 +272,64 @@ fn a_hitch_capture_passes_over_the_start_unless_asked_to_take_it() {
             .is_some_and(|s| s.contains("stall.rhai")));
     });
 }
+
+/// Leaves for scene B on the frame game time crosses 3.01 s.
+const LEAVE: &str = r#"
+fn on_update() {
+    let t = total_time();
+    if t - delta_time() < 3.01 && t >= 3.01 { load_scene("b.scene.toml"); }
+}
+"#;
+
+/// Scene B's script takes 150 ms to start: the transition's own time.
+const ARRIVE: &str = r#"
+fn on_init() {
+    let start = timestamp();
+    while start.elapsed < 0.15 { }
+}
+fn on_update() { }
+"#;
+
+/// #1124: a hitch is named for its notes only when they cover half of it,
+/// and a transition that took the frame's time still does. One line, the
+/// transition's frame, named `scene transition` with the scene it went to.
+#[test]
+fn a_slow_transition_is_named_as_its_hitchs_cause() {
+    let log = log_path("transition");
+    let mut files = game(LEAVE);
+    files.insert(
+        "game/scenes/b.scene.toml",
+        "[scene]\nname = \"B\"\n\n[entities.arrival]\n[entities.arrival.script]\nsource = \"arrive.rhai\"\n",
+    );
+    files.insert("game/scripts/arrive.rhai", ARRIVE);
+    vfs::scoped(Arc::new(files), || {
+        let mut app = started();
+        app.log_hitches_to(&log).expect("the log opens");
+        play_to(&mut app, 3.5);
+        app.print_exit_report();
+        let text = std::fs::read_to_string(&log).unwrap();
+        let lines: Vec<serde_json::Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let entered: Vec<&serde_json::Value> = lines
+            .iter()
+            .filter(|l| {
+                l["cause"]
+                    .as_str()
+                    .is_some_and(|c| c.starts_with("scene transition b.scene.toml, "))
+            })
+            .collect();
+        assert_eq!(entered.len(), 1, "{text}");
+        assert!(entered[0]["ms"].as_f64().unwrap() >= 150.0, "{text}");
+        let run = &app.stats.watch.run;
+        assert!(
+            run.all
+                .causes
+                .iter()
+                .any(|(k, n)| k == "scene transition" && *n == 1),
+            "{run:?}"
+        );
+    });
+    let _ = std::fs::remove_file(&log);
+}

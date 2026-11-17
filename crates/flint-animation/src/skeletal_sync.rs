@@ -14,7 +14,7 @@ use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::ComponentView;
 use flint_ecs::FlintWorld;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 /// Per-entity skeletal playback state (alias for the shared [`ClipPlaybackState`])
 pub type SkeletalPlaybackState = ClipPlaybackState;
@@ -99,14 +99,6 @@ pub struct SkeletalSync {
     /// the next `sync_from_world` sees a target that no longer matches the
     /// (now-cleared) runtime target and re-arms the same crossfade forever.
     completed_blends: Vec<EntityId>,
-    /// Entities whose `clip` or `playing` the runtime changed since the last
-    /// [`Self::write_back`]: a crossfade settled on its target, a one-shot
-    /// ended, or `autoplay` started a clip whose `playing` is false. Both
-    /// fields are live (#732), so write-back publishes them, or the next sync
-    /// would read the stale ECS value as a script's `play_clip` / `stop_clip`
-    /// and cut back to the old clip, replay the one-shot, or stop the
-    /// autoplay. Until then `sync_from_world` leaves the two fields alone.
-    unpublished: HashSet<EntityId>,
     /// Per-joint composition bookkeeping from the last `advance_and_compute`.
     contributions: HashMap<EntityId, LayerContribution>,
     /// Runtime-only per-layer mute flags (previewer solo/mute). Kept out of
@@ -156,25 +148,6 @@ fn apply_joint_offsets(skeleton: &mut Skeleton, offsets: &BTreeMap<usize, [f32; 
     }
 }
 
-/// Where a clip starts for its direction of play: 0, or its end when the
-/// speed is negative (played backwards from 0 it would end at once).
-fn start_time(duration: f64, speed: f64) -> f64 {
-    if speed < 0.0 {
-        duration
-    } else {
-        0.0
-    }
-}
-
-/// Whether a non-looping clip stands at the end it plays toward.
-fn has_finished(time: f64, duration: f64, speed: f64) -> bool {
-    if speed < 0.0 {
-        time <= 0.0
-    } else {
-        time >= duration
-    }
-}
-
 impl SkeletalSync {
     pub fn new() -> Self {
         Self::default()
@@ -186,7 +159,6 @@ impl SkeletalSync {
         self.skeletons.clear();
         self.states.clear();
         self.completed_blends.clear();
-        self.unpublished.clear();
         self.contributions.clear();
         self.mutes.clear();
         self.joint_offsets.clear();
@@ -254,14 +226,6 @@ impl SkeletalSync {
                 state.layers.push(incoming);
             }
         }
-        // Legacy mirror
-        state.layer_clip = state
-            .layers
-            .first()
-            .map(|l| l.clip.clone())
-            .unwrap_or_default();
-        state.layer_weight = state.layers.first().map(|l| l.weight).unwrap_or(1.0);
-        state.layer_time = state.layers.first().map(|l| l.time).unwrap_or(0.0);
     }
 
     /// Turn a joint by `rotation` in its own frame, on top of what the clips
@@ -320,7 +284,6 @@ impl SkeletalSync {
     /// Reset playback state for an entity (used when externally switching clips)
     pub fn reset_state(&mut self, entity_id: &EntityId) {
         self.states.remove(entity_id);
-        self.unpublished.remove(entity_id);
         self.fades.remove(entity_id);
         self.completed_fades.retain(|(e, _)| e != entity_id);
     }
@@ -349,94 +312,39 @@ impl SkeletalSync {
                 continue;
             }
             let animator = Animator::read(&view);
+            let clips = &self.clips;
+            let duration_of = |name: &str| clips.get(name).map(|c| c.duration);
 
-            if let Some(state) = self.states.get_mut(&entity_id) {
-                // Speed and loop are live dials (previewer Speed field,
-                // `set_anim_speed` from scripts).
-                state.speed = animator.speed;
-                state.looping = animator.looping;
-
-                // `clip` and `playing` (`play_clip`, `stop_clip`), unless the
-                // runtime changed them this frame and hasn't published yet.
-                if !self.unpublished.contains(&entity_id) {
-                    let ecs_clip = animator.clip;
-                    if !ecs_clip.is_empty() && ecs_clip != state.clip_name {
-                        if let Some(clip) = self.clips.get(ecs_clip) {
-                            state.clip_name = ecs_clip.to_string();
-                            state.time = start_time(clip.duration, state.speed);
-                            state.blend_target.clear();
-                            state.blend_elapsed = 0.0;
-                        }
-                    } else if animator.playing && !state.playing && !state.looping {
-                        // A one-shot that ended replays from its start; one
-                        // stopped part-way resumes where it was.
-                        if let Some(clip) = self.clips.get(&state.clip_name) {
-                            if has_finished(state.time, clip.duration, state.speed) {
-                                state.time = start_time(clip.duration, state.speed);
-                            }
-                        }
-                    }
-                    state.playing = animator.playing;
+            let state = if let Some(state) = self.states.get_mut(&entity_id) {
+                animator.apply_to(state, duration_of);
+                state
+            } else {
+                let Some(state) = animator.start(duration_of) else {
+                    continue;
+                };
+                // A resolved clip that is not playing holds its first frame
+                // forever. Both flags default to false, and TOML makes it
+                // easy to strand them on a neighbouring component table (a
+                // key after the next [table] header belongs to THAT table)
+                // — which reads as "the animation is stuck on one frame"
+                // with nothing else to explain it. Say so rather than render
+                // a statue in silence.
+                if !state.playing {
+                    log::warn!(
+                        "entity {:?} has animator clip '{}' but playing=false and \
+                         autoplay=false — it will hold its first frame. Check that \
+                         `playing`/`autoplay` are under [entities.<name>.animator].",
+                        entity_id,
+                        state.clip_name
+                    );
                 }
+                self.states.entry(entity_id).or_insert(state)
+            };
 
-                // Start a new crossfade if ECS sets a new blend_target
-                let ecs_blend_target = animator.blend_target;
-                if !ecs_blend_target.is_empty()
-                    && ecs_blend_target != state.blend_target
-                    && self.clips.contains_key(ecs_blend_target)
-                {
-                    state.blend_target = ecs_blend_target.to_string();
-                    state.blend_duration = animator.blend_duration;
-                    state.blend_elapsed = 0.0;
-                }
-
-                // Layers follow the ECS every frame (weights are live
-                // dials; changing a clip restarts that layer's clock).
-                let fades = self.fades.entry(entity_id).or_default();
-                Self::apply_ecs_layers(state, &view, fades);
-                continue;
-            }
-
-            let clip_name = animator.clip.to_string();
-
-            if clip_name.is_empty() || !self.clips.contains_key(&clip_name) {
-                continue;
-            }
-
-            let speed = animator.speed;
-            let looping = animator.looping;
-            let playing = animator.starts_playing();
-
-            // A resolved clip that is not playing holds its first frame
-            // forever. Both flags default to false, and TOML makes it easy to
-            // strand them on a neighbouring component table (a key after the
-            // next [table] header belongs to THAT table) — which reads as
-            // "the animation is stuck on one frame" with nothing else to
-            // explain it. Say so rather than render a statue in silence.
-            if !playing {
-                log::warn!(
-                    "entity {:?} has animator clip '{}' but playing=false and \
-                     autoplay=false — it will hold its first frame. Check that `playing`/\
-                     `autoplay` are under [entities.<name>.animator].",
-                    entity_id,
-                    clip_name
-                );
-            }
-
-            let mut state = SkeletalPlaybackState::new(clip_name, speed, looping, playing);
-
-            // Read initial blend fields
-            state.blend_target = animator.blend_target.to_string();
-            state.blend_duration = animator.blend_duration;
+            // Layers follow the ECS every frame (weights are live dials;
+            // changing a clip restarts that layer's clock).
             let fades = self.fades.entry(entity_id).or_default();
-            Self::apply_ecs_layers(&mut state, &view, fades);
-
-            // `autoplay` started it: publish `playing = true`, or the next
-            // sync reads the ECS `false` as a `stop_clip`.
-            if playing != animator.playing {
-                self.unpublished.insert(entity_id);
-            }
-            self.states.insert(entity_id, state);
+            Self::apply_ecs_layers(state, &view, fades);
         }
     }
 
@@ -454,28 +362,7 @@ impl SkeletalSync {
                 continue;
             };
 
-            // Advance time
-            if state.playing {
-                state.time += dt * state.speed;
-
-                if state.looping {
-                    if clip.duration > 0.0 {
-                        if state.time >= clip.duration {
-                            state.time %= clip.duration;
-                        } else if state.time < 0.0 {
-                            state.time = clip.duration - (-state.time % clip.duration);
-                        }
-                    }
-                } else if state.time >= clip.duration {
-                    state.time = clip.duration;
-                    state.playing = false;
-                    self.unpublished.insert(entity_id);
-                } else if state.time < 0.0 {
-                    state.time = 0.0;
-                    state.playing = false;
-                    self.unpublished.insert(entity_id);
-                }
-            }
+            state.advance_time(clip.duration, dt);
 
             // Start from the rest pose every frame. Clips are sparse (an
             // exporter drops tracks that hold the rest value), so a joint
@@ -529,7 +416,8 @@ impl SkeletalSync {
                         state.blend_target.clear();
                         state.blend_elapsed = 0.0;
                         self.completed_blends.push(entity_id);
-                        self.unpublished.insert(entity_id);
+                        // The animator's `clip` still names the old one.
+                        state.unpublished = true;
                     }
                 } else {
                     // Target clip not found, clear blend
@@ -687,9 +575,6 @@ impl SkeletalSync {
                 }
             }
 
-            // Legacy mirror of layer 0's clock
-            state.layer_time = state.layers.first().map(|l| l.time).unwrap_or(0.0);
-
             // Compute final bone matrices
             if let Some(offsets) = self.joint_offsets.get(&entity_id) {
                 apply_joint_offsets(skeleton, offsets);
@@ -757,32 +642,18 @@ impl SkeletalSync {
             let Some(mut components) = world.get_components_mut(entity_id) else {
                 continue;
             };
-            components.set_field(
-                comp::ANIMATOR,
-                "blend_target",
-                toml::Value::String(String::new()),
-            );
+            animator::write(&mut components).no_blend();
         }
 
         // The clip a crossfade settled on, a one-shot's end, an autoplay's
         // start: `clip` and `playing` are live, so they must say what plays.
-        for entity_id in self.unpublished.drain() {
-            let (Some(state), Some(mut components)) = (
-                self.states.get(&entity_id),
-                world.get_components_mut(entity_id),
-            ) else {
+        for (entity_id, state) in &mut self.states {
+            if !state.is_unpublished() {
                 continue;
-            };
-            components.set_field(
-                comp::ANIMATOR,
-                "clip",
-                toml::Value::String(state.clip_name.clone()),
-            );
-            components.set_field(
-                comp::ANIMATOR,
-                "playing",
-                toml::Value::Boolean(state.playing),
-            );
+            }
+            if let Some(mut components) = world.get_components_mut(*entity_id) {
+                animator::publish(state, &mut components);
+            }
         }
 
         // Layer fades: publish the ramped weight every frame (so the next
@@ -809,25 +680,11 @@ impl SkeletalSync {
             let Some(mut components) = world.get_components_mut(*entity_id) else {
                 continue;
             };
-            let Some(layers) = components
-                .get_mut(comp::ANIMATOR)
-                .and_then(|a| a.get_mut("layers"))
-                .and_then(|l| l.as_array_mut())
-            else {
-                continue;
-            };
-            for li in active.iter().chain(done.iter()) {
-                let (Some(layer), Some(table)) = (
-                    state.layers.get(*li),
-                    layers.get_mut(*li).and_then(|v| v.as_table_mut()),
-                ) else {
-                    continue;
-                };
-                table.insert("weight".into(), toml::Value::Float(layer.weight as f64));
-                if done.contains(li) {
-                    table.insert("fade_duration".into(), toml::Value::Float(0.0));
-                }
-            }
+            let weights = active.iter().chain(done.iter()).filter_map(|&li| {
+                let layer = state.layers.get(li)?;
+                Some((li, layer.weight, done.contains(&li)))
+            });
+            animator::write(&mut components).layer_weights(weights);
         }
     }
 
