@@ -142,6 +142,13 @@ impl ScopeDetail for u64 {
         DetailValue::Count(*self)
     }
 }
+/// A file's path, as written (a path that isn't UTF-8 reads `?`). Read only
+/// while a scope records, so a load's scope converts nothing when it doesn't.
+impl ScopeDetail for &std::path::Path {
+    fn detail(&self) -> DetailValue<'_> {
+        DetailValue::Text(self.to_str().unwrap_or("?"))
+    }
+}
 
 /// A frame's end: Tracy's frame mark, and the recorder's frame index.
 pub fn finish_frame() {
@@ -640,6 +647,19 @@ mod tests {
     }
 
     #[test]
+    fn a_path_detail_is_its_text() {
+        set_recording(true);
+        let seen = recorded_on_a_thread("profile-path", || {
+            let path = std::path::Path::new("models/oak.glb");
+            crate::scope!("import_model", path);
+        });
+        assert_eq!(
+            seen,
+            vec![("import_model", 0, Some("models/oak.glb".to_string()))]
+        );
+    }
+
+    #[test]
     fn a_detail_expression_runs_once() {
         set_recording(true);
         let seen = recorded_on_a_thread("profile-once", || {
@@ -679,5 +699,72 @@ mod tests {
             (19.0..500.0).contains(&dur_ms),
             "a 20 ms sleep read as {dur_ms} ms"
         );
+    }
+}
+
+/// What a scope costs, recording and not (#1096): `cargo test -p flint-core
+/// --release --features trace --lib scope_cost -- --ignored --nocapture`.
+#[cfg(all(test, any(debug_assertions, feature = "trace")))]
+mod cost {
+    #[inline(never)]
+    fn scoped(n: u64) -> u64 {
+        crate::scope!("bench");
+        std::hint::black_box(n + 1)
+    }
+
+    #[inline(never)]
+    fn counted(n: usize) -> usize {
+        crate::scope!("bench_counted", n);
+        std::hint::black_box(n + 1)
+    }
+
+    #[inline(never)]
+    fn named(file: &str) -> usize {
+        crate::scope!("bench_named", file);
+        std::hint::black_box(file.len())
+    }
+
+    fn per_call(f: impl Fn(u64)) -> f64 {
+        const N: u64 = 2_000_000;
+        let start = std::time::Instant::now();
+        for i in 0..N {
+            f(i);
+        }
+        start.elapsed().as_nanos() as f64 / N as f64
+    }
+
+    #[test]
+    #[ignore]
+    fn scope_cost() {
+        std::thread::Builder::new()
+            .name("profile-cost".into())
+            .spawn(|| {
+                let bare = per_call(|i| {
+                    std::hint::black_box(i + 1);
+                });
+                super::set_recording(false);
+                let off = per_call(|i| {
+                    scoped(i);
+                });
+                super::set_recording(true);
+                let on = per_call(|i| {
+                    scoped(i);
+                });
+                let on_count = per_call(|i| {
+                    counted(i as usize);
+                });
+                let on_named = per_call(|_| {
+                    named("scripts/kart.rhai");
+                });
+                super::set_recording(false);
+                println!(
+                    "per scope: bare loop {bare:.1} ns, not recording {off:.1} ns, \
+                     recording {on:.1} ns, with a count {on_count:.1} ns, \
+                     with a file name {on_named:.1} ns"
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

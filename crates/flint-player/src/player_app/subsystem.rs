@@ -91,6 +91,23 @@ pub enum Stage {
 }
 
 impl Stage {
+    /// The stage's name, for a profiler scope's detail (#1096).
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Stage::Clock => "clock",
+            Stage::Input => "input",
+            Stage::PreScripts => "pre_scripts",
+            Stage::Scripts => "scripts",
+            Stage::Physics => "physics",
+            Stage::PostPhysics => "post_physics",
+            Stage::ScriptUi => "script_ui",
+            Stage::Animation => "animation",
+            Stage::Procgen => "procgen",
+            Stage::Sync => "sync",
+            Stage::PreRender => "pre_render",
+        }
+    }
+
     /// Every stage `update` hears in the player's frame, in order: the
     /// host's [`Stage::Clock`], then `game_core::step`'s.
     #[cfg(test)]

@@ -12,7 +12,7 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 /// One device for this test binary's GPU tests (#598: a device a test
 /// would hang the binary on some drivers).
-fn gpu() -> Option<&'static (wgpu::Device, wgpu::Queue)> {
+pub(super) fn gpu() -> Option<&'static (wgpu::Device, wgpu::Queue)> {
     static GPU: std::sync::OnceLock<Option<(wgpu::Device, wgpu::Queue)>> =
         std::sync::OnceLock::new();
     GPU.get_or_init(|| {

@@ -276,6 +276,7 @@ impl SceneRenderer {
     /// Skylake) crash with unrecoverable device loss compiling these
     /// shaders; a style that fails stays off and marks the device lost.
     pub fn ensure_style_resources(&mut self, device: &wgpu::Device) {
+        flint_core::scope!("ensure_style_resources");
         let Some(pp) = &mut self.postprocess_pipeline else {
             return;
         };

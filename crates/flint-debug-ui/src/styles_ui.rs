@@ -84,6 +84,11 @@ impl StylesEdit {
 /// The sliders' width in a style's grid, in points.
 const SLIDER_WIDTH: f32 = 130.0;
 
+/// The Blend row's hover text (#521).
+const BLEND_HELP: &str = "How much of the style shows over the frame it read: 1 is all of it, \
+     0 none (it leaves the chain). A script fades it with set_post_style_param(name, \
+     \"blend\", v), and set_look(name, seconds) fades a whole look. Scene key: blend";
+
 /// How long the "copied" note stays after Copy TOML, in seconds.
 const COPIED_NOTE_SECS: f64 = 1.5;
 
@@ -349,6 +354,8 @@ impl StylesEditor {
                         .num_columns(4)
                         .spacing([8.0, 4.0])
                         .show(ui, |ui| {
+                            edit.changed |= self.blend_row(ui, style, pp, authored);
+                            ui.end_row();
                             for control in style.controls() {
                                 edit.changed |= self.row(ui, style, control, pp, authored);
                                 ui.end_row();
@@ -430,7 +437,8 @@ impl StylesEditor {
             )
             .on_hover_text(format!(
                 "Write this look into {file}'s [post_process.styles.{}], keeping its comments \
-                 (values back at their default are removed)",
+                 (values back at their default are removed). Only this style is written: the \
+                 rest of F4 (bloom, fog, other styles) stays on screen as tuned, not saved",
                 style.name
             ));
         let button = match &self.commit_blocked {
@@ -565,6 +573,36 @@ impl StylesEditor {
             self.reveal_stash.insert(name, current.clone());
             StyleReveal::default()
         }
+    }
+
+    /// The style's Blend row (#521), first in its grid: how much of the
+    /// style shows over the frame it read, the table's `blend`. Like the
+    /// reveal it is the framework's, so no descriptor lists it and every
+    /// style gets it; 1 (all of it) is the default and writes no key. True
+    /// when it changed.
+    fn blend_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        style: &StyleDescriptor,
+        pp: &mut PostProcessConfig,
+        authored: Option<&StyleSettings>,
+    ) -> bool {
+        let mut value = pp.styles.blend(style.name);
+        let scene = authored.map(|a| a.blend(style.name));
+        ui.label("Blend").on_hover_text(BLEND_HELP);
+        let mut changed = ui
+            .add(egui::Slider::new(&mut value, 0.0..=1.0).fixed_decimals(2))
+            .on_hover_text(BLEND_HELP)
+            .changed();
+        if reset_cell(ui, value < 1.0, "1") {
+            value = 1.0;
+            changed = true;
+        }
+        self.marked += dot_cell(ui, scene.filter(|s| *s != value).map(|s| number(s, false)));
+        if changed {
+            pp.styles.set_blend(style.name, Some(value));
+        }
+        changed
     }
 
     /// One setting's row of four grid cells (label, widget, reset,
@@ -1618,6 +1656,121 @@ mod tests {
                 ..Default::default()
             }
         );
+    }
+
+    #[test]
+    fn every_style_has_a_blend_row() {
+        let mut editor = StylesEditor::default();
+        let mut pp = all_on();
+        let text = drawn_text(&mut editor, &mut pp, None);
+        let rows = text.iter().filter(|t| *t == "Blend").count();
+        assert_eq!(rows, stylize::builtins().len(), "{text:?}");
+        // At 1 it draws no reset and changes nothing
+        assert_eq!(pp.styles, all_on().styles);
+    }
+
+    /// One frame of `style`'s section with `events`: what it changed, and
+    /// each text it drew with where.
+    fn blend_frame(
+        ctx: &egui::Context,
+        editor: &mut StylesEditor,
+        style: &'static StyleDescriptor,
+        pp: &mut PostProcessConfig,
+        authored: &StyleSettings,
+        events: Vec<egui::Event>,
+    ) -> (StylesEdit, Vec<(String, egui::Rect)>) {
+        let mut edit = StylesEdit::default();
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let output = run_headless_frame(ctx, input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                edit.merge(editor.section(ui, style, pp, Some(authored)));
+            });
+        });
+        fn walk(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
+            match shape {
+                egui::Shape::Text(t) => {
+                    out.push((t.galley.job.text.clone(), t.visual_bounding_rect()))
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut drawn = Vec::new();
+        for clipped in &output.shapes {
+            walk(&clipped.shape, &mut drawn);
+        }
+        (edit, drawn)
+    }
+
+    #[test]
+    fn the_blend_slider_fades_the_style_and_resets_to_1() {
+        let ctx = egui::Context::default();
+        let mut editor = StylesEditor::default();
+        let kuwahara = stylize::builtin("kuwahara").unwrap();
+        let mut authored = StyleSettings::default();
+        authored.set_enabled("kuwahara", true);
+        let mut pp = PostProcessConfig {
+            styles: authored.clone(),
+            ..Default::default()
+        };
+        let mut frame = |pp: &mut PostProcessConfig, events| {
+            // `ui` zeroes the count each frame; one section alone doesn't
+            editor.marked = 0;
+            let (edit, drawn) = blend_frame(&ctx, &mut editor, kuwahara, pp, &authored, events);
+            (edit, drawn, editor.marked)
+        };
+        frame(&mut pp, vec![]);
+        let (_, drawn, _) = frame(&mut pp, vec![]);
+        let row = |drawn: &[(String, egui::Rect)], text: &str| {
+            let label = drawn.iter().find(|(t, _)| t == "Blend").unwrap().1;
+            drawn
+                .iter()
+                .find(|(t, r)| t == text && (r.center().y - label.center().y).abs() < 4.0)
+                .map(|(_, r)| *r)
+        };
+        // The slider's value reads 1; its rail runs left of that
+        let value = row(&drawn, "1.00").unwrap_or_else(|| panic!("no blend value in {drawn:?}"));
+        let at = egui::pos2(value.left() - SLIDER_WIDTH * 0.75, value.center().y);
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(&mut pp, vec![egui::Event::PointerMoved(at)]);
+        let (pressed, _, _) = frame(&mut pp, vec![press(true)]);
+        frame(&mut pp, vec![press(false)]);
+        frame(&mut pp, vec![egui::Event::PointerGone]);
+        assert!(pressed.changed);
+        let faded = pp.styles.blend("kuwahara");
+        assert!(faded > 0.0 && faded < 0.5, "blend {faded}");
+        assert!(pp.styles.is_enabled("kuwahara"), "blend leaves it on");
+        let toml = stylize::style_toml(kuwahara, &pp);
+        assert!(toml.contains("blend = "), "{toml}");
+
+        // Against the scene's 1: the dot, the edited header and a reset
+        let (_, drawn, marked) = frame(&mut pp, vec![]);
+        assert_eq!(marked, 1);
+        assert!(drawn.iter().any(|(t, _)| t == "edited"));
+        let reset = row(&drawn, "↺").expect("a reset beside the blend");
+        let at = reset.center();
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(&mut pp, vec![egui::Event::PointerMoved(at)]);
+        frame(&mut pp, vec![press(true)]);
+        let (released, _, _) = frame(&mut pp, vec![press(false)]);
+        assert!(released.changed);
+        // Back at 1 the table says nothing of it, as the scene's
+        assert_eq!(pp.styles.blend("kuwahara"), 1.0);
+        assert!(pp.styles.same_style("kuwahara", &authored));
+        assert!(!stylize::style_toml(kuwahara, &pp).contains("blend"));
     }
 
     #[test]

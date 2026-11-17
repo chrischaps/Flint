@@ -75,7 +75,11 @@ impl PlayerApp {
         // The wait for the image is the swapchain's, not the renderer's
         // (#1123): a compositor stall reads as `elsewhere`. A field borrow,
         // as below: `context` is held.
-        let output = match self.stats.perf.acquire(&context.surface) {
+        let acquired = {
+            flint_core::scope!("acquire");
+            self.stats.perf.acquire(&context.surface)
+        };
+        let output = match acquired {
             Ok(output) => output,
             Err(flint_render::SurfaceError::Lost | flint_render::SurfaceError::Outdated) => {
                 return;
@@ -108,6 +112,7 @@ impl PlayerApp {
         // back through `PanelHost`.
         #[cfg(feature = "debug-hud")]
         {
+            flint_core::scope!("sync_debug_panels", self.debug_panels.len());
             let mut host = flint_debug_ui::PanelHost {
                 particles_render: self.particles_render_enabled,
                 ..Default::default()
@@ -234,7 +239,10 @@ impl PlayerApp {
                     .record_replay(renderer, device, &mut encoder, &self.core.world);
             }
             renderer.encode_gpu_timings(&context.device, &mut encoder);
-            context.queue.submit(std::iter::once(encoder.finish()));
+            {
+                flint_core::scope!("submit");
+                context.queue.submit(std::iter::once(encoder.finish()));
+            }
             renderer.frame_submitted();
             // The GPU time read back this frame, for the frame history
             self.stats.perf.gpu_ms(renderer.take_gpu_frame_ms());
@@ -283,6 +291,7 @@ impl PlayerApp {
         // Capture the composited frame (scene + HUD) before it is presented.
         self.capture.last_frame_time = Some(self.core.clock.total_time);
         if let Some(path) = self.capture_path_due() {
+            flint_core::scope!("screenshot");
             match self.write_screenshot(&output.texture, &path) {
                 Ok(()) => self.capture.written += 1,
                 Err(reason) => {
@@ -293,6 +302,7 @@ impl PlayerApp {
         }
 
         if let Some(context) = &self.render_context {
+            flint_core::scope!("present");
             context.queue.present(output);
         }
         let presented = web_time::Instant::now();
@@ -505,19 +515,22 @@ impl PlayerApp {
         #[cfg(target_arch = "wasm32")]
         self.sync_pointer_lock();
 
-        // Pads are held while a text field has focus (ADR 0110), before
-        // they're polled.
-        self.gate_gamepads();
+        {
+            flint_core::scope!("poll_devices");
+            // Pads are held while a text field has focus (ADR 0110), before
+            // they're polled.
+            self.gate_gamepads();
 
-        // The touch controls' layout follows the window and page (#133).
-        self.sync_touch_controls();
+            // The touch controls' layout follows the window and page (#133).
+            self.sync_touch_controls();
 
-        // Before the clock ticks: a subsystem that reads the pads its own
-        // way does it here (the rhythm session's capture drain, ADR 0018),
-        // and the player polls them only while none holds them.
-        super::game_core::run_stage(self, super::subsystem::Stage::Clock, None);
-        if !self.pads_lent {
-            self.poll_gamepad_events();
+            // Before the clock ticks: a subsystem that reads the pads its own
+            // way does it here (the rhythm session's capture drain, ADR 0018),
+            // and the player polls them only while none holds them.
+            super::game_core::run_stage(self, super::subsystem::Stage::Clock, None);
+            if !self.pads_lent {
+                self.poll_gamepad_events();
+            }
         }
 
         // Advance game clock. Its tick measured the frame just closed: that
@@ -525,6 +538,7 @@ impl PlayerApp {
         self.core.clock.tick();
         let mut found = 0;
         if self.stats.perf.recording() {
+            flint_core::scope!("frame_history");
             self.stats
                 .perf
                 .clock_ticked(super::frame_history::ClockSample::of(&self.core.clock));
@@ -562,6 +576,7 @@ impl PlayerApp {
         // Its `expect` and `wait` lines (#714) ask the game as it stands
         // before this frame's step.
         if let Some(script) = &mut self.capture.input_script {
+            flint_core::scope!("input_script");
             if self.core.event_log.is_none() && script.has_checks() {
                 self.core.event_log = Some(Vec::new());
             }
@@ -577,7 +592,10 @@ impl PlayerApp {
         super::game_core::step(self);
 
         // Script audio/cursor frame overrides, then per-frame input clear
-        self.finish_frame();
+        {
+            flint_core::scope!("finish_frame");
+            self.finish_frame();
+        }
         self.stats.perf.fixed_steps(self.core.fixed_steps);
         self.perf_mark(Phase::Sync);
     }
@@ -742,6 +760,7 @@ impl PlayerApp {
     }
 
     fn sync_renderer(&mut self) {
+        flint_core::scope!("sync_renderer");
         self.poll_user_styles();
 
         // The camera is final for the frame: a cut (a teleport, a jump to a
@@ -761,6 +780,7 @@ impl PlayerApp {
         if self.particles_render_enabled && self.scene_renderer.is_some() {
             self.core.particles.pack(Some(self.camera.position_array()));
         }
+        // The subsystems' and the frame's inputs (#739)
 
         // The frame's inputs, and the world read into the draw lists (#739)
         let ppp = self.renderer_pixels_per_point();
@@ -811,7 +831,10 @@ impl PlayerApp {
             camera: &self.camera,
             boil_on: renderer.post_process_config().boil_on,
         };
-        self.core.subsystems.frame_inputs(&frame, &mut inputs);
+        {
+            flint_core::scope!("subsystem_frame_inputs");
+            self.core.subsystems.frame_inputs(&frame, &mut inputs);
+        }
         // A frame being captured keeps what it was drawn with (#1086)
         if self.frame_captures.take_for_frame() {
             self.frame_captures
@@ -959,6 +982,9 @@ impl PlayerApp {
             errors.extend(flint_render::stylize::dev_shader::errors());
             errors
         };
+        // The registry they came from, for the card's "doesn't load" (#742)
+        #[cfg(feature = "debug-hud")]
+        let style_registry = self.core.styles.clone();
         // Scripts that fail (#693), each once with its count, until the
         // file is saved again or the scene changes
         #[cfg(feature = "debug-hud")]
@@ -966,111 +992,117 @@ impl PlayerApp {
             super::script_error_card::rows(self.core.script.errors());
 
         // A real frame: its texture updates are uploaded below (#944)
-        #[allow(clippy::disallowed_methods)]
-        let mut full_output = self.hud.egui_ctx.run_ui(raw_input, |ui| {
-            let ctx = &ui.ctx().clone();
-            // Layers, back to front: script UI, game egui, debug panels.
-            // Script UI first: it shares the background layer with any game
-            // panels, so issuing it first puts those panels in front of it
-            // (see render_draw_commands). Items a script pushed over the
-            // UI go on their own Middle layer, above the game's panels and
-            // windows and below the debug panels (ADR 0085).
-            render_draw_commands(
-                ctx,
-                &draw_commands,
-                ui_textures,
-                ui_fonts,
-                ui_fonts_warned,
-                text_halos,
-            );
-
-            // World text is laid out here, so the glyphs it needs go up
-            // with this pass's font atlas.
-            if let Some(view) = &text_view {
-                laid_text = super::world_text::lay_out(
+        // egui's frame: script UI, the game's, the debug panels (#1096)
+        let mut full_output = {
+            flint_core::scope!("egui_run");
+            #[allow(clippy::disallowed_methods)]
+            let full_output = self.hud.egui_ctx.run_ui(raw_input, |ui| {
+                let ctx = &ui.ctx().clone();
+                // Layers, back to front: script UI, game egui, debug panels.
+                // Script UI first: it shares the background layer with any game
+                // panels, so issuing it first puts those panels in front of it
+                // (see render_draw_commands). Items a script pushed over the
+                // UI go on their own Middle layer, above the game's panels and
+                // windows and below the debug panels (ADR 0085).
+                render_draw_commands(
                     ctx,
-                    &world_texts,
-                    view,
+                    &draw_commands,
+                    ui_textures,
                     ui_fonts,
                     ui_fonts_warned,
                     text_halos,
                 );
-            }
 
-            // The game's own egui, on the root Ui (PlayerExtension::ui,
-            // ADR 0121). Its panels sit on the background layer and its
-            // windows on Middle, both below the debug panels, which float
-            // on Foreground.
-            crate::extension::draw_ui(&mut extensions, ui);
+                // World text is laid out here, so the glyphs it needs go up
+                // with this pass's font atlas.
+                if let Some(view) = &text_view {
+                    laid_text = super::world_text::lay_out(
+                        ctx,
+                        &world_texts,
+                        view,
+                        ui_fonts,
+                        ui_fonts_warned,
+                        text_halos,
+                    );
+                }
 
-            // On-screen touch controls (#133), over the game's UI.
-            super::touch_overlay::paint(ctx, &touch_widgets, touch_opacity);
+                // The game's own egui, on the root Ui (PlayerExtension::ui,
+                // ADR 0121). Its panels sit on the background layer and its
+                // windows on Middle, both below the debug panels, which float
+                // on Foreground.
+                crate::extension::draw_ui(&mut extensions, ui);
 
-            // The subsystems' own (which preset is where, while two living
-            // props presets are compared, #238)
-            subsystems.ui(ctx);
+                // On-screen touch controls (#133), over the game's UI.
+                super::touch_overlay::paint(ctx, &touch_widgets, touch_opacity);
 
-            // The pose overlay (#218) and a picked tree's marks and window
-            // (#248), in the world and under every panel.
-            #[cfg(all(feature = "debug-hud", feature = "living"))]
-            for panel in debug_panels.iter_mut() {
-                if let Some(living) = panel
-                    .as_any_mut()
-                    .downcast_mut::<flint_debug_ui::LivingPropsDebugPanel>()
+                // The subsystems' own (which preset is where, while two living
+                // props presets are compared, #238)
+                subsystems.ui(ctx);
+
+                // The pose overlay (#218) and a picked tree's marks and window
+                // (#248), in the world and under every panel.
+                #[cfg(all(feature = "debug-hud", feature = "living"))]
+                for panel in debug_panels.iter_mut() {
+                    if let Some(living) = panel
+                        .as_any_mut()
+                        .downcast_mut::<flint_debug_ui::LivingPropsDebugPanel>()
+                    {
+                        living.paint_overlay(ctx, &view_proj);
+                    }
+                }
+
+                #[cfg(feature = "debug-hud")]
+                let debug_width = super::debug_panels::show_debug_panels(
+                    ctx,
+                    &mut debug_panels,
+                    &mut |panel, ui| super::debug_panels::draw_panel(panel, &mut extensions, ui),
+                );
+                #[cfg(not(feature = "debug-hud"))]
+                let debug_width = 0.0;
+
+                match (stats_view, stats_data.as_ref()) {
+                    (super::StatsView::Full, Some(stats)) => {
+                        render_stats_overlay(ctx, stats, &gpu_label, graph.as_mut(), debug_width)
+                    }
+                    (super::StatsView::Graph, _) => {
+                        render_graph_overlay(ctx, graph.as_mut(), debug_width)
+                    }
+                    _ => {}
+                }
+
+                // On the web, above the page's wordmark in the same corner
+                // (index.html's `.mark`, two lines at bottom 20px; #415)
+                // The debug keys' card (F1, #717), and a debug key's note (#367)
+                // over everything
+                if let Some(table) = &key_table {
+                    super::debug_keys::paint_key_table(ctx, table);
+                }
+                key_note.paint(ctx, 16.0);
+
+                #[cfg(feature = "debug-hud")]
                 {
-                    living.paint_overlay(ctx, &view_proj);
+                    let inset = if cfg!(target_arch = "wasm32") {
+                        52.0
+                    } else {
+                        0.0
+                    };
+                    // The script card in the corner, the style card above it
+                    let scripts = flint_debug_ui::paint_script_errors(
+                        ctx,
+                        &script_errors,
+                        script_errors_unkept,
+                        inset,
+                    );
+                    flint_debug_ui::paint_style_errors(
+                        ctx,
+                        &style_errors,
+                        &style_registry,
+                        inset + scripts,
+                    );
                 }
-            }
-
-            #[cfg(feature = "debug-hud")]
-            let debug_width =
-                super::debug_panels::show_debug_panels(ctx, &mut debug_panels, &mut |panel, ui| {
-                    super::debug_panels::draw_panel(panel, &mut extensions, ui)
-                });
-            #[cfg(not(feature = "debug-hud"))]
-            let debug_width = 0.0;
-
-            match (stats_view, stats_data.as_ref()) {
-                (super::StatsView::Full, Some(stats)) => {
-                    render_stats_overlay(ctx, stats, &gpu_label, graph.as_mut(), debug_width)
-                }
-                (super::StatsView::Graph, _) => {
-                    render_graph_overlay(ctx, graph.as_mut(), debug_width)
-                }
-                _ => {}
-            }
-
-            // On the web, above the page's wordmark in the same corner
-            // (index.html's `.mark`, two lines at bottom 20px; #415)
-            // The debug keys' card (F1, #717), and a debug key's note (#367)
-            // over everything
-            if let Some(table) = &key_table {
-                super::debug_keys::paint_key_table(ctx, table);
-            }
-            key_note.paint(ctx, 16.0);
-
-            #[cfg(feature = "debug-hud")]
-            {
-                let inset = if cfg!(target_arch = "wasm32") {
-                    52.0
-                } else {
-                    0.0
-                };
-                // The script card in the corner, the style card above it
-                let scripts = flint_debug_ui::paint_script_errors(
-                    ctx,
-                    &script_errors,
-                    script_errors_unkept,
-                    inset,
-                );
-                flint_debug_ui::paint_style_errors(
-                    ctx,
-                    &style_errors,
-                    &self.core.styles,
-                    inset + scripts,
-                );
-            }
-        });
+            });
+            full_output
+        };
 
         self.hud.draw_commands = draw_commands;
         self.extensions = extensions;
@@ -1086,13 +1118,17 @@ impl PlayerApp {
 
         egui_winit.handle_platform_output(window, full_output.platform_output);
 
-        let paint_jobs = self
-            .hud
-            .egui_ctx
-            .tessellate(full_output.shapes, full_output.pixels_per_point);
-        let glyphs = text_view
-            .map(|view| super::world_text::tessellate(&self.hud.egui_ctx, laid_text, &view))
-            .unwrap_or_default();
+        let (paint_jobs, glyphs) = {
+            flint_core::scope!("egui_tessellate");
+            let paint_jobs = self
+                .hud
+                .egui_ctx
+                .tessellate(full_output.shapes, full_output.pixels_per_point);
+            let glyphs = text_view
+                .map(|view| super::world_text::tessellate(&self.hud.egui_ctx, laid_text, &view))
+                .unwrap_or_default();
+            (paint_jobs, glyphs)
+        };
 
         let screen_descriptor = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [context.config.width, context.config.height],
@@ -1109,19 +1145,22 @@ impl PlayerApp {
             "UI",
         );
 
-        for (id, deltas) in &full_output.textures_delta.set {
-            for image_delta in deltas {
-                egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+        {
+            flint_core::scope!("egui_upload", paint_jobs.len());
+            for (id, deltas) in &full_output.textures_delta.set {
+                for image_delta in deltas {
+                    egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+                }
             }
-        }
 
-        egui_renderer.update_buffers(
-            &context.device,
-            &context.queue,
-            encoder,
-            &paint_jobs,
-            &screen_descriptor,
-        );
+            egui_renderer.update_buffers(
+                &context.device,
+                &context.queue,
+                encoder,
+                &paint_jobs,
+                &screen_descriptor,
+            );
+        }
 
         // World text goes under the HUD, against the scene's depth.
         if !glyphs.is_empty() {
@@ -1158,6 +1197,7 @@ impl PlayerApp {
             });
 
             let mut render_pass = render_pass.forget_lifetime();
+            flint_core::scope!("egui_encode");
             egui_renderer.render(&mut render_pass, &paint_jobs, &screen_descriptor);
         }
 
@@ -1248,7 +1288,10 @@ impl super::game_core::FrameHost for PlayerApp {
 
     fn before_events(&mut self) {
         // Advance transition phase timing
-        self.advance_transition();
+        {
+            flint_core::scope!("advance_transition");
+            self.advance_transition();
+        }
         // Game extensions, before anything below reads the world
         self.run_extension_pre_updates();
     }
@@ -1345,6 +1388,7 @@ impl super::game_core::FrameHost for PlayerApp {
     }
 
     fn script_ui_drawn(&mut self) {
+        flint_core::scope!("collect_script_ui");
         // Collect draw commands for this frame (scripts + data-driven UI)
         let mut commands = self.core.script.drain_draw_commands();
         let (screen_w, screen_h) = self.script_screen_size();
@@ -1398,6 +1442,7 @@ impl super::game_core::FrameHost for PlayerApp {
     fn bones_posed(&mut self) {
         // Push skeletal bone matrices to GPU
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
+            flint_core::scope!("upload_bones", self.skeletal_entity_assets.len());
             // The clock poses held on twos tick by (#405), before the bones
             // go up: the same seconds the post time reads, so a held pose
             // and a style's boil turn on the same frame
@@ -1426,6 +1471,7 @@ impl super::game_core::FrameHost for PlayerApp {
         self.sync_renderer();
 
         // Script post-override drain (a subsystem's share is in by now)
+        flint_core::scope!("post_overrides_and_quality");
         self.drain_post_overrides();
 
         // A script's set_quality (FlintKart#55), applied here, between the

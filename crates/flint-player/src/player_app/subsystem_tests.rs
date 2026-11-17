@@ -261,6 +261,113 @@ fn the_expression_feed_is_a_subsystem_only_when_the_run_has_one() {
     });
 }
 
+/// The F3 Expression panel the feed added, if any (#525).
+#[cfg(feature = "debug-hud")]
+fn expression_panel(app: &mut PlayerApp) -> Option<&mut super::expression_panel::ExpressionPanel> {
+    app.debug_panels
+        .iter_mut()
+        .find_map(|p| p.as_any_mut().downcast_mut())
+}
+
+#[cfg(feature = "debug-hud")]
+#[test]
+fn the_expression_panel_shows_each_state_the_frame_it_arrives() {
+    use flint_debug_ui::DebugPanel;
+    vfs::scoped(Arc::new(game()), || {
+        // No feed, no panel
+        let mut app = started_in_a(None);
+        app.tick();
+        assert!(expression_panel(&mut app).is_none());
+
+        // Frames are 0.25 s: "hello" on the first, "later" on the third
+        let timeline = ExpressionTimeline::parse(
+            r#"{"events": [{"state": "hello", "t": 0.0},
+                           {"state": "later", "energy": 0.4, "t": 0.5}]}"#,
+        )
+        .unwrap();
+        let feed = ExpressionFeed {
+            timeline: Some(timeline),
+            ..Default::default()
+        };
+        let mut app = started_in_a(Some(feed));
+        app.tick();
+        let panel = expression_panel(&mut app).expect("a feed gets the panel");
+        assert!(!panel.is_open(), "registered closed; F3 opens it");
+        assert!(panel.view().is_none(), "a closed panel isn't fed");
+        panel.toggle();
+
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            app.tick();
+            let heard = app.core.script.expression();
+            let view = expression_panel(&mut app).unwrap().view().unwrap().clone();
+            let latest = view.record.latest().unwrap();
+            // What the panel shows is what scripts hear, that same frame
+            assert_eq!(
+                Some(latest.state["state"].as_str().unwrap().to_string()),
+                heard.get("state").map(|s| s.to_string())
+            );
+            seen.push((view.frame, latest.frame, latest.state["state"].clone()));
+        }
+        // The first frame showing "later" is the frame it arrived on
+        let first = seen.iter().find(|s| s.2 == "later").expect("later came");
+        assert_eq!(first.0, first.1, "{seen:?}");
+        let view = expression_panel(&mut app).unwrap().view().unwrap().clone();
+        let names: Vec<&str> = view
+            .record
+            .newest_first()
+            .map(|a| a.state["state"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["later", "hello"], "newest first");
+        let timeline = view.timeline.unwrap();
+        assert_eq!((timeline.played, timeline.len, timeline.next), (2, 2, None));
+
+        // A transition drops the scene's panels; the feed's comes back
+        assert!(app.execute_scene_transition("b.scene.toml"));
+        app.tick();
+        assert!(expression_panel(&mut app).is_some());
+    });
+}
+
+#[cfg(all(feature = "debug-hud", not(target_arch = "wasm32")))]
+#[test]
+fn a_malformed_socket_line_raises_the_panels_dropped_count() {
+    use flint_debug_ui::DebugPanel;
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    vfs::scoped(Arc::new(game()), || {
+        let feed = ExpressionFeed::open(None, Some("127.0.0.1:0"))
+            .unwrap()
+            .unwrap();
+        let addr = feed.listener.as_ref().unwrap().local_addr();
+        let mut app = started_in_a(Some(feed));
+        app.tick();
+        expression_panel(&mut app).unwrap().toggle();
+
+        let mut s = std::net::TcpStream::connect(addr).unwrap();
+        s.write_all(b"{\"state\": \"listening\"}\n{oops\n").unwrap();
+        s.flush().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let view = loop {
+            app.tick();
+            let view = expression_panel(&mut app).unwrap().view().unwrap().clone();
+            let socket = view.socket.unwrap();
+            if socket.malformed == 1 && view.record.latest().is_some() {
+                break view;
+            }
+            assert!(Instant::now() < deadline, "{socket:?}");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let socket = view.socket.unwrap();
+        assert_eq!(socket.connections, 1);
+        assert_eq!((socket.oversize, socket.flooded), (0, 0));
+        assert_eq!(view.record.latest().unwrap().state["state"], "listening");
+        assert!(view.timeline.is_none());
+        // and the panel is still there, still open
+        assert!(expression_panel(&mut app).unwrap().is_open());
+    });
+}
+
 #[cfg(feature = "living")]
 #[test]
 fn a_scene_with_a_wooze_field_gets_living_props_and_the_next_scene_drops_it() {

@@ -44,6 +44,7 @@ impl PlayerApp {
     /// An error is a startup failure (physics would not initialize); at a
     /// transition the same failure is logged and the scene plays on.
     pub(super) fn enter_scene(&mut self, entry: SceneEntry) -> Result<()> {
+        flint_core::scope!("enter_scene");
         // Which project the scene is in, before anything is searched for
         self.refresh_project();
 
