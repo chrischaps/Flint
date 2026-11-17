@@ -55,7 +55,13 @@ Four component schemas define physics properties:
 - `contacts_enabled`: let the two jointed bodies collide
 
 **Character Controller** (`character_controller.toml`) --- first-person movement parameters:
-- `move_speed`, `jump_force`, `height`, `radius`, `camera_mode`
+- `move_speed` (5), `jump_force` (6), `sprint_multiplier` (1.6, while `sprint` is held)
+- `start_yaw`: the facing the scene starts with, degrees about +Y (0 faces +Z, 90 faces +X)
+- `look_sensitivity` (0.172 degrees per unit of raw mouse motion) and `pitch_limit` (80 degrees from level)
+- `gravity_scale` (1, times the physics world's gravity), `step_height` (0.5, the tallest ledge walked up; 0 turns it off), `snap_to_ground` (0.2; 0 turns it off)
+- `height` (the eye sits at 0.85 of it), and `radius` and `camera_mode`, which nothing reads yet
+
+Mouse look and the jump press are taken once a frame, and the walk once a fixed step. So a turn is the same at 30, 60 or 144 frames a second, and a jump pressed on a frame that runs no physics step still jumps at the next one.
 
 The **player** archetype (`player.toml`) bundles these together with a `transform` for a ready-to-use player entity.
 

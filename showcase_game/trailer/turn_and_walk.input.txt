@@ -1,7 +1,9 @@
 # Turn from the wall the player starts facing to the room, then walk into
 # it (format: crates/flint-player/src/player_app/input_script.rs; times are
 # game seconds). The click captures the cursor, so `look` reaches the game.
+# 900 raw units is 155 degrees, at any frame rate. Until #728 the capture's
+# 30 fps ran two physics steps a frame and each read the motion, so 450 did it.
 0.0   click  640 360
-0.2   look   450 0 1.6
+0.2   look   900 0 1.6
 1.9   down   KeyW
 3.4   up     KeyW
