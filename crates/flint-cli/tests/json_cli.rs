@@ -38,6 +38,7 @@ const WINDOWS: &[&str] = &[
     "music chart play",
     "spike-rumble",
     "prefab view",
+    "frame open",
 ];
 
 fn scratch(name: &str) -> PathBuf {

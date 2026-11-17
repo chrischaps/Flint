@@ -349,6 +349,10 @@ impl Commands {
             Commands::TerrainEdit(_) => "terrain-edit",
             Commands::TexEdit(_) => "tex-edit",
             Commands::Prefab(_) => "prefab view",
+            Commands::Frame(args) => match &args.command {
+                frame::FrameCommands::Open(open) if open.interactive() => "frame open",
+                _ => return None,
+            },
             _ => return None,
         })
     }
