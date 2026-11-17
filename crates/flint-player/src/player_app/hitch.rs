@@ -7,8 +7,18 @@
 //!
 //! A frame is a hitch when its time is over **both** `factor` times the
 //! median of the frames before it (default 2x) **and** that median plus
-//! `floor_ms` (default 8 ms). The factor alone cries wolf at high frame
+//! `floor_ms` (default 24 ms). The factor alone cries wolf at high frame
 //! rates (a 4 ms frame among 2 ms ones), the floor alone at low ones.
+//!
+//! The floor is a time, not a count of refreshes (#1109), because what a
+//! player sees is how long the picture held. On a 60 Hz display one missed
+//! refresh (16.7 ms late) is no hitch and two (33.3 ms) are, and 24 ms sits
+//! between them, so there the rule is what the factor made it. A faster
+//! display needs the same delay, not the same count: at 240 Hz, three
+//! refreshes are 12.5 ms against a 4.2 ms median, two missed refreshes of
+//! 4.2 ms that nobody sees, and the shortest hitch is seven (29.2 ms). The
+//! floor was 8 ms until then, and at 240 Hz half of what it counted was
+//! frames under 16.7 ms (`docs/design/hitching-1080.md`).
 //!
 //! The time judged is how long the frame stood on screen: where the clock
 //! paces to vsync, the paced time, so Fifo letting frames through 6, 6, 6,
@@ -52,7 +62,8 @@ const PLAYER_SHARE: f32 = 0.5;
 pub(crate) struct HitchThresholds {
     /// Over this many times the rolling median.
     pub factor: f32,
-    /// And over the median by at least this, ms.
+    /// And over the median by at least this, ms: a delay on screen, the
+    /// same at every refresh rate.
     pub floor_ms: f32,
 }
 
@@ -60,7 +71,7 @@ impl Default for HitchThresholds {
     fn default() -> Self {
         Self {
             factor: 2.0,
-            floor_ms: 8.0,
+            floor_ms: 24.0,
         }
     }
 }
@@ -888,26 +899,100 @@ mod tests {
 
     #[test]
     fn both_the_factor_and_the_floor_must_be_passed() {
-        // 2 ms frames: a 6 ms one is 3x, but only 4 ms over: no hitch.
+        // 2 ms frames: a 20 ms one is 10x, but only 18 ms over: no hitch.
         let mut run = Run::new(None);
         let quick = F {
             wall: 2.0,
             ..F::default()
         };
         run.frames(120, quick);
-        assert_eq!(run.frame(F { wall: 6.0, ..quick }), 0);
         assert_eq!(
             run.frame(F {
-                wall: 11.0,
+                wall: 20.0,
+                ..quick
+            }),
+            0
+        );
+        assert_eq!(
+            run.frame(F {
+                wall: 27.0,
                 ..quick
             }),
             1
         );
-        // 50 ms frames: 60 is 10 over but not 2x.
+        // 50 ms frames: 80 is 30 over but not 2x.
         let mut run = Run::new(None);
         run.frames(120, steady(50.0));
-        assert_eq!(run.frame(steady(60.0)), 0);
+        assert_eq!(run.frame(steady(80.0)), 0);
         assert_eq!(run.frame(steady(101.0)), 1);
+    }
+
+    const HZ240_MS: f64 = 1000.0 / 240.0;
+
+    /// #1109: a 240 Hz panel under a busy machine. Every so often a frame
+    /// stands three refreshes (12.5 ms), now and then four or five (16.7,
+    /// 20.8): a delay of two to four refreshes of 4.2 ms that no one sees,
+    /// and no hitch. The rule with the old 8 ms floor counted every one.
+    /// A 100 ms stall among them still is one, and says so in refreshes.
+    #[test]
+    fn at_240_hz_three_refresh_frames_are_not_hitches() {
+        let late = [3.0, 3.0, 4.0, 3.0, 5.0];
+        let series = |run: &mut Run| {
+            let mut found = 0;
+            for i in 0..2400 {
+                // One late frame in about every 23, the others on time
+                let wall = if i % 23 == 11 {
+                    late[(i / 23) % late.len()] * HZ240_MS
+                } else {
+                    HZ240_MS
+                };
+                found += run.frame(steady(wall));
+            }
+            found
+        };
+        let mut run = Run::new(Some(HZ240_MS));
+        assert_eq!(series(&mut run), 0);
+        let s = run.detector.session();
+        assert_eq!(s.hitches, 0);
+        // The late frames are still counted, as the refreshes they missed
+        assert!(s.missed_refreshes > 200, "{s:?}");
+
+        assert_eq!(run.frame(steady(100.0)), 1);
+        let h = run.detector.last().unwrap();
+        assert_eq!(h.refreshes, Some(24));
+        assert!((h.median_ms - HZ240_MS as f32).abs() < 0.01, "{h:?}");
+
+        // What #1109 saw: the same series judged with the 8 ms floor
+        let mut old = Run::new(Some(HZ240_MS));
+        old.detector.thresholds.floor_ms = 8.0;
+        assert!(series(&mut old) > 80);
+    }
+
+    /// The floor is a delay, so the shortest hitch is about the same length
+    /// on every display, and on a 60 Hz one it is what it always was: two
+    /// missed refreshes, where the factor puts it.
+    #[test]
+    fn the_shortest_hitch_is_about_as_long_at_every_refresh_rate() {
+        let shortest = |hz: f64| {
+            let period = 1000.0 / hz;
+            (2..40)
+                .find(|&n| {
+                    let mut run = Run::new(Some(period));
+                    run.frames(120, steady(period));
+                    run.frame(steady(n as f64 * period)) == 1
+                })
+                .map(|n| (n, n as f64 * period))
+                .unwrap()
+        };
+        assert_eq!(shortest(60.0).0, 3, "two missed refreshes at 60 Hz");
+        for hz in [60.0, 75.0, 90.0, 120.0, 144.0, 165.0, 240.0, 360.0] {
+            let (n, ms) = shortest(hz);
+            assert!(
+                (27.0..=50.0).contains(&ms),
+                "{hz} Hz: the shortest hitch is {n} refreshes, {ms:.1} ms"
+            );
+        }
+        assert_eq!(shortest(240.0).0, 7);
     }
 
     #[test]
@@ -1177,6 +1262,9 @@ mod tests {
         use flint_core::frame_notes::{self, NoteKind};
         frame_notes::listen(true);
         let mut run = Run::new(None);
+        // The line was logged on the 8 ms floor; at 24 (#1109) a frame
+        // 10.7 ms over is no hitch. The cause line is what's tested here.
+        run.detector.thresholds.floor_ms = 8.0;
         let grove = F {
             wall: 4.17,
             input: 0.1,
