@@ -9,7 +9,7 @@
 //! one draws are drawn next, the latest only.
 
 use super::super::read::Capture;
-use super::super::replay::{matches, Match};
+use super::super::replay::{matches, stepped_match, Match};
 use crate::commands::render::replay_host::{AssetCheck, Controls, ReplayHost, Skippable};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -28,8 +28,9 @@ pub struct Loaded {
 pub struct Drawn {
     pub dir: PathBuf,
     pub controls: Controls,
-    /// Its final image's and scene pass's comparison with the captured ones.
-    pub matches: [Match; 2],
+    /// Its final image's and scene pass's comparison with the captured
+    /// ones, then the stepped pass's when it isn't the scene's (#1204).
+    pub matches: Vec<Match>,
     pub refused: Vec<String>,
 }
 
@@ -64,17 +65,10 @@ pub struct Replay {
     in_flight: Option<Controls>,
     /// The last replay drawn.
     pub last: Option<Drawn>,
-    /// The captured scene pass's draws: the slider's end.
-    pub scene_draws: usize,
 }
 
 impl Replay {
-    pub fn new(
-        source: &Path,
-        scene: Option<PathBuf>,
-        schemas: Vec<String>,
-        scene_draws: usize,
-    ) -> Self {
+    pub fn new(source: &Path, scene: Option<PathBuf>, schemas: Vec<String>) -> Self {
         Self {
             source: source.to_path_buf(),
             scene,
@@ -86,7 +80,6 @@ impl Replay {
             want: Controls::default(),
             in_flight: None,
             last: None,
-            scene_draws,
         }
     }
 
@@ -253,10 +246,14 @@ fn worker(
             .draw(&controls, &out)
             .and_then(|drawn| {
                 let replayed = Capture::open(&out)?;
+                let mut compared = matches(&captured, &replayed).to_vec();
+                if controls.draws.is_some() {
+                    compared.extend(stepped_match(&captured, &replayed, controls.stepped_name()));
+                }
                 Ok(Drawn {
                     dir: out.clone(),
                     controls: controls.clone(),
-                    matches: matches(&captured, &replayed),
+                    matches: compared,
                     refused: drawn.refused,
                 })
             })

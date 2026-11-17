@@ -11,7 +11,8 @@ use flint_ecs::FlintWorld;
 use flint_import::ImportedMaterial;
 use flint_render::frame_capture::FrameDescription;
 use flint_render::{
-    Camera, DrawControls, FrameHost, FrameInputs, RendererConfig, SceneRenderer, Vertex,
+    Camera, DrawControls, DrawLimit, FrameHost, FrameInputs, RendererConfig, SceneRenderer,
+    SteppedPass, Vertex,
 };
 
 const SIZE: u32 = 64;
@@ -426,7 +427,10 @@ fn a_replays_draw_limit_stops_the_scene_pass_and_leaves_the_shadows_whole() {
 
     // The last step is the frame
     let all = DrawControls {
-        scene_draws: Some(2),
+        limit: Some(DrawLimit {
+            pass: SteppedPass::Scene,
+            draws: 2,
+        }),
         ..Default::default()
     };
     let (d, pixels) = described_with(&gpu, &mut renderer, &world, Some(&all));
@@ -438,7 +442,10 @@ fn a_replays_draw_limit_stops_the_scene_pass_and_leaves_the_shadows_whole() {
 
     // One draw: the tile is set aside, and still casts
     let one = DrawControls {
-        scene_draws: Some(1),
+        limit: Some(DrawLimit {
+            pass: SteppedPass::Scene,
+            draws: 1,
+        }),
         ..Default::default()
     };
     let (d, pixels) = described_with(&gpu, &mut renderer, &world, Some(&one));
@@ -449,7 +456,10 @@ fn a_replays_draw_limit_stops_the_scene_pass_and_leaves_the_shadows_whole() {
 
     // None at all
     let none = DrawControls {
-        scene_draws: Some(0),
+        limit: Some(DrawLimit {
+            pass: SteppedPass::Scene,
+            draws: 0,
+        }),
         ..Default::default()
     };
     let (d, _) = described_with(&gpu, &mut renderer, &world, Some(&none));
@@ -489,4 +499,72 @@ fn a_hidden_entity_draws_in_no_pass_as_if_it_were_never_there() {
     let mut fresh = gpu.renderer();
     let (_, gone) = described_with(&gpu, &mut fresh, &without, None);
     assert_eq!(hidden, gone, "hiding the crate isn't the frame without it");
+}
+
+/// A shadow layer's casters, drawn and set aside, by entity.
+fn layer(d: &FrameDescription, name: &str) -> (Vec<String>, Vec<(String, String)>) {
+    let pass = d.pass(name).unwrap_or_else(|| panic!("no {name} pass"));
+    let drawn = pass
+        .draws
+        .iter()
+        .map(|dr| dr.entity.clone().unwrap_or_default())
+        .collect();
+    let culled = pass
+        .culled
+        .iter()
+        .map(|c| {
+            (
+                c.entity.clone().unwrap_or_default(),
+                c.culled.clone().unwrap_or_default(),
+            )
+        })
+        .collect();
+    (drawn, culled)
+}
+
+#[test]
+fn a_replays_draw_limit_on_a_shadow_layer_steps_its_casters_and_no_other_pass() {
+    let gpu = gpu_or_skip!();
+    let world = world();
+    let mut renderer = gpu.renderer();
+    let (whole, full) = described_with(&gpu, &mut renderer, &world, None);
+    let (casters0, _) = layer(&whole, "Shadow cascade 0");
+    assert!(casters0.len() >= 2, "cascade 0 casts {casters0:?}");
+    let other = layer(&whole, "Shadow cascade 1");
+    let step = |n: usize| DrawControls {
+        limit: Some(DrawLimit {
+            pass: SteppedPass::Shadow(0),
+            draws: n,
+        }),
+        ..Default::default()
+    };
+
+    // The last step is the frame
+    let (d, pixels) = described_with(&gpu, &mut renderer, &world, Some(&step(casters0.len())));
+    assert_eq!(layer(&d, "Shadow cascade 0").0, casters0);
+    assert_eq!(pixels, full, "a limit at the layer's own count changed it");
+
+    // Each step casts the first N, sets the rest aside, and leaves the
+    // scene pass and the other layers whole
+    for n in 0..casters0.len() {
+        let (d, _) = described_with(&gpu, &mut renderer, &world, Some(&step(n)));
+        let (drawn, culled) = layer(&d, "Shadow cascade 0");
+        assert_eq!(drawn, casters0[..n], "step {n}");
+        let past: Vec<&str> = culled
+            .iter()
+            .filter(|(_, why)| why == "past the draw limit")
+            .map(|(e, _)| e.as_str())
+            .collect();
+        assert_eq!(past, casters0[n..], "step {n}");
+        assert_eq!(layer(&d, "Shadow cascade 1"), other, "step {n}");
+        assert_eq!(scene_draws(&d), scene_draws(&whole), "step {n}");
+    }
+
+    // A pass's name finds it, and the scene's limit is still its own
+    assert_eq!(
+        SteppedPass::from_name("shadow cascade 0"),
+        Some(SteppedPass::Shadow(0))
+    );
+    assert_eq!(SteppedPass::from_name("Bloom"), None);
+    assert_eq!(step(1).limit_of(SteppedPass::Scene), None);
 }

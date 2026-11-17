@@ -29,10 +29,15 @@ pub struct ReplayArgs {
     /// Draw the frame without this entity, by name (repeatable)
     #[arg(long, value_name = "NAME")]
     pub hide: Vec<String>,
-    /// Stop the scene pass after its first N draws, counted as `flint frame
-    /// show --draws --pass Scene` lists them
+    /// Stop a pass (the scene's, unless `--pass` names another) after its
+    /// first N draws, counted as `flint frame show --draws --pass <name>`
+    /// lists them
     #[arg(long, value_name = "N")]
     pub draws: Option<usize>,
+    /// The pass `--draws` steps: `Scene` (the default), `Shadow cascade 0`
+    /// to `2`, `Spot shadow`, `Style mask` or `Style albedo`
+    #[arg(long, value_name = "PASS", requires = "draws")]
+    pub pass: Option<String>,
     /// Draw the frame without this pass (`Bloom`, `SSAO`, `Shadows`, a
     /// style's; repeatable)
     #[arg(long, value_name = "PASS")]
@@ -155,6 +160,58 @@ fn compare(
     }
 }
 
+/// Compare every image `pass` has in the capture with the replay's image of
+/// the same target, step and layer (#1204): a shadow layer's depth, the
+/// style mask's ids and veil, the albedo. One `Match`, summed over them.
+fn compare_pass(pass: &str, captured: &Capture, replayed: &Capture) -> Match {
+    let fail = |why: String| Match {
+        image: "pass",
+        pixels: 0,
+        differing: None,
+        why: Some(why),
+    };
+    let (Some(a), Some(b)) = (
+        captured.description.pass(pass),
+        replayed.description.pass(pass),
+    ) else {
+        return fail(format!("one of the two has no {pass} pass"));
+    };
+    if a.images.is_empty() {
+        return fail(format!("the capture kept no image of {pass}"));
+    }
+    let (mut pixels, mut differing) = (0, 0);
+    for image in &a.images {
+        let same = |i: &&ImageDescription| {
+            i.target == image.target && i.step == image.step && i.layer == image.layer
+        };
+        let m = compare(
+            "pass",
+            captured,
+            replayed,
+            (Some(image), b.images.iter().find(same)),
+        );
+        match m.differing {
+            Some(n) => {
+                pixels += m.pixels;
+                differing += n;
+            }
+            None => return m,
+        }
+    }
+    Match {
+        image: "pass",
+        pixels,
+        differing: Some(differing),
+        why: None,
+    }
+}
+
+/// The comparison of the pass a replay steps (#1204), when it isn't the
+/// scene's (which [`matches`] compares anyway).
+pub fn stepped_match(captured: &Capture, replayed: &Capture, pass: &str) -> Option<Match> {
+    (pass != "Scene").then(|| compare_pass(pass, captured, replayed))
+}
+
 /// The final image's and the scene pass's comparisons.
 pub fn matches(captured: &Capture, replayed: &Capture) -> [Match; 2] {
     let replay_final = final_image(&replayed.description, None);
@@ -211,28 +268,33 @@ pub fn run(args: ReplayArgs) -> Result<()> {
         .out
         .clone()
         .unwrap_or_else(|| default_out(&args.capture));
+    let controls = Controls {
+        hidden: args.hide.clone(),
+        pass: args.pass.clone(),
+        draws: args.draws,
+        skip: args.skip.clone(),
+        outline: args.outline.clone(),
+    };
+    // A pass that can't be stepped is refused before the scene loads
+    let stepped = controls.stepped().map_err(anyhow::Error::msg)?.name();
     let mut host = ReplayHost::load(
         &captured.dir,
         &captured.description,
         args.scene.as_deref(),
         &args.schemas,
     )?;
-    let controls = Controls {
-        hidden: args.hide.clone(),
-        scene_draws: args.draws,
-        skip: args.skip.clone(),
-        outline: args.outline.clone(),
-    };
     let drawn = host.draw(&controls, &out)?;
     let replayed = Capture::open(&out)?;
     let [final_match, scene_match] = matches(&captured, &replayed);
+    let pass_match = controls
+        .draws
+        .and_then(|_| stepped_match(&captured, &replayed, stepped));
     let asked = controls != Controls::default();
     let out_shown = Capture::shown(&out);
 
-    let scene_draws = captured
-        .description
-        .pass("Scene")
-        .map_or(0, |p| p.draws.len());
+    let draws_of = |name: &str| captured.description.pass(name).map_or(0, |p| p.draws.len());
+    let scene_draws = draws_of("Scene");
+    let pass_draws = draws_of(stepped);
     let mut text = format!("Replayed {shown} into {out_shown}\n");
     let gpu: f32 = replayed
         .description
@@ -245,8 +307,8 @@ pub fn run(args: ReplayArgs) -> Result<()> {
         if !controls.hidden.is_empty() {
             what.push(format!("without {}", controls.hidden.join(", ")));
         }
-        if let Some(n) = controls.scene_draws {
-            what.push(format!("the scene pass to draw {n} of {scene_draws}"));
+        if let Some(n) = controls.draws {
+            what.push(format!("the {stepped} pass to draw {n} of {pass_draws}"));
         }
         if !controls.skip.is_empty() {
             what.push(format!("without the {} pass", controls.skip.join(", ")));
@@ -258,6 +320,9 @@ pub fn run(args: ReplayArgs) -> Result<()> {
     }
     text.push_str(&format!("  final image: {}\n", final_match.words()));
     text.push_str(&format!("  scene pass:  {}\n", scene_match.words()));
+    if let Some(m) = &pass_match {
+        text.push_str(&format!("  {stepped}: {}\n", m.words()));
+    }
     if gpu > 0.0 {
         text.push_str(&format!("  GPU: {gpu:.2} ms across its passes\n"));
     }
@@ -288,14 +353,19 @@ pub fn run(args: ReplayArgs) -> Result<()> {
         "replay": out_shown,
         "controls": {
             "hidden": controls.hidden,
-            "scene_draws": controls.scene_draws,
+            "pass": controls.draws.map(|_| stepped),
+            "draws": controls.draws,
             "skip": controls.skip,
             "outline": controls.outline,
         },
         "scene_draws": scene_draws,
+        "pass_draws": pass_draws,
         "final": final_match,
         "scene": scene_match,
-        "identical": final_match.identical() && scene_match.identical(),
+        "pass": pass_match,
+        "identical": final_match.identical()
+            && scene_match.identical()
+            && pass_match.as_ref().is_none_or(Match::identical),
         "gpu_ms": gpu,
         "fresh_only": host.fresh_only,
         "assets": host.assets,

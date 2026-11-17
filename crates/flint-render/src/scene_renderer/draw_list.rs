@@ -132,6 +132,10 @@ struct Cull {
     /// Past a replay's scene draw limit (#1089): out of the scene pass and
     /// what follows it, still in the shadows.
     past_limit: bool,
+    /// Past a replay's draw limit on another pass (#1204): a shadow layer,
+    /// the style mask or the albedo, whichever the controls step. Only
+    /// that pass's walk reads it ([`DrawList::within`]).
+    past_pass_limit: bool,
 }
 
 /// One draw of the frame.
@@ -308,7 +312,7 @@ pub(super) struct DrawList {
 #[derive(Default)]
 struct Controls {
     hidden: std::collections::HashSet<EntityId>,
-    scene_draws: Option<usize>,
+    limit: Option<super::DrawLimit>,
     /// The grass is past the limit.
     grass_cut: bool,
     /// How many 2D sprite batches are within it.
@@ -321,7 +325,7 @@ impl DrawList {
     pub fn set_controls(&mut self, controls: Option<&super::DrawControls>) {
         self.controls = controls.map(|c| Controls {
             hidden: c.hidden.iter().copied().collect(),
-            scene_draws: c.scene_draws,
+            limit: c.limit,
             grass_cut: false,
             sprites: usize::MAX,
         });
@@ -353,7 +357,7 @@ impl DrawList {
         grass: bool,
         sprites: usize,
     ) {
-        let Some(limit) = self.controls.as_ref().and_then(|c| c.scene_draws) else {
+        let Some(limit) = self.limit_of(super::SteppedPass::Scene) else {
             return;
         };
         let mut n = 0usize;
@@ -387,6 +391,36 @@ impl DrawList {
             c.grass_cut = grass_cut;
             c.sprites = sprites_in;
         }
+    }
+
+    /// The controls' draw limit, when it is `pass`'s (#1204).
+    pub fn limit_of(&self, pass: super::SteppedPass) -> Option<usize> {
+        let l = self.controls.as_ref()?.limit?;
+        (l.pass == pass).then_some(l.draws)
+    }
+
+    /// Cut `pass` (a shadow layer, the style mask or the albedo; the
+    /// scene's is [`cut_to_limit`](Self::cut_to_limit)) after the controls'
+    /// draw limit (#1204): `counts(item)` is whether that pass draws the
+    /// item, as its description lists it, walked in list order. Nothing
+    /// unless the limit is `pass`'s.
+    pub fn cut_pass(&mut self, pass: super::SteppedPass, counts: impl Fn(&DrawItem) -> bool) {
+        let Some(limit) = self.limit_of(pass) else {
+            return;
+        };
+        let mut n = 0usize;
+        for item in self.iter_mut() {
+            if counts(item) {
+                n += 1;
+                item.cull.past_pass_limit = n > limit;
+            }
+        }
+    }
+
+    /// Whether `pass` draws `item` under the controls' limit (#1204): false
+    /// only for an item past the limit of the pass the controls step.
+    pub fn within(&self, item: &DrawItem, pass: super::SteppedPass) -> bool {
+        !item.cull.past_pass_limit || self.limit_of(pass).is_none()
     }
 
     /// Whether a replay's draw limit leaves the grass out of the scene pass.
