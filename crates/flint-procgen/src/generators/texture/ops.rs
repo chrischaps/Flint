@@ -19,6 +19,7 @@ use crate::rng::{hsv_to_rgb, rgb_to_hsv};
 use crate::SeededRng;
 
 use super::cell_memo::CellMemo;
+use super::descriptor::{OpDescriptor, ParamDesc as P};
 use super::field::TextureField;
 use super::voronoi_util::{self, SpatialGrid};
 
@@ -58,8 +59,13 @@ pub trait TextureOp: Send + Sync {
     /// Apply this operation to the field, using `rng` for any randomness.
     fn apply(&self, field: &mut TextureField, rng: &mut SeededRng);
 
-    /// Return port metadata describing this op's channel I/O.
-    fn port_info(&self) -> OpPortInfo;
+    /// What the op is: its type, channels and parameters (#720).
+    fn descriptor(&self) -> &'static OpDescriptor;
+
+    /// Port metadata describing this op's channel I/O, from its descriptor.
+    fn port_info(&self) -> OpPortInfo {
+        self.descriptor().port_info()
+    }
 }
 
 // ─── BrickGridOp ──────────────────────────────────────────────────────────
@@ -84,15 +90,43 @@ pub struct BrickGridOp {
     pub warp_strength: f32,
 }
 
+/// The [`BrickGridOp`] op, as the pipeline knows it.
+pub const BRICK_GRID: OpDescriptor = OpDescriptor {
+    type_name: "brick_grid",
+    label: "Brick Grid",
+    summary: "Lay rectangular cells in staggered rows (running bond): bricks, planks, tiles.",
+    reads: &[],
+    writes: &["cell_id", "edge_dist", "mask"],
+    modifies: &[],
+    params: &[
+        P::int("columns", 8).min(1.0).help("Bricks across each row"),
+        P::int("rows", 16).min(1.0).help("Rows of bricks down the texture"),
+        P::float("stagger", 0.5).range(0.0, 1.0).help("How far each row shifts from the one above, as a fraction of a brick: 0.5 is running bond, 0 stacks them"),
+        P::float("gap_width", 0.04).range(0.0, 1.0).help("The mortar gap as a fraction of a brick's size; sets how fast edge_dist rises from the edge"),
+        P::float("width_variation", 0.0).range(0.0, 1.0).help("How much brick widths vary along a row: 0 all the same, 1 the most"),
+        P::float("row_height_variation", 0.0).range(0.0, 1.0).help("How much row heights vary: 0 all the same, 1 the most"),
+        P::opt_channel("warp_x").help("Channel (0.5 is no shift) that moves the grid sideways before each pixel finds its brick; needs warp_y and warp_strength"),
+        P::opt_channel("warp_y").help("Channel (0.5 is no shift) that moves the grid up and down before each pixel finds its brick; needs warp_x and warp_strength"),
+        P::float("warp_strength", 0.0).min(0.0).help("How far warp_x and warp_y move the grid, in texture widths; 0 keeps the courses straight"),
+    ],
+    build: |p| {
+        Ok(Box::new(BrickGridOp {
+            columns: p.u32("columns")?,
+            rows: p.u32("rows")?,
+            stagger: p.f32("stagger")?,
+            gap_width: p.f32("gap_width")?,
+            width_variation: p.f32("width_variation")?,
+            row_height_variation: p.f32("row_height_variation")?,
+            warp_x: p.opt_text("warp_x")?,
+            warp_y: p.opt_text("warp_y")?,
+            warp_strength: p.f32("warp_strength")?,
+        }))
+    },
+};
+
 impl TextureOp for BrickGridOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "brick_grid",
-            label: "Brick Grid",
-            reads: &[],
-            writes: &["cell_id", "edge_dist", "mask"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &BRICK_GRID
     }
 
     fn apply(&self, field: &mut TextureField, rng: &mut SeededRng) {
@@ -274,15 +308,37 @@ pub struct VoronoiGridOp {
     pub warp_strength: f32,
 }
 
+/// The [`VoronoiGridOp`] op, as the pipeline knows it.
+pub const VORONOI_GRID: OpDescriptor = OpDescriptor {
+    type_name: "voronoi_grid",
+    label: "Voronoi Grid",
+    summary: "Lay irregular Voronoi cells, for fieldstone and cobbles; every cell op reads them.",
+    reads: &[],
+    writes: &["cell_id", "edge_dist", "mask"],
+    modifies: &[],
+    params: &[
+        P::int("cell_count", 20).min(1.0).help("Cells (stones) across the whole texture"),
+        P::float("regularity", 0.0).range(0.0, 1.0).help("0 scatters the cells at random; toward 1 relaxes them (Lloyd) into even sizes"),
+        P::float("mortar_width", 0.03).range(0.0, 1.0).help("Width of the mortar between cells, as a fraction of the texture"),
+        P::opt_channel("warp_x").help("Channel (0.5 is no shift) that moves the cells sideways before each pixel finds its cell; needs warp_y and warp_strength"),
+        P::opt_channel("warp_y").help("Channel (0.5 is no shift) that moves the cells up and down before each pixel finds its cell; needs warp_x and warp_strength"),
+        P::float("warp_strength", 0.0).min(0.0).help("How far warp_x and warp_y move the cells, in texture widths; 0 leaves them unbent"),
+    ],
+    build: |p| {
+        Ok(Box::new(VoronoiGridOp {
+            cell_count: p.u32("cell_count")?,
+            regularity: p.f32("regularity")?,
+            mortar_width: p.f32("mortar_width")?,
+            warp_x: p.opt_text("warp_x")?,
+            warp_y: p.opt_text("warp_y")?,
+            warp_strength: p.f32("warp_strength")?,
+        }))
+    },
+};
+
 impl TextureOp for VoronoiGridOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "voronoi_grid",
-            label: "Voronoi Grid",
-            reads: &[],
-            writes: &["cell_id", "edge_dist", "mask"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &VORONOI_GRID
     }
 
     fn apply(&self, field: &mut TextureField, rng: &mut SeededRng) {
@@ -362,15 +418,37 @@ pub struct DomainWarpOp {
     pub strength: f32,
 }
 
+/// The [`DomainWarpOp`] op, as the pipeline knows it.
+pub const DOMAIN_WARP: OpDescriptor = OpDescriptor {
+    type_name: "domain_warp",
+    label: "Domain Warp",
+    summary: "Displace a channel by two others (bilinear lookup): swirl, bend or smear it.",
+    reads: &["<input>", "<warp_x>", "<warp_y>"],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("input", "input").help("Channel to warp"),
+        P::channel("output", "output").help("Channel the warped copy goes to; may be input itself"),
+        P::channel("warp_x", "warp_x").help("Channel giving the horizontal displacement"),
+        P::channel("warp_y", "warp_y").help("Channel giving the vertical displacement"),
+        P::float("strength", 0.1)
+            .min(0.0)
+            .help("How far the displacement reaches, in texture widths"),
+    ],
+    build: |p| {
+        Ok(Box::new(DomainWarpOp {
+            input: p.text("input")?,
+            output: p.text("output")?,
+            warp_x: p.text("warp_x")?,
+            warp_y: p.text("warp_y")?,
+            strength: p.f32("strength")?,
+        }))
+    },
+};
+
 impl TextureOp for DomainWarpOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "domain_warp",
-            label: "Domain Warp",
-            reads: &["<input>", "<warp_x>", "<warp_y>"],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &DOMAIN_WARP
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -430,15 +508,27 @@ pub struct CellHeightOp {
     pub variation: f32,
 }
 
+/// The [`CellHeightOp`] op, as the pipeline knows it.
+pub const CELL_HEIGHT: OpDescriptor = OpDescriptor {
+    type_name: "cell_height",
+    label: "Cell Height",
+    summary: "Give each cell a random base height, so stones stand proud of one another.",
+    reads: &["cell_id"],
+    writes: &["height"],
+    modifies: &[],
+    params: &[P::float("variation", 0.3)
+        .range(0.0, 1.0)
+        .help("How far each cell's height strays at random: 0 all level, 1 the most")],
+    build: |p| {
+        Ok(Box::new(CellHeightOp {
+            variation: p.f32("variation")?,
+        }))
+    },
+};
+
 impl TextureOp for CellHeightOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "cell_height",
-            label: "Cell Height",
-            reads: &["cell_id"],
-            writes: &["height"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &CELL_HEIGHT
     }
 
     fn apply(&self, field: &mut TextureField, rng: &mut SeededRng) {
@@ -522,15 +612,29 @@ pub struct CellBulgeOp {
     pub falloff: BulgeFalloff,
 }
 
+/// The [`CellBulgeOp`] op, as the pipeline knows it.
+pub const CELL_BULGE: OpDescriptor = OpDescriptor {
+    type_name: "cell_bulge",
+    label: "Cell Bulge",
+    summary: "Dome each cell, highest at its centre, whatever its size or shape.",
+    reads: &["cell_id", "edge_dist"],
+    writes: &[],
+    modifies: &["height"],
+    params: &[
+        P::float("strength", 0.3).min(0.0).help("Height added at each cell's centre"),
+        P::choice("falloff", &["cosine", "parabolic", "linear"], "cosine").help("The dome's profile from edge to centre: cosine an S-curve, flat at both ends; parabolic a flat-topped dome; linear a cone"),
+    ],
+    build: |p| {
+        Ok(Box::new(CellBulgeOp {
+            strength: p.f32("strength")?,
+            falloff: BulgeFalloff::from_str(p.choice("falloff")?),
+        }))
+    },
+};
+
 impl TextureOp for CellBulgeOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "cell_bulge",
-            label: "Cell Bulge",
-            reads: &["cell_id", "edge_dist"],
-            writes: &[],
-            modifies: &["height"],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &CELL_BULGE
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -570,6 +674,9 @@ impl TextureOp for CellBulgeOp {
 }
 
 // ─── NoiseType ────────────────────────────────────────────────────────────
+
+/// The names a `noise_type` parameter takes, in [`NoiseType`]'s order.
+pub const NOISE_TYPES: &[&str] = &["perlin", "simplex", "value", "voronoi"];
 
 /// Selects the base noise algorithm for [`NoiseLayerOp`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -623,15 +730,39 @@ pub struct NoiseLayerOp {
     pub cell_offset: bool,
 }
 
+/// The [`NoiseLayerOp`] op, as the pipeline knows it.
+pub const NOISE_LAYER: OpDescriptor = OpDescriptor {
+    type_name: "noise_layer",
+    label: "Noise Layer",
+    summary: "Write FBM noise (0–1) into a channel, for a blend to mix in downstream.",
+    reads: &[],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("output", "noise").help("Channel the noise is written to"),
+        P::choice("noise_type", NOISE_TYPES, "perlin").help("The base noise: perlin, simplex, value, or voronoi (Worley cells)"),
+        P::float("frequency", 10.0).min(0.1).help("Noise cells across the texture in the first octave; rounded to whole cycles when seamless"),
+        P::int("octaves", 4).range(1.0, 16.0).help("FBM octaves, each twice as fine"),
+        P::float("scale_x", 1.0).min(0.01).help("Horizontal squeeze of the noise: above 1 packs it tighter across, for vertical streaks"),
+        P::float("scale_y", 1.0).min(0.01).help("Vertical squeeze of the noise: above 1 packs it tighter down, for horizontal streaks"),
+        P::flag("cell_offset", false).help("Offset the noise per cell (reads the cell id), so neighbouring stones don't share a pattern"),
+    ],
+    build: |p| {
+        Ok(Box::new(NoiseLayerOp {
+            output: p.text("output")?,
+            frequency: p.f32("frequency")?,
+            octaves: p.u32("octaves")?,
+            noise_type: NoiseType::from_str(p.choice("noise_type")?),
+            scale_x: p.f32("scale_x")?,
+            scale_y: p.f32("scale_y")?,
+            cell_offset: p.flag("cell_offset")?,
+        }))
+    },
+};
+
 impl TextureOp for NoiseLayerOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "noise_layer",
-            label: "Noise Layer",
-            reads: &[],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &NOISE_LAYER
     }
 
     fn apply(&self, field: &mut TextureField, rng: &mut SeededRng) {
@@ -787,15 +918,39 @@ impl BlendMode {
     }
 }
 
+/// The [`BlendOp`] op, as the pipeline knows it.
+pub const BLEND: OpDescriptor = OpDescriptor {
+    type_name: "blend",
+    label: "Blend",
+    summary: "Blend one channel into another in place, optionally through a mask.",
+    reads: &["<source>"],
+    writes: &[],
+    modifies: &["<target>"],
+    params: &[
+        P::channel("source", "noise").help("Channel blended in"),
+        P::channel("target", "height").help("Channel changed in place"),
+        P::choice("mode", &[
+            "add", "add_raw", "multiply", "mix", "screen", "overlay", "soft_light",
+            "linear_light", "difference", "darken", "lighten", "color_dodge", "color_burn",
+            "subtract",
+        ], "add").help("How source meets target: add centres source on 0.5 first and add_raw doesn't; multiply and mix move toward source by strength; the rest are the usual image blend modes"),
+        P::float("strength", 0.1).min(0.0).help("How much of the source goes in"),
+        P::opt_channel("mask").help("Channel scaling the blend per pixel (a grid's mask keeps it off the mortar); unset, it applies everywhere"),
+    ],
+    build: |p| {
+        Ok(Box::new(BlendOp {
+            source: p.text("source")?,
+            target: p.text("target")?,
+            mode: BlendMode::from_str(p.choice("mode")?),
+            strength: p.f32("strength")?,
+            mask: p.opt_text("mask")?,
+        }))
+    },
+};
+
 impl TextureOp for BlendOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "blend",
-            label: "Blend",
-            reads: &["<source>"],
-            writes: &[],
-            modifies: &["<target>"],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &BLEND
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -905,15 +1060,33 @@ pub struct MortarGrooveOp {
     pub width: f32,
 }
 
+/// The [`MortarGrooveOp`] op, as the pipeline knows it.
+pub const MORTAR_GROOVE: OpDescriptor = OpDescriptor {
+    type_name: "mortar_groove",
+    label: "Mortar Groove",
+    summary: "Sink the height along cell edges, cutting the grooves between stones.",
+    reads: &["edge_dist"],
+    writes: &[],
+    modifies: &["height"],
+    params: &[
+        P::float("depth", 0.15)
+            .range(0.0, 1.0)
+            .help("How far the height drops at the bottom of the groove"),
+        P::float("width", 0.04)
+            .range(0.0, 1.0)
+            .help("The edge_dist below which the groove cuts in"),
+    ],
+    build: |p| {
+        Ok(Box::new(MortarGrooveOp {
+            depth: p.f32("depth")?,
+            width: p.f32("width")?,
+        }))
+    },
+};
+
 impl TextureOp for MortarGrooveOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "mortar_groove",
-            label: "Mortar Groove",
-            reads: &["edge_dist"],
-            writes: &[],
-            modifies: &["height"],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &MORTAR_GROOVE
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -947,15 +1120,32 @@ pub struct CellColorOp {
     pub variation: f32,
 }
 
+/// The [`CellColorOp`] op, as the pipeline knows it.
+pub const CELL_COLOR: OpDescriptor = OpDescriptor {
+    type_name: "cell_color",
+    label: "Cell Color",
+    summary: "Colour each cell a shade of one base colour, varying lightness and keeping hue.",
+    reads: &["cell_id"],
+    writes: &["r", "g", "b"],
+    modifies: &[],
+    params: &[
+        P::color("base_color", [0.45, 0.35, 0.28, 1.0])
+            .help("Albedo of the cells, hex; each cell gets its own shade of it"),
+        P::float("variation", 0.12)
+            .range(0.0, 1.0)
+            .help("How far each cell's lightness strays (saturation by half that; hue stays)"),
+    ],
+    build: |p| {
+        Ok(Box::new(CellColorOp {
+            base_color: p.color("base_color")?,
+            variation: p.f32("variation")?,
+        }))
+    },
+};
+
 impl TextureOp for CellColorOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "cell_color",
-            label: "Cell Color",
-            reads: &["cell_id"],
-            writes: &["r", "g", "b"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &CELL_COLOR
     }
 
     fn apply(&self, field: &mut TextureField, rng: &mut SeededRng) {
@@ -1004,15 +1194,31 @@ pub struct MortarColorOp {
     pub threshold: f32,
 }
 
+/// The [`MortarColorOp`] op, as the pipeline knows it.
+pub const MORTAR_COLOR: OpDescriptor = OpDescriptor {
+    type_name: "mortar_color",
+    label: "Mortar Color",
+    summary: "Blend a mortar colour into the albedo near cell edges.",
+    reads: &["edge_dist"],
+    writes: &[],
+    modifies: &["r", "g", "b"],
+    params: &[
+        P::color("color", [0.25, 0.22, 0.18, 1.0]).help("Albedo of the mortar, hex"),
+        P::float("threshold", 0.06)
+            .range(0.0, 1.0)
+            .help("The edge_dist below which the mortar colour blends in"),
+    ],
+    build: |p| {
+        Ok(Box::new(MortarColorOp {
+            color: p.color("color")?,
+            threshold: p.f32("threshold")?,
+        }))
+    },
+};
+
 impl TextureOp for MortarColorOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "mortar_color",
-            label: "Mortar Color",
-            reads: &["edge_dist"],
-            writes: &[],
-            modifies: &["r", "g", "b"],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &MORTAR_COLOR
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -1046,15 +1252,27 @@ pub struct DeriveNormalOp {
     pub strength: f32,
 }
 
+/// The [`DeriveNormalOp`] op, as the pipeline knows it.
+pub const DERIVE_NORMAL: OpDescriptor = OpDescriptor {
+    type_name: "derive_normal",
+    label: "Derive Normal",
+    summary: "Derive the tangent-space normal map from the height channel.",
+    reads: &["height"],
+    writes: &["normal_x", "normal_y", "normal_z"],
+    modifies: &[],
+    params: &[P::float("strength", 1.0)
+        .min(0.0)
+        .help("Depth of the relief; 0 is flat")],
+    build: |p| {
+        Ok(Box::new(DeriveNormalOp {
+            strength: p.f32("strength")?,
+        }))
+    },
+};
+
 impl TextureOp for DeriveNormalOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "derive_normal",
-            label: "Derive Normal",
-            reads: &["height"],
-            writes: &["normal_x", "normal_y", "normal_z"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &DERIVE_NORMAL
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -1119,15 +1337,41 @@ pub struct CellRoughnessOp {
     pub mortar_threshold: f32,
 }
 
+/// The [`CellRoughnessOp`] op, as the pipeline knows it.
+pub const CELL_ROUGHNESS: OpDescriptor = OpDescriptor {
+    type_name: "cell_roughness",
+    label: "Cell Roughness",
+    summary: "Give each cell its own roughness, and the mortar near its edges another.",
+    reads: &["cell_id", "edge_dist"],
+    writes: &["roughness"],
+    modifies: &[],
+    params: &[
+        P::float("base", 0.75)
+            .range(0.0, 1.0)
+            .help("Roughness of the cells' faces"),
+        P::float("variation", 0.05)
+            .range(0.0, 1.0)
+            .help("Per-cell random spread of roughness"),
+        P::float("mortar", 0.55)
+            .range(0.0, 1.0)
+            .help("Roughness of the mortar"),
+        P::float("mortar_threshold", 0.06)
+            .range(0.0, 1.0)
+            .help("The edge_dist below which the mortar roughness blends in"),
+    ],
+    build: |p| {
+        Ok(Box::new(CellRoughnessOp {
+            base: p.f32("base")?,
+            variation: p.f32("variation")?,
+            mortar: p.f32("mortar")?,
+            mortar_threshold: p.f32("mortar_threshold")?,
+        }))
+    },
+};
+
 impl TextureOp for CellRoughnessOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "cell_roughness",
-            label: "Cell Roughness",
-            reads: &["cell_id", "edge_dist"],
-            writes: &["roughness"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &CELL_ROUGHNESS
     }
 
     fn apply(&self, field: &mut TextureField, rng: &mut SeededRng) {
@@ -1276,15 +1520,66 @@ impl MathOperation {
     }
 }
 
+/// The [`MathOp`] op, as the pipeline knows it.
+pub const MATH: OpDescriptor = OpDescriptor {
+    type_name: "math",
+    label: "Math",
+    summary: "Per-pixel arithmetic on one channel, with a second channel or a constant.",
+    reads: &["<input_a>"],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::choice(
+            "operation",
+            &[
+                "add",
+                "subtract",
+                "multiply",
+                "divide",
+                "power",
+                "sqrt",
+                "abs",
+                "min",
+                "max",
+                "fract",
+                "modulo",
+                "snap",
+                "sin",
+                "cos",
+                "less_than",
+                "greater_than",
+                "sign",
+                "floor",
+                "ceil",
+                "round",
+                "pingpong",
+                "wrap",
+                "negate",
+            ],
+            "add",
+        )
+        .help("What to do with a and b (the one-argument ones ignore b); dividing by 0 gives 0"),
+        P::channel("input_a", "input").help("Channel a"),
+        P::opt_channel("input_b").help("Channel b; unset, b is value_b"),
+        P::float("value_b", 0.0).help("The constant b, when input_b is unset"),
+        P::channel("output", "output").help("Channel the result goes to"),
+        P::flag("clamp", false).help("Clamp the result to 0–1"),
+    ],
+    build: |p| {
+        Ok(Box::new(MathOp {
+            operation: MathOperation::from_str(p.choice("operation")?),
+            input_a: p.text("input_a")?,
+            input_b: p.opt_text("input_b")?,
+            value_b: p.f32("value_b")?,
+            output: p.text("output")?,
+            clamp_output: p.flag("clamp")?,
+        }))
+    },
+};
+
 impl TextureOp for MathOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "math",
-            label: "Math",
-            reads: &["<input_a>"],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &MATH
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -1435,15 +1730,41 @@ impl MapRangeInterp {
     }
 }
 
+/// The [`MapRangeOp`] op, as the pipeline knows it.
+pub const MAP_RANGE: OpDescriptor = OpDescriptor {
+    type_name: "map_range",
+    label: "Map Range",
+    summary: "Remap a channel from one range to another, straight or eased.",
+    reads: &["<input>"],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("input", "input").help("Channel to remap"),
+        P::channel("output", "output").help("Channel the result goes to"),
+        P::float("from_min", 0.0).help("Input value that maps to to_min"),
+        P::float("from_max", 1.0).help("Input value that maps to to_max"),
+        P::float("to_min", 0.0).help("Output at from_min"),
+        P::float("to_max", 1.0).help("Output at from_max"),
+        P::choice("interpolation", &["linear", "smoothstep", "smootherstep"], "linear").help("The curve between: linear, or eased at both ends (smoothstep, smootherstep; both clamp the input to the range)"),
+        P::flag("clamp", true).help("Keep the result between to_min and to_max"),
+    ],
+    build: |p| {
+        Ok(Box::new(MapRangeOp {
+            input: p.text("input")?,
+            output: p.text("output")?,
+            from_min: p.f32("from_min")?,
+            from_max: p.f32("from_max")?,
+            to_min: p.f32("to_min")?,
+            to_max: p.f32("to_max")?,
+            interpolation: MapRangeInterp::from_str(p.choice("interpolation")?),
+            clamp_output: p.flag("clamp")?,
+        }))
+    },
+};
+
 impl TextureOp for MapRangeOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "map_range",
-            label: "Map Range",
-            reads: &["<input>"],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &MAP_RANGE
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -1518,15 +1839,47 @@ pub struct ColorStop {
     pub color: [f32; 3],
 }
 
-impl TextureOp for ColorRampOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "color_ramp",
-            label: "Color Ramp",
-            reads: &["<input>"],
-            writes: &["r", "g", "b"],
-            modifies: &[],
+/// The [`ColorRampOp`] op, as the pipeline knows it.
+pub const COLOR_RAMP: OpDescriptor = OpDescriptor {
+    type_name: "color_ramp",
+    label: "Color Ramp",
+    summary: "Colour the albedo by a channel through a gradient of stops.",
+    reads: &["<input>"],
+    writes: &["r", "g", "b"],
+    modifies: &[],
+    params: &[
+        P::channel("input", "input").help("Channel (0–1) that picks the colour"),
+        P::choice("interpolation", &["linear", "constant", "ease"], "linear").help("Between stops: linear blends, constant holds each stop's colour up to the next, ease blends with an S-curve"),
+        P::tables("stops", "color_ramp stop", &[
+            P::float("position", 0.0).range(0.0, 1.0).help("Where on the input this colour sits"),
+            P::color("color", [0.0, 0.0, 0.0, 1.0]).help("The colour there, hex (alpha is ignored)"),
+        ]).help("The ramp's colours, as [[params.ops.stops]] tables, at least one; sorted by position"),
+    ],
+    build: |p| {
+        let mut stops = Vec::new();
+        for stop in p.tables("stops")? {
+            let c = stop.color("color")?;
+            stops.push(ColorStop {
+                position: stop.f32("position")?,
+                color: [c[0], c[1], c[2]],
+            });
         }
+        stops.sort_by(|a, b| {
+            a.position
+                .partial_cmp(&b.position)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok(Box::new(ColorRampOp {
+            input: p.text("input")?,
+            interpolation: ColorRampInterp::from_str(p.choice("interpolation")?),
+            stops,
+        }))
+    },
+};
+
+impl TextureOp for ColorRampOp {
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &COLOR_RAMP
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -1607,15 +1960,35 @@ pub struct CheckerTextureOp {
     pub scale_y: f32,
 }
 
+/// The [`CheckerTextureOp`] op, as the pipeline knows it.
+pub const CHECKER_TEXTURE: OpDescriptor = OpDescriptor {
+    type_name: "checker_texture",
+    label: "Checker Texture",
+    summary: "Write a checkerboard of 0s and 1s.",
+    reads: &[],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("output", "output").help("Channel the checker is written to"),
+        P::float("scale_x", 8.0)
+            .min(0.1)
+            .help("Squares across; an even count when seamless"),
+        P::float("scale_y", 8.0)
+            .min(0.1)
+            .help("Squares down; an even count when seamless"),
+    ],
+    build: |p| {
+        Ok(Box::new(CheckerTextureOp {
+            output: p.text("output")?,
+            scale_x: p.f32("scale_x")?,
+            scale_y: p.f32("scale_y")?,
+        }))
+    },
+};
+
 impl TextureOp for CheckerTextureOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "checker_texture",
-            label: "Checker Texture",
-            reads: &[],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &CHECKER_TEXTURE
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -1694,15 +2067,32 @@ impl GradientType {
     }
 }
 
+/// The [`GradientTextureOp`] op, as the pipeline knows it.
+pub const GRADIENT_TEXTURE: OpDescriptor = OpDescriptor {
+    type_name: "gradient_texture",
+    label: "Gradient Texture",
+    summary: "Write a gradient across the texture (a ramp: it never tiles).",
+    reads: &[],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("output", "output").help("Channel the gradient is written to"),
+        P::choice("gradient_type", &[
+            "linear", "quadratic", "easing", "diagonal", "spherical", "quadratic_sphere",
+            "radial",
+        ], "linear").help("Its shape: left to right (linear, quadratic, easing), corner to corner (diagonal), out from the centre (spherical, quadratic_sphere) or around it (radial)"),
+    ],
+    build: |p| {
+        Ok(Box::new(GradientTextureOp {
+            output: p.text("output")?,
+            gradient_type: GradientType::from_str(p.choice("gradient_type")?),
+        }))
+    },
+};
+
 impl TextureOp for GradientTextureOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "gradient_texture",
-            label: "Gradient Texture",
-            reads: &[],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &GRADIENT_TEXTURE
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -1793,15 +2183,46 @@ impl WaveDirection {
     }
 }
 
+/// The [`WaveTextureOp`] op, as the pipeline knows it.
+pub const WAVE_TEXTURE: OpDescriptor = OpDescriptor {
+    type_name: "wave_texture",
+    label: "Wave Texture",
+    summary:
+        "Write bands of sine, saw or triangle waves, optionally bent by noise: wood grain, ripples.",
+    reads: &[],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("output", "output").help("Channel the waves are written to"),
+        P::choice("wave_type", &["sine", "saw", "triangle"], "sine")
+            .help("The profile of each band"),
+        P::choice("direction", &["x", "y", "diagonal"], "x")
+            .help("The way the bands run across: x varies left to right, y top to bottom"),
+        P::float("scale", 4.0)
+            .min(0.1)
+            .help("Bands across the texture; whole when seamless (even along diagonal)"),
+        P::float("distortion", 0.0)
+            .min(0.0)
+            .help("How far noise bends the bands; needs detail above 0"),
+        P::int("detail", 0)
+            .range(0.0, 16.0)
+            .help("Octaves of the bending noise; 0 turns distortion off"),
+    ],
+    build: |p| {
+        Ok(Box::new(WaveTextureOp {
+            output: p.text("output")?,
+            wave_type: WaveType::from_str(p.choice("wave_type")?),
+            direction: WaveDirection::from_str(p.choice("direction")?),
+            scale: p.f32("scale")?,
+            distortion: p.f32("distortion")?,
+            detail: p.u32("detail")?,
+        }))
+    },
+};
+
 impl TextureOp for WaveTextureOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "wave_texture",
-            label: "Wave Texture",
-            reads: &[],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &WAVE_TEXTURE
     }
 
     fn apply(&self, field: &mut TextureField, rng: &mut SeededRng) {
@@ -1884,15 +2305,25 @@ pub struct WhiteNoiseOp {
     pub output: String,
 }
 
+/// The [`WhiteNoiseOp`] op, as the pipeline knows it.
+pub const WHITE_NOISE: OpDescriptor = OpDescriptor {
+    type_name: "white_noise",
+    label: "White Noise",
+    summary: "Write an independent random value (0–1) per pixel: grit, sparkle.",
+    reads: &[],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[P::channel("output", "output").help("Channel the noise is written to")],
+    build: |p| {
+        Ok(Box::new(WhiteNoiseOp {
+            output: p.text("output")?,
+        }))
+    },
+};
+
 impl TextureOp for WhiteNoiseOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "white_noise",
-            label: "White Noise",
-            reads: &[],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &WHITE_NOISE
     }
 
     fn apply(&self, field: &mut TextureField, rng: &mut SeededRng) {
@@ -1922,15 +2353,52 @@ pub struct VoronoiTextureOp {
     pub metric: VoronoiMetric,
 }
 
+/// The [`VoronoiTextureOp`] op, as the pipeline knows it.
+pub const VORONOI_TEXTURE: OpDescriptor = OpDescriptor {
+    type_name: "voronoi_texture",
+    label: "Voronoi Texture",
+    summary: "Write a Voronoi (Worley) distance field, and optionally each pixel's cell.",
+    reads: &[],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("output", "output").help("Channel the distance (0–1) is written to"),
+        P::opt_channel("cell_output").help("Channel each pixel's cell number is written to; unset, none is"),
+        P::float("scale", 4.0).min(0.1).help("Cells across the texture"),
+        P::float("randomness", 1.0).range(0.0, 1.0).help("How far each cell's point strays from a regular grid: 0 a grid, 1 fully random"),
+        P::choice("feature", &["f1", "f2", "smooth_f1", "distance_to_edge"], "f1").help("What is measured: distance to the nearest point (f1), the second nearest (f2), a rounded f1, or distance to the cell's edge"),
+        P::choice("metric", &["euclidean", "manhattan", "chebyshev", "minkowski"], "euclidean").help("How distance is measured: round cells (euclidean), diamonds (manhattan), squares (chebyshev), or minkowski with exponent"),
+        P::float("exponent", 2.0).min(0.1).help("The minkowski metric's exponent: 1 is manhattan, 2 euclidean; read only with metric = \"minkowski\""),
+    ],
+    build: |p| {
+        use crate::algorithms::noise::{VoronoiFeature, VoronoiMetric};
+        let feature = match p.choice("feature")? {
+            "f2" => VoronoiFeature::F2,
+            "smooth_f1" => VoronoiFeature::SmoothF1,
+            "distance_to_edge" => VoronoiFeature::DistanceToEdge,
+            _ => VoronoiFeature::F1,
+        };
+        let exponent = p.f32("exponent")?;
+        let metric = match p.choice("metric")? {
+            "manhattan" => VoronoiMetric::Manhattan,
+            "chebyshev" => VoronoiMetric::Chebyshev,
+            "minkowski" => VoronoiMetric::Minkowski(exponent as f64),
+            _ => VoronoiMetric::Euclidean,
+        };
+        Ok(Box::new(VoronoiTextureOp {
+            output: p.text("output")?,
+            cell_output: p.opt_text("cell_output")?,
+            scale: p.f32("scale")?,
+            randomness: p.f32("randomness")?,
+            feature,
+            metric,
+        }))
+    },
+};
+
 impl TextureOp for VoronoiTextureOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "voronoi_texture",
-            label: "Voronoi Texture",
-            reads: &[],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &VORONOI_TEXTURE
     }
 
     fn apply(&self, field: &mut TextureField, rng: &mut SeededRng) {
@@ -1993,15 +2461,60 @@ pub struct MusgraveTextureOp {
     pub cell_offset: bool,
 }
 
+/// The [`MusgraveTextureOp`] op, as the pipeline knows it.
+pub const MUSGRAVE_TEXTURE: OpDescriptor = OpDescriptor {
+    type_name: "musgrave_texture",
+    label: "Musgrave Texture",
+    summary: "Write fractal noise of Musgrave's kinds: fBm, multifractal, ridged, hybrid, hetero terrain.",
+    reads: &[],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("output", "output").help("Channel the noise (about 0–1) is written to"),
+        P::choice("noise_type", NOISE_TYPES, "perlin").help("The base noise: perlin, simplex, value, or voronoi (Worley cells)"),
+        P::choice("musgrave_type", &[
+            "fbm", "multifractal", "ridged_multifractal", "hybrid_multifractal",
+            "hetero_terrain",
+        ], "fbm").help("How octaves combine: summed (fbm), multiplied (multifractal), as sharp ridges (ridged_multifractal), or rougher where higher (hybrid_multifractal, hetero_terrain)"),
+        P::float("frequency", 4.0).min(0.1).help("Noise cells across the texture in the first octave; rounded to whole cycles when seamless"),
+        P::int("octaves", 4).range(1.0, 16.0).help("Octaves summed"),
+        P::float("lacunarity", 2.0).min(0.1).help("How much finer each octave is than the last"),
+        P::float("dimension", 1.0).help("Fractal dimension (H): higher weakens the fine octaves, for a smoother result"),
+        P::float("offset", 1.0).help("Added to each octave before combining (ridged, hybrid and hetero terrain)"),
+        P::float("gain", 2.0).help("How strongly one octave drives the next (ridged and hybrid)"),
+        P::float("scale_x", 1.0).min(0.01).help("Horizontal squeeze of the noise: above 1 packs it tighter across"),
+        P::float("scale_y", 1.0).min(0.01).help("Vertical squeeze of the noise: above 1 packs it tighter down"),
+        P::flag("cell_offset", false).help("Offset the noise per cell (reads the cell id), so neighbouring stones don't share a pattern"),
+    ],
+    build: |p| {
+        use crate::algorithms::noise::MusgraveType;
+        let musgrave_type = match p.choice("musgrave_type")? {
+            "multifractal" => MusgraveType::Multifractal,
+            "ridged_multifractal" => MusgraveType::RidgedMultifractal,
+            "hybrid_multifractal" => MusgraveType::HybridMultifractal,
+            "hetero_terrain" => MusgraveType::HeteroTerrain,
+            _ => MusgraveType::Fbm,
+        };
+        Ok(Box::new(MusgraveTextureOp {
+            output: p.text("output")?,
+            noise_type: NoiseType::from_str(p.choice("noise_type")?),
+            musgrave_type,
+            frequency: p.f32("frequency")?,
+            octaves: p.u32("octaves")?,
+            lacunarity: p.f32("lacunarity")?,
+            dimension: p.f32("dimension")?,
+            offset: p.f32("offset")?,
+            gain: p.f32("gain")?,
+            scale_x: p.f32("scale_x")?,
+            scale_y: p.f32("scale_y")?,
+            cell_offset: p.flag("cell_offset")?,
+        }))
+    },
+};
+
 impl TextureOp for MusgraveTextureOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "musgrave_texture",
-            label: "Musgrave Texture",
-            reads: &[],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &MUSGRAVE_TEXTURE
     }
 
     fn apply(&self, field: &mut TextureField, rng: &mut SeededRng) {
@@ -2069,15 +2582,33 @@ pub struct InvertOp {
     pub factor: f32,
 }
 
+/// The [`InvertOp`] op, as the pipeline knows it.
+pub const INVERT: OpDescriptor = OpDescriptor {
+    type_name: "invert",
+    label: "Invert",
+    summary: "Turn a channel's values over (v becomes 1 − v), fully or partway.",
+    reads: &["<input>"],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("input", "input").help("Channel to invert"),
+        P::channel("output", "output").help("Channel the result goes to"),
+        P::float("factor", 1.0)
+            .range(0.0, 1.0)
+            .help("How far toward 1 − v: 0 leaves the values, 1 inverts them"),
+    ],
+    build: |p| {
+        Ok(Box::new(InvertOp {
+            input: p.text("input")?,
+            output: p.text("output")?,
+            factor: p.f32("factor")?,
+        }))
+    },
+};
+
 impl TextureOp for InvertOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "invert",
-            label: "Invert",
-            reads: &["<input>"],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &INVERT
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -2106,15 +2637,33 @@ pub struct BrightnessContrastOp {
     pub contrast: f32,
 }
 
+/// The [`BrightnessContrastOp`] op, as the pipeline knows it.
+pub const BRIGHTNESS_CONTRAST: OpDescriptor = OpDescriptor {
+    type_name: "brightness_contrast",
+    label: "Brightness/Contrast",
+    summary: "Shift and stretch a channel about 0.5, clamped to 0–1.",
+    reads: &["<input>"],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("input", "input").help("Channel to adjust"),
+        P::channel("output", "output").help("Channel the result goes to"),
+        P::float("brightness", 0.0).range(-1.0, 1.0).help("Added to every value"),
+        P::float("contrast", 0.0).range(-1.0, 10.0).help("Stretch about 0.5: the result is (v − 0.5)(1 + contrast) + 0.5 + brightness; −1 flattens to grey"),
+    ],
+    build: |p| {
+        Ok(Box::new(BrightnessContrastOp {
+            input: p.text("input")?,
+            output: p.text("output")?,
+            brightness: p.f32("brightness")?,
+            contrast: p.f32("contrast")?,
+        }))
+    },
+};
+
 impl TextureOp for BrightnessContrastOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "brightness_contrast",
-            label: "Brightness/Contrast",
-            reads: &["<input>"],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &BRIGHTNESS_CONTRAST
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -2143,15 +2692,37 @@ pub struct HsvAdjustOp {
     pub value_factor: f32,
 }
 
+/// The [`HsvAdjustOp`] op, as the pipeline knows it.
+pub const HSV_ADJUST: OpDescriptor = OpDescriptor {
+    type_name: "hsv_adjust",
+    label: "HSV Adjust",
+    summary: "Turn the albedo's hue and scale its saturation and value, in place.",
+    reads: &[],
+    writes: &[],
+    modifies: &["r", "g", "b"],
+    params: &[
+        P::float("hue_offset", 0.0).range(-1.0, 1.0).help(
+            "Turn of the hue, in whole turns of the colour wheel (0.5 is the opposite colour)",
+        ),
+        P::float("saturation_factor", 1.0)
+            .range(0.0, 3.0)
+            .help("Saturation multiplier: 0 is grey, 1 unchanged"),
+        P::float("value_factor", 1.0)
+            .range(0.0, 3.0)
+            .help("Value (brightness) multiplier: 1 unchanged"),
+    ],
+    build: |p| {
+        Ok(Box::new(HsvAdjustOp {
+            hue_offset: p.f32("hue_offset")?,
+            saturation_factor: p.f32("saturation_factor")?,
+            value_factor: p.f32("value_factor")?,
+        }))
+    },
+};
+
 impl TextureOp for HsvAdjustOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "hsv_adjust",
-            label: "HSV Adjust",
-            reads: &[],
-            writes: &[],
-            modifies: &["r", "g", "b"],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &HSV_ADJUST
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -2195,15 +2766,33 @@ pub struct GammaOp {
     pub gamma: f32,
 }
 
+/// The [`GammaOp`] op, as the pipeline knows it.
+pub const GAMMA: OpDescriptor = OpDescriptor {
+    type_name: "gamma",
+    label: "Gamma",
+    summary: "Raise a channel to a power, bending its midtones.",
+    reads: &["<input>"],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("input", "input").help("Channel to adjust"),
+        P::channel("output", "output").help("Channel the result goes to"),
+        P::float("gamma", 1.0)
+            .range(0.01, 10.0)
+            .help("The exponent: v^gamma, so above 1 darkens the midtones and below 1 lifts them"),
+    ],
+    build: |p| {
+        Ok(Box::new(GammaOp {
+            input: p.text("input")?,
+            output: p.text("output")?,
+            gamma: p.f32("gamma")?,
+        }))
+    },
+};
+
 impl TextureOp for GammaOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "gamma",
-            label: "Gamma",
-            reads: &["<input>"],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &GAMMA
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -2232,15 +2821,33 @@ pub struct ClampOp {
     pub max: f32,
 }
 
+/// The [`ClampOp`] op, as the pipeline knows it.
+pub const CLAMP: OpDescriptor = OpDescriptor {
+    type_name: "clamp",
+    label: "Clamp",
+    summary: "Hold a channel's values between a minimum and a maximum.",
+    reads: &["<input>"],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("input", "input").help("Channel to clamp"),
+        P::channel("output", "output").help("Channel the result goes to"),
+        P::float("min", 0.0).help("Lowest value let through"),
+        P::float("max", 1.0).help("Highest value let through"),
+    ],
+    build: |p| {
+        Ok(Box::new(ClampOp {
+            input: p.text("input")?,
+            output: p.text("output")?,
+            min: p.f32("min")?,
+            max: p.f32("max")?,
+        }))
+    },
+};
+
 impl TextureOp for ClampOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "clamp",
-            label: "Clamp",
-            reads: &["<input>"],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &CLAMP
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -2323,15 +2930,37 @@ pub struct BlurOp {
     pub sigma: f32,
 }
 
+/// The [`BlurOp`] op, as the pipeline knows it.
+pub const BLUR: OpDescriptor = OpDescriptor {
+    type_name: "blur",
+    label: "Blur",
+    summary: "Gaussian-blur a channel (two separable passes, wrapping at the edges).",
+    reads: &["<input>"],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("input", "input").help("Channel to blur"),
+        P::channel("output", "output").help("Channel the result goes to"),
+        P::int("radius", 2)
+            .range(0.0, 64.0)
+            .help("Pixels the kernel reaches each way; 0 copies the channel unchanged"),
+        P::float("sigma", 1.0)
+            .range(0.1, 32.0)
+            .help("The Gaussian's spread, in pixels: larger is softer within the radius"),
+    ],
+    build: |p| {
+        Ok(Box::new(BlurOp {
+            input: p.text("input")?,
+            output: p.text("output")?,
+            radius: p.u32("radius")?,
+            sigma: p.f32("sigma")?,
+        }))
+    },
+};
+
 impl TextureOp for BlurOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "blur",
-            label: "Blur",
-            reads: &["<input>"],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &BLUR
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -2371,15 +3000,37 @@ pub struct SharpenOp {
     pub radius: u32,
 }
 
+/// The [`SharpenOp`] op, as the pipeline knows it.
+pub const SHARPEN: OpDescriptor = OpDescriptor {
+    type_name: "sharpen",
+    label: "Sharpen",
+    summary: "Sharpen a channel with an unsharp mask.",
+    reads: &["<input>"],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("input", "input").help("Channel to sharpen"),
+        P::channel("output", "output").help("Channel the result goes to"),
+        P::float("strength", 1.0)
+            .range(0.0, 10.0)
+            .help("How much of the difference from the blurred copy is added back"),
+        P::int("radius", 2)
+            .range(1.0, 64.0)
+            .help("Radius of the blur it compares against, in pixels"),
+    ],
+    build: |p| {
+        Ok(Box::new(SharpenOp {
+            input: p.text("input")?,
+            output: p.text("output")?,
+            strength: p.f32("strength")?,
+            radius: p.u32("radius")?,
+        }))
+    },
+};
+
 impl TextureOp for SharpenOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "sharpen",
-            label: "Sharpen",
-            reads: &["<input>"],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &SHARPEN
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -2424,15 +3075,29 @@ pub struct EdgeDetectOp {
     pub output: String,
 }
 
+/// The [`EdgeDetectOp`] op, as the pipeline knows it.
+pub const EDGE_DETECT: OpDescriptor = OpDescriptor {
+    type_name: "edge_detect",
+    label: "Edge Detect",
+    summary: "Write the strength of a channel's edges (Sobel): high where it changes fast.",
+    reads: &["<input>"],
+    writes: &["<output>"],
+    modifies: &[],
+    params: &[
+        P::channel("input", "input").help("Channel whose edges are found"),
+        P::channel("output", "output").help("Channel the edge strength goes to"),
+    ],
+    build: |p| {
+        Ok(Box::new(EdgeDetectOp {
+            input: p.text("input")?,
+            output: p.text("output")?,
+        }))
+    },
+};
+
 impl TextureOp for EdgeDetectOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "edge_detect",
-            label: "Edge Detect",
-            reads: &["<input>"],
-            writes: &["<output>"],
-            modifies: &[],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &EDGE_DETECT
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
@@ -2507,15 +3172,37 @@ pub struct EdgeErodeOp {
     pub threshold: f32,
 }
 
+/// The [`EdgeErodeOp`] op, as the pipeline knows it.
+pub const EDGE_ERODE: OpDescriptor = OpDescriptor {
+    type_name: "edge_erode",
+    label: "Edge Erode",
+    summary: "Nibble irregular chips into cell edges by displacing them with noise, here and there along each edge.",
+    reads: &[],
+    writes: &[],
+    modifies: &["cell_id", "edge_dist", "mask"],
+    params: &[
+        P::float("noise_frequency", 40.0).min(0.1).help("Frequency of the displacing noise: higher is finer, chippier edges"),
+        P::float("strength", 0.02).range(0.0, 0.5).help("How far an edge is pushed, in texture widths; fades toward the cell's interior"),
+        P::float("edge_width", 0.06).range(0.0, 1.0).help("Only pixels with edge_dist below this are moved"),
+        P::choice("noise_type", NOISE_TYPES, "perlin").help("The displacing noise: perlin, simplex, value, or voronoi (Worley cells)"),
+        P::int("octaves", 1).range(1.0, 8.0).help("FBM octaves of the displacing noise; 1 is the sharpest grain"),
+        P::float("threshold", 0.3).range(0.0, 1.0).help("How sparse the chips are: a slow noise gates the erosion, which happens only where it's above this; 0 erodes everywhere, 1 nowhere"),
+    ],
+    build: |p| {
+        Ok(Box::new(EdgeErodeOp {
+            noise_frequency: p.f32("noise_frequency")?,
+            strength: p.f32("strength")?,
+            edge_width: p.f32("edge_width")?,
+            noise_type: NoiseType::from_str(p.choice("noise_type")?),
+            octaves: p.u32("octaves")?,
+            threshold: p.f32("threshold")?,
+        }))
+    },
+};
+
 impl TextureOp for EdgeErodeOp {
-    fn port_info(&self) -> OpPortInfo {
-        OpPortInfo {
-            op_type: "edge_erode",
-            label: "Edge Erode",
-            reads: &[],
-            writes: &[],
-            modifies: &["cell_id", "edge_dist", "mask"],
-        }
+    fn descriptor(&self) -> &'static OpDescriptor {
+        &EDGE_ERODE
     }
 
     fn apply(&self, field: &mut TextureField, rng: &mut SeededRng) {
