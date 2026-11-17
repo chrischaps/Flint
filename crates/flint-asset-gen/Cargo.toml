@@ -6,11 +6,11 @@ license.workspace = true
 description = "AI-powered asset generation pipeline for Flint engine"
 
 [dependencies]
+flint-ai-core = { workspace = true }
 flint-core = { workspace = true }
 flint-asset = { workspace = true }
 flint-import = { workspace = true }
 flint-procgen = { workspace = true }
-ureq = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }

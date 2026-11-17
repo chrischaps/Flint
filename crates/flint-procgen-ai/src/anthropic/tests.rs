@@ -40,7 +40,7 @@ impl Scripted {
 }
 
 impl Transport for Scripted {
-    fn post(&self, req: &HttpRequest) -> std::result::Result<HttpResponse, String> {
+    fn send(&self, req: &HttpRequest) -> std::result::Result<HttpResponse, String> {
         self.sent.lock().unwrap().push(req.clone());
         self.responses
             .lock()
@@ -67,7 +67,7 @@ fn ok(text: &str) -> std::result::Result<HttpResponse, String> {
     Ok(HttpResponse {
         status: 200,
         retry_after: None,
-        body: body.to_string(),
+        body: body.to_string().into(),
     })
 }
 
@@ -81,7 +81,8 @@ fn status(
         retry_after,
         body:
             json!({"type": "error", "error": {"type": kind, "message": format!("{kind} message")}})
-                .to_string(),
+                .to_string()
+                .into(),
     })
 }
 
@@ -318,7 +319,7 @@ fn malformed_api_bodies_are_errors_not_panics() {
             Ok(HttpResponse {
                 status: 200,
                 retry_after: None,
-                body: body.to_string(),
+                body: body.to_string().into(),
             });
             3
         ]);
@@ -726,7 +727,7 @@ fn costly(text: &str, input: u64, output: u64) -> std::result::Result<HttpRespon
     Ok(HttpResponse {
         status: 200,
         retry_after: None,
-        body: body.to_string(),
+        body: body.to_string().into(),
     })
 }
 
@@ -765,7 +766,7 @@ fn a_reply_cut_off_at_max_tokens_is_still_paid_for() {
     let script = Scripted::new(vec![Ok(HttpResponse {
         status: 200,
         retry_after: None,
-        body: body.to_string(),
+        body: body.to_string().into(),
     })]);
     let (agent, meter) = metered(&script, CostMeter::new("anthropic"));
     assert!(agent.create_spec_reported("pine", "tree").is_err());
