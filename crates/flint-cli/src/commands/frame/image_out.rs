@@ -268,17 +268,21 @@ pub(crate) fn viewable(
         }
         format!("tonemapped at exposure {exposure}")
     } else {
-        // One or two channels, or 16-bit colour: normalized, stretched
-        // only past 1
+        // One or two channels, or 16-bit colour: as stored when it lies in
+        // 0..1. Past 1 it is a measure (a distance, a count), stretched on
+        // a log scale so that a far sky doesn't black out the rest.
         let scale = t.scale();
-        let max = t.values.iter().fold(0.0f32, |m, v| m.max(v.abs())) / scale;
-        let min = t.values.iter().fold(0.0f32, |m, v| m.min(*v)) / scale;
+        let finite = || t.values.iter().copied().filter(|v| v.is_finite());
+        let max = finite().fold(0.0f32, |m, v| m.max(v.abs())) / scale;
+        let min = finite().fold(0.0f32, f32::min) / scale;
         let signed = min < 0.0;
-        let by = if max > 1.0 { max } else { 1.0 };
+        let log = max > 1.0 && !signed;
         let norm = |v: f32| {
-            let v = v / scale / by;
-            if signed {
-                0.5 + 0.5 * v
+            let v = v / scale;
+            if log {
+                (1.0 + v.max(0.0)).ln() / (1.0 + max).ln()
+            } else if signed {
+                0.5 + 0.5 * v / max.max(1.0)
             } else {
                 v
             }
@@ -295,8 +299,8 @@ pub(crate) fn viewable(
             put(&mut out, i, rgb);
         }
         match (c, max > 1.0, signed) {
-            (_, true, _) => format!("stretched from 0..{max:.3}"),
             (_, _, true) => "signed, 0 at mid-grey".into(),
+            (_, true, _) => format!("log-stretched over 0..{max:.3}"),
             (1, ..) => "grey".into(),
             (2, ..) => "R and G as red and green".into(),
             _ => "as stored, 8-bit".into(),
@@ -398,5 +402,22 @@ mod tests {
         assert_eq!(view, "ids coloured");
         assert_eq!(rgba.get_pixel(0, 0).0, [0, 0, 0, 255]);
         assert_ne!(rgba.get_pixel(1, 0), rgba.get_pixel(2, 0));
+    }
+
+    #[test]
+    fn a_distance_is_log_stretched_so_the_near_stays_seen() {
+        let far = Texels {
+            width: 3,
+            height: 1,
+            channels: 1,
+            kind: Kind::Float,
+            values: vec![0.0, 9.0, 900.0],
+        };
+        let (rgba, view) = viewable(&far, &image("R32Float"), 1.0);
+        assert!(view.starts_with("log-stretched"), "{view}");
+        assert_eq!(rgba.get_pixel(2, 0).0[0], 255);
+        // 9 m of 900 is a third of the way up, not 1%
+        let near = rgba.get_pixel(1, 0).0[0];
+        assert!(near > 70 && near < 110, "{near}");
     }
 }

@@ -262,7 +262,7 @@ The diff is a report, so it exits 0 whatever it finds.
 | 8-bit PNG | the file, byte for byte |
 | float colour (EXR half) | exposed at the frame's `exposure`, tonemapped with the composite's ACES curve, sRGB-encoded |
 | depth (EXR `Z`) | grey over the depths the frame drew, near white, the clear value black |
-| one or two float channels | grey, or red and green; stretched only where a value passes 1, and centred on mid-grey when one is negative |
+| one or two float channels | grey, or red and green, as stored in 0..1; a measure past 1 (a distance in metres) on a log scale, so a far sky doesn't black out the rest; centred on mid-grey when a value is negative |
 | integer ids (the style mask, a u32 target) | a colour each, spaced round the hue circle; id 0 black |
 
 The pass is named as `--passes` lists it (`Scene`, `Bloom`, `Shadow cascade 1`, `Bloom (2)` for the second pass of that name), or by an image's file name (`05-hdr_scene.exr`). A pass that writes several images gives its first. `--target <id>` picks another (`--target depth`), and `--step <step>` picks one of bloom's `threshold`, `down` and `up`. `--raw` copies the stored file (an EXR stays an EXR). `--all -o <dir>` writes every image of the capture.
