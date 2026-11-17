@@ -410,6 +410,11 @@ topic = "runtime"
 purpose = "Forty-eight crates tumbling into a tray: a pile that settles the same way to the bit every run (#688)"
 
 [[example]]
+scene = "collision_layers.scene.toml"
+topic = "runtime"
+purpose = "The sieve: collision layers let blue balls fall through glass that holds amber ones; a barrel's mesh collider and a scaled crate hold theirs at their drawn size (#729)"
+
+[[example]]
 scene = "skeletal_test.scene.toml"
 topic = "runtime"
 purpose = "The YBot on a looping idle: skeletal animation"

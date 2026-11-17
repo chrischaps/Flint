@@ -184,18 +184,23 @@ impl CharacterController {
             horizontal.z * dt as f32
         ];
 
-        // Use Rapier's character controller to compute corrected movement
+        // Use Rapier's character controller to compute corrected movement.
+        // It meets what its collider meets: `collider.layer` and `mask`
+        // (#729), so a player whose mask leaves out `pickup` walks through
+        // pickups.
+        let collider = physics.collider_set.get(collider_handle).unwrap();
         let corrected = self.controller.move_shape(
             dt as f32,
             &physics.rigid_body_set,
             &physics.collider_set,
             &physics.query_pipeline,
-            physics.collider_set.get(collider_handle).unwrap().shape(),
+            collider.shape(),
             physics.rigid_body_set.get(body_handle).unwrap().position(),
             desired,
             QueryFilter::default()
                 .exclude_rigid_body(body_handle)
-                .exclude_sensors(),
+                .exclude_sensors()
+                .groups(collider.collision_groups()),
             |_| {},
         );
 

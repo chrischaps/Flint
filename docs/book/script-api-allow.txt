@@ -17,7 +17,7 @@ concepts/audio.md: fixed_update update
 concepts/glyph-atlas.md: atlas_indices bounds coverage for_angle for_arms inversions pick slots
 concepts/lighting.md: lighting_levers
 concepts/particles.md: resolve
-concepts/physics-and-runtime.md: fixed_update initialize shutdown update
+concepts/physics-and-runtime.md: fixed_update initialize shutdown update raycast_masked layer_mask
 concepts/procgen.md: import_gltf revision warp    # flint_core::step_clock (ADR 0123)
 concepts/quality-settings.md: effective_post_process_config post_process_config
 concepts/rendering.md: segment

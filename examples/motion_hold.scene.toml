@@ -141,7 +141,7 @@ body_type = "dynamic"
 mass = 2.0
 [entities.left_bob.collider]
 shape = "sphere"
-size = [0.56, 0.56, 0.56]
+size = [1, 1, 1]  # the 1 m Sphere model; the entity's 0.56 scale makes it 0.56 m (#729)
 [entities.left_bob.joint]
 type = "hinge"
 anchor = [-1.6, 0, 0]
@@ -207,7 +207,7 @@ body_type = "dynamic"
 mass = 2.0
 [entities.right_bob.collider]
 shape = "sphere"
-size = [0.56, 0.56, 0.56]
+size = [1, 1, 1]  # the 1 m Sphere model; the entity's 0.56 scale makes it 0.56 m (#729)
 [entities.right_bob.joint]
 type = "hinge"
 anchor = [1.6, 0, 0]
