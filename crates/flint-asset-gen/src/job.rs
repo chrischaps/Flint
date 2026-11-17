@@ -1,7 +1,9 @@
-//! Job tracking for async generation tasks
+//! Job tracking for generations that take minutes (Meshy's models).
 //!
-//! Jobs are persisted as `.job.toml` files in `.flint/jobs/` so they
-//! survive process restarts.
+//! A job is written to `.flint/jobs/<id>.job.toml` the moment the provider
+//! accepts (and bills) the task, and updated as it is polled, so a paid task
+//! outlives the process that started it: `flint asset job list` shows it and
+//! `flint asset job resume <id>` finishes it (#721).
 
 use flint_core::{FlintError, Result};
 use serde::{Deserialize, Serialize};
@@ -45,6 +47,9 @@ pub struct GenerationJob {
     /// Output path once complete
     #[serde(default)]
     pub output_path: Option<String>,
+    /// What the submit was recorded as costing in the ledger
+    #[serde(default)]
+    pub estimated_usd: Option<f64>,
 }
 
 impl GenerationJob {
@@ -61,11 +66,13 @@ impl GenerationJob {
             error: None,
             prompt: None,
             output_path: None,
+            estimated_usd: None,
         }
     }
 }
 
 /// File-based job store in `.flint/jobs/`
+#[derive(Debug, Clone)]
 pub struct JobStore {
     root: PathBuf,
 }
@@ -137,6 +144,7 @@ impl JobStore {
             }
         }
 
+        jobs.sort_by(|a, b| a.submitted_at.cmp(&b.submitted_at).then(a.id.cmp(&b.id)));
         Ok(jobs)
     }
 

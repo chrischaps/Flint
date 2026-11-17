@@ -25,6 +25,19 @@ impl GeneratorRegistry {
         }
     }
 
+    /// Every generator the engine ships: the built-ins
+    /// ([`crate::register_built_in_generators`]) and `mock`, a cube for
+    /// tests and offline AI runs. What `flint gen`, `flint check` and the
+    /// runtime resolver all resolve a spec's `generator` with, so the three
+    /// accept the same names (#718). A game's own go on top
+    /// ([`GeneratorRegistry::register`]).
+    pub fn with_built_ins() -> Self {
+        let mut registry = Self::new();
+        crate::register_built_in_generators(&mut registry);
+        registry.register(Box::new(crate::mock::MockGenerator));
+        registry
+    }
+
     /// Register a generator. Replaces any existing generator with the same
     /// type name.
     pub fn register(&mut self, generator: Box<dyn Generator>) {

@@ -7,10 +7,12 @@ mod alloc_count;
 #[cfg(test)]
 mod asset_search_tests;
 mod camera_cut;
+// The load summary and controls line a scene says when it comes up (#716)
 #[cfg(test)]
 mod capture_gate_tests;
 #[cfg(all(test, feature = "debug-hud"))]
 mod component_panel_tests;
+mod console;
 #[cfg(test)]
 mod debug_key_tests;
 mod debug_keys;
@@ -48,6 +50,8 @@ pub mod input_checks;
 mod input_config;
 mod input_probe;
 pub mod input_script;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod inspect;
 mod key_note;
 #[cfg(feature = "living")]
 mod living_ab;
@@ -63,6 +67,8 @@ mod living_subsystem;
 pub(crate) mod living_tuning;
 #[cfg(test)]
 mod look_read_tests;
+#[cfg(not(target_arch = "wasm32"))]
+mod loopback;
 mod missing_features;
 mod pacing;
 mod perf;
@@ -106,6 +112,8 @@ pub mod web_page;
 mod web_perf;
 #[cfg(target_arch = "wasm32")]
 pub mod web_startup;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod world_dump;
 mod world_text;
 
 #[cfg(target_os = "android")]

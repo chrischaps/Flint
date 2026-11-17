@@ -99,9 +99,9 @@ pub use render_scale::{clamp_render_scale, scaled_size, MIN_RENDER_SCALE};
 pub use render_stats::{format_count, RenderStats};
 pub use scene_renderer::{
     load_grass_ground_in, load_scene_grass_ground, load_scene_particle_textures,
-    load_scene_splines, BoundGrass, BoundScene, FrameHost, FrameInputs, HeldFrameCapture,
-    LightingLevers, LoadedGrassGround, LoadedSplines, LoadedTerrain, LodSettings, RendererConfig,
-    SceneBinding, SceneRenderer, SplineCollider, View2d, DEFAULT_CLEAR_COLOR,
+    load_scene_splines, BoundGrass, BoundScene, DrawControls, FrameHost, FrameInputs,
+    HeldFrameCapture, LightingLevers, LoadedGrassGround, LoadedSplines, LoadedTerrain, LodSettings,
+    RendererConfig, SceneBinding, SceneRenderer, SplineCollider, View2d, DEFAULT_CLEAR_COLOR,
 };
 /// The most bones one skinned mesh's buffer holds.
 pub use skinned_pipeline::MAX_BONES;

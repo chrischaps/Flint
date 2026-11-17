@@ -626,6 +626,18 @@ impl super::PlayerApp {
                     super::expression_feed::ExpressionSubsystem::new(feed),
                 ));
             }
+            // The live world's socket and its file (#713), the run's too
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                if let Some(listener) = self.launch.inspect.take() {
+                    self.core
+                        .subsystems
+                        .push(Box::new(super::inspect::InspectSubsystem::new(listener)));
+                }
+                if let Some(dump) = self.launch.world_dump.take() {
+                    self.core.subsystems.push(Box::new(dump));
+                }
+            }
         }
         let mut ctx = scene_ctx!(self);
         for build in for_scene_builders() {

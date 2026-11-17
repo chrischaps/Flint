@@ -121,6 +121,15 @@ pub struct LaunchOptions {
     /// a playtest's `screen_width()` is its `--width`, not egui's
     /// placeholder). `None` keeps egui's.
     pub headless_screen: Option<(f32, f32)>,
+    /// `--inspect-listen` (#713): the loopback socket that answers queries
+    /// about the live world, handed to its subsystem at the start.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub inspect: Option<super::inspect::InspectListener>,
+    /// `--dump-world` (#713): the world written to a file at game times,
+    /// handed to its subsystem at the start; `run_failure` asks it whether
+    /// every time came.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub world_dump: Option<super::world_dump::WorldDump>,
 }
 
 impl Default for LaunchOptions {
@@ -150,6 +159,10 @@ impl Default for LaunchOptions {
             strict_scripts: false,
             saves_in_memory: false,
             headless_screen: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            inspect: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            world_dump: None,
         }
     }
 }
@@ -523,6 +536,13 @@ pub(super) struct InputLayers {
     pub(super) config_paths: Option<InputConfigPaths>,
     pub(super) user_override: InputConfig,
     pub(super) pending_rebind: Option<PendingRebind>,
+    /// The actions the game's layer and `--input-config` name: what the
+    /// controls line lists (#716), with the player's rebinds on them. Empty
+    /// when neither names any, and the built-ins are the game's controls.
+    pub(super) named_actions: std::collections::BTreeSet<String>,
+    /// The controls line last said, so a transition says it again only
+    /// when the bindings changed
+    pub(super) said_controls: Option<String>,
 }
 
 impl InputLayers {
@@ -538,6 +558,8 @@ impl InputLayers {
                 debug_keys: None,
             },
             pending_rebind: None,
+            named_actions: Default::default(),
+            said_controls: None,
         }
     }
 }

@@ -695,6 +695,23 @@ pub(super) fn render(
                     &mut renderer,
                     Some(&world),
                     wanted,
+                    super::render_frame_dump::Origin {
+                        scene: &args.scene,
+                        game_time: None,
+                        written_by: "flint render",
+                        notes: Vec::new(),
+                    },
+                    Some(super::render_frame_dump::ReplayFacts {
+                        inputs: flint_render::frame_replay::FrameInputsState::of(
+                            &FrameInputs {
+                                particles: particle_sim.as_ref().map(|p| &p.sync),
+                                ..still_inputs(args, &camera, time)
+                            },
+                            &world,
+                        ),
+                        camera: &camera,
+                        particles: particle_sim.as_ref().map(|p| &p.sync),
+                    }),
                 )?;
                 for line in said {
                     say!("{line}");
@@ -1757,6 +1774,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                 config,
                 look: stage_look(args, grid, (column, row), scene_pp),
                 timeline: timeline.clone(),
+                resolve_procgen: false,
             },
         )?);
     }
@@ -1861,6 +1879,19 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                     &mut stage.renderer,
                     Some(stage.game.world()),
                     wanted,
+                    super::render_frame_dump::Origin {
+                        scene: &args.scene,
+                        game_time: Some(t),
+                        written_by: "flint render",
+                        notes: Vec::new(),
+                    },
+                    stage.replay_inputs.take().map(|inputs| {
+                        super::render_frame_dump::ReplayFacts {
+                            inputs,
+                            camera: &stage.camera,
+                            particles: Some(&stage.game.particles().sync),
+                        }
+                    }),
                 )?;
                 for line in said {
                     say!("{line}");
@@ -2586,6 +2617,10 @@ struct StageScene<'a> {
     /// `get_look()` (#497).
     look: Option<String>,
     timeline: Option<ExpressionTimeline>,
+    /// Resolve the scene's procgen assets as the player does, whatever the
+    /// scene: a replay of the player's capture (#1089). A render resolves
+    /// them only in a scene with living props.
+    resolve_procgen: bool,
 }
 
 /// The look a stage's cell draws with before a script asks for another
@@ -2602,6 +2637,10 @@ fn stage_look(
         .or_else(|| scene_pp.and_then(|d| d.look.as_deref()))
         .map(str::to_string)
 }
+
+/// A captured frame drawn again (#1089): the host takes a `Stage`.
+#[path = "render_replay.rs"]
+pub(crate) mod replay_host;
 
 /// One scene in one renderer, with its own clocks.
 struct Stage {
@@ -2652,6 +2691,8 @@ struct Stage {
     /// Seconds between the last two captures, for styles whose history is a
     /// rate (#342); 1/60 until a second capture follows on.
     style_dt: f32,
+    /// A captured frame's inputs as data (#1089), for its `replay/`.
+    replay_inputs: Option<flint_render::frame_replay::FrameInputsState>,
 }
 
 impl Stage {
@@ -2667,6 +2708,7 @@ impl Stage {
             config: mut pp_config,
             look: cell_look,
             timeline,
+            resolve_procgen,
         } = scene;
         let moment = is_moment(args, grid);
 
@@ -2769,7 +2811,7 @@ impl Stage {
 
         // Living props (#216), and the procgen assets their scene asks for, before the
         // model loader as in the player: catalog > procgen > file.
-        if wants_living {
+        if wants_living || resolve_procgen {
             game.resolve_procgen(
                 flint_procgen::LivingTables::or_warn(&scene_file)
                     .living
@@ -2964,6 +3006,7 @@ impl Stage {
             view_2d,
             pinned_boil,
             style_dt: FrameInputs::default().dt,
+            replay_inputs: None,
         })
     }
 
@@ -3134,6 +3177,11 @@ impl Stage {
             inputs.grass_time = inputs.grass_time.or(Some(0.0));
         }
         inputs.particles = particle_time.map(|_| &self.game.particles().sync);
+        // A captured frame keeps its inputs for its replay (#1089)
+        self.replay_inputs = self
+            .renderer
+            .capturing_frame()
+            .then(|| flint_render::frame_replay::FrameInputsState::of(&inputs, self.game.world()));
         self.renderer
             .prepare(&ctx.device, &ctx.queue, self.game.world(), &inputs);
 

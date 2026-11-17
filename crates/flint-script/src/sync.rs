@@ -257,7 +257,7 @@ impl ScriptSync {
                 Ok(ast) => {
                     // stderr, so a caller's stdout stays its own (`flint render
                     // --report json` with `--scripts`, #8)
-                    eprintln!("[script] Loaded: {} → {}", entity_name, source);
+                    tracing::debug!(target: "load", kind = "script", "[script] Loaded: {} → {}", entity_name, source);
                     // Record file timestamp (hot reload watches the disk)
                     if let Some(modified) = file_watch::modified(&script_path) {
                         self.file_timestamps.insert(script_path.clone(), modified);
@@ -369,7 +369,7 @@ impl ScriptSync {
                 let from = self.located[entity_id].from_dir.clone();
                 if let Ok(now) = self.locate(&script.source_path, from.as_deref()) {
                     if now.path != self.located[entity_id].path {
-                        eprintln!(
+                        tracing::info!(target: "script",
                             "[script] {} is now {}",
                             script.source_path,
                             flint_core::project::shown(&now.path)

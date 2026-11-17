@@ -97,15 +97,15 @@ pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
         #[cfg(feature = "rhythm")]
         return Some(Box::new(rhythm::RhythmSubsystem::new(base, comp, ctx)));
         #[cfg(not(feature = "rhythm"))]
-        eprintln!(
-            "[music] this player is built without the `rhythm` feature: the suite plays, \
+        tracing::warn!(target: "music",
+            "this player is built without the `rhythm` feature: the suite plays, \
              its chart isn't judged"
         );
     }
     match MusicSubsystem::new(&base, &comp) {
         Ok(music) => Some(Box::new(music)),
         Err(e) => {
-            eprintln!("[music] {e}");
+            tracing::warn!(target: "music", "{e}");
             None
         }
     }
@@ -124,7 +124,7 @@ pub(crate) fn for_capture(
     match MusicSubsystem::new(&base, &comp) {
         Ok(music) => Some(Box::new(music)),
         Err(e) => {
-            eprintln!("[music] {e}");
+            tracing::warn!(target: "music", "{e}");
             None
         }
     }
@@ -267,8 +267,8 @@ impl MusicSubsystem {
                     }
                 }
                 let buses: Vec<&str> = self.manifest.buses_in_order().map(|(n, _)| n).collect();
-                eprintln!(
-                    "[music] suite '{}' playing: {} bus(es) ({}), {}",
+                tracing::info!(target: "music",
+                    "suite '{}' playing: {} bus(es) ({}), {}",
                     self.manifest.id,
                     buses.len(),
                     buses.join(", "),
@@ -279,7 +279,9 @@ impl MusicSubsystem {
                 );
                 self.session = Some(session);
             }
-            Err(e) => eprintln!("[music] suite '{}' failed to start: {e}", self.manifest.id),
+            Err(e) => {
+                tracing::warn!(target: "music", "suite '{}' failed to start: {e}", self.manifest.id)
+            }
         }
     }
 
@@ -288,7 +290,7 @@ impl MusicSubsystem {
     fn stop(&mut self) {
         if let Some(mut session) = self.session.take() {
             session.stop(STOP_FADE_MS);
-            eprintln!("[music] suite '{}' stopped", self.manifest.id);
+            tracing::info!(target: "music", "suite '{}' stopped", self.manifest.id);
         }
     }
 

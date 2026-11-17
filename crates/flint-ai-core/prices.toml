@@ -1,0 +1,67 @@
+# What every AI provider Flint's tools call charges, in USD (#721).
+#
+# Compiled into flint-ai-core. A project overrides any entry with a file of
+# the same shape at .flint/prices.toml: a model or provider named there
+# replaces the one here whole, the rest are kept. `flint asset costs` and
+# `flint gen --cost-report` read what was recorded; the meter reads these to
+# keep a --max-cost before a call is sent.
+#
+# Every price errs high: a table that is wrong makes a budget too careful,
+# never too loose.
+
+# When the rates below were last checked against the providers' own pages.
+checked = "2026-11-16"
+
+[tokens]
+# A model not listed is priced as this one, the dearest, and its ledger
+# entry says `priced_as`.
+fallback = "claude-fable-5-1"
+
+# USD per million tokens: uncached input, output (thinking included), and
+# input read from the prompt cache. `cache_write` (the 5-minute TTL) is 1.25x
+# input unless given. A dated or suffixed id is priced as its longest listed
+# prefix. Anthropic's first-party rates:
+# https://platform.claude.com/docs/en/about-claude/pricing
+[tokens.models]
+"claude-fable-5-2" = { input = 8.0, output = 40.0, cache_read = 0.20 }
+"claude-mythos-5-2" = { input = 8.0, output = 40.0, cache_read = 0.20 }
+"claude-fable-5-1" = { input = 10.0, output = 50.0, cache_read = 0.25 }
+"claude-mythos-5-1" = { input = 10.0, output = 50.0, cache_read = 0.25 }
+"claude-fable-5" = { input = 10.0, output = 50.0, cache_read = 1.0 }
+"claude-mythos-5" = { input = 10.0, output = 50.0, cache_read = 1.0 }
+"claude-opus-5-5" = { input = 4.0, output = 20.0, cache_read = 0.20 }
+"claude-opus-5" = { input = 5.0, output = 25.0, cache_read = 0.50 }
+"claude-opus-4-8" = { input = 5.0, output = 25.0, cache_read = 0.50 }
+"claude-opus-4-7" = { input = 5.0, output = 25.0, cache_read = 0.50 }
+"claude-opus-4-6" = { input = 5.0, output = 25.0, cache_read = 0.50 }
+"claude-sonnet-5-5" = { input = 2.0, output = 10.0, cache_read = 0.10 }
+"claude-sonnet-5" = { input = 2.0, output = 10.0, cache_read = 0.20 }
+"claude-sonnet-4-6" = { input = 3.0, output = 15.0, cache_read = 0.30 }
+# Prompts up to 100K tokens; Flint's prompts are far below that.
+"claude-haiku-5-5" = { input = 0.10, output = 0.50, cache_read = 0.01 }
+"claude-haiku-4-5" = { input = 1.0, output = 5.0, cache_read = 0.10 }
+
+# Asset providers bill per call, by a unit each call counts itself.
+[calls.flux]
+# FLUX.1 [dev] on fal.ai: "$0.025 per megapixel", each image "rounded up to
+# the nearest megapixel". Flint counts a megapixel as 1,000,000 pixels, so a
+# 1024 x 1024 image is priced as 2 (fal may bill it as 1).
+unit = "megapixel"
+usd = 0.025
+source = "https://fal.ai/models/fal-ai/flux/dev"
+
+[calls.meshy]
+# A textured model is two billed requests: Text to 3D preview (20 credits on
+# meshy-7.1 / meshy-6) and refine (10 credits at 2K/4K). Meshy publishes no
+# dollar price for an API credit; $0.02 is its Pro plan's ($20 for 1,000).
+# Set your plan's rate in .flint/prices.toml.
+unit = "task"
+usd = 0.60
+source = "https://docs.meshy.ai/en/api/pricing"
+
+[calls.elevenlabs]
+# Sound effects: "$0.12 per minute" on the API pricing page. A call is priced
+# by the duration it asks for.
+unit = "second"
+usd = 0.002
+source = "https://elevenlabs.io/pricing/api"

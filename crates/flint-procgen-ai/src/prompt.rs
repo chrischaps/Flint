@@ -253,7 +253,7 @@ mod tests {
             let toml_start = block.find("```toml\n").unwrap() + 8;
             let toml_end = block[toml_start..].find("```").unwrap() + toml_start;
             let example: toml::Value = toml::from_str(&block[toml_start..toml_end]).unwrap();
-            let issues = crate::check_params(&g.param_schema(), &example["params"]);
+            let issues = flint_procgen::validate_params(&g.param_schema(), &example["params"]);
             assert!(issues.is_empty(), "{name}: {issues:?}");
         }
     }

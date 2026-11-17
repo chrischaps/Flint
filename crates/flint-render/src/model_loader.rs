@@ -285,7 +285,7 @@ fn expand_nodes_animated(
         node_map.insert(node.name.clone(), child_id);
         index_to_entity.insert(entry.node_idx, child_id);
 
-        eprintln!("  Expanded node: {} (animated, local TRS)", child_name);
+        tracing::debug!(target: "load", "  Expanded node: {} (animated, local TRS)", child_name);
 
         // Push children for traversal
         for &c in node.children.iter().rev() {
@@ -468,7 +468,7 @@ pub fn load_models_from_world(
                     .map(|b| format!(", bounds: {}", b))
                     .unwrap_or_default();
 
-                eprintln!(
+                tracing::debug!(target: "load", kind = "model",
                     "Loaded model: {} ({} meshes, {} nodes{}{})",
                     asset_name,
                     import_result.meshes.len(),
@@ -495,7 +495,7 @@ pub fn load_models_from_world(
                         .filter_map(|&p| import_result.meshes[p].lod)
                         .map(|band| format!("{:.1}", band.near))
                         .collect();
-                    eprintln!(
+                    tracing::debug!(target: "load",
                         "  LOD chain: {} levels, switching at {} m",
                         chain.len(),
                         switches.join(", ")
@@ -636,7 +636,7 @@ pub fn load_textures_from_world(
 
             match renderer.load_texture_file(device, queue, &tex_name, &tex_path) {
                 Ok(true) => {
-                    eprintln!("Loaded texture: {}", tex_name);
+                    tracing::debug!(target: "load", kind = "texture", "Loaded texture: {}", tex_name);
                 }
                 Ok(false) => {}
                 Err(e) => {
@@ -659,7 +659,7 @@ pub fn load_textures_from_world(
                         &companion_path,
                     ) {
                         Ok(true) => {
-                            eprintln!("Loaded texture: {}", companion_name);
+                            tracing::debug!(target: "load", kind = "texture", "Loaded texture: {}", companion_name);
                         }
                         Ok(false) => {}
                         Err(e) => {

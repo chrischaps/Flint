@@ -112,6 +112,26 @@ impl ScriptSystem {
             .is_some()
     }
 
+    /// Which of the actions `names` the loaded scripts read: an action a
+    /// script spells as a string literal (`is_action_pressed("move_left")`,
+    /// `if action == "jump"` in `on_action`), read from its AST so a comment
+    /// doesn't count, and `interact` when a script defines `on_interact`.
+    /// The player's controls line lists these (#716). Once a load, never a
+    /// frame.
+    pub fn actions_read<'a>(&self, names: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
+        let scripts = &self.engine.scripts;
+        names
+            .into_iter()
+            .filter(|name| {
+                scripts.values().any(|script| {
+                    engine::instance::names_string(&script.ast, name)
+                        || (*name == "interact"
+                            && script.defines(flint_core::callbacks::Callback::Interact))
+                })
+            })
+            .collect()
+    }
+
     pub fn new() -> Self {
         Self {
             engine: ScriptEngine::new(),
@@ -695,7 +715,7 @@ impl RuntimeSystem for ScriptSystem {
 
         let count = self.engine.scripts.len();
         if count > 0 {
-            eprintln!("Script system initialized ({} scripts)", count);
+            tracing::debug!(target: "load", "Script system initialized ({} scripts)", count);
         }
 
         Ok(())

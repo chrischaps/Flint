@@ -403,7 +403,7 @@ impl RuntimeSystem for AnimationSystem {
         self.node_sync.sync_from_world(world);
         self.sprite_sync.sync_from_world(world);
         self.sequence_sync.sync_from_world(world);
-        eprintln!(
+        log::debug!(target: "load",
             "Animation system initialized ({} property clips, {} skeletal clips, {} node clips, {} sprite clips, {} sequences, {} property entities, {} skeletal entities, {} node entities, {} sprite entities, {} sequence entities)",
             self.player.clip_count(),
             self.skeletal_sync.clip_count(),

@@ -10,12 +10,10 @@ let unlock_key = "";
 fn on_init() {
     let me = self_entity();
     let tgt = get_field(me, "zone_data", "target_scene");
-    log_warn("[zone_door] on_init: tgt=" + tgt + " type=" + type_of(tgt));
     if tgt != () {
         target_scene = tgt;
     }
     let zn = get_field(me, "zone_data", "zone_name");
-    log_warn("[zone_door] on_init: zn=" + zn + " type=" + type_of(zn));
     if zn != () {
         zone_name = zn;
     }
@@ -31,7 +29,8 @@ fn on_init() {
         unlock_key = "always_open";
     }
 
-    log_warn("[zone_door] ready: zone=" + zone_name + " target=" + target_scene + " key=" + unlock_key);
+    // A door is not a warning: `log` is info, which the player shows (#716)
+    log("[zone_door] ready: zone=" + zone_name + " target=" + target_scene + " key=" + unlock_key);
 }
 
 fn on_update() {
@@ -51,16 +50,15 @@ fn on_update() {
 fn on_interact() {
     let me = self_entity();
     let locked = get_field(me, "door", "locked");
-    log_warn("[zone_door] on_interact: locked=" + locked + " type=" + type_of(locked) + " target=" + target_scene + " zone=" + zone_name);
     if locked == true {
         play_sound("audio/door_locked.wav");
-        log_warn("[zone_door] LOCKED — need more essence for " + zone_name);
+        log("[zone_door] LOCKED — need more essence for " + zone_name);
         return;
     }
 
     if target_scene != "" {
         play_sound("audio/door_open.ogg");
-        log_warn("[zone_door] ENTERING " + zone_name + " via " + target_scene);
+        log("[zone_door] ENTERING " + zone_name + " via " + target_scene);
         load_scene(target_scene);
     } else {
         log_warn("[zone_door] ERROR: target_scene is empty!");

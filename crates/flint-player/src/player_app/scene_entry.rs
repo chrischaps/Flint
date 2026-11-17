@@ -83,6 +83,10 @@ impl PlayerApp {
         self.subsystems_enter_scene();
         // A `[debug_keys]` name nothing has, or two actions on one key (#717)
         self.say_debug_key_config();
+        // One line for what loaded and what went wrong (the line above's
+        // warnings included), and one for the controls this scene binds (#716)
+        self.say_loaded();
+        self.say_controls();
 
         // On Android the cursor always counts as captured, so touch input
         // flows without a click-to-capture gate; elsewhere a first-person
@@ -174,7 +178,7 @@ impl PlayerApp {
             &self.core.project,
             &self.core.scene_path,
         ) {
-            eprintln!("{line}");
+            tracing::warn!(target: "load", "{line}");
         }
         #[cfg(feature = "procgen")]
         super::procgen_assets::resolve_scene(

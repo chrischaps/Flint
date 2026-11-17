@@ -1,0 +1,43 @@
+# The Overgrown Ruins' trailer: three shots, each a level played with no
+# hand on the controls and captured frame by frame (#722).
+#
+#   flint capture showcase_game/trailer.shots.toml                 # frames + take.json
+#   flint capture showcase_game/trailer.shots.toml --verify        # twice, compared
+#   flint capture showcase_game/trailer.shots.toml --encode mp4    # and an MP4 a take
+#   flint capture showcase_game/trailer.shots.toml --scale 0.5 --shot garden
+#
+# Takes land in captures/trailer/<shot>/<take>/ beside this file.
+
+[capture]
+title = "The Overgrown Ruins"
+fps = 30
+width = 1280
+height = 720
+
+[[shot]]
+id = "arrival"
+title = "The tavern"
+scene = "levels/tavern_hub.scene.toml"
+seconds = 4.0
+# Turn to face the room, then walk in
+input = "trailer/turn_and_walk.input.txt"
+
+[[shot]]
+id = "garden"
+title = "The flooded garden"
+scene = "levels/flooded_garden.scene.toml"
+seconds = 4.0
+input = "trailer/turn_and_walk.input.txt"
+# One camera path, shot two ways
+take = [
+    { name = "main" },
+    { name = "watercolor", look = "watercolor" },
+]
+
+[[shot]]
+id = "crypt"
+title = "The sunken crypt"
+scene = "levels/sunken_crypt.scene.toml"
+seconds = 4.0
+look = "graphite"
+input = "trailer/turn_and_walk.input.txt"

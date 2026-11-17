@@ -29,7 +29,7 @@ fn repo() -> PathBuf {
 }
 
 /// The commands that open a window, play sound or read a pad: `--json`
-/// refuses them. `edit` is one except for a model's or effect's `--render`.
+/// refuses them. `edit` is one except for a `--render` still (any kind, #712).
 const WINDOWS: &[&str] = &[
     "play",
     "edit",
@@ -38,6 +38,7 @@ const WINDOWS: &[&str] = &[
     "music chart play",
     "spike-rumble",
     "prefab view",
+    "frame open",
 ];
 
 fn scratch(name: &str) -> PathBuf {
@@ -263,6 +264,22 @@ fn every_command_answers_with_one_json_document() {
     run("examples");
     assert!(ok(&dir, &["examples", "--dir", &r("examples")]).is_array());
 
+    // Exit 1 when a FLINT_* switch here holds a bad value, so only the
+    // document is held (#715)
+    run("env");
+    assert!(json(&dir, &["env"]).1["switches"].is_array());
+
+    // Its takes open player windows, so the case is the plan (#722);
+    // tests/capture_cli.rs captures for real
+    run("capture");
+    std::fs::write(
+        dir.join("trailer.shots.toml"),
+        format!("[[shot]]\nid = \"open\"\nscene = \"{scene}\"\nseconds = 1\n"),
+    )
+    .unwrap();
+    let planned = ok(&dir, &["capture", "trailer.shots.toml", "--dry-run"]);
+    assert_eq!(planned["takes"][0]["frames"], 31, "{planned:#}");
+
     run("bundle");
     let bundle = ok(&dir, &["bundle", ".", "--dry-run"]);
     assert!(bundle["files"].as_array().is_some_and(|f| !f.is_empty()));
@@ -286,6 +303,42 @@ fn every_command_answers_with_one_json_document() {
     ok(&dir, &["dxc", "status"]);
     run("dxc notices");
     let _ = json(&dir, &["dxc", "notices"]); // a build without DXC says so as an error
+
+    // flint frame: the frozen captures (#1087), read anywhere
+    let two = r("tests/fixtures/frames/two_crates.flintframe");
+    let one = r("tests/fixtures/frames/one_crate.flintframe");
+    run("frame show");
+    assert_eq!(
+        ok(&dir, &["frame", "show", &two])["summary"]["draws"]["draw_calls"],
+        3
+    );
+    assert!(ok(
+        &dir,
+        &[
+            "frame",
+            "show",
+            &two,
+            "--passes",
+            "--draws",
+            "--targets",
+            "--hitch"
+        ]
+    )["passes"]
+        .is_array());
+    run("frame diff");
+    assert!(ok(&dir, &["frame", "diff", &two, &one])["draws"]["vanished"].is_array());
+    run("frame image");
+    assert!(ok(
+        &dir,
+        &["frame", "image", &two, "Scene", "-o", "out/scene.png"]
+    )["written"]
+        .is_array());
+    // The frozen captures hold no replay/: refused, as one document
+    run("frame replay");
+    assert!(fails(&dir, &["frame", "replay", &two])["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("no replay inputs"));
 
     run("style new");
     assert_eq!(
@@ -426,6 +479,10 @@ fn every_command_answers_with_one_json_document() {
     assert!(ok(&dir, &["asset", "job", "list"])["jobs"].is_array());
     run("asset job status");
     assert!(fails(&dir, &["asset", "job", "status", "no-such-job"])["error"].is_object());
+    run("asset job resume");
+    assert!(fails(&dir, &["asset", "job", "resume", "no-such-job"])["error"].is_object());
+    run("asset costs");
+    assert!(ok(&dir, &["asset", "costs"])["total"]["calls"].is_u64());
 
     // Music: a one-bus suite, mixed offline; a chart replayed
     std::fs::create_dir_all(dir.join("stems")).unwrap();

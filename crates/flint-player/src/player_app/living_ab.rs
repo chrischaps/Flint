@@ -397,7 +397,7 @@ impl LivingSubsystem {
                 ),
                 Err(problem) => problem,
             };
-            eprintln!("[living] {said}");
+            tracing::info!(target: "player", "[living] {said}");
             self.tune.status = Some(said);
             if split {
                 self.split_living(ctx, true);
@@ -422,13 +422,13 @@ impl LivingSubsystem {
         };
         let (a, b) = self.living_ab_picks(ctx);
         match self.compare_living(ctx, &a, &b) {
-            Ok(()) => eprintln!(
+            Ok(()) => tracing::info!(target: "player",
                 "[living] comparing A ({}) with B ({}){}",
                 side_label(&a),
                 side_label(&b),
                 if split { ", split" } else { "" }
             ),
-            Err(problem) => eprintln!("[living] --compare: {problem}"),
+            Err(problem) => tracing::warn!(target: "player", "[living] --compare: {problem}"),
         }
         if split {
             self.split_living(ctx, true);

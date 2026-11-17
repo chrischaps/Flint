@@ -109,7 +109,20 @@ flint query "entities where door.locked == true" --scene levels/tavern.scene.tom
 # project's flint.toml `schemas`, else schemas/ in the working directory,
 # beside the scene and one level up
 flint query "entities" --scene levels/tavern.scene.toml --schemas engine/schemas --schemas schemas
+
+# Each entity with its components' values, as `flint entity show` prints one
+flint query "entities where door.locked == true" --scene levels/tavern.scene.toml --data
+
+# The same query of a running game started with --inspect-listen 127.0.0.1:7878
+flint query "entities where door.locked == true" --attach 7878
 ```
+
+A file and a running game are asked through one function
+(`flint_query::answer`), so the grammar, the entities picked and the JSON
+are the same for both. A game answers with its world as it stands that
+frame: a door a script unlocked is unlocked, a player who walked has moved.
+`flint-player --dump-world` writes the same entities to a file at game times.
+See [Asking a running game](../cli-reference/overview.md#asking-a-running-game).
 
 ## What it does not do
 

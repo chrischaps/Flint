@@ -193,6 +193,31 @@ pub(crate) fn may_complete_transition(ast: &AST) -> bool {
     find.found
 }
 
+/// Whether `ast` spells `name` as a string literal anywhere
+/// (`is_action_pressed("jump")`), function bodies and closures included; a
+/// comment, a variable or a function of that name doesn't. Rhai's walk
+/// skips a method call's arguments (`check.rs` says so too), so those are
+/// walked here by hand. Once a load.
+pub(crate) fn names_string(ast: &AST, name: &str) -> bool {
+    fn is_it(nodes: &[ASTNode], name: &str) -> bool {
+        matches!(nodes.last(), Some(ASTNode::Expr(Expr::StringConstant(s, _))) if s.as_str() == name)
+    }
+    let mut found = false;
+    ast.walk(&mut |nodes: &[ASTNode]| {
+        found = is_it(nodes, name);
+        if let Some(ASTNode::Expr(Expr::MethodCall(call, _))) = nodes.last() {
+            for arg in call.args.iter() {
+                arg.walk(&mut Vec::new(), &mut |inner: &[ASTNode]| {
+                    found |= is_it(inner, name);
+                    !found
+                });
+            }
+        }
+        !found
+    });
+    found
+}
+
 /// A `fmt::Write` that looks for any of its needles across the pieces it
 /// is handed, and refuses the rest once one is found.
 pub(crate) struct Finder<'a> {

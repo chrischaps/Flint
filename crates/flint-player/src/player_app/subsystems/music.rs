@@ -43,7 +43,7 @@ pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
 #[cfg(not(feature = "music"))]
 pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     if let Some(line) = crate::player_app::missing_features::music_line(ctx.world) {
-        eprintln!("{line}");
+        tracing::warn!(target: "load", "{line}");
     }
     None
 }

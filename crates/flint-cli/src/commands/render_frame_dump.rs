@@ -32,6 +32,56 @@ impl<'a> Wanted<'a> {
     }
 }
 
+/// Where the frame came from, for the manifest's `scene` and `frame`
+/// (#1087): the scene file as given and the game time it was drawn at.
+pub(super) struct Origin<'a> {
+    pub scene: &'a str,
+    pub game_time: Option<f64>,
+    /// The manifest's `written_by`.
+    pub written_by: &'a str,
+    /// Lines for the manifest's `notes`.
+    pub notes: Vec<String>,
+}
+
+impl Origin<'_> {
+    /// Lay the origin, the writer and the moment on `description`.
+    fn lay(&self, description: &mut flint_render::frame_capture::FrameDescription) {
+        let bytes = std::fs::read(self.scene).ok();
+        let name = bytes
+            .as_deref()
+            .and_then(|b| std::str::from_utf8(b).ok())
+            .and_then(|text| text.parse::<toml::Table>().ok())
+            .and_then(|t| t.get("scene")?.get("name")?.as_str().map(String::from))
+            .unwrap_or_default();
+        description.scene = Some(flint_render::frame_capture::SceneDescription {
+            path: self.scene.replace('\\', "/"),
+            name,
+            sha256: bytes.map(|b| flint_core::ContentHash::from_bytes(&b).to_hex()),
+        });
+        // As the player writes it (#1086): the version, the commit left
+        // to a host that asks git
+        description.engine = Some(flint_render::frame_capture::EngineDescription {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            commit: None,
+            dirty: None,
+        });
+        description.frame.game_time = self.game_time;
+        description.written_by = Some(self.written_by.into());
+        description.notes.extend(self.notes.iter().cloned());
+        description.captured_at = Some(super::frame::utc_now());
+    }
+}
+
+/// What a capture needs to be drawn again (#1089, ADR 0126 decision 4):
+/// the frame's inputs as the renderer took them, its camera and particles.
+/// `replay/` is written from these and from the renderer's own state.
+pub(super) struct ReplayFacts<'a> {
+    pub inputs: flint_render::frame_replay::FrameInputsState,
+    pub camera: &'a flint_render::Camera,
+    /// The particles the frame drew, when it drew any.
+    pub particles: Option<&'a flint_particles::ParticleSync>,
+}
+
 /// What [`arm`] changed, for [`write`] to put back.
 pub(super) struct Armed {
     /// The timer was off before and is on for this frame.
@@ -71,7 +121,31 @@ pub(super) fn write(
     renderer: &mut SceneRenderer,
     world: Option<&flint_ecs::FlintWorld>,
     wanted: Wanted,
+    origin: Origin,
+    replay: Option<ReplayFacts>,
 ) -> Result<Vec<String>> {
+    // The renderer's share of the replay inputs, before anything else
+    // touches it: its bone palettes read back (a headless frame may wait)
+    let replay_state = match (wanted.capture, world, &replay) {
+        (Some(_), Some(world), Some(_)) => {
+            let mut encoder = ctx
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Frame Capture Replay State"),
+                });
+            let mut state = renderer.capture_replay_state(&ctx.device, &mut encoder, world);
+            ctx.queue.submit(Some(encoder.finish()));
+            state.wait(&ctx.device);
+            let fresh_only = flint_render::frame_replay::fresh_only(renderer, world);
+            Some((
+                state
+                    .read()
+                    .map_err(|e| anyhow::anyhow!("--frame-capture: {e}"))?,
+                fresh_only,
+            ))
+        }
+        _ => None,
+    };
     // The capture's copies, mapped and waited for: `flint render` has no
     // frame to keep (ADR 0126 decision 5)
     let captured = match renderer.take_frame_capture() {
@@ -107,6 +181,7 @@ pub(super) fn write(
     if let Some(timings) = &timings {
         description.lay_gpu_times(timings);
     }
+    origin.lay(&mut description);
     let timed = if timings.is_some() {
         ", GPU-timed"
     } else {
@@ -114,6 +189,19 @@ pub(super) fn write(
     };
     let mut said = Vec::new();
     if let (Some(dir), Some(captured)) = (wanted.capture, captured) {
+        if let (Some(((state, palettes), fresh_only)), Some(facts), Some(world)) =
+            (replay_state, replay, world)
+        {
+            write_replay(
+                std::path::Path::new(dir),
+                &mut description,
+                world,
+                origin.scene,
+                (state, palettes, fresh_only),
+                facts,
+            )
+            .with_context(|| format!("--frame-capture: writing {dir}/replay"))?;
+        }
         let written = flint_render::frame_capture::write_capture(
             std::path::Path::new(dir),
             &mut description,
@@ -157,4 +245,60 @@ pub(super) fn write(
         ));
     }
     Ok(said)
+}
+
+/// Write `dir/replay/` and the manifest's `replay` (#1089): the world as it
+/// stood, the inputs, the palettes and particles, the assets by hash, as
+/// the player's writer does (#1086).
+fn write_replay(
+    dir: &std::path::Path,
+    description: &mut flint_render::frame_capture::FrameDescription,
+    world: &flint_ecs::FlintWorld,
+    scene: &str,
+    (renderer, palettes, fresh_only): (
+        flint_render::frame_replay::ReplayRenderer,
+        flint_render::frame_replay::ReadPalettes,
+        Vec<String>,
+    ),
+    facts: ReplayFacts,
+) -> Result<()> {
+    use flint_render::frame_replay as replay;
+    let stem = std::path::Path::new(scene)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.trim_end_matches(".toml").trim_end_matches(".scene"))
+        .unwrap_or("scene");
+    let world_toml = flint_scene::save_scene_string(world, stem)?;
+    let particles = facts
+        .particles
+        .filter(|_| facts.inputs.particles)
+        .map(|p| replay::ParticlesState::of(p, world))
+        .unwrap_or_default();
+    let inputs = replay::ReplayInputs {
+        version: 1,
+        frame: facts.inputs,
+        camera: replay::CameraState::of(facts.camera),
+        renderer,
+        particles: particles.emitters,
+    };
+    flint_render::frame_capture::write_replay(
+        dir,
+        &flint_render::frame_capture::ReplayFiles {
+            world_toml: &world_toml,
+            inputs: &inputs,
+            skinning: &palettes.bytes,
+            particles: &particles.bytes,
+        },
+    )?;
+    let config = flint_render::model_loader::ModelLoadConfig::from_scene_path(scene);
+    description.replay = Some(flint_render::frame_capture::ReplayDescription {
+        available: true,
+        files: flint_render::frame_capture::REPLAY_FILES
+            .iter()
+            .map(|f| f.to_string())
+            .collect(),
+        fresh_only,
+        assets: replay::hash_assets(replay::assets_named(world), &config),
+    });
+    Ok(())
 }

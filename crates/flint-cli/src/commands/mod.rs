@@ -1,9 +1,13 @@
 //! CLI command implementations
 
+pub mod ai_costs;
 pub mod asset;
 pub mod asset_where;
+pub mod attach;
 pub mod bundle;
 pub mod calibrate;
+pub mod capture;
+mod capture_compare;
 pub mod check;
 pub mod common_args;
 pub mod dxc;
@@ -12,9 +16,11 @@ pub mod entity;
 pub mod env;
 pub mod examples;
 pub mod export;
+pub mod frame;
 pub mod frame_seq;
 pub mod gen;
 pub mod gen_ai;
+pub mod gen_catalog;
 pub mod gen_preview;
 pub mod gen_preview_common;
 pub mod gen_refine;

@@ -211,8 +211,8 @@ enum Action {
     /// Finger to (x, y), at once or gliding over the seconds given.
     FingerMove(u64, f64, f64, f64),
     FingerUp(u64),
-    /// `capture frame` (#1086), at the line's time.
-    Capture(f64),
+    /// `capture frame` (#1086), at the time the line plays.
+    Capture,
     /// An `expect` or `wait` line (#714).
     Check(Box<Check>),
 }
@@ -436,7 +436,7 @@ impl InputScript {
                     events.push((t, Action::FingerMove(id, x, y, over)));
                 }
                 "capture" => match f[2] {
-                    "frame" => events.push((t, Action::Capture(t))),
+                    "frame" => events.push((t, Action::Capture)),
                     _ => return Err(bad("capture takes `frame`")),
                 },
                 _ => return Err(bad("unknown verb")),
@@ -605,7 +605,7 @@ impl InputScript {
                 }
                 Action::Text(text) => out.events.push(ScriptEvent::Text(text.clone())),
                 // At the time it plays, which a `wait` before it may have moved
-                Action::Capture(_) => out.events.push(ScriptEvent::Capture(*t)),
+                Action::Capture => out.events.push(ScriptEvent::Capture(*t)),
                 Action::Look(dx, dy, over) => {
                     if *over > 0.0 {
                         self.sweeps.push(Sweep {

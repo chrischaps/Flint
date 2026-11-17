@@ -179,7 +179,14 @@ pub(super) fn register_skeletal_data(
     load_result: &model_loader::ModelLoadResult,
     animation: &mut AnimationSystem,
 ) {
-    register_skeletal_data_saying(load_result, animation, &mut |line| eprintln!("{line}"));
+    register_skeletal_data_saying(load_result, animation, &mut loaded("skeletal_clip"));
+}
+
+/// The player's `say` for the `_saying` loaders: each line a `load` event
+/// of `kind`, which the load's summary counts and `RUST_LOG=load=debug`
+/// shows (#716). `flint render` hands its own `say`, for its report.
+pub(super) fn loaded(kind: &'static str) -> impl FnMut(String) {
+    move |line| tracing::debug!(target: "load", kind, "{}", line.trim_start())
 }
 
 /// [`register_skeletal_data`], each clip it registers told to `say` rather
@@ -247,7 +254,7 @@ pub(super) fn register_node_animation_data(
     load_result: &model_loader::ModelLoadResult,
     animation: &mut AnimationSystem,
 ) {
-    register_node_animation_data_saying(load_result, animation, &mut |line| eprintln!("{line}"));
+    register_node_animation_data_saying(load_result, animation, &mut loaded("node_clip"));
 }
 
 /// [`register_node_animation_data`], telling `say` what it registers.
@@ -304,7 +311,9 @@ pub(super) fn load_audio_from_world(
         };
         match result {
             Err(e) => tracing::warn!("Failed to load audio '{}': {:?}", name, e),
-            Ok(()) if !queue => eprintln!("Loaded audio: {}", name),
+            Ok(()) if !queue => {
+                tracing::debug!(target: "load", kind = "sound", "Loaded audio: {}", name)
+            }
             Ok(()) => {}
         }
     };
@@ -399,9 +408,7 @@ pub(super) fn load_animations_from_world(
     scene_path: &str,
     animation: &mut AnimationSystem,
 ) {
-    load_animations_saying(project, scene_path, animation, &mut |line| {
-        eprintln!("{line}")
-    });
+    load_animations_saying(project, scene_path, animation, &mut loaded("animation"));
 }
 
 /// [`load_animations_from_world`], telling `say` what it loads.
@@ -436,9 +443,7 @@ pub(super) fn load_sequences_from_world(
     scene_path: &str,
     animation: &mut AnimationSystem,
 ) {
-    load_sequences_saying(project, scene_path, animation, &mut |line| {
-        eprintln!("{line}")
-    });
+    load_sequences_saying(project, scene_path, animation, &mut loaded("sequence"));
 }
 
 /// [`load_sequences_from_world`], telling `say` what it loads.
@@ -476,9 +481,7 @@ pub(super) fn load_sprite_animations_from_world(
     scene_path: &str,
     animation: &mut AnimationSystem,
 ) {
-    load_sprite_animations_saying(project, scene_path, animation, &mut |line| {
-        eprintln!("{line}")
-    });
+    load_sprite_animations_saying(project, scene_path, animation, &mut loaded("sprite_clip"));
 }
 
 /// [`load_sprite_animations_from_world`], telling `say` what it loads.

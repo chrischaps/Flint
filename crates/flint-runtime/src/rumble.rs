@@ -309,7 +309,7 @@ mod tests {
         let started = rumble
             .rumble(&mut gilrs, request, Instant::now())
             .expect("rumble");
-        eprintln!("rumbling on {started} pad(s)");
+        println!("rumbling on {started} pad(s)");
         assert!(started > 0, "no force-feedback pad connected");
         assert_eq!(rumble.playing(), started);
         std::thread::sleep(std::time::Duration::from_millis(700));

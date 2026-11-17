@@ -1166,9 +1166,9 @@ fn on_init() {
         app.flush_persistent_store(true, "exit");
 
         let said = log.lock().unwrap().clone();
-        eprintln!("--- script output ---");
+        println!("--- script output ---");
         for line in &said {
-            eprintln!("{line}");
+            println!("{line}");
         }
         assert_eq!(
             said,
@@ -1183,9 +1183,9 @@ fn on_init() {
             ]
         );
         let on_disk = files_under(&saves);
-        eprintln!("--- kart/saves ---");
+        println!("--- kart/saves ---");
         for (name, text) in &on_disk {
-            eprintln!("{name}:\n{text}");
+            println!("{name}:\n{text}");
         }
         assert_eq!(
             on_disk,

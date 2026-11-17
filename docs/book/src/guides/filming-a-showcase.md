@@ -1,66 +1,168 @@
 # Filming a Showcase
 
-Flint can film itself. `flint-player` steps its clock a fixed amount per
-frame and writes every frame, so a scripted scene plays the same way however
+Flint can film itself. The player steps its clock a fixed amount per frame
+and writes every frame, so a scripted scene plays the same way however
 slowly a 4K frame draws, and two captures of it can be compared pixel for
-pixel. The stylize showcase film (#434) is made this way; its rig in
-`tools/showcase/` is a template for filming anything else.
+pixel. `flint capture` does it from a shot list, in any game project: a
+trailer, review footage, a regression run of a scripted level. The stylize
+showcase film (#434) is made this way, and the second half of this page is
+how.
 
 ## One command
 
 ```bash
-cargo build --release --bin flint-player
-python tools/showcase/capture.py
+flint capture trailer.shots.toml
 ```
 
-That captures every beat of the film (`tools/showcase/film.toml`) at
-3840x2160 into `~/flint-film/<beat>/<take>/frame_0001.png ...`, each take
-with a `take.json` saying how it was made and a `player.log`. It needs
-Python 3.11 or later; `--verify` also needs Pillow and numpy.
+A shot list names the shots. This is the example game's,
+`showcase_game/trailer.shots.toml`:
+
+```toml
+[capture]
+title = "The Overgrown Ruins"
+fps = 30
+width = 1280
+height = 720
+
+[[shot]]
+id = "arrival"
+scene = "levels/tavern_hub.scene.toml"
+seconds = 4.0
+input = "trailer/turn_and_walk.input.txt"   # timed keys and mouse, below
+
+[[shot]]
+id = "garden"
+scene = "levels/flooded_garden.scene.toml"
+seconds = 4.0
+input = "trailer/turn_and_walk.input.txt"
+take = [                                     # one camera path, shot two ways
+    { name = "main" },
+    { name = "watercolor", look = "watercolor" },
+]
+
+[[shot]]
+id = "crypt"
+scene = "levels/sunken_crypt.scene.toml"
+seconds = 4.0
+look = "graphite"
+input = "trailer/turn_and_walk.input.txt"
+```
+
+Each take lands in its own folder beside the list:
+
+```text
+captures/trailer/arrival/main/frame_0001.png ... frame_0121.png   frame 1 is t = 0
+captures/trailer/arrival/main/take.json      how it was made: size, fps, frames, command
+captures/trailer/arrival/main/player.log     what the player said
+```
+
+`seconds = 4.0` at 30 fps is 121 frames: one at t = 0, then one a step.
+A take whose frame count comes out different, or whose player exits with
+an error, fails the run (exit 1) and names its log.
 
 | Flag | What it does |
 |------|--------------|
-| `02_type 08_pencil` | Only these beats (`--list` shows them all, with frame counts and disk) |
-| `--take matrix` | Only these takes of a beat |
-| `--scale 0.5` | A fraction of the master size (0.5 is 1920x1080) |
-| `--width W --height H` | Any size; point-sized things keep their layout (below) |
-| `--out DIR` | Somewhere other than `[film] out` |
-| `--verify` | Capture each take twice and compare the runs |
-| `--cut reel` | What a cut uses, at its size and point canvas, into `<out>/<cut>/` ([A cut](#a-cut)) |
+| `--shot ID` | Only this shot (repeatable) |
+| `--take NAME` | Only takes of this name (repeatable) |
+| `--scale 0.5` | A fraction of each shot's size; point-sized things keep their layout (below) |
+| `--width W --height H` | One size for every shot |
+| `--out DIR` | Somewhere other than the list's `out` (default `captures/<list name>/` beside it) |
+| `--verify` | Capture each take twice and compare the runs ([Two runs, one film](#two-runs-one-film)) |
+| `--tolerance N` | With `--verify`: how many 8-bit levels still count as the same frame (default 0) |
+| `--encode mp4` | Also `<shot>/<take>.mp4` from each take: H.264, BT.709, no sound (needs ffmpeg on `PATH`) |
+| `--dry-run` | Print the takes, their frames and each command line; capture nothing |
+| `--schemas DIR` | Schema directories for the player (default: the scene's project's `flint.toml`) |
+| `-- FLAGS` | Anything after `--` goes to every take's `flint play` |
 
-A 4K frame of the film's scenes averages about 7 MB and the whole film is
-10,940 frames at 60 fps (77 GB), so the rig estimates the disk a run needs and refuses one that
-won't fit. Frames go outside the repo on purpose.
+With `--json` the answer is one document: each take's record (`take.json`'s
+fields, its folder, `ok`, and `verify` with `--verify`), `failed` and a
+summary. The run prints a disk estimate first, at about 8 MB a 4K frame:
+the film's 10,940 frames at 60 fps were 77 GB, so big runs go outside the
+repository (`out = "~/flint-film"`; `captures/` is in `.gitignore`).
+
+### The shot list
+
+`[capture]` holds what every shot takes unless it says otherwise; each
+`[[shot]]` can override most of it, and each `[[shot.take]]` the look,
+seed, input, args and a shorter `seconds`. A mistyped key is refused.
+
+| Key | Where | Meaning |
+|-----|-------|---------|
+| `title` | capture, shot | A name for the run and the shot, kept in `take.json` |
+| `fps` | capture, shot | Frames per second of game time (default 30) |
+| `width`, `height` | capture, shot | Frame size in pixels (default 1280x720) |
+| `points_wide` | capture | The point canvas's width (default: `width`, one pixel a point) |
+| `out` | capture | Where takes go, from the list's folder; `~/` is your home |
+| `id` | shot | The shot's folder name |
+| `scene` | shot | The scene, from the list's folder |
+| `seconds` | shot, take | How long the take runs |
+| `look` | capture, shot, take | A look (`--look`): a built-in or `styles/<name>.look.toml` |
+| `seed` | capture, shot, take | Scripts' `random()` sequence (`--seed`); a stepped run is seeded anyway |
+| `input` | shot, take | An input script (`--input-script`), pointer positions in points |
+| `args` | capture, shot, take | More `flint play` flags, added in that order |
+| `notes` | shot | Free text kept in `take.json` |
+| `take` | shot | The shot's takes, each with a `name`; one called `main` when none |
 
 ## What a take is
 
-One run of the player on one scene:
+One run of `flint play` on one scene, with the clock stepped. `--dry-run`
+prints each; the film's `02_type` is:
 
 ```bash
-flint-player examples/film/02_type.scene.toml \
+flint play examples/film/02_type.scene.toml \
   --width 3840 --height 2160 --pixels-per-point 2 \
-  --frame-step 0.0166667 --screenshot out/frame.png --screenshot-every 0.0166667 \
-  --exit-after 13.9917 --music-volume 0 --sfx-volume 0
+  --frame-step 0.016666667 --screenshot out/frame.png --screenshot-every 0.016666667 \
+  --exit-after 13.991666667 --music-volume 0 --sfx-volume 0 --no-activate
 ```
 
 - `--frame-step 1/fps` advances game time exactly one frame per frame, and
   `--screenshot-every` the same writes each one. Scripts, animation,
   particles, a style's `boil` and egui's own animations all run on that
   clock, and scripts' `random()` is seeded, so two takes draw the same
-  numbers (`--seed N` for another sequence).
-- `--pixels-per-point width/1920` lays every frame out on a 1920x1080-point
-  canvas. ASCII cells, pencil spacing and egui are sized in points, which
-  otherwise follow the window's scale factor, so the same take would differ
-  between a 100% and a 125% display. A 4K take and a 1080p preview frame the
-  same.
-- A take's `args` in `film.toml` add player flags; the looks beat's eight
-  takes are one scene with `--look ascii_noir`, `--look matrix`, and so on.
-- A beat's `input` is an input script (`--input-script`) for the beats that
-  drive the F4 menu. Its pointer positions are written in points; the rig
-  writes a copy scaled to the take's pixels beside the frames. They are the
-  menu's rows as captured, so a change to the menu's layout (a new style
-  parameter, a new section) moves them: capture the beat after one and look
-  at its menu frames before trusting a take.
+  numbers (`--seed N` for another sequence). `--exit-after` stops half a
+  step short of `seconds`, so float sums of the step neither drop the last
+  frame nor add one past it.
+- `--pixels-per-point width/points_wide` lays every frame out on one point
+  canvas (the film's is 1920 wide). ASCII cells, pencil spacing and egui are
+  sized in points, which otherwise follow the window's scale factor, so the
+  same take would differ between a 100% and a 125% display. With
+  `--scale` the canvas stays the list's: a 4K take and a 1080p preview frame
+  the same.
+- `--no-activate` opens each take's window without taking the keyboard. A
+  capture hears only its script, never the real mouse or keys.
+- A shot's `input` is an input script, the timed keys, pad and pointer of
+  `--input-script` (its format is in
+  `crates/flint-player/src/player_app/input_script.rs`). Its pointer
+  positions (`mouse`, `click`, `touch`, `drag`) are written in points;
+  `flint capture` writes a copy scaled to the take's pixels as `input.txt`
+  beside the frames. `look` is raw mouse motion and keeps its units. The
+  trailer's turns the player round from the wall it starts facing, then
+  walks in:
+
+  ```text
+  0.0   click  640 360        # captures the cursor, so `look` reaches the game
+  0.2   look   450 0 1.6      # raw mouse motion, spread over 1.6 s
+  1.9   down   KeyW
+  3.4   up     KeyW
+  ```
+
+- A take's `look` or `args` change it; the film's looks beat is one scene
+  shot eight times, `look = "ascii_noir"`, `look = "matrix"`, and so on.
+  The F4 beats' input scripts click the menu's rows as captured, so a
+  change to the menu's layout (a new style parameter, a new section) moves
+  them: capture the beat after one and look at its menu frames before
+  trusting a take.
+
+## The showcase film
+
+The film's shot list is `tools/showcase/film.toml`, a shot per beat, at
+3840x2160 and 60 fps on a 1920-point canvas, into `~/flint-film/`:
+
+```bash
+cargo build --release --bin flint
+flint capture tools/showcase/film.toml                       # every beat, every take
+flint capture tools/showcase/film.toml --shot 02_type --scale 0.5
+```
 
 ## A beat
 
@@ -68,8 +170,8 @@ A beat is a scene whose script drives the camera and the styles on game
 time. The film's beats share one set, `examples/film/set.toml`; each adds a
 fragment (`examples/film/beats/<beat>.toml`: its `[scene]`, `[camera]`, styles
 and script entity) and `python tools/showcase/build_scenes.py` writes the
-scene from the two (`--check` says whether any is stale; the capture runs
-it first). The fragment may add components to the set's props
+scene from the two (`--check` says whether any is stale; `cut.py --capture`
+runs it first, and after editing a fragment run it before `flint capture`). The fragment may add components to the set's props
 (`[entities.barrel.ascii_style]`) and its style tables
 (`[post_process.styles.ascii]`), but not repeat a table the set has.
 
@@ -138,17 +240,19 @@ Shots are measured in bars, not seconds, so the music (#438) can be
 written to the same list and change on every cut. Then:
 
 ```bash
-python tools/showcase/capture.py --cut reel   # the takes the cut uses, at its size
+python tools/showcase/cut.py reel --capture   # the takes the cut uses, at its size
 python tools/showcase/music.py reel           # its score, to the same list
 python tools/showcase/cut.py reel             # the MP4s, with the score
 python tools/showcase/check_cut.py reel       # every frame, the sound, every shot on its bar
 ```
 
-`capture.py --cut` captures only the takes the cut's shots use, each only
-as far as its last shot reaches (and the last through the cut's
-`tail_bars`), at the cut's size, frame rate (the reel is 30 fps, the master 60) and point canvas,
-into `~/flint-film/<cut>/`. With `--scale` the point canvas stays the
-cut's, so a smaller capture keeps its layout and the input scripts' clicks
+`cut.py <cut> --capture` writes a shot list for the cut,
+`~/flint-film/<cut>/shots.toml`, and runs `flint capture` on it: only the
+takes the cut's shots use, each only as far as its last shot reaches (and
+the last through the cut's `tail_bars`), at the cut's size, frame rate (the
+reel is 30 fps, the master 60) and point canvas, into `~/flint-film/<cut>/`
+(`--verify` and `--dry-run` go to it). With `--scale` the point canvas
+stays the cut's, so a smaller capture keeps its layout and the input scripts' clicks
 land on the same rows. A cut's `points_wide` is the frame's width in
 points: the master lays out on 1920, which in a 1080-pixel-wide frame makes
 an 8-point ASCII cell 4.5 pixels, too fine for a phone. The reel uses 720
@@ -200,16 +304,32 @@ across a narrow frame).
 
 ## Two runs, one film
 
-`--verify` captures each take twice and compares them frame by frame
-(`tools/showcase/compare.py`, also usable on its own):
+`--verify` captures each take twice, the second into `<take>.again`, and
+compares them frame by frame:
 
 ```bash
-python tools/showcase/capture.py --verify --scale 0.333
-python tools/showcase/compare.py ~/flint-film/02_type/main ~/flint-film/02_type/main.again
+flint capture showcase_game/trailer.shots.toml --verify
 ```
 
-The report (`verify.json` beside each take and one for the run) lists the
-frames that differ, in how many pixels and by how many 8-bit levels.
+```text
+  arrival/main: 121 frames (121 expected) in 20 s  ok
+  arrival/main.again: 121 frames (121 expected) in 23 s  ok
+    identical: all 121 frames byte for byte
+  garden/main: 121 frames (121 expected) in 16 s  ok
+  garden/main.again: 121 frames (121 expected) in 17 s  ok
+    identical: all 121 frames byte for byte
+  ...
+captured 4 takes, each the same twice
+```
+
+A run whose frames differ names each one (`<frame>: <n> pixels (<share>%), up
+to <levels> levels`), in how many pixels and by how many 8-bit
+levels of its worst channel, counts the frames by that worst level (a
+one-level wobble in a handful of pixels reads very differently from a wrong
+glyph, tens of levels over a whole cell), keeps both runs to look at, and
+exits 1. `--tolerance 1` lets a one-level wobble pass. The report is `verify.json`
+beside each take and one for the run. When the runs match, the second is
+deleted.
 
 ### What two runs of the film gave
 
@@ -232,14 +352,14 @@ The 16:9 film, for YouTube and the Flint page on chaps.dev, is the cut
 `master` (`tools/showcase/cuts/master.toml`), made like the reel:
 
 ```bash
-python tools/showcase/capture.py --cut master   # the takes it uses, 3840x2160 at 60 fps
+python tools/showcase/cut.py master --capture   # the takes it uses, 3840x2160 at 60 fps
 python tools/showcase/music.py master           # its score
 python tools/showcase/cut.py master             # master MP4, web MP4 + WebM, poster
 python tools/showcase/check_cut.py master       # every frame, the sound, every shot on its bar
 ```
 
 Everything lands in `~/flint-film/master/edit/`. Takes already captured
-for the whole film (`capture.py` with no `--cut`, `~/flint-film/<beat>/`)
+for the whole film (`flint capture tools/showcase/film.toml`, `~/flint-film/<beat>/`)
 are at the master's size and rate, so `cut.py master --frames ~/flint-film`
 cuts from them. `--scale` (or `--width`) cuts takes captured smaller, for a
 preview on a disk without room for 4K.

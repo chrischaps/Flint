@@ -8,9 +8,9 @@ mod output;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, bundle, check as check_cmd, dxc, edit_router, entity, env, examples, export, gen,
-    gen_preview, init, legacy_names, music, play, playtest, prefab, preview, query, render,
-    render_goldens, scene, schema, script, spike_rumble, spline_edit, style, terrain_edit,
+    asset, bundle, capture, check as check_cmd, dxc, edit_router, entity, env, examples, export,
+    frame, gen, gen_preview, init, legacy_names, music, play, playtest, prefab, preview, query,
+    render, render_goldens, scene, schema, script, spike_rumble, spline_edit, style, terrain_edit,
     tex_edit, validate,
 };
 
@@ -49,25 +49,8 @@ enum Commands {
     #[command(subcommand)]
     Scene(Box<scene::SceneCommands>),
 
-    /// Query entities
-    Query {
-        /// Query string (e.g., "entities where archetype == 'door'")
-        query: String,
-
-        /// Path to scene file
-        #[arg(long)]
-        scene: Option<String>,
-
-        /// Output format (json or toml)
-        #[arg(long, default_value = "json")]
-        format: String,
-
-        /// Schema directories, later ones overriding earlier (repeatable).
-        /// Without it: the project's flint.toml `schemas`, else schemas/ in
-        /// the working directory, beside the scene and one level up
-        #[arg(long, action = clap::ArgAction::Append)]
-        schemas: Vec<String>,
-    },
+    /// Query entities: of a scene file, or of a running game (--attach)
+    Query(Box<query::QueryArgs>),
 
     /// Show schema information: one component or archetype, --list for
     /// all of them, --format json / json-schema for the schemas as data
@@ -114,6 +97,10 @@ enum Commands {
     /// run (schemas, entity references, assets, files, styles, constraints)
     Check(Box<check_cmd::CheckArgs>),
 
+    /// Read a frame capture (`flint render --frame-capture`): show its
+    /// passes, draws, targets and GPU time, diff two, copy a pass's image out
+    Frame(Box<frame::FrameArgs>),
+
     /// The curated example scenes, from examples/index.toml: list them by
     /// topic, or --check that every one is indexed and validates
     Examples(Box<examples::ExamplesArgs>),
@@ -158,6 +145,9 @@ enum Commands {
     /// Play a scene headless on a fixed clock with an input script and the
     /// scripts' test_* calls; a JSON report, exit 1 on a failure
     Playtest(Box<playtest::PlaytestArgs>),
+    /// Capture a shot list as deterministic frame sequences (each take a
+    /// stepped run of `flint play`), with --verify and --encode mp4
+    Capture(Box<capture::CaptureArgs>),
 
     /// Preview a 3D model file (GLB/glTF) with orbit camera
     #[command(hide = true)]
@@ -193,25 +183,6 @@ enum Commands {
 }
 
 fn main() -> std::process::ExitCode {
-    use tracing_subscriber::layer::SubscriberExt as _;
-    use tracing_subscriber::util::SubscriberInitExt as _;
-    use tracing_subscriber::Layer as _;
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        // `script=info`: what scripts print, and the script system's
-        // reloads (#703)
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,rfd=off,script=info"));
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                // Stdout belongs to what a command answers with, such as --report json.
-                .with_writer(std::io::stderr)
-                .with_filter(filter),
-        )
-        // `flint playtest` counts the engine's warnings, whatever RUST_LOG
-        // shows (#714)
-        .with(flint_player::playtest_warning_layer())
-        .init();
-
     // The old names (`play-chart` is `music chart play`, #709;
     // `render-suite <x>.goldens.toml` is `goldens`, #327) still run
     let (argv, moved) = legacy_names::route(std::env::args_os().collect());
@@ -238,6 +209,52 @@ fn main() -> std::process::ExitCode {
             e.exit();
         }
     };
+    // Installed once the command is known: the player says what
+    // `flint-player` says, as its `--log-format` and `--quiet` ask (#716)
+    match &cli.command {
+        Commands::Play(play) => flint_player::logging::init(&play.player.log),
+        // A playtest is the player with no window: the player's filter and
+        // load summary, and the count of the engine's warnings its report
+        // holds, whatever RUST_LOG shows (#714)
+        Commands::Playtest(_) => {
+            use tracing_subscriber::layer::SubscriberExt as _;
+            use tracing_subscriber::util::SubscriberInitExt as _;
+            use tracing_subscriber::Layer as _;
+            let filter =
+                tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                    tracing_subscriber::EnvFilter::new(
+                        flint_player::logging::LogArgs::default().default_filter(),
+                    )
+                });
+            tracing_subscriber::registry()
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        // Stdout is the report's, under --json
+                        .with_writer(std::io::stderr)
+                        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+                        .with_filter(filter),
+                )
+                .with(flint_player::logging::tally_layer())
+                .with(flint_player::playtest_warning_layer())
+                .init();
+        }
+        _ => {
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                        // `script=info`: what scripts print, and the script
+                        // system's reloads (#703). `load=debug`: each file a
+                        // render or an editor loads, which the player counts
+                        // into one summary instead (#716)
+                        tracing_subscriber::EnvFilter::new("warn,rfd=off,script=info,load=debug")
+                    }),
+                )
+                // Stdout belongs to what a command answers with, such as --report json.
+                .with_writer(std::io::stderr)
+                .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+                .init();
+        }
+    }
     output::set_json(cli.json);
     output::finish(run(cli))
 }
@@ -262,16 +279,12 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Init(args) => init::run(*args),
         Commands::Entity(cmd) => entity::run(*cmd),
         Commands::Scene(cmd) => scene::run(*cmd),
-        Commands::Query {
-            query,
-            scene,
-            format,
-            schemas,
-        } => query::run(&query, scene.as_deref(), &format, &schemas),
+        Commands::Query(args) => query::run(*args),
         Commands::Schema(args) => schema::run(*args),
         Commands::Script(cmd) => script::run(*cmd),
         Commands::Validate(args) => validate::run(*args),
         Commands::Check(args) => check_cmd::run(*args),
+        Commands::Frame(args) => frame::run(*args),
         Commands::Examples(args) => examples::run(*args),
         Commands::Env(args) => env::run(*args),
         Commands::Bundle(args) => bundle::run(*args),
@@ -282,6 +295,7 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Goldens(args) => render_goldens::run_command(*args),
         Commands::Play(args) => play::run(*args),
         Commands::Playtest(args) => playtest::run(*args),
+        Commands::Capture(args) => capture::run(*args),
         Commands::Prefab(cmd) => prefab::run(*cmd),
         Commands::Asset(cmd) => asset::run(*cmd),
         Commands::Edit(args) => edit_router::run(*args),
@@ -348,6 +362,10 @@ impl Commands {
             Commands::TerrainEdit(_) => "terrain-edit",
             Commands::TexEdit(_) => "tex-edit",
             Commands::Prefab(_) => "prefab view",
+            Commands::Frame(args) => match &args.command {
+                frame::FrameCommands::Open(open) if open.interactive() => "frame open",
+                _ => return None,
+            },
             _ => return None,
         })
     }

@@ -61,6 +61,18 @@ DUPLICATE_EXCEPTIONS = {
     }): "10 KB; Sun Prints is a web game whose bundle packs only its own folder, "
         "so it can't name the example's file by a path outside it",
 }
+# The frozen frame captures (#1087): one scene with and without a lantern,
+# and a pass the lantern never reached (two cascades, bloom) is the same bytes
+# in both. That sameness is what `flint frame diff` is tested on, and a
+# capture's manifest names its images inside its own folder. 2.5 KB.
+for _image in (
+    "03-shadow_cascade_1.exr", "04-shadow_cascade_2.exr", "12-bloom_mip_0-threshold.exr",
+    "12-bloom_mip_0-up.exr", "12-bloom_mip_1-down.exr",
+):
+    DUPLICATE_EXCEPTIONS[frozenset({
+        f"tests/fixtures/frames/one_crate.flintframe/targets/{_image}",
+        f"tests/fixtures/frames/two_crates.flintframe/targets/{_image}",
+    })] = "a frame capture holds its own images; the pass was untouched, so its image is too"
 # The showcase game's sounds (#760): its scripts build their names at run
 # time ("audio/footstep_stone_" + idx), and a game in the checkout searches
 # only its own project, so it can't borrow examples/audio by a path. 1.8 MB.

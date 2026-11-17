@@ -18,6 +18,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint script api` | Every function a script can call, with its parameters and a one-line doc, and the callbacks; `--json` for the same as data, `--filter <text>` for names or modules containing it. A function a game's extension registers on the Rhai engine directly is listed with its parameter types only. `--book` writes the book's [Script API Reference](../reference/script-api.md) and the generated tables in its chapters; `--check-book` fails when they are stale or a chapter calls a function that doesn't exist (CI runs it) ([Scripting](../concepts/scripting.md#api-reference)) |
 | `flint script check [dir\|scene\|file.rhai]` | Compile every script and the modules it imports, and check each call's name and argument count against the script API, each callback's name and parameters, and each import, reported as `file:line:col`. Exits 1 on an error; `--json`; `--allow` / `--api` for a game's own functions ([Checking your scripts](../concepts/scripting.md#checking-your-scripts)) |
 | `flint check [dir\|scene]` | The pre-flight: everything wrong with a project, or with one scene, in one run. Schemas, entity references, every asset and file a scene names (with the paths tried), styles and looks, constraints, scripts. Exits 1 on any error; `--json` ([The `check` Command](#the-check-command)) |
+| `flint frame show <capture>` | A frame capture's summary (scene, adapter, size, GPU time by pass, draws and triangles, memory), and `--passes`, `--draws [--pass P] [--entity E] [--sort tris] [--culled]`, `--targets`, `--hitch`; `flint frame diff <a> <b> [--out dir]` says what changed between two; `flint frame image <capture> <pass> -o x.png` copies a pass's image out to look at; `flint frame open <capture>` is the frame debugger's window ([The Frame Debugger](../guides/frame-debugger.md)); `flint frame replay <capture>` draws it again, a draw at a time or with an entity or pass left out. All but `replay` read only the capture folder; `--json` ([The `frame` Command](#the-frame-command)) |
 | `flint validate <scene>` | Check one scene against its schemas (every unknown archetype, component and field, every value of the wrong type, every entity reference to nothing and every missing asset, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format text\|json`; `--fix` applies what a constraint can fix |
 | `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from `examples/index.toml` or fails validation |
 | `flint asset import` | Import a file into the asset store |
@@ -29,11 +30,14 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint asset validate` | Validate a generated model against style constraints |
 | `flint asset manifest` | Generate a build manifest of all generated assets |
 | `flint asset regenerate` | Regenerate an existing asset with new parameters |
-| `flint asset job status` | Check status of an async generation job |
+| `flint asset costs [--since DATE]` | What AI calls have cost, from the project's `.flint/ai_costs.jsonl`: assets, procgen specs and looks together |
+| `flint asset job status` | Check status of a generation job (a Meshy model) |
 | `flint asset job list` | List all generation jobs |
+| `flint asset job resume <id>` | Finish a job a generate didn't see through: wait, download, register; nothing new is paid for |
 | `flint edit <file>` | Unified interactive editor (auto-detects file type) |
 | `flint play [scene]` | Play a scene with first-person controls and physics; with no scene, the project's default (`flint.toml`'s `[project] scene`) |
 | `flint playtest <scene>` | Play a scene headless on a fixed clock, with an input script's `expect` / `wait` lines and the scripts' `test_*` calls; one JSON report, the same bytes every run, exit 1 on a failure ([Playtesting](../guides/playtesting.md)) |
+| `flint capture <shots.toml>` | Capture a shot list as deterministic frame sequences, each take a stepped `flint play`; `--verify` runs each twice and names the frames that differ, `--encode mp4` ([Filming a Showcase](../guides/filming-a-showcase.md)) |
 | `flint render <scene>` | Render a scene to PNG (headless) |
 | `flint dxc status` | What DX12 compiles shaders with here, and why: DXC is linked into the binary ([DX12's shader compiler](#dx12s-shader-compiler)); `flint dxc notices` writes DXC's licence and notices for a Windows build you ship |
 | `flint goldens <file>.goldens.toml` | Render a list of scenes and gate each against its golden PNG; `--bless` rewrites them ([Golden Suites](../guides/headless-rendering.md#golden-suites)) |
@@ -141,6 +145,7 @@ checked 2 scenes and 3 files: 6 errors, 1 warning
 | Every inline `particle_emitter` against the emitter's own reader: its keys, and that each value parses and resolves | `bad-emitter` |
 | The assets a scene names by kind, through the [one search](../concepts/assets.md): `model.asset`, `material.texture`, `sprite.texture`, `audio_source.file`, `script.source`, `terrain.heightmap` / `splat_map`, `grass_ground.mask`, `spline.file`, `particle_emitter.texture`, `[environment] skybox`, `[scene] input_config` | `missing-asset` |
 | The procgen spec behind a model or texture parses | `bad-spec` |
+| That spec's params fit its generator's schema, at every depth (`flint_procgen::validate_params`, what `flint gen` checks before generating; also `flint validate`) | `spec-param` |
 | The spline file behind a `spline.file` parses, its mistake placed by line and column | `bad-spline` |
 | The input config (the scene's, else `[project] input`, else `config/input.toml`) parses | `bad-input-config` |
 | Every other file a scene, prefab, particle effect, glyph set, chunk, user style or script names by path | `missing-file` |
@@ -167,6 +172,145 @@ For a folder, every `*.scene.toml` under it is checked, and every prefab, partic
 The exit code is 1 when there is an error and 0 otherwise. A warning does not fail it.
 
 `flint bundle` runs the same code over the files it is about to pack, and `flint validate` over one scene, so the three never disagree about what a problem is. They differ in what they ask: `flint bundle` asks whether the bundle is whole (every scene loads, every file named is packed, styles and looks load), `flint validate` asks about one scene's schemas and constraints and can `--fix`, and `flint check` asks everything. `flint bundle` leaves the scripts' calls alone; `flint validate` checks the scene's scripts.
+
+## The `frame` Command
+
+```bash
+flint render levels/dock.scene.toml --frame-capture dock.flintframe   # make one
+flint frame show dock.flintframe                    # the summary
+flint frame show dock.flintframe --passes           # every pass, ran or why not
+flint frame show dock.flintframe --draws --entity "barrel_*" --sort tris
+flint frame show dock.flintframe --targets          # every texture, its memory, who wrote it
+flint frame show dock.flintframe --hitch            # the frame history around it, when it has one
+flint frame diff before.flintframe after.flintframe --out diffs/
+flint frame image dock.flintframe Scene -o scene.png              # HDR, tonemapped
+flint frame image dock.flintframe Scene --target depth -o depth.png
+flint frame image dock.flintframe --all -o dock-images/
+flint frame open dock.flintframe                    # the frame debugger's window
+flint frame open dock.flintframe --pass Scene --screenshot scene.png   # one frame of it, no window
+flint frame replay dock.flintframe                  # draw it again: byte-identical, or how far off
+flint frame replay dock.flintframe --draws 40 --hide barrel_02 --out step.flintframe
+```
+
+`flint frame` reads a frame capture: the folder `flint render --frame-capture` writes, with a `manifest.json` describing the frame and an image for each target each pass wrote ([A frame's images](../guides/profiling.md#a-frames-images)). Every view but `replay` reads only that folder: no GPU, no scene, no schemas. So a capture from another machine, or attached to an issue, reads the same as one made here. A `--frame-dump` JSON file reads too, with no images. `replay` draws the frame again from the capture's `replay/`, so it needs the scene and its assets and a GPU.
+
+### `flint frame show`
+
+With no view it prints the summary:
+
+```text
+Capture  tests/fixtures/frames/two_crates.flintframe  (flintframe v1, written by flint render at 2026-11-17T01:15:46Z, engine 0.1.0)
+Scene    Crate and Lantern  (tests/fixtures/frames/two_crates.scene.toml)
+Adapter  NVIDIA GeForce RTX 5070 Laptop GPU (DiscreteGpu, Vulkan) (headless)
+Frame    64x36, scene 64x36 (scale 1.0), msaa 1, Rgba8UnormSrgb
+Time     GPU 0.069 ms (holds the capture's copies)
+Draws    3 draws, 36 triangles; shadows 9 draws, 108 triangles
+Passes   8 of 17 ran, 5 timed
+Memory   311.1 KB in 10 targets
+Images   11 images, 12.2 KB on disk
+Lights   1 drawn
+
+Most expensive passes (GPU ms):
+   #  pass       gpu ms  draws  triangles
+  12  Bloom       0.024      0          0
+  10  SSAO        0.021      0          0
+  01  Shadows     0.012      9        108
+  05  Scene       0.007      3         36
+  13  Composite   0.006      0          0
+```
+
+`#` is the pass's place in the frame, the `NN` of its image files. `--top N` lists more or fewer passes. A pass's draws include its layers' (the shadow cascades under `Shadows`).
+
+| View | What it lists |
+|------|---------------|
+| `--passes` | Every pass in the order the frame recorded it, a shadow map's layers indented under it: its GPU ms (`untimed` for a part the timer has no scope for), draws, triangles, and what it wrote, or `skipped:` and why |
+| `--draws` | Every draw, named by its entity: the pass, kind, layer, pipeline, mesh, triangles and instances. `--pass <name>` keeps one pass's, `--entity <name>` one entity's (`*` matches any run: `tree_*`), `--sort tris` puts the heaviest first, `--culled` adds the draws a cull set aside with the reason (`frustum`, `lod`, `draw distance`) |
+| `--targets` | Every texture the frame drew into or read: format, size, layers, samples, memory, its images and the passes that wrote it |
+| `--hitch` | The player's frame history around the capture and the hitch that asked for it ([Hitches](../guides/profiling.md#hitches)), when the capture holds one. A `flint render` capture has none, and says so |
+
+Views combine (`--passes --targets`). An entity that draws nothing, or a pass that doesn't exist, is an error with the nearest name (`did you mean `lantern`?`), and an entity a cull set aside says to add `--culled`.
+
+### `flint frame diff`
+
+`flint frame diff <a> <b>` says what changed between two captures, pairing passes by name (the second `Bloom` with the second), entities by name (never by id, which moves between runs) and targets by id:
+
+```text
+Frame
+  draws        3 -> 2 (-1)
+  triangles    36 -> 24 (-12)
+  shadow draws 9 -> 6 (-3)
+
+Draws by entity
+  removed  lantern in Shadow cascade 0: 1 draw (shadow)
+  removed  lantern in Shadow cascade 1: 1 draw (shadow)
+  removed  lantern in Shadow cascade 2: 1 draw (shadow)
+  removed  lantern in Scene: 1 draw (pbr)
+
+Images (5 of 11 the same)
+  image                                     differing     of     max  diff
+  Scene / hdr_scene                         78 (3.4%)   2304  0.2678  diffs/scene_hdr_scene.diff.png
+  ...
+  Composite / surface                      172 (7.5%)   2304  0.3569  diffs/composite_surface.diff.png
+```
+
+That is the frozen pair in `tests/fixtures/frames/`, a crate and a lantern and then the crate alone, with the passes and targets sections (unchanged) left out.
+
+- **Frame**: the GPU time, draws, triangles, culls and target memory, each a -> b.
+- **Passes**: those added, removed or moved, those that switched between running and skipped, and each pass whose GPU time, draws or triangles changed.
+- **Draws by entity**: each entity whose draws appeared or vanished in a pass, or changed pipeline or number.
+- **Targets**: added, removed, or changed in format, size or memory.
+- **Images**: for each pass image in both, how many pixels differ and by how much at most (in the image's own units, 8- and 16-bit steps normalized to 1). `--tolerance X` lets float values lie X apart and still be the same. `--out <dir>` writes a picture of each image that differs: the after image dimmed to grey, each changed pixel lit from amber to white by how far it moved.
+
+The diff is a report, so it exits 0 whatever it finds.
+
+### `flint frame image`
+
+`flint frame image <capture> <pass> -o out.png` copies a pass's image out as a PNG you can look at. An agent can read that PNG; an EXR it can't. A capture keeps each target exactly as the GPU held it, so the viewable copy is made here:
+
+| Stored | Written as |
+|--------|------------|
+| 8-bit PNG | the file, byte for byte |
+| float colour (EXR half) | exposed at the frame's `exposure`, tonemapped with the composite's ACES curve, sRGB-encoded |
+| depth (EXR `Z`) | grey over the depths the frame drew, near white, the clear value black |
+| one or two float channels | grey, or red and green, as stored in 0..1; a measure past 1 (a distance in metres) on a log scale, so a far sky doesn't black out the rest; centred on mid-grey when a value is negative |
+| integer ids (the style mask, a u32 target) | a colour each, spaced round the hue circle; id 0 black |
+
+The pass is named as `--passes` lists it (`Scene`, `Bloom`, `Shadow cascade 1`, `Bloom (2)` for the second pass of that name), or by an image's file name (`05-hdr_scene.exr`). A pass that writes several images gives its first. `--target <id>` picks another (`--target depth`), and `--step <step>` picks one of bloom's `threshold`, `down` and `up`. `--raw` copies the stored file (an EXR stays an EXR). `--all -o <dir>` writes every image of the capture.
+
+### `flint frame open`
+
+`flint frame open <capture>` is the frame debugger: a window with the passes as a tree, the selected pass's image (zoom, pan, a texel readout, channel, exposure and depth range, an A/B wipe against the pass before or the finished frame), its draws as a table linked by entity across passes, and the frame's CPU phases, GPU passes and frame history along the bottom ([The Frame Debugger](../guides/frame-debugger.md)).
+
+| Flag | What it does |
+|------|--------------|
+| `--pass <name>` | Open on this pass (`Scene`, `Bloom (2)`); else the finished frame. A name the capture lacks is refused before any window, naming the nearest |
+| `--target <id>` | Open on this of the pass's images (`depth`) |
+| `--entity <name>` | Select this entity (any part of its name): its draws are marked in every pass |
+| `--wipe previous`, `--wipe final` | Open with an A/B wipe against the previous pass's image or the finished frame |
+| `--screenshot <png>` | Draw one frame of the window into a PNG and exit, with no window; `--json` answers `{"written": [path]}`. Without it the command is a window and refuses `--json` |
+| `--width`, `--height` | The window's size in points (1600 x 1000); a screenshot's in pixels |
+| `--scale <x>` | A screenshot's pixels per point |
+| `--replay` | Draw the frame again as it opens (R in the window): needs the capture's `replay/`, the scene and a GPU |
+| `--draws <n>`, `--hide <name>`, `--skip <pass>`, `--outline <name>` | Replay it with the scene pass stopped after N draws, without an entity, without a pass, with an entity's pixels outlined (each implies `--replay`; `--hide` and `--skip` repeat). A screenshot waits for the replay |
+| `--scene <file>`, `--schemas <dir>` | The replay's scene, when it isn't where the capture says, and its schema directories |
+
+### `flint frame replay`
+
+`flint frame replay <capture>` draws a captured frame again ([Replaying a frame](../guides/frame-debugger.md#replaying-a-frame)): the authored scene loaded as `flint render` loads it, the captured world laid over it by entity name, the renderer's state put back, no game step run. It writes the replayed frame as a capture, which every other `frame` view reads, and says whether its final image and its scene pass's image are byte-identical with the captured ones, or in how many pixels they differ and what the capture draws fresh. Each asset is checked against its recorded hash; a missing or changed one is named and the frame still drawn. A capture with no `replay/` is refused, saying so. `--json` carries `identical`, `final` and `scene` (`pixels`, `differing`), `assets` (each `same`, `moved`, `changed` or `missing`), `notes`, `fresh_only`, `refused` and `skippable`.
+
+| Flag | What it does |
+|------|--------------|
+| `--out <dir>` | Where the replay goes (default: beside the capture, `<name>.replay.flintframe`) |
+| `--draws <n>` | Stop the scene pass after its first N draws, counted as `flint frame show --draws --pass Scene` lists them |
+| `--hide <name>` | Draw the frame without this entity in any pass (repeatable) |
+| `--skip <pass>` | Draw the frame without this pass: `Shadows`, `SSAO`, `Volumetric`, `Bloom`, `FXAA`, `Fog veil`, or a style's (repeatable). The text answer lists what this capture takes |
+| `--outline <name>` | Mark this entity's pixels with the selection outline |
+| `--scene <file>` | The scene, when it isn't where the capture says (found as recorded, else under the capture folder's parents) |
+| `--schemas <dir>` | Schema directories, as `flint render` takes them |
+
+### Capture versions
+
+A manifest carries an integer `version` (ADR 0126). `flint frame` reads its own version and every older one. A field it doesn't know is ignored, and one an older capture lacks is defaulted. A newer capture is refused, naming both versions: `this is a version 2 capture, and this flint reads version 1 and older: read it with a newer engine`.
 
 ## The `play` Command
 
@@ -203,9 +347,60 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 | `--motion-hold <rate>` | Motion on twos for the whole frame (#405): every entity's drawn position and pose, and the post time styles read, change only this many times a second (12 = on twos at 24 fps). Over every scene's `[post_process] motion_hold`, kept through transitions. See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
 | `--expression-timeline <file>` | Play expression states from a JSON timeline on the game clock, for scripts' `expression()` and `on_expression` (see [Expression API](../concepts/scripting.md#expression-api)) |
 | `--expression-listen <ip:port>` | Take expression states as newline-delimited JSON over TCP at a loopback address, e.g. `127.0.0.1:7777`. Off unless given |
+| `--log-format <text\|json>` | How the player writes what it says, to stderr: `text` (default) or `json`, one object a line with `timestamp`, `level`, `target`, `message` and the event's fields (#716) |
+| `--quiet` | Say only warnings, errors and what a flag asked for (`--perf`'s lines, the `--exit-after` report): no load summary, controls line or transitions |
+| `--inspect-listen <ip:port>` | Answer questions about the live world at a loopback address, e.g. `127.0.0.1:7878`: `flint query --attach` and `flint entity show --attach` ask it. Off unless given ([Asking a running game](#asking-a-running-game)) |
+| `--dump-world <file>` | Write the world as JSON at `--dump-world-at` times, each entity `--dump-query` picks with its components' values ([Asking a running game](#asking-a-running-game)) |
+| `--dump-world-at <secs>` | Game times for `--dump-world`, repeatable or comma separated (`1,2.5`), each taken on the first frame at or after it. Default: `--exit-after`'s time, else the first frame |
+| `--dump-query <query>` | Which entities `--dump-world` writes, in [query](../concepts/queries.md) grammar. Default `entities`, all of them |
 
 `--music-volume 0` is the quickest way to audition a scene's sound design
 without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).
+
+### What the player says
+
+Everything the player says goes through one log on stderr (#716); stdout is
+left for what a flag asks it to answer (`--list-gpus`). Each line has a
+target naming what it is about: `load`, `transition`, `perf` (the line
+`--perf` prints every 10 s), `report` (the exit report), `script`, `input`,
+`music` and `player` (debug keys, looks, bundles). A scene coming up says
+two lines, one for what it loaded and one for the controls it binds:
+
+```text
+INFO load: Loaded showcase_game/levels/tavern_hub.scene.toml: 36 entities, 1 model, 3 procgen assets, 15 scripts, 3 skeletal clips, 10 sounds in 6346 ms; no warnings
+INFO input: Controls: interact E, jump Space, move_backward S, move_forward W, move_left A, move_right D, pause Escape, sprint LShift | mouse look, F1 debug keys
+```
+
+The `2d` template (`flint init x --template 2d`) has no character controller
+and moves with WASD from its script, so it says
+`Controls: move_backward S, move_forward W, move_left A, move_right D, toggle_help H | Esc cursor/exit, F1 debug keys`.
+The player's other keys are the debug-key table's, which the key named
+there lists over the game (F1 unless `[debug_keys]` moves it, #717).
+The summary counts the engine's own warnings and quotes the first three; a
+library's (the GPU driver's, a gamepad mapping) is shown as it happens and
+left out of the count.
+
+The controls are the bound actions the scene uses: those the game's input
+config (and `--input-config`) names, those a loaded script spells as a
+string (`is_action_pressed("move_left")`, `action == "jump"` in `on_action`,
+and `interact` for a script with `on_interact`), and the character
+controller's walk, jump and sprint when the scene has one. A built-in action
+nothing uses (`fire` in a racing game) is left out. It is said again after a
+transition that changes it. Each
+file a load reads is a `debug` line of target `load`, counted into the
+summary: `RUST_LOG=load=debug` lists them all again. `RUST_LOG` replaces the
+filter whole, under either format; the default is
+`warn,load=info,transition=info,perf=info,report=info,script=info,input=info,music=info,player=info`.
+An agent reading a run takes `--log-format json` and reads one object a line:
+
+```bash
+flint-player scenes/race.scene.toml --exit-after 5 --log-format json 2> run.jsonl
+```
+
+A game binary that embeds `PlayerApp` gets the same with
+`flint_player::logging::init(&LogArgs::default())`, or adds
+`flint_player::logging::tally_layer()` to a subscriber of its own for the
+summary's counts.
 
 The standalone `flint-player` binary is the same player: both flatten one
 set of flags (`flint_player::PlayerArgs`) and launch through one function
@@ -354,6 +549,100 @@ not (some GL/Android surfaces) the player logs a warning and skips the
 screenshot rather than failing. `flint play` takes every one of these flags
 too (#705).
 
+### Asking a running game
+
+A screenshot shows what a run looks like; most gameplay bugs turn on what it
+*is*: where the player stands, whether the door is locked. Two flags let a
+run answer that (#713), both in the [query](../concepts/queries.md) grammar
+`flint query` takes for a scene file, and both answered by the same code, so
+a query means the same thing whichever world it is asked of.
+
+**A dump at game times**, for scripted runs. `--dump-world <file>` writes the
+entities `--dump-query` picks (all of them by default), each with its
+components' values, on the first frame at or after each `--dump-world-at`
+time:
+
+```bash
+flint-player examples/phase4_runtime.scene.toml --frame-step 0.0166667 \
+  --input-script examples/walk_to_door.txt --exit-after 5 \
+  --dump-world out/world.json --dump-world-at 0.5,2.5,5 \
+  --dump-query "entities where archetype == 'player'"
+```
+
+prints `[dump] out/world.json at t=2.500s (frame 151): 1 entities` as each
+snapshot is written, and leaves (the second snapshot, shortened):
+
+```json
+{
+  "scene": "examples/phase4_runtime.scene.toml",
+  "query": "entities where archetype == 'player'",
+  "snapshots": [
+    {
+      "at": 2.5,
+      "time": 2.5,
+      "frame": 151,
+      "entities": [
+        {
+          "id": 9,
+          "name": "player",
+          "archetype": "player",
+          "components": ["character_controller", "collider", "rigidbody", "script", "transform"],
+          "data": {
+            "transform": {"position": [-0.0073, 0.86, 4.2899], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
+            "character_controller": {"camera_mode": "first_person", "move_speed": 5.0, "...": "..."}
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+That run is the reason the dump exists: the input script holds W to walk to
+the front door at z = 10, and a screenshot at 5 s shows the door ahead
+under a `[E] Talk to Patron` prompt. The dump says the player stopped at
+z = 4.29 by 2.5 s and stayed there, 5.8 m short of the door. A dump of every
+entity (leave out `--dump-query`) says why: `tavern_table_3` stands at z = 5
+with a collider 0.8 m deep, so its near edge is at z = 4.6, and the player's
+capsule is 0.3 m round. `patron_1`, 1.2 m away, is who the script's `E`
+spoke to.
+
+`time` is the frame's game time and `at` the time asked for; `frame` counts
+the run's frames from 1. The world is read after the frame's scripts,
+physics, animation and procgen, and before `--exit-after`'s check, so a dump
+at the exit time is the run's last world. The file is written whole again
+after each snapshot. A time the run never reaches fails it, as a screenshot
+does: `Error: --dump-world out/world.json: the run ended at t=3.200s, before
+--dump-world-at 5`, exit 1. With no `--dump-world-at`, the world is dumped
+at `--exit-after`'s time, else on the first frame.
+
+**A live question**, for a game you are playing or a long run.
+`--inspect-listen 127.0.0.1:<port>` opens a loopback socket (only 127.0.0.1
+or ::1 can listen; off unless given), and `--attach <port>` on `flint query`
+and `flint entity show` asks it instead of a file. What they print is what
+they print for a file, so a command line moves between the two by swapping
+`--scene` for `--attach`:
+
+```bash
+flint play examples/phase4_runtime.scene.toml --inspect-listen 127.0.0.1:7878
+
+# in another terminal, while it runs
+flint query "entities where door.locked == true" --attach 7878
+flint entity show player --attach 7878
+flint query "entities where archetype == 'character'" --attach 7878 --data
+```
+
+Each answer says on stderr when in the run it was read
+(`live: examples/phase4_runtime.scene.toml at t=12.483s (frame 749)`);
+stdout is the answer alone. The socket speaks one line of JSON each way, so a
+program can ask without `flint`: send `{"query": "entities", "data": true}`,
+`{"entity": "player"}`, or a bare query line, and read back
+`{"ok": true, "scene": ..., "time": ..., "frame": ..., "answer": ...}` or
+`{"ok": false, ..., "error": "Entity 'x' not found"}`. The network is read
+and written on threads of its own; the frame answers at most 16 questions,
+at the end of its update, and a question no frame answers within 10 s (a
+game stopped in a debugger) is answered with an error saying so.
+
 ### Player Controls (Defaults)
 
 These are the built-in defaults. Games can override any binding via input config files (see [Physics and Runtime: Input System](../concepts/physics-and-runtime.md#input-system)).
@@ -473,6 +762,36 @@ flint playtest scenes/level1.scene.toml --timeout 30 --strict --dump player --js
 | `--timings` | Wall-clock times in the report (two runs then differ) |
 | `--width <w>`, `--height <h>` | The screen scripts see, in points (1280 x 720) |
 | `--schemas <dir>` | Schema directories (repeatable); without it, the project's |
+## The `capture` Command
+
+Captures a shot list (`[capture]` and its `[[shot]]`s: a scene, `seconds`,
+optionally a look, a seed, an input script and several takes) as PNG frame
+sequences, each take one run of `flint play` with the clock stepped exactly
+one frame a frame, so a slow frame changes nothing on screen. The list's
+keys and what a take is: [Filming a Showcase](../guides/filming-a-showcase.md).
+
+```bash
+flint capture showcase_game/trailer.shots.toml
+flint capture showcase_game/trailer.shots.toml --verify --encode mp4
+flint capture tools/showcase/film.toml --shot 02_type --scale 0.5 --dry-run --json
+```
+
+### Capture Flags
+
+| Flag | Description |
+|------|-------------|
+| `--shot <id>` | Only this shot (repeatable) |
+| `--take <name>` | Only takes of this name (repeatable) |
+| `--scale <f>` | A fraction of each shot's size, keeping the point canvas |
+| `--width <w>`, `--height <h>` | One frame size for every shot |
+| `--out <dir>` | Where takes go (default: the list's `out`, else `captures/<list name>/` beside it) |
+| `--verify` | Capture each take twice and compare the runs; exit 1 when a frame differs |
+| `--tolerance <levels>` | With `--verify`: the largest 8-bit difference that still counts as the same |
+| `--encode mp4` | Also an MP4 a take (H.264, BT.709, no sound; needs ffmpeg on `PATH`) |
+| `--dry-run` | Print each take's frames and `flint play` command line; capture nothing |
+| `--schemas <dir>` | Schema directories for the player (repeatable; default: the scene's project's) |
+
+Words after `--` are added to every take's `flint play` command line.
 
 ## The `render` Command
 
@@ -601,6 +920,47 @@ flint edit fx/fire.particles.toml              # Particle effect editor (created
 | `.terrain.toml` | Terrain editor | Heightmap terrain editing |
 | `.particles.toml` | Particle effect editor | Emitters, curves, forces, bursts; scrub timeline; headless `--render` |
 | `.glb`, `.gltf` | Model previewer | Orbit camera, animation playback |
+
+### One host, the same flags
+
+Every editor runs in one host (`flint_viewer::host`, #712): it opens the
+window, the GPU and egui, feeds the orbit camera, watches the file and draws
+the `--render` still. A flag means the same in every editor that takes it,
+and one an editor doesn't take is an error that names the editors it applies
+to, before anything opens:
+
+| Flag | Editors |
+|------|---------|
+| `--width`, `--height`, `--watch`, `--render` | every editor |
+| `--no-grid`, `--distance`, `--yaw`, `--pitch`, `--target`, `--fov` | the ones with a 3D view: scene, track (`--spline`), procgen mesh, terrain, model, particles |
+| `--auto-orbit` | the same, but the track editor |
+| `--seed` | procgen specs, texture pipelines, terrain |
+| `--schemas` | scene, track |
+| `--no-inspector` | scene |
+| `--style`, `--style-time` | scene; a model's or effect's `--render` still |
+| `--motion-hold` | scene, model |
+| `--anim-time` | a model's or effect's `--render` still |
+| `--clip`, `--layer`, `--sequence`, `--sequence-loop`, `--anim-speed`, `--no-animate`, `--pose-bone`, `--show-skeleton` | model |
+| `--preset` | particles |
+
+The camera flags lay themselves over the editor's own framing (the model
+auto-fitted, the terrain from above, the scene's `[camera]`), so a flag left
+out keeps that part of it.
+
+`--render out.png` writes what the window would show, without the panels, at
+`--width` x `--height`, for every kind of file:
+
+```bash
+flint edit examples/specs/grove_oak.procgen.toml --render oak.png --yaw 60   # the mesh, auto-framed
+flint edit examples/specs/tavern_plank.procgen.toml --render plank.png       # albedo, normal, roughness side by side
+flint edit examples/rolling_meadow.terrain.toml --render meadow.png          # the terrain from above
+flint edit examples/stylize_props.scene.toml --render props.png --no-grid    # the scene viewer's frame
+```
+
+A texture generator's or a texture pipeline's still is its output maps side by
+side, in the order the editor's tabs list them, and the command prints that
+order. The track editor's spline handles are drawn by its panels, so its still
+is the scene from the editor's camera.
 
 ### GPU Selection
 
@@ -832,7 +1192,12 @@ flint gen specs/stone_wall.procgen.toml -o wall.png
 flint gen specs/oak_tree.procgen.toml --dry-run
 flint gen specs/oak_tree.procgen.toml --seed 42 -o tree.glb
 flint gen specs/oak_tree.procgen.toml --batch 10 --seed-start 0
+flint gen --list-generators                 # every generator a spec may name
+flint gen --describe tree_v1                # its parameters: type, range, default, what each does
+flint gen --describe texture_v1 --json      # the schema itself, and every pipeline op with its ports
 ```
+
+Before anything is generated, the spec's params are checked against its generator's schema at every depth (`ops[2].columns`, `materials.shell.roughness`): a value the generator can't use (wrong type, out of range, not a choice, a required key missing) stops the run naming the key and what it allows, and a key it would ignore is a warning.
 
 `flint gen` also previews a glyph set: `flint gen fonts/terminal.glyphs.toml -o sheet.png` writes the atlas, each ramp's ink and a specimen as one sheet, and `-o out/` writes the pieces as well. See [Glyph Atlas](../concepts/glyph-atlas.md#looking-at-a-set).
 
@@ -850,6 +1215,9 @@ It also bakes a terrain spec, with no window: `flint gen examples/rolling_meadow
 | `--force` | `false` | With `--register`, regenerate even if this spec + seed is stored |
 | `--validate` | `false` | Validate output after generation |
 | `--strict` | `false` | Treat warnings as failures |
+| `--list-generators` | `false` | List every generator: output, revision, parameter count, whether it can live (no spec) |
+| `--describe <generator>` | (none) | Print every parameter a generator reads, grouped by the mode that reads it; `texture_v1`'s ops too (no spec). With the global `--json`, either catalog is one document: `--describe`'s is the schema itself |
+| `--markdown` | `false` | With `--describe`: Markdown tables, as the flint-procgen README's catalog |
 | `--style-guide <path>` | (none) | Style guide TOML for validation constraints |
 | `--report <fmt>` | `human` | Validation report format: `human`, or `json` (one object per variant on stdout, with each check's `actual` and `limit`; human output moves to stderr). Requires `--validate` |
 
@@ -875,7 +1243,7 @@ flint gen --cost-report --since 2026-10-01
 | `--print-spec` | `false` | Print the final spec as TOML on stdout (the summary moves to stderr) |
 | `--save-spec <path>` | (none) | Write the final spec to a file |
 | `--max-cost <USD>` | (none) | Refuse any AI call that could take the run past this amount |
-| `--cost-report` | `false` | Summarize `.flint/procgen_costs.json` by provider, model and spec |
+| `--cost-report` | `false` | Summarize the project's `.flint/ai_costs.jsonl` by provider, model and spec or asset (the same report as `flint asset costs`) |
 | `--since <date>` | (none) | With `--cost-report`: only calls from `YYYY-MM-DD` on |
 
 ## The `prefab view` Command

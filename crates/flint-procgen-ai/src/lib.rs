@@ -16,8 +16,9 @@
 //! - [`MockAgent`] is a local, deterministic agent for tests and pipelines
 //!   with no network: its specs always fit the generator's param schema.
 //! - [`cost`] prices every call, keeps the append-only ledger at
-//!   `.flint/procgen_costs.json`, and enforces a cost ceiling before each
-//!   request ([`CostMeter`]).
+//!   `.flint/ai_costs.jsonl`, and enforces a cost ceiling before each
+//!   request ([`CostMeter`]): [`flint_ai_core`]'s, shared with asset
+//!   generation (#721), with the Messages API's input estimate added.
 //! - [`schema`] checks and repairs a spec's params against that schema.
 
 pub mod agent;
@@ -41,4 +42,4 @@ pub use http::{HttpRequest, HttpResponse, Reply, ScriptedTransport, Transport, U
 pub use measure::Distance;
 pub use mock::MockAgent;
 pub use preview::Previewer;
-pub use schema::{check_params, repair_params, IssueKind, ParamIssue};
+pub use schema::repair_params;
