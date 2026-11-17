@@ -752,6 +752,8 @@ impl PlayerApp {
         // Lazy-load any sprite textures referenced by draw commands
         // (must happen before egui_winit borrow)
         self.load_pending_sprites();
+        // The F1 card's table (#717), while the subsystems are here to ask
+        let key_table = self.hud.key_table_open.then(|| self.debug_key_table());
 
         let Some(window) = &self.window else { return };
         let Some(context) = &self.render_context else {
@@ -941,7 +943,11 @@ impl PlayerApp {
 
             // On the web, above the page's wordmark in the same corner
             // (index.html's `.mark`, two lines at bottom 20px; #415)
-            // A debug key's note (#367), over everything
+            // The debug keys' card (F1, #717), and a debug key's note (#367)
+            // over everything
+            if let Some(table) = &key_table {
+                super::debug_keys::paint_key_table(ctx, table);
+            }
             key_note.paint(ctx, 16.0);
 
             #[cfg(feature = "debug-hud")]

@@ -48,14 +48,16 @@ Music commands are detailed in [Music Commands](cli-reference/music.md).
 | Left Click | Fire |
 | R | Reload |
 | 1 / 2 | Weapon slots |
+| F1 | Show the debug keys (`--list-keys` prints them; an input config's `[debug_keys]` rebinds them) |
 | F2 | Toggle render stats overlay (with the GPU's time per phase, where the device can time) |
 | F3 | Toggle scene debug panels (ocean, day/time, camera, grass, weather… — only those the scene uses; never the F4 menu) and the game's own ([ADR 0107](https://github.com/chrischaps/Flint/blob/main/docs/adr/0107-debug-panels-from-the-game.md)) |
 | F4 | Toggle the **Rendering & Effects** menu (all render/post toggles and parameters, debug shading mode, shadows, lighting levers) |
-| F9 | Force a music-session full-fail (debug builds, session running) |
-| `` ` `` / `\` | Music Guide overlay / Manifest Map strip (debug builds, session running) |
+| F5-F8 | Living props: freeze, A/B flip, A/B split, pick (only in a scene with living props) |
+| F9 | Force a music-session full-fail (debug builds, a charted session playing) |
+| `` ` `` / `\` | Music Guide overlay / Manifest Map strip (debug builds, a charted session playing) |
 | F11 | Toggle fullscreen |
 
-The old per-effect keys (F1 debug mode, F4 shadows, F5 bloom, F6 post) are gone; everything is in the F4 menu.
+Where a key's owner isn't in the scene, or the game binds the key, the press is the game's. The old per-effect keys (F1 debug mode, F4 shadows, F5 bloom, F6 post) are gone; everything is in the F4 menu.
 | Escape | Release cursor / Exit (the game's own key when its input config binds it, see [Escape](concepts/physics-and-runtime.md#escape)) |
 
 ### Scene Viewer (`flint edit <scene.toml>`)

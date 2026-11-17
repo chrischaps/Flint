@@ -320,6 +320,24 @@ fn on_draw_ui() {
 
 On the web a page has no window to close: `quit_game()` leaves full screen and the pointer lock and goes back to the list of games where the page has one. A game can hide its EXIT row there with `gpu_info().platform == "web"`.
 
+### Debug Keys
+
+The player's debug keys (F1 to F11, backquote and backslash: the list is on [Debug Panels](../guides/debug-panels.md#keys)) are a table, and any input config layer can change it with a `[debug_keys]` block (#717). Each key has an action name; give it another key, `"none"` to unbind it, or turn the whole table off:
+
+```toml
+[debug_keys]
+enabled = false            # a release build: every key goes to the game
+stats = "F10"              # the stats overlay moves to F10, and F2 is the game's
+living_pick_next = "Shift+F7"
+music_force_fail = "none"
+```
+
+Key names are the ones bindings use (`F5`, `Backquote`, `KeyK`), with `Shift+` the one modifier. Layers merge as the rest of the config does: a later layer's `enabled` and each action it names win. A name no debug key has, or two actions on one key, is said once in the console when the scene comes up.
+
+**A key the game binds is the game's.** When any action binds a debug key's key, the debug action stands aside and the game gets the press, as Escape already worked; nothing needs turning off to bind F5 to a quicksave or backquote to a console. **A debug key is the debug key's alone**: a press the table takes, and its repeats and release, never reach `is_action_pressed` or the game's key state. And a subsystem's keys exist only in a scene that has it: with no living props or charted music session, F5 to F9, backquote and backslash are ordinary keys.
+
+`flint play <scene> --list-keys` prints the table after the scene's input layers (`--json` for agents), and F1 shows it over a running game, dimming the keys whose owner isn't in the scene.
+
 ### Gamepad Support
 
 Gamepad input is handled via the [gilrs](https://gitlab.com/gilrs-project/gilrs) crate. The player polls gamepad events each frame and routes them through the same binding system as keyboard/mouse:

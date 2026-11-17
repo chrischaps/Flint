@@ -731,8 +731,15 @@ impl PlayerApp {
                         }
                     }
 
-                    // Debug keys, shared with `--input-script` (H9)
-                    self.handle_debug_key(key_code);
+                    // Debug keys, shared with `--input-script` (H9): one the
+                    // table takes is its alone, repeats and release too (#717)
+                    if self.focus.debug_keys_held.contains(&key_code) {
+                        return;
+                    }
+                    if self.handle_debug_key(key_code) {
+                        self.focus.debug_keys_held.insert(key_code);
+                        return;
+                    }
 
                     self.input.process_key_down(key_code);
 
@@ -754,6 +761,9 @@ impl PlayerApp {
                     }
                 }
                 ElementState::Released => {
+                    if self.focus.debug_keys_held.remove(&key_code) {
+                        return;
+                    }
                     self.input.process_key_up(key_code);
 
                     #[cfg(target_os = "android")]
@@ -789,112 +799,6 @@ impl PlayerApp {
                     }
                 }
             }
-        }
-    }
-
-    /// The player's debug keys: F2 stats overlay, F3/F4 panels, F11
-    /// fullscreen; a subsystem's own first (the rhythm session's guide, map
-    /// and F9 force-fail, the living props' F5-F8). Called for a real
-    /// key press and for one the input script presses, so a capture can
-    /// open the overlay (H9). A real Escape exits only when no action binds
-    /// it (`Escape::decide`, #639); a scripted one never does.
-    pub(super) fn handle_debug_key(&mut self, key_code: KeyCode) {
-        // A subsystem's own debug keys come first (ADR 0117)
-        let key = super::subsystem::KeyPress {
-            code: key_code,
-            shift: self.focus.key_modifiers.shift_key(),
-        };
-        #[cfg(feature = "debug-hud")]
-        let open_before = self.debug_panels.iter().filter(|p| p.is_open()).count();
-        if self.subsystems_take_key(key) {
-            // A subsystem's panel opened or closed: the cursor follows the
-            // panels, as F3's do
-            #[cfg(feature = "debug-hud")]
-            {
-                let open = self.debug_panels.iter().filter(|p| p.is_open()).count();
-                if open != open_before {
-                    if open > 0 {
-                        self.release_cursor();
-                    } else if self.core.physics.has_player_entity() {
-                        self.capture_cursor();
-                    }
-                }
-            }
-            return;
-        }
-        match key_code {
-            KeyCode::F2 => {
-                // Off, the full overlay, the graph alone, off (#1078)
-                self.set_stats_view(self.stats.view.next());
-            }
-            #[cfg(feature = "debug-hud")]
-            KeyCode::F3 => {
-                // Toggle the scene-component debug panels
-                // (grass, ocean, ...). The Rendering &
-                // Effects panel is excluded — it has its
-                // own key (F4) and would otherwise flip
-                // out of phase with it.
-                let scene_panels: Vec<usize> = self
-                    .debug_panels
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, p)| p.name() != flint_debug_ui::RENDER_DEBUG_PANEL)
-                    .map(|(i, _)| i)
-                    .collect();
-                if scene_panels.is_empty() {
-                    self.hud.key_note.say("F3", "no debug panels in this scene");
-                } else {
-                    // Toggle the panels, then adjust cursor outside the borrow
-                    for i in scene_panels {
-                        self.debug_panels[i].toggle();
-                    }
-                    // Cursor follows ALL panels (incl. the
-                    // render panel, which F3 leaves alone).
-                    let any_open = self.debug_panels.iter().any(|p| p.is_open());
-                    if any_open {
-                        self.release_cursor();
-                    } else if self.core.physics.has_player_entity() {
-                        self.capture_cursor();
-                    }
-                }
-            }
-            // Backquote, Backslash and F9 are the rhythm subsystem's (its
-            // guide, map and forced fail); with no chart playing they say so
-            #[cfg(feature = "debug-hud")]
-            KeyCode::Backquote | KeyCode::Backslash | KeyCode::F9 => {
-                let key = match key_code {
-                    KeyCode::Backquote => "`",
-                    KeyCode::Backslash => "\\",
-                    _ => "F9",
-                };
-                self.hud
-                    .key_note
-                    .say(key, "no chart is playing in this scene — nothing to show");
-            }
-            // Rendering & Effects menu (ADR 0053): the
-            // one home for every render/post debug
-            // control the old F1/F4-F10/F12 keys used to
-            // flip blindly, plus their non-binary params.
-            #[cfg(feature = "debug-hud")]
-            KeyCode::F4 => {
-                self.toggle_named_panel(
-                    flint_debug_ui::RENDER_DEBUG_PANEL,
-                    "F4",
-                    "no renderer active — nothing to tune",
-                );
-            }
-            // F5-F8 and a scripted Escape are the living subsystem's
-            // (`LivingSubsystem::on_key`)
-            KeyCode::F11 => {
-                if let Some(window) = &self.window {
-                    if window.fullscreen().is_some() {
-                        window.set_fullscreen(None);
-                    } else {
-                        window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
-                    }
-                }
-            }
-            _ => {}
         }
     }
 
@@ -1046,11 +950,24 @@ impl PlayerApp {
         if crate::extension::dispatch_key(&mut self.extensions, &input) {
             return;
         }
-        // As a real key, through the debug keys (H9), but Esc doesn't quit.
+        // As a real key, through the debug keys (H9), but Esc doesn't quit:
+        // it lets go of a picked prop first, as a real one does (#248), and
+        // a debug key's press and release stay from the game (#717).
         if pressed {
-            self.handle_debug_key(key);
+            if key == KeyCode::Escape
+                && self.subsystems_take_input(super::subsystem::PlayerInput::Escape)
+            {
+                return;
+            }
+            if self.focus.debug_keys_held.contains(&key) {
+                return;
+            }
+            if self.handle_debug_key(key) {
+                self.focus.debug_keys_held.insert(key);
+                return;
+            }
             self.input.process_key_down(key);
-        } else {
+        } else if !self.focus.debug_keys_held.remove(&key) {
             self.input.process_key_up(key);
         }
     }
