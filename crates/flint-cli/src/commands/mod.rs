@@ -13,6 +13,7 @@ pub mod entity;
 pub mod env;
 pub mod examples;
 pub mod export;
+pub mod frame;
 pub mod frame_seq;
 pub mod gen;
 pub mod gen_ai;

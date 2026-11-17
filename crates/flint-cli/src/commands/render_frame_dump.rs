@@ -32,6 +32,41 @@ impl<'a> Wanted<'a> {
     }
 }
 
+/// Where the frame came from, for the manifest's `scene` and `frame`
+/// (#1087): the scene file as given and the game time it was drawn at.
+pub(super) struct Origin<'a> {
+    pub scene: &'a str,
+    pub game_time: Option<f64>,
+}
+
+impl Origin<'_> {
+    /// Lay the origin, the writer and the moment on `description`.
+    fn lay(&self, description: &mut flint_render::frame_capture::FrameDescription) {
+        let bytes = std::fs::read(self.scene).ok();
+        let name = bytes
+            .as_deref()
+            .and_then(|b| std::str::from_utf8(b).ok())
+            .and_then(|text| text.parse::<toml::Table>().ok())
+            .and_then(|t| t.get("scene")?.get("name")?.as_str().map(String::from))
+            .unwrap_or_default();
+        description.scene = Some(flint_render::frame_capture::SceneDescription {
+            path: self.scene.replace('\\', "/"),
+            name,
+            sha256: bytes.map(|b| flint_core::ContentHash::from_bytes(&b).to_hex()),
+        });
+        // As the player writes it (#1086): the version, the commit left
+        // to a host that asks git
+        description.engine = Some(flint_render::frame_capture::EngineDescription {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            commit: None,
+            dirty: None,
+        });
+        description.frame.game_time = self.game_time;
+        description.written_by = Some("flint render".into());
+        description.captured_at = Some(super::frame::utc_now());
+    }
+}
+
 /// What [`arm`] changed, for [`write`] to put back.
 pub(super) struct Armed {
     /// The timer was off before and is on for this frame.
@@ -71,6 +106,7 @@ pub(super) fn write(
     renderer: &mut SceneRenderer,
     world: Option<&flint_ecs::FlintWorld>,
     wanted: Wanted,
+    origin: Origin,
 ) -> Result<Vec<String>> {
     // The capture's copies, mapped and waited for: `flint render` has no
     // frame to keep (ADR 0126 decision 5)
@@ -107,6 +143,7 @@ pub(super) fn write(
     if let Some(timings) = &timings {
         description.lay_gpu_times(timings);
     }
+    origin.lay(&mut description);
     let timed = if timings.is_some() {
         ", GPU-timed"
     } else {

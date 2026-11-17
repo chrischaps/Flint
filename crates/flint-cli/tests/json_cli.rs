@@ -283,6 +283,36 @@ fn every_command_answers_with_one_json_document() {
     run("dxc notices");
     let _ = json(&dir, &["dxc", "notices"]); // a build without DXC says so as an error
 
+    // flint frame: the frozen captures (#1087), read anywhere
+    let two = r("tests/fixtures/frames/two_crates.flintframe");
+    let one = r("tests/fixtures/frames/one_crate.flintframe");
+    run("frame show");
+    assert_eq!(
+        ok(&dir, &["frame", "show", &two])["summary"]["draws"]["draw_calls"],
+        3
+    );
+    assert!(ok(
+        &dir,
+        &[
+            "frame",
+            "show",
+            &two,
+            "--passes",
+            "--draws",
+            "--targets",
+            "--hitch"
+        ]
+    )["passes"]
+        .is_array());
+    run("frame diff");
+    assert!(ok(&dir, &["frame", "diff", &two, &one])["draws"]["vanished"].is_array());
+    run("frame image");
+    assert!(ok(
+        &dir,
+        &["frame", "image", &two, "Scene", "-o", "out/scene.png"]
+    )["written"]
+        .is_array());
+
     run("style new");
     assert_eq!(
         ok(&dir, &["style", "new", "glow", "--dir", "styles"])["name"],

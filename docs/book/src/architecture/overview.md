@@ -395,7 +395,7 @@ Standalone player binary that wires together runtime, physics, audio, animation,
 
 ### flint-cli
 
-Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: `init`, `entity`, `scene`, `query`, `schema`, `script`, `edit`, `validate`, `check`, `examples`, `env`, `bundle`, `export`, `music`, `goldens`, `prefab`, `asset`, `play`, `gen`, `render`, `dxc` and `style`, of which `music` holds the rhythm-game tools (`validate`, `play`, `render`, `calibrate`, `chart play`, `chart replay`; top-level commands until #709, whose old names still run for one release). The pre-`edit` tools (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`, `spline-edit`) survive as hidden subcommands. [The CLI reference](../cli-reference/overview.md) covers each one.
+Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: `init`, `entity`, `scene`, `query`, `schema`, `script`, `edit`, `validate`, `check`, `frame`, `examples`, `env`, `bundle`, `export`, `music`, `goldens`, `prefab`, `asset`, `play`, `gen`, `render`, `dxc` and `style`, of which `music` holds the rhythm-game tools (`validate`, `play`, `render`, `calibrate`, `chart play`, `chart replay`; top-level commands until #709, whose old names still run for one release). The pre-`edit` tools (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`, `spline-edit`) survive as hidden subcommands. [The CLI reference](../cli-reference/overview.md) covers each one.
 
 ### tools/arch-analyzer
 

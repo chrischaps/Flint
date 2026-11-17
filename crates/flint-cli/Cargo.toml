@@ -68,6 +68,9 @@ wgpu = { workspace = true }
 pollster = { workspace = true }
 glam = { workspace = true }
 image = { workspace = true, features = ["gif"] }
+# A frame capture's float and depth targets (#1087): flint-render writes them
+# with this crate (#1085), so `flint frame` reads them with it, same version
+exr = { version = "1.74", default-features = false }
 # Already in the tree through `image`. Used directly so that a GIF can share one
 # palette across its frames, which `image`'s encoder doesn't do (gif_writer.rs).
 gif = "0.14"

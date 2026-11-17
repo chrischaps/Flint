@@ -1743,6 +1743,7 @@ dependencies = [
  "egui-snarl",
  "egui-wgpu",
  "egui-winit",
+ "exr",
  "flint-ai-core",
  "flint-animation",
  "flint-asset",
