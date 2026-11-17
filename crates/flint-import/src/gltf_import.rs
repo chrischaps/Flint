@@ -36,7 +36,7 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
                     return Ok(hit.clone());
                 }
                 drop(memo);
-                let result = decode_gltf(path)?;
+                let result = decode_gltf(path, Images::Decode)?;
                 if let Some(kept) = MEMO.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
                     kept.insert(path.to_path_buf(), result.clone());
                 }
@@ -44,11 +44,33 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
             }
         }
     }
-    decode_gltf(path)
+    decode_gltf(path, Images::Decode)
 }
 
-fn decode_gltf(path: &Path) -> Result<ImportResult> {
-    let (document, buffers, images) = import_via_vfs(path)
+/// A glTF or GLB file's meshes and nodes, without decoding its images:
+/// what a collider or a bounds query needs, for a fraction of the time
+/// (decoding textures is most of an import). `textures` is empty; the
+/// materials still name theirs. A file [`memoize_imports`] already holds
+/// is that whole import.
+pub fn import_gltf_geometry<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
+    let path = path.as_ref();
+    if let Some(kept) = MEMO.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        if let Some(hit) = kept.get(path) {
+            return Ok(hit.clone());
+        }
+    }
+    decode_gltf(path, Images::Skip)
+}
+
+/// Whether an import decodes the file's images.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Images {
+    Decode,
+    Skip,
+}
+
+fn decode_gltf(path: &Path, images: Images) -> Result<ImportResult> {
+    let (document, buffers, images) = import_via_vfs(path, images)
         .map_err(|e| FlintError::ImportError(format!("Failed to import glTF: {}", e)))?;
 
     let hash = ContentHash::from_file(path)
@@ -800,6 +822,7 @@ fn build_keyframes(
 /// `data:` URIs and buffer views never touch a file, so gltf decodes those.
 fn import_via_vfs(
     path: &Path,
+    decode_images: Images,
 ) -> gltf::Result<(
     gltf::Document,
     Vec<gltf::buffer::Data>,
@@ -834,7 +857,12 @@ fn import_via_vfs(
     }
 
     let mut images = Vec::new();
-    for img in document.images() {
+    let wanted = if decode_images == Images::Decode {
+        document.images().len()
+    } else {
+        0
+    };
+    for img in document.images().take(wanted) {
         let data = match img.source() {
             gltf::image::Source::Uri { uri, mime_type } if !uri.starts_with("data:") => {
                 let encoded = read_uri(base, uri)?;
@@ -1073,5 +1101,71 @@ mod tests {
             (2, 1)
         );
         assert_eq!(percent_decode("a%2fb%zz%"), "a/b%zz%");
+    }
+
+    /// A collider's triangles (#729): the geometry read skips the images,
+    /// and each node's triangles are placed by its chain of transforms.
+    #[test]
+    fn the_triangles_are_placed_by_their_nodes_and_no_image_is_decoded() {
+        use flint_core::vfs::MemorySource;
+        use std::sync::Arc;
+
+        let positions: [[f32; 3]; 3] = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let bin: Vec<u8> = positions
+            .iter()
+            .flatten()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        // The same triangle twice: as it is, and under a parent moved 10 up
+        // whose child is scaled 2 and turned a quarter about Z
+        let gltf = r#"{
+            "asset": { "version": "2.0" },
+            "scene": 0,
+            "scenes": [{ "nodes": [0, 1] }],
+            "nodes": [
+                { "name": "plain", "mesh": 0 },
+                { "name": "lifted", "translation": [0, 10, 0], "children": [2] },
+                { "name": "turned", "mesh": 0, "scale": [2, 2, 2],
+                  "rotation": [0, 0, 0.70710678, 0.70710678] }
+            ],
+            "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }],
+            "buffers": [{ "uri": "tri.bin", "byteLength": 36 }],
+            "bufferViews": [{ "buffer": 0, "byteLength": 36 }],
+            "accessors": [{
+                "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+                "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0]
+            }],
+            "images": [{ "uri": "missing.png" }],
+            "textures": [{ "source": 0 }]
+        }"#;
+        let mut bundle = MemorySource::new();
+        bundle.insert("models/tri.gltf", gltf);
+        bundle.insert("models/tri.bin", bin);
+        let bundle = Arc::new(bundle);
+        // The image isn't there: a full import fails, the geometry doesn't
+        // read it
+        assert!(vfs::scoped(bundle.clone(), || import_gltf("models/tri.gltf")).is_err());
+        let result = vfs::scoped(bundle, || import_gltf_geometry("models/tri.gltf")).unwrap();
+        assert!(result.textures.is_empty());
+
+        let (points, triangles) = result.triangles();
+        assert_eq!(triangles.len(), 2);
+        let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5);
+        let placed: Vec<[f32; 3]> = triangles
+            .iter()
+            .flat_map(|t| t.map(|i| points[i as usize]))
+            .collect();
+        let expect = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            // x axis turned to +y, scaled 2, lifted 10
+            [0.0, 10.0, 0.0],
+            [0.0, 12.0, 0.0],
+            [-2.0, 10.0, 0.0],
+        ];
+        for p in expect {
+            assert!(placed.iter().any(|q| near(*q, p)), "{p:?} in {placed:?}");
+        }
     }
 }

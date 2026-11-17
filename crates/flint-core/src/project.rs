@@ -82,7 +82,7 @@ pub use root::guessed_root;
 pub const MANIFEST_FILE: &str = "flint.toml";
 
 /// The keys `[project]` may hold.
-const PROJECT_KEYS: [&str; 7] = [
+const PROJECT_KEYS: [&str; 8] = [
     "id",
     "schemas",
     "scene",
@@ -90,7 +90,12 @@ const PROJECT_KEYS: [&str; 7] = [
     "strict",
     "save_version",
     "diagnostics",
+    "physics",
 ];
+
+/// How many layers `[project.physics] layers` may name besides `default`:
+/// Rapier has 32 collision groups and `default` is the first (#729).
+pub const MAX_PHYSICS_LAYERS: usize = 31;
 
 /// Why a directory was taken as the project root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,10 +154,19 @@ pub enum ProjectError {
 
     /// `[project]` holds a key this version doesn't know.
     #[error(
-        "{}: unknown key `{key}` in [project] (the keys are id, schemas, scene, input, strict, save_version, diagnostics)",
+        "{}: unknown key `{key}` in [project] (the keys are id, schemas, scene, input, strict, save_version, diagnostics, physics)",
         file.display()
     )]
     UnknownKey { file: PathBuf, key: String },
+
+    /// `[project.physics]` that can't be the project's collision layers: a
+    /// key other than `layers`, a name twice or empty, or too many (#729).
+    #[error("{}: `{key}`: {message}", file.display())]
+    BadPhysics {
+        file: PathBuf,
+        key: String,
+        message: String,
+    },
 
     /// An entry of `[project.diagnostics] allow` that names no code a
     /// project may allow (#795), or a key of `[project.diagnostics]` other
@@ -198,6 +212,10 @@ pub struct Project {
     /// accepts, left out of what `flint_scene::diagnose`, the loaders,
     /// `flint validate` and `flint check` report (they say how many).
     pub allow: Vec<crate::diagnostic::Allow>,
+    /// `[project.physics] layers` (#729): the collision layers a
+    /// `collider.layer` and `collider.mask` may name, besides `default`,
+    /// which is always the first. Empty when the manifest doesn't say.
+    pub physics_layers: Vec<String>,
 }
 
 static OVERRIDE: OnceLock<Project> = OnceLock::new();
@@ -304,6 +322,7 @@ impl Project {
             strict: false,
             save_version: 0,
             allow: Vec::new(),
+            physics_layers: Vec::new(),
         }
     }
 
@@ -393,6 +412,9 @@ impl Project {
         };
         if let Some(value) = table.get("diagnostics") {
             self.allow = read_allow(file, value)?;
+        }
+        if let Some(value) = table.get("physics") {
+            self.physics_layers = read_physics_layers(file, value)?;
         }
         if let Some(value) = table.get("schemas") {
             let list = value
@@ -815,6 +837,68 @@ fn marker(dir: &Path, home: Option<&Path>) -> Option<Found> {
 
 /// `[project.diagnostics]`: a table holding `allow`, a list of
 /// [`Allow`](crate::diagnostic::Allow) entries.
+/// `[project.physics]`: `layers`, a list of distinct non-empty names
+/// (`default` may be among them; it is always the first layer), at most
+/// [`MAX_PHYSICS_LAYERS`] others.
+fn read_physics_layers(file: &Path, value: &toml::Value) -> Result<Vec<String>, ProjectError> {
+    let bad = |key: &str, message: String| ProjectError::BadPhysics {
+        file: file.to_path_buf(),
+        key: key.to_string(),
+        message,
+    };
+    let table = value.as_table().ok_or_else(|| ProjectError::WrongType {
+        file: file.to_path_buf(),
+        key: "project.physics".into(),
+        expected: "a table",
+        got: kind_of(value),
+    })?;
+    if let Some(key) = table.keys().find(|k| k.as_str() != "layers") {
+        return Err(bad(
+            &format!("project.physics.{key}"),
+            "unknown key (the one key is `layers`)".into(),
+        ));
+    }
+    let Some(list) = table.get("layers") else {
+        return Ok(Vec::new());
+    };
+    let list = list.as_array().ok_or_else(|| ProjectError::WrongType {
+        file: file.to_path_buf(),
+        key: "project.physics.layers".into(),
+        expected: "a list of layer names",
+        got: kind_of(list),
+    })?;
+    let mut names: Vec<String> = Vec::new();
+    for (i, entry) in list.iter().enumerate() {
+        let key = format!("project.physics.layers[{i}]");
+        let Some(name) = entry.as_str() else {
+            return Err(ProjectError::WrongType {
+                file: file.to_path_buf(),
+                key,
+                expected: "a string",
+                got: kind_of(entry),
+            });
+        };
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(bad(&key, "a layer name is empty".into()));
+        }
+        if names.iter().any(|n| n == name) {
+            return Err(bad(&key, format!("`{name}` is listed twice")));
+        }
+        names.push(name.to_string());
+    }
+    let others = names.iter().filter(|n| n.as_str() != "default").count();
+    if others > MAX_PHYSICS_LAYERS {
+        return Err(bad(
+            "project.physics.layers",
+            format!(
+                "{others} layers besides `default`; Rapier has 32 collision groups, so at most {MAX_PHYSICS_LAYERS}"
+            ),
+        ));
+    }
+    Ok(names)
+}
+
 fn read_allow(
     file: &Path,
     value: &toml::Value,
@@ -1222,6 +1306,48 @@ save_version = 1.5
                 let said = err.to_string();
                 assert!(said.contains(&file.display().to_string()), "{said}");
                 assert!(said.contains(&format!("`{key}`")), "{said}");
+            });
+        }
+    }
+
+    /// `[project.physics] layers` (#729): the collision layers, as written;
+    /// a name twice, an empty one, too many or another key is refused by key.
+    #[test]
+    fn the_manifest_names_the_collision_layers() {
+        let text = "[project]\nid = \"x\"\n\n[project.physics]\n\
+                    layers = [\"world\", \"player\", \"pickup\"]\n";
+        with_files(&[("game/flint.toml", text)], || {
+            let project = discover("game").unwrap();
+            assert_eq!(project.physics_layers, ["world", "player", "pickup"]);
+        });
+        let many: Vec<String> = (0..32).map(|i| format!("\"l{i}\"")).collect();
+        let many = format!("[project.physics]\nlayers = [{}]\n", many.join(", "));
+        let refused = [
+            (
+                "[project.physics]\nlayers = [\"a\", \"a\"]\n",
+                "project.physics.layers[1]",
+                "listed twice",
+            ),
+            (
+                "[project.physics]\nlayers = [\"\"]\n",
+                "project.physics.layers[0]",
+                "empty",
+            ),
+            (
+                "[project.physics]\nlayer = []\n",
+                "project.physics.layer",
+                "the one key is `layers`",
+            ),
+            (many.as_str(), "project.physics.layers", "at most 31"),
+        ];
+        for (text, key, says) in refused {
+            with_files(&[("game/flint.toml", text)], || {
+                let err = discover("game").unwrap_err();
+                assert!(
+                    matches!(&err, ProjectError::BadPhysics { key: k, .. } if k == key),
+                    "{text}: {err}"
+                );
+                assert!(err.to_string().contains(says), "{err}");
             });
         }
     }

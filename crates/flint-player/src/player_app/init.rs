@@ -853,7 +853,7 @@ impl PlayerApp {
     /// answer when it differs: at the first load, and after a transition,
     /// which may cross into another project's root (or a `flint.toml` may
     /// have changed under a long session). `--project` pins one answer.
-    pub(super) fn refresh_project(&mut self) {
+    pub(crate) fn refresh_project(&mut self) {
         let next = flint_core::project::Project::for_scene(Path::new(&self.core.scene_path));
         if next != self.core.project {
             tracing::info!(
@@ -862,6 +862,19 @@ impl PlayerApp {
                 next.found.describe()
             );
             self.core.project = next;
+        }
+        self.declare_audio_buses();
+    }
+
+    /// The mixer's buses from the project's `flint.toml` `[audio.buses]`
+    /// (#730). The engine applies a table once, so this is free at every
+    /// scene of one project and keeps the volumes set since; a project
+    /// with another table adds its buses. A manifest that doesn't read is
+    /// said and the buses stay as they are.
+    pub(crate) fn declare_audio_buses(&mut self) {
+        match flint_audio::Buses::for_project(&self.core.project) {
+            Ok(buses) => self.audio.engine.set_buses(&buses),
+            Err(e) => tracing::error!(target: "load", "audio buses: {e}"),
         }
     }
 

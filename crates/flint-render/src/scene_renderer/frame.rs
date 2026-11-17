@@ -90,8 +90,8 @@ pub struct FrameInputs<'a> {
     /// the component's.
     pub ocean_tint: Option<crate::ocean_pipeline::OceanTint>,
     /// A frame debugger's controls over what is drawn (#1089): entities
-    /// left out of every pass, and the scene pass stopped after its Nth
-    /// draw. Debug only: `None`, every frame a game draws, changes nothing.
+    /// left out of every pass, and one pass stopped after its Nth draw.
+    /// Debug only: `None`, every frame a game draws, changes nothing.
     pub draw_controls: Option<&'a DrawControls>,
 }
 
@@ -105,11 +105,72 @@ pub struct DrawControls {
     /// mask or the selection. Grass, water and the sky aren't entity draws
     /// and stay.
     pub hidden: Vec<flint_core::EntityId>,
-    /// The scene pass draws only its first N draws, counted as its
-    /// description lists them (`flint frame show --draws --pass Scene`:
-    /// the entities' draws with grass and 2D sprite batches among them).
-    /// The sky, water and the grid aren't counted and always draw.
-    pub scene_draws: Option<usize>,
+    /// One pass drawn only up to its Nth draw (#1204); every other pass
+    /// draws whole.
+    pub limit: Option<DrawLimit>,
+}
+
+impl DrawControls {
+    /// The draw limit, when it is `pass`'s.
+    pub fn limit_of(&self, pass: SteppedPass) -> Option<usize> {
+        self.limit.filter(|l| l.pass == pass).map(|l| l.draws)
+    }
+}
+
+/// A pass stopped after its first `draws` draws (#1204), counted as the
+/// frame's description lists that pass's draws (`flint frame show --draws
+/// --pass <name>`): step N ends on its row N.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DrawLimit {
+    pub pass: SteppedPass,
+    pub draws: usize,
+}
+
+/// A pass a replay can step a draw at a time (#1204): one whose draws are
+/// the frame's draw items again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SteppedPass {
+    /// The scene pass: the entities' draws with grass and 2D sprite batches
+    /// among them; the sky, water and grid aren't counted and always draw.
+    /// What follows the scene (the style mask and albedo, the fog veil, the
+    /// selection) draws only what it drew.
+    Scene,
+    /// A shadow map layer, by index: a cascade (0 to 2) or the casting
+    /// spot's ([`SPOT_SHADOW_LAYER`](crate::shadow::SPOT_SHADOW_LAYER)).
+    /// Its casters in list order; the grass it casts isn't counted. The
+    /// scene still reads the whole of every other layer.
+    Shadow(usize),
+    /// The entity style mask's styled draws; the veil over them stays whole.
+    StyleMask,
+    /// The style albedo's opaque meshes.
+    StyleAlbedo,
+}
+
+impl SteppedPass {
+    /// Every pass that can be stepped, in frame order.
+    pub fn all() -> impl Iterator<Item = SteppedPass> {
+        std::iter::once(SteppedPass::Scene)
+            .chain((0..crate::shadow::SHADOW_LAYERS).map(SteppedPass::Shadow))
+            .chain([SteppedPass::StyleMask, SteppedPass::StyleAlbedo])
+    }
+
+    /// Its pass's name in the frame's description (`Shadow cascade 0`).
+    pub fn name(self) -> &'static str {
+        match self {
+            SteppedPass::Scene => "Scene",
+            SteppedPass::Shadow(n) => super::render_passes::SHADOW_PASS_LABELS
+                .get(n)
+                .copied()
+                .unwrap_or("Shadow"),
+            SteppedPass::StyleMask => "Style mask",
+            SteppedPass::StyleAlbedo => "Style albedo",
+        }
+    }
+
+    /// The pass named `name` in a frame's description, if it can be stepped.
+    pub fn from_name(name: &str) -> Option<SteppedPass> {
+        Self::all().find(|p| p.name().eq_ignore_ascii_case(name.trim()))
+    }
 }
 
 impl Default for FrameInputs<'_> {
@@ -819,6 +880,9 @@ impl SceneRenderer {
             let scope = scopes.begin(encoder, "Style mask");
             self.encode_style_mask(device, queue, encoder, depth_view, depth_key);
             scopes.end(encoder, scope);
+            if let Some(pass) = scopes.log().and_then(|l| l.named("Style mask")) {
+                self.log_style_mask_draws(pass);
+            }
             scopes.note("Style mask", |p| {
                 p.reads(&[sd])
                     .writes(&["style veil", crate::style_mask::MASK_TARGET]);
@@ -838,6 +902,9 @@ impl SceneRenderer {
             let scope = scopes.begin(encoder, "Style albedo");
             self.encode_style_albedo(device, encoder, depth_view);
             scopes.end(encoder, scope);
+            if let Some(pass) = scopes.log().and_then(|l| l.named("Style albedo")) {
+                self.log_style_albedo_draws(pass);
+            }
             scopes.note("Style albedo", |p| {
                 p.reads(&[sd]).writes(&[crate::style_albedo::ALBEDO_TARGET]);
             });

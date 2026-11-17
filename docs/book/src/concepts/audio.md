@@ -38,15 +38,32 @@ In the browser, and whenever a late bundle of audio arrives, nothing is decoded 
 
 ## Mixer Buses
 
-Every ordinary sound routes through one of two buses — `music` and `sfx` — both children
-of Kira's main track. (A running [music session](music-sessions.md) adds its own stem mixer, one bus per stem the suite names, on the same device; that mixer is owned by `flint-music`, not by `audio_source`, and is described on its own page.)
+Every ordinary sound routes through a bus. Every game has two, `sfx` and `music`, both children
+of Kira's main track, and a game adds its own in its `flint.toml`. (A running [music session](music-sessions.md) adds its own stem mixer, one bus per stem the suite names, on the same device; that mixer is owned by `flint-music`, not by `audio_source`, and is described on its own page.)
+
+```toml
+# flint.toml, beside [project]
+[audio.buses.voice]          # under the main track
+volume = 0.9
+
+[audio.buses.ui]
+parent = "sfx"               # turned down whenever sfx is
+volume = 0.7
+
+[audio.buses.music]          # a built-in bus takes a starting volume, not a parent
+volume = 0.8
+```
 
 ```
-main  ──┬── music     (audio_source.bus = "music")
-        └── sfx       (everything else, including all one-shots)
+main  ──┬── sfx       (the default: one-shots and sources that name no bus)
+        │    └── ui
+        ├── music
+        └── voice
 ```
 
-Opt a source into the music bus in the scene:
+A bus's `parent` is another bus, or `master` (the default) for the main track; `volume` is where it starts, linear, 1 by default. A bus's volume scales everything under it, its children's buses included. A mistake in the table (a parent that isn't a bus, a loop, an unknown key, a negative volume) is an error naming `flint.toml` and the key, and the game keeps the buses it had. The game's buses are numbered after the built-in two, by name with each parent first, and are made in the mixer whether it runs on this thread or in the browser's worklet.
+
+Opt a source into a bus in the scene:
 
 ```toml
 [entities.score.audio_source]
@@ -56,7 +73,9 @@ loop = true
 autoplay = true
 ```
 
-Initial gains come from the CLI:
+A script names a bus in `play_sound`'s options (`#{ bus: "voice" }`) and turns one up or down by name with `set_bus_volume("voice", 0.5)`. A name that is no bus is reported once: a sound plays on `sfx`, and `set_bus_volume` changes nothing.
+
+The CLI's flags scale the built-in two from where the game starts them:
 
 ```bash
 flint play scene.toml --music-volume 0.8 --sfx-volume 1.0
@@ -67,11 +86,11 @@ flint play scene.toml --music-volume 0     # mute the score, keep the world
 between two music beds keeps working at any bus gain, and a player who has
 turned the music down does not have their fades overridden.
 
-The master low-pass applies to both buses, so `set_audio_lowpass` muffles the
+The master low-pass applies to every bus, so `set_audio_lowpass` muffles the
 entire mix — score included — which is what you want when the effect is
 "something is between you and the world" rather than "the sfx got quieter".
 
-One-shots (`play_sound`, `play_sound_at`) are always sfx.
+When the page holds the game (it is hidden, or paused by the browser), every bus under the main track fades out and comes back to the volume it was at.
 
 ## Music Sessions
 
@@ -97,7 +116,7 @@ Three component schemas define audio behavior:
 | `min_distance` | f32 | 1.0 | Distance at full volume |
 | `max_distance` | f32 | 25.0 | Distance at silence |
 | `autoplay` | bool | true | Start playing on scene load |
-| `bus` | string | `"sfx"` | Mixer bus: `"sfx"` or `"music"`. Any other name plays on `sfx` and is reported once ([Diagnostics while the game runs](schemas.md#diagnostics-while-the-game-runs)) |
+| `bus` | string | `"sfx"` | Mixer bus: `"sfx"`, `"music"` or one the game declares in `flint.toml` ([Mixer Buses](#mixer-buses)). Any other name plays on `sfx` and is reported once ([Diagnostics while the game runs](schemas.md#diagnostics-while-the-game-runs)) |
 
 > **Looping component sources must keep `autoplay = true`.** Components have no
 > play/stop API — scripts can only fade their volume. If you need a sound that
@@ -183,7 +202,7 @@ Audio can be controlled from [Rhai scripts](scripting.md) using deferred command
 |----------|-------------|
 | `play_sound(name)` | Play a non-spatial sound at default volume; returns its handle |
 | `play_sound(name, volume)` | Play a non-spatial sound at the given volume (0.0--1.0) |
-| `play_sound(name, opts)` | Play a non-spatial sound with options: `volume`, `pitch`, `looping`, `bus` (`"sfx"` or `"music"`), each optional |
+| `play_sound(name, opts)` | Play a non-spatial sound with options: `volume`, `pitch`, `looping`, `bus` (`"sfx"`, `"music"` or a bus the game declares), each optional |
 | `play_sound(name, volume, pitch)` | As above, with a pitch multiplier |
 | `play_sound_at(name, x, y, z, volume)` | Play a spatial sound at a 3D position; returns its handle |
 | `play_sound_at(name, x, y, z, volume, pitch)` | As above, with a pitch multiplier |
@@ -193,6 +212,7 @@ Audio can be controlled from [Rhai scripts](scripting.md) using deferred command
 | `stop_sound(handle_or_name, fade)` | As above, fading out over `fade` seconds |
 | `set_sound_volume(handle, volume)` | Set a playing sound's volume (0.0--1.0) |
 | `set_sound_volume(handle, volume, fade)` | Fade it there over `fade` seconds |
+| `set_bus_volume(bus, volume)` | Set a [mixer bus](#mixer-buses)'s volume by name (`"music"`, `"voice"`...): it scales every sound on the bus and on the buses under it |
 | `audio_position(entity)` | Seconds into the sound the entity's `audio_source` is playing, wrapped for a loop, on the mixer's clock; `-1.0` before it has started and after it ends. See [Keeping time with the music](#keeping-time-with-the-music) |
 | `audio_output_latency()` | How long after it is mixed a sound is heard, seconds, where the platform says (the browser); `-1.0` where it doesn't (the desktop) |
 
@@ -231,7 +251,7 @@ fn on_interact() {
 - `stop_sound(handle)` stops one sound. `stop_sound(name)` stops every sound a script started under that name, found the same way `play_sound` finds it (see [Sound names](#sound-names)). Neither touches `audio_source`s or trigger sounds.
 - A stop or volume change with no fade still takes 10 ms, so a cut doesn't click.
 - A handle for a sound that has ended, was stopped, or never started (an unknown name, a one-shot placed out of earshot) does nothing and gives no warning.
-- The options map's loop key is `looping`. `loop` is a Rhai keyword, so `#{ loop: true }` doesn't parse. An unknown key, a value of the wrong type or an unknown `bus` is ignored, and the script gets one warning per function and key.
+- The options map's loop key is `looping`. `loop` is a Rhai keyword, so `#{ loop: true }` doesn't parse. An unknown key or a value of the wrong type is ignored, and the script gets one warning per function and key; a `bus` that names no bus plays on `sfx`, with one warning from the engine.
 - A placed loop starts even when the listener is out of earshot, so it is heard when the listener comes back. A placed one-shot out of earshot isn't started at all.
 - The desktop and the browser behave the same: the handle reaches kira on the desktop, and the worklet's mixer on the web.
 

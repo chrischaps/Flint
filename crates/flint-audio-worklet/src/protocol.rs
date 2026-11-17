@@ -11,9 +11,14 @@
 //! to write batches, and the worklet crate reads them, so both sides are
 //! always built from the same encoding.
 
-/// The mixer bus a sound or a spatial track hangs off.
+/// The mixer bus a sound or a spatial track hangs off. These two are
+/// every mixer's from the start; a game's own buses (#730) follow them,
+/// numbered in the order [`Command::BusNew`] makes them.
 pub const BUS_SFX: u8 = 0;
 pub const BUS_MUSIC: u8 = 1;
+/// The parent a bus names when it hangs off the main track (where the
+/// master low-pass is) rather than off another bus.
+pub const BUS_MAIN: u8 = u8::MAX;
 
 /// Where a voice plays: a bus, or a spatial track made earlier.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,6 +39,14 @@ pub enum Command {
         bus: u8,
         db: f32,
         tween: f32,
+    },
+    /// A game's bus (#730): `bus` is the next number after the buses there
+    /// are, under `parent` (a bus made earlier, or [`BUS_MAIN`]), starting
+    /// at `db`.
+    BusNew {
+        bus: u8,
+        parent: u8,
+        db: f32,
     },
     /// Place the listener, making it if there is none yet.
     Listener {
@@ -180,6 +193,11 @@ mod op {
     pub const VOICE_PAUSE: u8 = 16;
     pub const VOICE_RESUME: u8 = 17;
     pub const VOICE_WATCH: u8 = 18;
+    pub const BUS_NEW: u8 = 19;
+    /// The highest op: every one from 1 to this reads back
+    /// (`every_op_reads_back`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub const LAST: u8 = BUS_NEW;
 }
 
 struct Writer<'a>(&'a mut Vec<u8>);
@@ -215,6 +233,9 @@ impl Command {
             }
             Command::BusVolume { bus, db, tween } => {
                 w.u8(op::BUS_VOLUME).u8(bus).f32(db).f32(tween);
+            }
+            Command::BusNew { bus, parent, db } => {
+                w.u8(op::BUS_NEW).u8(bus).u8(parent).f32(db);
             }
             Command::Listener { pos, quat } => {
                 w.u8(op::LISTENER).f32s(&pos).f32s(&quat);
@@ -360,6 +381,11 @@ impl<'a> Reader<'a> {
                 db: self.f32()?,
                 tween: self.f32()?,
             },
+            op::BUS_NEW => Command::BusNew {
+                bus: self.u8()?,
+                parent: self.u8()?,
+                db: self.f32()?,
+            },
             op::LISTENER => Command::Listener {
                 pos: self.vec3()?,
                 quat: [self.f32()?, self.f32()?, self.f32()?, self.f32()?],
@@ -469,6 +495,16 @@ mod tests {
                 db: -6.0,
                 tween: 0.016,
             },
+            Command::BusNew {
+                bus: 2,
+                parent: BUS_MAIN,
+                db: -3.0,
+            },
+            Command::BusNew {
+                bus: 3,
+                parent: BUS_SFX,
+                db: 0.0,
+            },
             Command::Listener {
                 pos: [1.0, 2.0, 3.0],
                 quat: [0.0, 0.0, 0.0, 1.0],
@@ -558,6 +594,25 @@ mod tests {
         let read: Vec<Command> = reader.by_ref().collect();
         assert_eq!(read, commands);
         assert_eq!(reader.error, None);
+    }
+
+    /// Every op the encoder writes is one the reader takes: a new `Command`
+    /// needs its arm in `encode` and in the worklet's `Mixer::command` (or
+    /// nothing compiles), and its op, its arm in the reader and an example
+    /// above, or this fails.
+    #[test]
+    fn every_op_reads_back() {
+        let mut ops: Vec<u8> = every_command()
+            .iter()
+            .map(|c| {
+                let mut bytes = Vec::new();
+                c.encode(&mut bytes);
+                bytes[0]
+            })
+            .collect();
+        ops.sort();
+        ops.dedup();
+        assert_eq!(ops, (1..=op::LAST).collect::<Vec<_>>());
     }
 
     #[test]

@@ -104,13 +104,7 @@ impl App {
         let summary = super::super::show::summary_of(d, &shown);
         let exposure = super::super::image_out::exposure(d);
         let replayable = d.replay.as_ref().is_some_and(|r| r.available);
-        let scene_draws = d.pass("Scene").map_or(0, |p| p.draws.len());
-        let replay = Replay::new(
-            &capture.dir,
-            start.scene.clone(),
-            start.schemas.clone(),
-            scene_draws,
-        );
+        let replay = Replay::new(&capture.dir, start.scene.clone(), start.schemas.clone());
         let mut app = Self {
             replay,
             captured: None,
@@ -161,9 +155,9 @@ impl App {
         if let Some(controls) = &start.replay {
             app.replay.want = controls.clone();
             app.replay.start();
-            // A step of the scene pass is the scene pass's image
-            if controls.scene_draws.is_some() && start.pass.is_none() {
-                if let Some(row) = app.model.find_pass("Scene") {
+            // A step of a pass is that pass's image
+            if controls.draws.is_some() && start.pass.is_none() {
+                if let Some(row) = app.model.find_pass(controls.stepped_name()) {
                     app.selected = row;
                 }
             }
@@ -187,6 +181,11 @@ impl App {
                 let was = self.show(replayed, shown);
                 if self.captured.is_none() {
                     self.captured = Some(was);
+                }
+                // The CPU side stays the captured frame's: a replay runs no
+                // game loop, and those phases are the frame it draws (#1208)
+                if let Some((original, _)) = &self.captured {
+                    self.timing = std::mem::take(&mut self.timing).replaying(&original.description);
                 }
             }
             Err(e) => self.replay.status = Status::Failed(format!("{e:#}")),
@@ -233,6 +232,45 @@ impl App {
     /// Ask for the frame under `controls`.
     fn replay_with(&mut self, controls: Controls) {
         self.replay.ask(controls);
+    }
+
+    /// The pass the draw slider and `[` `]` step (#1204): the selected pass
+    /// when it can be stepped (a shadow layer, the style mask or albedo),
+    /// else the scene's.
+    fn stepped_pass(&self) -> flint_render::SteppedPass {
+        self.model
+            .passes
+            .get(self.selected)
+            .filter(|row| row.panel.is_none())
+            .and_then(|row| flint_render::SteppedPass::from_name(&row.name))
+            .unwrap_or(flint_render::SteppedPass::Scene)
+    }
+
+    /// The captured frame's draws of `pass`: the slider's end.
+    fn pass_draws(&self, pass: flint_render::SteppedPass) -> usize {
+        self.captured_description()
+            .pass(pass.name())
+            .map_or(0, |p| p.draws.len())
+    }
+
+    /// How many of `pass`'s draws the controls ask for: all of them unless
+    /// it is the pass they step.
+    fn asked_draws(&self, pass: flint_render::SteppedPass) -> usize {
+        let want = &self.replay.want;
+        match want.draws {
+            Some(n) if want.stepped() == Ok(pass) => n,
+            _ => self.pass_draws(pass),
+        }
+    }
+
+    /// The controls asked for, with `pass` drawn to its `k`th draw (`None`:
+    /// whole, which also lifts a limit on another pass).
+    fn stepped_to(&self, pass: flint_render::SteppedPass, k: Option<usize>) -> Controls {
+        let mut c = self.replay.want.clone();
+        c.draws = k;
+        c.pass = (k.is_some() && pass != flint_render::SteppedPass::Scene)
+            .then(|| pass.name().to_string());
+        c
     }
 
     /// Whether an image is still being read (a screenshot waits for it).
@@ -527,17 +565,16 @@ impl App {
                 }
             }
             if self.replay.status == Status::Ready {
-                let total = self.replay.scene_draws;
-                let now = self.replay.want.scene_draws.unwrap_or(total);
+                let pass = self.stepped_pass();
+                let total = self.pass_draws(pass);
+                let now = self.asked_draws(pass);
                 let step = |to: usize| (to < total).then_some(to);
                 if pressed(Key::OpenBracket) {
-                    let mut c = self.replay.want.clone();
-                    c.scene_draws = step(now.saturating_sub(1));
+                    let c = self.stepped_to(pass, step(now.saturating_sub(1)));
                     self.replay_with(c);
                 }
                 if pressed(Key::CloseBracket) {
-                    let mut c = self.replay.want.clone();
-                    c.scene_draws = step((now + 1).min(total));
+                    let c = self.stepped_to(pass, step((now + 1).min(total)));
                     self.replay_with(c);
                 }
                 if pressed(Key::O) {
@@ -1265,8 +1302,9 @@ impl App {
                     ink::ENTITY
                 };
                 let what = match m.image {
-                    "final" => "final image",
-                    _ => "scene pass ",
+                    "final" => "final image".to_string(),
+                    "scene" => "scene pass ".to_string(),
+                    _ => last.controls.stepped_name().to_lowercase(),
                 };
                 ui.label(
                     RichText::new(format!("{what}  {}", m.words()))
@@ -1286,36 +1324,46 @@ impl App {
             }
         }
 
-        // The scene pass, a draw at a time
-        let total = self.replay.scene_draws;
+        // The selected pass (the scene's unless another that can be is
+        // selected), a draw at a time (#1204)
+        let pass = self.stepped_pass();
+        let name = pass.name();
+        let total = self.pass_draws(pass);
         if total > 0 {
-            let mut k = self.replay.want.scene_draws.unwrap_or(total);
+            let mut k = self.asked_draws(pass);
             let mut moved = false;
+            let label = match pass {
+                flint_render::SteppedPass::Scene => "scene draws".to_string(),
+                flint_render::SteppedPass::Shadow(_)
+                | flint_render::SteppedPass::StyleMask
+                | flint_render::SteppedPass::StyleAlbedo => name.to_lowercase(),
+            };
             ui.horizontal(|ui| {
-                ui.label(RichText::new("scene draws").small().color(ink::DIM));
+                ui.label(RichText::new(label).small().color(ink::DIM));
                 let w = (ui.available_width() - 70.0).max(60.0);
                 ui.spacing_mut().slider_width = w;
                 moved = ui
                     .add(egui::Slider::new(&mut k, 0..=total).show_value(false))
-                    .on_hover_text("[ and ] step a draw")
+                    .on_hover_text(
+                        "[ and ] step a draw; select a shadow layer or a style pass to step it",
+                    )
                     .changed();
                 ui.label(RichText::new(format!("{k} / {total}")).monospace());
             });
             if moved {
-                let mut c = self.replay.want.clone();
-                c.scene_draws = (k < total).then_some(k);
+                let c = self.stepped_to(pass, (k < total).then_some(k));
                 self.replay_with(c);
-                // What the slider builds is the scene pass's image
-                if let Some(row) = self.model.find_pass("Scene") {
+                // What the slider builds is the stepped pass's image
+                if let Some(row) = self.model.find_pass(name) {
                     self.select_pass(row);
                 }
             }
-            let at = self.replay.want.scene_draws.unwrap_or(total);
+            let at = self.asked_draws(pass);
             // The replay's own last draw (hiding moves the count), else the
             // captured frame's at that place
             let drawn_here = self
                 .showing_replay()
-                .then(|| self.capture.description.pass("Scene"))
+                .then(|| self.capture.description.pass(name))
                 .flatten()
                 .filter(|p| p.draws.len() == at)
                 .and_then(|p| p.draws.last());
@@ -1323,7 +1371,7 @@ impl App {
                 .then(|| {
                     drawn_here.or_else(|| {
                         self.captured_description()
-                            .pass("Scene")
+                            .pass(name)
                             .and_then(|p| p.draws.get(at - 1))
                     })
                 })
@@ -1332,9 +1380,17 @@ impl App {
                     let who = d.entity.clone().unwrap_or_else(|| d.kind.clone());
                     format!("draw {at}: {who} · {} · {}", d.kind, d.layer)
                 });
+            let nothing = match pass {
+                flint_render::SteppedPass::Scene => {
+                    "nothing drawn yet: the sky and what isn't a draw"
+                }
+                flint_render::SteppedPass::Shadow(_) => "no caster drawn yet: the layer cleared",
+                flint_render::SteppedPass::StyleMask => "no styled draw yet: the mask cleared",
+                flint_render::SteppedPass::StyleAlbedo => "no mesh drawn yet: the albedo cleared",
+            };
             let words = match last_drawn {
                 Some(w) if at < total => w,
-                _ if at == 0 => "nothing drawn yet: the sky and what isn't a draw".to_string(),
+                _ if at == 0 => nothing.to_string(),
                 _ => "every draw".to_string(),
             };
             ui.label(RichText::new(words).small().color(ink::TEXT));
@@ -1797,6 +1853,9 @@ impl App {
                 if let Some(ms) = t.cpu_ms {
                     ui.label(RichText::new(format!("{ms:.2} ms")).small().color(ink::DIM));
                 }
+                if t.cpu_of_captured {
+                    ui.label(RichText::new("as captured").small().color(ink::FAINT));
+                }
             });
             if t.cpu.is_empty() {
                 ui.label(
@@ -1874,14 +1933,12 @@ impl App {
                             .color(ink::DIM),
                     );
                 }
+                if t.cpu_of_captured && !t.history.is_empty() {
+                    ui.label(RichText::new("as captured").small().color(ink::FAINT));
+                }
             });
             if t.history.is_empty() {
-                ui.label(
-                    RichText::new(
-                        "no frame history: the player's captures keep the frames around theirs",
-                    )
-                    .color(ink::FAINT),
-                );
+                ui.label(RichText::new(t.history_missing.clone()).color(ink::FAINT));
                 return;
             }
             let h = (ui.available_height() - 22.0).clamp(48.0, 140.0);
@@ -2323,6 +2380,59 @@ mod app_tests {
     fn shown_target(app: &App) -> Option<String> {
         let (shown, _) = app.images();
         shown.map(|(i, _)| app.model.images[i].image.target.clone())
+    }
+
+    #[test]
+    fn a_replay_of_a_player_capture_keeps_the_captured_frames_cpu_side() {
+        use flint_render::frame_capture::{CpuDescription, CpuFrame};
+        // The frozen fixture, as the player would have written it: one
+        // frame of history, the captured one
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/frames/two_crates.flintframe");
+        let mut capture = Capture::open(&path).unwrap();
+        let captured = CpuFrame {
+            index: 7,
+            ms: 16.5,
+            phases_ms: [("scripts".to_string(), 2.0), ("render".to_string(), 4.0)]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        capture.description.written_by = Some("flint-player".into());
+        capture.description.cpu = Some(CpuDescription {
+            frame: Some(captured.clone()),
+            window: vec![captured],
+            ..Default::default()
+        });
+        let mut app = App::new(capture, "two_crates".into(), &Start::default(), true, 8192);
+        assert!(!app.timing.cpu_of_captured);
+        // What `flint frame replay` writes: no CPU side of its own
+        let dir = std::env::temp_dir().join(format!("flint-1208-replay-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path.join("manifest.json")).unwrap())
+                .unwrap();
+        manifest["written_by"] = "flint frame replay".into();
+        manifest["cpu"] = serde_json::Value::Null;
+        std::fs::write(dir.join("manifest.json"), manifest.to_string()).unwrap();
+
+        app.show_replay(&dir);
+        assert!(app.showing_replay());
+        let t = &app.timing;
+        assert!(t.cpu_of_captured);
+        assert_eq!(t.cpu_ms, Some(16.5), "the captured frame's phases");
+        assert_eq!(t.cpu.len(), 2);
+        assert_eq!(t.history.len(), 1);
+        assert_eq!(t.cpu_missing, None, "nothing blames `flint render`");
+        // The strip draws with it
+        let ctx = egui::Context::default();
+        frame(&ctx, &mut app, &[]);
+        // and the captured frame put back is the capture's own again
+        app.show_captured();
+        assert!(!app.timing.cpu_of_captured);
+        assert_eq!(app.timing.cpu_ms, Some(16.5));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

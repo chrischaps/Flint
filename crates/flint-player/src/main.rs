@@ -11,6 +11,7 @@
 //!                [--expression-timeline <file>] [--expression-listen <ip:port>]
 //!                [--hitch-log <file>] [--max-hitches <n>]
 //!                [--capture-frame-at <secs>] [--capture-on-hitch[=<n>]]
+//!                [--capture-on-hitch-startup]
 //!   flint-player --bundle <game.flintpack> [scene.toml]
 //!
 //! Every flag but `--bundle` is `flint_player::PlayerArgs`, which `flint

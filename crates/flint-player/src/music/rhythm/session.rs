@@ -282,14 +282,17 @@ impl MusicSession {
             calibration_ms,
         };
 
-        // The shared manager (ADR 0017): the borrow ends at start — the
-        // session keeps only kira handles, the manager stays in the engine.
-        let Some(manager) = audio.manager_mut() else {
-            tracing::info!(target: "music", "no audio device — session skipped");
-            return Ok(None);
+        // Hosted on the engine's mixer (ADR 0017, #730): the borrow ends at
+        // start — the session keeps only kira handles, the manager stays in
+        // the engine, and the mixer says whether it can.
+        let opened = match audio.host(|manager| ChartSession::open_shared(&cfg, manager)) {
+            Ok(opened) => opened,
+            Err(why) => {
+                tracing::info!(target: "music", "{why}: session skipped");
+                return Ok(None);
+            }
         };
-        let (mut session, notices) =
-            ChartSession::open_shared(&cfg, manager).map_err(|e| anyhow!("{e}"))?;
+        let (mut session, notices) = opened.map_err(|e| anyhow!("{e}"))?;
         for n in notices {
             tracing::info!(target: "music", "{n}");
         }

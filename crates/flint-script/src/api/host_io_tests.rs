@@ -449,3 +449,63 @@ fn test_physics_api_without_physics() {
     engine.call_inits(&mut world);
     assert_eq!(probe_float(&world, id, "age"), 1.0, "on_init ran through");
 }
+
+/// A wall behind a pane of glass, each on its own layer (#729): a script's
+/// `raycast` meets the glass, or with a mask the wall, and an unknown
+/// layer is a script error naming the nearest.
+#[test]
+fn a_script_raycast_takes_a_layer_mask() {
+    let engine = ScriptEngine::new();
+    let mut world = FlintWorld::new();
+    let mut physics = flint_physics::PhysicsSystem::new();
+    physics.set_layers(flint_physics::CollisionLayers::new(&["glass", "wall"]).unwrap());
+    for (name, x, w, layer) in [("glass", 5.0, 0.1, "glass"), ("wall", 10.0, 1.0, "wall")] {
+        let id = world.spawn(name).unwrap();
+        let text = format!(
+            "[transform]\nposition = [{x}, 0, 0]\n[rigidbody]\nbody_type = \"static\"\n\
+             [collider]\nshape = \"box\"\nsize = [{w}, 4, 4]\nlayer = \"{layer}\"\n"
+        );
+        for (component, data) in text.parse::<toml::Table>().unwrap() {
+            world.set_component(id, &component, data).unwrap();
+        }
+    }
+    physics.initialize(&mut world).unwrap();
+    physics
+        .fixed_update(&mut world, 1.0 / 60.0, &mut flint_runtime::EventBus::new())
+        .unwrap();
+    let mut sm = flint_runtime::GameStateMachine::new();
+    let mut store = flint_runtime::PersistentStore::new();
+    let _world = crate::context::WorldScope::new(&engine.ctx, &mut world);
+    let _state = crate::context::StateScope::new(&engine.ctx, &mut sm, &mut store, &physics);
+    let names: rhai::Array = engine
+        .rhai_engine()
+        .eval(
+            r#"
+            let plain = raycast(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 50.0);
+            let walls = raycast(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 50.0, "wall");
+            let both = raycast(0, 0, 0, 1, 0, 0, 50, ["wall", "glass"]);
+            let none = raycast(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 50.0, []);
+            [entity_name(plain.entity), entity_name(walls.entity), entity_name(both.entity),
+             type_of(none), collision_layers()]
+        "#,
+        )
+        .unwrap();
+    let text: Vec<String> = names.iter().map(|v| v.to_string()).collect();
+    assert_eq!(
+        text,
+        [
+            "glass",
+            "wall",
+            "glass",
+            "()",
+            "[\"default\", \"glass\", \"wall\"]"
+        ]
+    );
+    let err = engine
+        .rhai_engine()
+        .eval::<rhai::Dynamic>(r#"raycast(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 50.0, "wal")"#)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("`wal` is not a collision layer"), "{err}");
+    assert!(err.contains("did you mean `wall`?"), "{err}");
+}

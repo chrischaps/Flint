@@ -61,6 +61,11 @@ impl PlayerApp {
             self.install_text_measurer();
         }
 
+        // Which model each mesh collider takes its triangles from, before
+        // the renderer expands a model of several nodes and its parent
+        // loses its `model` (#729)
+        let collider_meshes = super::collider_meshes::requests(&self.core.world);
+
         let grass = self.stage_scene_in_renderer();
         #[cfg(feature = "debug-hud")]
         self.create_scene_debug_panels(grass);
@@ -77,6 +82,10 @@ impl PlayerApp {
             // with no `[project] id`. A transition keeps the store.
             self.load_persistent_store();
         }
+
+        // The project's collision layers and the mesh colliders' triangles,
+        // before physics makes the scene's bodies
+        self.prepare_physics(&collider_meshes);
 
         self.start_scene_systems(entry)?;
         // The subsystems this scene uses, each told it is up

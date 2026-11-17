@@ -17,3 +17,8 @@
 # A --schemas flag is the whole list, so `--schemas schemas` alone is the
 # engine's set and leaves the examples' archetypes unresolved.
 schemas = ["schemas", "schemas/examples"]
+
+# The collision layers the examples' colliders may name besides `default`
+# (#729): `examples/collision_layers.scene.toml` sorts its balls with them.
+[project.physics]
+layers = ["glass", "ghost"]

@@ -30,13 +30,41 @@ use std::path::PathBuf;
 pub struct Controls {
     /// Entities drawn in no pass.
     pub hidden: Vec<String>,
-    /// The scene pass's first N draws only.
-    pub scene_draws: Option<usize>,
+    /// The pass `draws` steps, by its name in the frame's description
+    /// (`Scene`, `Shadow cascade 0`, `Style mask`...; #1204). `None` is the
+    /// scene pass.
+    pub pass: Option<String>,
+    /// That pass's first N draws only.
+    pub draws: Option<usize>,
     /// Passes switched off, by name (`Bloom`, `SSAO`, a style's).
     pub skip: Vec<String>,
     /// The entity whose pixels the selection outline marks, in place of
     /// the captured selection.
     pub outline: Option<String>,
+}
+
+impl Controls {
+    /// The pass `draws` steps: the scene's unless `pass` names another,
+    /// or why the name can't be stepped.
+    pub fn stepped(&self) -> Result<flint_render::SteppedPass, String> {
+        let Some(name) = &self.pass else {
+            return Ok(flint_render::SteppedPass::Scene);
+        };
+        flint_render::SteppedPass::from_name(name).ok_or_else(|| {
+            let names: Vec<&str> = flint_render::SteppedPass::all().map(|p| p.name()).collect();
+            format!(
+                "no pass named {name:?} steps a draw at a time (these do: {})",
+                names.join(", ")
+            )
+        })
+    }
+
+    /// The stepped pass's name as the description has it (`Scene`).
+    pub fn stepped_name(&self) -> &str {
+        self.stepped()
+            .map(|p| p.name())
+            .unwrap_or_else(|_| self.pass.as_deref().unwrap_or("Scene"))
+    }
 }
 
 /// One asset the capture names, as the replay found it.
@@ -181,11 +209,14 @@ impl ReplayHost {
                 ));
             }
         }
-        if let Some(commit) = description.engine.as_ref().and_then(|e| e.commit.as_ref()) {
-            notes.push(format!(
-                "captured at engine commit {commit}: the comparison below says whether this \
-                 engine draws it the same"
-            ));
+        // Which engine drew it against which draws it now (#1208: a render's
+        // capture names its commit too, so both sides usually can)
+        let captured_at = description.engine.as_ref().and_then(|e| e.commit.as_ref());
+        let (here, here_dirty) = super::super::render_frame_dump::checkout_of(&scene_path);
+        if let Some(note) =
+            commit_note(captured_at.map(String::as_str), here.as_deref(), here_dirty)
+        {
+            notes.push(note);
         }
 
         // The render a capture of this frame would be, as words
@@ -391,11 +422,16 @@ impl ReplayHost {
             refused.push(format!("no entity named {name:?} to outline"));
         }
         renderer.set_selected_entity(outline);
-        let draw_controls = flint_render::DrawControls {
-            hidden,
-            scene_draws: controls.scene_draws,
+        let limit = match (controls.draws, controls.stepped()) {
+            (Some(draws), Ok(pass)) => Some(flint_render::DrawLimit { pass, draws }),
+            (Some(_), Err(why)) => {
+                refused.push(why);
+                None
+            }
+            (None, _) => None,
         };
-        let any = !draw_controls.hidden.is_empty() || draw_controls.scene_draws.is_some();
+        let draw_controls = flint_render::DrawControls { hidden, limit };
+        let any = !draw_controls.hidden.is_empty() || draw_controls.limit.is_some();
 
         let out_text = out.to_string_lossy().replace('\\', "/");
         let wanted = crate::commands::render_frame_dump::Wanted {
@@ -425,8 +461,8 @@ impl ReplayHost {
         if !controls.hidden.is_empty() {
             notes.push(format!("hidden: {}", controls.hidden.join(", ")));
         }
-        if let Some(n) = controls.scene_draws {
-            notes.push(format!("the scene pass stopped after {n} draws"));
+        if let (Some(n), Some(pass)) = (controls.draws, limit.map(|l| l.pass)) {
+            notes.push(format!("the {} pass stopped after {n} draws", pass.name()));
         }
         if !controls.skip.is_empty() {
             notes.push(format!("switched off: {}", controls.skip.join(", ")));
@@ -450,6 +486,34 @@ impl ReplayHost {
         )?;
         Ok(Drawn { refused })
     }
+}
+
+/// The note on which engine commit drew the capture and which draws the
+/// replay: the same one, another (the comparison is across commits), or
+/// only the captured one known. Nothing when the capture names none.
+fn commit_note(captured: Option<&str>, here: Option<&str>, dirty: Option<bool>) -> Option<String> {
+    let captured = captured?;
+    let short = |c: &str| c.chars().take(9).collect::<String>();
+    let changes = if dirty == Some(true) {
+        "; this checkout has uncommitted changes"
+    } else {
+        ""
+    };
+    Some(match here {
+        Some(here) if here == captured => {
+            format!("captured at this engine's commit, {}{changes}", short(here))
+        }
+        Some(here) => format!(
+            "captured at engine commit {} and replayed at {}{changes}: the comparison \
+             below is across commits",
+            short(captured),
+            short(here)
+        ),
+        None => format!(
+            "captured at engine commit {captured}: the comparison below says whether this \
+             engine draws it the same"
+        ),
+    })
 }
 
 /// Lay `captured` over `world` by entity name (ADR 0126 decision 4): every
@@ -686,4 +750,26 @@ fn check_assets(assets: &[AssetDescription], scene: &str) -> Vec<AssetCheck> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::commit_note;
+
+    #[test]
+    fn the_commit_note_says_whether_the_replay_is_across_commits() {
+        let (a, b) = ("beef94170000", "c0ffee000000");
+        assert_eq!(commit_note(None, Some(a), Some(false)), None);
+        let same = commit_note(Some(a), Some(a), Some(false)).unwrap();
+        assert!(same.contains("this engine's commit, beef94170"), "{same}");
+        let other = commit_note(Some(a), Some(b), Some(true)).unwrap();
+        assert!(
+            other.contains("beef94170 and replayed at c0ffee000"),
+            "{other}"
+        );
+        assert!(other.contains("uncommitted"), "{other}");
+        assert!(other.contains("across commits"), "{other}");
+        let unknown = commit_note(Some(a), None, None).unwrap();
+        assert!(unknown.contains(a), "{unknown}");
+    }
 }

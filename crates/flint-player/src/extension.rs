@@ -455,7 +455,11 @@ impl ExtensionCtx<'_> {
 /// ctx.audio.play("audio/door.ogg", &SoundOptions::new().at(pos).distances(2.0, 60.0))?;
 /// // Heard from far off, fading like a sound in the open:
 /// ctx.audio.play("bell", &SoundOptions::new().at(pos).distances(10.0, 400.0).rolloff(0.7))?;
-/// ctx.audio.set_bus_volume(Bus::Music, 0.4);
+/// ctx.audio.set_bus_volume(Bus::MUSIC, 0.4);
+/// // A bus the game's flint.toml declares ([audio.buses.voice]):
+/// if let Some(voice) = ctx.audio.bus("voice") {
+///     ctx.audio.play("line_04", &SoundOptions::new().bus(voice))?;
+/// }
 /// ```
 pub struct ExtensionAudio<'a> {
     pub(crate) system: &'a mut AudioSystem,
@@ -536,6 +540,20 @@ impl<'a> ExtensionAudio<'a> {
     pub fn set_bus_volume(&mut self, bus: Bus, volume: f64) {
         self.system.set_bus_volume(bus, volume);
     }
+
+    /// A bus by name: `sfx`, `music`, or one the game's `flint.toml`
+    /// declares under `[audio.buses]` (#730), for [`SoundOptions::bus`] and
+    /// [`set_bus_volume`](Self::set_bus_volume).
+    pub fn bus(&self, name: &str) -> Option<Bus> {
+        self.system.engine.bus(name)
+    }
+
+    /// Declare buses in code, as a manifest's `[audio.buses]` would: a game
+    /// that builds its mix at run time. Buses already there keep their
+    /// numbers; see `AudioEngine::set_buses`.
+    pub fn set_buses(&mut self, buses: &flint_audio::Buses) {
+        self.system.engine.set_buses(buses);
+    }
 }
 
 /// How [`ExtensionAudio::play`] plays a sound.
@@ -563,7 +581,7 @@ impl Default for SoundOptions {
         Self {
             volume: 1.0,
             pitch: 1.0,
-            bus: Bus::Sfx,
+            bus: Bus::SFX,
             at: None,
             distances: flint_audio::engine::DEFAULT_DISTANCES,
             rolloff: flint_audio::engine::DEFAULT_ROLLOFF,
@@ -889,13 +907,13 @@ mod tests {
             .at(Vec3::new(4.0, 0.0, 2.0))
             .distances(2.0, 80.0)
             .rolloff(0.7)
-            .bus(Bus::Music);
+            .bus(Bus::MUSIC);
         assert_eq!(placed.distances, (2.0, 80.0));
         assert_eq!(placed.rolloff, 0.7);
         assert_eq!(SoundOptions::new().rolloff, 2.0);
         audio.play("click", &placed).unwrap();
         assert!(audio.play("missing", &SoundOptions::new()).is_err());
-        audio.set_bus_volume(Bus::Sfx, 0.25);
+        audio.set_bus_volume(Bus::SFX, 0.25);
         // Scripts and audio_sources read the same cache.
         assert!(system.engine.has_sound("click"));
     }

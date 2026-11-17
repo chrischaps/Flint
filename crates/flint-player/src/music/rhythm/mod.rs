@@ -83,7 +83,7 @@ impl RhythmSubsystem {
             return;
         }
         let Some(audio) = audio else { return };
-        if audio.manager_mut().is_none() {
+        if audio.can_host().is_err() {
             return;
         }
         self.tried_with_device = true;

@@ -35,7 +35,7 @@ impl Default for KeyedPlay {
             volume: 1.0,
             pitch: 1.0,
             looping: false,
-            bus: Bus::Sfx,
+            bus: Bus::SFX,
         }
     }
 }
@@ -298,7 +298,7 @@ mod tests {
         volume: 1.0,
         pitch: 1.0,
         looping: true,
-        bus: Bus::Sfx,
+        bus: Bus::SFX,
     };
 
     /// #699 through the web's mixer: what a script starts, it can stop,

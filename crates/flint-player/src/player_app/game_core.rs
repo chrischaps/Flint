@@ -529,6 +529,11 @@ impl GameCore {
     ) -> Option<Listener> {
         self.physics.begin_frame(self.clock.pending_fixed_ratio());
         self.fixed_steps = 0;
+        // Look and the jump press once a frame, however many steps run
+        // below: none on most frames above 60 Hz, two at 30 (#728)
+        if has_fps_player && config.runs(PHYSICS) {
+            self.physics.character_frame_input(input, &self.world);
+        }
         while self.clock.should_fixed_update() {
             let dt = self.clock.fixed_timestep;
 
@@ -800,6 +805,7 @@ pub(crate) fn for_the_host(command: &ScriptCommand) -> bool {
         | C::PlaySoundAt { .. }
         | C::StopSound { .. }
         | C::SetSoundVolume { .. }
+        | C::SetBusVolume { .. }
         | C::Rumble { .. }
         | C::SetCameraCutDetection { .. }
         | C::SetLook { .. }

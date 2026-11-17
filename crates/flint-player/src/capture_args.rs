@@ -18,11 +18,14 @@ pub struct FrameCaptureArgs {
     #[arg(long, value_name = "SECS", action = clap::ArgAction::Append)]
     pub capture_frame_at: Vec<f64>,
 
-    /// Capture the frame after each of the run's first N hitches (default
-    /// 1). A hitch is over by the time it is found, so the capture is the
-    /// next frame, with the frame history around the hitch (its cost by
-    /// phase, its cause) in the manifest's `cpu`. Times every script
-    /// callback, as --hitch-log does
+    /// Capture the frame after each of the run's first N hitches past the
+    /// start (default 1). Hitches in the first 2 s of game time (loading,
+    /// first compiles) are passed over, as the exit report and
+    /// --max-hitches set them apart; --capture-on-hitch-startup takes them.
+    /// A hitch is over by the time it is found, so the capture is the next
+    /// frame, with the frame history around the hitch (its cost by phase,
+    /// its cause) in the manifest's `cpu`. Times every script callback, as
+    /// --hitch-log does
     #[arg(
         long,
         value_name = "N",
@@ -31,6 +34,11 @@ pub struct FrameCaptureArgs {
         default_missing_value = "1"
     )]
     pub capture_on_hitch: Option<u32>,
+
+    /// Let --capture-on-hitch take the hitches of the first 2 s of game
+    /// time too, when it's the load itself being chased
+    #[arg(long, requires = "capture_on_hitch")]
+    pub capture_on_hitch_startup: bool,
 
     /// Where frame captures go. Default: `captures/` at the project's root
     #[arg(long, value_name = "DIR")]
@@ -61,6 +69,7 @@ impl FrameCaptureArgs {
             self.capture_on_hitch.unwrap_or(0),
             self.capture_dir.clone(),
         );
+        app.capture_startup_hitches(self.capture_on_hitch_startup);
         Ok(())
     }
 }
@@ -101,7 +110,15 @@ mod tests {
             cli.scene, "a.scene.toml",
             "a bare --capture-on-hitch takes no scene"
         );
+        assert!(!cli.captures.capture_on_hitch_startup, "off by default");
         let cli = Cli::try_parse_from(["x", "--capture-on-hitch=3"]).unwrap();
         assert_eq!(cli.captures.capture_on_hitch, Some(3));
+        let cli =
+            Cli::try_parse_from(["x", "--capture-on-hitch", "--capture-on-hitch-startup"]).unwrap();
+        assert!(cli.captures.capture_on_hitch_startup);
+        assert!(
+            Cli::try_parse_from(["x", "--capture-on-hitch-startup"]).is_err(),
+            "it says which hitches --capture-on-hitch takes, so it needs it"
+        );
     }
 }

@@ -14,7 +14,7 @@ use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::ComponentView;
 use flint_ecs::FlintWorld;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Per-entity skeletal playback state (alias for the shared [`ClipPlaybackState`])
 pub type SkeletalPlaybackState = ClipPlaybackState;
@@ -99,6 +99,14 @@ pub struct SkeletalSync {
     /// the next `sync_from_world` sees a target that no longer matches the
     /// (now-cleared) runtime target and re-arms the same crossfade forever.
     completed_blends: Vec<EntityId>,
+    /// Entities whose `clip` or `playing` the runtime changed since the last
+    /// [`Self::write_back`]: a crossfade settled on its target, a one-shot
+    /// ended, or `autoplay` started a clip whose `playing` is false. Both
+    /// fields are live (#732), so write-back publishes them, or the next sync
+    /// would read the stale ECS value as a script's `play_clip` / `stop_clip`
+    /// and cut back to the old clip, replay the one-shot, or stop the
+    /// autoplay. Until then `sync_from_world` leaves the two fields alone.
+    unpublished: HashSet<EntityId>,
     /// Per-joint composition bookkeeping from the last `advance_and_compute`.
     contributions: HashMap<EntityId, LayerContribution>,
     /// Runtime-only per-layer mute flags (previewer solo/mute). Kept out of
@@ -148,6 +156,25 @@ fn apply_joint_offsets(skeleton: &mut Skeleton, offsets: &BTreeMap<usize, [f32; 
     }
 }
 
+/// Where a clip starts for its direction of play: 0, or its end when the
+/// speed is negative (played backwards from 0 it would end at once).
+fn start_time(duration: f64, speed: f64) -> f64 {
+    if speed < 0.0 {
+        duration
+    } else {
+        0.0
+    }
+}
+
+/// Whether a non-looping clip stands at the end it plays toward.
+fn has_finished(time: f64, duration: f64, speed: f64) -> bool {
+    if speed < 0.0 {
+        time <= 0.0
+    } else {
+        time >= duration
+    }
+}
+
 impl SkeletalSync {
     pub fn new() -> Self {
         Self::default()
@@ -159,6 +186,7 @@ impl SkeletalSync {
         self.skeletons.clear();
         self.states.clear();
         self.completed_blends.clear();
+        self.unpublished.clear();
         self.contributions.clear();
         self.mutes.clear();
         self.joint_offsets.clear();
@@ -292,6 +320,7 @@ impl SkeletalSync {
     /// Reset playback state for an entity (used when externally switching clips)
     pub fn reset_state(&mut self, entity_id: &EntityId) {
         self.states.remove(entity_id);
+        self.unpublished.remove(entity_id);
         self.fades.remove(entity_id);
         self.completed_fades.retain(|(e, _)| e != entity_id);
     }
@@ -303,7 +332,12 @@ impl SkeletalSync {
 
     /// Scan the world for entities with `animator` + `skeleton` components.
     /// Creates playback states for newly discovered entities.
-    /// Updates blend_target/blend_duration for existing entities if changed in ECS.
+    ///
+    /// For a tracked entity every field is live, with `node_sync`'s rules
+    /// (#732): a new `clip` cuts to it from its start and cancels a crossfade;
+    /// `playing` pauses and resumes, and turning a finished one-shot back on
+    /// replays it; a new `blend_target` starts a crossfade; `speed`, `loop`
+    /// and layers are dials.
     pub fn sync_from_world(&mut self, world: &FlintWorld) {
         for entity_id in world.entities_with_components(&[comp::ANIMATOR, comp::SKELETON]) {
             let view = world.view(entity_id, comp::ANIMATOR);
@@ -316,25 +350,45 @@ impl SkeletalSync {
             }
             let animator = Animator::read(&view);
 
-            // If already tracked, check for blend_target changes from ECS
             if let Some(state) = self.states.get_mut(&entity_id) {
-                let ecs_blend_target = animator.blend_target.to_string();
-                let ecs_blend_duration = animator.blend_duration;
-
-                // Start a new crossfade if ECS sets a new blend_target
-                if !ecs_blend_target.is_empty()
-                    && ecs_blend_target != state.blend_target
-                    && self.clips.contains_key(&ecs_blend_target)
-                {
-                    state.blend_target = ecs_blend_target;
-                    state.blend_duration = ecs_blend_duration;
-                    state.blend_elapsed = 0.0;
-                }
-
-                // Speed and loop are live dials too (previewer Speed
-                // field, `set_anim_speed` from scripts).
+                // Speed and loop are live dials (previewer Speed field,
+                // `set_anim_speed` from scripts).
                 state.speed = animator.speed;
                 state.looping = animator.looping;
+
+                // `clip` and `playing` (`play_clip`, `stop_clip`), unless the
+                // runtime changed them this frame and hasn't published yet.
+                if !self.unpublished.contains(&entity_id) {
+                    let ecs_clip = animator.clip;
+                    if !ecs_clip.is_empty() && ecs_clip != state.clip_name {
+                        if let Some(clip) = self.clips.get(ecs_clip) {
+                            state.clip_name = ecs_clip.to_string();
+                            state.time = start_time(clip.duration, state.speed);
+                            state.blend_target.clear();
+                            state.blend_elapsed = 0.0;
+                        }
+                    } else if animator.playing && !state.playing && !state.looping {
+                        // A one-shot that ended replays from its start; one
+                        // stopped part-way resumes where it was.
+                        if let Some(clip) = self.clips.get(&state.clip_name) {
+                            if has_finished(state.time, clip.duration, state.speed) {
+                                state.time = start_time(clip.duration, state.speed);
+                            }
+                        }
+                    }
+                    state.playing = animator.playing;
+                }
+
+                // Start a new crossfade if ECS sets a new blend_target
+                let ecs_blend_target = animator.blend_target;
+                if !ecs_blend_target.is_empty()
+                    && ecs_blend_target != state.blend_target
+                    && self.clips.contains_key(ecs_blend_target)
+                {
+                    state.blend_target = ecs_blend_target.to_string();
+                    state.blend_duration = animator.blend_duration;
+                    state.blend_elapsed = 0.0;
+                }
 
                 // Layers follow the ECS every frame (weights are live
                 // dials; changing a clip restarts that layer's clock).
@@ -377,6 +431,11 @@ impl SkeletalSync {
             let fades = self.fades.entry(entity_id).or_default();
             Self::apply_ecs_layers(&mut state, &view, fades);
 
+            // `autoplay` started it: publish `playing = true`, or the next
+            // sync reads the ECS `false` as a `stop_clip`.
+            if playing != animator.playing {
+                self.unpublished.insert(entity_id);
+            }
             self.states.insert(entity_id, state);
         }
     }
@@ -410,9 +469,11 @@ impl SkeletalSync {
                 } else if state.time >= clip.duration {
                     state.time = clip.duration;
                     state.playing = false;
+                    self.unpublished.insert(entity_id);
                 } else if state.time < 0.0 {
                     state.time = 0.0;
                     state.playing = false;
+                    self.unpublished.insert(entity_id);
                 }
             }
 
@@ -468,6 +529,7 @@ impl SkeletalSync {
                         state.blend_target.clear();
                         state.blend_elapsed = 0.0;
                         self.completed_blends.push(entity_id);
+                        self.unpublished.insert(entity_id);
                     }
                 } else {
                     // Target clip not found, clear blend
@@ -699,6 +761,27 @@ impl SkeletalSync {
                 comp::ANIMATOR,
                 "blend_target",
                 toml::Value::String(String::new()),
+            );
+        }
+
+        // The clip a crossfade settled on, a one-shot's end, an autoplay's
+        // start: `clip` and `playing` are live, so they must say what plays.
+        for entity_id in self.unpublished.drain() {
+            let (Some(state), Some(mut components)) = (
+                self.states.get(&entity_id),
+                world.get_components_mut(entity_id),
+            ) else {
+                continue;
+            };
+            components.set_field(
+                comp::ANIMATOR,
+                "clip",
+                toml::Value::String(state.clip_name.clone()),
+            );
+            components.set_field(
+                comp::ANIMATOR,
+                "playing",
+                toml::Value::Boolean(state.playing),
             );
         }
 
@@ -1471,5 +1554,199 @@ mod tests {
             .unwrap();
         step(&mut sync, &mut world, 1);
         assert!((sync.states[&eid].speed - 3.0).abs() < 1e-9);
+    }
+
+    // ── play_clip / stop_clip on a tracked entity (#732) ────────────
+
+    /// What `play_clip(e, clip)` writes.
+    fn play_clip(world: &mut FlintWorld, eid: EntityId, clip: &str) {
+        let mut c = world.get_components_mut(eid).unwrap();
+        c.set_field(comp::ANIMATOR, "clip", toml::Value::String(clip.into()));
+        c.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(true));
+        c.set_field(
+            comp::ANIMATOR,
+            "blend_target",
+            toml::Value::String(String::new()),
+        );
+    }
+
+    /// What `stop_clip(e)` writes.
+    fn stop_clip(world: &mut FlintWorld, eid: EntityId) {
+        world
+            .set_field(eid, comp::ANIMATOR, "playing", toml::Value::Boolean(false))
+            .unwrap();
+    }
+
+    fn ecs_str(world: &FlintWorld, eid: EntityId, field: &str) -> String {
+        world.view(eid, comp::ANIMATOR).str(field, "").to_string()
+    }
+
+    fn ecs_playing(world: &FlintWorld, eid: EntityId) -> bool {
+        world.view(eid, comp::ANIMATOR).bool("playing", false)
+    }
+
+    fn set_bool(world: &mut FlintWorld, eid: EntityId, field: &str, v: bool) {
+        world
+            .set_field(eid, comp::ANIMATOR, field, toml::Value::Boolean(v))
+            .unwrap();
+    }
+
+    #[test]
+    fn play_clip_switches_a_tracked_entity_to_the_new_clip_from_its_start() {
+        let mut sync = SkeletalSync::new();
+        sync.add_clip(slide_clip("idle", 4.0));
+        sync.add_clip(slide_clip("wave", 2.0));
+        let (mut world, eid) = world_with_animator("idle", "", 0.3);
+        sync.add_skeleton(eid, one_joint_skeleton());
+        step(&mut sync, &mut world, 60);
+        assert_eq!(sync.states[&eid].clip_name, "idle");
+        assert!(sync.states[&eid].time > 0.9);
+
+        play_clip(&mut world, eid, "wave");
+        step(&mut sync, &mut world, 6);
+        let s = &sync.states[&eid];
+        assert_eq!(s.clip_name, "wave", "play_clip must switch the clip");
+        assert!(
+            (s.time - 0.1).abs() < 1e-6,
+            "a new clip starts at 0, got {}",
+            s.time
+        );
+        assert!(s.playing);
+    }
+
+    #[test]
+    fn play_clip_starts_an_entity_that_was_tracked_stopped() {
+        let mut sync = SkeletalSync::new();
+        sync.add_clip(slide_clip("idle", 4.0));
+        let (mut world, eid) = world_with_animator("idle", "", 0.3);
+        set_bool(&mut world, eid, "playing", false);
+        sync.add_skeleton(eid, one_joint_skeleton());
+        step(&mut sync, &mut world, 30);
+        assert_eq!(sync.states[&eid].time, 0.0, "stopped: holds frame 0");
+
+        play_clip(&mut world, eid, "idle");
+        step(&mut sync, &mut world, 30);
+        assert!(
+            (sync.states[&eid].time - 0.5).abs() < 1e-6,
+            "play_clip must start it, time {}",
+            sync.states[&eid].time
+        );
+    }
+
+    #[test]
+    fn stop_clip_freezes_time_and_play_resumes_where_it_stopped() {
+        let mut sync = SkeletalSync::new();
+        sync.add_clip(slide_clip("walk", 4.0));
+        let (mut world, eid) = world_with_animator("walk", "", 0.3);
+        sync.add_skeleton(eid, one_joint_skeleton());
+        step(&mut sync, &mut world, 30);
+        let at_stop = sync.states[&eid].time;
+        let pose_at_stop = sync.skeleton(&eid).unwrap().local_poses[0].translation[0];
+
+        stop_clip(&mut world, eid);
+        step(&mut sync, &mut world, 60);
+        assert_eq!(
+            sync.states[&eid].time, at_stop,
+            "stop_clip must freeze time"
+        );
+        assert_eq!(
+            sync.skeleton(&eid).unwrap().local_poses[0].translation[0],
+            pose_at_stop,
+            "and the pose with it"
+        );
+
+        play_clip(&mut world, eid, "walk");
+        step(&mut sync, &mut world, 6);
+        assert!(
+            (sync.states[&eid].time - (at_stop + 0.1)).abs() < 1e-6,
+            "the same clip resumes, not restarts: {}",
+            sync.states[&eid].time
+        );
+    }
+
+    #[test]
+    fn a_finished_one_shot_replays_on_play_clip() {
+        let mut sync = SkeletalSync::new();
+        sync.add_clip(slide_clip("attack", 0.5));
+        let (mut world, eid) = world_with_animator("attack", "", 0.3);
+        set_bool(&mut world, eid, "loop", false);
+        sync.add_skeleton(eid, one_joint_skeleton());
+        step(&mut sync, &mut world, 60);
+        let s = &sync.states[&eid];
+        assert!(!s.playing && s.time == 0.5, "the one-shot ended");
+        assert!(
+            !ecs_playing(&world, eid),
+            "its end is published, so a script can see it finished"
+        );
+
+        play_clip(&mut world, eid, "attack");
+        step(&mut sync, &mut world, 6);
+        let s = &sync.states[&eid];
+        assert!(s.playing, "play_clip must replay a finished one-shot");
+        assert!((s.time - 0.1).abs() < 1e-6, "from its start: {}", s.time);
+
+        // Plays through and ends again.
+        step(&mut sync, &mut world, 60);
+        assert!(!sync.states[&eid].playing);
+    }
+
+    #[test]
+    fn a_finished_crossfade_publishes_its_clip_so_play_clip_can_return() {
+        let mut sync = SkeletalSync::new();
+        sync.add_clip(slide_clip("idle", 4.0));
+        sync.add_clip(slide_clip("walk", 4.0));
+        let (mut world, eid) = world_with_animator("idle", "walk", 0.2);
+        sync.add_skeleton(eid, one_joint_skeleton());
+        step(&mut sync, &mut world, 30);
+        assert_eq!(sync.states[&eid].clip_name, "walk");
+        assert_eq!(ecs_str(&world, eid, "clip"), "walk");
+        assert_eq!(ecs_str(&world, eid, "blend_target"), "");
+
+        // Keeps walking: the ECS clip is not read as a change back to idle.
+        step(&mut sync, &mut world, 30);
+        assert_eq!(sync.states[&eid].clip_name, "walk");
+        assert!(sync.states[&eid].time > 0.5);
+
+        play_clip(&mut world, eid, "idle");
+        step(&mut sync, &mut world, 1);
+        assert_eq!(sync.states[&eid].clip_name, "idle");
+    }
+
+    #[test]
+    fn play_clip_during_a_crossfade_wins() {
+        let mut sync = SkeletalSync::new();
+        sync.add_clip(slide_clip("idle", 4.0));
+        sync.add_clip(slide_clip("walk", 4.0));
+        sync.add_clip(slide_clip("jump", 4.0));
+        let (mut world, eid) = world_with_animator("idle", "walk", 1.0);
+        sync.add_skeleton(eid, one_joint_skeleton());
+        step(&mut sync, &mut world, 10);
+        assert_eq!(sync.states[&eid].blend_target, "walk");
+
+        play_clip(&mut world, eid, "jump");
+        step(&mut sync, &mut world, 120);
+        let s = &sync.states[&eid];
+        assert_eq!(s.clip_name, "jump");
+        assert!(s.blend_target.is_empty(), "the crossfade is cancelled");
+    }
+
+    #[test]
+    fn autoplay_keeps_playing_and_stop_clip_still_stops_it() {
+        let mut sync = SkeletalSync::new();
+        sync.add_clip(slide_clip("idle", 4.0));
+        let (mut world, eid) = world_with_animator("idle", "", 0.3);
+        set_bool(&mut world, eid, "playing", false);
+        set_bool(&mut world, eid, "autoplay", true);
+        sync.add_skeleton(eid, one_joint_skeleton());
+        // Two syncs before the first write-back, as the previewer's
+        // headless render does.
+        sync.sync_from_world(&world);
+        step(&mut sync, &mut world, 30);
+        assert!((sync.states[&eid].time - 0.5).abs() < 1e-6);
+        assert!(ecs_playing(&world, eid), "autoplay publishes playing");
+
+        stop_clip(&mut world, eid);
+        step(&mut sync, &mut world, 30);
+        assert!((sync.states[&eid].time - 0.5).abs() < 1e-6);
     }
 }

@@ -2,9 +2,10 @@
 //! 4 and 6), end to end: `flint render --frame-capture` writes `replay/`,
 //! the frame is drawn again byte for byte, the scene pass steps a draw at a
 //! time to the captured image, hiding the lantern is the scene with the
-//! lantern taken out, a model that moved is named rather than crashed on,
-//! and a capture with no replay inputs is refused saying why. Each test
-//! that draws skips itself without a GPU.
+//! lantern taken out, a shadow layer, the style mask and the albedo step
+//! their own draws to their captured images (#1204), a model that moved is
+//! named rather than crashed on, and a capture with no replay inputs is
+//! refused saying why. Each test that draws skips itself without a GPU.
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -325,4 +326,155 @@ fn a_capture_without_replay_inputs_is_refused_saying_why() {
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(err.contains("holds no replay inputs"), "{err}");
     assert!(err.contains("--frame-capture"), "{err}");
+}
+
+/// The pass named `name`, a shadow layer under `Shadows` included.
+fn pass_named<'a>(m: &'a Value, name: &str) -> &'a Value {
+    fn find<'a>(passes: &'a Value, name: &str) -> Option<&'a Value> {
+        passes.as_array()?.iter().find_map(|p| {
+            if p["name"] == name {
+                Some(p)
+            } else {
+                find(&p["passes"], name)
+            }
+        })
+    }
+    find(&m["passes"], name).unwrap_or_else(|| panic!("no {name} pass"))
+}
+
+/// A pass's draws, as `entity / mesh`.
+fn draws_of(m: &Value, pass: &str) -> Vec<String> {
+    pass_named(m, pass)["draws"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| format!("{} / {}", d["entity"], d["mesh"]))
+        .collect()
+}
+
+#[test]
+fn a_shadow_layer_steps_a_caster_at_a_time_to_the_captured_layer_and_no_other_moves() {
+    let dir = tmp("shadow_steps");
+    let cap = dir.join("two.flintframe");
+    if !capture(&fixture("two_crates.scene.toml"), &cap) {
+        return;
+    }
+    let casters = draws_of(&manifest(&cap), "Shadow cascade 0");
+    assert_eq!(casters.len(), 3, "{casters:?}");
+    for n in 0..=casters.len() {
+        let out = dir.join(format!("c{n}.flintframe"));
+        let r = replay(
+            &cap,
+            &out,
+            &["--pass", "Shadow cascade 0", "--draws", &n.to_string()],
+        );
+        let m = manifest(&out);
+        assert_eq!(draws_of(&m, "Shadow cascade 0"), casters[..n], "step {n}");
+        assert_eq!(r["controls"]["pass"], "Shadow cascade 0");
+        assert_eq!(r["pass_draws"], 3);
+        // The layer's own image: the captured one at the last step
+        assert_eq!(
+            r["pass"]["differing"] == 0,
+            n == casters.len(),
+            "step {n}: {r:#}"
+        );
+        assert_eq!(r["identical"], n == casters.len(), "step {n}");
+        // The scene pass draws every draw, and the other layers are whole
+        assert_eq!(scene_draws(&m), scene_draws(&manifest(&cap)), "step {n}");
+        let diff = json(&flint(&[&"--json", &"frame", &"diff", &cap, &out]));
+        for image in diff["images"].as_array().unwrap() {
+            let name = image["image"].as_str().unwrap();
+            if name.starts_with("Shadow cascade 1") || name.starts_with("Shadow cascade 2") {
+                assert_eq!(image["status"], "same", "step {n}: {image:#}");
+            }
+        }
+        if n > 0 && n < casters.len() {
+            let culled = &pass_named(&m, "Shadow cascade 0")["culled"];
+            assert!(
+                culled
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|c| c["culled"] == "past the draw limit"),
+                "step {n}: {culled:#}"
+            );
+        }
+    }
+
+    // A pass that can't be stepped is refused, naming those that can
+    let o = flint(&[
+        &"frame", &"replay", &cap, &"--pass", &"Bloom", &"--draws", &"1",
+    ]);
+    assert!(!o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("Shadow cascade 0") && err.contains("Style mask"),
+        "{err}"
+    );
+}
+
+#[test]
+fn the_style_mask_and_albedo_step_their_draws_to_the_captured_images() {
+    let dir = tmp("style_steps");
+    let cap = dir.join("props.flintframe");
+    let o = flint(&[
+        &"render",
+        &repo().join("tests/fixtures/scenes/stylize_props.scene.toml"),
+        &"--width",
+        &"96",
+        &"--height",
+        &"54",
+        // Pencil's light tone divides by the albedo, so both passes run
+        &"--set",
+        &"pencil.tone=light",
+        &"-o",
+        &dir.join("props.png"),
+        &"--frame-capture",
+        &cap,
+    ]);
+    if !o.status.success() && String::from_utf8_lossy(&o.stderr).contains("headless render context")
+    {
+        eprintln!("no GPU adapter: skipped");
+        return;
+    }
+    ok(&o);
+    let m = manifest(&cap);
+    for pass in ["Style mask", "Style albedo"] {
+        let all = draws_of(&m, pass);
+        assert!(all.len() >= 4, "{pass}: {all:?}");
+        let mut last = None;
+        for n in [0, all.len() / 2, all.len()] {
+            let out = dir.join(format!("{}-{n}.flintframe", pass.replace(' ', "_")));
+            let r = json(&flint(&[
+                &"--json",
+                &"frame",
+                &"replay",
+                &cap,
+                &"--out",
+                &out,
+                &"--pass",
+                &pass,
+                &"--draws",
+                &n.to_string(),
+            ]));
+            assert_eq!(draws_of(&manifest(&out), pass), all[..n], "{pass} step {n}");
+            let differing = r["pass"]["differing"].as_u64().unwrap();
+            if n == all.len() {
+                assert_eq!(
+                    differing, 0,
+                    "{pass}: the last step isn't the captured image"
+                );
+            } else {
+                assert!(differing > 0, "{pass} step {n} drew the whole pass");
+            }
+            // Each step is nearer the captured image than the one before
+            if let Some(before) = last {
+                assert!(
+                    differing < before,
+                    "{pass} step {n}: {differing} >= {before}"
+                );
+            }
+            last = Some(differing);
+        }
+    }
 }

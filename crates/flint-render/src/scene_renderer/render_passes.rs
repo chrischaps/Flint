@@ -3,7 +3,7 @@
 //! Each method handles one stage of the multi-pass rendering pipeline.
 
 use super::helpers::identity_matrix;
-use super::{Blend, Draw, DrawItem, DrawList, Layer, SceneRenderer};
+use super::{Blend, Draw, DrawItem, DrawList, Layer, SceneRenderer, SteppedPass};
 use crate::billboard_pipeline::BillboardUniforms;
 use crate::camera::Camera;
 use crate::debug::DebugMode;
@@ -267,12 +267,16 @@ impl SceneRenderer {
             for (item, caster) in shadow_casters(&self.draws, &self.terrain.draws) {
                 let woozy = item.wooze().is_some() && woozy_pass;
                 let name = caster_pipeline_name(&caster, woozy);
-                if caster.visible(&frustum) {
+                if !caster.visible(&frustum) {
+                    logged
+                        .culled
+                        .push(self.logged_draw(item, Some("outside the layer"), name));
+                } else if self.draws.within(item, SteppedPass::Shadow(layer)) {
                     logged.draws.push(self.logged_draw(item, None, name));
                 } else {
                     logged
                         .culled
-                        .push(self.logged_draw(item, Some("outside the layer"), name));
+                        .push(self.logged_draw(item, Some("past the draw limit"), name));
                 }
             }
             pass.passes.push(logged);
@@ -364,6 +368,19 @@ impl SceneRenderer {
             ));
         }
 
+        // A replay stepping one layer's casters (#1204): those past its limit
+        // are set aside from that layer alone, counted as its log lists them
+        for &(layer, vp) in &layers {
+            let stepped = SteppedPass::Shadow(layer);
+            if self.draws.limit_of(stepped).is_some() {
+                let frustum = crate::frustum::Frustum::from_view_projection(&vp);
+                let terrain = &self.terrain.draws;
+                self.draws.cut_pass(stepped, |item| {
+                    shadow_caster(item, terrain).is_some_and(|c| c.visible(&frustum))
+                });
+            }
+        }
+
         // Write shadow uniforms
         queue.write_buffer(
             &shadow_pass.shadow_uniforms_buffer,
@@ -380,10 +397,12 @@ impl SceneRenderer {
         let mut draw_uniforms: Vec<ShadowDrawUniforms> = Vec::new();
         // Shallow wooze's drift, for the slots whose casters have any (#215).
         let mut draw_wooze = Vec::new();
-        for &(_, cascade_vp) in &layers {
+        for &(layer, cascade_vp) in &layers {
             let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
             for (item, caster) in shadow_casters(&self.draws, &self.terrain.draws) {
-                if !caster.visible(&cascade_frustum) {
+                if !caster.visible(&cascade_frustum)
+                    || !self.draws.within(item, SteppedPass::Shadow(layer))
+                {
                     continue;
                 }
                 if let Some(wooze) = item.wooze() {
@@ -468,6 +487,10 @@ impl SceneRenderer {
             // Same per-cascade test as the uniform gather above, so the slots
             // line up.
             let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
+            let stepped = SteppedPass::Shadow(cascade);
+            let casts = |item: &DrawItem, caster: &Caster<'_>| {
+                caster.visible(&cascade_frustum) && self.draws.within(item, stepped)
+            };
             let mut bound = BoundPipeline::default();
             let mut casters = shadow_casters(&self.draws, &self.terrain.draws).peekable();
             let mut group = LayerGroup::default();
@@ -477,7 +500,7 @@ impl SceneRenderer {
                 .is_some_and(|(item, _)| item.layer() == super::Layer::Terrain)
             {
                 let (item, caster) = casters.next().expect("peeked");
-                if caster.visible(&cascade_frustum) {
+                if casts(item, &caster) {
                     group.enter(&mut pass, Layer::Terrain);
                     if marks {
                         self.draws.mark(&mut pass, &mut draw_label, item);
@@ -521,7 +544,7 @@ impl SceneRenderer {
             }
 
             for (item, caster) in casters {
-                if caster.visible(&cascade_frustum) {
+                if casts(item, &caster) {
                     group.enter(&mut pass, item.layer());
                     if marks {
                         self.draws.mark(&mut pass, &mut draw_label, item);

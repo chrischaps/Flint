@@ -431,8 +431,8 @@ The `animator` component controls playback for both tiers:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `clip` | string | "" | Current animation clip name |
-| `playing` | bool | false | Whether the animation is playing |
+| `clip` | string | "" | Current animation clip name. Writing a new one cuts to it from its start; the engine writes the clip a crossfade lands on |
+| `playing` | bool | false | Whether the clip is playing: `false` holds the current frame, `true` resumes (and replays a finished one-shot). The engine sets it `false` when a one-shot ends, and `true` when `autoplay` starts a clip |
 | `autoplay` | bool | false | Start playing on scene load |
 | `loop` | bool | true | Loop when the clip ends |
 | `speed` | f32 | 1.0 | Playback speed (-10.0 to 10.0) |
@@ -458,8 +458,8 @@ Animations can be controlled from [Rhai scripts](scripting.md) by writing direct
 
 | Function | Description |
 |----------|-------------|
-| `play_clip(entity_id, clip_name)` | Start playing a named animation clip |
-| `stop_clip(entity_id)` | Stop the current animation |
+| `play_clip(entity_id, clip_name)` | Play a named clip: a new clip cuts to its start (cancelling a crossfade), a stopped one resumes, a finished one-shot replays |
+| `stop_clip(entity_id)` | Pause the clip on its current frame (layers keep their own clocks) |
 | `blend_to(entity_id, clip, duration)` | Crossfade to another clip over the given duration |
 | `set_anim_speed(entity_id, speed)` | Set animation playback speed |
 | `set_anim_layer(entity_id, index, clip, weight)` | Play `clip` on a layer (additive, unmasked) |

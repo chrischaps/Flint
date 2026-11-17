@@ -540,9 +540,9 @@ impl SequenceSync {
         };
         match &ev.step {
             SequenceStep::Blend { clip, duration } => {
-                // Only `blend_target` changes a tracked skeletal base clip;
-                // `clip` is latched at state creation. Set both so an
-                // untracked entity also starts on the right clip.
+                // A crossfade is `blend_target`: writing `clip` on a tracked
+                // entity would cut to it instead (#732). Set `clip` only when
+                // empty, so an untracked entity also starts on the right clip.
                 let has_clip = comps
                     .get(comp::ANIMATOR)
                     .and_then(|a| a.get("clip"))

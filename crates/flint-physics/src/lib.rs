@@ -8,11 +8,14 @@
 //!   into the caller's `EventBus`
 
 pub mod character;
+pub mod layers;
 pub mod sync;
 pub mod world;
 
 #[cfg(test)]
 mod joint_tests;
+#[cfg(test)]
+mod layer_tests;
 #[cfg(test)]
 mod order_tests;
 
@@ -21,10 +24,22 @@ use flint_core::components as comp;
 use flint_core::{EntityId, Result, Vec3};
 use flint_ecs::FlintWorld;
 use flint_runtime::{EventBus, GameEvent, InputState};
+pub use layers::{CollisionLayers, LayerError, LayerMask};
 use rapier3d::control::{CharacterLength, KinematicCharacterController};
 use rapier3d::prelude::*;
+use std::sync::Arc;
 use sync::PhysicsSync;
 use world::PhysicsWorld;
+
+/// The triangles of a `mesh` or `convex` collider, in the entity's own
+/// space (where its model's vertices are drawn, before the entity's
+/// transform). A host reads them from the entity's model and hands them
+/// over with [`PhysicsSystem::set_collider_mesh`] (#729).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ColliderMesh {
+    pub positions: Vec<[f32; 3]>,
+    pub triangles: Vec<[u32; 3]>,
+}
 
 /// Entity-level raycast result
 #[derive(Debug, Clone)]
@@ -47,10 +62,31 @@ pub struct MoveCharacterResult {
 /// Collider shape dimensions for an entity
 #[derive(Debug, Clone)]
 pub enum ColliderExtents {
-    Box { half_extents: [f32; 3] },
-    Sphere { radius: f32 },
-    Capsule { radius: f32, half_height: f32 },
-    Cylinder { radius: f32, half_height: f32 },
+    Box {
+        half_extents: [f32; 3],
+    },
+    Sphere {
+        radius: f32,
+    },
+    Capsule {
+        radius: f32,
+        half_height: f32,
+    },
+    Cylinder {
+        radius: f32,
+        half_height: f32,
+    },
+    /// A `mesh` collider: the half extents of its triangles' box, centred
+    /// where the box is (`centre`, in the body's frame)
+    Mesh {
+        half_extents: [f32; 3],
+        centre: [f32; 3],
+    },
+    /// A `convex` collider's hull, as `Mesh`
+    Convex {
+        half_extents: [f32; 3],
+        centre: [f32; 3],
+    },
 }
 
 /// The physics simulation: initialized from the world when a scene is
@@ -115,6 +151,45 @@ impl PhysicsSystem {
         self.step_in_frame = 0;
     }
 
+    /// The collision layers colliders are read against: `default` and the
+    /// project's (`[project.physics] layers`). Set before the scene's
+    /// bodies are made ([`initialize`](Self::initialize)); a collider made
+    /// earlier keeps the layer it was given. Kept by [`clear`](Self::clear).
+    pub fn set_layers(&mut self, layers: CollisionLayers) {
+        self.sync.layers = layers;
+    }
+
+    /// The layers in use, `default` first.
+    pub fn layers(&self) -> &CollisionLayers {
+        &self.sync.layers
+    }
+
+    /// The mask of some layers by name, for [`raycast_masked`](Self::raycast_masked)
+    /// and [`move_character_masked`](Self::move_character_masked).
+    pub fn layer_mask<S: AsRef<str>>(
+        &self,
+        names: &[S],
+    ) -> std::result::Result<LayerMask, LayerError> {
+        self.sync.layers.mask(names)
+    }
+
+    /// The model an entity's `mesh` or `convex` collider takes its
+    /// triangles from, for each that wants some (see
+    /// [`PhysicsSync::mesh_requests`]): ask before the models load.
+    pub fn collider_mesh_requests(world: &FlintWorld) -> Vec<(EntityId, String)> {
+        PhysicsSync::mesh_requests(world)
+    }
+
+    /// Hand over an entity's collider triangles, before its body is made.
+    pub fn set_collider_mesh(&mut self, entity_id: EntityId, mesh: Arc<ColliderMesh>) {
+        self.sync.set_mesh(entity_id, mesh);
+    }
+
+    /// The entity a collider belongs to.
+    pub fn entity_of_collider(&self, handle: ColliderHandle) -> Option<EntityId> {
+        self.sync.entity_of(handle)
+    }
+
     /// Cast a ray and resolve the hit collider to an EntityId
     pub fn raycast(
         &self,
@@ -123,20 +198,32 @@ impl PhysicsSystem {
         max_distance: f32,
         exclude_entity: Option<EntityId>,
     ) -> Option<EntityRaycastHit> {
+        self.raycast_masked(origin, direction, max_distance, exclude_entity, None)
+    }
+
+    /// [`raycast`](Self::raycast) meeting only the colliders on a layer of
+    /// `mask` (`None`: every collider). The colliders' own masks don't
+    /// matter: a ray is on every layer.
+    pub fn raycast_masked(
+        &self,
+        origin: [f32; 3],
+        direction: [f32; 3],
+        max_distance: f32,
+        exclude_entity: Option<EntityId>,
+        mask: Option<LayerMask>,
+    ) -> Option<EntityRaycastHit> {
         let exclude_collider =
             exclude_entity.and_then(|eid| self.sync.collider_map.get(&eid).copied());
 
-        let hit = self
-            .physics_world
-            .cast_ray(origin, direction, max_distance, exclude_collider)?;
+        let hit = self.physics_world.cast_ray(
+            origin,
+            direction,
+            max_distance,
+            exclude_collider,
+            mask.map(LayerMask::query_groups),
+        )?;
 
-        // Resolve collider handle → EntityId
-        let entity_id = self
-            .sync
-            .collider_map
-            .iter()
-            .find(|(_, ch)| **ch == hit.collider_handle)
-            .map(|(eid, _)| *eid)?;
+        let entity_id = self.sync.entity_of(hit.collider_handle)?;
 
         Some(EntityRaycastHit {
             entity_id,
@@ -149,6 +236,7 @@ impl PhysicsSystem {
     /// Collision-corrected kinematic character movement using Rapier's shape-sweep.
     /// Scripts pass the desired movement delta; the engine resolves collisions and
     /// returns the corrected absolute position plus grounded status.
+    /// It meets what its own collider meets (`collider.layer` and `mask`).
     pub fn move_character_shape(
         &self,
         entity_id: EntityId,
@@ -156,11 +244,31 @@ impl PhysicsSystem {
         desired_delta: [f32; 3],
         dt: f32,
     ) -> Option<MoveCharacterResult> {
+        self.move_character_masked(entity_id, current_pos, desired_delta, dt, None)
+    }
+
+    /// [`move_character_shape`](Self::move_character_shape) meeting the
+    /// colliders on a layer of `mask` (whose own masks hold the
+    /// character's layer) instead of its collider's mask. `None` is its
+    /// collider's mask.
+    pub fn move_character_masked(
+        &self,
+        entity_id: EntityId,
+        current_pos: [f32; 3],
+        desired_delta: [f32; 3],
+        dt: f32,
+        mask: Option<LayerMask>,
+    ) -> Option<MoveCharacterResult> {
         let collider_handle = *self.sync.collider_map.get(&entity_id)?;
         let body_handle = *self.sync.body_map.get(&entity_id)?;
 
         let collider = self.physics_world.collider_set.get(collider_handle)?;
         let shape = collider.shape();
+        let own = collider.collision_groups();
+        let groups = match mask {
+            Some(mask) => InteractionGroups::new(own.memberships, mask.group()),
+            None => own,
+        };
 
         // Build isometry from the ECS position (freshest data from scripts)
         let position = Isometry::translation(current_pos[0], current_pos[1], current_pos[2]);
@@ -185,7 +293,8 @@ impl PhysicsSystem {
             desired,
             QueryFilter::default()
                 .exclude_rigid_body(body_handle)
-                .exclude_sensors(),
+                .exclude_sensors()
+                .groups(groups),
             |_| {},
         );
 
@@ -238,7 +347,23 @@ impl PhysicsSystem {
                 half_height: cyl.half_height,
             })
         } else {
-            None
+            let aabb = shape.compute_local_aabb();
+            let (half, centre) = (aabb.half_extents(), aabb.center());
+            let half_extents = [half.x, half.y, half.z];
+            let centre = [centre.x, centre.y, centre.z];
+            if shape.as_trimesh().is_some() {
+                Some(ColliderExtents::Mesh {
+                    half_extents,
+                    centre,
+                })
+            } else if shape.as_convex_polyhedron().is_some() {
+                Some(ColliderExtents::Convex {
+                    half_extents,
+                    centre,
+                })
+            } else {
+                None
+            }
         }
     }
 
@@ -255,13 +380,7 @@ impl PhysicsSystem {
             &shape,
             QueryFilter::default(),
             |handle| {
-                if let Some(eid) = self
-                    .sync
-                    .collider_map
-                    .iter()
-                    .find(|(_, ch)| **ch == handle)
-                    .map(|(eid, _)| *eid)
-                {
+                if let Some(eid) = self.sync.entity_of(handle) {
                     result.push(eid);
                 }
                 true // continue searching
@@ -341,10 +460,12 @@ impl PhysicsSystem {
             self.physics_world.remove_impulse_joint(joint_handle);
             self.sync.joint_cache.remove(&entity_id);
         }
-        // Remove standalone collider if any
-        if let Some(collider_handle) = self.sync.collider_map.remove(&entity_id) {
+        // Remove standalone collider if any (one on the body went with it;
+        // removing its handle again is a no-op)
+        if let Some(collider_handle) = self.sync.remove_collider(entity_id) {
             self.physics_world.remove_collider(collider_handle);
         }
+        self.sync.meshes.remove(&entity_id);
         self.sync.synced_entities.remove(&entity_id);
     }
 
@@ -401,7 +522,16 @@ impl PhysicsSystem {
         );
     }
 
-    /// Run the character controller update (called from player app with input access)
+    /// The character's share of a frame's input, once a frame before its
+    /// fixed steps, whether the frame runs none or several (#728): mouse
+    /// look turns the view, a jump press waits for the next step.
+    pub fn character_frame_input(&mut self, input: &InputState, world: &FlintWorld) {
+        self.character.frame_input(input, world);
+    }
+
+    /// One fixed step of the character: walk, fall, jump (called from the
+    /// player's fixed loop; look and jump presses come from
+    /// `character_frame_input`)
     pub fn update_character(&mut self, input: &InputState, world: &mut FlintWorld, dt: f64) {
         self.character.update(
             input,
@@ -427,6 +557,7 @@ impl PhysicsSystem {
             if let Some(components) = world.get_components(entity.id) {
                 if components.has(comp::CHARACTER_CONTROLLER) {
                     self.character.set_player_entity(entity.id);
+                    self.character.face_start(world);
                     break;
                 }
             }
@@ -475,18 +606,8 @@ impl PhysicsSystem {
             match event {
                 rapier3d::prelude::CollisionEvent::Started(h1, h2, flags) => {
                     // Map collider handles back to entity IDs
-                    let e1 = self
-                        .sync
-                        .collider_map
-                        .iter()
-                        .find(|(_, ch)| **ch == h1)
-                        .map(|(eid, _)| *eid);
-                    let e2 = self
-                        .sync
-                        .collider_map
-                        .iter()
-                        .find(|(_, ch)| **ch == h2)
-                        .map(|(eid, _)| *eid);
+                    let e1 = self.sync.entity_of(h1);
+                    let e2 = self.sync.entity_of(h2);
                     if let (Some(a), Some(b)) = (e1, e2) {
                         if flags.contains(CollisionEventFlags::SENSOR) {
                             // Determine which is the sensor (trigger) and which is the entity
@@ -507,18 +628,8 @@ impl PhysicsSystem {
                     }
                 }
                 rapier3d::prelude::CollisionEvent::Stopped(h1, h2, flags) => {
-                    let e1 = self
-                        .sync
-                        .collider_map
-                        .iter()
-                        .find(|(_, ch)| **ch == h1)
-                        .map(|(eid, _)| *eid);
-                    let e2 = self
-                        .sync
-                        .collider_map
-                        .iter()
-                        .find(|(_, ch)| **ch == h2)
-                        .map(|(eid, _)| *eid);
+                    let e1 = self.sync.entity_of(h1);
+                    let e2 = self.sync.entity_of(h2);
                     if let (Some(a), Some(b)) = (e1, e2) {
                         if flags.contains(CollisionEventFlags::SENSOR) {
                             let a_is_sensor = self
@@ -1012,8 +1123,8 @@ mod tests {
         assert_eq!(
             said[0].hint.as_deref(),
             Some(
-                "did you mean `sphere`? allowed values: box, sphere, capsule, cylinder, sprite; \
-                 the default \"box\" is used"
+                "did you mean `sphere`? allowed values: box, sphere, capsule, cylinder, sprite, \
+                 mesh, convex; the default \"box\" is used"
             )
         );
     }
@@ -1122,5 +1233,126 @@ mod tests {
         let (wrong, reports) = metres_walked("move_speed = \"fast\"");
         assert_eq!(wrong, unset);
         assert_eq!(reports, 1);
+    }
+
+    /// A floor and a character standing on it after half a second, whose
+    /// `character_controller` is `settings`.
+    fn standing(settings: &str) -> (FlintWorld, PhysicsSystem, EntityId) {
+        let mut world = FlintWorld::new();
+        let mut sys = PhysicsSystem::new();
+        spawn_from_toml(
+            &mut world,
+            "floor",
+            "[transform]\nposition = [0, -0.5, 0]\n[rigidbody]\nbody_type = \"static\"\n\
+             [collider]\nshape = \"box\"\nsize = [200, 1, 200]",
+        );
+        let id = spawn_from_toml(
+            &mut world,
+            "player",
+            &format!(
+                "[transform]\nposition = [0, 1, 0]\n[rigidbody]\nbody_type = \"kinematic\"\n\
+                 [collider]\nshape = \"capsule\"\nsize = [0.6, 1.8, 0.6]\n\
+                 [character_controller]\n{settings}"
+            ),
+        );
+        sys.initialize(&mut world).unwrap();
+        let input = InputState::new();
+        for _ in 0..30 {
+            sys.character_frame_input(&input, &world);
+            sys.update_character(&input, &mut world, 1.0 / 60.0);
+            sys.step(&mut world, 1.0 / 60.0);
+        }
+        (world, sys, id)
+    }
+
+    /// Highest the character's feet rise over `steps` steps of 1/60 s.
+    fn rise(sys: &mut PhysicsSystem, world: &mut FlintWorld, id: EntityId, steps: usize) -> f32 {
+        let input = InputState::new();
+        let floor = world.get_transform(id).unwrap().position.y;
+        let mut top = floor;
+        for _ in 0..steps {
+            sys.character_frame_input(&input, world);
+            sys.update_character(&input, world, 1.0 / 60.0);
+            sys.step(world, 1.0 / 60.0);
+            top = top.max(world.get_transform(id).unwrap().position.y);
+        }
+        top - floor
+    }
+
+    #[test]
+    fn a_jump_pressed_on_a_frame_with_no_step_still_jumps() {
+        let (mut world, mut sys, id) = standing("");
+        // A 144 Hz frame that runs no fixed step: Space goes down and is
+        // cleared again at the frame's end, before any step reads it
+        let mut input = InputState::new();
+        input.process_key_down(flint_runtime::parse_key_code("Space").unwrap());
+        sys.character_frame_input(&input, &world);
+        input.end_frame();
+        assert!(!input.is_action_just_pressed("jump"));
+
+        let height = rise(&mut sys, &mut world, id, 30);
+        // jump_force 6 under 9.81: about 1.8 at the top
+        assert!(
+            height > 1.0,
+            "the press waited for the next step: rose {height}"
+        );
+    }
+
+    #[test]
+    fn a_frame_of_several_steps_turns_once() {
+        let (world, mut sys, _) = standing("");
+        let mut input = InputState::new();
+        input.process_mouse_raw_delta(100.0, 0.0);
+        sys.character_frame_input(&input, &world);
+        let turned = -sys.camera_yaw();
+        // 100 units at 0.172 degrees each, however many steps follow
+        assert!((turned - 17.2f32.to_radians()).abs() < 1e-5, "{turned}");
+    }
+
+    #[test]
+    fn a_character_starts_facing_its_start_yaw() {
+        let (world, sys, _) = standing("start_yaw = 90");
+        assert!((sys.camera_yaw() - std::f32::consts::FRAC_PI_2).abs() < 1e-6);
+        let eye = sys.camera_position(&world);
+        let ahead = sys.camera_target(eye) - eye;
+        assert!(
+            ahead.x > 0.999 && ahead.z.abs() < 1e-3,
+            "faces +X: {ahead:?}"
+        );
+
+        // Unset: +Z, as before
+        let (world, sys, _) = standing("");
+        let eye = sys.camera_position(&world);
+        let ahead = sys.camera_target(eye) - eye;
+        assert!(ahead.z > 0.999, "faces +Z: {ahead:?}");
+    }
+
+    #[test]
+    fn the_look_and_fall_settings_are_the_components() {
+        // Pitch held at 30 degrees, however far the mouse goes
+        let (world, mut sys, _) = standing("pitch_limit = 30");
+        let mut input = InputState::new();
+        input.process_mouse_raw_delta(0.0, -10_000.0);
+        sys.character_frame_input(&input, &world);
+        assert!((sys.camera_pitch() - 30f32.to_radians()).abs() < 1e-6);
+
+        // Twice the sensitivity, twice the turn
+        let (world, mut sys, _) = standing("look_sensitivity = 0.344");
+        let mut input = InputState::new();
+        input.process_mouse_raw_delta(100.0, 0.0);
+        sys.character_frame_input(&input, &world);
+        assert!((-sys.camera_yaw() - 34.4f32.to_radians()).abs() < 1e-5);
+
+        // Half the gravity, a jump about twice as high
+        let jump_height = |settings: &str| {
+            let (mut world, mut sys, id) = standing(settings);
+            let mut input = InputState::new();
+            input.process_key_down(flint_runtime::parse_key_code("Space").unwrap());
+            sys.character_frame_input(&input, &world);
+            rise(&mut sys, &mut world, id, 120)
+        };
+        let full = jump_height("");
+        let half = jump_height("gravity_scale = 0.5");
+        assert!((half / full - 2.0).abs() < 0.1, "{full} then {half}");
     }
 }
