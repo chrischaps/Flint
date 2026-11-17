@@ -1167,6 +1167,43 @@ pub trait StylePass: Send + Sync {
     fn read_text(&self, _device: &wgpu::Device) -> Option<GlyphText> {
         None
     }
+
+    /// The grid this style draws the whole frame in whole cells of, when
+    /// it wants the edge of another style's entity snapped to it (#534):
+    /// the framework's [`ownership`] cut then gives each cell of the grid
+    /// wholly to one side, by how much of it is the other style's, rather
+    /// than cutting a cell along the entity's outline. Asked of a display
+    /// style once a frame, before the stage runs (`frame.descriptor` is
+    /// this style's); only the first style of the stage that answers is
+    /// heard. `None` (the default) keeps the cut to the mask's pixel.
+    fn ownership_cells(&self, _frame: &StyleFrame<'_>) -> Option<OwnershipCells> {
+        None
+    }
+}
+
+/// A whole-frame grid the [`ownership`] cut snaps to (#534), in output
+/// pixels: `cell` wide and tall from `origin`, as the style draws it. A
+/// cell is the style's (drawn whole, another style's pixels in it
+/// included) while at least `share` of its 16 lattice samples are not
+/// another style's; otherwise it is the other style's whole, and the
+/// style's own pixels in it show what came into the style.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OwnershipCells {
+    pub cell: [f32; 2],
+    pub origin: [f32; 2],
+    /// 1/16..1: the least share of a cell's samples the style must hold.
+    pub share: f32,
+}
+
+/// The stage's snapped ownership (#534): which style snaps (its registry
+/// index), its grid, and where another style's ids can be on screen, so
+/// the cut leaves every other pixel at once.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SnappedOwnership {
+    pub style: u32,
+    pub cells: OwnershipCells,
+    /// Output pixels (x0, y0, x1, y1).
+    pub rect: [f32; 4],
 }
 
 /// The view a style reads, with an id that's stable for as long as the
@@ -1281,6 +1318,10 @@ pub struct StyleFrame<'a> {
     pub debug_mode: crate::DebugMode,
     pub(crate) binds: &'a BindCache,
     pub(crate) targets: &'a StyleTargets,
+    /// The grid the stage's ownership cut snaps to (#534), set by
+    /// [`run_stage`] from [`StylePass::ownership_cells`]; `None` cuts to
+    /// the mask's pixel.
+    pub(crate) snapped_ownership: Option<SnappedOwnership>,
 }
 
 /// Whether per-entity styles scissor their passes to their entities
@@ -1529,10 +1570,19 @@ impl StyleFrame<'_> {
         }
         let me = registry_index(self.descriptor)? as u32;
         let table = owner_table(self.config, self.style_ids);
-        table
-            .iter()
-            .any(|&o| o != ownership::NONE && o != me)
-            .then_some(table)
+        // Under a snapped cut (#534) a style that isn't the snapping one
+        // gives back the other styles' pixels in the cells the snapping
+        // style holds, even with nothing of its own to cut
+        let snapped = self.snapped_ownership.is_some_and(|s| s.style != me);
+        (snapped || table.iter().any(|&o| o != ownership::NONE && o != me)).then_some(table)
+    }
+
+    /// Where the mask can hold an id another running style owns (#534),
+    /// as [`mask_rect`](Self::mask_rect) is for this style's own ids:
+    /// `None` when they could be anywhere, empty when none is in view.
+    pub fn foreign_rect(&self, pad: u32) -> Option<kit::PixelRect> {
+        let foreign = self.foreign_ids();
+        self.ids_rect(pad, |id| foreign.binary_search(&id).is_ok())
     }
 
     /// Whether `config` switches this style on for the whole frame, rather
@@ -1590,12 +1640,23 @@ impl StyleFrame<'_> {
         pad: u32,
         with: impl Fn(u16, &crate::style_mask::StyleVariant) -> bool,
     ) -> Option<kit::PixelRect> {
+        let mine: Vec<u16> = self
+            .variants()
+            .filter(|&(id, v)| with(id, v))
+            .map(|(id, _)| id)
+            .collect();
+        self.ids_rect(pad, |id| mine.contains(&id))
+    }
+
+    /// The screen bounds of the ids `with` picks, grown by `pad` and the
+    /// mask's rounding ([`variants_rect`](Self::variants_rect)).
+    fn ids_rect(&self, pad: u32, with: impl Fn(u16) -> bool) -> Option<kit::PixelRect> {
         if !scissor_enabled() {
             return None;
         }
         let mut uv = crate::style_mask::IdBounds::Nowhere;
-        for (id, v) in self.variants() {
-            if with(id, v) {
+        for (id, _) in self.style_ids.iter() {
+            if with(id) {
                 uv = uv.union(self.style_bounds.get(id));
             }
         }
@@ -2735,6 +2796,14 @@ pub(crate) fn run_stage(
             .then(|| frame.target(names[n], frame.format))
     });
     let ping = |n: u8| pings[n as usize].as_ref().expect("a ping the steps name");
+    // A grid the ownership cut snaps to (#534), asked before any style of
+    // the stage draws, so a style that runs before the snapping one cuts
+    // along the same cells. The display stage's alone: its styles all draw
+    // at the output's size, which the grid is in
+    frame.snapped_ownership = match stage {
+        StyleStage::Display if ownership.is_some() => snapped_ownership(styles, frame),
+        _ => None,
+    };
     for ((descriptor, pass), (src, dst)) in styles.iter().zip(steps.iter().copied()) {
         frame.descriptor = *descriptor;
         let src = match src {
@@ -2796,6 +2865,48 @@ pub(crate) fn run_stage(
         });
     }
     result
+}
+
+/// The first style of `styles` that yields and answers
+/// [`StylePass::ownership_cells`] (#534), with where the ids the other
+/// running styles own can be. `None` when none answers, its grid is no
+/// grid, or no other style's entity is in view.
+fn snapped_ownership(
+    styles: &[(&'static StyleDescriptor, &dyn StylePass)],
+    frame: &mut StyleFrame<'_>,
+) -> Option<SnappedOwnership> {
+    for (descriptor, pass) in styles {
+        if !descriptor.yields {
+            continue;
+        }
+        frame.descriptor = *descriptor;
+        let Some(cells) = pass.ownership_cells(frame) else {
+            continue;
+        };
+        let sane = |v: [f32; 2], least: f32| v.iter().all(|x| x.is_finite() && *x >= least);
+        if !sane(cells.cell, 1.0) || !sane(cells.origin, f32::MIN) || !cells.share.is_finite() {
+            return None;
+        }
+        let cells = OwnershipCells {
+            share: cells.share.clamp(1.0 / 16.0, 1.0),
+            ..cells
+        };
+        let style = registry_index(descriptor)? as u32;
+        // A cell touching a foreign id reads it: grow by two cells
+        let reach = (2.0 * cells.cell[0].max(cells.cell[1])).ceil() as u32;
+        let rect = match frame.foreign_rect(reach) {
+            Some(r) if r.width == 0 || r.height == 0 => return None,
+            Some(r) => [
+                r.x as f32,
+                r.y as f32,
+                (r.x + r.width) as f32,
+                (r.y + r.height) as f32,
+            ],
+            None => [0.0, 0.0, frame.width as f32, frame.height as f32],
+        };
+        return Some(SnappedOwnership { style, cells, rect });
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------

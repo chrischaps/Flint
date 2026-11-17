@@ -23,8 +23,8 @@
 //! edge_tint = 0.0       # for edge_ink = "color": toward the near side's hue
 //! outline = 1.0         # per-entity: ink this many points along the silhouette (#288)
 //! min_coverage = 0.5    # per-entity: least ink in a cell the entity only grazes
-//! silhouette = "pixel"  # per-entity: pixel | cell (whole glyphs at the edge, #338)
-//! cell_share = 0.5      # per-entity, cell silhouette: share of a cell that is the entity's
+//! silhouette = "pixel"  # pixel | cell (whole glyphs at the edge, #338; whole frame: at other styles' entities too, #534)
+//! cell_share = 0.5      # cell silhouette: share of a cell that is the entity's (whole frame: not another style's)
 //! ```
 //!
 //! It runs at the display stage: on the finished picture at output
@@ -149,12 +149,19 @@
 //! its own minority cells, but fills no others). The pixel `outline` is
 //! off on a snapped variant: its edge is the cells'. A variant that cuts
 //! to the pixel keeps its own pixels inside a snapped neighbour's cell.
+//!
+//! For the whole frame (#534), `silhouette = "cell"` also snaps the edge
+//! of another style's entity: [`StylePass::ownership_cells`] hands the
+//! framework the whole frame's grid, and the ownership cut gives each cell
+//! along a pencil prop wholly to the glyph (at least `cell_share` of it
+//! not the prop's) or wholly to the prop (its scene pixels plain). See
+//! [`super::ownership`].
 
 use super::kit;
 use super::variant_table::{report_drop, storage_entry, VariantTable};
 use super::text::{self, GlyphCell, GlyphText};
 use super::{
-    choices_with, ChoiceScope, MaskUse, StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleOption, StyleParam, StylePass, StyleStage, StyleTexture,
+    choices_with, ChoiceScope, MaskUse, OwnershipCells, StyleDescriptor, StyleDevice, StyleFrame, StyleInput, StyleOption, StyleParam, StylePass, StyleStage, StyleTexture,
 };
 use crate::glyph_atlas::{
     calibrated_bounds, GlyphRamp, GlyphSet, GlyphSetCache, GpuGlyphStack, RampMap, BUILTIN_SET,
@@ -324,7 +331,7 @@ const PARAMS: &[StyleParam] = &[
         .help("Per-entity: the least ink in a cell the entity only grazes (a thin feature), 0..1"),
     StyleParam::new("cell_share", 0.5, 0.0625..=1.0)
         .label("Cell share")
-        .help("Per-entity, silhouette cell: how much of a cell the entity must cover for the cell to be drawn as its glyph; lower keeps thinner features"),
+        .help("Silhouette cell: how much of a cell the entity must cover for the cell to be drawn as its glyph; lower keeps thinner features. For the whole frame, how much of a cell must not be another style's entity for it to stay a glyph"),
 ];
 
 const OPTIONS: &[StyleOption] = &[
@@ -364,7 +371,7 @@ const OPTIONS: &[StyleOption] = &[
         .help("What inks the line glyphs: cell (as the cell's tone glyph), color (one colour, Edge colour), or hue (the near side's own colour, not the cell's mix of it and what's behind)"),
     StyleOption::new("silhouette", "pixel", SILHOUETTES)
         .label("Silhouette")
-        .help("Per-entity: pixel cuts the glyphs at the entity's exact edge; cell draws each edge cell whole or not at all, by how much of it the entity covers"),
+        .help("pixel cuts the glyphs at the entity's exact edge; cell draws each edge cell whole or not at all, by how much of it the entity covers. For the whole frame, cell also snaps the edge of another style's entity (a pencil prop) to whole glyphs"),
 ];
 
 pub(super) static STYLE: StyleDescriptor =
@@ -3004,11 +3011,7 @@ impl Ascii {
     /// (#323). A reloaded set is a new Arc, so the stack re-uploads, and
     /// palettes are packed afresh every frame.
     fn refresh_fonts(&self, frame: &StyleFrame<'_>, fonts: &mut Fonts) {
-        if fonts.cache.scope() != Some(frame.assets) {
-            fonts.cache = GlyphSetCache::new(frame.assets.clone());
-            fonts.palettes = PaletteCache::new(frame.assets.clone());
-            fonts.stack = None;
-        }
+        self.follow_scope(frame, fonts);
         fonts.since_poll += 1;
         if fonts.since_poll >= POLL_FRAMES {
             fonts.since_poll = 0;
@@ -3026,6 +3029,27 @@ impl Ascii {
                 fonts.warned = None;
             }
         }
+    }
+
+    /// The caches follow the scene's folder.
+    fn follow_scope(&self, frame: &StyleFrame<'_>, fonts: &mut Fonts) {
+        if fonts.cache.scope() != Some(frame.assets) {
+            fonts.cache = GlyphSetCache::new(frame.assets.clone());
+            fonts.palettes = PaletteCache::new(frame.assets.clone());
+            fonts.stack = None;
+        }
+    }
+
+    /// The whole frame's grid, as [`encode`](StylePass::encode) lays it:
+    /// the cell for the frame's font and its origin.
+    fn whole_frame_grid(
+        &self,
+        frame: &StyleFrame<'_>,
+        fonts: &mut Fonts,
+    ) -> ([f32; 2], [f32; 2]) {
+        let glyph = self.set_named(fonts, frame.option("font")).atlas().cell_size();
+        let cell = cell_pixels(frame.param("cell"), frame.pixels_per_point, glyph);
+        (cell, grid_origin([frame.width, frame.height], cell))
     }
 
     /// The glyph set `name`, the built-in set when it can't be loaded (the
@@ -3594,6 +3618,27 @@ impl StylePass for Ascii {
             .unwrap_or_else(|e| e.into_inner())
             .as_mut()?
             .read(device)
+    }
+
+    /// The whole frame's grid under `silhouette = "cell"` (#534), so the
+    /// edge of another style's entity is whole glyphs too: a cell at least
+    /// `cell_share` not the other style's is drawn whole, any other is the
+    /// other style's. The silhouette that snaps ASCII's own props (#338)
+    /// then snaps the props of every other style the frame runs.
+    fn ownership_cells(&self, frame: &StyleFrame<'_>) -> Option<OwnershipCells> {
+        if !frame.covers_frame() || frame.option("silhouette") != "cell" {
+            return None;
+        }
+        let mut fonts = self.fonts.lock().unwrap_or_else(|e| e.into_inner());
+        // Before `encode` polls this frame: a glyph set reloaded this
+        // frame snaps to last frame's cell once
+        self.follow_scope(frame, &mut fonts);
+        let (cell, origin) = self.whole_frame_grid(frame, &mut fonts);
+        Some(OwnershipCells {
+            cell,
+            origin,
+            share: frame.param("cell_share"),
+        })
     }
 }
 
