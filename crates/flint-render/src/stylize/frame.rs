@@ -1,0 +1,580 @@
+//! What a style's pass reads each frame: [`StylePass`], [`StyleFrame`] and
+//! its helpers (moved from `stylize/mod.rs`, #742).
+
+use super::*;
+
+/// A style's GPU side: pipelines, layouts and uniform buffers, made once.
+pub trait StylePass: Send + Sync {
+    /// Record this frame's draws: read `input`, write every pixel of
+    /// `output` (both [`StyleFrame::width`] x [`StyleFrame::height`], in
+    /// [`StyleFrame::format`]). `input_id` distinguishes the views the
+    /// input can be; key bind groups over it with it
+    /// ([`StyleFrame::sampled_input`] does).
+    fn encode(
+        &self,
+        frame: &StyleFrame<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        input: &StyleInput<'_>,
+        output: &wgpu::TextureView,
+    );
+
+    /// Keep each frame's glyph grid for [`read_text`](Self::read_text)
+    /// (#317). Only a style that draws glyphs does anything with it.
+    fn set_text_capture(&self, _on: bool) {}
+
+    /// The glyph grid the last frame encoded with capture on drew, once
+    /// that frame's submission is done (this waits on the device). `None`
+    /// from a style that draws no glyphs, or before such a frame.
+    fn read_text(&self, _device: &wgpu::Device) -> Option<GlyphText> {
+        None
+    }
+}
+
+/// The view a style reads, with an id that's stable for as long as the
+/// chain's bind groups are.
+pub struct StyleInput<'a> {
+    pub view: &'a wgpu::TextureView,
+    pub id: u64,
+}
+
+/// The camera, for styles that read depth (edges, fog-aware washes).
+#[derive(Clone, Copy, Debug)]
+pub struct StyleCamera {
+    /// World to clip, column-major (for projecting an anchor, #266).
+    pub view_proj: [[f32; 4]; 4],
+    pub inv_view_proj: [[f32; 4]; 4],
+    pub position: [f32; 3],
+    pub near: f32,
+    pub far: f32,
+}
+
+/// Everything a style may read in one frame.
+pub struct StyleFrame<'a> {
+    pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
+    pub config: &'a PostProcessConfig,
+    pub descriptor: &'a StyleDescriptor,
+    /// The registry the frame is drawn with (#742): what the style mask's
+    /// ids and the owner table (#384) name styles by.
+    pub styles: &'a StyleRegistry,
+    /// The size of the input and output, in pixels.
+    pub width: u32,
+    pub height: u32,
+    /// The input's and output's format.
+    pub format: wgpu::TextureFormat,
+    /// The scene's depth (single-sample; under a render scale, the scaled
+    /// scene's). Sample it by UV: at the display stage it is smaller than
+    /// the output.
+    pub depth: &'a wgpu::TextureView,
+    /// [`depth`](Self::depth)'s size in pixels, which a view doesn't say:
+    /// the scene's, so smaller than `width` x `height` at the display stage
+    /// under a render scale. The style mask is this size too.
+    pub depth_size: [u32; 2],
+    /// Who vouches for `depth`, so bind groups over it may be kept
+    /// ([`StyleFrame::depth_bind`], #379).
+    pub depth_key: crate::bind_cache::DepthKey,
+    pub camera: StyleCamera,
+    /// The entity style mask (#263): one style id a pixel
+    /// ([`STYLE_MASK_FORMAT`](crate::style_mask::STYLE_MASK_FORMAT),
+    /// `texture_2d<u32>`, 0 = unstyled), at the scene's resolution like
+    /// [`depth`](Self::depth), so a display-stage style reads it by UV
+    /// with `textureLoad`. `Some` whenever a style with
+    /// [`uses_mask`](StyleDescriptor::uses_mask) is on. It lives with the
+    /// chain; bind it with [`mask_bind`](Self::mask_bind).
+    pub mask: Option<&'a wgpu::TextureView>,
+    /// Whether some pixel of [`mask`](Self::mask) may hold a blend below 1
+    /// this frame: an entity part-way into its style (#278) or a veil in
+    /// front of one (#290). The framework's cross-fade (#396) runs only
+    /// while it holds.
+    pub mask_fades: bool,
+    /// Which id each style name has in [`mask`](Self::mask).
+    pub style_ids: &'a crate::style_mask::StyleIds,
+    /// Where each style id's entities can be on screen this frame (#385),
+    /// from the world bounds of the draws the mask draws. Read it through
+    /// [`styled_rect`](Self::styled_rect).
+    pub style_bounds: &'a crate::style_mask::StyleBounds,
+    /// The shared geometry edges (#301, [`edges`] says what the channels
+    /// hold): [`EDGE_FORMAT`], the depth's size, read by UV with
+    /// `textureLoad`. `Some` whenever a style that
+    /// [`needs`](StyleDescriptor::needs) them is on; the framework draws
+    /// them once, before the first stage, for every style that reads them.
+    /// Bind it with [`edges_bind`](Self::edges_bind).
+    pub edges: Option<Arc<StyleTexture>>,
+    /// The style albedo (#869): each opaque mesh's own colour before light
+    /// ([`ALBEDO_FORMAT`](crate::style_albedo::ALBEDO_FORMAT), linear rgb,
+    /// alpha 1 where a mesh was drawn and 0 where none was: the sky,
+    /// terrain, grass, the ocean, particles), at the depth's size, read by
+    /// UV with `textureLoad`. `Some` whenever a style that
+    /// [`uses_albedo`](StyleDescriptor::uses_albedo) is on; key bind groups
+    /// over it with [`albedo_key`](Self::albedo_key).
+    pub albedo: Option<Arc<StyleTexture>>,
+    /// The chain's linear, clamped sampler.
+    pub linear_sampler: &'a wgpu::Sampler,
+    /// Seconds of game time, for animated styles.
+    pub time: f32,
+    /// Seconds of game time since the last frame (#342), for history that
+    /// decays at a rate rather than a step a frame. Game time, so it is the
+    /// fixed step under `--frame-step` and the capture is deterministic.
+    /// Read it through [`per_60hz`] to turn a per-60 Hz-frame weight into
+    /// this frame's.
+    pub dt: f32,
+    /// This frame's number: one more than the last frame the renderer drew
+    /// through the post chain. A style that keeps history from frame to
+    /// frame (ASCII's temporal stability, #277) trusts it only when the
+    /// last frame it drew is `frame - 1`, so a frame drawn without it (the
+    /// style switched off a while) starts it over.
+    pub frame: u64,
+    /// Bumped by [`SceneRenderer::reset_style_history`](crate::SceneRenderer::reset_style_history)
+    /// (a new scene, a camera cut): history from another epoch is not
+    /// this picture's past.
+    pub history_epoch: u64,
+    /// Physical pixels per logical point of the window (the OS scale
+    /// factor). A style sized in points multiplies by it, so its cells keep
+    /// their size on a high-DPI display. 1 headless unless asked.
+    pub pixels_per_point: f32,
+    /// The scene's folder, when the host knows it.
+    pub scene_dir: Option<&'a std::path::Path>,
+    /// Where a style finds the files it loads (a glyph set, a palette, a
+    /// paper): the scene's project and folder, searched by the one rule
+    /// (ADR 0114). With no scene, the working directory stands in for the
+    /// scene's folder.
+    pub assets: &'a flint_core::project::AssetScope,
+    /// The renderer's debug shading mode: a style with a debug view of its
+    /// own draws it under its mode (ASCII's edges under
+    /// [`DebugMode::StyleEdges`](crate::DebugMode::StyleEdges), #349).
+    pub debug_mode: crate::DebugMode,
+    pub(crate) binds: &'a BindCache,
+    pub(crate) targets: &'a StyleTargets,
+}
+
+/// Whether per-entity styles scissor their passes to their entities
+/// (#385): on unless `FLINT_STYLE_SCISSOR=0`, which is for checking that
+/// the scissored frame is the full one, byte for byte. Read once.
+pub fn scissor_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| flint_core::env::STYLE_SCISSOR.flag().unwrap_or(true))
+}
+
+/// A weight `w` that means "keep this much of last frame, per 60 Hz frame"
+/// as this frame's weight, `w^(dt * 60)` (#342): at 120 Hz two frames keep
+/// what one 60 Hz frame keeps, at 30 Hz one frame keeps what two do, so a
+/// change settles in the same game time at any rate. A `dt` that isn't a
+/// positive number says nothing about the rate and reads as 1/60.
+pub fn per_60hz(w: f32, dt: f32) -> f32 {
+    let dt = if dt.is_finite() && dt > 0.0 {
+        dt
+    } else {
+        1.0 / 60.0
+    };
+    w.clamp(0.0, 1.0).powf(dt * 60.0)
+}
+
+impl StyleFrame<'_> {
+    pub fn texel_size(&self) -> [f32; 2] {
+        [1.0 / self.width as f32, 1.0 / self.height as f32]
+    }
+
+    /// Whether [`format`](Self::format) is sRGB: samples come back linear
+    /// and writes are encoded.
+    pub fn srgb(&self) -> bool {
+        self.format.is_srgb()
+    }
+
+    /// This style's parameter `name`, from the config or its default.
+    pub fn param(&self, name: &str) -> f32 {
+        self.descriptor.param(self.config, name)
+    }
+
+    /// This style's option `name`, from the config or its default.
+    pub fn option(&self, name: &str) -> &str {
+        self.descriptor.option(self.config, name)
+    }
+
+    /// This style's colour `name` (`tint`, #315): its `_r`/`_g`/`_b`
+    /// channels from the config or their defaults, in display values.
+    pub fn color(&self, name: &str) -> [f32; 3] {
+        self.descriptor.color(self.config, name)
+    }
+
+    /// A texture of the style's own, `width` x `height` in `format`, made
+    /// on first use and kept until the chain is rebuilt (on resize).
+    /// `name` must be unique across styles; prefix it with the style's.
+    pub fn target(&self, name: &'static str, format: wgpu::TextureFormat) -> Arc<StyleTexture> {
+        self.targets
+            .get(self.device, name, format, self.width, self.height)
+    }
+
+    /// [`target`](Self::target) at a size of the style's own, such as one
+    /// texel per glyph cell. A name asked for at a new size is made again,
+    /// so bind groups over it must be keyed by something that changes with
+    /// it (see the ASCII style's history generation).
+    pub fn target_sized(
+        &self,
+        name: &'static str,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Arc<StyleTexture> {
+        self.targets.get(self.device, name, format, width, height)
+    }
+
+    /// A bind group kept with the chain, made with `make` the first time.
+    pub fn bind(
+        &self,
+        name: &'static str,
+        variant: u64,
+        make: impl FnOnce() -> wgpu::BindGroup,
+    ) -> Arc<wgpu::BindGroup> {
+        self.binds.get(name, self.keyed(variant), make)
+    }
+
+    /// `variant` told apart by the style's install (#742): a user style
+    /// reloaded under its old names never binds the old install's groups.
+    /// A built-in's (generation 0) is `variant` itself.
+    pub(super) fn keyed(&self, variant: u64) -> u64 {
+        match self.descriptor.generation {
+            0 => variant,
+            g => {
+                // splitmix64 of the pair: no install's keys meet another's
+                let mut z = variant ^ g.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+                z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+                z ^ (z >> 31)
+            }
+        }
+    }
+
+    /// A bind group over [`depth`](Self::depth): kept while the chain owns
+    /// the depth or the caller's depth id holds, made for this frame alone
+    /// when nothing vouches for it (#379).
+    pub fn depth_bind(
+        &self,
+        name: &'static str,
+        variant: u64,
+        make: impl FnOnce() -> wgpu::BindGroup,
+    ) -> Arc<wgpu::BindGroup> {
+        self.binds
+            .get_over(self.depth_key, name, self.keyed(variant), make)
+    }
+
+    /// True the first time it's asked about `name` while the chain lives:
+    /// for uniforms that only change on resize, such as texel sizes.
+    pub fn first_write(&self, name: &'static str) -> bool {
+        self.binds.first_write(name)
+    }
+
+    /// A kept bind group of `view` (binding 0) and the linear sampler
+    /// (binding 1), the shape most passes read a texture in. `view` must
+    /// live as long as the chain: a [`target`](Self::target) of this style.
+    pub fn sampled(
+        &self,
+        name: &'static str,
+        layout: &wgpu::BindGroupLayout,
+        view: &wgpu::TextureView,
+    ) -> Arc<wgpu::BindGroup> {
+        self.bind(name, 0, || self.make_sampled(name, layout, view))
+    }
+
+    /// [`sampled`](Self::sampled) over the style's input, keyed by which
+    /// view the input is this frame.
+    pub fn sampled_input(
+        &self,
+        name: &'static str,
+        layout: &wgpu::BindGroupLayout,
+        input: &StyleInput<'_>,
+    ) -> Arc<wgpu::BindGroup> {
+        self.bind(name, input.id, || {
+            self.make_sampled(name, layout, input.view)
+        })
+    }
+
+    /// A kept bind group of the style mask at binding 0, for a layout made
+    /// with [`kit::mask_layout`]; `None` while there's no mask.
+    pub fn mask_bind(
+        &self,
+        name: &'static str,
+        layout: &wgpu::BindGroupLayout,
+    ) -> Option<Arc<wgpu::BindGroup>> {
+        let mask = self.mask?;
+        Some(self.bind(name, 0, || {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(name),
+                layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(mask),
+                }],
+            })
+        }))
+    }
+
+    /// A kept bind group of the shared edges at binding 0, for a layout
+    /// made with [`kit::texture_layout`]; `None` while no style needs them.
+    pub fn edges_bind(
+        &self,
+        name: &'static str,
+        layout: &wgpu::BindGroupLayout,
+    ) -> Option<Arc<wgpu::BindGroup>> {
+        let edges = self.edges.as_ref()?;
+        Some(self.bind(name, self.edges_key(), || {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(name),
+                layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&edges.view),
+                }],
+            })
+        }))
+    }
+
+    /// A key for bind groups over [`albedo`](Self::albedo): its size, as
+    /// [`edges_key`](Self::edges_key) is the edges'. 0 while there is none.
+    pub fn albedo_key(&self) -> u64 {
+        self.albedo
+            .as_ref()
+            .map_or(0, |a| (u64::from(a.width) << 32) | u64::from(a.height))
+    }
+
+    /// A key for bind groups over [`edges`](Self::edges): its size, which
+    /// is what a render-scale step changes (the edge target is made again
+    /// at the depth's new size while the chain's bind groups stay). 0
+    /// while there are none.
+    pub fn edges_key(&self) -> u64 {
+        self.edges
+            .as_ref()
+            .map_or(0, |e| (u64::from(e.width) << 32) | u64::from(e.height))
+    }
+
+    /// The style mask id of style `name` this frame, if an entity asks
+    /// for it.
+    pub fn style_id(&self, name: &str) -> Option<u16> {
+        self.style_ids.id(name)
+    }
+
+    /// `(mask id, variant)` for each of this style's per-entity variants
+    /// this frame (#266), in id order. Read a variant's settings with
+    /// [`variant_param`](Self::variant_param) and
+    /// [`variant_option`](Self::variant_option).
+    pub fn variants(&self) -> impl Iterator<Item = (u16, &crate::style_mask::StyleVariant)> {
+        self.style_ids.variants_of(self.descriptor.name)
+    }
+
+    /// Parameter `name` of `variant`: the entity's, else the scene's, else
+    /// the style's default.
+    pub fn variant_param(&self, variant: &crate::style_mask::StyleVariant, name: &str) -> f32 {
+        variant.param(self.descriptor, self.config, name)
+    }
+
+    /// Colour `name` of `variant` (#315), channel by channel: the entity's,
+    /// else the scene's, else the style's default.
+    pub fn variant_color(&self, variant: &crate::style_mask::StyleVariant, name: &str) -> [f32; 3] {
+        match self.descriptor.color_setting(name) {
+            Some(c) => c.channels.map(|p| self.variant_param(variant, p.name)),
+            None => [0.0; 3],
+        }
+    }
+
+    /// Option `name` of `variant`: the entity's, else the scene's, else the
+    /// style's default.
+    pub fn variant_option<'v>(
+        &'v self,
+        variant: &'v crate::style_mask::StyleVariant,
+        name: &str,
+    ) -> &'v str {
+        variant.option(self.descriptor, self.config, name)
+    }
+
+    /// The mask ids whose pixels another running style owns (#384,
+    /// [`StyleDescriptor::foreign_ids`]). The framework already puts the
+    /// input back on them after a style that
+    /// [`yields`](StyleDescriptor::yields) draws; a style reads this to
+    /// skip work there (pencil's contours, ASCII's text grid).
+    pub fn foreign_ids(&self) -> Vec<u16> {
+        self.styles
+            .foreign_ids(self.descriptor, self.config, self.style_ids)
+    }
+
+    /// The owner table the ownership pass reads after this style, or
+    /// `None` when it has nothing to do: the style doesn't yield, there is
+    /// no mask, a debug view runs one style alone, or no pixel is another
+    /// style's.
+    pub(crate) fn owner_table(&self) -> Option<Vec<u32>> {
+        if !self.descriptor.yields
+            || self.mask.is_none()
+            || matches!(
+                self.debug_mode,
+                crate::DebugMode::StyleMask | crate::DebugMode::StyleEdges
+            )
+        {
+            return None;
+        }
+        let me = self.styles.index_of(self.descriptor.name)? as u32;
+        let table = self.styles.owner_table(self.config, self.style_ids);
+        table
+            .iter()
+            .any(|&o| o != ownership::NONE && o != me)
+            .then_some(table)
+    }
+
+    /// Whether `config` switches this style on for the whole frame, rather
+    /// than only for the entities that ask for it.
+    pub fn whole_frame(&self) -> bool {
+        self.descriptor.is_enabled(self.config)
+    }
+
+    /// Whether the style draws every pixel this frame: its table is on and
+    /// its `scope` (where it has one) isn't `entities`. Otherwise it draws
+    /// only its entities' pixels and passes the rest through.
+    pub fn covers_frame(&self) -> bool {
+        self.whole_frame() && self.option("scope") != "entities"
+    }
+
+    /// The pixels of this frame (`width` x `height`) the style can change
+    /// (#385): the screen bounds of its per-entity variants' draws (opt-outs
+    /// left out), grown by `pad` pixels for how far a styled pixel reaches
+    /// (a cell, a blur) and by a pixel or two for the mask's own rounding.
+    /// `None` when that could be anywhere: the style
+    /// [`covers_frame`](Self::covers_frame), one of its draws has no bounds
+    /// or crosses the camera plane, or `FLINT_STYLE_SCISSOR=0` turns the
+    /// scissor off. An empty rect means no entity of the style is in view.
+    ///
+    /// Outside it a per-entity style's passthrough holds, so a pass that
+    /// writes the input there ([`kit::scissored_pass`]) is the full pass.
+    pub fn styled_rect(&self, pad: u32) -> Option<kit::PixelRect> {
+        if self.covers_frame() {
+            return None;
+        }
+        self.variants_rect(pad, |_, v| !v.off)
+    }
+
+    /// The pixels of this frame where the style mask can hold one of the
+    /// style's ids (#507): the screen bounds of every per-entity variant's
+    /// draws, opt-outs included, grown by `pad` and the mask's rounding as
+    /// [`styled_rect`](Self::styled_rect) is, whether or not the style
+    /// covers the frame. Outside it every mask texel within `pad` pixels
+    /// reads as none of the style's, so a whole-frame pass can skip its
+    /// mask reads there. `None` when the ids could be anywhere (as for
+    /// `styled_rect`, `FLINT_STYLE_SCISSOR=0` included); empty when none is
+    /// in view.
+    pub fn mask_rect(&self, pad: u32) -> Option<kit::PixelRect> {
+        self.variants_rect(pad, |_, _| true)
+    }
+
+    /// [`mask_rect`](Self::mask_rect) of the one variant with mask id `id`:
+    /// where its own pixels can be.
+    pub fn variant_rect(&self, id: u16, pad: u32) -> Option<kit::PixelRect> {
+        self.variants_rect(pad, |of, _| of == id)
+    }
+
+    pub(super) fn variants_rect(
+        &self,
+        pad: u32,
+        with: impl Fn(u16, &crate::style_mask::StyleVariant) -> bool,
+    ) -> Option<kit::PixelRect> {
+        if !scissor_enabled() {
+            return None;
+        }
+        let mut uv = crate::style_mask::IdBounds::Nowhere;
+        for (id, v) in self.variants() {
+            if with(id, v) {
+                uv = uv.union(self.style_bounds.get(id));
+            }
+        }
+        let [x0, y0, x1, y1] = match uv {
+            crate::style_mask::IdBounds::Everywhere => return None,
+            crate::style_mask::IdBounds::Nowhere => return Some(kit::PixelRect::EMPTY),
+            crate::style_mask::IdBounds::Uv(r) => r,
+        };
+        let (w, h) = (self.width as f32, self.height as f32);
+        let rect = kit::PixelRect {
+            x: (x0 * w).floor().max(0.0) as u32,
+            y: (y0 * h).floor().max(0.0) as u32,
+            width: 0,
+            height: 0,
+        };
+        let right = ((x1 * w).ceil().max(0.0) as u32).min(self.width);
+        let bottom = ((y1 * h).ceil().max(0.0) as u32).min(self.height);
+        let rect = kit::PixelRect {
+            width: right.saturating_sub(rect.x),
+            height: bottom.saturating_sub(rect.y),
+            ..rect
+        };
+        // The mask is drawn at the depth's size: a display pixel reads the
+        // mask texel under it, up to one texel (of this frame's pixels)
+        // past the projected box, and MSAA or a rasterizer's rounding a
+        // pixel more
+        let texel = (self.width as f32 / self.depth_size[0].max(1) as f32)
+            .max(self.height as f32 / self.depth_size[1].max(1) as f32)
+            .ceil() as u32;
+        let slack = 2 + texel;
+        let rect = rect.padded(pad.saturating_add(slack), self.width, self.height);
+        tracing::trace!(
+            style = self.descriptor.name,
+            pad,
+            x = rect.x,
+            y = rect.y,
+            w = rect.width,
+            h = rect.height,
+            "styled rect"
+        );
+        Some(rect)
+    }
+
+    /// Where world point `p` lands in this frame, in pixels from the top
+    /// left; `None` behind the camera.
+    pub fn project(&self, p: [f32; 3]) -> Option<[f32; 2]> {
+        let m = &self.camera.view_proj;
+        let row = |r: usize| m[0][r] * p[0] + m[1][r] * p[1] + m[2][r] * p[2] + m[3][r];
+        let w = row(3);
+        if !w.is_finite() || w <= 1e-6 {
+            return None;
+        }
+        let (x, y) = (row(0) / w, row(1) / w);
+        Some([
+            (x * 0.5 + 0.5) * self.width as f32,
+            (0.5 - y * 0.5) * self.height as f32,
+        ])
+    }
+
+    /// A kept bind group of one uniform buffer at binding 0.
+    pub fn uniform(
+        &self,
+        name: &'static str,
+        layout: &wgpu::BindGroupLayout,
+        buffer: &wgpu::Buffer,
+    ) -> Arc<wgpu::BindGroup> {
+        self.bind(name, 0, || {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(name),
+                layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                }],
+            })
+        })
+    }
+
+    pub(super) fn make_sampled(
+        &self,
+        name: &'static str,
+        layout: &wgpu::BindGroupLayout,
+        view: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(name),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(self.linear_sampler),
+                },
+            ],
+        })
+    }
+}
