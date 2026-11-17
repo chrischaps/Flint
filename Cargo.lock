@@ -1942,6 +1942,7 @@ dependencies = [
  "flint-particles",
  "flint-physics",
  "flint-procgen",
+ "flint-query",
  "flint-render",
  "flint-rhythm",
  "flint-runtime",

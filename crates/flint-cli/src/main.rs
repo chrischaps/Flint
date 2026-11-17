@@ -48,7 +48,7 @@ enum Commands {
     #[command(subcommand)]
     Scene(scene::SceneCommands),
 
-    /// Query entities
+    /// Query entities: of a scene file, or of a running game (--attach)
     Query {
         /// Query string (e.g., "entities where archetype == 'door'")
         query: String,
@@ -56,6 +56,17 @@ enum Commands {
         /// Path to scene file
         #[arg(long)]
         scene: Option<String>,
+
+        /// Ask a running game instead of a file: the address it was started
+        /// with as `--inspect-listen` (IP:PORT, or a port on 127.0.0.1). The
+        /// same grammar and the same answer, of the world as it stands (#713)
+        #[arg(long, value_name = "IP:PORT", conflicts_with_all = ["scene", "schemas"])]
+        attach: Option<String>,
+
+        /// Each entity with its components' values, as `flint entity show`
+        /// prints one, not only its name and component list
+        #[arg(long)]
+        data: bool,
 
         /// Output format (json or toml)
         #[arg(long, default_value = "json")]
@@ -248,9 +259,18 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Query {
             query,
             scene,
+            attach,
+            data,
             format,
             schemas,
-        } => query::run(&query, scene.as_deref(), &format, &schemas),
+        } => query::run(query::QueryArgs {
+            query: &query,
+            scene: scene.as_deref(),
+            attach: attach.as_deref(),
+            data,
+            format: &format,
+            schemas: &schemas,
+        }),
         Commands::Schema(args) => schema::run(args),
         Commands::Script(cmd) => script::run(cmd),
         Commands::Validate(args) => validate::run(*args),

@@ -45,6 +45,19 @@ impl PlayerApp {
         if let Some(missing) = self.capture.missing() {
             return Some(missing);
         }
+        // `--dump-world` (#713): every time it asked for, or why not. A
+        // dump never handed over (no frame ran) has taken none.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let dump = self
+                .core
+                .subsystems
+                .find::<super::world_dump::WorldDump>()
+                .or(self.launch.world_dump.as_ref());
+            if let Some(missing) = dump.and_then(|d| d.missing()) {
+                return Some(missing);
+            }
+        }
         if self.launch.strict_scripts {
             if let Some(failure) = self.core.script.errors().strict_failure() {
                 return Some(failure);

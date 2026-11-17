@@ -84,14 +84,21 @@ pub enum EntityCommands {
         schemas: Vec<String>,
     },
 
-    /// Show entity details
+    /// Show entity details: its components' values, from a scene file or
+    /// a running game (--attach)
     Show {
         /// Entity name
         name: String,
 
         /// Path to scene file
-        #[arg(long)]
-        scene: String,
+        #[arg(long, required_unless_present = "attach")]
+        scene: Option<String>,
+
+        /// Ask a running game instead of a file: the address it was started
+        /// with as `--inspect-listen` (IP:PORT, or a port on 127.0.0.1), as
+        /// it stands now (#713)
+        #[arg(long, value_name = "IP:PORT", conflicts_with_all = ["scene", "schemas"])]
+        attach: Option<String>,
 
         /// Output format (json or toml)
         #[arg(long, default_value = "json")]
@@ -139,9 +146,16 @@ pub fn run(cmd: EntityCommands) -> Result<()> {
         EntityCommands::Show {
             name,
             scene,
+            attach,
             format,
             schemas,
-        } => show(&name, &scene, &format, &schemas),
+        } => show(
+            &name,
+            scene.as_deref(),
+            attach.as_deref(),
+            &format,
+            &schemas,
+        ),
     }
 }
 
@@ -330,41 +344,35 @@ fn delete(name: &str, scene_path: &str, recursive: bool, schemas: &[String]) -> 
     ))
 }
 
-fn show(name: &str, scene_path: &str, format: &str, schemas: &[String]) -> Result<()> {
-    let registry = load_registry(scene_path, schemas)?;
-    let (world, _) = load_scene(scene_path, &registry).context("Failed to load scene")?;
-
-    let id = world
-        .get_id(name)
-        .ok_or_else(|| anyhow::anyhow!("Entity '{}' not found", name))?;
-
-    let info = world
-        .all_entities()
-        .into_iter()
-        .find(|e| e.name == name)
-        .ok_or_else(|| anyhow::anyhow!("Entity '{}' not found", name))?;
-
-    let components = world.get_components(id);
-
-    #[derive(serde::Serialize)]
-    struct EntityDetails {
-        #[serde(flatten)]
-        info: flint_ecs::EntityInfo,
-        data: Option<std::collections::BTreeMap<String, toml::Value>>,
-    }
-
-    let details = EntityDetails {
-        info,
-        data: components.map(|c| c.data.clone()),
+/// One entity's details from a scene file, or from a running game with
+/// `--attach` (#713): either way `flint_query::answer`'s, so the two print
+/// the same.
+fn show(
+    name: &str,
+    scene_path: Option<&str>,
+    attach: Option<&str>,
+    format: &str,
+    schemas: &[String],
+) -> Result<()> {
+    let ask = flint_query::Ask::Entity {
+        entity: name.to_owned(),
+    };
+    let details = match (attach, scene_path) {
+        (Some(addr), _) => super::attach::ask(addr, &ask)?.answer,
+        (None, Some(scene_path)) => {
+            let registry = load_registry(scene_path, schemas)?;
+            let (world, _) = load_scene(scene_path, &registry).context("Failed to load scene")?;
+            flint_query::answer(&world, &ask).map_err(anyhow::Error::msg)?
+        }
+        (None, None) => anyhow::bail!("give --scene <file> or --attach <IP:PORT>"),
     };
 
     match output::format_or_json(format) {
-        "json" => {
-            output::document(&serde_json::to_value(&details)?);
-        }
-        "toml" => {
-            println!("{}", toml::to_string_pretty(&details)?);
-        }
+        "json" => output::document(&details),
+        "toml" => println!(
+            "{}",
+            toml::to_string_pretty(&super::attach::without_nulls(details))?
+        ),
         _ => anyhow::bail!("Unknown format: {}", format),
     }
 

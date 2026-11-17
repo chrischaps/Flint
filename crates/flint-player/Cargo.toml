@@ -85,6 +85,7 @@ flint-asset = { workspace = true }
 flint-schema = { workspace = true }
 flint-ecs = { workspace = true }
 flint-scene = { workspace = true }
+flint-query = { workspace = true }
 flint-render = { workspace = true }
 flint-runtime = { workspace = true }
 flint-physics = { workspace = true }

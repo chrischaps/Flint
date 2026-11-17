@@ -37,6 +37,8 @@ pub use player_app::headless_game::{
     apply_look, HeadlessGame, LookRequest, ScriptLook, Skipped, PRESENTATION_ONLY, SCRIPT_SEED,
 };
 pub use player_app::input_script::{Applied, InputScript, PointerEvent, ScriptEvent};
+#[cfg(not(target_arch = "wasm32"))]
+pub use player_app::inspect::InspectListener;
 #[cfg(feature = "living")]
 pub use player_app::living_props::import_of as living_import;
 #[cfg(feature = "living")]
@@ -62,6 +64,8 @@ pub use player_app::web_pacing::coarse_pointer as web_coarse_pointer;
 pub use player_app::web_page::begin as web_begin;
 #[cfg(target_arch = "wasm32")]
 pub use player_app::web_startup::WEB_CANVAS_ID;
+#[cfg(not(target_arch = "wasm32"))]
+pub use player_app::world_dump::WorldDump;
 pub use player_app::ProcGenMode;
 pub use player_app::StatsView;
 pub use player_app::{CaptureConfig, GameCore, LaunchOptions, PlayerApp, SceneSettings};

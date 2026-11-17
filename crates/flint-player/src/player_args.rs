@@ -203,6 +203,40 @@ pub struct PlayerArgs {
     #[arg(long, value_name = "IP:PORT")]
     pub expression_listen: Option<String>,
 
+    /// Answer questions about the live world at this loopback address
+    /// (e.g. 127.0.0.1:7878), a line of JSON for each line asked: `flint
+    /// query --attach ADDR "entities where ..."` and `flint entity show NAME
+    /// --attach ADDR` ask it (#713). Off unless given; only 127.0.0.1 or ::1
+    #[arg(long, value_name = "IP:PORT")]
+    pub inspect_listen: Option<String>,
+
+    /// Write the world as JSON to this file: each entity `--dump-query`
+    /// picks, with its components' values, at each `--dump-world-at` time
+    /// (#713). The run fails if a time never comes
+    #[arg(long, value_name = "FILE")]
+    pub dump_world: Option<PathBuf>,
+
+    /// Game times in seconds for `--dump-world`, repeatable or comma
+    /// separated (`--dump-world-at 1,2.5`); each is taken on the first frame
+    /// at or after it. Default: `--exit-after`'s time, else the first frame
+    #[arg(
+        long,
+        value_name = "SECS",
+        value_delimiter = ',',
+        requires = "dump_world"
+    )]
+    pub dump_world_at: Vec<f64>,
+
+    /// Which entities `--dump-world` writes, in `flint query`'s grammar
+    /// (`entities where archetype == 'player'`). Default: all of them
+    #[arg(
+        long,
+        value_name = "QUERY",
+        default_value = "entities",
+        requires = "dump_world"
+    )]
+    pub dump_query: String,
+
     /// Open the rendering stats overlay (F2) from the first frame, so a
     /// capture shows it: `--stats` the whole of it (the frame-time graph,
     /// its hitch counters and the rendering stats), `--stats=graph` the
@@ -447,6 +481,25 @@ impl PlayerArgs {
             args.expression_timeline.as_deref(),
             args.expression_listen.as_deref(),
         )?;
+        // The live world's socket and file (#713), as early, for the same reason
+        #[cfg(not(target_arch = "wasm32"))]
+        let inspect = args
+            .inspect_listen
+            .as_deref()
+            .map(crate::InspectListener::bind)
+            .transpose()?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let world_dump = match &args.dump_world {
+            Some(path) => {
+                let at = if args.dump_world_at.is_empty() {
+                    vec![args.exit_after.unwrap_or(0.0)]
+                } else {
+                    args.dump_world_at.clone()
+                };
+                Some(crate::WorldDump::new(path.clone(), at, &args.dump_query)?)
+            }
+            None => None,
+        };
 
         #[cfg_attr(not(feature = "living"), allow(unused_mut))]
         let (world, mut scene_file) =
@@ -490,6 +543,11 @@ impl PlayerArgs {
         launch.window_size = args.window.size();
         launch.window_options = args.window.clone();
         launch.expression_feed = expression_feed;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            launch.inspect = inspect;
+            launch.world_dump = world_dump;
+        }
         app.input.touch_controls_mut().set_mode(touch_mode);
         args.hitches.apply(&mut app)?;
         // Skybox, ambient, shading levers, shadows, default lights, camera,
