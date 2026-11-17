@@ -29,10 +29,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let d_edge = (abs(lin_r - lin_l) + abs(lin_d - lin_u)) / max(lin_c * 0.05, 0.05);
 
     // Luminance gradient assist picks up interior detail (foam lace, logs).
-    let lum_l = luma(picture(uv - vec2<f32>(px.x, 0.0)));
-    let lum_r = luma(picture(uv + vec2<f32>(px.x, 0.0)));
-    let lum_u = luma(picture(uv - vec2<f32>(0.0, px.y)));
-    let lum_d = luma(picture(uv + vec2<f32>(0.0, px.y)));
+    let lum_l = flint_luma(picture(uv - vec2<f32>(px.x, 0.0)));
+    let lum_r = flint_luma(picture(uv + vec2<f32>(px.x, 0.0)));
+    let lum_u = flint_luma(picture(uv - vec2<f32>(0.0, px.y)));
+    let lum_d = flint_luma(picture(uv + vec2<f32>(0.0, px.y)));
     let l_edge = (abs(lum_r - lum_l) + abs(lum_d - lum_u)) * 2.0;
 
     let edge = smoothstep(0.25, 0.9, d_edge + l_edge);

@@ -28,7 +28,7 @@
 fn cell_shown(p: vec2<i32>) -> vec3<f32> {
     let max_px = vec2<i32>(u.size) - vec2<i32>(1);
     let c = clamp(textureLoad(cell_input, clamp(p, vec2<i32>(0), max_px), 0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    return select(c, to_display(c), u.srgb == 1u);
+    return select(c, flint_to_display(c), u.srgb == 1u);
 }
 
 // The mask id the glyph pass's `slot_at` looks up; 0 with no load where the

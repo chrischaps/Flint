@@ -242,22 +242,6 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return out;
 }
 
-fn to_display(c: vec3<f32>) -> vec3<f32> {
-    let lo = c * 12.92;
-    let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, c <= vec3<f32>(0.0031308));
-}
-
-fn to_linear(c: vec3<f32>) -> vec3<f32> {
-    let lo = c / 12.92;
-    let hi = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, c <= vec3<f32>(0.04045));
-}
-
-fn luma(c: vec3<f32>) -> f32 {
-    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
-}
-
 // Luminance remapped to the ramp: contrast about mid-grey, then brightness.
 fn tone(lum: f32) -> f32 {
     return clamp((lum - 0.5) * u.contrast + 0.5 + u.brightness, 0.0, 1.0);
@@ -305,7 +289,7 @@ fn exposed(c: vec3<f32>, gain: f32) -> vec3<f32> {
         return c;
     }
     if u.srgb == 1u {
-        return clamp(to_display(to_linear(c) * gain), vec3<f32>(0.0), vec3<f32>(1.0));
+        return clamp(flint_to_display(flint_to_linear(c) * gain), vec3<f32>(0.0), vec3<f32>(1.0));
     }
     return clamp(c * gain, vec3<f32>(0.0), vec3<f32>(1.0));
 }

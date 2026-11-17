@@ -52,9 +52,9 @@
 fn slot_luma(col: vec3<f32>, slot: u32) -> f32 {
     let amount = slot_normalize(slot);
     if amount <= 0.0 {
-        return luma(col);
+        return flint_luma(col);
     }
-    return stretched(luma(col), textureLoad(tone_stats, vec2<i32>(i32(slot), 0), 0), amount);
+    return stretched(flint_luma(col), textureLoad(tone_stats, vec2<i32>(i32(slot), 0), 0), amount);
 }
 
 // The edge glyph slot of the screen-grid cell `cell`, or NO_EDGE: the
@@ -253,7 +253,7 @@ fn mode_ink(v: Variant, col: vec3<f32>, t: f32, cell: vec2<f32>) -> vec3<f32> {
 }
 
 fn cell_inks(v: Variant, col: vec3<f32>, t: f32, cell: vec2<f32>) -> Inks {
-    let lum = luma(col);
+    let lum = flint_luma(col);
     let ink = mode_ink(v, col, t, cell);
     var ground = col * v.background;
     switch v.color_mode {
@@ -555,7 +555,7 @@ fn dissolve_place(slot: u32, p: vec2<f32>) -> f32 {
 fn shown_entity(p: vec2<i32>) -> vec3<f32> {
     let max_px = vec2<i32>(u.size) - vec2<i32>(1);
     let c = clamp(textureLoad(entity_input, clamp(p, vec2<i32>(0), max_px), 0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    return select(c, to_display(c), u.srgb == 1u);
+    return select(c, flint_to_display(c), u.srgb == 1u);
 }
 
 // The picture as it came, for pixels no style of this one's covers
@@ -738,7 +738,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let t = banded(tone(slot_luma(col, 0u)));
         out = shade(frame_look(), col, t, state.a, cell, local, edge_slot(cell, u.corners), 0.0);
     }
-    return vec4<f32>(select(out, to_linear(out), u.srgb == 1u), 1.0);
+    return vec4<f32>(select(out, flint_to_linear(out), u.srgb == 1u), 1.0);
 }
 
 // The glyph grid as text (#317): one fragment a screen-grid cell, the

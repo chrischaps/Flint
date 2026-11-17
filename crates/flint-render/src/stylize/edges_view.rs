@@ -51,7 +51,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         pipeline: kit::fullscreen_pipeline(
             device,
             "Edges View Pipeline",
-            &kit::shader(device, "Edges View Shader", kit::wgsl!("edges_view.wgsl")),
+            &kit::shader(device, "Edges View Shader", kit::wgsl!("prelude_core.wgsl", "edges_view.wgsl")),
             &[&uniform_bgl, &input_bgl, &edges_bgl],
             d.format,
         ),

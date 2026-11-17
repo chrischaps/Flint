@@ -90,11 +90,13 @@
 //!
 //! Luminance alone loses silhouettes, so cells along the scene's edges
 //! draw the glyph set's line glyphs (`─ │ ╱ ╲` in the built-in set)
-//! instead of a tone glyph. Two more passes, before the glyph pass:
-//! `ascii_edges.wgsl` finds edge pixels from geometry at the depth's
-//! resolution (depth, normals rebuilt from it, and the style mask), and
-//! `ascii_edge_cells.wgsl` reduces each glyph cell to one line glyph by the
-//! summed structure tensor of every edge pixel in it. The glyph pass draws
+//! instead of a tone glyph. The edge pixels come from geometry at the
+//! depth's resolution: depth steps and creases from the shared edge pass
+//! (`edges.wgsl`, every line style's since #743, scaled by this style's
+//! `edge_depth` / `edge_normal`), and the style mask's outlines
+//! (`ascii_edge_source.wgsl`). `ascii_edge_cells.wgsl` reduces each glyph
+//! cell to one line glyph by the summed structure tensor of every edge
+//! pixel in it. The glyph pass draws
 //! it over the tone glyph in the one cell the line passes within half a
 //! cell of (#352: the cell pass records where the line crosses the cell's
 //! centre column or row; `ascii_edge_thin.wgsl` keeps it there). Per
@@ -374,6 +376,9 @@ pub(super) static STYLE: StyleDescriptor =
         // The mask gives styled entities their outlines (#267), so only while
         // edges are on and something is styled (#350)
         .uses_mask(MaskUse::When(reads_mask))
+        // Its line glyphs are drawn from the shared edges (#743), so only
+        // while edges are on or the edge view shows them
+        .needs_edges_when(needs_edges)
         .component("ascii_style")
         // Its fade mixes in display space and its dissolve turns whole cells (#278)
         .blends_itself();
@@ -387,8 +392,8 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         label: Some("ASCII Table BGL"),
         entries: &[uniform_entry(), storage_entry(1), storage_entry(2)],
     });
-    // The edge pass's: its uniform and the slots, which say whose ids
-    // draw outlines
+    // The edge cell pass's and the edge view's group 0: its uniform and
+    // the slots, which say whose ids draw outlines (ascii_edge_source.wgsl)
     let edge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("ASCII Edge BGL"),
         entries: &[uniform_entry(), storage_entry(1)],
@@ -519,20 +524,16 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         ],
     });
     let edges_in_bgl = load_layout(device, "ASCII Edges In BGL");
-    let depth_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("ASCII Depth BGL"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Depth,
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        }],
+    // What the edge pixels are read from (#743, ascii_edge_source.wgsl):
+    // the shared edges, the style mask and the scene's depth
+    let source_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ASCII Edge Source BGL"),
+        entries: &[
+            texture_entry(0, wgpu::TextureSampleType::Float { filterable: false }),
+            texture_entry(1, wgpu::TextureSampleType::Uint),
+            texture_entry(2, wgpu::TextureSampleType::Depth),
+        ],
     });
-    let mask_bgl = kit::mask_layout(device, "ASCII Mask BGL");
     // Bound while no entity asks for the style: one unstyled pixel
     let no_mask = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("ASCII No Mask"),
@@ -549,14 +550,23 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         view_formats: &[],
     });
     let no_mask_view = no_mask.create_view(&Default::default());
-    let no_mask_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("ASCII No Mask BG"),
-        layout: &mask_bgl,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::TextureView(&no_mask_view),
-        }],
+    // Bound if the shared edge pass couldn't be built: no edge anywhere, so
+    // only the mask's outlines are found
+    let no_edges = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("ASCII No Edges"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: super::edges::EDGE_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
     });
+    let no_edges_view = no_edges.create_view(&Default::default());
     // The cell pass's past (#277, #344): last frame's cells and their
     // view depths, and the scene depth to reproject through
     let history_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -633,6 +643,17 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         entries: &[
             texture_entry(0, wgpu::TextureSampleType::Float { filterable: false }),
             texture_entry(1, wgpu::TextureSampleType::Uint),
+            // The mask's outlines (#743)
+            texture_entry(2, wgpu::TextureSampleType::Float { filterable: false }),
+        ],
+    });
+    // The edge cell pass's last group: last frame's edge cells (#477) and
+    // this frame's outlines (#743)
+    let past_outline_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ASCII Past Cells And Outlines BGL"),
+        entries: &[
+            texture_entry(0, wgpu::TextureSampleType::Float { filterable: false }),
+            texture_entry(1, wgpu::TextureSampleType::Float { filterable: false }),
         ],
     });
     // The edge debug view (#349): the edge pixels and the edge cells in
@@ -640,7 +661,8 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         device,
         "ASCII Edge View Pipeline",
         &kit::shader(device, "ASCII Edge View Shader", EDGE_VIEW_SHADER),
-        &[&uniform_bgl, &input_bgl, &edges_in_bgl, &edge_view_cells_bgl],
+        // The edge pixels' table and inputs first, as the cell pass's
+        &[&edge_bgl, &source_bgl, &input_bgl, &edge_view_cells_bgl],
         d.format,
     );
     // The thin pass's last group: last frame's edge slots (#477) and the
@@ -673,16 +695,14 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     );
     let blit = kit::Blit::new(device, "ASCII Blit", &input_bgl, d.format);
     Box::new(Ascii {
-        edge_pipeline: kit::fullscreen_pipeline(
+        outline_pipeline: kit::fullscreen_pipeline(
             device,
-            "ASCII Edge Pipeline",
-            &kit::shader(
-                device,
-                "ASCII Edge Shader",
-                kit::wgsl!("ascii_edges.wgsl"),
-            ),
-            &[&edge_bgl, &depth_bgl, &mask_bgl],
-            EDGE_FORMAT,
+            "ASCII Edge Outline Pipeline",
+            &kit::shader(device, "ASCII Edge Outline Shader", EDGE_OUTLINE_SHADER),
+            // The edge cell pass's table (its uniform starts with the edge
+            // source) and the edge pixels' inputs
+            &[&edge_bgl, &source_bgl],
+            super::edges::EDGE_FORMAT,
         ),
         edge_cell_pipeline: kit::fullscreen_pipeline(
             device,
@@ -690,14 +710,14 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
             &kit::shader(
                 device,
                 "ASCII Edge Cell Shader",
-                kit::wgsl!("ascii_edge_cells.wgsl"),
+                EDGE_CELLS_SHADER,
             ),
-            // The picture too (#351): the near side's hue; and last frame's
-            // edge cells (#477)
-            &[&uniform_bgl, &edges_in_bgl, &stats_in_bgl, &edges_in_bgl],
+            // The edge table and the edge pixels' inputs (#743), the picture
+            // (#351: the near side's hue), last frame's edge cells (#477) and
+            // the outlines
+            &[&edge_bgl, &source_bgl, &stats_in_bgl, &past_outline_bgl],
             EDGE_CELL_FORMAT,
         ),
-        edge_uniforms: kit::uniform_buffer::<EdgeUniforms>(device, "ASCII Edge Uniforms"),
         edge_cell_uniforms: kit::uniform_buffer::<EdgeCellUniforms>(
             device,
             "ASCII Edge Cell Uniforms",
@@ -716,10 +736,11 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
             "ASCII Edge View Uniforms",
         ),
         edges_in_bgl,
-        depth_bgl,
-        mask_bgl,
-        no_mask_bind,
-        edges: Mutex::new(None),
+        source_bgl,
+        past_outline_bgl,
+        outlines: Mutex::new(None),
+        _no_edges: no_edges,
+        no_edges_view,
         edge_cells: Mutex::new(None),
         edge_thin: Mutex::new(None),
         edge_slots: Mutex::new(None),
@@ -951,26 +972,32 @@ const NO_EDGE_START: u32 = u32::MAX;
 /// (`ascii_edge_slot.wgsl`).
 const EDGE_SLOTS: usize = 13;
 
-/// The edge pass's uniforms (#267), `ascii_edges.wgsl`.
+/// What the edge pixels are read with (#743), `EdgeSource` in
+/// `ascii_edge_source.wgsl`: the first member of the edge cell pass's and
+/// the edge view's uniforms.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-struct EdgeUniforms {
+struct EdgeSource {
     inv_view_proj: [[f32; 4]; 4],
     camera_pos: [f32; 3],
-    _pad0: u32,
-    _pad: [f32; 2],
-    depth_threshold: f32,
-    normal_threshold: f32,
     /// The plain `ascii` id (0 = none); the variants' ids are the ones the
     /// variant table gives a slot (#336).
     plain_id: u32,
-    _pad1: [u32; 3],
+    /// The shared `edge_depth` over the style's: the shared depth strength
+    /// times this is the style's.
+    depth_scale: f32,
+    /// The shared `edge_normal` over the style's.
+    normal_scale: f32,
+    /// 1 while the mask is bound, so the styled outlines are looked for.
+    outlines: u32,
+    _pad: u32,
 }
 
 /// The edge cell pass's uniforms (#267), `ascii_edge_cells.wgsl`.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct EdgeCellUniforms {
+    src: EdgeSource,
     cell: [f32; 2],
     origin: [f32; 2],
     size: [f32; 2],
@@ -1025,6 +1052,7 @@ const EDGE_REACH: f32 = 1.0;
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct EdgeViewUniforms {
+    src: EdgeSource,
     cell: [f32; 2],
     origin: [f32; 2],
     size: [f32; 2],
@@ -1068,9 +1096,6 @@ pub fn edge_view_thresholds(config: &crate::postprocess::PostProcessConfig) -> S
     )
 }
 
-/// Edge pixels: the unit gradient's structure tensor and the edge's source
-/// (1 crease, 2 depth, 3 outline).
-const EDGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// One texel a glyph cell: its line glyph's slot + 1, edge length, outline.
 /// 32-bit, so z holds the outline and cross-axis bits and the near side's hue above
 /// them as an exact integer (#351); x, y and w are kept at f16 precision,
@@ -1209,21 +1234,36 @@ fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType) -> wgpu::Bi
 }
 
 const CELLS_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "ascii_cells.wgsl"
 );
 pub(crate) const GLYPH_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "../palette.wgsl",
     "ascii_dissolve.wgsl",
     "ascii.wgsl",
     "ascii_edge_slot.wgsl"
 );
+const EDGE_OUTLINE_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
+    "ascii_edge_source.wgsl",
+    "ascii_edge_outline.wgsl"
+);
+const EDGE_CELLS_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
+    "ascii_edge_source.wgsl",
+    "ascii_edge_cells.wgsl"
+);
 const EDGE_VIEW_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
+    "ascii_edge_source.wgsl",
     "ascii_edge_view.wgsl",
     "ascii_edge_slot.wgsl"
 );
 const EDGE_THIN_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "ascii_edge_slot.wgsl",
     "ascii_edge_thin.wgsl"
@@ -1233,24 +1273,29 @@ const EDGE_CORNER_SHADER: kit::Wgsl = kit::wgsl!(
     "ascii_edge_corners.wgsl"
 );
 const DISSOLVE_ORDER_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "ascii_dissolve.wgsl",
     "ascii_dissolve_order.wgsl"
 );
 const DISSOLVE_RANK_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "ascii_dissolve.wgsl",
     "ascii_dissolve_rank.wgsl"
 );
 const VARIANT_CELLS_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "ascii_variant_cells.wgsl"
 );
 const STATS_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "ascii_stats.wgsl"
 );
 const STATS_RESOLVE_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "ascii_common.wgsl",
     "ascii_stats_resolve.wgsl"
 );
@@ -1907,7 +1952,8 @@ struct Ascii {
     pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniforms: wgpu::Buffer,
     uniform_bgl: wgpu::BindGroupLayout,
-    /// The uniform and the variant table (#336), and the edge pass's.
+    /// The uniform and the variant table (#336), and the edge cell pass's
+    /// and edge view's uniform with the slots.
     table_bgl: wgpu::BindGroupLayout,
     edge_bgl: wgpu::BindGroupLayout,
     /// The variant table (#336, the framework's since #740).
@@ -1923,9 +1969,13 @@ struct Ascii {
     blit: kit::Blit,
     fonts: Mutex<Fonts>,
     history: Mutex<History>,
-    edge_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    /// The mask's outlines (#743, `ascii_edge_outline.wgsl`), a fragment a
+    /// depth pixel into `outlines`, drawn only while the mask is bound.
+    outline_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    /// The edge cell pass (#267), summing the edge pixels
+    /// (`ascii_edge_source.wgsl`: the shared edges and the mask's outlines,
+    /// #743) over each glyph cell.
     edge_cell_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
-    edge_uniforms: wgpu::Buffer,
     edge_cell_uniforms: wgpu::Buffer,
     /// The edge debug view (#349), drawn instead of the glyphs under
     /// `DebugMode::StyleEdges`.
@@ -1943,10 +1993,14 @@ struct Ascii {
     /// style mask.
     thin_in_bgl: wgpu::BindGroupLayout,
     edges_in_bgl: wgpu::BindGroupLayout,
-    depth_bgl: wgpu::BindGroupLayout,
-    mask_bgl: wgpu::BindGroupLayout,
-    no_mask_bind: wgpu::BindGroup,
-    edges: Mutex<Option<Owned>>,
+    /// The edge pixels' inputs (#743): the shared edges, mask and depth.
+    source_bgl: wgpu::BindGroupLayout,
+    /// The edge cell pass's last group: last frame's cells and the outlines.
+    past_outline_bgl: wgpu::BindGroupLayout,
+    /// The outline pass's target, at the depth's size.
+    outlines: Mutex<Option<Owned>>,
+    _no_edges: wgpu::Texture,
+    no_edges_view: wgpu::TextureView,
     edge_cells: Mutex<Option<Owned>>,
     edge_thin: Mutex<Option<Owned>>,
     edge_slots: Mutex<Option<Owned>>,
@@ -2417,14 +2471,14 @@ impl Ascii {
 
     /// The variant table's rows and slots written to its buffers (grown to
     /// fit, #336), and the bind groups over them: the uniform's group 0 of
-    /// every ascii_common.wgsl pass, the edge pass's, and the width the
-    /// tone statistics give a column each row.
+    /// every ascii_common.wgsl pass, the edge cell pass's and the edge
+    /// view's, and the width the tone statistics give a column each row.
     fn upload_table(
         &self,
         frame: &StyleFrame<'_>,
         rows: &[VariantUniform],
         slots: &[u32],
-    ) -> (Arc<wgpu::BindGroup>, Arc<wgpu::BindGroup>, u32) {
+    ) -> (Arc<wgpu::BindGroup>, [Arc<wgpu::BindGroup>; 2], u32) {
         let mut table = self.table.lock().unwrap_or_else(|e| e.into_inner());
         // Every slot is written, so an id a past frame held reads 0 again
         table.upload(frame.device, frame.queue, rows, slots);
@@ -2448,22 +2502,28 @@ impl Ascii {
                 ],
             })
         });
-        let edge = frame.bind("ASCII Edge Table BG", table.generation(), || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("ASCII Edge Table BG"),
-                layout: &self.edge_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.edge_uniforms.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: table.slots().as_entire_binding(),
-                    },
-                ],
+        let edge_table = |name: &'static str, uniforms: &wgpu::Buffer| {
+            frame.bind(name, table.generation(), || {
+                frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(name),
+                    layout: &self.edge_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: uniforms.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: table.slots().as_entire_binding(),
+                        },
+                    ],
+                })
             })
-        });
+        };
+        let edge = [
+            edge_table("ASCII Edge Cell Table BG", &self.edge_cell_uniforms),
+            edge_table("ASCII Edge View Table BG", &self.edge_view_uniforms),
+        ];
         let width = table.row_capacity().min(MAX_VARIANTS) as u32;
         (main, edge, width)
     }
@@ -2616,9 +2676,60 @@ impl Ascii {
         (rows, slots)
     }
 
-    /// Edge pixels from depth, normals and the mask, then each cell's line
-    /// glyph from them (#267), then the glyph each cell draws, thinned and
-    /// cornered, into `edge_slots` (#910).
+    /// What the edge pixels are read with this frame (#743): the camera,
+    /// the plain id, the style's thresholds against the shared ones, and
+    /// whether the mask's outlines are looked for.
+    fn edge_source(&self, frame: &StyleFrame<'_>) -> EdgeSource {
+        let min = super::edges::MIN_THRESHOLD;
+        EdgeSource {
+            inv_view_proj: frame.camera.inv_view_proj,
+            camera_pos: frame.camera.position,
+            plain_id: frame.style_id(STYLE.name).map_or(0, u32::from),
+            depth_scale: frame.config.edge_depth.max(min) / frame.param("edge_depth").max(min),
+            normal_scale: frame.config.edge_normal.max(min) / frame.param("edge_normal").max(min),
+            outlines: frame.mask.is_some() as u32,
+            _pad: 0,
+        }
+    }
+
+    /// The edge pixels' inputs (#743, `ascii_edge_source.wgsl`'s group 1):
+    /// the shared edges (or no edge, if their pass couldn't be built), the
+    /// mask (or one unstyled pixel) and the depth, kept over the depth and
+    /// keyed by the edges' size, which a render-scale step changes.
+    fn edge_source_bind(&self, frame: &StyleFrame<'_>) -> Arc<wgpu::BindGroup> {
+        let key = frame.edges_key() ^ (frame.mask.is_some() as u64) << 63;
+        frame.depth_bind("ASCII Edge Source BG", key, || {
+            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ASCII Edge Source BG"),
+                layout: &self.source_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(
+                            frame
+                                .edges
+                                .as_ref()
+                                .map_or(&self.no_edges_view, |e| &e.view),
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(
+                            frame.mask.unwrap_or(&self.no_mask_view),
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(frame.depth),
+                    },
+                ],
+            })
+        })
+    }
+
+    /// Each cell's line glyph from the edge pixels (#267: the shared edges
+    /// and the mask's outlines, #743), then the glyph each cell draws,
+    /// thinned and cornered, into `edge_slots` (#910).
     #[allow(clippy::too_many_arguments)]
     fn encode_edges(
         &self,
@@ -2634,7 +2745,8 @@ impl Ascii {
         let origin = grid_origin([frame.width, frame.height], cell);
         // What the glyph pass reads of the edges inside its rect (#385):
         // the edge cells under it and one beside (thinning asks a
-        // neighbour), and the edge pixels under those cells
+        // neighbour), and the edge pixels under those cells (the outline
+        // pass's)
         let regions = glyph_rect.map(|g| {
             edge_regions(
                 g,
@@ -2645,41 +2757,7 @@ impl Ascii {
                 frame.depth_size,
             )
         });
-        let edge_uniforms = EdgeUniforms {
-            inv_view_proj: frame.camera.inv_view_proj,
-            camera_pos: frame.camera.position,
-            _pad0: 0,
-            _pad: [0.0; 2],
-            depth_threshold: frame.param("edge_depth").max(1e-3),
-            normal_threshold: frame.param("edge_normal").max(1e-3),
-            plain_id: frame.style_id(STYLE.name).map_or(0, u32::from),
-            _pad1: [0; 3],
-        };
-        frame
-            .queue
-            .write_buffer(&self.edge_uniforms, 0, bytemuck::bytes_of(&edge_uniforms));
-        // At the depth's size, so a line is one depth pixel wide
-        let mut edges_slot = self.edges.lock().unwrap_or_else(|e| e.into_inner());
-        let edges = Owned::ensure(
-            &mut edges_slot,
-            frame.device,
-            "ASCII Edges",
-            EDGE_FORMAT,
-            frame.depth_size,
-            &self.edges_in_bgl,
-        );
-        let depth = frame.depth_bind("ASCII Depth BG", 0, || {
-            frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("ASCII Depth BG"),
-                layout: &self.depth_bgl,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(frame.depth),
-                }],
-            })
-        });
-        let mask = frame.mask_bind("ASCII Mask BG", &self.mask_bgl);
-
+        let source = self.edge_source_bind(frame);
         // Last frame's edge cells and slots (#477), copied aside before
         // this frame's passes write over them, when they're its past: the
         // passes keep last frame's decisions until an edge has clearly
@@ -2717,27 +2795,62 @@ impl Ascii {
         }
         let hold = frame.param("hysteresis").max(0.0);
 
-        kit::fullscreen_pass_in(
-            encoder,
-            "ASCII Edge Pass",
-            &edges.view,
-            edges.size,
-            &self.edge_pipeline,
-            &[
-                edge_table,
-                &depth,
-                mask.as_deref().unwrap_or(&self.no_mask_bind),
-            ],
-            regions.map(|r| r.edge_pixels),
+        // The mask's outlines (#743), where the glyph pass reads them
+        let mut outline_slot = self.outlines.lock().unwrap_or_else(|e| e.into_inner());
+        let outlines = frame.mask.is_some().then(|| {
+            let target = Owned::ensure(
+                &mut outline_slot,
+                frame.device,
+                "ASCII Edge Outlines",
+                super::edges::EDGE_FORMAT,
+                frame.depth_size,
+                &self.edges_in_bgl,
+            );
+            kit::fullscreen_pass_in(
+                encoder,
+                "ASCII Edge Outline Pass",
+                &target.view,
+                target.size,
+                &self.outline_pipeline,
+                &[edge_table, &source],
+                regions.map(|r| r.edge_pixels),
+            );
+            target
+        });
+        let past_and_outlines = frame.bind(
+            "ASCII Past Cells And Outlines BG",
+            bind_key(&[
+                past_cells.generation,
+                outlines.map_or(u64::MAX, |o| o.generation),
+            ]),
+            || {
+                frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("ASCII Past Cells And Outlines BG"),
+                    layout: &self.past_outline_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&past_cells.view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(
+                                outlines.map_or(&self.no_edges_view, |o| &o.view),
+                            ),
+                        },
+                    ],
+                })
+            },
         );
 
         let cell_uniforms = EdgeCellUniforms {
+            src: self.edge_source(frame),
             cell,
             origin,
             size: [frame.width as f32, frame.height as f32],
             threshold: frame.param("edge_threshold").max(0.01),
             max_len: frame.param("edge_max"),
-            edge_size: [edges.size[0] as f32, edges.size[1] as f32],
+            edge_size: frame.depth_size.map(|n| n as f32),
             srgb: frame.srgb() as u32,
             corner: frame.param("edge_corner").clamp(0.0, 1.0),
             history: history as u32,
@@ -2773,14 +2886,10 @@ impl Ascii {
             edge_cells.size,
             &self.edge_cell_pipeline,
             &[
-                &frame.uniform(
-                    "ASCII Edge Cell Uniform BG",
-                    &self.uniform_bgl,
-                    &self.edge_cell_uniforms,
-                ),
-                &edges.bind,
+                edge_table,
+                &source,
                 &self.picture_bind(frame, input, false),
-                &past_cells.bind,
+                &past_and_outlines,
             ],
             regions.map(|r| r.edge_cells),
         );
@@ -2856,16 +2965,17 @@ impl Ascii {
         cell: [f32; 2],
         origin: [f32; 2],
         corners: u32,
+        view_table: &wgpu::BindGroup,
     ) {
-        let edges_slot = self.edges.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(edges) = edges_slot.as_ref() else {
-            return;
-        };
+        // The outlines the edge passes drew this frame, while the mask is bound
+        let outline_slot = self.outlines.lock().unwrap_or_else(|e| e.into_inner());
+        let outlines = outline_slot.as_ref().filter(|_| frame.mask.is_some());
         let uniforms = EdgeViewUniforms {
+            src: self.edge_source(frame),
             cell,
             origin,
             size: [frame.width as f32, frame.height as f32],
-            edge_size: [edges.size[0] as f32, edges.size[1] as f32],
+            edge_size: frame.depth_size.map(|n| n as f32),
             threshold: frame.param("edge_threshold").max(0.01),
             max_len: frame.param("edge_max"),
             srgb: if frame.srgb() { 1.0 } else { 0.0 },
@@ -2879,7 +2989,11 @@ impl Ascii {
             .write_buffer(&self.edge_view_uniforms, 0, bytemuck::bytes_of(&uniforms));
         let cells = frame.bind(
             "ASCII Edge View Cells BG",
-            bind_key(&[edge_cells.generation, edge_slots.generation]),
+            bind_key(&[
+                edge_cells.generation,
+                edge_slots.generation,
+                outlines.map_or(u64::MAX, |o| o.generation),
+            ]),
             || {
                 frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("ASCII Edge View Cells BG"),
@@ -2893,6 +3007,12 @@ impl Ascii {
                             binding: 1,
                             resource: wgpu::BindingResource::TextureView(&edge_slots.view),
                         },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(
+                                outlines.map_or(&self.no_edges_view, |o| &o.view),
+                            ),
+                        },
                     ],
                 })
             },
@@ -2903,13 +3023,9 @@ impl Ascii {
             output,
             &self.edge_view_pipeline,
             &[
-                &frame.uniform(
-                    "ASCII Edge View Uniform BG",
-                    &self.uniform_bgl,
-                    &self.edge_view_uniforms,
-                ),
+                view_table,
+                &self.edge_source_bind(frame),
                 &frame.sampled_input("ASCII Edge View Input BG", &self.input_bgl, input),
-                &edges.bind,
                 &cells,
             ],
         );
@@ -3199,7 +3315,8 @@ impl StylePass for Ascii {
             &self.cells_bgl,
         );
         // The variant table (#336), written before any pass reads it
-        let (uniform, edge_table, stats_width) = self.upload_table(frame, &variants, &slots);
+        let (uniform, [edge_table, view_table], stats_width) =
+            self.upload_table(frame, &variants, &slots);
         // The edge debug view (#349) runs the edge passes even with the
         // glyphs' edges off, and draws them in place of the glyphs
         let edge_view = frame.debug_mode == crate::DebugMode::StyleEdges;
@@ -3226,6 +3343,7 @@ impl StylePass for Ascii {
                 cell,
                 origin,
                 corners,
+                &view_table,
             );
             return;
         }
@@ -3581,6 +3699,33 @@ impl StylePass for Ascii {
         }
     }
 
+    /// Per entity (#743), the edge cells it sums lie within two of the
+    /// largest cell of the glyph pass's rect (itself two cells round the
+    /// entities, #385), so the shared edges are drawn within four cells
+    /// of them, a cell counted three times as tall as wide (no font is that
+    /// tall) since this is asked before the fonts load. The edge view
+    /// reads the whole frame.
+    fn edges_rect(&self, frame: &StyleFrame<'_>) -> Option<kit::PixelRect> {
+        if frame.debug_mode == crate::DebugMode::StyleEdges {
+            return None;
+        }
+        let points = frame
+            .variants()
+            .map(|(_, v)| frame.variant_param(v, "cell"))
+            .fold(frame.param("cell"), f32::max);
+        let ppp = if frame.pixels_per_point.is_finite() && frame.pixels_per_point > 0.0 {
+            frame.pixels_per_point
+        } else {
+            1.0
+        };
+        let reach = (points.max(1.0) * ppp).round().max(2.0) * 3.0;
+        let size = [frame.width, frame.height];
+        frame.styled_rect((4.0 * reach).ceil() as u32 + 2).map(|r| {
+            r.rescaled(size, frame.depth_size)
+                .padded(2, frame.depth_size[0], frame.depth_size[1])
+        })
+    }
+
     fn set_text_capture(&self, on: bool) {
         self.capture.store(on, Ordering::Relaxed);
         if !on {
@@ -3612,6 +3757,13 @@ fn reads_mask(
             || ids
                 .iter()
                 .any(|(id, _)| ids.variant(id).is_some_and(|v| v.style != STYLE.name)))
+}
+
+/// Whether ASCII reads the shared edges this frame (#743): while its
+/// `edges` are on, or the edge debug view (#349) draws them in place of
+/// the glyphs.
+fn needs_edges(frame: &StyleFrame<'_>) -> bool {
+    STYLE.param(frame.config, "edges") > 0.0 || frame.debug_mode == crate::DebugMode::StyleEdges
 }
 
 /// The style mask ids whose pixels aren't ASCII's in the finished frame
@@ -3725,9 +3877,10 @@ mod tests {
         );
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edges), 128);
         assert_eq!(std::mem::offset_of!(AsciiUniforms, edge_glyphs), 160);
-        assert_eq!(std::mem::size_of::<EdgeUniforms>(), 112);
-        // #477's history, hold and smoothing
-        assert_eq!(std::mem::size_of::<EdgeCellUniforms>(), 64);
+        // #743's edge source: the camera, the plain id, the thresholds' scales
+        assert_eq!(std::mem::size_of::<EdgeSource>(), 96);
+        // #477's history, hold and smoothing, after the edge source
+        assert_eq!(std::mem::size_of::<EdgeCellUniforms>(), 96 + 64);
         // #493's grid and who draws
         assert_eq!(std::mem::size_of::<EdgeThinUniforms>(), 48);
     }
@@ -3736,13 +3889,8 @@ mod tests {
     fn the_edge_shaders_validate_and_their_uniforms_match_rust() {
         for (name, src, size) in [
             (
-                "ascii_edges.wgsl",
-                include_str!("ascii_edges.wgsl"),
-                std::mem::size_of::<EdgeUniforms>(),
-            ),
-            (
                 "ascii_edge_cells.wgsl",
-                include_str!("ascii_edge_cells.wgsl"),
+                EDGE_CELLS_SHADER.text,
                 std::mem::size_of::<EdgeCellUniforms>(),
             ),
             (

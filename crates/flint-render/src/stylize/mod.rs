@@ -568,6 +568,12 @@ pub enum StyleNeed {
     /// strength and the direction across them, from the depth alone, read
     /// as [`StyleFrame::edges`].
     Edges,
+    /// The shared edges' depth steps alone (#743): `r` and the direction,
+    /// with `g` (the creases) left 0 on a frame where no style that is
+    /// on asks for [`Edges`](StyleNeed::Edges). Contour's, whose lines
+    /// are silhouettes: the pass then needs a 3x3 patch, not 5x5 and
+    /// normals.
+    EdgeSteps,
 }
 
 /// Whether a style reads the entity style mask (#263), and when (#350).
@@ -639,6 +645,10 @@ pub struct StyleDescriptor {
     /// asks for one is on, the framework makes it once a frame for all of
     /// them: [`StyleNeed::Edges`] is [`StyleFrame::edges`].
     pub needs: &'static [StyleNeed],
+    /// When the style reads the shared edges, if not whenever it is on
+    /// (#743, [`StyleDescriptor::needs_edges_when`]): ASCII only while its
+    /// `edges` are on or the edge view draws them.
+    pub edges_when: Option<fn(&StyleFrame<'_>) -> bool>,
     /// The component an entity takes this style with, its fields being the
     /// style's parameters and options (`ascii_style`, #266). A style with
     /// one is per-entity: an entity carrying it (or a `style_mask` naming
@@ -721,6 +731,7 @@ impl StyleDescriptor {
             uses_mask: MaskUse::Never,
             uses_albedo: MaskUse::Never,
             needs: &[],
+            edges_when: None,
             component: None,
             feeds_bloom: false,
             yields: true,
@@ -758,6 +769,15 @@ impl StyleDescriptor {
     /// The framework-made inputs it reads.
     pub const fn needs(mut self, needs: &'static [StyleNeed]) -> Self {
         self.needs = needs;
+        self
+    }
+
+    /// Reads the shared edges ([`StyleNeed::Edges`]) on the frames `when`
+    /// says (#743), so a frame where it doesn't skips the edge pass. The
+    /// pass is built while the style is on either way.
+    pub const fn needs_edges_when(mut self, when: fn(&StyleFrame<'_>) -> bool) -> Self {
+        self.needs = &[StyleNeed::Edges];
+        self.edges_when = Some(when);
         self
     }
 
@@ -876,7 +896,19 @@ impl StyleDescriptor {
 
     /// Whether the style reads the shared edges ([`StyleNeed::Edges`]).
     pub fn needs_edges(&self) -> bool {
+        self.needs.contains(&StyleNeed::Edges) || self.needs.contains(&StyleNeed::EdgeSteps)
+    }
+
+    /// Whether it reads the shared edges' creases, not only their depth
+    /// steps ([`StyleNeed::EdgeSteps`]).
+    pub fn needs_creases(&self) -> bool {
         self.needs.contains(&StyleNeed::Edges)
+    }
+
+    /// Whether it reads them on this frame: it needs them, and its
+    /// [`edges_when`](Self::edges_when), if it has one, says so.
+    pub fn wants_edges(&self, frame: &StyleFrame<'_>) -> bool {
+        self.needs_edges() && self.edges_when.is_none_or(|when| when(frame))
     }
 
     /// Whether bloom reads this style's result under `config` (#300): the
@@ -1165,6 +1197,15 @@ pub trait StylePass: Send + Sync {
     /// that frame's submission is done (this waits on the device). `None`
     /// from a style that draws no glyphs, or before such a frame.
     fn read_text(&self, _device: &wgpu::Device) -> Option<GlyphText> {
+        None
+    }
+
+    /// The shared edges' pixels (at [`StyleFrame::depth_size`]) this
+    /// style reads this frame (#743), when it reads them only near its
+    /// entities: the edge pass draws the union of its readers' rects and
+    /// leaves the rest 0. `None`, the default, is the whole frame. `frame`
+    /// is this style's ([`StyleFrame::descriptor`] is its descriptor).
+    fn edges_rect(&self, _frame: &StyleFrame<'_>) -> Option<kit::PixelRect> {
         None
     }
 }
@@ -2475,17 +2516,32 @@ impl StyleSet {
     pub(crate) fn encode_edges(
         &self,
         styles: &[(&'static StyleDescriptor, &dyn StylePass)],
-        frame: &StyleFrame<'_>,
+        frame: &mut StyleFrame<'_>,
         encoder: &mut wgpu::CommandEncoder,
         scope: &mut Scope<'_>,
     ) -> Option<Arc<StyleTexture>> {
         let pass = self.edges.as_ref()?;
-        if !styles.iter().any(|(d, _)| d.needs_edges()) {
+        let readers: Vec<_> = styles
+            .iter()
+            .filter(|(d, _)| d.wants_edges(frame))
+            .collect();
+        if readers.is_empty() {
             return None;
         }
+        let creases = readers.iter().any(|(d, _)| d.needs_creases());
+        // Where they read them (#743): the union of their rects, unless
+        // one reads the whole frame
+        let was = frame.descriptor;
+        let mut rect = Some(kit::PixelRect::EMPTY);
+        for (d, style) in &readers {
+            frame.descriptor = d;
+            rect = rect.zip(style.edges_rect(frame)).map(|(a, b)| a.union(b));
+        }
+        frame.descriptor = was;
+        let frame = &*frame;
         let mut made = None;
         scope(edges::EDGE_LABEL, encoder, &mut |encoder| {
-            made = Some(pass.encode(frame, encoder));
+            made = Some(pass.encode(frame, encoder, creases, rect));
         });
         self.edge_runs
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
