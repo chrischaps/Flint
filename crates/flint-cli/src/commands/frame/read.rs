@@ -42,9 +42,10 @@ impl Capture {
         } else {
             bail!("{}: no such capture", path.display());
         };
-        let text = std::fs::read_to_string(&manifest)
-            .with_context(|| format!("reading {}", manifest.display()))?;
-        let description = parse(&text).with_context(|| format!("{}", manifest.display()))?;
+        let shown = Self::shown(&manifest);
+        let text =
+            std::fs::read_to_string(&manifest).with_context(|| format!("reading {shown}"))?;
+        let description = parse(&text).with_context(|| shown.clone())?;
         let dir = manifest
             .parent()
             .map(Path::to_path_buf)
