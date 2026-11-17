@@ -577,8 +577,8 @@ impl ApplicationHandler for PlayerApp {
                 self.render();
                 #[cfg(target_arch = "wasm32")]
                 self.web_frame_end();
-                // The frame's end, for the profiler (ADR 0109).
-                profiling::finish_frame!();
+                // The frame's end, for both profilers (ADRs 0109, 0128).
+                flint_core::profile::finish_frame();
                 if self.outcome.exit_requested {
                     event_loop.exit();
                 }
@@ -636,6 +636,18 @@ impl ApplicationHandler for PlayerApp {
         #[cfg(not(target_arch = "wasm32"))]
         self.finish_frame_captures();
         self.flush_persistent_store(true, "exit");
+        // SPIKE #1095: the recorder's rings as Chrome trace-event JSON.
+        #[cfg(any(debug_assertions, feature = "profiler"))]
+        #[allow(clippy::disallowed_methods)] // a spike's write
+        if let Some(path) = std::env::var_os("SPIKE_TRACE") {
+            let json = flint_core::profile::chrome_json();
+            match std::fs::write(&path, &json) {
+                Ok(()) => {
+                    tracing::info!(target: "report", "[spike] trace: {} ({} bytes)", path.to_string_lossy(), json.len())
+                }
+                Err(e) => tracing::error!("[spike] trace not written: {e}"),
+            }
+        }
     }
 }
 

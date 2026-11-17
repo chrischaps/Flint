@@ -1808,11 +1808,14 @@ dependencies = [
 name = "flint-core"
 version = "0.1.0"
 dependencies = [
+ "profiling",
  "serde",
  "sha2",
  "thiserror 2.0.18",
  "toml",
  "tracing",
+ "tracing-subscriber",
+ "tracy-client",
  "web-time",
 ]
 

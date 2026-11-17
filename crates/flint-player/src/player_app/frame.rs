@@ -50,8 +50,8 @@ impl PlayerApp {
         }
     }
 
-    #[profiling::function]
     pub(super) fn render(&mut self) {
+        flint_core::scope!("render");
         // On Android, window may be None between suspended() and resumed()
         if self.window.is_none() {
             return;
@@ -495,8 +495,8 @@ impl PlayerApp {
         Ok(())
     }
 
-    #[profiling::function]
     pub(super) fn tick(&mut self) {
+        flint_core::scope!("tick");
         // A frame begins: the frame history's clock (#120, #1076).
         self.stats.perf.begin_frame();
         use super::perf::Phase;
@@ -582,8 +582,8 @@ impl PlayerApp {
         self.perf_mark(Phase::Sync);
     }
 
-    #[profiling::function]
     fn run_extension_pre_updates(&mut self) {
+        flint_core::scope!("run_extension_pre_updates");
         self.each_extension(|ext, ctx| {
             ext.pre_update(ctx);
             false
@@ -704,13 +704,13 @@ impl PlayerApp {
         core.tick_procgen(lent);
     }
 
-    #[profiling::function]
     /// Hot reload of user styles' descriptions (#275, natively): a few
     /// times a second, look for edited or new `styles/*.shader.toml`, and
     /// read the scene's settings again for each style that changed, since
     /// its tables were checked against the old parameters. The WGSL files
     /// are polled by the styles themselves.
     fn poll_user_styles(&mut self) {
+        flint_core::scope!("poll_user_styles");
         #[cfg(not(target_arch = "wasm32"))]
         {
             use std::sync::atomic::{AtomicU32, Ordering};
@@ -842,8 +842,8 @@ impl PlayerApp {
         self.post.take_from(&mut self.core.script_requests);
     }
 
-    #[profiling::function]
     fn render_hud(&mut self, target_view: &wgpu::TextureView, encoder: &mut wgpu::CommandEncoder) {
+        flint_core::scope!("render_hud");
         // Lazy-load any sprite textures referenced by draw commands
         // (must happen before egui_winit borrow)
         self.load_pending_sprites();
@@ -1356,8 +1356,8 @@ impl super::game_core::FrameHost for PlayerApp {
         self.hud.world_texts = self.core.script.drain_world_texts();
     }
 
-    #[profiling::function]
     fn sound(&mut self, config: &StateConfig, game_events: &[flint_runtime::GameEvent]) {
+        flint_core::scope!("sound");
         // A late bundle (audio, #98) landed: queue what wasn't there at
         // start. Already-loaded sounds are skipped, and an autoplay source
         // that was waiting for its file starts on the update after its

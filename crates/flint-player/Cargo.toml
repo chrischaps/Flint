@@ -75,6 +75,9 @@ debug-hud = ["dep:flint-debug-ui"]
 # compile to nothing. The client listens on loopback only (no firewall
 # prompt) and keeps nothing until a viewer connects.
 profile = ["profiling/profile-with-tracy", "dep:tracy-client"]
+# Flint's own scope recorder in a release build (ADR 0128); a debug build has
+# it always. Its gate is flint-core's, so this only forwards.
+profiler = ["flint-core/profiler"]
 
 [dependencies]
 web-time = { workspace = true }

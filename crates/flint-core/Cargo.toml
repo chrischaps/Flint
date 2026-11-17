@@ -12,6 +12,22 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 sha2 = { workspace = true }
 web-time = { workspace = true }
+profiling = { workspace = true }
+
+[features]
+# Flint's own scope recorder (ADR 0128) in a release build; a debug build
+# always has it. Off by default, so a shipped game carries nothing.
+profiler = []
+# SPIKE (#1095) only: scope_bench with Tracy as profiling's backend.
+spike-tracy = ["profiling/profile-with-tracy", "dep:tracy-client"]
+
+[dependencies.tracy-client]
+workspace = true
+optional = true
+features = ["only-localhost", "ondemand"]
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

@@ -112,6 +112,10 @@ impl PlayerApp {
         // harmless.
         #[cfg(feature = "profile")]
         profiling::tracy_client::Client::start();
+        // SPIKE #1095: SPIKE_TRACE=<file> records every scope to a file too.
+        if std::env::var_os("SPIKE_TRACE").is_some() {
+            flint_core::profile::set_recording(true);
+        }
         // Before the file source may be final (the web installs its bundle
         // later): `refresh_project` asks again when the scene loads.
         let project = flint_core::project::Project::for_scene(Path::new(&scene_path));
