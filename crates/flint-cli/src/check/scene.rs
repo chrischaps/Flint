@@ -98,6 +98,9 @@ pub struct Memo {
     /// The asset catalog of each project root: asked before the files for a
     /// model or a texture, as the player asks, and as `diagnose` does.
     catalogs: BTreeMap<PathBuf, Option<HeldAssets>>,
+    /// Procgen specs whose params have been checked: each is reported
+    /// once a run, however many scenes name it.
+    specs_checked: BTreeSet<PathBuf>,
 }
 
 /// What a scene's check found, and the files it reached: the scripts,
@@ -196,6 +199,7 @@ fn check_all(
         if let Some(world) = &world {
             particle_emitters(scene, world, &mut out.diagnostics);
         }
+        spec_params(scene, scene_dir, &file, project, memo, &mut out.diagnostics);
     }
     if checks.files {
         assets(scene, scene_dir, &file, project, memo, &mut out);
@@ -226,6 +230,87 @@ fn check_all(
         }
     }
     out
+}
+
+/// The params of every procgen spec a model or texture of the scene is made
+/// from, against its generator's schema (#718): the one validator `flint
+/// gen` runs before generating (`flint_procgen::validate_params`), so a
+/// spec is judged the same wherever it is checked. A value the generator
+/// can't use is an error, a key it ignores a warning, each `spec-param` on
+/// the spec's file with the parameter's path as its field. A spec found in
+/// the asset catalog first, one that doesn't parse (the files pass's
+/// `bad-spec`) or one whose generator is a game's own is passed over.
+fn spec_params(
+    scene: &Path,
+    scene_dir: &Path,
+    file: &SceneFile,
+    project: &Project,
+    memo: &mut Memo,
+    out: &mut Vec<Diagnostic>,
+) {
+    let specs: BTreeMap<String, PathBuf> = project
+        .list(AssetKind::Specs, scene_dir)
+        .into_iter()
+        .map(|listed| (listed.name, listed.path))
+        .collect();
+    if specs.is_empty() {
+        return;
+    }
+    let catalog = memo
+        .catalogs
+        .entry(project.root.clone())
+        .or_insert_with(|| HeldAssets::of(project));
+    let in_catalog = |name: &str| catalog.as_ref().is_some_and(|c| c.holds(name));
+    let to_be_made = flint_scene::declared_assets(file);
+    let registry = flint_procgen::GeneratorRegistry::with_built_ins();
+
+    let mut names: Vec<&String> = file.entities.keys().collect();
+    names.sort_unstable();
+    for entity in names {
+        let def = &file.entities[entity];
+        for (component, field, kind) in ASSET_FIELDS {
+            if !matches!(kind, AssetKind::Models | AssetKind::Textures) {
+                continue;
+            }
+            let Some(name) = def
+                .components
+                .get(*component)
+                .and_then(|data| data.get(field))
+                .and_then(|v| v.as_str())
+            else {
+                continue;
+            };
+            if to_be_made.contains(name) || in_catalog(name) {
+                continue;
+            }
+            let Some(path) = specs.get(name) else {
+                continue;
+            };
+            if !memo.specs_checked.insert(path.clone()) {
+                continue;
+            }
+            let Ok(spec) = flint_procgen::ProcGenSpec::from_file(path) else {
+                continue;
+            };
+            let Some(generator) = registry.get(&spec.generator) else {
+                continue;
+            };
+            for issue in flint_procgen::validate_params(&generator.param_schema(), &spec.params) {
+                let message = format!("procgen spec `{name}`: {issue}");
+                let d = if issue.is_error() {
+                    Diagnostic::error(codes::SPEC_PARAM, message)
+                } else {
+                    Diagnostic::warning(codes::SPEC_PARAM, message)
+                };
+                out.push(d.file(path).field(issue.key()).hint(format!(
+                    "{} names it (entity '{entity}', {component}.{field}); \
+                     `flint gen --describe {}` lists every parameter",
+                    shown(scene),
+                    spec.generator
+                )));
+            }
+        }
+    }
 }
 
 /// The assets the scene names, each asked of the project's one resolver

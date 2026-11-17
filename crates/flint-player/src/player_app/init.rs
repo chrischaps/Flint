@@ -45,10 +45,27 @@ impl PlayerApp {
         if let Some(missing) = self.capture.missing() {
             return Some(missing);
         }
+        // `--dump-world` (#713): every time it asked for, or why not. A
+        // dump never handed over (no frame ran) has taken none.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let dump = self
+                .core
+                .subsystems
+                .find::<super::world_dump::WorldDump>()
+                .or(self.launch.world_dump.as_ref());
+            if let Some(missing) = dump.and_then(|d| d.missing()) {
+                return Some(missing);
+            }
+        }
         if self.launch.strict_scripts {
             if let Some(failure) = self.core.script.errors().strict_failure() {
                 return Some(failure);
             }
+        }
+        // A capture asked for and never written (#1086)
+        if let Some(failure) = self.frame_captures.failure() {
+            return Some(failure);
         }
         // `--max-hitches` and `--max-hitches-startup` (#1079)
         self.stats.watch.failure()
@@ -95,6 +112,7 @@ impl PlayerApp {
             post: Default::default(),
             audio_vfs_generation: flint_core::vfs::generation(),
             capture: CaptureConfig::default(),
+            frame_captures: Default::default(),
             outcome: Default::default(),
             #[cfg(test)]
             test_gpu: None,
@@ -620,7 +638,7 @@ impl PlayerApp {
             .then(|| procgen_disk_config(&self.core.project, &scene_dir))
             .flatten()
         {
-            println!("[procgen] disk cache: {}", disk.dir.display());
+            tracing::debug!(target: "load", "[procgen] disk cache: {}", disk.dir.display());
             self.use_procgen_disk(disk);
         }
     }
@@ -710,12 +728,17 @@ impl PlayerApp {
             self.scene.input_config.as_deref(),
             self.input_layers.config_override.as_deref(),
         );
+        // What the scene's own layers bind, for the controls line (#716)
+        self.input_layers.named_actions.clear();
 
         if let Some(path) = &paths.game_default {
             if vfs::exists(path) {
                 let cfg = InputConfig::load_from_file(path).with_context(|| {
                     format!("failed to load game input config '{}'", path.display())
                 })?;
+                self.input_layers
+                    .named_actions
+                    .extend(cfg.actions.keys().cloned());
                 self.input
                     .merge_bindings(cfg)
                     .context("failed to merge game input config")?;
@@ -748,6 +771,9 @@ impl PlayerApp {
                 let cfg = InputConfig::load_from_file(path).with_context(|| {
                     format!("failed to load CLI input config '{}'", path.display())
                 })?;
+                self.input_layers
+                    .named_actions
+                    .extend(cfg.actions.keys().cloned());
                 self.input
                     .merge_bindings(cfg)
                     .context("failed to merge CLI input config")?;
@@ -916,7 +942,7 @@ impl PlayerApp {
                         egui::TextureOptions::LINEAR,
                     );
                     self.hud.textures.insert(name.to_string(), tex_handle);
-                    println!("Loaded UI sprite: {}", name);
+                    tracing::debug!(target: "load", kind = "ui_sprite", "Loaded UI sprite: {}", name);
                     return true;
                 }
                 Err(e) => format!("UI sprite '{name}': {}: {e}", path.display()),

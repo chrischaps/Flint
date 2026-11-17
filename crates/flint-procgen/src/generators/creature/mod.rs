@@ -557,7 +557,7 @@ metallic = 0.1
             "[materials.shell]\nbase_color = \"#8B4513\"\nrougness = 0.3\n[materials.leg]\nmetallic = 0.2\n",
         )
         .unwrap();
-        let shown: Vec<String> = crate::lint_params(&schema, &params)
+        let shown: Vec<String> = crate::validate_params(&schema, &params)
             .iter()
             .map(|i| i.to_string())
             .collect();

@@ -1,0 +1,9 @@
+# An input script for examples/phase4_runtime.scene.toml: walk up the tavern
+# to the front door and try it. The book's "Asking a running game" dumps the
+# world on the way (#713):
+#   flint-player examples/phase4_runtime.scene.toml --frame-step 0.0166667 \
+#     --input-script examples/walk_to_door.txt --exit-after 5 \
+#     --dump-world out/world.json --dump-world-at 0.5,2.5,5
+0.5   down  KeyW
+3.4   up    KeyW
+3.8   tap   KeyE

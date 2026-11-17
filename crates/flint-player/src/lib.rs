@@ -3,8 +3,11 @@
 //! This crate provides the `PlayerApp` application handler
 //! for running Flint scenes with physics and first-person controls.
 
+pub mod capture_args;
 pub mod extension;
 pub mod hitch_args;
+// Everything the player says, through tracing, as text or JSON lines (#716)
+pub mod logging;
 #[cfg(feature = "music")]
 mod music;
 mod player_app;
@@ -13,6 +16,7 @@ pub mod player_args;
 pub mod user_files;
 pub mod window_args;
 
+pub use capture_args::FrameCaptureArgs;
 pub use extension::{
     ExtensionAudio, ExtensionCtx, ExtensionGpu, KeyInput, MeshOptions, PlayerExtension,
     SoundOptions, Stage,
@@ -37,6 +41,8 @@ pub use player_app::headless_game::{
     apply_look, HeadlessGame, LookRequest, ScriptLook, Skipped, PRESENTATION_ONLY, SCRIPT_SEED,
 };
 pub use player_app::input_script::{Applied, InputScript, PointerEvent, ScriptEvent};
+#[cfg(not(target_arch = "wasm32"))]
+pub use player_app::inspect::InspectListener;
 #[cfg(feature = "living")]
 pub use player_app::living_props::import_of as living_import;
 #[cfg(feature = "living")]
@@ -62,6 +68,8 @@ pub use player_app::web_pacing::coarse_pointer as web_coarse_pointer;
 pub use player_app::web_page::begin as web_begin;
 #[cfg(target_arch = "wasm32")]
 pub use player_app::web_startup::WEB_CANVAS_ID;
+#[cfg(not(target_arch = "wasm32"))]
+pub use player_app::world_dump::WorldDump;
 pub use player_app::ProcGenMode;
 pub use player_app::StatsView;
 pub use player_app::{CaptureConfig, GameCore, LaunchOptions, PlayerApp, SceneSettings};

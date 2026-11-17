@@ -19,12 +19,16 @@ pub struct EditArgs {
 }
 
 pub fn run(args: EditArgs) -> Result<()> {
-    launch(args, flint_viewer::app::ViewerWindow::default())
+    let window = flint_viewer::app::ViewerWindow::default();
+    flint_viewer::host::run(editor(args, window)?, window.host_options())
 }
 
-/// `run` with the window's size and grid: `flint edit <scene> --spline`
-/// passes its `--width` / `--height` / `--no-grid` (#423).
-pub fn launch(args: EditArgs, window: flint_viewer::app::ViewerWindow) -> Result<()> {
+/// The track editor on the scene's first spline, for the editor host
+/// (#712). `window` carries `--no-grid` (#423); the host its size.
+pub fn editor(
+    args: EditArgs,
+    window: flint_viewer::app::ViewerWindow,
+) -> Result<flint_viewer::app::ViewerApp> {
     // The one resolver (ADR 0114): --schemas, else the manifest, else discovery
     let (registry, schema_dirs) =
         super::common_args::load_schemas(Some(&args.scene), &args.schemas)?;
@@ -35,8 +39,8 @@ pub fn launch(args: EditArgs, window: flint_viewer::app::ViewerWindow) -> Result
 
     // Load scene
     let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
-    println!("Loaded scene: {}", scene_file.scene.name);
-    println!("Entities: {}", world.entity_count());
+    crate::output::say!("Loaded scene: {}", scene_file.scene.name);
+    crate::output::say!("Entities: {}", world.entity_count());
 
     // Find the first entity with a `spline` component
     let scene_dir = Path::new(&args.scene)
@@ -61,7 +65,7 @@ pub fn launch(args: EditArgs, window: flint_viewer::app::ViewerWindow) -> Result
                 spline_file_path = Some(full_path.to_string_lossy().to_string());
                 // Try to get a name from the entity
                 spline_name = entity.name.clone();
-                println!("Found spline: {} -> {}", entity.name, full_path.display());
+                crate::output::say!("Found spline: {} -> {}", entity.name, full_path.display());
                 break;
             } else {
                 tracing::warn!("Spline file not found: {}", full_path.display());
@@ -122,7 +126,7 @@ pub fn launch(args: EditArgs, window: flint_viewer::app::ViewerWindow) -> Result
         });
     }
 
-    println!(
+    crate::output::say!(
         "Loaded {} control points from {} (closed={}, spacing={:.1})",
         control_points.len(),
         spline_path,
@@ -140,5 +144,5 @@ pub fn launch(args: EditArgs, window: flint_viewer::app::ViewerWindow) -> Result
     };
 
     // Launch viewer in editor mode with file watching enabled
-    flint_viewer::app::run_editor(&args.scene, true, &args.schemas, editor_config, window)
+    flint_viewer::app::track_editor(&args.scene, true, &args.schemas, editor_config, window)
 }

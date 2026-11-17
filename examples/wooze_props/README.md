@@ -21,7 +21,7 @@ as they did, byte for byte.
 ## How it's measured
 
 As for the grass: a crop around each target, frame pairs at 12 fps over 4 s, with
-the shading boil off (`--kuwahara-boil 0 --contour-boil 0`), since the boil redraws
+the shading boil off (`--set kuwahara.boil=0 --set contour.boil=0`), since the boil redraws
 every pixel 12 times a second. `#` is a pair that changes and `.` is a hold. Each
 target's still twin is its control. The field is the grove's `linklater` preset:
 a 0.5 s step, so a beat is 6 frames.

@@ -12,14 +12,14 @@
 
 use std::collections::HashMap;
 
-use crate::generators::util::{parse_hex_color, toml_f32, toml_u32};
 use crate::types::ImageData;
 use crate::{ProcGenError, Result, SeededRng};
 
+use super::descriptor::OpDescriptor;
 use super::field::TextureField;
 use super::maps::TextureMapParams;
 use super::node_graph;
-use super::ops::*;
+use super::ops::{self, TextureOp};
 
 // ─── Pipeline Execution ───────────────────────────────────────────────────
 
@@ -383,371 +383,80 @@ fn resolve_output_channels(
     }
 }
 
-/// All known op type identifiers.
-pub const ALL_OP_TYPES: &[&str] = &[
-    "brick_grid",
-    "voronoi_grid",
-    "domain_warp",
-    "cell_height",
-    "cell_bulge",
-    "noise_layer",
-    "blend",
-    "mortar_groove",
-    "cell_color",
-    "mortar_color",
-    "derive_normal",
-    "cell_roughness",
-    // Phase 1
-    "math",
-    "map_range",
-    "color_ramp",
-    "checker_texture",
-    // Phase 2
-    "gradient_texture",
-    "wave_texture",
-    "white_noise",
-    "voronoi_texture",
-    "musgrave_texture",
-    // Phase 3
-    "invert",
-    "brightness_contrast",
-    "hsv_adjust",
-    "gamma",
-    "clamp",
-    // Phase 4
-    "blur",
-    "sharpen",
-    "edge_detect",
-    // Phase 5
-    "edge_erode",
+/// Every op, in the order the editor lists them: the registry (#720). An
+/// op's struct, `impl TextureOp` and [`OpDescriptor`] live in `ops.rs`;
+/// adding one is those and a line here.
+pub const OPS: &[&OpDescriptor] = &[
+    &ops::BRICK_GRID,
+    &ops::VORONOI_GRID,
+    &ops::DOMAIN_WARP,
+    &ops::CELL_HEIGHT,
+    &ops::CELL_BULGE,
+    &ops::NOISE_LAYER,
+    &ops::BLEND,
+    &ops::MORTAR_GROOVE,
+    &ops::CELL_COLOR,
+    &ops::MORTAR_COLOR,
+    &ops::DERIVE_NORMAL,
+    &ops::CELL_ROUGHNESS,
+    &ops::MATH,
+    &ops::MAP_RANGE,
+    &ops::COLOR_RAMP,
+    &ops::CHECKER_TEXTURE,
+    &ops::GRADIENT_TEXTURE,
+    &ops::WAVE_TEXTURE,
+    &ops::WHITE_NOISE,
+    &ops::VORONOI_TEXTURE,
+    &ops::MUSGRAVE_TEXTURE,
+    &ops::INVERT,
+    &ops::BRIGHTNESS_CONTRAST,
+    &ops::HSV_ADJUST,
+    &ops::GAMMA,
+    &ops::CLAMP,
+    &ops::BLUR,
+    &ops::SHARPEN,
+    &ops::EDGE_DETECT,
+    &ops::EDGE_ERODE,
 ];
 
-/// Return a JSON Schema describing the parameters for a given op type.
+/// All known op type identifiers: the registry's keys, in its order.
+pub const ALL_OP_TYPES: &[&str] = &{
+    let mut names = [""; OPS.len()];
+    let mut i = 0;
+    while i < OPS.len() {
+        names[i] = OPS[i].type_name;
+        i += 1;
+    }
+    names
+};
+
+/// The descriptor of the op named `op_type`, if there is one.
+pub fn op_descriptor(op_type: &str) -> Option<&'static OpDescriptor> {
+    OPS.iter().copied().find(|d| d.type_name == op_type)
+}
+
+/// Return a JSON Schema describing the parameters for a given op type
+/// (empty for an unknown one), from its [`OpDescriptor`].
 pub fn op_param_schema(op_type: &str) -> serde_json::Value {
-    match op_type {
-        "brick_grid" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "columns": { "type": "integer", "minimum": 1, "default": 8 },
-                "rows": { "type": "integer", "minimum": 1, "default": 16 },
-                "stagger": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5 },
-                "gap_width": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.04 },
-                "width_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
-                "row_height_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
-                "warp_x": { "type": "string" },
-                "warp_y": { "type": "string" },
-                "warp_strength": { "type": "number", "minimum": 0.0, "default": 0.0 }
-            }
-        }),
-        "voronoi_grid" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "cell_count": { "type": "integer", "minimum": 1, "default": 20 },
-                "regularity": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
-                "mortar_width": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.03 },
-                "warp_x": { "type": "string" },
-                "warp_y": { "type": "string" },
-                "warp_strength": { "type": "number", "minimum": 0.0, "default": 0.0 }
-            }
-        }),
-        "domain_warp" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "input": { "type": "string", "default": "input" },
-                "output": { "type": "string", "default": "output" },
-                "warp_x": { "type": "string", "default": "warp_x" },
-                "warp_y": { "type": "string", "default": "warp_y" },
-                "strength": { "type": "number", "minimum": 0.0, "default": 0.1 }
-            }
-        }),
-        "cell_height" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3 }
-            }
-        }),
-        "cell_bulge" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "strength": { "type": "number", "minimum": 0.0, "default": 0.3 },
-                "falloff": { "type": "string", "enum": ["cosine", "parabolic", "linear"], "default": "cosine" }
-            }
-        }),
-        "noise_layer" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "output": { "type": "string", "default": "noise" },
-                "noise_type": { "type": "string", "enum": ["perlin", "simplex", "value", "voronoi"], "default": "perlin" },
-                "frequency": { "type": "number", "minimum": 0.1, "default": 10.0 },
-                "octaves": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4 },
-                "scale_x": { "type": "number", "minimum": 0.01, "default": 1.0 },
-                "scale_y": { "type": "number", "minimum": 0.01, "default": 1.0 },
-                "cell_offset": { "type": "boolean", "default": false, "description": "Offset the noise per cell (reads the cell id), so neighbouring stones don't share a pattern" }
-            }
-        }),
-        "blend" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "source": { "type": "string", "default": "noise" },
-                "target": { "type": "string", "default": "height" },
-                "mode": { "type": "string", "enum": [
-                    "add", "add_raw", "multiply", "mix", "screen", "overlay", "soft_light",
-                    "linear_light", "difference", "darken", "lighten",
-                    "color_dodge", "color_burn", "subtract"
-                ], "default": "add" },
-                "strength": { "type": "number", "minimum": 0.0, "default": 0.1 },
-                "mask": { "type": "string", "description": "Optional channel to mask the blend (e.g. cell mask)" }
-            }
-        }),
-        "mortar_groove" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "depth": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.15 },
-                "width": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.04 }
-            }
-        }),
-        "cell_color" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "base_color": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#735A47" },
-                "variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.12 }
-            }
-        }),
-        "mortar_color" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "color": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#40382E" },
-                "threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.06 }
-            }
-        }),
-        "derive_normal" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "strength": { "type": "number", "minimum": 0.0, "default": 1.0 }
-            }
-        }),
-        "cell_roughness" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "base": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.75 },
-                "variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.05 },
-                "mortar": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.55 },
-                "mortar_threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.06 }
-            }
-        }),
-        // Phase 1
-        "math" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "operation": { "type": "string", "enum": [
-                    "add", "subtract", "multiply", "divide", "power", "sqrt", "abs",
-                    "min", "max", "fract", "modulo", "snap", "sin", "cos",
-                    "less_than", "greater_than", "sign", "floor", "ceil", "round",
-                    "pingpong", "wrap", "negate"
-                ], "default": "add" },
-                "input_a": { "type": "string", "default": "input" },
-                "input_b": { "type": "string" },
-                "value_b": { "type": "number", "default": 0.0 },
-                "output": { "type": "string", "default": "output" },
-                "clamp": { "type": "boolean", "default": false }
-            }
-        }),
-        "map_range" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "input": { "type": "string", "default": "input" },
-                "output": { "type": "string", "default": "output" },
-                "from_min": { "type": "number", "default": 0.0 },
-                "from_max": { "type": "number", "default": 1.0 },
-                "to_min": { "type": "number", "default": 0.0 },
-                "to_max": { "type": "number", "default": 1.0 },
-                "interpolation": { "type": "string", "enum": ["linear", "smoothstep", "smootherstep"], "default": "linear" },
-                "clamp": { "type": "boolean", "default": true }
-            }
-        }),
-        "color_ramp" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "input": { "type": "string", "default": "input" },
-                "interpolation": { "type": "string", "enum": ["linear", "constant", "ease"], "default": "linear" },
-                "stops": {
-                    "type": "array",
-                    "description": "The ramp's colours, as [[params.ops.stops]] tables",
-                    "items": {
-                        "type": "object",
-                        "title": "color_ramp stop",
-                        "properties": {
-                            "position": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
-                            "color": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#000000" }
-                        },
-                        "additionalProperties": false
-                    }
-                }
-            },
-            "required": ["stops"]
-        }),
-        "checker_texture" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "output": { "type": "string", "default": "output" },
-                "scale_x": { "type": "number", "minimum": 0.1, "default": 8.0 },
-                "scale_y": { "type": "number", "minimum": 0.1, "default": 8.0 }
-            }
-        }),
-        // Phase 2
-        "gradient_texture" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "output": { "type": "string", "default": "output" },
-                "gradient_type": { "type": "string", "enum": [
-                    "linear", "quadratic", "easing", "diagonal",
-                    "spherical", "quadratic_sphere", "radial"
-                ], "default": "linear" }
-            }
-        }),
-        "wave_texture" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "output": { "type": "string", "default": "output" },
-                "wave_type": { "type": "string", "enum": ["sine", "saw", "triangle"], "default": "sine" },
-                "direction": { "type": "string", "enum": ["x", "y", "diagonal"], "default": "x" },
-                "scale": { "type": "number", "minimum": 0.1, "default": 4.0 },
-                "distortion": { "type": "number", "minimum": 0.0, "default": 0.0 },
-                "detail": { "type": "integer", "minimum": 0, "maximum": 16, "default": 0 }
-            }
-        }),
-        "white_noise" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "output": { "type": "string", "default": "output" }
-            }
-        }),
-        "voronoi_texture" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "output": { "type": "string", "default": "output" },
-                "cell_output": { "type": "string" },
-                "scale": { "type": "number", "minimum": 0.1, "default": 4.0 },
-                "randomness": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 1.0 },
-                "feature": { "type": "string", "enum": ["f1", "f2", "smooth_f1", "distance_to_edge"], "default": "f1" },
-                "metric": { "type": "string", "enum": ["euclidean", "manhattan", "chebyshev", "minkowski"], "default": "euclidean" },
-                "exponent": { "type": "number", "minimum": 0.1, "default": 2.0 }
-            }
-        }),
-        "musgrave_texture" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "output": { "type": "string", "default": "output" },
-                "noise_type": { "type": "string", "enum": ["perlin", "simplex", "value", "voronoi"], "default": "perlin" },
-                "musgrave_type": { "type": "string", "enum": [
-                    "fbm", "multifractal", "ridged_multifractal",
-                    "hybrid_multifractal", "hetero_terrain"
-                ], "default": "fbm" },
-                "frequency": { "type": "number", "minimum": 0.1, "default": 4.0 },
-                "octaves": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4 },
-                "lacunarity": { "type": "number", "minimum": 0.1, "default": 2.0 },
-                "dimension": { "type": "number", "default": 1.0 },
-                "offset": { "type": "number", "default": 1.0 },
-                "gain": { "type": "number", "default": 2.0 },
-                "scale_x": { "type": "number", "minimum": 0.01, "default": 1.0 },
-                "scale_y": { "type": "number", "minimum": 0.01, "default": 1.0 },
-                "cell_offset": { "type": "boolean", "default": false, "description": "Offset the noise per cell (reads the cell id), so neighbouring stones don't share a pattern" }
-            }
-        }),
-        // Phase 3
-        "invert" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "input": { "type": "string", "default": "input" },
-                "output": { "type": "string", "default": "output" },
-                "factor": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 1.0 }
-            }
-        }),
-        "brightness_contrast" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "input": { "type": "string", "default": "input" },
-                "output": { "type": "string", "default": "output" },
-                "brightness": { "type": "number", "minimum": -1.0, "maximum": 1.0, "default": 0.0 },
-                "contrast": { "type": "number", "minimum": -1.0, "maximum": 10.0, "default": 0.0 }
-            }
-        }),
-        "hsv_adjust" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "hue_offset": { "type": "number", "minimum": -1.0, "maximum": 1.0, "default": 0.0 },
-                "saturation_factor": { "type": "number", "minimum": 0.0, "maximum": 3.0, "default": 1.0 },
-                "value_factor": { "type": "number", "minimum": 0.0, "maximum": 3.0, "default": 1.0 }
-            }
-        }),
-        "gamma" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "input": { "type": "string", "default": "input" },
-                "output": { "type": "string", "default": "output" },
-                "gamma": { "type": "number", "minimum": 0.01, "maximum": 10.0, "default": 1.0 }
-            }
-        }),
-        "clamp" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "input": { "type": "string", "default": "input" },
-                "output": { "type": "string", "default": "output" },
-                "min": { "type": "number", "default": 0.0 },
-                "max": { "type": "number", "default": 1.0 }
-            }
-        }),
-        // Phase 4
-        "blur" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "input": { "type": "string", "default": "input" },
-                "output": { "type": "string", "default": "output" },
-                "radius": { "type": "integer", "minimum": 0, "maximum": 64, "default": 2 },
-                "sigma": { "type": "number", "minimum": 0.1, "maximum": 32.0, "default": 1.0 }
-            }
-        }),
-        "sharpen" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "input": { "type": "string", "default": "input" },
-                "output": { "type": "string", "default": "output" },
-                "strength": { "type": "number", "minimum": 0.0, "maximum": 10.0, "default": 1.0 },
-                "radius": { "type": "integer", "minimum": 1, "maximum": 64, "default": 2 }
-            }
-        }),
-        "edge_detect" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "input": { "type": "string", "default": "input" },
-                "output": { "type": "string", "default": "output" }
-            }
-        }),
-        "edge_erode" => serde_json::json!({
-            "type": "object",
-            "properties": {
-                "noise_frequency": { "type": "number", "minimum": 0.1, "default": 40.0 },
-                "strength": { "type": "number", "minimum": 0.0, "maximum": 0.5, "default": 0.02 },
-                "edge_width": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.06 },
-                "noise_type": { "type": "string", "enum": ["perlin", "simplex", "value"], "default": "perlin" },
-                "octaves": { "type": "integer", "minimum": 1, "maximum": 8, "default": 1 },
-                "threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3 }
-            }
-        }),
-        _ => serde_json::json!({ "type": "object", "properties": {} }),
+    match op_descriptor(op_type) {
+        Some(d) => d.param_schema(),
+        None => serde_json::json!({ "type": "object", "properties": {} }),
     }
 }
 
 /// The full, closed schema of one `[[params.ops]]` table of type `op_type`:
 /// its [`op_param_schema`] knobs plus the keys every op may carry (`type`,
 /// and `id` / `inputs` for graph wiring), with `"additionalProperties": false`
-/// so [`crate::lint_params`] reports a typo inside an op.
+/// so [`crate::validate_params`] reports a typo inside an op.
 pub fn op_schema(op_type: &str) -> serde_json::Value {
     let mut schema = op_param_schema(op_type);
     let props = schema["properties"]
         .as_object_mut()
         .expect("op schemas have properties");
-    props.insert("type".into(), serde_json::json!({ "const": op_type }));
+    props.insert(
+        "type".into(),
+        serde_json::json!({ "const": op_type, "description": "Which op this table is" }),
+    );
     props.insert(
         "id".into(),
         serde_json::json!({ "type": "string", "description": "Names the op so others can wire to its outputs (graph mode)" }),
@@ -766,7 +475,7 @@ pub fn op_schema(op_type: &str) -> serde_json::Value {
 }
 
 /// The schema of the `[[params.ops]]` array's items: one closed branch per
-/// op type, chosen by the op's `type` (see [`crate::lint_params`]).
+/// op type, chosen by the op's `type` (see [`crate::validate_params`]).
 pub fn ops_items_schema() -> serde_json::Value {
     let branches: Vec<serde_json::Value> = ALL_OP_TYPES.iter().map(|t| op_schema(t)).collect();
     serde_json::json!({
@@ -777,43 +486,31 @@ pub fn ops_items_schema() -> serde_json::Value {
     })
 }
 
-/// Return default parameter values for a given op type as a TOML map.
-pub fn op_default_params(op_type: &str) -> toml::map::Map<String, toml::Value> {
-    let schema = op_param_schema(op_type);
-    let mut map = toml::map::Map::new();
-    map.insert("type".to_string(), toml::Value::String(op_type.to_string()));
-
-    if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
-        for (key, prop) in props {
-            if let Some(default) = prop.get("default") {
-                let toml_val = json_to_toml(default);
-                map.insert(key.clone(), toml_val);
-            }
-        }
-    }
-
-    map
+/// The channels an op of `op_type` reads, writes and modifies, as the node
+/// editor draws its ports; `None` for a type that isn't an op. Its
+/// [`OpDescriptor`]'s (`flint gen --describe texture_v1` prints them).
+pub fn op_ports(op_type: &str) -> Option<super::OpPortInfo> {
+    op_descriptor(op_type).map(|d| d.port_info())
 }
 
-/// Convert a serde_json::Value to a toml::Value (for default param extraction).
-fn json_to_toml(v: &serde_json::Value) -> toml::Value {
-    match v {
-        serde_json::Value::Bool(b) => toml::Value::Boolean(*b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                toml::Value::Integer(i)
-            } else {
-                toml::Value::Float(n.as_f64().unwrap_or(0.0))
-            }
+/// Return default parameter values for a given op type as a TOML map:
+/// `type` and every key with a default (just `type` for an unknown op).
+pub fn op_default_params(op_type: &str) -> toml::map::Map<String, toml::Value> {
+    match op_descriptor(op_type) {
+        Some(d) => d.default_params(),
+        None => {
+            let mut map = toml::map::Map::new();
+            map.insert("type".to_string(), toml::Value::String(op_type.to_string()));
+            map
         }
-        serde_json::Value::String(s) => toml::Value::String(s.clone()),
-        _ => toml::Value::String(String::new()),
     }
 }
 
 // ─── Op Parsing ───────────────────────────────────────────────────────────
 
-/// Parse a single op from a TOML table.
+/// Parse a single op from a TOML table, through its [`OpDescriptor`]: an
+/// unset key is its default, and a wrong type, an unknown choice or a number
+/// out of its range is an error naming `ops[index].key`.
 pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>> {
     let table = value
         .as_table()
@@ -829,658 +526,14 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
         }
     })?;
 
-    match op_type {
-        "brick_grid" => {
-            let columns = opt_u32(table, "columns")?.unwrap_or(8);
-            let rows = opt_u32(table, "rows")?.unwrap_or(16);
-            let stagger = opt_f32(table, "stagger")?.unwrap_or(0.5);
-            let gap_width = opt_f32(table, "gap_width")?.unwrap_or(0.04);
-            let width_variation = opt_f32(table, "width_variation")?.unwrap_or(0.0);
-            let row_height_variation = opt_f32(table, "row_height_variation")?.unwrap_or(0.0);
-            let warp_x = table
-                .get("warp_x")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let warp_y = table
-                .get("warp_y")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let warp_strength = opt_f32(table, "warp_strength")?.unwrap_or(0.0);
-            Ok(Box::new(BrickGridOp {
-                columns,
-                rows,
-                stagger,
-                gap_width,
-                width_variation,
-                row_height_variation,
-                warp_x,
-                warp_y,
-                warp_strength,
-            }))
-        }
-        "voronoi_grid" => {
-            let cell_count = opt_u32(table, "cell_count")?.unwrap_or(20);
-            let regularity = opt_f32(table, "regularity")?.unwrap_or(0.0);
-            let mortar_width = opt_f32(table, "mortar_width")?.unwrap_or(0.03);
-            let warp_x = table
-                .get("warp_x")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let warp_y = table
-                .get("warp_y")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let warp_strength = opt_f32(table, "warp_strength")?.unwrap_or(0.0);
-            Ok(Box::new(VoronoiGridOp {
-                cell_count,
-                regularity,
-                mortar_width,
-                warp_x,
-                warp_y,
-                warp_strength,
-            }))
-        }
-        "domain_warp" => {
-            let input = table
-                .get("input")
-                .and_then(|v| v.as_str())
-                .unwrap_or("input")
-                .to_string();
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            let warp_x = table
-                .get("warp_x")
-                .and_then(|v| v.as_str())
-                .unwrap_or("warp_x")
-                .to_string();
-            let warp_y = table
-                .get("warp_y")
-                .and_then(|v| v.as_str())
-                .unwrap_or("warp_y")
-                .to_string();
-            let strength = opt_f32(table, "strength")?.unwrap_or(0.1);
-            Ok(Box::new(DomainWarpOp {
-                input,
-                output,
-                warp_x,
-                warp_y,
-                strength,
-            }))
-        }
-        "cell_height" => {
-            let variation = opt_f32(table, "variation")?.unwrap_or(0.3);
-            Ok(Box::new(CellHeightOp { variation }))
-        }
-        "cell_bulge" => {
-            let strength = opt_f32(table, "strength")?.unwrap_or(0.3);
-            let falloff = table
-                .get("falloff")
-                .and_then(|v| v.as_str())
-                .map(BulgeFalloff::from_str)
-                .unwrap_or(BulgeFalloff::Cosine);
-            Ok(Box::new(CellBulgeOp { strength, falloff }))
-        }
-        "noise_layer" => {
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("noise")
-                .to_string();
-            let noise_type = table
-                .get("noise_type")
-                .and_then(|v| v.as_str())
-                .map(NoiseType::from_str)
-                .unwrap_or(NoiseType::Perlin);
-            let frequency = opt_f32(table, "frequency")?.unwrap_or(10.0);
-            let octaves = opt_u32(table, "octaves")?.unwrap_or(4);
-            let scale_x = opt_f32(table, "scale_x")?.unwrap_or(1.0);
-            let scale_y = opt_f32(table, "scale_y")?.unwrap_or(1.0);
-            let cell_offset = table
-                .get("cell_offset")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            Ok(Box::new(NoiseLayerOp {
-                output,
-                frequency,
-                octaves,
-                noise_type,
-                scale_x,
-                scale_y,
-                cell_offset,
-            }))
-        }
-        "blend" => {
-            let source = table
-                .get("source")
-                .and_then(|v| v.as_str())
-                .unwrap_or("noise")
-                .to_string();
-            let target = table
-                .get("target")
-                .and_then(|v| v.as_str())
-                .unwrap_or("height")
-                .to_string();
-            let mode = table
-                .get("mode")
-                .and_then(|v| v.as_str())
-                .map(BlendMode::from_str)
-                .unwrap_or(BlendMode::Add);
-            let strength = opt_f32(table, "strength")?.unwrap_or(0.1);
-            let mask = table.get("mask").and_then(|v| v.as_str()).map(String::from);
-            Ok(Box::new(BlendOp {
-                source,
-                target,
-                mode,
-                strength,
-                mask,
-            }))
-        }
-        "mortar_groove" => {
-            let depth = opt_f32(table, "depth")?.unwrap_or(0.15);
-            let width = opt_f32(table, "width")?.unwrap_or(0.04);
-            Ok(Box::new(MortarGrooveOp { depth, width }))
-        }
-        "cell_color" => {
-            let base_color = if let Some(v) = table.get("base_color") {
-                let hex = v.as_str().ok_or_else(|| ProcGenError::InvalidParameter {
-                    name: "base_color".into(),
-                    reason: "expected a hex color string".into(),
-                })?;
-                parse_hex_color(hex)?
-            } else {
-                [0.45, 0.35, 0.28, 1.0]
-            };
-            let variation = opt_f32(table, "variation")?.unwrap_or(0.12);
-            Ok(Box::new(CellColorOp {
-                base_color,
-                variation,
-            }))
-        }
-        "mortar_color" => {
-            let color = if let Some(v) = table.get("color") {
-                let hex = v.as_str().ok_or_else(|| ProcGenError::InvalidParameter {
-                    name: "color".into(),
-                    reason: "expected a hex color string".into(),
-                })?;
-                parse_hex_color(hex)?
-            } else {
-                [0.25, 0.22, 0.18, 1.0]
-            };
-            let threshold = opt_f32(table, "threshold")?.unwrap_or(0.06);
-            Ok(Box::new(MortarColorOp { color, threshold }))
-        }
-        "derive_normal" => {
-            let strength = opt_f32(table, "strength")?.unwrap_or(1.0);
-            Ok(Box::new(DeriveNormalOp { strength }))
-        }
-        "cell_roughness" => {
-            let base = opt_f32(table, "base")?.unwrap_or(0.75);
-            let variation = opt_f32(table, "variation")?.unwrap_or(0.05);
-            let mortar = opt_f32(table, "mortar")?.unwrap_or(0.55);
-            let mortar_threshold = opt_f32(table, "mortar_threshold")?.unwrap_or(0.06);
-            Ok(Box::new(CellRoughnessOp {
-                base,
-                variation,
-                mortar,
-                mortar_threshold,
-            }))
-        }
-        // ── Phase 1 ──────────────────────────────────────────────────
-        "math" => {
-            let operation = table
-                .get("operation")
-                .and_then(|v| v.as_str())
-                .map(MathOperation::from_str)
-                .unwrap_or(MathOperation::Add);
-            let input_a = table
-                .get("input_a")
-                .and_then(|v| v.as_str())
-                .unwrap_or("input")
-                .to_string();
-            let input_b = table
-                .get("input_b")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let value_b = opt_f32(table, "value_b")?.unwrap_or(0.0);
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            let clamp_output = table
-                .get("clamp")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            Ok(Box::new(MathOp {
-                operation,
-                input_a,
-                input_b,
-                value_b,
-                output,
-                clamp_output,
-            }))
-        }
-        "map_range" => {
-            let input = table
-                .get("input")
-                .and_then(|v| v.as_str())
-                .unwrap_or("input")
-                .to_string();
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            let from_min = opt_f32(table, "from_min")?.unwrap_or(0.0);
-            let from_max = opt_f32(table, "from_max")?.unwrap_or(1.0);
-            let to_min = opt_f32(table, "to_min")?.unwrap_or(0.0);
-            let to_max = opt_f32(table, "to_max")?.unwrap_or(1.0);
-            let interpolation = table
-                .get("interpolation")
-                .and_then(|v| v.as_str())
-                .map(MapRangeInterp::from_str)
-                .unwrap_or(MapRangeInterp::Linear);
-            let clamp_output = table.get("clamp").and_then(|v| v.as_bool()).unwrap_or(true);
-            Ok(Box::new(MapRangeOp {
-                input,
-                output,
-                from_min,
-                from_max,
-                to_min,
-                to_max,
-                interpolation,
-                clamp_output,
-            }))
-        }
-        "color_ramp" => {
-            let input = table
-                .get("input")
-                .and_then(|v| v.as_str())
-                .unwrap_or("input")
-                .to_string();
-            let interpolation = table
-                .get("interpolation")
-                .and_then(|v| v.as_str())
-                .map(ColorRampInterp::from_str)
-                .unwrap_or(ColorRampInterp::Linear);
-            let stops_arr = table
-                .get("stops")
-                .and_then(|v| v.as_array())
-                .ok_or_else(|| ProcGenError::InvalidParameter {
-                    name: format!("ops[{index}].stops"),
-                    reason: "color_ramp requires a [[params.ops.stops]] array".into(),
-                })?;
-            let mut stops = Vec::with_capacity(stops_arr.len());
-            for (si, stop_val) in stops_arr.iter().enumerate() {
-                let stop_table =
-                    stop_val
-                        .as_table()
-                        .ok_or_else(|| ProcGenError::InvalidParameter {
-                            name: format!("ops[{index}].stops[{si}]"),
-                            reason: "each stop must be a TOML table".into(),
-                        })?;
-                let position = opt_f32(stop_table, "position")?.unwrap_or(0.0);
-                let color = if let Some(v) = stop_table.get("color") {
-                    let hex = v.as_str().ok_or_else(|| ProcGenError::InvalidParameter {
-                        name: format!("ops[{index}].stops[{si}].color"),
-                        reason: "expected a hex color string".into(),
-                    })?;
-                    let c = parse_hex_color(hex)?;
-                    [c[0], c[1], c[2]]
-                } else {
-                    [0.0, 0.0, 0.0]
-                };
-                stops.push(ColorStop { position, color });
-            }
-            // Sort stops by position
-            stops.sort_by(|a, b| {
-                a.position
-                    .partial_cmp(&b.position)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            Ok(Box::new(ColorRampOp {
-                input,
-                interpolation,
-                stops,
-            }))
-        }
-        "checker_texture" => {
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            let scale_x = opt_f32(table, "scale_x")?.unwrap_or(8.0);
-            let scale_y = opt_f32(table, "scale_y")?.unwrap_or(8.0);
-            Ok(Box::new(CheckerTextureOp {
-                output,
-                scale_x,
-                scale_y,
-            }))
-        }
-        // ── Phase 2 ──────────────────────────────────────────────────
-        "gradient_texture" => {
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            let gradient_type = table
-                .get("gradient_type")
-                .and_then(|v| v.as_str())
-                .map(GradientType::from_str)
-                .unwrap_or(GradientType::Linear);
-            Ok(Box::new(GradientTextureOp {
-                output,
-                gradient_type,
-            }))
-        }
-        "wave_texture" => {
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            let wave_type = table
-                .get("wave_type")
-                .and_then(|v| v.as_str())
-                .map(WaveType::from_str)
-                .unwrap_or(WaveType::Sine);
-            let direction = table
-                .get("direction")
-                .and_then(|v| v.as_str())
-                .map(WaveDirection::from_str)
-                .unwrap_or(WaveDirection::X);
-            let scale = opt_f32(table, "scale")?.unwrap_or(4.0);
-            let distortion = opt_f32(table, "distortion")?.unwrap_or(0.0);
-            let detail = opt_u32(table, "detail")?.unwrap_or(0);
-            Ok(Box::new(WaveTextureOp {
-                output,
-                wave_type,
-                direction,
-                scale,
-                distortion,
-                detail,
-            }))
-        }
-        "white_noise" => {
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            Ok(Box::new(WhiteNoiseOp { output }))
-        }
-        "voronoi_texture" => {
-            use crate::algorithms::noise::{VoronoiFeature, VoronoiMetric};
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            let cell_output = table
-                .get("cell_output")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let scale = opt_f32(table, "scale")?.unwrap_or(4.0);
-            let randomness = opt_f32(table, "randomness")?.unwrap_or(1.0);
-            let feature = match table.get("feature").and_then(|v| v.as_str()) {
-                Some("f2") => VoronoiFeature::F2,
-                Some("smooth_f1") => VoronoiFeature::SmoothF1,
-                Some("distance_to_edge") => VoronoiFeature::DistanceToEdge,
-                _ => VoronoiFeature::F1,
-            };
-            let exponent = opt_f32(table, "exponent")?.unwrap_or(2.0);
-            let metric = match table.get("metric").and_then(|v| v.as_str()) {
-                Some("manhattan") => VoronoiMetric::Manhattan,
-                Some("chebyshev") => VoronoiMetric::Chebyshev,
-                Some("minkowski") => VoronoiMetric::Minkowski(exponent as f64),
-                _ => VoronoiMetric::Euclidean,
-            };
-            Ok(Box::new(VoronoiTextureOp {
-                output,
-                cell_output,
-                scale,
-                randomness,
-                feature,
-                metric,
-            }))
-        }
-        "musgrave_texture" => {
-            use crate::algorithms::noise::MusgraveType;
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            let noise_type = table
-                .get("noise_type")
-                .and_then(|v| v.as_str())
-                .map(NoiseType::from_str)
-                .unwrap_or(NoiseType::Perlin);
-            let musgrave_type = match table.get("musgrave_type").and_then(|v| v.as_str()) {
-                Some("multifractal") => MusgraveType::Multifractal,
-                Some("ridged_multifractal") => MusgraveType::RidgedMultifractal,
-                Some("hybrid_multifractal") => MusgraveType::HybridMultifractal,
-                Some("hetero_terrain") => MusgraveType::HeteroTerrain,
-                _ => MusgraveType::Fbm,
-            };
-            let frequency = opt_f32(table, "frequency")?.unwrap_or(4.0);
-            let octaves = opt_u32(table, "octaves")?.unwrap_or(4);
-            let lacunarity = opt_f32(table, "lacunarity")?.unwrap_or(2.0);
-            let dimension = opt_f32(table, "dimension")?.unwrap_or(1.0);
-            let offset = opt_f32(table, "offset")?.unwrap_or(1.0);
-            let gain = opt_f32(table, "gain")?.unwrap_or(2.0);
-            let scale_x = opt_f32(table, "scale_x")?.unwrap_or(1.0);
-            let scale_y = opt_f32(table, "scale_y")?.unwrap_or(1.0);
-            let cell_offset = table
-                .get("cell_offset")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            Ok(Box::new(MusgraveTextureOp {
-                output,
-                noise_type,
-                musgrave_type,
-                frequency,
-                octaves,
-                lacunarity,
-                dimension,
-                offset,
-                gain,
-                scale_x,
-                scale_y,
-                cell_offset,
-            }))
-        }
-        // ── Phase 3 ──────────────────────────────────────────────────
-        "invert" => {
-            let input = table
-                .get("input")
-                .and_then(|v| v.as_str())
-                .unwrap_or("input")
-                .to_string();
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            let factor = opt_f32(table, "factor")?.unwrap_or(1.0);
-            Ok(Box::new(InvertOp {
-                input,
-                output,
-                factor,
-            }))
-        }
-        "brightness_contrast" => {
-            let input = table
-                .get("input")
-                .and_then(|v| v.as_str())
-                .unwrap_or("input")
-                .to_string();
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            let brightness = opt_f32(table, "brightness")?.unwrap_or(0.0);
-            let contrast = opt_f32(table, "contrast")?.unwrap_or(0.0);
-            Ok(Box::new(BrightnessContrastOp {
-                input,
-                output,
-                brightness,
-                contrast,
-            }))
-        }
-        "hsv_adjust" => {
-            let hue_offset = opt_f32(table, "hue_offset")?.unwrap_or(0.0);
-            let saturation_factor = opt_f32(table, "saturation_factor")?.unwrap_or(1.0);
-            let value_factor = opt_f32(table, "value_factor")?.unwrap_or(1.0);
-            Ok(Box::new(HsvAdjustOp {
-                hue_offset,
-                saturation_factor,
-                value_factor,
-            }))
-        }
-        "gamma" => {
-            let input = table
-                .get("input")
-                .and_then(|v| v.as_str())
-                .unwrap_or("input")
-                .to_string();
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            let gamma = opt_f32(table, "gamma")?.unwrap_or(1.0);
-            Ok(Box::new(GammaOp {
-                input,
-                output,
-                gamma,
-            }))
-        }
-        "clamp" => {
-            let input = table
-                .get("input")
-                .and_then(|v| v.as_str())
-                .unwrap_or("input")
-                .to_string();
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            let min = opt_f32(table, "min")?.unwrap_or(0.0);
-            let max = opt_f32(table, "max")?.unwrap_or(1.0);
-            Ok(Box::new(ClampOp {
-                input,
-                output,
-                min,
-                max,
-            }))
-        }
-        // ── Phase 4 ──────────────────────────────────────────────────
-        "blur" => {
-            let input = table
-                .get("input")
-                .and_then(|v| v.as_str())
-                .unwrap_or("input")
-                .to_string();
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            let radius = opt_u32(table, "radius")?.unwrap_or(2);
-            let sigma = opt_f32(table, "sigma")?.unwrap_or(1.0);
-            Ok(Box::new(BlurOp {
-                input,
-                output,
-                radius,
-                sigma,
-            }))
-        }
-        "sharpen" => {
-            let input = table
-                .get("input")
-                .and_then(|v| v.as_str())
-                .unwrap_or("input")
-                .to_string();
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            let strength = opt_f32(table, "strength")?.unwrap_or(1.0);
-            let radius = opt_u32(table, "radius")?.unwrap_or(2);
-            Ok(Box::new(SharpenOp {
-                input,
-                output,
-                strength,
-                radius,
-            }))
-        }
-        "edge_detect" => {
-            let input = table
-                .get("input")
-                .and_then(|v| v.as_str())
-                .unwrap_or("input")
-                .to_string();
-            let output = table
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("output")
-                .to_string();
-            Ok(Box::new(EdgeDetectOp { input, output }))
-        }
-        "edge_erode" => {
-            let noise_frequency = opt_f32(table, "noise_frequency")?.unwrap_or(40.0);
-            let strength = opt_f32(table, "strength")?.unwrap_or(0.02);
-            let edge_width = opt_f32(table, "edge_width")?.unwrap_or(0.06);
-            let noise_type = NoiseType::from_str(
-                table
-                    .get("noise_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("perlin"),
-            );
-            let octaves = opt_u32(table, "octaves")?.unwrap_or(1);
-            let threshold = opt_f32(table, "threshold")?.unwrap_or(0.3);
-            Ok(Box::new(EdgeErodeOp {
-                noise_frequency,
-                strength,
-                edge_width,
-                noise_type,
-                octaves,
-                threshold,
-            }))
-        }
-        other => Err(ProcGenError::InvalidParameter {
-            name: format!("ops[{index}].type"),
-            reason: format!(
-                "unknown op type \"{other}\"; expected one of: {:?}",
-                ALL_OP_TYPES
-            ),
-        }),
-    }
-}
-
-// ─── Parsing Helpers ──────────────────────────────────────────────────────
-
-fn opt_f32(table: &toml::map::Map<String, toml::Value>, key: &str) -> Result<Option<f32>> {
-    match table.get(key) {
-        Some(v) => Ok(Some(toml_f32(v, key)?)),
-        None => Ok(None),
-    }
-}
-
-fn opt_u32(table: &toml::map::Map<String, toml::Value>, key: &str) -> Result<Option<u32>> {
-    match table.get(key) {
-        Some(v) => Ok(Some(toml_u32(v, key)?)),
-        None => Ok(None),
-    }
+    let descriptor = op_descriptor(op_type).ok_or_else(|| ProcGenError::InvalidParameter {
+        name: format!("ops[{index}].type"),
+        reason: format!(
+            "unknown op type \"{op_type}\"; expected one of: {:?}",
+            ALL_OP_TYPES
+        ),
+    })?;
+    descriptor.parse(table, index)
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────
@@ -2111,56 +1164,231 @@ octaves = 5
         assert!(run(Some(false)) > 1.5, "unwrapped {}", run(Some(false)));
     }
 
-    /// Every key `parse_op` reads for an op is in that op's schema, and every
-    /// key the schema lists is read: the lint trusts the schema, so a key it
-    /// lacks would be reported as a typo, and one it invents would hide one.
-    /// Read from this file's own source, arm by arm.
-    #[test]
-    fn op_schemas_list_exactly_the_keys_parse_op_reads() {
-        let src = include_str!("pipeline.rs");
-        let body = &src[src.find("pub fn parse_op(").unwrap()..];
-        let body = &body[..body.find("// ─── Parsing Helpers").unwrap()];
-        let key_re = |line: &str| -> Option<String> {
-            for pat in [".get(\"", "(table, \"", "(stop_table, \""] {
-                if let Some(at) = line.find(pat) {
-                    let rest = &line[at + pat.len()..];
-                    return Some(rest[..rest.find('"').unwrap()].to_string());
+    /// Each op's table, every key set: a default, or for a key with none
+    /// (an optional channel) its own name; a list gets one entry the same way.
+    fn full_table(
+        params: &[super::super::descriptor::ParamDesc],
+    ) -> toml::map::Map<String, toml::Value> {
+        use super::super::descriptor::ParamKind;
+        let mut map = toml::map::Map::new();
+        for p in params {
+            let value = match p.kind {
+                ParamKind::Text(None) => toml::Value::String(p.key.into()),
+                ParamKind::Tables { items, .. } => {
+                    toml::Value::Array(vec![toml::Value::Table(full_table(items))])
                 }
-            }
-            None
-        };
-        let mut problems = Vec::new();
-        for op in ALL_OP_TYPES {
-            let arm_start = body.find(&format!("        \"{op}\" => {{")).unwrap();
-            let arm = &body[arm_start..];
-            // The arm ends at the next arm (or the catch-all) at the same indent.
-            let next = arm[1..]
-                .find("\n        \"")
-                .or_else(|| arm[1..].find("\n        other =>"))
-                .unwrap();
-            let arm = &arm[..next + 1];
-            let mut read: Vec<String> = arm.lines().filter_map(key_re).collect();
-            read.retain(|k| k != "type");
-            read.sort();
-            read.dedup();
+                _ => continue,
+            };
+            map.insert(p.key.into(), value);
+        }
+        map
+    }
 
-            let schema = op_param_schema(op);
-            let mut listed: Vec<String> = Vec::new();
-            for (k, prop) in schema["properties"].as_object().unwrap() {
-                listed.push(k.clone());
-                if let Some(items) = prop["items"]["properties"].as_object() {
-                    listed.extend(items.keys().cloned());
+    /// The schema and the parser can't drift (#720, replacing a test that
+    /// read this file's source): every op builds from its descriptor's own
+    /// defaults, and its build reads every key it declares (reading one it
+    /// doesn't declare panics). The lint trusts the schema, so a key it
+    /// lacked would be reported as a typo, and one it invented would hide one.
+    #[test]
+    fn every_op_reads_exactly_the_keys_it_declares() {
+        use super::super::descriptor::{OpParams, ParamKind};
+        let mut problems = Vec::new();
+        for op in OPS {
+            let mut table = op.default_params();
+            table.extend(full_table(op.params));
+            let params = OpParams::for_test(&table, op);
+            if let Err(e) = (op.build)(&params) {
+                problems.push(format!(
+                    "{}: doesn't build from its defaults: {e}",
+                    op.type_name
+                ));
+                continue;
+            }
+            let mut declared: Vec<&str> = Vec::new();
+            for p in op.params {
+                declared.push(p.key);
+                if let ParamKind::Tables { items, .. } = p.kind {
+                    declared.extend(items.iter().map(|i| i.key));
                 }
             }
-            listed.sort();
-            listed.dedup();
-            if read != listed {
+            declared.sort_unstable();
+            declared.dedup();
+            let read = params.keys_read();
+            if read != declared {
                 problems.push(format!(
-                    "{op}: parse_op reads {read:?}, schema lists {listed:?}"
+                    "{}: build reads {read:?}, descriptor declares {declared:?}",
+                    op.type_name
                 ));
             }
         }
         assert!(problems.is_empty(), "\n{}", problems.join("\n"));
+    }
+
+    /// The registry's keys are unique, and each op answers with its own
+    /// descriptor.
+    #[test]
+    fn the_registry_names_each_op_once() {
+        let mut names: Vec<&str> = ALL_OP_TYPES.to_vec();
+        assert_eq!(names.len(), OPS.len());
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), OPS.len(), "an op type is registered twice");
+        for op in OPS {
+            let mut table = op.default_params();
+            table.extend(full_table(op.params));
+            let built = parse_op(&toml::Value::Table(table), 0).unwrap();
+            assert_eq!(built.descriptor().type_name, op.type_name);
+            assert_eq!(built.port_info().label, op.label);
+        }
+    }
+
+    /// Every op and every one of its keys says what it does (the schema's
+    /// `description`, which the editor's tooltips, the README catalog and
+    /// `texture_v1`'s schema carry).
+    #[test]
+    fn every_op_parameter_has_help() {
+        use crate::generator::Generator;
+        let schema = super::super::TextureGenerator.param_schema();
+        let branches = schema["properties"]["ops"]["items"]["oneOf"]
+            .as_array()
+            .unwrap();
+        assert_eq!(branches.len(), OPS.len());
+        let mut missing = Vec::new();
+        for branch in branches {
+            let title = branch["title"].as_str().unwrap().to_string();
+            if branch["description"].as_str().unwrap_or("").is_empty() {
+                missing.push(title.clone());
+            }
+            for (key, prop) in branch["properties"].as_object().unwrap() {
+                let mut props = vec![(key.clone(), prop)];
+                if let Some(items) = prop["items"]["properties"].as_object() {
+                    props.extend(items.iter().map(|(k, v)| (format!("{key}.{k}"), v)));
+                }
+                for (k, p) in props {
+                    if p["description"].as_str().unwrap_or("").is_empty() {
+                        missing.push(format!("{title}: {k}"));
+                    }
+                }
+            }
+        }
+        assert!(missing.is_empty(), "no help: {missing:?}");
+    }
+
+    /// A default is the value parse_op applies, and the editor's new node
+    /// gets that value: building from `op_default_params` and from a bare
+    /// `type` makes the same op (#720: the schema used to say `#735A47` for
+    /// cell_color while parse_op used another colour).
+    #[test]
+    fn a_default_table_builds_the_same_texture_as_a_bare_type() {
+        let ops: Vec<String> = [
+            "brick_grid",
+            "cell_height",
+            "noise_layer",
+            "blend",
+            "mortar_color",
+            "cell_roughness",
+            "derive_normal",
+        ]
+        .iter()
+        .map(|t| {
+            let table = toml::Value::Table(op_default_params(t));
+            format!("[[ops]]\n{}", toml::to_string(&table).unwrap())
+        })
+        .collect();
+        let bare: Vec<String> = [
+            "brick_grid",
+            "cell_height",
+            "noise_layer",
+            "blend",
+            "mortar_color",
+            "cell_roughness",
+            "derive_normal",
+        ]
+        .iter()
+        .map(|t| format!("[[ops]]\ntype = \"{t}\"\n"))
+        .collect();
+        let a = run_ops(&ops.concat(), (64, 64), true, 5);
+        let b = run_ops(&bare.concat(), (64, 64), true, 5);
+        for ch in ["height", "r", "g", "b", "roughness", "normal_x"] {
+            assert_eq!(a.channel(ch), b.channel(ch), "{ch}");
+        }
+    }
+
+    /// A wrong type, an unknown choice and a number out of range are errors
+    /// naming the op's key, where they used to fall back to a default.
+    #[test]
+    fn parse_op_names_the_key_that_is_out_of_range_or_unknown() {
+        let err = |op: &str| {
+            let doc: toml::Value = toml::from_str(op).unwrap();
+            match parse_op(&doc, 2) {
+                Ok(_) => panic!("{op} parsed"),
+                Err(e) => e.to_string(),
+            }
+        };
+        assert_eq!(
+            err("type = \"brick_grid\"\ncolumns = 0"),
+            "invalid parameter `ops[2].columns`: 0 is below the minimum 1"
+        );
+        assert_eq!(
+            err("type = \"brick_grid\"\ncolumns = \"x\""),
+            "invalid parameter `ops[2].columns`: expected an integer"
+        );
+        assert_eq!(
+            err("type = \"noise_layer\"\noctaves = 17"),
+            "invalid parameter `ops[2].octaves`: 17 is above the maximum 16"
+        );
+        assert_eq!(
+            err("type = \"blend\"\nmode = \"addd\""),
+            "invalid parameter `ops[2].mode`: \"addd\" is not one of: add, add_raw, multiply, mix, screen, overlay, soft_light, linear_light, difference, darken, lighten, color_dodge, color_burn, subtract"
+        );
+        assert_eq!(
+            err("type = \"blend\"\ntarget = 3"),
+            "invalid parameter `ops[2].target`: expected a string (a channel name)"
+        );
+        assert_eq!(
+            err("type = \"cell_color\"\nbase_color = \"#12345\""),
+            "invalid parameter `ops[2].base_color`: expected 6 or 8 hex digits (got 5 chars: \"12345\")"
+        );
+        assert_eq!(
+            err("type = \"color_ramp\""),
+            "invalid parameter `ops[2].stops`: color_ramp requires a [[params.ops.stops]] array"
+        );
+        assert_eq!(
+            err("type = \"color_ramp\"\nstops = []"),
+            "invalid parameter `ops[2].stops`: color_ramp needs at least one entry"
+        );
+        assert_eq!(
+            err("type = \"color_ramp\"\n[[stops]]\nposition = 1.5"),
+            "invalid parameter `ops[2].stops[0].position`: 1.5 is above the maximum 1"
+        );
+        // A float bound holds at the value written, not its f32 rounding.
+        let doc: toml::Value =
+            toml::from_str("type = \"edge_erode\"\nstrength = 0.5\nnoise_frequency = 0.1").unwrap();
+        assert!(parse_op(&doc, 0).is_ok());
+    }
+
+    /// The README's op catalog is [`op_reference_markdown`]: every op with
+    /// its channels and a row per key.
+    #[test]
+    fn the_op_catalog_lists_every_op_and_key() {
+        let md = super::super::descriptor::op_reference_markdown();
+        for op in OPS {
+            assert!(
+                md.contains(&format!("### `{}` ({})", op.type_name, op.label)),
+                "{}",
+                op.type_name
+            );
+            for p in op.params {
+                assert!(
+                    md.contains(&format!("| `{}` |", p.key)),
+                    "{}.{}",
+                    op.type_name,
+                    p.key
+                );
+            }
+        }
+        assert!(md.contains("Each `[[params.ops.stops]]` entry:"));
+        assert!(md.contains("| `base_color` | hex colour | `\"#735947\"` |"));
     }
 
     #[test]
@@ -2182,7 +1410,7 @@ colour = "#000000"
 "##,
         );
         let schema = super::super::TextureGenerator.param_schema();
-        let shown: Vec<String> = crate::lint_params(&schema, &spec.params)
+        let shown: Vec<String> = crate::validate_params(&schema, &spec.params)
             .iter()
             .map(|i| i.to_string())
             .collect();

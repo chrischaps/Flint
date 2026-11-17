@@ -22,6 +22,53 @@ pub(crate) const SCRIPT_MODULES: &[&dyn flint_script::ScriptModule] = &[
 #[cfg(not(feature = "living"))]
 pub(crate) const SCRIPT_MODULES: &[&dyn flint_script::ScriptModule] = &[];
 
+/// Its debug keys (#717): the A/B of #238 and the pick of #248. Live only
+/// in a scene the subsystem runs in; elsewhere F5-F8 are the game's.
+pub(crate) const DEBUG_KEYS: flint_runtime::DebugKeyGroup = flint_runtime::DebugKeyGroup {
+    owner: "living",
+    when: "a scene with living props or wooze",
+    keys: KEYS,
+};
+
+#[cfg(feature = "living")]
+const A_B: [flint_runtime::DebugKey; 3] = [
+    flint_runtime::DebugKey {
+        action: "living_freeze",
+        key: "F5",
+        does: "Freeze or thaw the living clock",
+    },
+    flint_runtime::DebugKey {
+        action: "living_flip",
+        key: "F6",
+        does: "A/B: flip between the two presets",
+    },
+    flint_runtime::DebugKey {
+        action: "living_split",
+        key: "F7",
+        does: "A/B: split the view between the two presets",
+    },
+];
+#[cfg(all(feature = "living", feature = "debug-hud"))]
+const KEYS: &[flint_runtime::DebugKey] = &[
+    A_B[0],
+    A_B[1],
+    A_B[2],
+    flint_runtime::DebugKey {
+        action: "living_pick",
+        key: "F8",
+        does: "Pick the living prop at the view centre",
+    },
+    flint_runtime::DebugKey {
+        action: "living_pick_next",
+        key: "Shift+F8",
+        does: "Pick the next living prop by name",
+    },
+];
+#[cfg(all(feature = "living", not(feature = "debug-hud")))]
+const KEYS: &[flint_runtime::DebugKey] = &A_B;
+#[cfg(not(feature = "living"))]
+const KEYS: &[flint_runtime::DebugKey] = &[];
+
 /// The subsystem for the scene being entered, if it has living props or wooze.
 #[cfg(feature = "living")]
 pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
@@ -39,7 +86,7 @@ pub(crate) fn for_scene(ctx: &mut SceneCtx) -> Option<Box<dyn Subsystem>> {
     if let Some(line) =
         crate::player_app::missing_features::living_line(ctx.world, ctx.tables, grass)
     {
-        println!("{line}");
+        tracing::warn!(target: "load", "{line}");
     }
     None
 }

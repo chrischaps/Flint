@@ -114,6 +114,15 @@ pub struct LaunchOptions {
     /// run time, fails (`PlayerApp::run_failure`), so a headless run of a
     /// broken game can't exit 0.
     pub strict_scripts: bool,
+    /// `--inspect-listen` (#713): the loopback socket that answers queries
+    /// about the live world, handed to its subsystem at the start.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub inspect: Option<super::inspect::InspectListener>,
+    /// `--dump-world` (#713): the world written to a file at game times,
+    /// handed to its subsystem at the start; `run_failure` asks it whether
+    /// every time came.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub world_dump: Option<super::world_dump::WorldDump>,
 }
 
 impl Default for LaunchOptions {
@@ -141,6 +150,10 @@ impl Default for LaunchOptions {
             compare: None,
             compare_at_start: None,
             strict_scripts: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            inspect: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            world_dump: None,
         }
     }
 }
@@ -385,6 +398,8 @@ pub(super) struct Hud {
     /// What a debug key with nothing to act on said (#367), shown for a
     /// moment at the top of the window.
     pub(super) key_note: super::key_note::KeyNote,
+    /// The F1 card of the run's debug keys is showing (#717).
+    pub(super) key_table_open: bool,
 }
 
 impl Default for Hud {
@@ -407,6 +422,7 @@ impl Default for Hud {
             fonts_root: Default::default(),
             fonts_installed: false,
             key_note: Default::default(),
+            key_table_open: false,
         }
     }
 }
@@ -511,6 +527,13 @@ pub(super) struct InputLayers {
     pub(super) config_paths: Option<InputConfigPaths>,
     pub(super) user_override: InputConfig,
     pub(super) pending_rebind: Option<PendingRebind>,
+    /// The actions the game's layer and `--input-config` name: what the
+    /// controls line lists (#716), with the player's rebinds on them. Empty
+    /// when neither names any, and the built-ins are the game's controls.
+    pub(super) named_actions: std::collections::BTreeSet<String>,
+    /// The controls line last said, so a transition says it again only
+    /// when the bindings changed
+    pub(super) said_controls: Option<String>,
 }
 
 impl InputLayers {
@@ -523,8 +546,11 @@ impl InputLayers {
                 game_id: String::new(),
                 actions: Default::default(),
                 touch_controls: None,
+                debug_keys: None,
             },
             pending_rebind: None,
+            named_actions: Default::default(),
+            said_controls: None,
         }
     }
 }
@@ -540,6 +566,9 @@ pub(super) struct Focus {
     pub(super) real_pad_slots: HashSet<u32>,
     /// The modifiers held now, real or scripted, for `PlayerExtension::on_key`.
     pub(super) key_modifiers: winit::keyboard::ModifiersState,
+    /// Keys held whose press was a debug key (#717): their repeats and
+    /// release don't reach the game either.
+    pub(super) debug_keys_held: HashSet<winit::keyboard::KeyCode>,
 }
 
 impl Default for Focus {
@@ -549,6 +578,7 @@ impl Default for Focus {
             window_focused: true,
             real_pad_slots: Default::default(),
             key_modifiers: Default::default(),
+            debug_keys_held: Default::default(),
         }
     }
 }

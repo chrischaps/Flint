@@ -40,7 +40,7 @@ The ASCII numbers from #313 (RTX 4070 laptop, Vulkan, `flint render --gpu-time 2
 
 The last row is the noise. At footprint 1 neither binary runs the pre-pass, yet they read 8% apart, so only the two 4K footprint-2 close-ups (−16% and −20%, in separate runs) are a measured win. The rest are within noise. Other sessions shared the GPU: take the least of several processes, and check a pass the change doesn't touch.
 
-Whole-frame ASCII over styled props, from #507 (the same GPU, `examples/ascii_entities` at 1080p, `--ascii-scope screen --ascii-edges 0 --gpu-time 240`, the least of 3 processes per binary, main and the branch taking turns; runs agreed to 1 µs). The four scenes are the demo with no prop styled, every prop's `enabled = false` (only the mask is read), the barrel without `normalize`, and the demo as it is:
+Whole-frame ASCII over styled props, from #507 (the same GPU, `examples/ascii_entities` at 1080p, `--style ascii:scope=screen,edges=0 --gpu-time 240`, the least of 3 processes per binary, main and the branch taking turns; runs agreed to 1 µs). The four scenes are the demo with no prop styled, every prop's `enabled = false` (only the mask is read), the barrel without `normalize`, and the demo as it is:
 
 | Case | Before | After |
 |---|---|---|
@@ -128,7 +128,7 @@ A pass, trimmed:
 - **Draws** come from the same choices the pass draws with, so the scene pass's `draws` are `RenderStats::draw_calls` exactly. Each names its entity, and `entity_id` is there for display only (ids move between runs, ADR 0126). `mesh` is a model's sub-mesh as `<asset>#<n>`, or `box` for a `bounds` box. Draws with one `material_id` share a material buffer. `culled` lists what this camera set aside: `frustum`, `lod` (another level of detail draws from here) or `draw distance`.
 - **The frame**: `frame` (size, scene size, render scale, MSAA, adapter, backend, debug view, every `--quality` setting, the drawn `[post_process]` by key, the styles in chain order), `targets` (every texture the frame drew into or read: its id, format, size, layers, samples and bytes), `memory`, `lights` (which were drawn and which a cap left out) and `stats`, the F2 overlay's totals. A comic page's panels are each a frame drawn again, so each has its own passes under `panels`, and the page's compositor is the top-level `Panels` pass.
 
-The file has `"format": "flintframe"` and `"version": 1`. It is the same type (`flint_render::frame_capture::FrameDescription`) a frame capture's `manifest.json` holds ([below](#a-frames-images)), so the frame tool to come (#1087) reads both with one reader. A host describes a frame with `renderer.describe_next_frame()` before it and `renderer.describe_frame(Some(&world), &FrameHost { .. })` after, then `FrameDescription::lay_gpu_times` with that frame's `GpuTimer::recorded` times once they are read back. A frame nobody asked about keeps no log and draws the same bytes.
+The file has `"format": "flintframe"` and `"version": 1`. It is the same type (`flint_render::frame_capture::FrameDescription`) a frame capture's `manifest.json` holds ([below](#a-frames-images)), so `flint frame` reads both with one reader. A host describes a frame with `renderer.describe_next_frame()` before it and `renderer.describe_frame(Some(&world), &FrameHost { .. })` after, then `FrameDescription::lay_gpu_times` with that frame's `GpuTimer::recorded` times once they are read back. A frame nobody asked about keeps no log and draws the same bytes.
 
 With `--time`, the frame described is the span's last. `--report json` names the file as `frame_dump`.
 
@@ -158,13 +158,38 @@ props.flintframe/
     15-surface.png                the output, byte for byte the -o file
 ```
 
-- **Each target is kept once, exactly**: 8-bit targets as PNG, 16-bit integers (the style mask) as a 16-bit PNG, half floats (the HDR chain) as OpenEXR half, depth and 32-bit floats as OpenEXR f32 (channel `Z` for depth), the EXRs ZIP-compressed. No viewable copy sits beside an EXR: tonemapping HDR and linearizing depth for a look is the reader's job (the frame tool to come, #1087). An EXR opens in most image tools.
+- **Each target is kept once, exactly**: 8-bit targets as PNG, 16-bit integers (the style mask) as a 16-bit PNG, half floats (the HDR chain) as OpenEXR half, depth and 32-bit floats as OpenEXR f32 (channel `Z` for depth), the EXRs ZIP-compressed. No viewable copy sits beside an EXR: `flint frame image <capture> <pass> -o x.png` makes one (HDR tonemapped, depth stretched to grey, ids coloured; [The `frame` Command](../cli-reference/overview.md#the-frame-command)). An EXR opens in most image tools too.
 - **Read where it's written.** Each copy is made right after the pass, in the frame's own encoder, because the chain reuses its targets: a style stage's two pings, and bloom's mips, which the upsample writes over. So a ping written by two styles is two images, and bloom's are `threshold`, each `down` and each `up`. A multisampled target is read through its resolve (the HDR buffer), each shadow map layer that was drawn is its own image (a sun's cascades, a casting spot's `spot_shadow`), and a style's own targets are whatever it asked the chain's table for while it drew, so a user style's are there too.
 - **In the manifest**, each pass's `images` lists `target`, `step`, `layer`, `format`, `size`, `file` and `stored` (`png`, `png16`, `exr-half`, `exr-f32`, `exr-u32`, or `raw` for a format nothing else holds). `frame.capturing` is true. `capture` says what it cost: images, bytes read back and on disk, the targets a pass wrote that weren't read and why (`grass_instances` is a buffer), and the milliseconds spent recording the copies, waiting, copying out and encoding.
 - **The last `surface` image is the output.** A pass that writes after it (the depth upscale below render scale 1) still follows it in the folder. A comic page's panels each have their own `surface`, the panel's picture, and the page's is the `Panels` pass's.
 - **A folder that holds anything but a capture is refused**, so a wrong path can't empty it; an earlier capture there is replaced.
 
+`flint frame show <capture>` reads it back as text or `--json`: the summary, each pass, each draw by entity, each target. `flint frame diff <a> <b>` names what changed between two, down to each entity's draws and each pass image's pixels ([The `frame` Command](../cli-reference/overview.md#the-frame-command)). `flint frame open <capture>` opens it in a window: the passes as a tree, each pass's image with zoom, exposure and a texel readout, its draws, and the frame's times ([The Frame Debugger](frame-debugger.md)).
+
 The capture costs only the frame that asked: no other frame makes a copy or a buffer, and every golden is byte-identical. The capturing frame does pay: the copies stay on its GPU timeline, and reading them back is the raw size of every target (72 MB for the tavern at 1280 x 720), which a headless render waits for. A host captures with `renderer.capture_next_frame(CaptureTargets { surface, depth })` (its own output and depth, each made with `COPY_SRC`), then after the submit `take_frame_capture()`, `map()` and `poll(&device)` on later frames until it says ready (never waiting), `read()`, `describe_frame(..)`, and `flint_render::frame_capture::write_capture(dir, &mut description, frame)` off the frame thread.
+
+### Capturing from the running player
+
+The frames worth a look happen mid-play, so the player writes the same capture (#1086). It writes one at a game time, from an input script, on a key, or on a hitch:
+
+```bash
+flint-player levels/tavern_hub.scene.toml --frame-step 0.0167 --capture-frame-at 2 --exit-after 3
+flint-player examples/hitch_metronome.scene.toml --capture-on-hitch --exit-after 7
+```
+
+```text
+INFO player: [debug] capture: capturing the frame at t=2.00 s to captures/tavern_hub-t2.004.flintframe
+INFO player: [capture] wrote captures/tavern_hub-t2.004.flintframe: 18 images from 8 passes, 5.9 MB
+```
+
+- **Triggers.** `--capture-frame-at <secs>` (repeatable), **Shift+F2** while playing (the player's `capture_frame` debug key, which `[debug_keys]` can move; the note at the top of the window names the folder), `capture frame` in an `--input-script`, and `--capture-on-hitch[=N]` for the first N hitches. `flint play` takes the same flags. Captures go to `--capture-dir`, or `captures/` at the project's root, which `.gitignore` leaves out: a capture holds renders of a game's content.
+- **The folder** is the one `flint render --frame-capture` writes, named `<scene>-t<game time>.flintframe`. The player adds its own `UI` pass at the end, the HUD drawn over the frame, with the presented image. It also adds `trigger` (why), `scene` (path, `[scene] name`, SHA-256), `engine` (version, the checkout's commit and whether it had changes), `captured_at`, `frame.index`, `frame.game_time` and `frame.dt`, and `cpu`: the frame history's record of the frame and the second of frames before it, each with its phases, script callbacks, notes, physics steps and GPU time.
+- **A hitch can't be captured itself.** It is over by the time the detector judges it, because its clock comes in on the next tick. So `--capture-on-hitch` captures the frame after it. The manifest's `cpu.hitch` holds the hitch: its frame, ms, the median it stood out from, `player` or `elsewhere`, and the cause line the hitch log writes. Its record in `cpu.window` (`"hitch": true`) shows what it cost by phase. The images show the scene one frame later.
+- **Replay inputs** go under `replay/` (ADR 0126 decision 4), for the replay to come (#1089). `world.toml` is every entity by name in a scene's encoding. `inputs.json` holds every `FrameInputs` field, the whole camera, the drawn config's styles, the quality, MSAA, render scale, debug mode, the selected entity, motion holds' kept matrices and ticks, part tints and softness, and the palette and particle indexes. `skinning.bin` holds every bone, shadow and echo palette, read back from the GPU. `particles.bin` is the packed particle stream as drawn. The manifest's `replay.assets` lists each model and texture by path and SHA-256, never a copy. `replay.fresh_only` lists what a replay will draw fresh for this frame (ASCII's history, a user style's history targets, runtime meshes, grass and terrain edits).
+- **Two stepped runs give the same capture.** With `--frame-step`, two runs of the tavern wrote byte-identical images and replay files, and manifests that differ only in their timings.
+- **It never waits on the frame.** The capture is armed for one frame, and its copies go into that frame's one submission. The frames after poll the read-back, and a writer thread copies it out, encodes it and writes the folder on a quarter of the machine's cores, manifest last. One capture is in flight at a time, and a request made meanwhile waits for it. The capturing frame and every frame until the writer takes over are marked `capturing` in the frame history, and the hitch detector passes over them, so the capture isn't counted as the hitch it may cause. The writing still shares the machine: in a debug build, small hitches showed in the hot-reload poll while a capture was written to disk.
+- **The Living Props split** (#238) draws its other side over part of the frame. The capture keeps the shown side's passes and images and says so in `notes`, and the `UI` image shows both.
+- **Desktop only.** The web player declines with a note: it writes no files, and its `image` has no EXR.
 
 ### The perf line
 

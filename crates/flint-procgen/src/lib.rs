@@ -23,6 +23,7 @@ pub mod mock;
 pub mod model;
 mod output;
 pub mod param_ui;
+pub mod params;
 mod queue;
 mod registry;
 pub mod resolver;
@@ -82,8 +83,11 @@ pub use types::{
 
 pub use model::{read_model, read_png, Model, ModelLayout, ModelMesh};
 pub use param_ui::{
-    lint_params, param_reference_markdown, parse_param_schema, ParamCondition, ParamFieldSpec,
-    ParamFieldType, ParamIssue,
+    param_reference_markdown, param_reference_text, parse_param_schema, ParamCondition,
+    ParamFieldSpec, ParamFieldType,
+};
+pub use params::{
+    parse_path, prop_type, schema_at, string_enum, validate_params, NumBounds, ParamIssue, PathStep,
 };
 pub use validate::{
     validate_model, validate_output, CheckStatus, ValidationCheck, ValidationConstraints,
@@ -92,12 +96,14 @@ pub use validate::{
 
 // Texture pattern types
 pub use generators::texture::pipeline::{
-    op_default_params, op_param_schema, op_schema, run_pipeline_with_snapshots, ALL_OP_TYPES,
+    op_default_params, op_descriptor, op_param_schema, op_ports, op_schema,
+    run_pipeline_with_snapshots, ALL_OP_TYPES, OPS,
 };
 pub use generators::texture::{
-    derive_maps, OpPortInfo, Pattern, PatternCell, PatternField, PerlinOrganicParams,
-    PerlinOrganicPattern, TextureField, TextureMapParams, TextureOp, TilingGridParams,
-    TilingGridPattern, VoronoiBrickParams, VoronoiBrickPattern,
+    derive_maps, op_reference_markdown, OpDescriptor, OpParams, OpPortInfo, ParamDesc, ParamKind,
+    Pattern, PatternCell, PatternField, PerlinOrganicParams, PerlinOrganicPattern, TextureField,
+    TextureMapParams, TextureOp, TilingGridParams, TilingGridPattern, VoronoiBrickParams,
+    VoronoiBrickPattern,
 };
 
 // The README's and CONTRIBUTING guide's Rust examples run as doctests, so

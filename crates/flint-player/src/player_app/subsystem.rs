@@ -6,7 +6,8 @@
 //! A subsystem hears the scene come and go (`scene_loaded`,
 //! `scene_unloading`), each [`Stage`] of the frame (`update`), the scripts'
 //! commands before the player's own dispatcher (`script_command`), the debug
-//! keys (`on_key`), the moment before the frame is encoded (`pre_render`) and
+//! keys it declares (`debug_keys`, `on_debug_key`), the moment before the
+//! frame is encoded (`pre_render`) and
 //! the end of an `--exit-after` run (`exit_report`). Every hook has a default
 //! that does nothing.
 //!
@@ -41,11 +42,11 @@ use flint_ecs::FlintWorld;
 use flint_procgen::ProcGenResolver;
 use flint_render::{Camera, FrameInputs, SceneRenderer};
 use flint_runtime::pad::Gilrs;
+use flint_runtime::DebugKey;
 use flint_runtime::{GameClock, GameStateMachine, InputState, StateConfig};
 use flint_script::context::ScriptCommand;
 use flint_script::ScriptSystem;
 use std::any::Any;
-use winit::keyboard::KeyCode;
 
 /// The stages of a frame, in the order `tick` runs them (ADR 0117
 /// decision 1). A subsystem's `update` is called at each, after the player's
@@ -225,13 +226,6 @@ impl StageCtx<'_> {
     }
 }
 
-/// A key the debug keys hear (a real press or a scripted one).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct KeyPress {
-    pub code: KeyCode,
-    pub shift: bool,
-}
-
 /// Input a subsystem may take before the game and the player see it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PlayerInput {
@@ -368,11 +362,17 @@ pub(crate) trait Subsystem: Any {
         false
     }
 
-    /// A debug key (a real press or a scripted one). Return `true` to take
-    /// it from the player's own debug keys; the game still sees the key.
-    fn on_key(&mut self, _key: KeyPress, _ctx: &mut StageCtx) -> bool {
-        false
+    /// The debug keys it acts on (#717): its file's `DEBUG_KEYS.keys` (a
+    /// test's subsystem may declare its own). While it is in the scene the
+    /// table dispatches them to [`on_debug_key`](Self::on_debug_key) and
+    /// the game never sees the press; with it gone they are the game's.
+    fn debug_keys(&self) -> &'static [DebugKey] {
+        &[]
     }
+
+    /// One of its [`debug_keys`](Self::debug_keys) was pressed (real or
+    /// scripted). `key` is the chord it is on, as a note names it.
+    fn on_debug_key(&mut self, _action: &str, _key: &str, _ctx: &mut StageCtx) {}
 
     /// A click or a real Escape, before anything else hears it. Return `true`
     /// to take it: then nothing else does.
@@ -485,8 +485,29 @@ impl Subsystems {
         self.list.iter_mut().any(|s| s.script_command(command, ctx))
     }
 
-    pub(crate) fn on_key(&mut self, key: KeyPress, ctx: &mut StageCtx) -> bool {
-        self.list.iter_mut().any(|s| s.on_key(key, ctx))
+    /// Whether one of them declares the debug action `action`.
+    pub(crate) fn declares(&self, action: &str) -> bool {
+        self.list
+            .iter()
+            .any(|s| s.debug_keys().iter().any(|k| k.action == action))
+    }
+
+    /// Each one's name and debug keys, in run order.
+    pub(crate) fn debug_keys(
+        &self,
+    ) -> impl Iterator<Item = (&'static str, &'static [DebugKey])> + '_ {
+        self.list.iter().map(|s| (s.name(), s.debug_keys()))
+    }
+
+    /// Hand `action` to the first that declares it.
+    pub(crate) fn on_debug_key(&mut self, action: &str, key: &str, ctx: &mut StageCtx) {
+        if let Some(s) = self
+            .list
+            .iter_mut()
+            .find(|s| s.debug_keys().iter().any(|k| k.action == action))
+        {
+            s.on_debug_key(action, key, ctx);
+        }
     }
 
     pub(crate) fn on_input(&mut self, input: PlayerInput, ctx: &mut StageCtx) -> bool {
@@ -605,6 +626,18 @@ impl super::PlayerApp {
                     super::expression_feed::ExpressionSubsystem::new(feed),
                 ));
             }
+            // The live world's socket and its file (#713), the run's too
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                if let Some(listener) = self.launch.inspect.take() {
+                    self.core
+                        .subsystems
+                        .push(Box::new(super::inspect::InspectSubsystem::new(listener)));
+                }
+                if let Some(dump) = self.launch.world_dump.take() {
+                    self.core.subsystems.push(Box::new(dump));
+                }
+            }
         }
         let mut ctx = scene_ctx!(self);
         for build in for_scene_builders() {
@@ -646,13 +679,13 @@ impl super::PlayerApp {
         self.core.enable_script_modules();
     }
 
-    /// Whether a subsystem took a debug key.
-    pub(super) fn subsystems_take_key(&mut self, key: KeyPress) -> bool {
+    /// Hand a subsystem the debug action its key was pressed for.
+    pub(super) fn subsystems_debug_key(&mut self, action: &str, key: &str) {
         if self.core.subsystems.is_empty() {
-            return false;
+            return;
         }
         let mut ctx = stage_ctx!(self, None);
-        self.core.subsystems.on_key(key, &mut ctx)
+        self.core.subsystems.on_debug_key(action, key, &mut ctx);
     }
 
     /// Whether a subsystem took a click or an Escape.

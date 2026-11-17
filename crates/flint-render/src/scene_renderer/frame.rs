@@ -89,6 +89,27 @@ pub struct FrameInputs<'a> {
     /// `set_render_mode` shim's blood (2) and underside (5). `None` draws
     /// the component's.
     pub ocean_tint: Option<crate::ocean_pipeline::OceanTint>,
+    /// A frame debugger's controls over what is drawn (#1089): entities
+    /// left out of every pass, and the scene pass stopped after its Nth
+    /// draw. Debug only: `None`, every frame a game draws, changes nothing.
+    pub draw_controls: Option<&'a DrawControls>,
+}
+
+/// What a frame debugger's replay leaves out of a frame (#1089,
+/// [`FrameInputs::draw_controls`]). Applied as cull flags on the frame's
+/// draw items, the way the frustum and LOD culls are, so a frame with no
+/// controls takes the path it always did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DrawControls {
+    /// Entities drawn in no pass: not in the shadows, the scene, the style
+    /// mask or the selection. Grass, water and the sky aren't entity draws
+    /// and stay.
+    pub hidden: Vec<flint_core::EntityId>,
+    /// The scene pass draws only its first N draws, counted as its
+    /// description lists them (`flint frame show --draws --pass Scene`:
+    /// the entities' draws with grass and 2D sprite batches among them).
+    /// The sky, water and the grid aren't counted and always draw.
+    pub scene_draws: Option<usize>,
 }
 
 impl Default for FrameInputs<'_> {
@@ -108,6 +129,7 @@ impl Default for FrameInputs<'_> {
             grass_benders: &[],
             contact_velocities: &[],
             ocean_tint: None,
+            draw_controls: None,
         }
     }
 }
@@ -235,6 +257,7 @@ impl SceneRenderer {
         self.world_lines.clear();
         self.world_lines.extend_from_slice(inputs.world_lines);
         self.world_line_px_per_point = inputs.pixels_per_point;
+        self.draws.set_controls(inputs.draw_controls);
     }
 
     /// The boil the last [`prepare`](Self::prepare) took (or a split view's
@@ -389,6 +412,8 @@ impl SceneRenderer {
         // Pick each model's level of detail for this camera and drop what is
         // past its draw distance (#56), before the shadow pass sees them.
         self.cull_draws_to_lod(camera.position_array());
+        // and what a replay hides (#1089), out of every pass
+        self.draws.cull_hidden();
 
         // Count visible terrain chunks for stats
         self.terrain.visible_chunks = if let Some(ref frustum) = self.camera_frustum {
@@ -453,6 +478,8 @@ impl SceneRenderer {
 
         // Set aside draws outside the camera frustum for the rest of the frame.
         self.cull_draws_to_camera();
+        // and, replaying, the scene pass's draws past its limit (#1089)
+        self.cut_draws_to_limit();
 
         // All scene pipelines target Rgba16Float, so we always render to the HDR
         // buffer and composite to sRGB.
@@ -921,7 +948,20 @@ impl SceneRenderer {
         target_view: &wgpu::TextureView,
     ) {
         let timer = self.gpu_timer.take();
+        // A described or captured frame is the shown side's (#1086): the
+        // other side is neither logged nor read, only noted
+        let held = self.hold_frame_capture();
         self.encode_to(device, queue, encoder, depth_view, camera, target_view);
+        self.resume_frame_capture(held);
+        if let Some(log) = self.frame_log.as_deref_mut() {
+            let note = "a split view's other side (encode_again_to, the Living Props A/B \
+                        split #238) was drawn over part of the frame: the passes and images \
+                        are the shown side's"
+                .to_string();
+            if !log.notes.contains(&note) {
+                log.notes.push(note);
+            }
+        }
         self.gpu_timer = timer;
         // The other side's boil is drawn once (#739)
         self.again_boil = None;

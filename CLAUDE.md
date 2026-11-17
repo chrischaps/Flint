@@ -65,6 +65,7 @@ Flint uses an **edit -> validate -> play** loop:
    flint gen specs/oak_tree.procgen.toml -o tree.glb
    flint gen specs/stone_wall.procgen.toml -o wall.png
    flint gen specs/oak_tree.procgen.toml --dry-run
+   flint gen examples/rolling_meadow.terrain.toml -o terrain/   # heightmap + splat PNGs, no window
    ```
    More, and the goldens: `crates/flint-cli/CLAUDE.md`.
 
@@ -86,16 +87,17 @@ Flint uses an **edit -> validate -> play** loop:
 
 ## Architecture
 
-31-crate Cargo workspace (plus `tools/arch-analyzer`, a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph and the book's crate table, checked in CI). Every member but `flint-android` is a default member, so plain `cargo test` runs every desktop crate's tests (#758):
+32-crate Cargo workspace (plus `tools/arch-analyzer`, a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph and the book's crate table, checked in CI). Every member but `flint-android` is a default member, so plain `cargo test` runs every desktop crate's tests (#758):
 
 ```
-flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, capture, check, env, validate,
+flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, script, edit, play, capture, check, frame, env, validate,
   │                 examples, asset, render, style, gen, prefab, bundle, export, music, goldens, dxc
   │                 (`music`: validate, play, render, calibrate, chart play|replay, #709; hidden aliases: serve, preview,
   │                 gen-preview, spline-edit, terrain-edit, tex-edit, and for one release the old music names, spike-rumble)
   ├── flint-asset-gen AI asset generation: pluggable providers (Flux, Meshy, ElevenLabs, Mock)
   ├── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
-  └── flint-procgen-ai AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
+  ├── flint-procgen-ai AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
+  └── flint-ai-core   What every paid AI call goes through: transport + one retry policy, prices.toml (+ .flint/prices.toml), the .flint/ai_costs.jsonl ledger, CostMeter (--max-cost)
 flint-android       Android entry point (NativeActivity, APK asset extraction)
 flint-player        Standalone player (game loop, physics, audio, animation, scripting, egui HUD)
   ├── flint-rhythm   The rhythm layer: charts, judgment, coherence, ladder/seam/reintegration, replay, haptics
@@ -155,7 +157,7 @@ A bullet below that names a feature in a line or two has its full text in one of
 - **All game UI is script-driven** -- no hardcoded HUD; `hud_controller` entity + `hud.rhai` pattern; engine provides draw primitives (`draw_text/rect/circle/line/sprite`), scripts compose UI
 - **Game project pattern** -- games in own repos with engine as git subtree at `engine/`; `schemas = ["engine/schemas", "schemas"]` under `[project]` in the game's `flint.toml` layers the game's schemas over the engine's with no flags, and `--schemas engine/schemas --schemas schemas` overrides it for a run
 - **Player extensions** (ADRs 0071-0075) -- a game binary embeds `PlayerApp` and installs `PlayerExtension`s (`add_extension`): native Rhai fns, `pre_update` before scripts' `on_update`, window events, egui UI. Book: guides/player-extensions.md
-- **Every runtime read goes through `flint_core::vfs`** (#97) -- `vfs::read` / `read_to_string` / `read_dir` / `exists` / `is_file` / `is_dir`, never `std::fs` or `Path::exists` in a runtime crate. Decode images with `flint_render::open_image` and glTF through `flint_import::import_gltf`. Tests and the CLI keep `std::fs`. Plain `cargo clippy` warns on a read past the vfs and on `as_float` in every crate the player links (the root `clippy.toml`, #761; denied in the five that draw): a write path or test that means it says why, `#[allow(clippy::disallowed_methods)] // <reason>`, a test file once at its top (`#![allow(..)]`), a crate's unit tests in one `#![cfg_attr(test, allow(..))]` in its lib.rs. Change a rule in the root `clippy.toml`, then run `bash scripts/clippy-conf.sh`: it writes the tool crates' own copies (`TOOL_CRATES`: the CLI, viewer, asset-gen, procgen-ai and arch-analyzer hold only the wgpu seams) and `scripts/ci.sh` fails a stale one. The clock rules can't be native (there `web_time::Instant` is `std::time::Instant`): `scripts/wasm-clippy/wasm-only.toml`, added for the wasm check alone
+- **Every runtime read goes through `flint_core::vfs`** (#97) -- `vfs::read` / `read_to_string` / `read_dir` / `exists` / `is_file` / `is_dir`, never `std::fs` or `Path::exists` in a runtime crate. Decode images with `flint_render::open_image` and glTF through `flint_import::import_gltf`. Tests and the CLI keep `std::fs`. Plain `cargo clippy` warns on a read past the vfs and on `as_float` in every crate the player links (the root `clippy.toml`, #761; denied in the five that draw): a write path or test that means it says why, `#[allow(clippy::disallowed_methods)] // <reason>`, a test file once at its top (`#![allow(..)]`), a crate's unit tests in one `#![cfg_attr(test, allow(..))]` in its lib.rs. Change a rule in the root `clippy.toml`, then run `bash scripts/clippy-conf.sh`: it writes the tool crates' own copies (`TOOL_CRATES`: the CLI, viewer, asset-gen, procgen-ai, ai-core and arch-analyzer hold only the wgpu seams) and `scripts/ci.sh` fails a stale one. The clock rules can't be native (there `web_time::Instant` is `std::time::Instant`): `scripts/wasm-clippy/wasm-only.toml`, added for the wasm check alone
 - **`FLINT_*` environment switches are one table** (#715, `flint_core::env`): each is a `Var` (name, kind, default, help, group) read only through its getter (`env::VSYNC.choice()`, `env::LOD_SCALE.f32()`, `.flag()`, `.path()`), which warns once on a value it doesn't take; `flint env [--json]` lists them with their values, and the `--help` of `render`, `play` and `flint-player` ends with theirs. `scripts/ci.sh` refuses a `var("FLINT_` elsewhere, and `cargo test -p flint-core --test env_table` a `"FLINT_..."` name the table lacks: a new switch is a row there, then `flint env --book`. `crates/flint-core/CLAUDE.md`
 - **Fixed-timestep physics** (1/60s) via accumulator; animation/particles run at variable rate
 
@@ -169,7 +171,7 @@ A bullet below that names a feature in a line or two has its full text in one of
 - `AudioManager::new()` / `Gilrs::new()` may fail in headless/CI -- wrap in `Option`
 - Rhai v1.24 `sync`: `call_fn()` Scope visible only to direct callee, NOT sub-functions; entity IDs as `i64`
 - `flint-android` is the one crate excluded from `default-members` (a new crate goes in both lists, #758) -- use `cargo ndk -p flint-android`; min API 26. `cargo test --workspace` fails on `ndk-sys` on Windows; use plain `cargo test`
-- Windows links a 1 MB main-thread stack; debug builds of flint-cli's clap parser overflow it -- `.cargo/config.toml` links with `/STACK:8388608`. Don't remove it, and don't grow `Commands` assuming stack is free.
+- Windows links a 1 MB main-thread stack; `.cargo/config.toml` links debug builds with `/STACK:8388608`. Don't remove it: the commands' own stack use is unmeasured. The clap parser was what overflowed (a derived `augment_args` is one frame of about 8 KB a flag in debug: 1346 KB while `flint render` was one 130-flag struct, about 600 KB (579 to 643 as commands come and go) since #708 made a struct a help heading and boxed every `Commands` variant). Keep an `Args` struct to a dozen or so flags; `stack_tests::the_parser_fits_in_windows_default_stack` in `main.rs` fails past 1 MB.
 - Scene entity `merge_component()` does field-level merge INTO archetype defaults, not full replacement
 - Read a component through `world.view(id, comp::COLLIDER)` (`.f32("friction", 0.5)`, `.choice("shape", &[..], "box")`, `.opt_f32(..)`; ADR 0115, `crates/flint-core/CLAUDE.md`): it takes an integer as a number and reports a wrong type or unknown choice once per entity and field. Any other TOML goes through `flint_core::toml_util` (`toml_f64`/`toml_f32`/`toml_vec3`/...). Never `toml::Value::as_float` in a runtime crate: it reads `8` as nothing, and `cargo clippy` warns on it (the root `clippy.toml`, #761) and `scripts/wasm-check.sh` denies it
 - `furniture`, `wall`, `floor`, `ceiling`, `pillar`, `room`, `door` (and the `door` component) are not the engine's: they are the examples' layer, `schemas/examples/` (#681). The root `flint.toml` lists it after `schemas/`, so every scene in this checkout resolves them with no flag; a `--schemas` flag is the whole list, so `--schemas schemas` alone leaves them out (add `--schemas schemas/examples`), and a game has none of them unless its own `flint.toml` lists `engine/schemas/examples`. In an example, never put `furniture` on a non-visual entity: it includes `bounds` and draws a green box. A `bounds` box's colour is its archetype's `[archetype.<name>.visual]` (`color`, `wireframe`; #751), which each host hands the renderer with `SceneBinding::with_archetypes(&registry)`; the renderer names no archetype, and one with no `visual` draws grey

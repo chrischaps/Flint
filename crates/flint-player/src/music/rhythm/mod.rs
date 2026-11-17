@@ -24,7 +24,7 @@ pub(crate) mod session;
 pub(crate) mod timeline_panel;
 
 use crate::music::conducted::ConductedSnapshot;
-use crate::player_app::subsystem::{KeyPress, Pads, SceneCtx, Stage, StageCtx, Subsystem};
+use crate::player_app::subsystem::{Pads, SceneCtx, Stage, StageCtx, Subsystem};
 use flint_script::MusicClock;
 use session::{LadderPostBase, MusicSession};
 use std::path::PathBuf;
@@ -94,8 +94,8 @@ impl RhythmSubsystem {
                 if let Some(pads) = pads {
                     pads.take();
                 }
-                println!(
-                    "[music] gamepad handed to capture thread \
+                tracing::info!(target: "music",
+                    "gamepad handed to capture thread \
                      (player polling suspended for the session)"
                 );
                 #[cfg(feature = "debug-hud")]
@@ -104,7 +104,7 @@ impl RhythmSubsystem {
                 }
             }
             Ok(None) => {}
-            Err(e) => eprintln!("[music] session failed to start: {e:#}"),
+            Err(e) => tracing::warn!(target: "music", "session failed to start: {e:#}"),
         }
     }
 
@@ -121,7 +121,7 @@ impl RhythmSubsystem {
         }
         script.set_module_state(ConductedSnapshot::default());
         script.set_music(MusicClock::default());
-        println!("[music] session ended — gamepad returned to player polling");
+        tracing::info!(target: "music", "session ended — gamepad returned to player polling");
     }
 
     /// The Music Guide (Backquote) and Manifest Map (Backslash), registered
@@ -137,7 +137,7 @@ impl RhythmSubsystem {
             .any(|p| p.name() == guide_panel::MUSIC_GUIDE_PANEL)
         {
             panels.push(Box::new(guide_panel::MusicGuidePanel::new()));
-            println!("[music] debug guide available — press ` (Backquote)");
+            tracing::info!(target: "music", "debug guide available — press ` (Backquote)");
         }
         if !panels
             .iter()
@@ -146,7 +146,7 @@ impl RhythmSubsystem {
             let mut panel = timeline_panel::ManifestMapPanel::new();
             panel.set_map(session.timeline_map());
             panels.push(Box::new(panel));
-            println!("[music] manifest map available — press \\ (Backslash)");
+            tracing::info!(target: "music", "manifest map available — press \\ (Backslash)");
         }
     }
 
@@ -195,7 +195,7 @@ impl RhythmSubsystem {
                     && p.name() != timeline_panel::MANIFEST_MAP_PANEL
             });
             if quit {
-                println!("[music] quit_on_finish — exiting player");
+                tracing::info!(target: "music", "quit_on_finish — exiting player");
                 if let Some(flag) = ctx.quit.as_deref_mut() {
                     *flag = true;
                 }
@@ -271,25 +271,28 @@ impl Subsystem for RhythmSubsystem {
     }
 
     #[cfg(feature = "debug-hud")]
-    fn on_key(&mut self, key: KeyPress, ctx: &mut StageCtx) -> bool {
-        use winit::keyboard::KeyCode;
-        let panel = match key.code {
-            // The Phase 4 debug-surface keys (ADR 0035): all F-keys are taken
-            KeyCode::Backquote => guide_panel::MUSIC_GUIDE_PANEL,
-            KeyCode::Backslash => timeline_panel::MANIFEST_MAP_PANEL,
+    fn debug_keys(&self) -> &'static [flint_runtime::DebugKey] {
+        DEBUG_KEYS
+    }
+
+    #[cfg(feature = "debug-hud")]
+    fn on_debug_key(&mut self, action: &str, key: &str, ctx: &mut StageCtx) {
+        let panel = match action {
+            MUSIC_GUIDE => guide_panel::MUSIC_GUIDE_PANEL,
+            MANIFEST_MAP => timeline_panel::MANIFEST_MAP_PANEL,
             // Force the full reintegration (rewind, seam, reassembly) with
             // no fail to play to (ADR 0064 follow-up)
-            KeyCode::F9 => {
+            FORCE_FAIL => {
                 if let Some(session) = self.session.as_mut() {
                     session.debug_force_fail();
-                    println!("[music] DEBUG: full-fail forced — rewind incoming");
+                    tracing::info!(target: "music", "DEBUG: full-fail forced — rewind incoming");
                 } else {
                     ctx.note
-                        .say("F9", "the music session has ended — nothing to fail");
+                        .say(key, "the music session has ended — nothing to fail");
                 }
-                return true;
+                return;
             }
-            _ => return false,
+            _ => return,
         };
         let mut found = false;
         for p in ctx.panels.iter_mut().filter(|p| p.name() == panel) {
@@ -297,19 +300,36 @@ impl Subsystem for RhythmSubsystem {
             found = true;
         }
         if !found {
-            let key = if key.code == KeyCode::Backquote {
-                "`"
-            } else {
-                "\\"
-            };
             ctx.note
                 .say(key, "the music session has ended — nothing to show");
         }
-        true
-    }
-
-    #[cfg(not(feature = "debug-hud"))]
-    fn on_key(&mut self, _key: KeyPress, _ctx: &mut StageCtx) -> bool {
-        false
     }
 }
+
+#[cfg(feature = "debug-hud")]
+const MUSIC_GUIDE: &str = "music_guide";
+#[cfg(feature = "debug-hud")]
+const MANIFEST_MAP: &str = "manifest_map";
+#[cfg(feature = "debug-hud")]
+const FORCE_FAIL: &str = "music_force_fail";
+
+/// A charted session's debug keys (#717; ADR 0035's debug surface), the
+/// `DEBUG_KEYS` of `player_app/subsystems/music.rs`.
+#[cfg(feature = "debug-hud")]
+pub(crate) const DEBUG_KEYS: &[flint_runtime::DebugKey] = &[
+    flint_runtime::DebugKey {
+        action: MUSIC_GUIDE,
+        key: "Backquote",
+        does: "The Music Guide panel",
+    },
+    flint_runtime::DebugKey {
+        action: MANIFEST_MAP,
+        key: "Backslash",
+        does: "The Manifest Map panel",
+    },
+    flint_runtime::DebugKey {
+        action: FORCE_FAIL,
+        key: "F9",
+        does: "Force the full reintegration: rewind, seam, reassembly",
+    },
+];

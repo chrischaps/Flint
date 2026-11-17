@@ -7,12 +7,15 @@ mod alloc_count;
 #[cfg(test)]
 mod asset_search_tests;
 mod camera_cut;
+// The load summary and controls line a scene says when it comes up (#716)
 #[cfg(test)]
 mod capture_gate_tests;
 #[cfg(all(test, feature = "debug-hud"))]
 mod component_panel_tests;
+mod console;
 #[cfg(test)]
 mod debug_key_tests;
+mod debug_keys;
 mod debug_panels;
 mod egui_input;
 #[cfg(test)]
@@ -25,6 +28,9 @@ mod extension_hooks_tests;
 mod extension_tests;
 pub mod fonts;
 mod frame;
+mod frame_capture;
+#[cfg(test)]
+mod frame_capture_tests;
 mod frame_history;
 #[cfg(test)]
 mod frame_notes_tests;
@@ -42,6 +48,8 @@ mod hud_render;
 mod init;
 mod input_config;
 pub mod input_script;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod inspect;
 mod key_note;
 #[cfg(feature = "living")]
 mod living_ab;
@@ -57,6 +65,8 @@ mod living_subsystem;
 pub(crate) mod living_tuning;
 #[cfg(test)]
 mod look_read_tests;
+#[cfg(not(target_arch = "wasm32"))]
+mod loopback;
 mod missing_features;
 mod pacing;
 mod perf;
@@ -98,6 +108,8 @@ pub mod web_page;
 mod web_perf;
 #[cfg(target_arch = "wasm32")]
 pub mod web_startup;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod world_dump;
 mod world_text;
 
 #[cfg(target_os = "android")]
@@ -320,6 +332,10 @@ pub struct PlayerApp {
     /// `--screenshot-every` / `--exit-after`. Captures the presented frame
     /// (scene + egui HUD) right before `present()`.
     pub capture: CaptureConfig,
+    /// Frame captures for the frame debugger (#1086): `--capture-frame-at`,
+    /// `--capture-on-hitch`, the debug key and an input script's `capture`
+    /// line, each a `.flintframe` folder (`frame_capture.rs`).
+    pub(crate) frame_captures: frame_capture::FrameCaptures,
     /// How the run ends, and why it failed if it did
     outcome: state::Outcome,
     /// A windowless device for the tests that take a scene through a

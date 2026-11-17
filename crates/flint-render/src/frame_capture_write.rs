@@ -39,6 +39,40 @@ pub struct WrittenCapture {
     pub raw_bytes: u64,
 }
 
+/// The four files of a capture's `replay/` (ADR 0126 decision 4), as
+/// [`write_replay`] writes them.
+pub struct ReplayFiles<'a> {
+    /// The world as it stood, in a scene's encoding.
+    pub world_toml: &'a str,
+    pub inputs: &'a crate::frame_replay::ReplayInputs,
+    /// `skinning.bin`: the palettes `inputs.renderer.skinning` indexes.
+    pub skinning: &'a [u8],
+    /// `particles.bin`: the packed stream `inputs.particles` indexes.
+    pub particles: &'a [u8],
+}
+
+/// The files [`write_replay`] writes, under the capture's folder.
+pub const REPLAY_FILES: [&str; 4] = [
+    "replay/world.toml",
+    "replay/inputs.json",
+    "replay/skinning.bin",
+    "replay/particles.bin",
+];
+
+/// Write `files` into `dir/replay/` (made if missing). The player (#1086)
+/// and `flint render --frame-capture` (#1089) both write through it, before
+/// [`write_capture`], which keeps the folder and writes the manifest last.
+pub fn write_replay(dir: &Path, files: &ReplayFiles) -> io::Result<()> {
+    let replay = dir.join("replay");
+    std::fs::create_dir_all(&replay)?;
+    std::fs::write(replay.join("world.toml"), files.world_toml)?;
+    let json = serde_json::to_string_pretty(files.inputs).map_err(io::Error::other)?;
+    std::fs::write(replay.join("inputs.json"), json)?;
+    std::fs::write(replay.join("skinning.bin"), files.skinning)?;
+    std::fs::write(replay.join("particles.bin"), files.particles)?;
+    Ok(())
+}
+
 /// Write `frame`'s images into `dir` (made if missing) under the files
 /// `description` names for them, then `description` as `manifest.json`,
 /// last, with what the capture cost in its `capture`. A folder that already
@@ -49,6 +83,19 @@ pub fn write_capture(
     description: &mut FrameDescription,
     frame: CapturedFrame,
 ) -> io::Result<WrittenCapture> {
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    write_capture_on(dir, description, frame, threads)
+}
+
+/// [`write_capture`] encoding on at most `threads` threads: a window's
+/// writer (#1086) leaves the frame thread its cores, so the game it
+/// captures doesn't stutter while the images encode.
+pub fn write_capture_on(
+    dir: &Path,
+    description: &mut FrameDescription,
+    frame: CapturedFrame,
+    threads: usize,
+) -> io::Result<WrittenCapture> {
     prepare_dir(dir)?;
     let started = Instant::now();
     let jobs: Vec<(PathBuf, &CapturedImage)> = description
@@ -57,9 +104,7 @@ pub fn write_capture(
         .filter_map(|d| Some((dir.join(&d.file), frame.image(d)?)))
         .collect();
     let next = AtomicUsize::new(0);
-    let threads = std::thread::available_parallelism()
-        .map_or(4, |n| n.get())
-        .min(jobs.len().max(1));
+    let threads = threads.max(1).min(jobs.len().max(1));
     let results: Vec<io::Result<u64>> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..threads)
             .map(|_| {

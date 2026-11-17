@@ -181,7 +181,7 @@ args = ["--no-grid", "--style", "ascii:normalize=1"]
 [[case]]
 name = "ascii-entities-normalize"
 scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
-args = ["--no-grid", "--ascii-scope", "entities", "--ascii-normalize", "1", "--ascii-exposure", "0.5"]
+args = ["--no-grid", "--style", "ascii:scope=entities,normalize=1,exposure=0.5"]
 
 # --- ASCII in motion: the shimmer gate (#478) -------------------------------
 #
@@ -308,12 +308,12 @@ args = ["--no-grid", "--style", "ascii"]
 [[case]]
 name = "ascii-style-screen"
 scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
-args = ["--no-grid", "--ascii-scope", "screen"]
+args = ["--no-grid", "--style", "ascii:scope=screen"]
 
 [[case]]
 name = "ascii-style-object"
 scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
-args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object"]
+args = ["--no-grid", "--style", "ascii:scope=entities,grid=object"]
 
 # Whole-cell silhouettes (#338): every edge cell of the glyph props is drawn
 # whole or shows the scene, on the screen grid and on object grids
@@ -325,7 +325,7 @@ args = ["--no-grid", "--style", "ascii:silhouette=cell"]
 [[case]]
 name = "ascii-silhouette-cell-object"
 scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
-args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object", "--style", "ascii:silhouette=cell,edges=0"]
+args = ["--no-grid", "--style", "ascii:scope=entities,grid=object", "--style", "ascii:silhouette=cell,edges=0"]
 
 # The variant cell pre-pass (#313) sums a variant's cells once, but only at
 # a footprint of 2 or more: these pin it on both grids. Blessed with main's
@@ -338,7 +338,7 @@ args = ["--no-grid", "--style", "ascii:footprint=2"]
 [[case]]
 name = "ascii-style-object-footprint3"
 scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
-args = ["--no-grid", "--ascii-scope", "entities", "--ascii-grid", "object", "--style", "ascii:footprint=3"]
+args = ["--no-grid", "--style", "ascii:scope=entities,grid=object", "--style", "ascii:footprint=3"]
 
 # Blend (#278): the barrel half-way dissolved, the YBot a 40% cross-fade,
 # both carried in the mask's .g beside their ids (on the ASCII props alone
@@ -364,19 +364,19 @@ args = ["--no-grid", "--style", "ascii:footprint=2"]
 [[case]]
 name = "ascii-tear"
 scene = "tests/fixtures/scenes/stylize_props_tear.scene.toml"
-args = ["--no-grid", "--tear", "0.5"]
+args = ["--no-grid", "--set", "post.tear=0.5"]
 
 [[case]]
 name = "ascii-tear-matrix"
 scene = "tests/fixtures/scenes/stylize_props_tear.scene.toml"
-args = ["--no-grid", "--style", "matrix:blend_source=tear,rate=6", "--tear", "0.5", "--tear-scale", "3"]
+args = ["--no-grid", "--style", "matrix:blend_source=tear,rate=6", "--set", "post.tear=0.5", "--set", "post.tear_scale=3"]
 
 # The deprecated render mode (#746) is that style and tear, pixel for pixel
 [[case]]
 name = "render-mode-shim-matrix"
 scene = "tests/fixtures/scenes/stylize_props_tear.scene.toml"
 args = ["--no-grid", "--render-mode", "1", "--mode-mix", "0.5"]
-matches = ["--no-grid", "--style", "matrix:blend_source=tear", "--tear", "0.5"]
+matches = ["--no-grid", "--style", "matrix:blend_source=tear", "--set", "post.tear=0.5"]
 
 # With no tear the torn props are at blend 0: their style is off, pass and
 # mask skipped, so the frame is the one with ASCII off everywhere, byte for
@@ -384,7 +384,7 @@ matches = ["--no-grid", "--style", "matrix:blend_source=tear", "--tear", "0.5"]
 [[case]]
 name = "ascii-tear-calm"
 scene = "tests/fixtures/scenes/stylize_props_tear.scene.toml"
-args = ["--no-grid", "--tear", "0", "--style", "matrix:blend_source=tear"]
+args = ["--no-grid", "--set", "post.tear=0", "--style", "matrix:blend_source=tear"]
 matches = ["--no-grid", "--style", "ascii:off"]
 
 # The veil (#290): a glyph stone behind a campfire and a glyph crate behind
@@ -474,7 +474,7 @@ args = ["--no-grid", "--style", "pencil:grid=world,scope=screen,stroke_image=../
 [[case]]
 name = "display-bloom"
 scene = "tests/fixtures/scenes/pbr_test.scene.toml"
-args = ["--ascii", "--ascii-palette", "phosphor", "--ascii-edges", "0", "--style", "display_bloom"]
+args = ["--style", "ascii:palette=phosphor,color=palette,edges=0", "--style", "display_bloom"]
 
 [[case]]
 name = "invert"
@@ -495,12 +495,12 @@ tolerance = { level = 8, share = 0.003, mean = 0.25 }
 [[case]]
 name = "ascii-whole-blend-half"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
-args = ["--no-grid", "--ascii", "--style", "ascii:blend=0.5"]
+args = ["--no-grid", "--style", "ascii:blend=0.5"]
 
 [[case]]
 name = "ascii-whole-blend-zero"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
-args = ["--no-grid", "--ascii", "--style", "ascii:blend=0"]
+args = ["--no-grid", "--style", "ascii:blend=0"]
 matches = ["--no-grid"]
 
 [[case]]
@@ -567,7 +567,7 @@ args = ["--no-grid"]
 [[case]]
 name = "pencil-draw-entities-torn"
 scene = "tests/fixtures/scenes/stylize_props_pencil_draw.scene.toml"
-args = ["--no-grid", "--tear", "0.5"]
+args = ["--no-grid", "--set", "post.tear=0.5"]
 
 # Contour (#214; a registered style since #599): ink from depth's second
 # difference and luminance edges, so the flat ground draws no line. Lines
@@ -583,12 +583,27 @@ name = "contour-over-kuwahara"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--style", "kuwahara:radius=4", "--style", "contour:width=1.5"]
 
-# The old flags are shorthands for its table's keys
+# The old flags (hidden since #708, gone in the next release) are its
+# table's keys, as --set and --style are a post key's and a style's
 [[case]]
 name = "contour-flags-are-its-table"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
 args = ["--no-grid", "--contour-width", "1.5", "--contour-color", "0.2,0.05,0.02"]
 matches = ["--no-grid", "--style", "contour:width=1.5,color=0.2/0.05/0.02"]
+
+# #708: the old post flags are --set, pixel for pixel
+[[case]]
+name = "post-flags-are-set"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--exposure", "1.4", "--fog-density", "0.05", "--grade-gain", "1.04,1,0.94", "--ssao-intensity", "0"]
+matches = ["--no-grid", "--set", "post.exposure=1.4", "--set", "post.fog_density=0.05", "--set", "post.fog_enabled=true", "--set", "post.grade_gain=1.04,1,0.94", "--set", "post.ssao_intensity=0", "--set", "post.ssao_enabled=false"]
+
+# #708: the old ASCII flags are --style and --set
+[[case]]
+name = "ascii-flags-are-style-and-set"
+scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
+args = ["--no-grid", "--ascii-scope", "screen", "--ascii-palette", "phosphor", "--ascii-cell", "12"]
+matches = ["--no-grid", "--style", "ascii:scope=screen,palette=phosphor,color=palette", "--set", "ascii.cell=12"]
 
 [[case]]
 name = "contour-blend-zero"
@@ -908,8 +923,8 @@ matches = ["--no-grid", "--no-shadows"]
 [[case]]
 name = "tear-default-params"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
-args = ["--no-grid", "--style", "matrix:blend_source=tear", "--tear", "0.55", "--tear-scale", "0"]
-matches = ["--no-grid", "--style", "matrix:blend_source=tear", "--tear", "0.55"]
+args = ["--no-grid", "--style", "matrix:blend_source=tear", "--set", "post.tear=0.55", "--set", "post.tear_scale=0"]
+matches = ["--no-grid", "--style", "matrix:blend_source=tear", "--set", "post.tear=0.55"]
 
 # The reality styles (#746): render modes 1-5 of the composite until then,
 # each a display style with named params now. Whole frame, on the plain bench
@@ -942,4 +957,4 @@ args = ["--no-grid", "--style", "underwater:depth=0.4,churn=0.3,daylight=1"]
 [[case]]
 name = "reality-tron-iris"
 scene = "tests/fixtures/scenes/stylize_props_plain.scene.toml"
-args = ["--no-grid", "--style", "tron:blend_source=tear", "--tear", "0.45", "--tear-iris"]
+args = ["--no-grid", "--style", "tron:blend_source=tear", "--set", "post.tear=0.45", "--set", "post.tear_iris=true"]

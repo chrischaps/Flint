@@ -348,7 +348,9 @@ impl HitchDetector {
         let frames = history.frames();
         let frame = &frames[at];
         let before = at.saturating_sub(MEDIAN_FRAMES)..at;
-        if before.len() < WARM_FRAMES {
+        // A frame a capture was recorded or read back in (#1086) isn't
+        // judged: the tool that looks for hitches mustn't report its own
+        if before.len() < WARM_FRAMES || frame.capturing {
             return false;
         }
         let median = self.median(before.clone().map(|i| frames[i].judged_ms()));
@@ -1041,5 +1043,23 @@ mod tests {
         );
         assert!(flint_core::env::HITCH_FACTOR.parse("0.5").is_err());
         assert!(flint_core::env::HITCH_FLOOR_MS.parse("-1").is_err());
+    }
+
+    /// A frame a capture was recorded or read back in (#1086) is passed
+    /// over: the tool that looks for hitches doesn't report its own.
+    #[test]
+    fn a_frame_a_capture_was_in_is_not_judged() {
+        let mut run = Run::new(None);
+        for _ in 0..60 {
+            run.frame(steady(HZ60_MS));
+        }
+        let slow = F {
+            render: 190.0,
+            ..steady(200.0)
+        };
+        run.history.capturing();
+        assert_eq!(run.frame(slow), 0, "the capture's own frame");
+        assert_eq!(run.frame(slow), 1, "the same frame uncaptured is a hitch");
+        assert_eq!(run.detector.session().hitches, 1);
     }
 }

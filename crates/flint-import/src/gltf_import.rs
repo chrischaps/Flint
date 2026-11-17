@@ -762,8 +762,8 @@ fn build_keyframes(
 ) -> Vec<ImportedKeyframe> {
     if interpolation == "CUBICSPLINE" {
         if outputs.len() < timestamps.len() * 3 {
-            eprintln!(
-                "warning: CUBICSPLINE sampler has {} outputs for {} timestamps (expected {}); treating as LINEAR",
+            tracing::warn!(
+                "CUBICSPLINE sampler has {} outputs for {} timestamps (expected {}); treating as LINEAR",
                 outputs.len(),
                 timestamps.len(),
                 timestamps.len() * 3

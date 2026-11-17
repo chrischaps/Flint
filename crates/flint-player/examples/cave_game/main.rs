@@ -85,10 +85,9 @@ impl PlayerExtension for CaveGame {
 }
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        // script=info: what the game's scripts print and log (#703)
-        .with_env_filter(tracing_subscriber::EnvFilter::new("warn,script=info"))
-        .init();
+    // The player's log (#716): the load summary, the controls line and
+    // what scripts print, on stderr, as `flint play` says them
+    flint_player::logging::init(&flint_player::logging::LogArgs::default());
 
     // `--screenshot <png>`: one frame half a second in, then exit.
     let args: Vec<String> = std::env::args().skip(1).collect();

@@ -22,13 +22,15 @@ use crate::cost::{estimate_input_tokens, CostMeter};
 use crate::error::{ProcGenAiError, Result};
 use crate::http::{
     base64, extract_json_object, image_media_type, parse_response, shorten, HttpRequest,
-    HttpResponse, Reply, Transport, UreqTransport, Usage,
+    HttpResponse, Method, Reply, Transport, UreqTransport, Usage,
 };
 use crate::measure::{self, Distance};
 use crate::mock::{bump_patch, fnv1a, props, registry, resolve_name, slug, unknown_generator};
 use crate::preview::Previewer;
 use crate::prompt::{self, Current};
-use crate::schema::{check_params, json_to_toml, prop_type, repair_params};
+use crate::schema::{json_to_toml, prop_type, repair_params};
+use flint_ai_core::retry::{Retry, RetryPolicy};
+use flint_procgen::validate_params;
 
 /// The model used when a config names none.
 pub const DEFAULT_MODEL: &str = "claude-opus-5-5";
@@ -262,41 +264,42 @@ impl AnthropicAgent {
             headers.push(("anthropic-beta".to_string(), FALLBACK_BETA.to_string()));
         }
         let input_estimate = estimate_input_tokens(&self.body(system, messages, self.max_tokens));
-        let mut attempt = 0;
-        loop {
-            attempt += 1;
-            // Checked before every send, retries included: a retry is a new
-            // call, and the budget may have moved since the last check.
-            let max_tokens = match &self.meter {
-                Some(m) => m.admit(&self.config.model, input_estimate, self.max_tokens)?,
-                None => self.max_tokens,
-            };
-            let req = HttpRequest {
-                url: self.url.clone(),
-                headers: headers.clone(),
-                body: self.body(system, messages, max_tokens).to_string(),
-            };
-            let result = match self.transport.post(&req) {
-                Ok(resp) => {
-                    self.meter_response(&resp);
-                    parse_response(&resp, attempt)
+        // The one retry policy (#721): 2 s, then 4 s, or the provider's
+        // `retry-after`, at most a minute.
+        let policy = RetryPolicy {
+            attempts: self.max_retries + 1,
+            base_delay: Duration::from_secs(2),
+            max_delay: Duration::from_secs(60),
+            sleep: self.sleep,
+        };
+        policy.run(
+            |attempt| {
+                // Checked before every send, retries included: a retry is a
+                // new call, and the budget may have moved since the last check.
+                let max_tokens = match &self.meter {
+                    Some(m) => m.admit(&self.config.model, input_estimate, self.max_tokens)?,
+                    None => self.max_tokens,
+                };
+                let req = HttpRequest {
+                    method: Method::Post,
+                    url: self.url.clone(),
+                    headers: headers.clone(),
+                    body: self.body(system, messages, max_tokens).to_string(),
+                };
+                match self.transport.send(&req) {
+                    Ok(resp) => {
+                        self.meter_response(&resp);
+                        parse_response(&resp, attempt)
+                    }
+                    Err(e) => Err(ProcGenAiError::Network(e)),
                 }
-                Err(e) => Err(ProcGenAiError::Network(e)),
-            };
-            match result {
-                Err(e) if e.is_retryable() && attempt <= self.max_retries => {
-                    let wait = match &e {
-                        ProcGenAiError::RateLimited {
-                            retry_after: Some(s),
-                            ..
-                        } => *s,
-                        _ => 1 << attempt,
-                    };
-                    (self.sleep)(Duration::from_secs(wait.min(60)));
-                }
-                other => return other,
-            }
-        }
+            },
+            |e| match e {
+                ProcGenAiError::RateLimited { retry_after, .. } => Retry::After(*retry_after),
+                e if e.is_retryable() => Retry::After(None),
+                _ => Retry::No,
+            },
+        )
     }
 
     /// Record a successful response's usage, read from the raw body so a
@@ -306,7 +309,7 @@ impl AnthropicAgent {
         if !(200..300).contains(&resp.status) {
             return;
         }
-        let Ok(v) = serde_json::from_str::<Json>(&resp.body) else {
+        let Ok(v) = serde_json::from_slice::<Json>(&resp.body) else {
             return;
         };
         let Some(usage) = v.get("usage") else { return };
@@ -748,7 +751,7 @@ impl Ctx {
 
     /// Schema issues, then (if there are none) what generating them reveals.
     fn issues(&self, params: &toml::Value) -> Vec<String> {
-        let schema: Vec<String> = check_params(&self.schema, params)
+        let schema: Vec<String> = validate_params(&self.schema, params)
             .iter()
             .map(ToString::to_string)
             .collect();

@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use flint_procgen::{
-    lint_params, register_built_in_generators, GeneratorOutput, GeneratorRegistry, OutputKind,
+    register_built_in_generators, validate_params, GeneratorOutput, GeneratorRegistry, OutputKind,
     ProcGenSpec,
 };
 
@@ -65,7 +65,7 @@ fn every_example_is_strict_clean_and_generates_deterministically() {
             .unwrap_or_else(|| panic!("{file}: unknown generator {}", spec.generator));
 
         // What `flint gen --strict` refuses.
-        let issues = lint_params(&generator.param_schema(), &spec.params);
+        let issues = validate_params(&generator.param_schema(), &spec.params);
         assert!(issues.is_empty(), "{file}: {issues:?}");
 
         // A commented example: it opens by saying what it makes.
@@ -143,20 +143,84 @@ fn every_example_is_strict_clean_and_generates_deterministically() {
     );
 }
 
+/// Every spec anywhere in the tree (examples, the games kept in the
+/// checkout, the AI templates, the cave game's) passes the one validator
+/// `flint gen`, `flint check` and the resolver share (#718): no key its
+/// generator ignores, no value it can't use.
 #[test]
-fn readme_catalog_matches_the_schemas() {
+fn every_spec_in_the_tree_validates() {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if path.is_dir() {
+                let skipped = name.starts_with('.')
+                    || name.starts_with("target")
+                    || matches!(name.as_str(), "node_modules" | "dist");
+                if !skipped {
+                    walk(&path, out);
+                }
+            } else if name.ends_with(".procgen.toml") {
+                out.push(path);
+            }
+        }
+    }
+    let root = crate_dir().join("../..");
+    let mut specs = Vec::new();
+    walk(&root, &mut specs);
+    specs.sort();
+    assert!(specs.len() >= 50, "found only {} specs", specs.len());
+
+    let registry = GeneratorRegistry::with_built_ins();
+    let mut problems = Vec::new();
+    for path in &specs {
+        let shown = path
+            .strip_prefix(&root)
+            .unwrap_or(path)
+            .display()
+            .to_string();
+        let spec = match ProcGenSpec::from_file(path) {
+            Ok(spec) => spec,
+            Err(e) => {
+                problems.push(format!("{shown}: {e}"));
+                continue;
+            }
+        };
+        // A game's own generator (the cave game's `rock_v1`, #195) is the
+        // game's to check
+        let Some(generator) = registry.get(&spec.generator) else {
+            continue;
+        };
+        for issue in validate_params(&generator.param_schema(), &spec.params) {
+            problems.push(format!("{shown}: {issue}"));
+        }
+    }
+    assert!(problems.is_empty(), "\n{}", problems.join("\n"));
+}
+
+/// The README's text between `<!-- {name}:begin -->` and `<!-- {name}:end -->`.
+fn readme_block(name: &str) -> String {
     let readme = std::fs::read_to_string(crate_dir().join("README.md"))
         .unwrap()
         .replace("\r\n", "\n");
-    let begin = "<!-- catalog:begin -->\n";
-    let end = "<!-- catalog:end -->";
+    let begin = format!("<!-- {name}:begin -->\n");
+    let end = format!("<!-- {name}:end -->");
     let a = readme
-        .find(begin)
-        .expect("README has no catalog:begin marker")
+        .find(&begin)
+        .unwrap_or_else(|| panic!("README has no {name}:begin marker"))
         + begin.len();
-    let b = readme.find(end).expect("README has no catalog:end marker");
-    let in_readme = readme[a..b].trim_end();
-    let generated = registry().reference_markdown();
+    let b = readme
+        .find(&end)
+        .unwrap_or_else(|| panic!("README has no {name}:end marker"));
+    readme[a..b].trim_end().to_string()
+}
+
+/// Fail with the first differing line and how to regenerate the block.
+fn assert_block_matches(name: &str, generated: &str, example_args: &str) {
+    let in_readme = readme_block(name);
     let generated = generated.trim_end();
     if in_readme != generated {
         let first_diff = in_readme
@@ -166,9 +230,24 @@ fn readme_catalog_matches_the_schemas() {
             .map(|(x, y)| format!("README:  {x}\nschemas: {y}"))
             .unwrap_or_else(|| "(one is a prefix of the other)".into());
         panic!(
-            "The README catalog is out of date. Regenerate it with\n  \
-             cargo run -p flint-procgen --example param_catalog\nand paste it between \
-             the catalog markers. First difference:\n{first_diff}"
+            "The README {name} is out of date. Regenerate it with\n  \
+             cargo run -p flint-procgen --example param_catalog{example_args}\nand paste it between \
+             the {name} markers. First difference:\n{first_diff}"
         );
     }
+}
+
+#[test]
+fn readme_catalog_matches_the_schemas() {
+    assert_block_matches("catalog", &registry().reference_markdown(), "");
+}
+
+/// The texture ops' catalog is their descriptors' (#720).
+#[test]
+fn readme_op_catalog_matches_the_descriptors() {
+    assert_block_matches(
+        "op-catalog",
+        &flint_procgen::op_reference_markdown(),
+        " -- ops",
+    );
 }
