@@ -3,7 +3,7 @@
 //! The [`ProcGenResolver`] indexes `*.procgen.toml` files by their `meta.name`
 //! and provides cached generation through the [`ProcGenCache`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -16,7 +16,7 @@ use crate::output::GeneratorOutput;
 use crate::queue::{AssetKind, CompletedAsset, GenerationRequest, ProcGenQueue, QueueStats};
 use crate::registry::GeneratorRegistry;
 use crate::spec::ProcGenSpec;
-use crate::{register_built_in_generators, CacheStats, ProcGenError, Result, Seed};
+use crate::{CacheStats, ProcGenError, Result, Seed};
 use flint_core::ContentHash;
 
 /// Discovers procgen specs by name and generates assets with caching.
@@ -31,6 +31,8 @@ pub struct ProcGenResolver {
     queue: ProcGenQueue,
     /// The scene's living props, which share the queue's frame budget
     living: LivingProps,
+    /// Specs whose params have been checked: each is warned about once
+    checked: HashSet<String>,
 }
 
 impl ProcGenResolver {
@@ -39,17 +41,15 @@ impl ProcGenResolver {
         Self::with_config(ProcGenCacheConfig::default())
     }
 
-    /// Create a resolver whose cache and queue use `config`, with the
-    /// built-in generators (and `mock`, for tests and validation).
+    /// Create a resolver whose cache and queue use `config`, with
+    /// [`GeneratorRegistry::with_built_ins`]: the generators `flint gen`
+    /// knows.
     pub fn with_config(config: ProcGenCacheConfig) -> Self {
-        let mut registry = GeneratorRegistry::new();
-        register_built_in_generators(&mut registry);
-        registry.register(Box::new(crate::mock::MockGenerator));
-        Self::with_registry(config, registry)
+        Self::with_registry(config, GeneratorRegistry::with_built_ins())
     }
 
     /// Create a resolver over a registry built elsewhere, used as it is: no
-    /// built-in is added, so call [`register_built_in_generators`] on it
+    /// built-in is added, so call [`crate::register_built_in_generators`] on it
     /// first to keep them. This is how a resolver is rebuilt with another
     /// cache without losing the generators a game registered (#195):
     ///
@@ -68,6 +68,7 @@ impl ProcGenResolver {
             cache: ProcGenCache::new(config),
             queue: ProcGenQueue::new(budget_ms),
             living: LivingProps::new(POSE_CACHE_BYTES),
+            checked: HashSet::new(),
         }
     }
 
@@ -86,6 +87,8 @@ impl ProcGenResolver {
 
     /// Index one spec, as discovery would have.
     pub fn index_spec(&mut self, spec: ProcGenSpec) {
+        // A replaced spec is checked again when it is next asked for
+        self.checked.remove(&spec.meta.name);
         self.specs.insert(spec.meta.name.clone(), spec);
     }
 
@@ -116,6 +119,33 @@ impl ProcGenResolver {
             ));
         }
         Ok(())
+    }
+
+    /// What is wrong with the named spec's params against its generator's
+    /// schema ([`crate::validate_params`]): empty when the spec isn't
+    /// indexed or its generator isn't registered (those are
+    /// [`check_generator`](Self::check_generator)'s to say).
+    pub fn param_issues(&self, name: &str) -> Vec<crate::ParamIssue> {
+        let Some(spec) = self.specs.get(name) else {
+            return Vec::new();
+        };
+        match self.registry.get(&spec.generator) {
+            Some(generator) => crate::validate_params(&generator.param_schema(), &spec.params),
+            None => Vec::new(),
+        }
+    }
+
+    /// Warn, once a spec, about what [`param_issues`](Self::param_issues)
+    /// finds: the first time a spec is asked for, whichever way. The spec
+    /// still generates; `flint check` and `flint validate` say the same
+    /// before a run.
+    fn warn_params_once(&mut self, name: &str) {
+        if !self.specs.contains_key(name) || !self.checked.insert(name.to_string()) {
+            return;
+        }
+        for issue in self.param_issues(name) {
+            tracing::warn!("procgen spec '{name}': {issue}");
+        }
     }
 
     /// Register another generator alongside the built-ins (a game's own, or
@@ -168,6 +198,7 @@ impl ProcGenResolver {
     ///
     /// A hit returns the cached output itself, shared: no copy is made.
     pub fn generate(&mut self, name: &str) -> Result<Arc<GeneratorOutput>> {
+        self.warn_params_once(name);
         let spec = self
             .specs
             .get(name)
@@ -203,6 +234,7 @@ impl ProcGenResolver {
         entity_position: [f32; 3],
         asset_kind: AssetKind,
     ) -> bool {
+        self.warn_params_once(name);
         let spec = match self.specs.get(name) {
             Some(s) => s.clone(),
             None => return false,
@@ -267,6 +299,7 @@ impl ProcGenResolver {
         &mut self,
         request: LivingPropRequest,
     ) -> std::result::Result<(LivingPropId, String), String> {
+        self.warn_params_once(&request.spec_name);
         let name = &request.spec_name;
         let spec = self
             .specs

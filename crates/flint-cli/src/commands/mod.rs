@@ -17,6 +17,7 @@ pub mod frame;
 pub mod frame_seq;
 pub mod gen;
 pub mod gen_ai;
+pub mod gen_catalog;
 pub mod gen_preview;
 pub mod gen_preview_common;
 pub mod gen_refine;

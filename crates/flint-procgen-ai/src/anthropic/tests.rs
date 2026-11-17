@@ -101,6 +101,7 @@ const PINE: &str = r##"{
   "params": {
     "trunk_height": 14,
     "trunk_radius_base": 0.35,
+    "branch_method": "space_colonization",
     "crown_shape": "ellipsoid",
     "crown_radius": 1.8,
     "crown_height_ratio": 3.0,
@@ -134,7 +135,7 @@ fn create_returns_a_spec_the_generator_builds() {
     assert_eq!(spec.params["leaf_density"].as_float(), Some(0.3));
 
     let schema = registry().get("tree_v1").unwrap().param_schema();
-    assert!(check_params(&schema, &spec.params).is_empty());
+    assert!(validate_params(&schema, &spec.params).is_empty());
     registry().generate_from_spec(&spec).unwrap();
 
     assert_eq!(report.rounds.len(), 1);
@@ -204,10 +205,10 @@ fn the_loop_sends_validator_reports_back_until_the_spec_is_valid() {
     // "cone" until #198 made it a real shape the same day, and it failed
     // unseen until plain `cargo test` ran this crate (#758).
     let broken = r##"{"name": "pine", "tags": [], "params": {
-        "trunk_height": -3.0, "trunk_radius": 0.3, "crown_shape": "pyramid", "leaf_density": 0.3
+        "trunk_height": -3.0, "trunk_radius": 0.3, "branch_method": "space_colonization", "crown_shape": "pyramid", "leaf_density": 0.3
     }}"##;
     let half = r##"{"name": "pine", "tags": [], "params": {
-        "trunk_height": 12.0, "crown_shape": "pyramid", "leaf_density": 0.3
+        "trunk_height": 12.0, "branch_method": "space_colonization", "crown_shape": "pyramid", "leaf_density": 0.3
     }}"##;
     let script = Scripted::new(vec![ok(broken), ok(half), ok(PINE)]);
     let (spec, report) = agent(&script)
@@ -293,7 +294,7 @@ fn params_that_fit_the_schema_but_build_nothing_are_issues() {
     // A creature with no skeleton passes the schema and builds 0 vertices.
     let ctx = Ctx::new("creature").unwrap();
     let empty = ctx.params_from_json(&json!({})).unwrap();
-    assert!(check_params(&ctx.schema, &empty).is_empty());
+    assert!(validate_params(&ctx.schema, &empty).is_empty());
     let issues = ctx.issues(&empty);
     assert!(
         issues.iter().any(|i| i.contains("empty mesh")),
@@ -416,7 +417,7 @@ leaf_density = 1.4
         "`leaf_density` 1.4 -> 0.3: out of range, and 'sparse' asks for a thin crown"
       ],
       "confidence": 0.2,
-      "params": {"trunk_height": 13.0, "leaf_density": 0.3, "crown_shape": "ellipsoid"}
+      "params": {"trunk_height": 13.0, "leaf_density": 0.3, "branch_method": "space_colonization", "crown_shape": "ellipsoid"}
     }"#;
     let script = Scripted::new(vec![ok(reply)]);
     let fb = agent(&script).interpret_spec(&spec).unwrap();

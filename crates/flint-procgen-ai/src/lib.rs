@@ -42,4 +42,4 @@ pub use http::{HttpRequest, HttpResponse, Reply, ScriptedTransport, Transport, U
 pub use measure::Distance;
 pub use mock::MockAgent;
 pub use preview::Previewer;
-pub use schema::{check_params, repair_params, IssueKind, ParamIssue};
+pub use schema::repair_params;
