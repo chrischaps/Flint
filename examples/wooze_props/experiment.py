@@ -52,7 +52,7 @@ VARIANTS = {
 
 # The measuring pass: smaller, and with the shading boil off, since the boil redraws
 # every pixel 12 times a second and would move the still twins' crops too.
-MEASURE = ["--kuwahara-boil", "0", "--contour-boil", "0"]
+MEASURE = ["--set", "kuwahara.boil=0", "--set", "contour.boil=0"]
 
 WIDTH, HEIGHT = 960, 540
 SPAN, FPS = "0..4", "12"

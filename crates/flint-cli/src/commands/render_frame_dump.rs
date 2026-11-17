@@ -25,8 +25,8 @@ pub(super) struct Wanted<'a> {
 impl<'a> Wanted<'a> {
     pub fn of(args: &'a super::render::RenderArgs) -> Option<Self> {
         let wanted = Self {
-            dump: args.frame_dump.as_deref(),
-            capture: args.frame_capture.as_deref(),
+            dump: args.measure.frame_dump.as_deref(),
+            capture: args.measure.frame_capture.as_deref(),
         };
         (wanted.dump.is_some() || wanted.capture.is_some()).then_some(wanted)
     }

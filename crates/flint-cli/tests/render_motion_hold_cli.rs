@@ -247,7 +247,7 @@ fn a_held_capture_is_byte_identical_run_to_run() {
     }
 }
 
-/// `--motion-hold 12` holds everything, the box included, and the post time:
+/// `--set post.motion_hold=12` holds everything, the box included, and the post time:
 /// a whole-frame pencil boiling at 24 still redraws once a tick.
 #[test]
 fn the_whole_frame_hold_holds_every_entity_and_the_post_time() {
@@ -256,7 +256,7 @@ fn the_whole_frame_hold_holds_every_entity_and_the_post_time() {
         &dir,
         "plain.scene.toml",
         "whole",
-        &["--motion-hold", "12", "--style", "pencil:boil=24"],
+        &["--set", "post.motion_hold=12", "--style", "pencil:boil=24"],
     );
     if no_gpu(&run) {
         return;

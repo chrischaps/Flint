@@ -487,7 +487,8 @@ fn a_clocked_render_writes_its_ascii_grid() {
         &[
             "--time",
             "1.3",
-            "--ascii",
+            "--style",
+            "ascii",
             "--ascii-text",
             text.to_str().unwrap(),
         ],
@@ -507,7 +508,8 @@ fn a_clocked_render_writes_its_ascii_grid() {
             "0..1",
             "--fps",
             "2",
-            "--ascii",
+            "--style",
+            "ascii",
             "--ascii-text",
             text.to_str().unwrap(),
         ],
@@ -534,7 +536,8 @@ fn frames_on_the_clock_move_the_props_and_count_flips() {
             "0.5",
             "--orbit",
             "20",
-            "--ascii",
+            "--style",
+            "ascii",
             "--flip-json",
             flips.to_str().unwrap(),
         ],
@@ -563,7 +566,8 @@ fn last_frame_is_the_sequences_last_frame_alone() {
         "0.5",
         "--orbit",
         "20",
-        "--ascii",
+        "--style",
+        "ascii",
     ];
     let o = render(&dir, "seq.png", &seq);
     if no_gpu(&o) {

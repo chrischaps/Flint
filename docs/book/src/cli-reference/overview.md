@@ -481,67 +481,14 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--last-frame` | `false` | With `--frames`: write only the last frame, to `--output` itself (not numbered): the sequence's end, a temporal style's history settled (#478) |
 | `--mesh <entity>=<files>` | (none) | A frame per mesh file (one GLB, a folder, or `out/f*.glb`, natural order) shown on that entity, all on one renderer; repeatable, frame for frame. `-o` numbered PNGs, `%03d`, a `.gif` at `--fps`, or `--sheet` ([Mesh sequences](../guides/headless-rendering.md#mesh-sequences), #222) |
 | `--sheet` | `false` | With `--mesh`: one labelled contact sheet, a cell a file |
-| `--ascii` | (off) | The full-screen ASCII style (#265, [Stylize Passes](../concepts/stylize-passes.md#ascii)): one glyph per cell on one screen grid. Any `--ascii-*` flag below marked *style* also turns it on |
-| `--ascii-font <name>` | `builtin` | *Style:* glyph set, `builtin` or `fonts/<name>.glyphs.toml` beside the scene ([Glyph Atlas](../concepts/glyph-atlas.md)) |
-| `--ascii-ramp <name>` | the set's | *Style:* ramp of that set (built-in: `classic`, `blocks`, `minimal`, `detailed`, `quadrants`, `braille`) |
-| `--ascii-color <mode>` | `source` | *Style:* `source` (the cell's hue), `tint` (one colour), `raw` (the cell's colour as it is), `mono` (white on grey) or `palette` ([colour modes](../concepts/stylize-passes.md#colour-modes)) |
-| `--ascii-palette <name>` | `phosphor` | *Style:* palette for `palette` mode: `cga`, `cga-warm`, `cga16`, `phosphor`, `amber`, `mono` or `palettes/<name>.palette.toml` beside the scene; sets `--ascii-color palette` unless that's given |
-| `--ascii-ground <mode>` | `dim` | *Style:* behind the glyph: `dim` (the mode's own), `black` or `inverse` (ink fills the cell, the glyph is cut out) |
-| `--ascii-glow <f32>` | `0` | *Style:* halo around bright glyphs (0.6 reads as a phosphor tube) |
-| `--ascii-tint <r,g,b>` | `0.35,1,0.45` | *Style:* the tint colour; sets `--ascii-color tint` unless that's given |
 | `--ascii-text <file>` | (none) | Also write the ASCII grid as UTF-8 text: a line per cell row, a character per cell, matching the PNG (a passed-through cell is a space; #317, [Reading a render as text](../guides/headless-rendering.md#reading-a-render-as-text)). Needs the style on; not with `--sweep` |
 | `--ascii-text-ansi <file>` | (none) | The same grid with 24-bit ANSI colours, each glyph's ink over its ground |
-| `--ascii-background <f32>` | `0.15` | *Style:* how much of the cell's colour fills behind its glyph (0 black) |
-| `--ascii-brightness <f32>` / `--ascii-contrast <f32>` | `0` / `1` | *Style:* luminance remap before the ramp: contrast about mid-grey, then an offset |
-| `--ascii-ink <f32>` | `1` | *Style:* glyph ink brightness |
-| `--ascii-dither <f32>` | `0` | *Style:* ordered dither before the ramp, fixed to the grid (#277) |
-| `--ascii-exposure <f32>` / `--ascii-normalize <f32>` | `0` / `0` | *Style:* stops of gain on each cell's colour; stretch each style id's tone range over the ramp, from this frame (#289) |
 | `--pixels-per-point <f32>` | `1` | A high-DPI window's scale factor: styles sized in points (ASCII cells) scale by it |
-| `--ascii-cell <n>` | `8` | ASCII cell width in points (height follows the font) |
-| `--ascii-levels <n>` | `0` | ASCII tone bands; `0` keeps the whole ramp |
-| `--ascii-footprint <cells>` | `1` | How many cells wide each cell's tone is averaged over |
-| `--ascii-no-edges` | `false` | Turn off the line glyphs (`─ │ ╱ ╲`) drawn on depth, normal and silhouette edges; the style's `edges = 0` |
-| `--ascii-edges <f32>` | `1` | *Style:* edge glyph strength over the tone glyph, 0 off to 1 ([Edges](../concepts/stylize-passes.md#edges), #267) |
-| `--ascii-edge-threshold <f32>` | `0.5` | *Style:* cell widths of edge a cell needs to draw a line glyph (lower finds more) |
-| `--ascii-edge-max <f32>` | `3` | *Style:* more edge than this is texture (grass) and keeps its tone glyph; a styled entity's outline ignores it |
-| `--ascii-edge-depth <f32>` | `0.6` | Relative view-distance step that counts as an edge (lower finds more) |
-| `--ascii-edge-normal <f32>` | `2.5` | Normal change that counts as a crease (lower finds more) |
 | `--no-postprocess` | `false` | Disable post-processing |
-| `--bloom-intensity <f32>` | `0.04` | Bloom strength |
-| `--bloom-threshold <f32>` | `1.0` | Bloom brightness threshold |
-| `--exposure <f32>` | `1.0` | Exposure multiplier |
-| `--ssao-radius <f32>` | `0.5` | SSAO sample radius |
-| `--ssao-intensity <f32>` | `1.0` | SSAO intensity (0 = disabled) |
-| `--ssao-samples <n>` | `64` | SSAO hemisphere samples per pixel, 1–64; the kernel is strided so lower counts keep full radius coverage. `16` is ~4x cheaper |
-| `--fog-density <f32>` | `0.02` | Fog density (0 = disabled) |
-| `--fog-color <r,g,b>` | `0.7,0.75,0.82` | Fog color |
-| `--fog-height-falloff <f32>` | `0.1` | Fog height falloff (enables height fog) |
-| `--dither-intensity <f32>` | `0.03` | Ordered dither strength (enables dither; 0 = disabled) |
-| `--volumetric-density <f32>` | `1.0` | Volumetric light density (enables god rays) |
-| `--volumetric-samples <n>` | `32` | Volumetric ray-march sample count |
-| `--desaturate <f32>` | `0` | Drain colour toward ash-grey (0 = full colour, 1 = fully drained) |
-| `--dof <f32>` | `0` | Depth-of-field strength (0 = sharp, 1 = full defocus) |
-| `--dof-focus <f32>` | `10.0` | Focus plane distance in world units |
-| `--dof-range <f32>` | `5.0` | Focus half-width in world units |
-| `--kuwahara-radius <n>` | `4` | Kuwahara filter radius in pixels (enables Kuwahara) |
-| `--kuwahara-sharpness <f32>` | `8.0` | Kuwahara sector sharpness |
-| `--kuwahara-hardness <f32>` | `8.0` | Kuwahara sector hardness |
-| `--kuwahara-anisotropy <f32>` | `1.0` | Kuwahara anisotropy (0 = isotropic, 1 = full) |
-| `--edge-depth <f32>` / `--edge-normal <f32>` | `0.6` / `2.5` | The [shared geometry edges](../concepts/stylize-passes.md#shared-edges)' silhouette and crease thresholds, for every style that reads them |
-| `--kuwahara-boil <f32>` | `0.0` | How far each drawing moves the paint |
-| `--contour` | off | Enable the contour pass |
-| `--contour-width <f32>` | `1.25` | Half a line's width at 1080p (enables contour) |
-| `--contour-threshold <f32>` | `0.08` | How strong an edge must be before it inks (enables contour) |
-| `--contour-strength <f32>` | `0.9` | How dark the ink goes, 0--1 (enables contour) |
-| `--contour-luma <f32>` | `0.5` | How much luminance edges count (enables contour) |
-| `--contour-color <R,G,B>` | near black | The ink's colour, linear (enables contour) |
-| `--contour-fade <f32>` | `30` | Metres at which a line has faded by half (enables contour) |
-| `--contour-boil <f32>` | `0.0` | How far each drawing moves the lines (enables contour) |
-| `--boil-on <u32>` | `2` | Film frames each drawing is held: 1, 2 or 3 |
-| `--motion-hold <rate>` | `0` | Motion on twos for the whole frame (#405): entities' drawn positions and poses, and the post time styles read, change only this many times a second (sets `[post_process] motion_hold`; 0 = off). See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
 | `--boil-time <f64>` | `0` | Seconds of the wooze field to run, which picks the drawing |
-| `--film-grain <f32>` | `0` | Animated film grain (0 = off; 0.02–0.05 is subtle) |
 | `--grain-time <s>` | `0.0` | Post time for grain and the styles' animation. Deterministic: two renders at the same value are identical |
+| `--look <name\|path>` | (none) | A look merged over the scene's `[post_process]`, key by key: a built-in, a `styles/<name>.look.toml` beside the scene, or a path. `--look help` lists every look and what to tune |
+| `--set <key=value>` | (none) | Set one key as the scene would write it (#708), repeatable, in the order given. `post.<key>=v` is a `[post_process]` key: `post.exposure=1.5`, `post.fog_color=0.7,0.75,0.82`, `post.fxaa=true`. `<style>.<key>=v` is a key of a style's table (`ascii.cell=12`), leaving the style on or off as it was. `--list-effects` and `--list-styles` list the keys |
 | `--style <name[:k=v,...]>` | (none) | Turn on any registered style over the scene's post-processing: `ascii`, `ascii:cell=12,ramp=blocks`, `invert:strength=0.5`, `kuwahara:radius=6`, `ascii:off` (off everywhere, entities' own included, #376). Repeatable; a later word wins; `--style help` lists every style and its keys ([Stylize Passes](../concepts/stylize-passes.md#using-a-style)) |
 | `--style-time <s>` | `0.0` | Post time animated styles read; the same clock as `--grain-time`, and it wins when both are given |
 | `--particle-time <s>` | (none) | Simulate particle emitters and effects for this long at a fixed 1/60 s step before capturing. Deterministic; without it no particles are drawn |
@@ -555,22 +502,26 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--fps <n>` | `12` | With a `--time` span: GIF frames per second of game time, up to 50 |
 | `--sweep <knob=a,b,...>` | (none) | The same moment once per value, as labelled columns: `wooze.glide=0,0.25,0.5,1`. Takes `wooze.amplitude`, `.step`, `.glide`, `.jitter`, `.preset` |
 | `--report json` | (none) | One JSON object on stdout: each living prop's lineage seed, pose indices, the wooze values it read, and every species value with the layer that set it, and `script_errors`, each script error of the run with its entity, callback, line and count. Everything else moves to stderr |
-| `--grade-lift <r,g,b>` | `0,0,0` | Colour-grade lift (per-channel add after ACES) |
-| `--grade-gamma <r,g,b>` | `1,1,1` | Colour-grade gamma (per-channel curve) |
-| `--grade-gain <r,g,b>` | `1,1,1` | Colour-grade gain (per-channel multiply) |
-| `--fxaa` | `false` | Enable the FXAA anti-aliasing pass |
 | `--oren-nayar <f32>` | `0` | Oren-Nayar diffuse blend (0 = Lambert, 1 = full); see [Lighting](../concepts/lighting.md) |
 | `--sheen-strength <f32>` | `0` | Charlie-sheen rim strength (keep at or below about 0.3) |
 | `--sheen-color <r,g,b>` | `1,1,1` | Charlie-sheen rim tint |
-| `--tear <f32>` | `0.0` | `[post_process] tear`: how much of the frame tears open; a style or prop with `blend_source = "tear"` shows only in the holes ([The tear](../concepts/post-processing.md#the-tear)) |
-| `--tear-scale <f32>` | `3.0` | The tear's patches across the frame's height |
-| `--tear-iris` | off | Tear open from the centre in a circle |
-| `--render-mode <n>` | none | Deprecated (#746): 1 matrix, 2 blood, 3 drunk, 4 tron, 5 underwater, 6 the tear alone, as the styles that replaced them ([The old render modes](../concepts/post-processing.md#the-old-render-modes)) |
-| `--mode-mix <f32>` | `1.0` | Deprecated with `--render-mode`: its mix |
-| `--mode-params <x,y,z,w>` | `0,0,0,0` | Deprecated with `--render-mode`: its four values |
 | `--schemas <path>` | manifest, else discovered | Schemas directory (repeatable; see [Common Flags](#common-flags)) |
 
-When no camera flags are given, the render starts from the scene's `[camera]` block if it has one. The camera and post flags override the scene's authored `[camera]` and `[post_process]` values.
+The old render-mode flags (deprecated by #746) are hidden from the help but still work for one release, each mode drawn as the style that replaced it: 1 matrix, 2 blood, 3 drunk, 4 tron, 5 underwater, 6 the tear alone ([The old render modes](../concepts/post-processing.md#the-old-render-modes)).
+
+When no camera flags are given, the render starts from the scene's `[camera]` block if it has one. The camera flags override the scene's authored `[camera]`.
+
+**Post-processing and styles are keys, not flags.** Any `[post_process]` key is `--set post.<key>=<value>`, and a style is turned on with its keys by `--style <name>:<key>=<value>,...`. They apply over the scene's block and `--look`, `--set` in the order given and `--style` last, so the command line wins:
+
+```bash
+flint render scene.toml -o warm.png --set post.exposure=1.2 --set post.grade_gain=1.04,1,0.94 --set post.film_grain=0.03
+flint render scene.toml -o fog.png --set post.fog_enabled=true --set post.fog_density=0.05
+flint render scene.toml -o dof.png --set post.dof_strength=0.6 --set post.dof_focus_distance=8 --set post.dof_focus_range=3
+flint render scene.toml -o painted.png --style kuwahara:radius=6 --style contour:width=1.5
+flint render scene.toml -o glyphs.png --style ascii:ramp=blocks,palette=phosphor,color=palette --set ascii.cell=12
+```
+
+A key that turns an effect on is its own key: `post.fog_density` alone leaves fog off in a scene that has `fog_enabled = false`, and likewise bloom, dither, height fog and volumetric light. A colour in a `--style` word is `r/g/b` or `#rrggbb`, since commas separate its keys. `flint render --list-effects` lists every `[post_process]` key with its kind, default and tuned range, `--list-styles` every style's keys, `--look help` the looks, and `flint render --help` every flag by heading. The per-effect flags these replaced (`--bloom-intensity`, `--fog-density`, `--ascii-ramp`, `--contour-width`...) still work for one release and print their new spelling.
 
 > **`flint render` runs no scripts unless you pass `--scripts` (or `--script-time <t>`),**
 > and a render of a scene with scripts says so on stderr, naming them. Without it,
@@ -719,7 +670,7 @@ target yet, so nothing copies it into a build for you.
 | `--no-inspector` | `false` | Hide egui inspector (scene) |
 | `--spline` | `false` | Open the spline/track editor instead of the viewer (scene) |
 | `--auto-orbit` | `false` | Start with the turntable auto-orbit on (scene/model/procgen); toggle with **O**, speed with `[` / `]` |
-| `--motion-hold <rate>` | (the scene's) | Motion on twos for the whole frame (#871), as on `flint render`: the scene viewer and the model previewer draw positions and poses on ticks, this many a second (0 = off). See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
+| `--motion-hold <rate>` | (the scene's) | Motion on twos for the whole frame (#871), as `--set post.motion_hold=<rate>` is on `flint render`: the scene viewer and the model previewer draw positions and poses on ticks, this many a second (0 = off). See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
 
 ### Model Previewer Flags
 
