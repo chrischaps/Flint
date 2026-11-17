@@ -81,6 +81,8 @@ impl PlayerApp {
         self.start_scene_systems(entry)?;
         // The subsystems this scene uses, each told it is up
         self.subsystems_enter_scene();
+        // A `[debug_keys]` name nothing has, or two actions on one key (#717)
+        self.say_debug_key_config();
 
         // On Android the cursor always counts as captured, so touch input
         // flows without a click-to-capture gate; elsewhere a first-person

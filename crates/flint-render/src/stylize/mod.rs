@@ -1287,7 +1287,7 @@ pub struct StyleFrame<'a> {
 /// the scissored frame is the full one, byte for byte. Read once.
 pub fn scissor_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("FLINT_STYLE_SCISSOR").map_or(true, |v| v.trim() != "0"))
+    *ON.get_or_init(|| flint_core::env::STYLE_SCISSOR.flag().unwrap_or(true))
 }
 
 /// A weight `w` that means "keep this much of last frame, per 60 Hz frame"

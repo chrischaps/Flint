@@ -92,12 +92,14 @@ pub use validate::{
 
 // Texture pattern types
 pub use generators::texture::pipeline::{
-    op_default_params, op_param_schema, op_schema, run_pipeline_with_snapshots, ALL_OP_TYPES,
+    op_default_params, op_descriptor, op_param_schema, op_schema, run_pipeline_with_snapshots,
+    ALL_OP_TYPES, OPS,
 };
 pub use generators::texture::{
-    derive_maps, OpPortInfo, Pattern, PatternCell, PatternField, PerlinOrganicParams,
-    PerlinOrganicPattern, TextureField, TextureMapParams, TextureOp, TilingGridParams,
-    TilingGridPattern, VoronoiBrickParams, VoronoiBrickPattern,
+    derive_maps, op_reference_markdown, OpDescriptor, OpParams, OpPortInfo, ParamDesc, ParamKind,
+    Pattern, PatternCell, PatternField, PerlinOrganicParams, PerlinOrganicPattern, TextureField,
+    TextureMapParams, TextureOp, TilingGridParams, TilingGridPattern, VoronoiBrickParams,
+    VoronoiBrickPattern,
 };
 
 // The README's and CONTRIBUTING guide's Rust examples run as doctests, so

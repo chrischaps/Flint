@@ -57,6 +57,7 @@ const REPORT_TO_STDOUT: &str = "json";
 #[command(group(clap::ArgGroup::new("span").multiple(true).args(["time", "script_time", "mesh"])))]
 #[command(group(clap::ArgGroup::new("clock").multiple(true).args(["time", "script_time"])))]
 #[command(group(clap::ArgGroup::new("listing").args(["list_styles", "list_effects"])))]
+#[command(after_help = flint_core::env::help_section(&[flint_core::env::Group::Render]))]
 pub struct RenderArgs {
     /// Path to scene file
     #[arg(
@@ -453,6 +454,15 @@ pub struct RenderArgs {
     /// last frame; not with a sweep or a sequence
     #[arg(long)]
     pub frame_dump: Option<String>,
+
+    /// Capture the rendered frame into this folder (#1085, ADR 0126): its
+    /// description as `manifest.json` (written last) and, under
+    /// `targets/`, every target each pass wrote, as that pass left it:
+    /// 8-bit as PNG, float as OpenEXR half, depth as OpenEXR f32 (`.flintframe`
+    /// by convention). The last image is the render's output byte for byte.
+    /// Of a span, the last frame; not with a sweep or a sequence
+    #[arg(long)]
+    pub frame_capture: Option<String>,
 
     /// Draw a sequence of N frames on one renderer (#345), written as
     /// numbered PNGs beside --output (`seq.png` gives `seq_0000.png`...).
@@ -1095,10 +1105,10 @@ pub(super) fn render(
             "--report / --reference measure one frame or a sweep: drop --frames / --mesh"
         );
     }
-    if args.frame_dump.is_some() && (sequence || grid.is_some()) {
+    if (args.frame_dump.is_some() || args.frame_capture.is_some()) && (sequence || grid.is_some()) {
         anyhow::bail!(
-            "--frame-dump describes one frame: drop --frames / --mesh / --sweep \
-             (a span's last frame is described: --time 0..4 --frame-dump f.json)"
+            "--frame-dump / --frame-capture record one frame: drop --frames / --mesh / --sweep \
+             (a span's last frame is recorded: --time 0..4 --frame-capture f.flintframe)"
         );
     }
     if args.time.is_some() && sequence {
@@ -1448,12 +1458,16 @@ pub(super) fn render(
         let mut frames = Vec::with_capacity(configs.len());
         let mut texts = Vec::with_capacity(configs.len());
         for (i, config) in configs.iter().enumerate() {
-            // The frame's description (#1084): the still's own frame
-            let dump = args
-                .frame_dump
-                .as_deref()
+            // The frame's description (#1084) and capture (#1085): the
+            // still's own frame
+            let dump = super::render_frame_dump::Wanted::of(args)
                 .filter(|_| i == 0)
-                .map(|path| (path, super::render_frame_dump::arm(ctx, &mut renderer)));
+                .map(|wanted| {
+                    (
+                        wanted,
+                        super::render_frame_dump::arm(ctx, &mut renderer, wanted),
+                    )
+                });
             let pixels = draw_pixels(
                 ctx,
                 &mut renderer,
@@ -1461,10 +1475,17 @@ pub(super) fn render(
                 (i > 0 || redraw).then(|| config.clone()),
                 Some(&world),
             )?;
-            if let Some((path, armed)) = dump {
-                let said =
-                    super::render_frame_dump::write(armed, ctx, &mut renderer, Some(&world), path)?;
-                say!("{said}");
+            if let Some((wanted, armed)) = dump {
+                let said = super::render_frame_dump::write(
+                    armed,
+                    ctx,
+                    &mut renderer,
+                    Some(&world),
+                    wanted,
+                )?;
+                for line in said {
+                    say!("{line}");
+                }
             }
             // The grid is read back once a frame: a second read finds nothing
             let measured = args.report.is_some() || reads_glyphs;
@@ -2886,27 +2907,28 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                     stage.camera.target = target;
                 }
             }
-            // The frame's description (#1084): the first cell's last capture
-            let dump = args
-                .frame_dump
-                .as_deref()
+            // The frame's description (#1084) and capture (#1085): the
+            // first cell's last capture
+            let dump = super::render_frame_dump::Wanted::of(args)
                 .filter(|_| i == 0 && index + 1 == times.len())
-                .map(|path| {
+                .map(|wanted| {
                     (
-                        path,
-                        super::render_frame_dump::arm(ctx, &mut stage.renderer),
+                        wanted,
+                        super::render_frame_dump::arm(ctx, &mut stage.renderer, wanted),
                     )
                 });
             pictures.push(stage.capture(args, ctx, t, frame_step)?);
-            if let Some((path, armed)) = dump {
+            if let Some((wanted, armed)) = dump {
                 let said = super::render_frame_dump::write(
                     armed,
                     ctx,
                     &mut stage.renderer,
                     Some(stage.game.world()),
-                    path,
+                    wanted,
                 )?;
-                say!("{said}");
+                for line in said {
+                    say!("{line}");
+                }
             }
             if wants_text || wants_flips || report_file.is_some() || reads_glyphs {
                 texts.push(stage.renderer.style_text(&ctx.device, "ascii"));
@@ -3221,6 +3243,7 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
             wooze_zones: field.map_or(0, |f| f.zones().len()),
             sweep: grid.map(super::sweep::SweepGrid::name),
             frame_dump: args.frame_dump.clone(),
+            frame_capture: args.frame_capture.clone(),
             captures,
             still_props: still_props(&stages[0]),
             warnings,

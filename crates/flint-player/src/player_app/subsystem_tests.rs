@@ -5,9 +5,7 @@
 
 use super::expression_feed::{ExpressionFeed, ExpressionTimeline};
 use super::scene_entry::SceneEntry;
-use super::subsystem::{
-    ExitReport, KeyPress, Lasts, ReportCtx, SceneCtx, Stage, StageCtx, Subsystem,
-};
+use super::subsystem::{ExitReport, Lasts, ReportCtx, SceneCtx, Stage, StageCtx, Subsystem};
 use super::PlayerApp;
 use flint_core::project::{SchemaDirs, SchemaSource};
 use flint_core::vfs::{self, MemorySource};
@@ -113,9 +111,21 @@ impl Subsystem for Toy {
     fn update(&mut self, stage: Stage, ctx: &mut StageCtx) {
         self.say(format!("{stage:?} policy={}", ctx.policy.is_some()));
     }
-    fn on_key(&mut self, key: KeyPress, _ctx: &mut StageCtx) -> bool {
-        self.say(format!("key {:?}", key.code));
-        key.code == KeyCode::F8
+    /// Toy "a" declares `ping` on F8; the others none.
+    fn debug_keys(&self) -> &'static [flint_runtime::DebugKey] {
+        const PING: &[flint_runtime::DebugKey] = &[flint_runtime::DebugKey {
+            action: "ping",
+            key: "F8",
+            does: "Ping",
+        }];
+        if self.name == "a" {
+            PING
+        } else {
+            &[]
+        }
+    }
+    fn on_debug_key(&mut self, action: &str, key: &str, _ctx: &mut StageCtx) {
+        self.say(format!("key {action} {key}"));
     }
     fn exit_report(&self, _ctx: &ReportCtx, report: &mut ExitReport) {
         report.line(format!("[{}] done", self.name));
@@ -194,11 +204,12 @@ fn subsystems_take_debug_keys_and_add_to_the_exit_report() {
         let mut app = started_in_a(None);
         app.core.subsystems.push(Toy::boxed("a", &log, false));
         app.core.subsystems.push(Toy::boxed("b", &log, false));
-        let key = |code| KeyPress { code, shift: false };
-        assert!(app.subsystems_take_key(key(KeyCode::F8)), "a takes F8");
-        assert_eq!(take(&log), ["a key F8"], "b never sees a key a took");
-        assert!(!app.subsystems_take_key(key(KeyCode::F2)));
-        assert_eq!(take(&log), ["a key F2", "b key F2"]);
+        // A key only the subsystem that declares it hears, and one it
+        // doesn't declare is no debug key of theirs
+        assert!(app.handle_debug_key(KeyCode::F8), "a's ping");
+        assert_eq!(take(&log), ["a key ping F8"], "b declares none");
+        assert!(!app.handle_debug_key(KeyCode::F9));
+        assert!(take(&log).is_empty());
 
         assert_eq!(app.subsystem_report(), ["[a] done", "[b] done"]);
 

@@ -6,22 +6,33 @@ Panels are dev surface. They compile only when the player's `debug-hud` cargo fe
 
 ## Keys
 
-| Key | What it toggles | Host |
-|-----|-----------------|------|
-| `F2` | The **stats overlay**: the [frame-time graph](profiling.md#the-frame-time-graph) and its hitch counters over the rendering stats; a second press shows the graph alone in a corner, a third closes it | player (the scene viewer's F2 shows its rendering stats alone) |
-| `F3` | Every scene-component panel the current scene created (ocean, grass, camera, particles, styles, Living Props), a [panel for each component whose schema asks for one](#a-panel-from-a-schema), and every panel a game added | player |
-| `F4` | The **Rendering & Effects** panel, on its own so it never flips out of phase with F3 | player and scene viewer |
-| `` ` `` (backquote) | **Music Guide**, only while a [music session](../concepts/music-sessions.md) runs | player |
-| `\` (backslash) | **Manifest Map** timeline strip, same condition | player |
-| `F5` | Freeze or unfreeze a scene's [living props](#living-props-f3), as the panel's **Freeze** | player |
-| `F6` | Living Props [A/B](#comparing-two-presets-ab): show the other preset, starting a comparison if none is running | player |
-| `F7` | Living Props A/B: split the view, A left and B right, or put it back | player |
-| `F8` | Living Props: [pick the tree](#picking-a-tree-in-the-world) at the view centre, as a click would with the cursor free. `Shift+F8` picks the next tree by name, for a click that missed | player |
-| `Escape` | Lets go of a picked tree first. Otherwise it releases the mouse so panels can be clicked; clicking the world recaptures it | player |
+The debug keys are a table (#717): each belongs to an owner (the player, or a scene subsystem), has an action name an input config's [`[debug_keys]`](../concepts/physics-and-runtime.md#debug-keys) can move, unbind or turn off, and acts only where its owner is. **F1** shows the table over the running game; `flint play <scene> --list-keys [--json]` prints it.
 
-Opening any panel releases the cursor; closing the last one recaptures it if the scene has a player entity. When a key has nothing to toggle (no panels in the scene, no music session, no renderer) the player says so instead: a short note at the top of the window for about two seconds, and the same line in the console (`[debug] F3: no debug panels in this scene`).
+![The F1 card in the Living Props bench, with an input config that moves stats to F10, unbinds the freeze and binds backquote to the game's console](../images/debug-keys-f1.png)
 
-The old per-effect function keys (F1 debug-mode cycle, F4 shadows, F5 to F10 per-effect toggles, F12 kuwahara) are gone. Everything they flipped now lives in the Rendering & Effects panel, along with the non-binary parameters those keys could never expose ([ADR 0053](https://github.com/chrischaps/Flint/blob/main/docs/adr/0053-one-rendering-and-effects-menu-on-f4.md), consolidated render debug menu). F5 to F7 came back for Living Props, and only do anything in a scene that has some.
+| Key | Action | What it does | Owner, and where it acts |
+|-----|--------|--------------|--------------------------|
+| `F1` | `keys` | This table, over the game | player, always |
+| `F2` | `stats` | The **stats overlay**: the [frame-time graph](profiling.md#the-frame-time-graph) and its hitch counters over the rendering stats; a second press shows the graph alone in a corner, a third closes it | player, always (the scene viewer's F2 shows its rendering stats alone) |
+| `F3` | `panels` | Every scene-component panel the current scene created (ocean, grass, camera, particles, styles, Living Props), a [panel for each component whose schema asks for one](#a-panel-from-a-schema), and every panel a game added | player, always |
+| `F4` | `render_panel` | The **Rendering & Effects** panel, on its own so it never flips out of phase with F3 | player, always (and the scene viewer) |
+| `F11` | `fullscreen` | Fullscreen, or back to the window | player, always |
+| `F5` | `living_freeze` | Freeze or unfreeze a scene's [living props](#living-props-f3), as the panel's **Freeze** | living, in a scene with living props or wooze |
+| `F6` | `living_flip` | Living Props [A/B](#comparing-two-presets-ab): show the other preset, starting a comparison if none is running | living, same |
+| `F7` | `living_split` | Living Props A/B: split the view, A left and B right, or put it back | living, same |
+| `F8` | `living_pick` | Living Props: [pick the tree](#picking-a-tree-in-the-world) at the view centre, as a click would with the cursor free | living, same |
+| `Shift+F8` | `living_pick_next` | Pick the next tree by name, for a click that missed | living, same |
+| `` ` `` (backquote) | `music_guide` | **Music Guide** | music, while a [music session](../concepts/music-sessions.md) with a chart plays |
+| `\` (backslash) | `manifest_map` | **Manifest Map** timeline strip | music, same |
+| `F9` | `music_force_fail` | Force the full rewind, seam and reassembly | music, same |
+
+`Escape` is not in the table: it lets go of a picked tree first, otherwise releases the mouse so panels can be clicked (clicking the world recaptures it), and is the game's when it binds it ([Escape](../concepts/physics-and-runtime.md#escape)).
+
+Where its owner isn't, a key is the game's like any other: in a scene with no living props, F5 reaches the game. So does any debug key the game's input config binds, and a press the table does take never reaches the game. Opening any panel releases the cursor; closing the last one recaptures it if the scene has a player entity. When a key has nothing to toggle (no panels in the scene, no renderer, a music session that has ended) the player says so instead: a short note at the top of the window for about two seconds, and the same line in the console (`[debug] F3: no debug panels in this scene`).
+
+The old per-effect function keys (F1 debug-mode cycle, F4 shadows, F5 to F10 per-effect toggles, F12 kuwahara) are gone. Everything they flipped now lives in the Rendering & Effects panel, along with the non-binary parameters those keys could never expose ([ADR 0053](https://github.com/chrischaps/Flint/blob/main/docs/adr/0053-one-rendering-and-effects-menu-on-f4.md), consolidated render debug menu). F5 to F7 came back for Living Props, and F1 for the table of keys.
+
+A scene subsystem declares its keys in its file (`DEBUG_KEYS` in `crates/flint-player/src/player_app/subsystems/`) and acts on them in `Subsystem::on_debug_key`; the table and F1 pick it up with no other edit.
 
 ## Layout
 

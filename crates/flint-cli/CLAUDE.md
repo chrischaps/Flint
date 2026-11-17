@@ -68,6 +68,14 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
    #                           and recording for it), write() after the read-back (finish + flush, the raw times
    #                           laid on). Still path: column 0; stage path: the first cell's last capture.
    #                           Refused with --frames/--mesh/--sweep; --report json carries `frame_dump`)
+   #   --frame-capture out.flintframe
+   #                          (#1085: the same frame captured, manifest.json last + targets/NN-<target>.<ext>,
+   #                           through the same arm()/write() (`Wanted` says which of the two): arm() calls
+   #                           capture_next_frame with ctx's colour and depth textures (both COPY_SRC), write()
+   #                           takes the capture, waits (headless may), reads, describes, write_capture. With
+   #                           --frame-dump too, the JSON carries the capture's `capture` block. The last
+   #                           `-surface.png` is the -o PNG byte for byte (same image::save_buffer encoder).
+   #                           --report json carries `frame_capture`. tests/render_frame_capture_cli.rs)
    #   --mesh tree_a=out/oaks [--mesh tree_b='out/w*.glb'] [--sheet | -o x.gif --fps 4 | -o f-%03d.png]
    #                          (#222: a frame per GLB on that entity, one renderer; natural order;
    #                           multi-node GLBs baked flat, mesh_seq.rs; examples/mesh_sequence.scene.toml)
@@ -264,6 +272,11 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
                                                              #   contact sheet (hold-and-glide from the spec's step/glide/stagger,
                                                              #   mesh rebuilt per frame, one fixed camera; --frames 48 --fps 24
                                                              #   --columns N --cell-size 240; byte-identical per machine, #210)
+   flint gen examples/rolling_meadow.terrain.toml -o terrain/meadow.png  # #719: a terrain spec, no window: 16-bit
+                                                             #   heightmap there + meadow_splat.png beside it (-o dir/ -> <name>.png);
+                                                             #   commands/terrain_gen.rs, routed like a .glyphs.toml; takes -o, --seed,
+                                                             #   --strict (unknown keys fail), --dry-run, --json (seed, coverage, sha256s);
+                                                             #   refuses procgen flags. Same bytes as the editor's Ctrl+E (flint_terrain::bake)
    # --ai-model, --ai-iterations, --ai-generator,
    # --print-spec (spec alone on stdout), --save-spec. Every API call goes through
    # flint_procgen_ai::CostMeter: priced, appended to the JSON Lines ledger, and
@@ -341,6 +354,10 @@ The root file keeps the short edit -> validate -> play loop; this is the rest of
 ## `flint examples`
 
 - `flint examples [--topic t] [--json] [--check] [--dir d] [--schemas s]` (#763, `commands/examples.rs`): lists `examples/index.toml` (`[[example]] scene/topic/purpose`, unknown keys refused) grouped by topic in index order; `--dir` defaults to `examples/`, else `engine/examples/`. `--check` fails (exit 1, a `FAIL` line each) on a scene on disk with no entry (`dist/` skipped), an entry with no file, an empty topic or purpose, a duplicate, or a scene failing `validate::check` -- everything `flint validate` checks, but the scene is loaded even with no constraints, and style warnings count as failures. CI's headless job runs it. Test: `tests/examples_cli.rs`
+
+## `flint env`
+
+- `flint env [--json] [--group window|render|player|assets|tests] [--set]` (#715, `commands/env.rs`): every `FLINT_*` switch from `flint_core::env::ALL` (`crates/flint-core/CLAUDE.md`), a block per group, each with its value here, help, accepted forms and what unset means, and the warning its value would raise. Exits 1 when any set switch (of all of them, not only those shown) holds a value it doesn't take, so a perf script can run it first. A `Secret` (the provider keys) prints `(set)`. JSON: `valid`, `set`, `problems`, `switches[]` (`Status`: `name`, `group`, `kind`, `accepts`, `default`, `help`, `value`, `problem`). `--book [DIR]` writes `docs/book/src/cli-reference/environment.md` whole from `env::book_page()`; `--check-book` exits 1 when it's stale (CI's headless job, `scripts/ci.sh --full`). `flint render --help` ends with the render group (`after_help = env::help_section(..)` on `RenderArgs`), `flint play` and `flint-player` with `PLAYER_GROUPS`
 
 ## `flint script api` and `flint script check`
 

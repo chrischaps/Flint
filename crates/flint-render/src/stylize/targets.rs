@@ -7,6 +7,7 @@
 //! scene's new size the next time they're asked for.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// A texture and its default view.
@@ -21,6 +22,12 @@ pub struct StyleTexture {
 #[derive(Default)]
 pub struct StyleTargets {
     textures: Mutex<HashMap<(&'static str, wgpu::TextureFormat), Arc<StyleTexture>>>,
+    /// While a frame is captured (#1085): each name asked for since the
+    /// last [`take_touched`](Self::take_touched), so the capture can tap a
+    /// style's own targets (a user style's included) after the style draws.
+    /// Off, `get` reads one flag.
+    recording: AtomicBool,
+    touched: Mutex<Vec<&'static str>>,
 }
 
 impl StyleTargets {
@@ -38,6 +45,12 @@ impl StyleTargets {
         height: u32,
     ) -> Arc<StyleTexture> {
         let (width, height) = (width.max(1), height.max(1));
+        if self.recording.load(Ordering::Relaxed) {
+            let mut touched = self.touched.lock().unwrap_or_else(|e| e.into_inner());
+            if !touched.contains(&name) {
+                touched.push(name);
+            }
+        }
         let mut textures = self.textures.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(t) = textures.get(&(name, format)) {
             if (t.width, t.height) == (width, height) {
@@ -60,7 +73,10 @@ impl StyleTargets {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                // Copied out by a frame capture (#1085)
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -72,6 +88,40 @@ impl StyleTargets {
         });
         textures.insert((name, format), made.clone());
         made
+    }
+
+    /// Record each name asked for, while a frame is captured (#1085).
+    pub(crate) fn record_touches(&self, on: bool) {
+        // Every frame says whether it records: one load when nothing changes
+        if !on && !self.recording.load(Ordering::Relaxed) {
+            return;
+        }
+        self.recording.store(on, Ordering::Relaxed);
+        self.touched
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+
+    /// The names asked for since the last call, in the order first asked.
+    pub(crate) fn take_touched(&self) -> Vec<&'static str> {
+        if !self.recording.load(Ordering::Relaxed) {
+            return Vec::new();
+        }
+        std::mem::take(&mut *self.touched.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// The texture named `name`, in whichever format it was made (a name is
+    /// made in one format by everything that asks for it).
+    pub(crate) fn texture(&self, name: &str) -> Option<wgpu::Texture> {
+        let textures = self.textures.lock().ok()?;
+        let mut found: Vec<_> = textures
+            .iter()
+            .filter(|((n, _), _)| *n == name)
+            .map(|((_, f), t)| (format!("{f:?}"), t.texture.clone()))
+            .collect();
+        found.sort_by(|a, b| a.0.cmp(&b.0));
+        found.into_iter().next().map(|(_, t)| t)
     }
 
     /// How many textures it holds.

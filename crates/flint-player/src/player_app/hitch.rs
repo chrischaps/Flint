@@ -65,32 +65,13 @@ impl Default for HitchThresholds {
 impl HitchThresholds {
     /// The defaults, with `FLINT_HITCH_FACTOR` / `FLINT_HITCH_FLOOR_MS`
     /// over them. A value that isn't a number (or a factor under 1, a
-    /// negative floor) is said once and the default kept.
+    /// negative floor) is said once and the default kept (`flint_core::env`).
     pub(crate) fn from_env() -> Self {
-        let var = |name: &str| std::env::var(name).ok();
-        let (thresholds, warnings) =
-            Self::parse(var("FLINT_HITCH_FACTOR"), var("FLINT_HITCH_FLOOR_MS"));
-        for warning in warnings {
-            tracing::warn!("{warning}");
+        let d = Self::default();
+        Self {
+            factor: flint_core::env::HITCH_FACTOR.f32().unwrap_or(d.factor),
+            floor_ms: flint_core::env::HITCH_FLOOR_MS.f32().unwrap_or(d.floor_ms),
         }
-        thresholds
-    }
-
-    fn parse(factor: Option<String>, floor: Option<String>) -> (Self, Vec<String>) {
-        let mut t = Self::default();
-        let mut warnings = Vec::new();
-        let mut read = |name: &str, value: Option<String>, min: f32, into: &mut f32| {
-            let Some(value) = value else { return };
-            match value.trim().parse::<f32>() {
-                Ok(v) if v.is_finite() && v >= min => *into = v,
-                _ => warnings.push(format!(
-                    "{name}={value:?} is not a number of at least {min}: keeping {into}"
-                )),
-            }
-        };
-        read("FLINT_HITCH_FACTOR", factor, 1.0, &mut t.factor);
-        read("FLINT_HITCH_FLOOR_MS", floor, 0.0, &mut t.floor_ms);
-        (t, warnings)
     }
 }
 
@@ -1050,16 +1031,15 @@ mod tests {
     }
 
     #[test]
-    fn thresholds_come_from_the_environment_or_stay_default() {
-        let (t, w) = HitchThresholds::parse(Some("3".into()), Some("12.5".into()));
-        assert_eq!(t.factor, 3.0);
-        assert_eq!(t.floor_ms, 12.5);
-        assert!(w.is_empty());
-        let (t, w) = HitchThresholds::parse(Some("fast".into()), Some("-1".into()));
-        assert_eq!(t, HitchThresholds::default());
-        assert_eq!(w.len(), 2, "{w:?}");
-        assert!(w[0].contains("FLINT_HITCH_FACTOR"), "{w:?}");
-        let (t, _) = HitchThresholds::parse(None, None);
-        assert_eq!(t, HitchThresholds::default());
+    fn the_tables_defaults_are_the_thresholds() {
+        // `flint env` says what an unset switch means; it must be true
+        let d = HitchThresholds::default();
+        assert_eq!(flint_core::env::HITCH_FACTOR.default, d.factor.to_string());
+        assert_eq!(
+            flint_core::env::HITCH_FLOOR_MS.default,
+            d.floor_ms.to_string()
+        );
+        assert!(flint_core::env::HITCH_FACTOR.parse("0.5").is_err());
+        assert!(flint_core::env::HITCH_FLOOR_MS.parse("-1").is_err());
     }
 }

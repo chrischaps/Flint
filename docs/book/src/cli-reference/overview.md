@@ -13,6 +13,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint scene list` | List scene files |
 | `flint scene info` | Show scene metadata and entity count |
 | `flint query "<query>"` | Query entities with the Flint query language |
+| `flint env [--json]` | Every `FLINT_*` environment switch, what it accepts and its value now; exit 1 on a value it can't take ([Environment Switches](environment.md)) |
 | `flint schema <name>` | Inspect a component or archetype schema; an unknown name exits 1. `--list` names every one loaded (`--json`); `--format json` is the schemas as data; `--format json-schema [--output file]` is a JSON Schema for a `.scene.toml`, for editor completion ([Introspecting Schemas](../concepts/schemas.md#introspecting-schemas)) |
 | `flint script api` | Every function a script can call, with its parameters and a one-line doc, and the callbacks; `--json` for the same as data, `--filter <text>` for names or modules containing it. A function a game's extension registers on the Rhai engine directly is listed with its parameter types only. `--book` writes the book's [Script API Reference](../reference/script-api.md) and the generated tables in its chapters; `--check-book` fails when they are stale or a chapter calls a function that doesn't exist (CI runs it) ([Scripting](../concepts/scripting.md#api-reference)) |
 | `flint script check [dir\|scene\|file.rhai]` | Compile every script and the modules it imports, and check each call's name and argument count against the script API, each callback's name and parameters, and each import, reported as `file:line:col`. Exits 1 on an error; `--json`; `--allow` / `--api` for a game's own functions ([Checking your scripts](../concepts/scripting.md#checking-your-scripts)) |
@@ -194,6 +195,8 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 | `--sfx-volume <f32>` | Initial gain for the `sfx` mixer bus |
 | `--gpu <name>` | GPU adapter to use (case-insensitive substring, e.g. `NVIDIA`). See [GPU Selection](#gpu-selection) |
 | `--list-gpus` | Print available GPU adapters and exit |
+| `--list-keys` | Print the debug keys after the scene's input layers (each key, action, owner, what it does, when it acts, and any the game's bindings take) and exit. F1 shows the same in a running game ([Debug Keys](../concepts/physics-and-runtime.md#debug-keys)) |
+| `--json` | With `--list-keys`: the table as JSON, for agents |
 | `--style <name[:k=v,...]>` | Turn a registered style on over the scene's post-processing, as `flint render --style` does: `ascii`, `ascii:cell=12,ramp=blocks`, `ascii:off` (off everywhere, entities' own included, #376). Repeatable; a later word wins. Written over every scene again after a transition, so it survives them (#328) |
 | `--style-time <s>` | Hold the post time animated styles see (shared with the ocean, grain, the tear and the reality styles) at this many seconds |
 | `--motion-hold <rate>` | Motion on twos for the whole frame (#405): every entity's drawn position and pose, and the post time styles read, change only this many times a second (12 = on twos at 24 fps). Over every scene's `[post_process] motion_hold`, kept through transitions. See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
@@ -450,15 +453,14 @@ These are the built-in defaults. Games can override any binding via input config
 | R | Reload |
 | 1 / 2 | Select weapon slot |
 | Escape | Release cursor / Exit (the game's own key when its input config binds it, see [Escape](../concepts/physics-and-runtime.md#escape)) |
+| F1 | Show the debug keys: every one, its action and whether it acts in this scene |
 | F2 | Toggle the render stats overlay (FPS, frame time, draw stats) |
 | F3 | Toggle the scene debug panels (see below); leaves the Rendering & Effects panel alone |
 | F4 | Toggle the **Rendering & Effects** menu: every render and post-processing control, including debug shading mode, shadows, and the lighting levers |
-| F9 | Force a music-session full-fail (debug builds only, needs a running session) |
-| `` ` `` | Toggle the Music Guide overlay (debug builds only) |
-| `\` | Toggle the Manifest Map timeline strip (debug builds only) |
 | F11 | Toggle fullscreen |
+| F5-F9, `` ` ``, `\` | Living props' and a charted music session's keys, only in a scene that has them; anywhere else they are the game's |
 
-The per-effect F-keys of earlier releases (F1 debug mode, F4 shadows, F5 bloom, F6 post-processing and so on) are gone; all of those toggles and their parameters live in the F4 menu (see [Post-Processing: The Rendering & Effects menu](../concepts/post-processing.md#the-rendering--effects-menu-f4)). F9, `` ` `` and `\` exist only when the player is built with the default `debug-hud` feature.
+These are the debug keys' defaults. An input config's `[debug_keys]` moves, unbinds or turns them off, a key the game binds is the game's, and `--list-keys` prints the table ([Debug Keys](../concepts/physics-and-runtime.md#debug-keys); the full list is on [Debug Panels](../guides/debug-panels.md#keys)). The per-effect F-keys of earlier releases (F1 debug mode, F4 shadows, F5 bloom, F6 post-processing and so on) are gone; all of those toggles and their parameters live in the F4 menu (see [Post-Processing: The Rendering & Effects menu](../concepts/post-processing.md#the-rendering--effects-menu-f4)). F3, F4, F8, F9, `` ` `` and `\` exist only when the player is built with the default `debug-hud` feature.
 
 Gamepad controllers are also supported when connected. Bindings for gamepad buttons and axes can be configured in input config TOML files.
 
@@ -564,6 +566,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--render-scale <f32>` | `1` | Draw the scene at this fraction of the image on each side (0.25–1), upscaled in the composite, as `flint-player --render-scale` (#122) |
 | `--gpu-time <frames>` | (none) | Render the frame this many times with GPU timing on and print each pass's smoothed time ([ADR 0108](https://github.com/chrischaps/Flint/blob/main/docs/adr/0108-gpu-timing-from-timestamp-queries.md)) before writing the image |
 | `--frame-dump <file.json>` | (none) | Write the rendered frame's description as JSON (#1084, [ADR 0126](https://github.com/chrischaps/Flint/blob/main/docs/adr/0126-what-a-frame-capture-holds-and-how-it-replays.md)): every pass in the order drawn, named as `--gpu-time`'s rows are, with the targets it read and wrote, its draws by entity, what a cull set aside and why, why a skipped pass was skipped and its GPU time in that frame; then the frame's settings, targets, lights and stats. Of a `--time` span, the last frame; not with `--frames`, `--mesh` or `--sweep`. `--report json` names the file ([A frame's description](../guides/profiling.md#a-frames-description)) |
+| `--frame-capture <dir>` | (none) | Capture the rendered frame into a folder (#1085): its description as `manifest.json`, written last, and under `targets/` every target each pass wrote, as that pass left it (`NN-<target>.<ext>`: 8-bit as PNG, float as OpenEXR half, depth as OpenEXR f32). The last `surface` image is the `-o` output byte for byte. Of a `--time` span, the last frame; not with `--frames`, `--mesh` or `--sweep`; a folder holding anything else is refused. `--report json` names it as `frame_capture` ([A frame's images](../guides/profiling.md#a-frames-images)) |
 | `--frames <n>` | (none) | Draw a sequence of `n` frames on one renderer, written as `<stem>_0000.png`... beside `--output`; temporal styles see consecutive frames ([Frame sequences](../guides/headless-rendering.md#frame-sequences), #345) |
 | `--frame-dt <s>` | `1/60` | With `--frames`: seconds between frames; post time, grass wind and particles advance by it |
 | `--orbit <deg/s>` / `--camera-path <file>` | (still) | With `--frames`: orbit the camera about its target, or follow a TOML of `[[key]] time/position/target` keys |
@@ -937,6 +940,8 @@ flint gen specs/oak_tree.procgen.toml --batch 10 --seed-start 0
 ```
 
 `flint gen` also previews a glyph set: `flint gen fonts/terminal.glyphs.toml -o sheet.png` writes the atlas, each ramp's ink and a specimen as one sheet, and `-o out/` writes the pieces as well. See [Glyph Atlas](../concepts/glyph-atlas.md#looking-at-a-set).
+
+It also bakes a terrain spec, with no window: `flint gen examples/rolling_meadow.terrain.toml -o terrain/meadow.png` writes the 16-bit heightmap there and `terrain/meadow_splat.png` beside it, the bytes the terrain editor's Ctrl+E export writes; `-o terrain/` names them after the spec's `[meta] name`. A terrain spec takes `-o`, `--seed`, `--strict` (a key nothing reads is then an error, not a warning) and `--dry-run`, and refuses the procgen-only flags. See [Terrain](../concepts/terrain.md#generating-terrain-from-a-spec).
 
 | Flag | Default | Description |
 |------|---------|-------------|

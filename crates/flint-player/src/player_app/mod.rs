@@ -13,6 +13,7 @@ mod capture_gate_tests;
 mod component_panel_tests;
 #[cfg(test)]
 mod debug_key_tests;
+mod debug_keys;
 mod debug_panels;
 mod egui_input;
 #[cfg(test)]

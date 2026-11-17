@@ -1692,8 +1692,8 @@ mod tests {
         assert_eq!(ProcGenSpec::parse(&after).unwrap().params, spec.params);
 
         // The old save's output (toml::to_string_pretty), for comparison.
-        if let Ok(out) = std::env::var("FLINT_194_SAVE_DIR") {
-            let out = Path::new(&out);
+        if let Some(out) = flint_core::env::SAVE_194_DIR.path() {
+            let out = out.as_path();
             std::fs::write(out.join("before.toml"), &before).unwrap();
             std::fs::write(out.join("after_new.toml"), &after).unwrap();
             std::fs::write(
