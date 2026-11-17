@@ -441,6 +441,9 @@ pub(super) struct Stats {
     /// What the F2 overlay shows (#1078): nothing, all of it, or the
     /// frame-time graph alone
     pub(super) view: super::StatsView,
+    /// What the last HUD pass drew: a view drawn for the first frame since
+    /// it changed leaves a note of what it cost (#1129)
+    pub(super) drawn_view: super::StatsView,
     /// The frame-time graph's buffers and ceiling, kept across frames
     #[cfg(feature = "debug-hud")]
     pub(super) graph: super::stats_view::StatsGraph,
@@ -465,6 +468,7 @@ impl Default for Stats {
     fn default() -> Self {
         Self {
             view: super::StatsView::Off,
+            drawn_view: super::StatsView::Off,
             #[cfg(feature = "debug-hud")]
             graph: Default::default(),
             frame_times: Default::default(),
