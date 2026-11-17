@@ -733,14 +733,14 @@ It's 38 living trees in four species, from `examples/specs/`: an oak, a cypress,
 | `drowse` | Far right, oaks and birch | step 1.1, glide 0.9, amplitude 1, jitter 0.4 | The morph end of the dial, which never rests |
 | `shiver` | Near right, thorn and birch | step 0.125, glide 0, amplitude 0.7, jitter 2.2 | The boil end of the dial, which never eases |
 
-`examples/woozy_grove_walk.txt` walks the same route through all of them, for `flint-player --input-script`. With `--frame-step 0.0166667` it's the same walk every time. Don't step coarser than 1/60: the character reads mouse look once per physics step, so a frame of two steps turns it twice as far.
+`examples/woozy_grove_walk.txt` walks the same route through all of them, for `flint-player --input-script`. With `--frame-step 0.0166667` it's the same walk every time. Any step turns it the same way: the character takes mouse look once a frame, however many physics steps the frame runs.
 
 A few things the grove had to work around, which any scene like it will meet:
 
 - **Every species is the built-in L-system with no `[[lod]]`.** The conifer is a cypress and not a fir because the rule makes too few scaffold limbs for whorls. When the grove was planted, space colonization couldn't live at all. Now a pine can, by [noise](#noise-poses) (`grove_pine`, in `examples/noise_trees.scene.toml`).
 - **A trunk's collider is a sibling, not on the tree.** Physics assumes unit scale, and the trees are scaled. Trunks hold still, so they can be solid. Limbs drift, so they aren't.
 - **The floor is a `texture_v1` spec covering the ground once.** A box's UVs are in metres, so `texture_scale = 1 / width` fits it, which is also the only way to avoid seams while pipeline noise doesn't tile.
-- **A character always starts facing +Z,** so a scene's way in has to be laid out along it.
+- **A character starts facing +Z** unless its `character_controller` gives a `start_yaw`, so the grove's way in is laid out along +Z.
 - **Lights are `[entities.x.light]` with a `type`,** and a directional light's `direction` points toward the light. `flint schema light` lists the fields. No system reads a `directional_light` table, and `flint validate` still lets one through, so a scene with only that has the renderer's default light and no warning.
 
 ### The sweet spot: `linklater`

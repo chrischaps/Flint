@@ -10,6 +10,8 @@ mod camera_cut;
 // The load summary and controls line a scene says when it comes up (#716)
 #[cfg(test)]
 mod capture_gate_tests;
+#[cfg(test)]
+mod character_input_tests;
 #[cfg(all(test, feature = "debug-hud"))]
 mod component_panel_tests;
 mod console;

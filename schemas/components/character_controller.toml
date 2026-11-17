@@ -2,13 +2,22 @@
 # the reader's own fallbacks (#792). `height` has none: with no height the
 # camera sits 1.5 above the entity, with one it sits at 0.85 x height, so a
 # default would move the eye. `radius` and `camera_mode` are read by nothing
-# yet (the capsule comes from the collider).
+# yet (the capsule comes from the collider). Look and the jump press are
+# taken once a frame, the walk once a physics step (#728), so a turn is the
+# same at any frame rate.
 [component.character_controller]
-description = "Player movement, jump and first-person eye height"
+description = "Player movement, look, jump and first-person eye height"
 
 [component.character_controller.fields]
 move_speed = { type = "f32", default = 5.0, min = 0.0, description = "Movement speed in units per second" }
 jump_force = { type = "f32", default = 6.0, min = 0.0, description = "Vertical impulse applied on jump" }
+sprint_multiplier = { type = "f32", default = 1.6, min = 0.0, description = "Speed times this while the sprint action is held" }
+start_yaw = { type = "f32", default = 0.0, description = "Facing at the scene's start, degrees about +Y: 0 faces +Z, 90 faces +X" }
+look_sensitivity = { type = "f32", default = 0.172, min = 0.0, description = "Degrees turned per unit of raw mouse motion, the same at any frame rate" }
+pitch_limit = { type = "f32", default = 80.0, min = 0.0, max = 90.0, description = "Looking up or down stops this many degrees from level" }
+gravity_scale = { type = "f32", default = 1.0, description = "The physics world's gravity times this pulls the character down" }
+step_height = { type = "f32", default = 0.5, min = 0.0, description = "Tallest ledge walked up without a jump, in units; 0 turns stepping off" }
+snap_to_ground = { type = "f32", default = 0.2, min = 0.0, description = "Furthest the character is held down onto the ground going down a slope or step, in units; 0 turns it off" }
 height = { type = "f32", min = 0.1, description = "Character height; the eye sits at 0.85 x height (1.5 above the entity when unset)" }
 radius = { type = "f32", min = 0.01, description = "Character capsule radius (not read yet: the collider sets the capsule)" }
 camera_mode = { type = "enum", values = ["first_person", "orbit"], description = "Camera mode for this character (not read yet)" }
