@@ -479,8 +479,8 @@ impl GameCore {
 
     /// Hand scripts' style reads (#372) the settings the renderer draws
     /// with, copied only when they've changed since the last hand-over.
-    #[profiling::function]
     fn publish_style_reader(&mut self, renderer: Option<&SceneRenderer>) {
+        flint_core::scope!("publish_style_reader");
         let Some(renderer) = renderer else {
             return;
         };
@@ -521,7 +521,6 @@ impl GameCore {
     /// consuming steps to avoid a spiral), then the first-person camera.
     /// Returns where the listener goes, when the sound runs and a
     /// first-person player moved the camera.
-    #[profiling::function]
     fn tick_fixed_physics(
         &mut self,
         config: &StateConfig,
@@ -530,6 +529,7 @@ impl GameCore {
         input: &InputState,
         camera: &mut Camera,
     ) -> Option<Listener> {
+        flint_core::scope!("tick_fixed_physics");
         self.physics.begin_frame(self.clock.pending_fixed_ratio());
         self.fixed_steps = 0;
         // Look and the jump press once a frame, however many steps run
@@ -641,8 +641,8 @@ impl GameCore {
 
     /// Animations, then the sprite animations' ends and sequence cues to
     /// the scripts (skipped while the game state pauses animation).
-    #[profiling::function]
     fn animate(&mut self, config: &StateConfig) {
+        flint_core::scope!("animate");
         if !config.runs(ANIMATION) {
             return;
         }
@@ -698,8 +698,8 @@ impl GameCore {
     /// renderer, when there is one. Living props move on after it, at
     /// `Stage::Procgen`, in whatever it left of the budget.
     #[cfg(feature = "procgen")]
-    #[profiling::function]
     pub(crate) fn tick_procgen(&mut self, lent: Lent<'_>) {
+        flint_core::scope!("tick_procgen");
         use flint_core::frame_notes::{self, NoteKind};
         // Whether the queue made anything is known only after: timed by
         // hand, noted (#1077) when it did

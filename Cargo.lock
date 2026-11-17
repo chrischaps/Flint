@@ -1808,6 +1808,7 @@ dependencies = [
 name = "flint-core"
 version = "0.1.0"
 dependencies = [
+ "profiling",
  "serde",
  "sha2",
  "thiserror 2.0.18",
@@ -2064,7 +2065,6 @@ dependencies = [
  "mach-dxcompiler-rs",
  "naga",
  "pollster",
- "profiling",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
