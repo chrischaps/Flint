@@ -17,6 +17,7 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint script api` | Every function a script can call, with its parameters and a one-line doc, and the callbacks; `--json` for the same as data, `--filter <text>` for names or modules containing it. A function a game's extension registers on the Rhai engine directly is listed with its parameter types only. `--book` writes the book's [Script API Reference](../reference/script-api.md) and the generated tables in its chapters; `--check-book` fails when they are stale or a chapter calls a function that doesn't exist (CI runs it) ([Scripting](../concepts/scripting.md#api-reference)) |
 | `flint script check [dir\|scene\|file.rhai]` | Compile every script and the modules it imports, and check each call's name and argument count against the script API, each callback's name and parameters, and each import, reported as `file:line:col`. Exits 1 on an error; `--json`; `--allow` / `--api` for a game's own functions ([Checking your scripts](../concepts/scripting.md#checking-your-scripts)) |
 | `flint check [dir\|scene]` | The pre-flight: everything wrong with a project, or with one scene, in one run. Schemas, entity references, every asset and file a scene names (with the paths tried), styles and looks, constraints, scripts. Exits 1 on any error; `--json` ([The `check` Command](#the-check-command)) |
+| `flint frame show <capture>` | A frame capture's summary (scene, adapter, size, GPU time by pass, draws and triangles, memory), and `--passes`, `--draws [--pass P] [--entity E] [--sort tris] [--culled]`, `--targets`, `--hitch`; `flint frame diff <a> <b> [--out dir]` says what changed between two; `flint frame image <capture> <pass> -o x.png` copies a pass's image out to look at. Reads only the capture folder; `--json` ([The `frame` Command](#the-frame-command)) |
 | `flint validate <scene>` | Check one scene against its schemas (every unknown archetype, component and field, every value of the wrong type, every entity reference to nothing and every missing asset, in one run: [Scene Diagnostics](../concepts/schemas.md#scene-diagnostics)), its constraints, and its `[wooze]` table. Exits 1 on any error; `--strict` makes an unknown field one; `--format text\|json`; `--fix` applies what a constraint can fix |
 | `flint examples` | List the engine's example scenes by topic, each with its purpose (`--topic`, `--json`); `--check` fails when one is missing from `examples/index.toml` or fails validation |
 | `flint asset import` | Import a file into the asset store |
@@ -165,6 +166,110 @@ For a folder, every `*.scene.toml` under it is checked, and every prefab, partic
 The exit code is 1 when there is an error and 0 otherwise. A warning does not fail it.
 
 `flint bundle` runs the same code over the files it is about to pack, and `flint validate` over one scene, so the three never disagree about what a problem is. They differ in what they ask: `flint bundle` asks whether the bundle is whole (every scene loads, every file named is packed, styles and looks load), `flint validate` asks about one scene's schemas and constraints and can `--fix`, and `flint check` asks everything. `flint bundle` leaves the scripts' calls alone; `flint validate` checks the scene's scripts.
+
+## The `frame` Command
+
+```bash
+flint render levels/dock.scene.toml --frame-capture dock.flintframe   # make one
+flint frame show dock.flintframe                    # the summary
+flint frame show dock.flintframe --passes           # every pass, ran or why not
+flint frame show dock.flintframe --draws --entity "barrel_*" --sort tris
+flint frame show dock.flintframe --targets          # every texture, its memory, who wrote it
+flint frame show dock.flintframe --hitch            # the frame history around it, when it has one
+flint frame diff before.flintframe after.flintframe --out diffs/
+flint frame image dock.flintframe Scene -o scene.png              # HDR, tonemapped
+flint frame image dock.flintframe Scene --target depth -o depth.png
+flint frame image dock.flintframe --all -o dock-images/
+```
+
+`flint frame` reads a frame capture: the folder `flint render --frame-capture` writes, with a `manifest.json` describing the frame and an image for each target each pass wrote ([A frame's images](../guides/profiling.md#a-frames-images)). It reads only that folder: no GPU, no scene, no schemas. So a capture from another machine, or attached to an issue, reads the same as one made here. A `--frame-dump` JSON file reads too, with no images.
+
+### `flint frame show`
+
+With no view it prints the summary:
+
+```text
+Capture  tests/fixtures/frames/two_crates.flintframe  (flintframe v1, written by flint render at 2026-11-17T01:15:46Z, engine 0.1.0)
+Scene    Crate and Lantern  (tests/fixtures/frames/two_crates.scene.toml)
+Adapter  NVIDIA GeForce RTX 5070 Laptop GPU (DiscreteGpu, Vulkan) (headless)
+Frame    64x36, scene 64x36 (scale 1.0), msaa 1, Rgba8UnormSrgb
+Time     GPU 0.069 ms (holds the capture's copies)
+Draws    3 draws, 36 triangles; shadows 9 draws, 108 triangles
+Passes   8 of 17 ran, 5 timed
+Memory   311.1 KB in 10 targets
+Images   11 images, 12.2 KB on disk
+Lights   1 drawn
+
+Most expensive passes (GPU ms):
+   #  pass       gpu ms  draws  triangles
+  12  Bloom       0.024      0          0
+  10  SSAO        0.021      0          0
+  01  Shadows     0.012      9        108
+  05  Scene       0.007      3         36
+  13  Composite   0.006      0          0
+```
+
+`#` is the pass's place in the frame, the `NN` of its image files. `--top N` lists more or fewer passes. A pass's draws include its layers' (the shadow cascades under `Shadows`).
+
+| View | What it lists |
+|------|---------------|
+| `--passes` | Every pass in the order the frame recorded it, a shadow map's layers indented under it: its GPU ms (`untimed` for a part the timer has no scope for), draws, triangles, and what it wrote, or `skipped:` and why |
+| `--draws` | Every draw, named by its entity: the pass, kind, layer, pipeline, mesh, triangles and instances. `--pass <name>` keeps one pass's, `--entity <name>` one entity's (`*` matches any run: `tree_*`), `--sort tris` puts the heaviest first, `--culled` adds the draws a cull set aside with the reason (`frustum`, `lod`, `draw distance`) |
+| `--targets` | Every texture the frame drew into or read: format, size, layers, samples, memory, its images and the passes that wrote it |
+| `--hitch` | The player's frame history around the capture and the hitch that asked for it ([Hitches](../guides/profiling.md#hitches)), when the capture holds one. A `flint render` capture has none, and says so |
+
+Views combine (`--passes --targets`). An entity that draws nothing, or a pass that doesn't exist, is an error with the nearest name (`did you mean `lantern`?`), and an entity a cull set aside says to add `--culled`.
+
+### `flint frame diff`
+
+`flint frame diff <a> <b>` says what changed between two captures, pairing passes by name (the second `Bloom` with the second), entities by name (never by id, which moves between runs) and targets by id:
+
+```text
+Frame
+  draws        3 -> 2 (-1)
+  triangles    36 -> 24 (-12)
+  shadow draws 9 -> 6 (-3)
+
+Draws by entity
+  removed  lantern in Shadow cascade 0: 1 draw (shadow)
+  removed  lantern in Shadow cascade 1: 1 draw (shadow)
+  removed  lantern in Shadow cascade 2: 1 draw (shadow)
+  removed  lantern in Scene: 1 draw (pbr)
+
+Images (5 of 11 the same)
+  image                                     differing     of     max  diff
+  Scene / hdr_scene                         78 (3.4%)   2304  0.2678  diffs/scene_hdr_scene.diff.png
+  ...
+  Composite / surface                      172 (7.5%)   2304  0.3569  diffs/composite_surface.diff.png
+```
+
+That is the frozen pair in `tests/fixtures/frames/`, a crate and a lantern and then the crate alone, with the passes and targets sections (unchanged) left out.
+
+- **Frame**: the GPU time, draws, triangles, culls and target memory, each a -> b.
+- **Passes**: those added, removed or moved, those that switched between running and skipped, and each pass whose GPU time, draws or triangles changed.
+- **Draws by entity**: each entity whose draws appeared or vanished in a pass, or changed pipeline or number.
+- **Targets**: added, removed, or changed in format, size or memory.
+- **Images**: for each pass image in both, how many pixels differ and by how much at most (in the image's own units, 8- and 16-bit steps normalized to 1). `--tolerance X` lets float values lie X apart and still be the same. `--out <dir>` writes a picture of each image that differs: the after image dimmed to grey, each changed pixel lit from amber to white by how far it moved.
+
+The diff is a report, so it exits 0 whatever it finds.
+
+### `flint frame image`
+
+`flint frame image <capture> <pass> -o out.png` copies a pass's image out as a PNG you can look at. An agent can read that PNG; an EXR it can't. A capture keeps each target exactly as the GPU held it, so the viewable copy is made here:
+
+| Stored | Written as |
+|--------|------------|
+| 8-bit PNG | the file, byte for byte |
+| float colour (EXR half) | exposed at the frame's `exposure`, tonemapped with the composite's ACES curve, sRGB-encoded |
+| depth (EXR `Z`) | grey over the depths the frame drew, near white, the clear value black |
+| one or two float channels | grey, or red and green; stretched only where a value passes 1, and centred on mid-grey when one is negative |
+| integer ids (the style mask, a u32 target) | a colour each, spaced round the hue circle; id 0 black |
+
+The pass is named as `--passes` lists it (`Scene`, `Bloom`, `Shadow cascade 1`, `Bloom (2)` for the second pass of that name), or by an image's file name (`05-hdr_scene.exr`). A pass that writes several images gives its first. `--target <id>` picks another (`--target depth`), and `--step <step>` picks one of bloom's `threshold`, `down` and `up`. `--raw` copies the stored file (an EXR stays an EXR). `--all -o <dir>` writes every image of the capture.
+
+### Capture versions
+
+A manifest carries an integer `version` (ADR 0126). `flint frame` reads its own version and every older one. A field it doesn't know is ignored, and one an older capture lacks is defaulted. A newer capture is refused, naming both versions: `this is a version 2 capture, and this flint reads version 1 and older: read it with a newer engine`.
 
 ## The `play` Command
 

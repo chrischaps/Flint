@@ -1,0 +1,878 @@
+//! `flint frame show`: a capture's summary, and its passes, draws, targets
+//! and hitch window. Each view is built once as JSON and its text is
+//! written from that document, so the two forms carry the same numbers.
+
+use super::read::Capture;
+use super::table::Table;
+use super::{bytes, name_matches, passes, DrawSort, PassAt, ShowArgs};
+use crate::output::{self, Answer};
+use anyhow::{bail, Result};
+use flint_render::frame_capture::{DrawDescription, FrameDescription};
+use serde_json::{json, Value};
+use std::fmt::Write as _;
+
+pub fn run(args: ShowArgs) -> Result<()> {
+    let capture = Capture::open(&args.capture)?;
+    let shown = Capture::shown(&args.capture);
+    let d = &capture.description;
+    let draws = args.draws
+        || args.pass.is_some()
+        || args.entity.is_some()
+        || args.sort.is_some()
+        || args.culled;
+    let any_view = args.passes || draws || args.targets || args.hitch;
+
+    let mut text = String::new();
+    let mut doc = serde_json::Map::new();
+    doc.insert("path".into(), json!(shown));
+    if !any_view {
+        let summary = summary(d, args.top);
+        text.push_str(&summary_text(&shown, &summary));
+        doc.insert("summary".into(), summary);
+    }
+    if args.passes {
+        let rows = pass_rows(d);
+        text.push_str(&passes_text(&rows));
+        doc.insert("passes".into(), Value::Array(rows));
+    }
+    if draws {
+        let rows = draw_rows(d, &args)?;
+        text.push_str(&draws_text(&rows, args.culled));
+        doc.insert("draws".into(), Value::Array(rows));
+    }
+    if args.targets {
+        let rows = target_rows(d);
+        text.push_str(&targets_text(&rows));
+        doc.insert("targets".into(), Value::Array(rows));
+    }
+    if args.hitch {
+        let hitch = hitch(d);
+        text.push_str(&hitch_text(&hitch));
+        doc.insert("hitch".into(), hitch);
+    }
+    output::emit(&Answer::new(text, Value::Object(doc)))
+}
+
+// ── The summary ──
+
+/// A pass's own draws and their triangles.
+fn pass_totals(p: &PassAt) -> (usize, u64) {
+    let draws = p.pass.draws.len();
+    let tris = p.pass.draws.iter().map(|d| d.triangles as u64).sum();
+    (draws, tris)
+}
+
+/// A pass's draws with those of the passes inside it (`Shadows` and its
+/// layers), as its GPU time counts them.
+fn inclusive_totals(pass: &flint_render::frame_capture::PassDescription) -> (usize, u64) {
+    let mut draws = pass.draws.len();
+    let mut tris: u64 = pass.draws.iter().map(|d| d.triangles as u64).sum();
+    for inner in &pass.passes {
+        let (d, t) = inclusive_totals(inner);
+        draws += d;
+        tris += t;
+    }
+    (draws, tris)
+}
+
+fn summary(d: &FrameDescription, top: usize) -> Value {
+    let all = passes(d);
+    let mut timed: Vec<&PassAt> = all.iter().filter(|p| p.pass.gpu_ms.is_some()).collect();
+    timed.sort_by(|a, b| {
+        b.pass
+            .gpu_ms
+            .partial_cmp(&a.pass.gpu_ms)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let top_passes: Vec<Value> = timed
+        .iter()
+        .take(top)
+        .map(|p| {
+            let (draws, tris) = inclusive_totals(p.pass);
+            json!({
+                "index": p.index,
+                "pass": p.key(),
+                "gpu_ms": p.pass.gpu_ms,
+                "draws": draws,
+                "triangles": tris,
+            })
+        })
+        .collect();
+    let s = &d.stats;
+    let f = &d.frame;
+    let cpu_frame_ms = (s.frame_time_ms > 0.0).then_some(s.frame_time_ms);
+    json!({
+        "format": d.format,
+        "version": d.version,
+        "written_by": d.written_by,
+        "captured_at": d.captured_at,
+        "engine": d.engine,
+        "scene": d.scene,
+        "frame": {
+            "index": f.index,
+            "game_time": f.game_time,
+            "dt": f.dt,
+            "size": f.size,
+            "scene_size": f.scene_size,
+            "render_scale": f.render_scale,
+            "msaa": f.msaa,
+            "surface_format": f.surface_format,
+            "adapter": f.adapter,
+            "backend": f.backend,
+            "present_mode": f.present_mode,
+            "debug_mode": f.debug_mode,
+            "capturing": f.capturing,
+        },
+        "time": {
+            "gpu_frame_ms": f.gpu_frame_ms,
+            "cpu_frame_ms": cpu_frame_ms,
+            "cpu_phases_ms": d.cpu.as_ref().map(|c| &c.phases_ms),
+        },
+        "draws": {
+            "draw_calls": s.draw_calls,
+            "triangles": s.triangles,
+            "shadow_draw_calls": s.shadow_draw_calls,
+            "shadow_triangles": s.shadow_triangles,
+            "culled_draws": s.culled_draws,
+            "lod_culled_draws": s.lod_culled_draws,
+            "skinned_draws": s.skinned_draws,
+            "transparent_draws": s.transparent_draws,
+            "particle_draws": s.particle_draws,
+            "particle_instances": s.particle_instances,
+            "grass_instances": s.grass_instances,
+        },
+        "passes": {
+            "total": all.len(),
+            "ran": all.iter().filter(|p| p.pass.ran).count(),
+            "timed": timed.len(),
+        },
+        "top_passes": top_passes,
+        "memory": {
+            "target_bytes": d.memory.target_bytes,
+            "style_target_bytes": d.memory.style_target_bytes,
+            "targets": d.targets.len(),
+        },
+        "images": d.capture.as_ref().map(|c| json!({
+            "images": c.images,
+            "file_bytes": c.file_bytes,
+            "raw_bytes": c.raw_bytes,
+            "untapped": c.untapped,
+        })),
+        "styles": d.frame.styles,
+        "lights": {
+            "kept": d.lights.kept.len(),
+            "left_out": d.lights.left_out.len(),
+            "default_lights": d.lights.default_lights,
+        },
+        "panels": d.panels.iter().map(|p| &p.name).collect::<Vec<_>>(),
+    })
+}
+
+fn ms(v: &Value) -> String {
+    v.as_f64().map_or("-".into(), |m| format!("{m:.3}"))
+}
+
+fn count(n: &Value) -> String {
+    flint_render::format_count(n.as_u64().unwrap_or(0).min(u32::MAX as u64) as u32)
+}
+
+fn summary_text(shown: &str, s: &Value) -> String {
+    let mut out = String::new();
+    let line = |out: &mut String, label: &str, value: String| {
+        let _ = writeln!(out, "{label:<9}{value}");
+    };
+    let mut written = format!("{} v{}", s["format"].as_str().unwrap_or(""), s["version"]);
+    if let Some(by) = s["written_by"].as_str() {
+        let _ = write!(written, ", written by {by}");
+    }
+    if let Some(at) = s["captured_at"].as_str() {
+        let _ = write!(written, " at {at}");
+    }
+    if let Some(v) = s["engine"]["version"].as_str() {
+        let _ = write!(written, ", engine {v}");
+        if let Some(c) = s["engine"]["commit"].as_str() {
+            let _ = write!(written, " ({c})");
+        }
+    }
+    line(&mut out, "Capture", format!("{shown}  ({written})"));
+    let scene = &s["scene"];
+    if scene.is_object() {
+        let path = scene["path"].as_str().unwrap_or("");
+        let named = scene["name"]
+            .as_str()
+            .map_or(path.to_string(), |n| format!("{n}  ({path})"));
+        line(&mut out, "Scene", named);
+    }
+    let f = &s["frame"];
+    let mut at = Vec::new();
+    if let Some(t) = f["game_time"].as_f64() {
+        at.push(format!("t = {t:.3} s"));
+    }
+    if let Some(i) = f["index"].as_u64() {
+        at.push(format!("frame {i}"));
+    }
+    if let Some(dt) = f["dt"].as_f64() {
+        at.push(format!("dt {:.2} ms", dt * 1000.0));
+    }
+    if !at.is_empty() {
+        line(&mut out, "At", at.join(", "));
+    }
+    let adapter = f["adapter"].as_str().unwrap_or("(not said)");
+    // The adapter line names its backend already, as a rule
+    let backend = f["backend"]
+        .as_str()
+        .filter(|b| !adapter.contains(b))
+        .map_or(String::new(), |b| format!(" on {b}"));
+    let present = f["present_mode"]
+        .as_str()
+        .map_or(" (headless)".to_string(), |p| format!(", present {p}"));
+    line(&mut out, "Adapter", format!("{adapter}{backend}{present}"));
+    let size = |v: &Value| format!("{}x{}", v[0], v[1]);
+    let mut frame = format!(
+        "{}, scene {} (scale {}), msaa {}, {}",
+        size(&f["size"]),
+        size(&f["scene_size"]),
+        f["render_scale"],
+        f["msaa"],
+        f["surface_format"].as_str().unwrap_or("")
+    );
+    let shading = f["debug_mode"].as_str().unwrap_or("");
+    if !shading.is_empty() && !["pbr", "normal"].contains(&shading.to_ascii_lowercase().as_str()) {
+        let _ = write!(frame, ", debug {}", f["debug_mode"].as_str().unwrap_or(""));
+    }
+    line(&mut out, "Frame", frame);
+    let t = &s["time"];
+    let mut time = match t["gpu_frame_ms"].as_f64() {
+        Some(g) => format!("GPU {g:.3} ms"),
+        None => "GPU untimed".to_string(),
+    };
+    if let Some(c) = t["cpu_frame_ms"].as_f64() {
+        let _ = write!(time, ", CPU frame {c:.3} ms");
+    }
+    if let Some(phases) = t["cpu_phases_ms"].as_object() {
+        let list: Vec<String> = phases
+            .iter()
+            .map(|(k, v)| format!("{k} {}", ms(v)))
+            .collect();
+        if !list.is_empty() {
+            let _ = write!(time, "; phases: {}", list.join(", "));
+        }
+    }
+    if f["capturing"].as_bool() == Some(true) && t["gpu_frame_ms"].is_number() {
+        time.push_str(" (holds the capture's copies)");
+    }
+    line(&mut out, "Time", time);
+    let dr = &s["draws"];
+    let mut draws = format!(
+        "{} draws, {} triangles; shadows {} draws, {} triangles",
+        dr["draw_calls"],
+        count(&dr["triangles"]),
+        dr["shadow_draw_calls"],
+        count(&dr["shadow_triangles"])
+    );
+    if dr["culled_draws"].as_u64().unwrap_or(0) > 0 {
+        let _ = write!(draws, "; {} culled", dr["culled_draws"]);
+    }
+    line(&mut out, "Draws", draws);
+    let p = &s["passes"];
+    line(
+        &mut out,
+        "Passes",
+        format!("{} of {} ran, {} timed", p["ran"], p["total"], p["timed"]),
+    );
+    let m = &s["memory"];
+    let mut memory = format!(
+        "{} in {} targets",
+        bytes(m["target_bytes"].as_u64().unwrap_or(0)),
+        m["targets"]
+    );
+    if m["style_target_bytes"].as_u64().unwrap_or(0) > 0 {
+        let _ = write!(
+            memory,
+            " ({} the style chain's)",
+            bytes(m["style_target_bytes"].as_u64().unwrap_or(0))
+        );
+    }
+    line(&mut out, "Memory", memory);
+    let i = &s["images"];
+    if i.is_object() {
+        let mut images = format!(
+            "{} images, {} on disk",
+            i["images"],
+            bytes(i["file_bytes"].as_u64().unwrap_or(0))
+        );
+        let untapped = i["untapped"].as_array().map_or(0, Vec::len);
+        if untapped > 0 {
+            let _ = write!(images, "; {untapped} written targets not read");
+        }
+        line(&mut out, "Images", images);
+    } else {
+        line(
+            &mut out,
+            "Images",
+            "none (a description without images)".into(),
+        );
+    }
+    if let Some(styles) = s["styles"].as_array().filter(|s| !s.is_empty()) {
+        let list: Vec<String> = styles
+            .iter()
+            .map(|st| {
+                format!(
+                    "{} ({})",
+                    st["name"].as_str().unwrap_or(""),
+                    st["stage"].as_str().unwrap_or("")
+                )
+            })
+            .collect();
+        line(&mut out, "Styles", list.join(" > "));
+    }
+    let l = &s["lights"];
+    let mut lights = format!("{} drawn", l["kept"]);
+    if l["left_out"].as_u64().unwrap_or(0) > 0 {
+        let _ = write!(lights, ", {} past the caps", l["left_out"]);
+    }
+    if l["default_lights"].as_bool() == Some(true) {
+        lights.push_str(" (the built-in pair: the scene has no usable light)");
+    }
+    line(&mut out, "Lights", lights);
+    if let Some(top) = s["top_passes"].as_array().filter(|t| !t.is_empty()) {
+        let _ = writeln!(out, "\nMost expensive passes (GPU ms):");
+        let mut t = Table::new(&[">#", "pass", ">gpu ms", ">draws", ">triangles"]);
+        for p in top {
+            t.row(vec![
+                format!("{:02}", p["index"].as_u64().unwrap_or(0)),
+                p["pass"].as_str().unwrap_or("").to_string(),
+                ms(&p["gpu_ms"]),
+                p["draws"].to_string(),
+                count(&p["triangles"]),
+            ]);
+        }
+        out.push_str(&t.render("  "));
+    }
+    out.push_str(
+        "\nViews: --passes, --draws [--pass P] [--entity E] [--sort tris] [--culled], --targets, --hitch\n",
+    );
+    out
+}
+
+// ── Passes ──
+
+fn pass_rows(d: &FrameDescription) -> Vec<Value> {
+    passes(d)
+        .iter()
+        .map(|p| {
+            let (draws, tris) = pass_totals(p);
+            json!({
+                "index": p.index,
+                "pass": p.pass.name,
+                "key": p.key(),
+                "depth": p.depth,
+                "ran": p.pass.ran,
+                "skipped": p.pass.skipped,
+                "timed": p.pass.timed,
+                "gpu_ms": p.pass.gpu_ms,
+                "draws": draws,
+                "culled": p.pass.culled.len(),
+                "triangles": tris,
+                "reads": p.pass.reads,
+                "writes": p.pass.writes,
+                "also": p.pass.also,
+                "images": p.pass.images.iter().map(|i| &i.file).collect::<Vec<_>>(),
+            })
+        })
+        .collect()
+}
+
+fn passes_text(rows: &[Value]) -> String {
+    let mut t = Table::new(&[
+        ">#",
+        "pass",
+        ">gpu ms",
+        ">draws",
+        ">triangles",
+        "writes / why not",
+    ]);
+    for r in rows {
+        let depth = r["depth"].as_u64().unwrap_or(0) as usize;
+        let name = format!("{}{}", "  ".repeat(depth), r["key"].as_str().unwrap_or(""));
+        let ran = r["ran"].as_bool() == Some(true);
+        let last = if ran {
+            let writes: Vec<&str> = r["writes"]
+                .as_array()
+                .map(|w| w.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            writes.join(", ")
+        } else {
+            format!("skipped: {}", r["skipped"].as_str().unwrap_or("not drawn"))
+        };
+        let gpu = if !ran {
+            String::new()
+        } else if r["timed"].as_bool() == Some(true) {
+            ms(&r["gpu_ms"])
+        } else {
+            "untimed".into()
+        };
+        let draws = r["draws"].as_u64().unwrap_or(0);
+        t.row(vec![
+            format!("{:02}", r["index"].as_u64().unwrap_or(0)),
+            name,
+            gpu,
+            if draws > 0 {
+                draws.to_string()
+            } else {
+                String::new()
+            },
+            if draws > 0 {
+                count(&r["triangles"])
+            } else {
+                String::new()
+            },
+            last,
+        ]);
+    }
+    let ran = rows
+        .iter()
+        .filter(|r| r["ran"].as_bool() == Some(true))
+        .count();
+    format!("Passes: {ran} of {} ran\n{}", rows.len(), t.render("  "))
+}
+
+// ── Draws ──
+
+fn draw_row(p: &PassAt, d: &DrawDescription) -> Value {
+    json!({
+        "pass_index": p.index,
+        "pass": p.key(),
+        "entity": d.entity,
+        "entity_id": d.entity_id,
+        "kind": d.kind,
+        "layer": d.layer,
+        "blend": d.blend,
+        "vertex": d.vertex,
+        "pipeline": d.pipeline,
+        "mesh": d.mesh,
+        "material": d.material,
+        "triangles": d.triangles,
+        "instances": d.instances,
+        "casts_shadow": d.casts_shadow,
+        "double_sided": d.double_sided,
+        "culled": d.culled,
+    })
+}
+
+fn draw_rows(d: &FrameDescription, args: &ShowArgs) -> Result<Vec<Value>> {
+    let all = passes(d);
+    let chosen: Vec<&PassAt> = match &args.pass {
+        Some(name) => {
+            let found: Vec<&PassAt> = all
+                .iter()
+                .filter(|p| {
+                    p.pass.name.eq_ignore_ascii_case(name) || p.key().eq_ignore_ascii_case(name)
+                })
+                .collect();
+            if found.is_empty() {
+                let names: Vec<&str> = all.iter().map(|p| p.pass.name.as_str()).collect();
+                let hint = flint_core::diagnostic::did_you_mean(name, names.iter().copied())
+                    .map_or(String::new(), |h| format!(": {h}"));
+                bail!("no pass is named {name:?}{hint} (`flint frame show <capture> --passes` lists them)");
+            }
+            found
+        }
+        None => all.iter().collect(),
+    };
+    let mut rows = Vec::new();
+    for p in &chosen {
+        let culled = args
+            .culled
+            .then_some(p.pass.culled.iter())
+            .into_iter()
+            .flatten();
+        for draw in p.pass.draws.iter().chain(culled) {
+            if let Some(pattern) = &args.entity {
+                if !draw
+                    .entity
+                    .as_deref()
+                    .is_some_and(|e| name_matches(pattern, e))
+                {
+                    continue;
+                }
+            }
+            rows.push(draw_row(p, draw));
+        }
+    }
+    if rows.is_empty() {
+        if let Some(pattern) = &args.entity {
+            let mut names: Vec<&str> = all
+                .iter()
+                .flat_map(|p| p.pass.draws.iter().chain(&p.pass.culled))
+                .filter_map(|d| d.entity.as_deref())
+                .collect();
+            names.sort_unstable();
+            names.dedup();
+            let culled_too = all.iter().any(|p| {
+                p.pass.culled.iter().any(|d| {
+                    d.entity
+                        .as_deref()
+                        .is_some_and(|e| name_matches(pattern, e))
+                })
+            });
+            if culled_too && !args.culled {
+                bail!("{pattern:?} draws nothing in this frame, but a cull set it aside: add --culled to see why");
+            }
+            let hint = flint_core::diagnostic::did_you_mean(pattern, names.iter().copied())
+                .map_or(String::new(), |h| format!(": {h}"));
+            bail!("no draw is of an entity named {pattern:?}{hint}");
+        }
+    }
+    if args.sort == Some(DrawSort::Tris) {
+        rows.sort_by_key(|r| std::cmp::Reverse(r["triangles"].as_u64().unwrap_or(0)));
+    }
+    Ok(rows)
+}
+
+fn draws_text(rows: &[Value], culled: bool) -> String {
+    let mut header = vec![
+        "pass",
+        "entity",
+        "kind",
+        "layer",
+        "pipeline",
+        "mesh",
+        ">triangles",
+        ">inst",
+    ];
+    if culled {
+        header.push("culled");
+    }
+    let mut t = Table::new(&header);
+    let s = |v: &Value| v.as_str().unwrap_or("-").to_string();
+    for r in rows {
+        let mut row = vec![
+            s(&r["pass"]),
+            s(&r["entity"]),
+            s(&r["kind"]),
+            s(&r["layer"]),
+            s(&r["pipeline"]),
+            s(&r["mesh"]),
+            count(&r["triangles"]),
+            r["instances"].to_string(),
+        ];
+        if culled {
+            row.push(r["culled"].as_str().unwrap_or("").to_string());
+        }
+        t.row(row);
+    }
+    let tris: u64 = rows
+        .iter()
+        .filter(|r| r["culled"].is_null())
+        .map(|r| r["triangles"].as_u64().unwrap_or(0))
+        .sum();
+    let drawn = rows.iter().filter(|r| r["culled"].is_null()).count();
+    let mut head = format!(
+        "Draws: {drawn}, {} triangles",
+        flint_render::format_count(tris.min(u32::MAX as u64) as u32)
+    );
+    if culled {
+        let _ = write!(head, "; {} culled", rows.len() - drawn);
+    }
+    format!("{head}\n{}", t.render("  "))
+}
+
+// ── Targets ──
+
+fn target_rows(d: &FrameDescription) -> Vec<Value> {
+    let all = passes(d);
+    d.targets
+        .iter()
+        .map(|t| {
+            let by = |f: &dyn Fn(&PassAt) -> bool| -> Vec<String> {
+                all.iter().filter(|p| f(p)).map(PassAt::key).collect()
+            };
+            let images: Vec<&str> = all
+                .iter()
+                .flat_map(|p| p.pass.images.iter())
+                .filter(|i| i.target == t.id)
+                .map(|i| i.file.as_str())
+                .collect();
+            json!({
+                "id": t.id,
+                "format": t.format,
+                "size": t.size,
+                "layers": t.layers,
+                "samples": t.samples,
+                "bytes": t.bytes,
+                "written_by": by(&|p| p.pass.writes.contains(&t.id)),
+                "read_by": by(&|p| p.pass.reads.contains(&t.id)),
+                "images": images,
+            })
+        })
+        .collect()
+}
+
+fn targets_text(rows: &[Value]) -> String {
+    let mut t = Table::new(&[
+        "target",
+        "format",
+        "size",
+        ">memory",
+        ">images",
+        "written by",
+    ]);
+    for r in rows {
+        let mut size = format!("{}x{}", r["size"][0], r["size"][1]);
+        if r["layers"].as_u64().unwrap_or(1) > 1 {
+            let _ = write!(size, "x{}", r["layers"]);
+        }
+        if r["samples"].as_u64().unwrap_or(1) > 1 {
+            let _ = write!(size, " {}x", r["samples"]);
+        }
+        let writers: Vec<&str> = r["written_by"]
+            .as_array()
+            .map(|w| w.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        t.row(vec![
+            r["id"].as_str().unwrap_or("").to_string(),
+            r["format"].as_str().unwrap_or("").to_string(),
+            size,
+            bytes(r["bytes"].as_u64().unwrap_or(0)),
+            r["images"].as_array().map_or(0, Vec::len).to_string(),
+            writers.join(", "),
+        ]);
+    }
+    let total: u64 = rows.iter().map(|r| r["bytes"].as_u64().unwrap_or(0)).sum();
+    format!(
+        "Targets: {}, {}\n{}",
+        rows.len(),
+        bytes(total),
+        t.render("  ")
+    )
+}
+
+// ── The hitch window ──
+
+fn hitch(d: &FrameDescription) -> Value {
+    match &d.cpu {
+        Some(cpu) => json!({
+            "hitch": cpu.hitch,
+            "phases_ms": cpu.phases_ms,
+            "notes": cpu.notes,
+            "window": cpu.window,
+        }),
+        None => json!({
+            "hitch": null,
+            "window": [],
+            "why": format!(
+                "no frame history: {} keeps none (the player's captures carry it, #1086)",
+                d.written_by.as_deref().unwrap_or("its writer")
+            ),
+        }),
+    }
+}
+
+fn hitch_text(h: &Value) -> String {
+    if let Some(why) = h["why"].as_str() {
+        return format!("Hitch: {why}\n");
+    }
+    let mut out = String::new();
+    match h["hitch"].as_object() {
+        Some(hitch) => {
+            let _ = writeln!(
+                out,
+                "Hitch: {}",
+                hitch.get("line").and_then(Value::as_str).unwrap_or("")
+            );
+            let _ = writeln!(
+                out,
+                "  frame {}: {} ms against a median of {} ms; cause {}",
+                hitch.get("index").map_or("?".into(), Value::to_string),
+                ms(hitch.get("ms").unwrap_or(&Value::Null)),
+                ms(hitch.get("median_ms").unwrap_or(&Value::Null)),
+                hitch.get("cause").and_then(Value::as_str).unwrap_or("?")
+            );
+            let _ = writeln!(
+                out,
+                "  The capture is of the frame after it: a hitch is over when it is seen."
+            );
+        }
+        None => out.push_str("Hitch: none asked for this capture\n"),
+    }
+    if let Some(notes) = h["notes"].as_array().filter(|n| !n.is_empty()) {
+        for n in notes {
+            let _ = writeln!(out, "  note: {}", n.as_str().unwrap_or(""));
+        }
+    }
+    let window = h["window"].as_array().cloned().unwrap_or_default();
+    if window.is_empty() {
+        out.push_str("  (no window of frames)\n");
+        return out;
+    }
+    let mut t = Table::new(&[
+        ">frame",
+        ">t s",
+        ">ms",
+        ">gpu ms",
+        ">steps",
+        "",
+        "phases / notes",
+    ]);
+    for f in &window {
+        let mut mark = String::new();
+        if f["hitch"].as_bool() == Some(true) {
+            mark.push_str("HITCH");
+        }
+        if f["capturing"].as_bool() == Some(true) {
+            mark.push_str(if mark.is_empty() {
+                "capture"
+            } else {
+                " capture"
+            });
+        }
+        let mut detail: Vec<String> = f["phases_ms"]
+            .as_object()
+            .map(|p| p.iter().map(|(k, v)| format!("{k} {}", ms(v))).collect())
+            .unwrap_or_default();
+        if let Some(notes) = f["notes"].as_array() {
+            detail.extend(
+                notes
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|n| format!("[{n}]")),
+            );
+        }
+        t.row(vec![
+            f["index"].to_string(),
+            f["game_time"]
+                .as_f64()
+                .map_or("-".into(), |t| format!("{t:.3}")),
+            ms(&f["ms"]),
+            ms(&f["gpu_ms"]),
+            f["physics_steps"].to_string(),
+            mark,
+            detail.join(", "),
+        ]);
+    }
+    out.push_str(&t.render("  "));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flint_render::frame_capture::{CpuDescription, HistoryFrame, PassDescription};
+
+    fn frame() -> FrameDescription {
+        let mut d = FrameDescription::default();
+        let draw = |entity: &str, tris: u32| DrawDescription {
+            entity: Some(entity.into()),
+            kind: "Static".into(),
+            pipeline: "pbr".into(),
+            triangles: tris,
+            instances: 1,
+            ..Default::default()
+        };
+        d.passes = vec![
+            PassDescription {
+                name: "Scene".into(),
+                ran: true,
+                timed: true,
+                gpu_ms: Some(1.5),
+                draws: vec![draw("crate", 12), draw("ground", 2), draw("tree_oak", 900)],
+                culled: vec![DrawDescription {
+                    culled: Some("frustum".into()),
+                    ..draw("far_rock", 40)
+                }],
+                ..Default::default()
+            },
+            PassDescription {
+                name: "Bloom".into(),
+                skipped: Some("bloom_enabled is false".into()),
+                ..Default::default()
+            },
+        ];
+        d
+    }
+
+    fn args() -> ShowArgs {
+        ShowArgs {
+            capture: "x".into(),
+            passes: false,
+            draws: true,
+            pass: None,
+            entity: None,
+            sort: None,
+            culled: false,
+            targets: false,
+            hitch: false,
+            top: 10,
+        }
+    }
+
+    #[test]
+    fn draws_filter_by_entity_and_sort_by_triangles() {
+        let d = frame();
+        let mut a = args();
+        a.entity = Some("tree_*".into());
+        let rows = draw_rows(&d, &a).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["entity"], "tree_oak");
+        let mut a = args();
+        a.sort = Some(DrawSort::Tris);
+        let rows = draw_rows(&d, &a).unwrap();
+        assert_eq!(rows[0]["entity"], "tree_oak");
+        assert_eq!(rows[2]["entity"], "ground");
+    }
+
+    #[test]
+    fn a_culled_entity_says_to_ask_for_culls() {
+        let d = frame();
+        let mut a = args();
+        a.entity = Some("far_rock".into());
+        let e = draw_rows(&d, &a).unwrap_err().to_string();
+        assert!(e.contains("--culled"), "{e}");
+        a.culled = true;
+        let rows = draw_rows(&d, &a).unwrap();
+        assert_eq!(rows[0]["culled"], "frustum");
+        let mut a = args();
+        a.entity = Some("crat".into());
+        let e = draw_rows(&d, &a).unwrap_err().to_string();
+        assert!(e.contains("did you mean `crate`"), "{e}");
+    }
+
+    #[test]
+    fn the_summary_ranks_passes_by_gpu_time_and_counts_skips() {
+        let s = summary(&frame(), 10);
+        assert_eq!(s["passes"]["total"], 2);
+        assert_eq!(s["passes"]["ran"], 1);
+        assert_eq!(s["top_passes"][0]["pass"], "Scene");
+        assert_eq!(s["top_passes"][0]["triangles"], 914);
+        let rows = pass_rows(&frame());
+        assert!(passes_text(&rows).contains("skipped: bloom_enabled is false"));
+    }
+
+    #[test]
+    fn a_hitch_window_shows_its_frames() {
+        let mut d = frame();
+        assert!(hitch_text(&hitch(&d)).contains("no frame history"));
+        d.cpu = Some(CpuDescription {
+            window: vec![
+                HistoryFrame {
+                    index: 9,
+                    ms: 48.0,
+                    hitch: true,
+                    ..Default::default()
+                },
+                HistoryFrame {
+                    index: 10,
+                    ms: 17.0,
+                    capturing: true,
+                    notes: vec!["model load".into()],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        });
+        let text = hitch_text(&hitch(&d));
+        assert!(text.contains("HITCH"), "{text}");
+        assert!(text.contains("[model load]"), "{text}");
+    }
+}

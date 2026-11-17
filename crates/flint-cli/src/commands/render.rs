@@ -1481,6 +1481,10 @@ pub(super) fn render(
                     &mut renderer,
                     Some(&world),
                     wanted,
+                    super::render_frame_dump::Origin {
+                        scene: &args.scene,
+                        game_time: None,
+                    },
                 )?;
                 for line in said {
                     say!("{line}");
@@ -2924,6 +2928,10 @@ fn run_stages(args: &RenderArgs, host: &mut RenderHost, staged: StagedRender) ->
                     &mut stage.renderer,
                     Some(stage.game.world()),
                     wanted,
+                    super::render_frame_dump::Origin {
+                        scene: &args.scene,
+                        game_time: Some(t),
+                    },
                 )?;
                 for line in said {
                     say!("{line}");

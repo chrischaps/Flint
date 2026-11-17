@@ -57,6 +57,15 @@ pub struct FrameDescription {
     pub format: String,
     /// [`VERSION`] when written by this engine.
     pub version: u32,
+    /// The engine that drew it (#1087): its crate version, and the commit
+    /// when the writer knows it.
+    pub engine: Option<EngineDescription>,
+    /// What wrote it: `flint render`, `flint-player`.
+    pub written_by: Option<String>,
+    /// When, as RFC 3339 UTC (`2026-11-16T22:30:00Z`).
+    pub captured_at: Option<String>,
+    /// The scene it is a frame of, when the host had one.
+    pub scene: Option<SceneDescription>,
     pub frame: FrameInfo,
     /// The frame's totals, as the F2 overlay counts them. `gpu_passes` is
     /// left out: each pass carries its own `gpu_ms`.
@@ -76,6 +85,9 @@ pub struct FrameDescription {
     /// What a capture (#1085) read back and wrote: `None` for a frame
     /// described without its images (`--frame-dump`).
     pub capture: Option<CaptureDescription>,
+    /// The CPU's side of the frame, from the player's frame history
+    /// (#1086): `None` from a host that keeps none (`flint render`).
+    pub cpu: Option<CpuDescription>,
 }
 
 impl Default for FrameDescription {
@@ -83,6 +95,11 @@ impl Default for FrameDescription {
         Self {
             format: FORMAT.to_string(),
             version: VERSION,
+            engine: None,
+            written_by: None,
+            captured_at: None,
+            scene: None,
+            cpu: None,
             frame: FrameInfo::default(),
             stats: RenderStats::default(),
             lights: LightsDescription::default(),
@@ -177,10 +194,101 @@ impl FrameDescription {
     }
 }
 
+/// The engine a frame was drawn by.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EngineDescription {
+    /// The renderer crate's version (`CARGO_PKG_VERSION`).
+    pub version: String,
+    /// The commit, when the writer knows it.
+    pub commit: Option<String>,
+    /// Whether that commit's tree had changes.
+    pub dirty: Option<bool>,
+}
+
+impl EngineDescription {
+    /// This build: its version, the commit left for a writer that knows it.
+    pub fn this_build() -> Self {
+        Self {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            commit: None,
+            dirty: None,
+        }
+    }
+}
+
+/// The scene a frame is of.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SceneDescription {
+    /// As the host was given it (a project path, or one on the command line).
+    pub path: String,
+    /// Its `[scene] name`.
+    pub name: Option<String>,
+    /// The file's SHA-256, hex.
+    pub sha256: Option<String>,
+}
+
+/// The CPU's side of a captured frame (ADR 0126 decision 3): what the
+/// player's frame history (#1076) holds for it and the frames around it.
+/// Filled by the player (#1086); read by `flint frame show --hitch`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CpuDescription {
+    /// The captured frame's phases, by name, ms.
+    pub phases_ms: BTreeMap<String, f64>,
+    /// What the engine noted in the frame (#1077).
+    pub notes: Vec<String>,
+    /// The hitch that asked for the capture, when one did.
+    pub hitch: Option<HitchDescription>,
+    /// The frame history's window around the capture, oldest first.
+    pub window: Vec<HistoryFrame>,
+}
+
+/// A hitch, as the detector (#1076) said it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HitchDescription {
+    /// The hitch frame's index in the history.
+    pub index: u64,
+    /// Its wall time, ms, and the median it stood out from.
+    pub ms: f32,
+    pub median_ms: f32,
+    /// The cause the detector named (`gpu`, `cpu: Scripts`, `stall`...).
+    pub cause: String,
+    /// The detector's one line for it.
+    pub line: String,
+}
+
+/// One frame of the history's window.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HistoryFrame {
+    pub index: u64,
+    pub game_time: f64,
+    /// Wall time, ms.
+    pub ms: f32,
+    pub phases_ms: BTreeMap<String, f32>,
+    pub gpu_ms: Option<f32>,
+    pub physics_steps: u32,
+    pub notes: Vec<String>,
+    /// The detector judged it a hitch.
+    pub hitch: bool,
+    /// It is the captured frame, or was drawn while a capture was in
+    /// flight (its time holds the copies).
+    pub capturing: bool,
+}
+
 /// The frame's settings: what it was drawn at and on.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FrameInfo {
+    /// The frame's number in its run, when the host counts frames.
+    pub index: Option<u64>,
+    /// The game clock at the frame, seconds, when the host has one.
+    pub game_time: Option<f64>,
+    /// The step that frame took, seconds.
+    pub dt: Option<f64>,
     /// The output's size in pixels.
     pub size: [u32; 2],
     /// What the 3D scene is drawn at: `size` at render scale 1 (#122).

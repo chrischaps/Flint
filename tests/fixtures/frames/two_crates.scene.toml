@@ -1,0 +1,39 @@
+# A frame capture's fixture (#1087): with the lantern.
+# Its capture is beside it; tests/fixtures/frames/README.md says how it is made.
+
+[scene]
+name = "Crate and Lantern"
+
+[post_process]
+bloom_enabled = true
+ssao_enabled = true
+
+[camera]
+position = [3.2, 2.4, 4.2]
+target = [0, 0.4, 0]
+
+[entities.ground.transform]
+position = [0, -0.1, 0]
+
+[entities.ground.bounds]
+min = [-4, 0, -4]
+max = [4, 0.1, 4]
+
+[entities.crate.transform]
+position = [-0.7, 0.5, 0]
+
+[entities.crate.bounds]
+min = [-0.5, -0.5, -0.5]
+max = [0.5, 0.5, 0.5]
+
+[entities.lantern.transform]
+position = [0.9, 0.35, 0.4]
+
+[entities.lantern.bounds]
+min = [-0.35, -0.35, -0.35]
+max = [0.35, 0.35, 0.35]
+
+[entities.sun.light]
+type = "directional"
+direction = [0.3, 1, 0.2]
+intensity = 2.0

@@ -136,7 +136,9 @@ impl SceneRenderer {
                 styles,
                 gpu_frame_ms: None,
                 capturing: false,
+                ..Default::default()
             },
+            engine: Some(fc::EngineDescription::this_build()),
             stats,
             lights: fc::LightsDescription {
                 kept: kept

@@ -8,7 +8,7 @@ mod output;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, bundle, check as check_cmd, dxc, edit_router, entity, examples, export, gen,
+    asset, bundle, check as check_cmd, dxc, edit_router, entity, examples, export, frame, gen,
     gen_preview, init, legacy_names, music, play, prefab, preview, query, render, render_goldens,
     scene, schema, script, spike_rumble, spline_edit, style, terrain_edit, tex_edit, validate,
 };
@@ -112,6 +112,10 @@ enum Commands {
     /// The pre-flight: everything wrong with a project or a scene in one
     /// run (schemas, entity references, assets, files, styles, constraints)
     Check(Box<check_cmd::CheckArgs>),
+
+    /// Read a frame capture (`flint render --frame-capture`): show its
+    /// passes, draws, targets and GPU time, diff two, copy a pass's image out
+    Frame(Box<frame::FrameArgs>),
 
     /// The curated example scenes, from examples/index.toml: list them by
     /// topic, or --check that every one is indexed and validates
@@ -255,6 +259,7 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Script(cmd) => script::run(cmd),
         Commands::Validate(args) => validate::run(*args),
         Commands::Check(args) => check_cmd::run(*args),
+        Commands::Frame(args) => frame::run(*args),
         Commands::Examples(args) => examples::run(args),
         Commands::Bundle(args) => bundle::run(args),
         Commands::Export(cmd) => export::run(cmd),
