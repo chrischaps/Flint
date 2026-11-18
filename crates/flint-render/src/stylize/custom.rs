@@ -79,11 +79,13 @@ mod check;
 mod compose;
 mod format;
 mod loading;
+mod packed;
 mod pass;
 pub use check::*;
 pub use compose::*;
 pub use format::*;
 pub use loading::*;
+pub use packed::*;
 pub use pass::*;
 
 #[cfg(test)]

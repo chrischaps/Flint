@@ -24,8 +24,9 @@ pub struct Report {
     pub warnings: Vec<String>,
     /// The WGSL to give wgpu when it isn't the composed text: the module
     /// written back out by naga with every user loop guarded (#411).
-    /// `None` when there is no loop to guard, the guard is off, or on the
-    /// web (no naga there).
+    /// `None` when there is no loop to guard or the guard is off. On the
+    /// web (no naga there) it is the module a bundle packed for the pass
+    /// ([`packed_guarded`], #550), else `None`.
     pub guarded: Option<String>,
 }
 
@@ -574,9 +575,17 @@ pub(super) fn count_helper_calls(statement: &naga::Statement, module: &naga::Mod
 /// it and checking here would add it to the download (#415). The browser's
 /// own WGSL compiler reports instead, a frame or two later
 /// ([`compiler_error`], read when the build settles).
+///
+/// The loop guard can't run here either, so a bundle carries its result:
+/// `flint bundle` packs each pass's guarded module beside the style
+/// (#550), and when one was written from the text this pass composes to,
+/// it is what gets built ([`packed_guarded`]).
 #[cfg(target_arch = "wasm32")]
-pub fn check_pass(_source: &StyleSource, _pass: usize, _user: &str) -> Result<Report, String> {
-    Ok(Report::default())
+pub fn check_pass(source: &StyleSource, pass: usize, user: &str) -> Result<Report, String> {
+    Ok(Report {
+        guarded: packed_guarded(source, pass, user),
+        ..Report::default()
+    })
 }
 
 /// The first error in a compiler's report on `composed` (the browser's
