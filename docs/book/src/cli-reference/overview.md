@@ -416,9 +416,9 @@ flint play scenes/body.scene.toml --width 480 --height 480 --position 1400,560  
 | `--style-time <s>` | Hold the post time animated styles see (shared with the ocean, grain, the tear and the reality styles) at this many seconds |
 | `--motion-hold <rate>` | Motion on twos for the whole frame (#405): every entity's drawn position and pose, and the post time styles read, change only this many times a second (12 = on twos at 24 fps). Over every scene's `[post_process] motion_hold`, kept through transitions. See [Motion on twos](../concepts/stylize-passes.md#motion-on-twos) |
 | `--expression-timeline <file>` | Play expression states from a JSON timeline on the game clock, for scripts' `expression()` and `on_expression` (see [Expression API](../concepts/scripting.md#expression-api)) |
-| `--expression-listen <ip:port>` | Take expression states as newline-delimited JSON over TCP at a loopback address, e.g. `127.0.0.1:7777`. Off unless given |
+| `--expression-listen <ip:port>` | Take expression states as newline-delimited JSON over TCP at a loopback address, e.g. `127.0.0.1:7777`. Off unless given. It opens once the first frame is presented (until then a connect is refused) and says so in one `listen` line ([Expression API](../concepts/scripting.md#expression-api), #584) |
 | `--log-format <text\|json>` | How the player writes what it says, to stderr: `text` (default) or `json`, one object a line with `timestamp`, `level`, `target`, `message` and the event's fields (#716) |
-| `--quiet` | Say only warnings, errors and what a flag asked for (`--perf`'s lines, the `--exit-after` report): no load summary, controls line or transitions |
+| `--quiet` | Say only warnings, errors and what a flag asked for (`--perf`'s lines, the `--exit-after` report, `--inspect-listen`'s and `--expression-listen`'s opening): no load summary, controls line or transitions |
 | `--inspect-listen <ip:port>` | Answer questions about the live world at a loopback address, e.g. `127.0.0.1:7878`: `flint query --attach` and `flint entity show --attach` ask it. Off unless given ([Asking a running game](#asking-a-running-game)) |
 | `--dump-world <file>` | Write the world as JSON at `--dump-world-at` times, each entity `--dump-query` picks with its components' values ([Asking a running game](#asking-a-running-game)) |
 | `--dump-world-at <secs>` | Game times for `--dump-world`, repeatable or comma separated (`1,2.5`), each taken on the first frame at or after it. Default: `--exit-after`'s time, else the first frame |
@@ -433,7 +433,8 @@ Everything the player says goes through one log on stderr (#716); stdout is
 left for what a flag asks it to answer (`--list-gpus`). Each line has a
 target naming what it is about: `load`, `transition`, `perf` (the line
 `--perf` prints every 10 s), `report` (the exit report), `script`, `input`,
-`music` and `player` (debug keys, looks, bundles). A scene coming up says
+`music`, `player` (debug keys, looks, bundles), `inspect` (`--inspect-listen`,
+`--dump-world`) and `listen` (`--expression-listen`'s socket opening). A scene coming up says
 two lines, one for what it loaded and one for the controls it binds:
 
 ```text
@@ -460,7 +461,7 @@ transition that changes it. Each
 file a load reads is a `debug` line of target `load`, counted into the
 summary: `RUST_LOG=load=debug` lists them all again. `RUST_LOG` replaces the
 filter whole, under either format; the default is
-`warn,load=info,transition=info,perf=info,report=info,script=info,input=info,music=info,player=info`.
+`warn,load=info,transition=info,perf=info,report=info,script=info,input=info,music=info,player=info,inspect=info,listen=info`.
 An agent reading a run takes `--log-format json` and reads one object a line:
 
 ```bash

@@ -212,7 +212,9 @@ pub struct PlayerArgs {
 
     /// Take expression states as newline-delimited JSON objects over TCP at
     /// this loopback address (e.g. 127.0.0.1:7777). Off unless given; only
-    /// 127.0.0.1 or ::1 can listen (Flint#518)
+    /// 127.0.0.1 or ::1 can listen (Flint#518). It opens once the first frame
+    /// is presented, and says so in one `listen` log line: a client that
+    /// connects is heard from the next frame on (Flint#584)
     #[arg(long, value_name = "IP:PORT")]
     pub expression_listen: Option<String>,
 
