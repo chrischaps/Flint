@@ -26,6 +26,9 @@ the files `git ls-files` lists, as they are on disk:
    one would move goldens. Each has its SHA-256 pinned, every path a
    fixture names under `examples/` must be pinned, and every pin must
    still have a borrower.
+6. **A book PNG has no alpha channel** (#1276), but those `ALPHA_EXCEPTIONS`
+   names. A render or screenshot is saved RGBA with every pixel opaque;
+   `tools/assets/pack_book_images.py` drops the channel, same pixels.
 
 Standard library only: CI runs it before anything is installed.
 """
@@ -105,6 +108,8 @@ BINARY = {
 }
 IMAGES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tga", ".hdr"}
 NOT_TEXTURES = ("docs/", "crates/flint-cli/tests/golden/")
+# Book PNGs whose transparency the page needs, each with why (#1276).
+ALPHA_EXCEPTIONS: dict[str, str] = {}
 
 BORROWED = Path("tests/fixtures/borrowed.toml")
 # Where a fixture can name an example file: the frozen scenes and their
@@ -197,6 +202,12 @@ def check(files: list[Path], names: set[str], report: bool) -> list[str]:
             continue
         data = f.read_bytes()
         by_hash[hashlib.sha256(data).hexdigest()].append(p)
+        # colour type 4 or 6: grey or RGB with alpha
+        if p.startswith("docs/") and png_size(data) and data[25] in (4, 6) and p not in ALPHA_EXCEPTIONS:
+            problems.append(
+                f"{p}: a book PNG with an alpha channel; a render's is opaque, a quarter of its bytes "
+                f"(python tools/assets/pack_book_images.py {p}: same pixels; a needed alpha: ALPHA_EXCEPTIONS)"
+            )
         if p.startswith(NOT_TEXTURES):
             continue
         textures = []
