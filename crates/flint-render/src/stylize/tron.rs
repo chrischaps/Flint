@@ -49,7 +49,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
     reality::create(
         d,
         "Tron Pass",
-        super::kit::wgsl!("../tear_mask.wgsl", "reality.wgsl", "tron.wgsl"),
+        super::kit::wgsl!("prelude_core.wgsl", "../tear_mask.wgsl", "reality.wgsl", "tron.wgsl"),
         fill,
     )
 }

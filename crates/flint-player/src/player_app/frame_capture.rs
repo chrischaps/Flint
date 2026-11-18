@@ -176,6 +176,11 @@ pub(crate) struct FrameCaptures {
     said: Vec<String>,
     /// The armed frame turned the GPU timer on.
     armed_timing: bool,
+    /// The player records scopes (#1097): a capture handed to its writer
+    /// names `trace.json` in its manifest, and its folder waits in
+    /// `handed` for the player to write the trace into.
+    pub(crate) with_trace: bool,
+    pub(crate) handed: Vec<PathBuf>,
     /// The armed frame's bone palettes and renderer state, recorded last
     /// in its encoder.
     #[cfg(not(target_arch = "wasm32"))]
@@ -523,6 +528,10 @@ impl FrameCaptures {
             job.description.frame.index,
             scripts_timed,
         ));
+        if self.with_trace {
+            job.description.trace = Some("trace.json".into());
+            self.handed.push(job.dir.clone());
+        }
         let job = flight.job;
         self.writers.push(std::thread::spawn(move || write(job)));
         // The hand-off is this frame's work too
@@ -694,7 +703,7 @@ pub(crate) fn hitch_description(h: &Hitch) -> HitchDescription {
             script.as_ref().map(|(n, _)| n.clone()),
             script.as_ref().map(|(_, ms)| *ms),
         ),
-        Cause::Elsewhere { .. } => (None, None, None, None),
+        Cause::Elsewhere { .. } | Cause::Tooling { .. } => (None, None, None, None),
     };
     HitchDescription {
         frame: h.index,
@@ -739,7 +748,8 @@ impl super::PlayerApp {
 
     /// In `tick`, once the clock and the hitch detector have run: the
     /// hitches it just found (`found`, the newest) for `--capture-on-hitch`,
-    /// past the start unless `on_hitch_startup`, and the
+    /// past the start unless `on_hitch_startup` and never the tools' own
+    /// (`Cause::Tooling`), and the
     /// `--capture-frame-at` times reached.
     pub(super) fn frame_capture_triggers(&mut self, found: usize) {
         let captures = &mut self.frame_captures;
@@ -748,6 +758,11 @@ impl super::PlayerApp {
             for h in hitches.iter().skip(hitches.len().saturating_sub(found)) {
                 if captures.on_hitch == 0 {
                     break;
+                }
+                // A screenshot's or the F2 overlay's own cost (#1129) is
+                // not the game's hitch: a capture of it shows nothing
+                if h.cause.is_tooling() {
+                    continue;
                 }
                 if !captures.on_hitch_startup && h.game_time < STARTUP_SECS {
                     if captures.passed_startup == 0 {
@@ -826,6 +841,7 @@ impl super::PlayerApp {
                 timed,
             );
         }
+        self.traces_into_captures();
         for line in self.frame_captures.take_said() {
             tracing::info!(target: "player", "[capture] {line}");
         }
@@ -949,7 +965,7 @@ pub fn git_state(root: &Path) -> (Option<String>, Option<bool>) {
 
 /// Now, UTC, as RFC 3339 to the second.
 #[cfg(not(target_arch = "wasm32"))]
-fn utc_now() -> String {
+pub(crate) fn utc_now() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());

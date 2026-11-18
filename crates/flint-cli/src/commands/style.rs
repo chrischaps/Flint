@@ -264,15 +264,18 @@ fn list(args: ListArgs) -> Result<()> {
     // The styles and choices a scene there sees, by its project's one
     // asset search (ADR 0114); with no scene, the working directory's
     let assets = flint_core::project::AssetScope::for_dir(scene_dir.unwrap_or(Path::new(".")));
+    let mut styles = flint_render::stylize::StyleRegistry::new();
     if scene_dir.is_some() {
-        for message in custom::load_for(&assets) {
+        for message in styles.load_for(&assets) {
             eprintln!("warning: {message}");
         }
     }
     if crate::output::json() {
-        crate::output::document(&serde_json::to_value(catalog::catalog_in(&assets))?);
+        crate::output::document(&serde_json::to_value(catalog::catalog_in(
+            &styles, &assets,
+        ))?);
     } else {
-        print!("{}", catalog::catalog_text_in(&assets));
+        print!("{}", catalog::catalog_text_in(&styles, &assets));
     }
     Ok(())
 }

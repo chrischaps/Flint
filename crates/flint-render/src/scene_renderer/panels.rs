@@ -97,7 +97,7 @@ impl SceneRenderer {
                     if !spec.has_own_look() {
                         return None;
                     }
-                    match resolve_panel_post(base.as_ref(), spec, &scope) {
+                    match resolve_panel_post(base.as_ref(), spec, &scope, &self.styles) {
                         Ok(config) => Some(config),
                         Err(e) => {
                             tracing::warn!(
@@ -407,6 +407,7 @@ fn resolve_panel_post(
     base: Option<&flint_scene::PostProcessDef>,
     spec: &crate::panels::PanelSpec,
     scope: &flint_core::project::AssetScope,
+    styles: &crate::stylize::StyleRegistry,
 ) -> Result<PostProcessConfig, String> {
     let mut def = match base {
         Some(def) => crate::look::resolve_in(def, def.look.as_deref(), scope)?,
@@ -419,5 +420,7 @@ fn resolve_panel_post(
     if let Some(keys) = &spec.post_process {
         def = crate::look::overlay(Some(&def), keys)?;
     }
-    Ok(crate::postprocess::post_process_config_from_def(&def))
+    Ok(crate::postprocess::post_process_config_from_def(
+        &def, styles,
+    ))
 }

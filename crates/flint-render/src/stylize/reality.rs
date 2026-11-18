@@ -216,7 +216,8 @@ mod tests {
     fn uniforms_match_wgsl_layout() {
         assert_eq!(std::mem::size_of::<RealityUniforms>(), 176);
         let source = format!(
-            "{}{}fn _unused() {{}}",
+            "{}{}{}fn _unused() {{}}",
+            include_str!("prelude_core.wgsl"),
             include_str!("../tear_mask.wgsl"),
             include_str!("reality.wgsl")
         );
@@ -245,7 +246,8 @@ mod tests {
             ("underwater", include_str!("underwater.wgsl")),
         ] {
             let source = format!(
-                "{}{}{}",
+                "{}{}{}{}",
+                include_str!("prelude_core.wgsl"),
                 include_str!("../tear_mask.wgsl"),
                 include_str!("reality.wgsl"),
                 body

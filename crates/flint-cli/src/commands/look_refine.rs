@@ -57,8 +57,10 @@ impl Edit {
         let value = parse_value(&self.value);
         match sweep.key {
             SweepKey::Look => return Err("`look` can't be an edit; edit its keys".into()),
-            SweepKey::Wooze { .. } => {
-                return Err("wooze knobs belong to the scene, not a look".into())
+            SweepKey::Wooze { .. } | SweepKey::Echoes { .. } => {
+                return Err(
+                    "wooze knobs and [living] echoes belong to the scene, not a look".into(),
+                )
             }
             SweepKey::Post { field } => {
                 table.insert(field, value);
@@ -226,7 +228,7 @@ fn current_value(table: &toml::Table, key: &SweepKey) -> Option<toml::Value> {
     match key {
         SweepKey::Post { field } => table.get(field).cloned(),
         SweepKey::Style { style, key } => table.get("styles")?.get(style)?.get(key).cloned(),
-        SweepKey::Look | SweepKey::Wooze { .. } => None,
+        SweepKey::Look | SweepKey::Wooze { .. } | SweepKey::Echoes { .. } => None,
     }
 }
 
@@ -338,17 +340,19 @@ pub fn key_catalogue(current: &toml::Table) -> String {
         .map(|t| t.keys().cloned().collect())
         .unwrap_or_default();
     for name in &styles {
-        let Some(d) = flint_render::stylize::find(name) else {
+        // A look's styles are the built-ins' (#742: a look carries no
+        // registry of its own)
+        let Some(d) = flint_render::stylize::builtin(name) else {
             continue;
         };
         out.push_str(&format!("style {name}:\n"));
-        for p in d.params {
+        for p in &d.params {
             out.push_str(&format!(
                 "  {name}.{} = {} (range {}..{})\n",
                 p.name, p.default, p.min, p.max
             ));
         }
-        for o in d.options {
+        for o in &d.options {
             let choices = if o.choices.is_empty() {
                 String::new()
             } else {
@@ -360,7 +364,7 @@ pub fn key_catalogue(current: &toml::Table) -> String {
             ));
         }
     }
-    let others: Vec<&str> = flint_render::stylize::registry()
+    let others: Vec<&str> = flint_render::stylize::builtins()
         .iter()
         .map(|d| d.name)
         .filter(|n| !styles.iter().any(|s| s == n))

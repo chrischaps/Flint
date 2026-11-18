@@ -181,12 +181,19 @@ impl PlayerApp {
                     .map(|p| (p.id, p.position)),
             )
         });
+        // The page's Save trace (#1097), shown while the recorder records
+        if self.stats.perf.trace.is_some() && super::web_page::trace_wanted() {
+            self.ask_trace("Save trace");
+        }
         if !self.perf_due(EVERY) {
             return;
         }
         let Some(panel) = element("perf") else {
             return;
         };
+        if self.stats.perf.trace.is_some() {
+            let _ = panel.set_attribute("data-trace", "");
+        }
         let user_agent = web_sys::window()
             .and_then(|w| w.navigator().user_agent().ok())
             .unwrap_or_default();

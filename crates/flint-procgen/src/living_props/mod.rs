@@ -47,8 +47,9 @@ use crate::spec::{ProcGenSpec, Stagger, VarianceConfig};
 
 pub use blend::{BlendFrame, PropBlend};
 pub use layers::{
-    ClockOverride, EchoOverride, Layer, Layered, LivingDefaults, LivingLayer, LivingLayers,
-    LivingScope, LivingShadows, Resolved, ResolvedProp, SpeciesOverride, VarianceOverride,
+    jitter_rate_clamped, ClockOverride, EchoOverride, Layer, Layered, LivingDefaults, LivingLayer,
+    LivingLayers, LivingScope, LivingShadows, Resolved, ResolvedProp, SpeciesOverride,
+    VarianceOverride, JITTER_RATE_MAX,
 };
 pub use prop::LivingProp;
 
@@ -341,12 +342,15 @@ impl LivingProps {
     }
 
     /// Move every prop's clock on by exactly `beats` of its own steps, however
-    /// long those are, and the seconds its jitter reads by `seconds`. For
+    /// long those are, and the seconds its jitter reads by `seconds` at its
+    /// jitter rate. For
     /// single-stepping: with `dt` at 0 it's the only thing moving the clock.
     pub fn advance_beats(&mut self, beats: f64, seconds: f64) {
         self.time += seconds;
+        let species = &self.species;
         for prop in &mut self.props {
             prop.beats += beats;
+            prop.jitter_time += seconds * prop.jitter_rate_in(&species[prop.species]);
         }
     }
 
@@ -425,6 +429,8 @@ impl LivingProps {
             jitter: LivingJitter::from(living),
             jitter_ahead: f64::from(phase_offset) * jitter_step,
             jitter_step,
+            // Where the props' clock is, so that at a rate of 1 the two agree.
+            jitter_time: self.time,
             beats: f64::from(phase_offset),
             position: request.position,
             wooze,
@@ -452,6 +458,7 @@ impl LivingProps {
             stagger_layers,
             stagger_entity: request.stagger.is_some(),
             softness_layers: Layered::new(living.softness, self.defaults.softness),
+            jitter_rate_layers: Layered::new(1.0, self.defaults.jitter_rate),
         });
         (LivingPropId(self.props.len() - 1), asset_name)
     }

@@ -64,7 +64,8 @@ fn viewer(path: &Path, device: &wgpu::Device, queue: &wgpu::Queue) -> ViewerApp 
     let config = ModelLoadConfig::from_scene_path(&scene_path);
     let binding = scene_binding(&scene_path);
     stage_scene(&mut renderer, device, queue, &mut state, binding, &config);
-    let authored = post_process_config_from_def(state.scene_post.as_ref().unwrap());
+    let authored =
+        post_process_config_from_def(state.scene_post.as_ref().unwrap(), renderer.styles());
     renderer.set_post_process_config(authored);
 
     let mut app = ViewerApp::new(Arc::new(Mutex::new(state)), false);
@@ -85,7 +86,11 @@ fn tune(app: &mut ViewerApp) -> PostProcessConfig {
     let mut tuned = renderer.post_process_config().clone();
     tuned.bloom_intensity = 0.6;
     tuned.fog_density = 0.03;
-    let errors = flint_render::stylize::apply_style_specs(&mut tuned, &["ascii:cell=12".into()]);
+    let errors = flint_render::stylize::apply_style_specs(
+        &mut tuned,
+        &["ascii:cell=12".into()],
+        renderer.styles(),
+    );
     assert!(errors.is_empty(), "{errors:?}");
     renderer.set_post_process_config(tuned.clone());
     tuned
@@ -119,7 +124,7 @@ fn committing_a_style_keeps_the_unsaved_bloom_and_fog_on_screen() {
     // on the panel's styles_committed flag
     let mut editor = flint_debug_ui::StylesEditor::default();
     editor.set_scene_file(Some(path.clone()));
-    let ascii = flint_render::stylize::find("ascii").unwrap();
+    let ascii = flint_render::stylize::builtin("ascii").unwrap();
     editor.commit(ascii, &mut tuned).unwrap();
     app.own_commit_until = Some(Instant::now() + OWN_COMMIT_RELOAD);
     reload(&mut app);
@@ -138,7 +143,10 @@ fn committing_a_style_keeps_the_unsaved_bloom_and_fog_on_screen() {
     assert!(text.contains("bloom_intensity = 0.04"), "{text}");
     assert!(text.starts_with("# A comment the commit keeps"), "{text}");
     let state = app.state.lock().unwrap();
-    let authored = post_process_config_from_def(state.scene_post.as_ref().unwrap());
+    let authored = post_process_config_from_def(
+        state.scene_post.as_ref().unwrap(),
+        &flint_render::stylize::StyleRegistry::new(),
+    );
     assert!(authored.styles.same_style("ascii", &after.styles));
     assert_eq!(authored.bloom_intensity, 0.04);
     drop(state);

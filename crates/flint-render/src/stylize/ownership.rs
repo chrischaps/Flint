@@ -210,7 +210,7 @@ impl OwnershipPass {
         let Some(table) = frame.owner_table() else {
             return false;
         };
-        let Some(me) = super::registry_index(frame.descriptor) else {
+        let Some(me) = super::registry_index(frame.styles, frame.descriptor) else {
             return false;
         };
         let Some(mask) = frame.mask_bind("Style Ownership Mask BG", &self.mask_bgl) else {

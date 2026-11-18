@@ -18,5 +18,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ghost_off = vec2<f32>(0.012 + 0.010 * sin(t * 0.5), 0.0) * m * r.p0.y;
     let ghost = sample_linear(uv + ghost_off);
     color = mix(color, ghost, clamp(0.35 * m * r.p0.y, 0.0, 1.0));
-    return vec4<f32>(select(to_display(color), color, r.srgb > 0.5), 1.0);
+    return vec4<f32>(select(flint_to_display(color), color, r.srgb > 0.5), 1.0);
 }

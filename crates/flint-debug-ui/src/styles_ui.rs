@@ -24,7 +24,8 @@
 
 use flint_render::stylize::reveal::{self, RevealShape, StyleReveal};
 use flint_render::stylize::{
-    self, ChoiceScope, StyleControl, StyleDescriptor, StyleOption, StyleSettings, StyleStage,
+    self, ChoiceScope, StyleControl, StyleDescriptor, StyleOption, StyleRegistry, StyleSettings,
+    StyleStage,
 };
 use flint_render::PostProcessConfig;
 use std::collections::HashMap;
@@ -35,7 +36,7 @@ use std::path::{Path, PathBuf};
 /// changed. Draws nothing for a display style, which runs after bloom.
 pub fn feeds_bloom_checkbox(
     ui: &mut egui::Ui,
-    style: &'static StyleDescriptor,
+    style: &StyleDescriptor,
     pp: &mut PostProcessConfig,
 ) -> bool {
     if style.stage != StyleStage::Hdr {
@@ -129,9 +130,23 @@ pub struct StylesEditor {
     /// (#875), so switching it back on brings the tuned tear back while
     /// the config (and Copy TOML) say nothing of it in between.
     reveal_stash: HashMap<&'static str, StyleReveal>,
+    /// The registry the host's renderer draws with (#742), mirrored by
+    /// [`set_styles`](Self::set_styles): one section a style.
+    styles: StyleRegistry,
 }
 
 impl StylesEditor {
+    /// Mirror the registry the renderer draws with (#742). Cheap: the
+    /// user styles are shared.
+    pub fn set_styles(&mut self, styles: &StyleRegistry) {
+        self.styles = styles.clone();
+    }
+
+    /// The registry the editor lists.
+    pub fn styles(&self) -> &StyleRegistry {
+        &self.styles
+    }
+
     /// The scene's folder, where options look for its palettes and glyph
     /// sets (#322); `None` offers the built-ins only. Calling it again (a
     /// scene load or reload) finds new files.
@@ -173,14 +188,14 @@ impl StylesEditor {
     /// defaults dropped), so it and the authored settings compare equal.
     pub fn commit(
         &self,
-        style: &'static StyleDescriptor,
+        style: &StyleDescriptor,
         pp: &mut PostProcessConfig,
     ) -> Result<(), String> {
         let path = self
             .scene_file
             .as_deref()
             .ok_or_else(|| "No scene file to write".to_string())?;
-        let committed = commit_style(path, style, pp)?;
+        let committed = commit_style(path, style, pp, &self.styles)?;
         pp.styles.restore(style.name, &committed);
         Ok(())
     }
@@ -195,7 +210,7 @@ impl StylesEditor {
     /// the style (the font, for ramps) or the scene changes.
     pub fn choices(
         &mut self,
-        style: &'static StyleDescriptor,
+        style: &StyleDescriptor,
         o: &StyleOption,
         pp: &PostProcessConfig,
     ) -> Vec<String> {
@@ -234,16 +249,17 @@ impl StylesEditor {
     ) -> StylesEdit {
         let mut edit = StylesEdit::default();
         self.marked = 0;
-        edit.changed |= chain_ui(ui, pp);
+        let styles = self.styles.clone();
+        edit.changed |= chain_ui(ui, pp, &styles);
         let mut any = false;
-        for style in stylize::registry().iter().copied() {
+        for style in styles.iter() {
             any = true;
             edit.merge(self.section(ui, style, pp, authored));
         }
         if !any {
             ui.weak("No styles registered");
         }
-        if !pp.enabled && stylize::registry().iter().any(|s| s.is_enabled(pp)) {
+        if !pp.enabled && styles.iter().any(|s| s.is_enabled(pp)) {
             ui.colored_label(
                 ui.visuals().warn_fg_color,
                 "Post-processing is off: styles don't draw",
@@ -255,7 +271,7 @@ impl StylesEditor {
     fn section(
         &mut self,
         ui: &mut egui::Ui,
-        style: &'static StyleDescriptor,
+        style: &StyleDescriptor,
         pp: &mut PostProcessConfig,
         authored: Option<&StyleSettings>,
     ) -> StylesEdit {
@@ -282,15 +298,15 @@ impl StylesEditor {
                     }
                 });
                 // A game binary's own Rust style (#419)
-                if stylize::is_game_style(style.name) {
+                if self.styles.is_game_style(style.name) {
                     ui.weak("game").on_hover_text(
                         "Written in Rust by this game and registered with \
-                         stylize::register; not part of the engine",
+                         StyleRegistry::register; not part of the engine",
                     );
                 }
                 // A user-authored style (ADR 0112, #275): where it lives, and
                 // whether it compiles
-                if let Some(source) = stylize::custom::source(style.name) {
+                if let Some(source) = self.styles.source(style.name) {
                     // Each pass's WGSL, and the targets the passes write (#412)
                     let mut hover = source.toml_path.display().to_string();
                     for pass in &source.passes {
@@ -311,7 +327,9 @@ impl StylesEditor {
                     }
                     hover.push_str("\nSaving any of these files reloads it");
                     ui.weak("user").on_hover_text(hover);
-                    if let Some((_, error)) = stylize::custom::errors()
+                    if let Some((_, error)) = self
+                        .styles
+                        .errors()
                         .into_iter()
                         .find(|(name, _)| name == style.name)
                     {
@@ -401,7 +419,7 @@ impl StylesEditor {
     fn commit_button(
         &mut self,
         ui: &mut egui::Ui,
-        style: &'static StyleDescriptor,
+        style: &StyleDescriptor,
         pp: &mut PostProcessConfig,
     ) -> StylesEdit {
         let mut edit = StylesEdit::default();
@@ -468,7 +486,7 @@ impl StylesEditor {
     fn reveal_group(
         &mut self,
         ui: &mut egui::Ui,
-        style: &'static StyleDescriptor,
+        style: &StyleDescriptor,
         pp: &mut PostProcessConfig,
         authored: Option<&StyleSettings>,
     ) -> bool {
@@ -565,7 +583,7 @@ impl StylesEditor {
     fn blend_row(
         &mut self,
         ui: &mut egui::Ui,
-        style: &'static StyleDescriptor,
+        style: &StyleDescriptor,
         pp: &mut PostProcessConfig,
         authored: Option<&StyleSettings>,
     ) -> bool {
@@ -592,7 +610,7 @@ impl StylesEditor {
     fn row(
         &mut self,
         ui: &mut egui::Ui,
-        style: &'static StyleDescriptor,
+        style: &StyleDescriptor,
         control: StyleControl,
         pp: &mut PostProcessConfig,
         authored: Option<&StyleSettings>,
@@ -776,8 +794,9 @@ impl StylesEditor {
 /// holds for the style, read back from that block.
 pub fn commit_style(
     path: &Path,
-    style: &'static StyleDescriptor,
+    style: &StyleDescriptor,
     pp: &PostProcessConfig,
+    styles: &StyleRegistry,
 ) -> Result<StyleSettings, String> {
     let block = stylize::style_toml(style, pp);
     let mut doc = flint_scene::SceneDocument::from_file(path)?;
@@ -793,7 +812,7 @@ pub fn commit_style(
         .cloned()
         .unwrap_or_default();
     let tables = std::collections::BTreeMap::from([(style.name.to_string(), table)]);
-    let (settings, warnings) = StyleSettings::from_tables(&tables);
+    let (settings, warnings) = StyleSettings::from_tables(&tables, styles);
     for warning in warnings {
         tracing::warn!("Committed style block: {warning}");
     }
@@ -801,8 +820,13 @@ pub fn commit_style(
 }
 
 /// The styles on in `stage`, in the order its chain runs them (#299).
-pub fn chain_of(stage: StyleStage, pp: &PostProcessConfig) -> Vec<(&'static StyleDescriptor, f32)> {
-    stylize::stage_chain(stage, pp)
+pub fn chain_of<'s>(
+    stage: StyleStage,
+    pp: &PostProcessConfig,
+    styles: &'s StyleRegistry,
+) -> Vec<(&'s StyleDescriptor, f32)> {
+    styles
+        .stage_chain(stage, pp)
         .into_iter()
         .filter(|(d, _)| d.is_enabled(pp))
         .collect()
@@ -811,11 +835,7 @@ pub fn chain_of(stage: StyleStage, pp: &PostProcessConfig) -> Vec<(&'static Styl
 /// Run `chain[i]` one place earlier, swapping its order with the style
 /// before it. Equal orders (both at their defaults' tie) step the moved one
 /// just in front instead, so the move always shows.
-pub fn move_earlier(
-    pp: &mut PostProcessConfig,
-    chain: &[(&'static StyleDescriptor, f32)],
-    i: usize,
-) {
+pub fn move_earlier(pp: &mut PostProcessConfig, chain: &[(&StyleDescriptor, f32)], i: usize) {
     let ((a, oa), (b, ob)) = (chain[i - 1], chain[i]);
     if oa == ob {
         pp.styles.set_order(b.name, Some(oa - 0.5));
@@ -828,10 +848,10 @@ pub fn move_earlier(
 /// The chain line of each stage with a style on: its styles in running
 /// order, with buttons to move one earlier or later. True when the order
 /// changed.
-fn chain_ui(ui: &mut egui::Ui, pp: &mut PostProcessConfig) -> bool {
+fn chain_ui(ui: &mut egui::Ui, pp: &mut PostProcessConfig, styles: &StyleRegistry) -> bool {
     let mut changed = false;
     for (stage, name) in [(StyleStage::Hdr, "HDR"), (StyleStage::Display, "Display")] {
-        let chain = chain_of(stage, pp);
+        let chain = chain_of(stage, pp, styles);
         if chain.is_empty() {
             continue;
         }
@@ -1185,7 +1205,7 @@ mod tests {
 
     fn all_on() -> PostProcessConfig {
         let mut pp = PostProcessConfig::default();
-        for s in stylize::registry().iter() {
+        for s in stylize::builtins().iter() {
             pp.styles.set_enabled(s.name, true);
         }
         pp
@@ -1196,7 +1216,7 @@ mod tests {
         let mut editor = StylesEditor::default();
         let mut pp = all_on();
         let text = drawn_text(&mut editor, &mut pp, None);
-        for style in stylize::registry().iter() {
+        for style in stylize::builtins().iter() {
             assert!(text.contains(&style.label.to_string()), "{}", style.label);
             for control in style.controls() {
                 let label = style.label_for(control.name());
@@ -1309,7 +1329,7 @@ mod tests {
         let mut pp = PostProcessConfig::default();
         pp.styles.set_enabled("pencil", true);
         let drawn = drawn_strength(&mut editor, &mut pp);
-        let pencil = stylize::find("pencil").unwrap();
+        let pencil = stylize::builtin("pencil").unwrap();
         let labels: Vec<f32> = pencil
             .controls()
             .into_iter()
@@ -1330,11 +1350,12 @@ mod tests {
 
     /// A style with a free-text option (no choices, none found), as a
     /// file-named setting is. Registered nowhere; drawn by hand.
+    const TEXT_OPTIONS: &[StyleOption] = &[StyleOption::new("file", "", &[])];
     static TEXT_STYLE: StyleDescriptor =
         StyleDescriptor::new("text_test", "Text test", StyleStage::Display, |_| {
             unreachable!("never drawn")
         })
-        .options(&[StyleOption::new("file", "", &[])]);
+        .options(TEXT_OPTIONS);
 
     #[test]
     fn typing_a_file_name_survives_frames_and_commits_on_enter() {
@@ -1383,7 +1404,7 @@ mod tests {
             "[ramps.dots]\nglyphs = \" .:\"\n",
         );
         flint_core::vfs::scoped(std::sync::Arc::new(src), || {
-            let ascii = stylize::find("ascii").unwrap();
+            let ascii = stylize::builtin("ascii").unwrap();
             let option = |name: &str| ascii.options.iter().find(|o| o.name == name).unwrap();
             let mut editor = StylesEditor::default();
             let mut pp = all_on();
@@ -1404,7 +1425,7 @@ mod tests {
             // A fixed list is the descriptor's own
             assert_eq!(
                 editor.choices(ascii, option("color"), &pp),
-                option("color").choices
+                option("color").choices.to_vec()
             );
         });
     }
@@ -1415,8 +1436,9 @@ mod tests {
         pp.styles.set_enabled("watercolor", true);
         pp.styles.set_enabled("ascii", true);
         pp.styles.set_enabled("invert", true);
+        let styles = StyleRegistry::new();
         let names = |pp: &PostProcessConfig| -> Vec<&str> {
-            chain_of(StyleStage::Display, pp)
+            chain_of(StyleStage::Display, pp, &styles)
                 .iter()
                 .map(|(d, _)| d.name)
                 .collect()
@@ -1427,7 +1449,7 @@ mod tests {
         assert!(!text.iter().any(|t| t == "HDR chain:"), "nothing on in HDR");
 
         // ASCII before watercolor: the two swap orders
-        let chain = chain_of(StyleStage::Display, &pp);
+        let chain = chain_of(StyleStage::Display, &pp, &styles);
         move_earlier(&mut pp, &chain, 1);
         assert_eq!(names(&pp), ["ascii", "watercolor", "invert"]);
         assert_eq!(pp.styles.order("ascii"), Some(1.0));
@@ -1435,7 +1457,7 @@ mod tests {
         // A tie still moves
         pp.styles.set_order("invert", Some(2.0));
         assert_eq!(names(&pp), ["ascii", "watercolor", "invert"]);
-        let chain = chain_of(StyleStage::Display, &pp);
+        let chain = chain_of(StyleStage::Display, &pp, &styles);
         move_earlier(&mut pp, &chain, 2);
         assert_eq!(names(&pp), ["ascii", "invert", "watercolor"]);
     }
@@ -1455,7 +1477,7 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) = StyleSettings::from_tables(&tables, &StyleRegistry::new());
         assert!(warnings.is_empty(), "{warnings:?}");
         settings
     }
@@ -1478,7 +1500,7 @@ mod tests {
             ..Default::default()
         };
         // Tuned in F4: a new cell and ramp, glow back at its default, a tint
-        let ascii = stylize::find("ascii").unwrap();
+        let ascii = stylize::builtin("ascii").unwrap();
         pp.styles.set_param("ascii", "cell", 9.0);
         pp.styles.set_option("ascii", "ramp", "blocks");
         let glow = ascii.params.iter().find(|p| p.name == "glow").unwrap();
@@ -1502,7 +1524,7 @@ mod tests {
         // Loaded fresh, the scene draws what was on screen
         let fresh = styles_in_file(&path);
         assert!(fresh.same_style("ascii", &pp.styles));
-        for p in ascii.params {
+        for p in &ascii.params {
             assert_eq!(
                 ascii.param(&shown, p.name),
                 ascii.param(&pp, p.name),
@@ -1510,7 +1532,7 @@ mod tests {
                 p.name
             );
         }
-        for o in ascii.options {
+        for o in &ascii.options {
             assert_eq!(
                 ascii.option(&shown, o.name),
                 ascii.option(&pp, o.name),
@@ -1554,14 +1576,14 @@ mod tests {
     fn every_style_has_a_reveal_group_with_a_row_per_key() {
         // #875: the reveal is the framework's, so each style gets the group
         let mut pp = pencil_wiped(0.5);
-        for s in stylize::registry().iter() {
+        for s in stylize::builtins().iter() {
             pp.styles.set_enabled(s.name, true);
         }
         let shown = pp.clone();
         let mut editor = StylesEditor::default();
         let text = drawn_text(&mut editor, &mut pp, None);
         let groups = text.iter().filter(|t| *t == "Reveal").count();
-        assert_eq!(groups, stylize::registry().len(), "{text:?}");
+        assert_eq!(groups, stylize::builtins().len(), "{text:?}");
         // Pencil's is open, since it has a reveal: every row, and the
         // header's summary
         assert!(text.contains(&"wipe at 0.5".to_string()), "{text:?}");
@@ -1589,7 +1611,7 @@ mod tests {
         let rim = drawn_strength(&mut editor, &mut pp);
         assert!(strength_of(&rim, "Rim colour") >= strength_of(&rim, "Ink") * 0.9);
         // Its default is the renderer's: pencil's paper, lifted
-        let paper = reveal::style_paper(stylize::find("pencil").unwrap(), &pp);
+        let paper = reveal::style_paper(stylize::builtin("pencil").unwrap(), &pp);
         let shown = pp.styles.reveal("pencil").unwrap().rim_color(paper);
         assert!(shown.iter().zip(paper).all(|(r, p)| *r > p), "{shown:?}");
     }
@@ -1618,7 +1640,7 @@ mod tests {
         let off = editor.toggled_reveal("pencil", &tuned, false);
         pp.styles.replace_reveal("pencil", off);
         assert!(pp.styles.reveal("pencil").is_none());
-        let pencil = stylize::find("pencil").unwrap();
+        let pencil = stylize::builtin("pencil").unwrap();
         assert!(!stylize::style_toml(pencil, &pp).contains("reveal"));
         // On again: the wipe comes back, at reveal = 1
         let on = editor.toggled_reveal("pencil", &StyleReveal::default(), true);
@@ -1642,7 +1664,7 @@ mod tests {
         let mut pp = all_on();
         let text = drawn_text(&mut editor, &mut pp, None);
         let rows = text.iter().filter(|t| *t == "Blend").count();
-        assert_eq!(rows, stylize::registry().len(), "{text:?}");
+        assert_eq!(rows, stylize::builtins().len(), "{text:?}");
         // At 1 it draws no reset and changes nothing
         assert_eq!(pp.styles, all_on().styles);
     }
@@ -1687,7 +1709,7 @@ mod tests {
     fn the_blend_slider_fades_the_style_and_resets_to_1() {
         let ctx = egui::Context::default();
         let mut editor = StylesEditor::default();
-        let kuwahara = stylize::find("kuwahara").unwrap();
+        let kuwahara = stylize::builtin("kuwahara").unwrap();
         let mut authored = StyleSettings::default();
         authored.set_enabled("kuwahara", true);
         let mut pp = PostProcessConfig {
@@ -1758,7 +1780,7 @@ mod tests {
         pp.styles
             .set_reveal("pencil", "reveal_edge", &value, true)
             .unwrap();
-        let text = stylize::style_toml(stylize::find("pencil").unwrap(), &pp);
+        let text = stylize::style_toml(stylize::builtin("pencil").unwrap(), &pp);
         for line in [
             "reveal = 0.42",
             "reveal_shape = \"wipe\"",
@@ -1794,7 +1816,7 @@ mod tests {
              reveal_x = 0.56\nboil = 4.0\n",
         )
         .unwrap();
-        let pencil = stylize::find("pencil").unwrap();
+        let pencil = stylize::builtin("pencil").unwrap();
         let mut editor = StylesEditor::default();
         editor.set_scene_file(Some(path.clone()));
 

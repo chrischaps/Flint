@@ -143,6 +143,41 @@ pub struct FrameGraph {
     /// hitch's span of columns: room kept from frame to frame.
     columns: Vec<u32>,
     marks: Vec<(usize, usize, u32)>,
+    /// Where the last `show` put its columns.
+    placed: Option<Placed>,
+}
+
+/// Where a graph's columns were drawn, for a host that maps a pointer to a
+/// frame or a time to a place on it (the profiler's strip, #1099).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Placed {
+    /// The graph's rectangle.
+    pub rect: Rect,
+    first: i64,
+    slice: f64,
+    col_w: f32,
+    cols: usize,
+}
+
+impl Placed {
+    /// The x of time `t`, seconds on the frames' epoch.
+    pub fn x_of(&self, t: f64) -> f32 {
+        let col = t / self.slice - self.first as f64;
+        self.rect.right() - (self.cols as f64 - col) as f32 * self.col_w
+    }
+
+    /// The time at `x`, seconds on the frames' epoch.
+    pub fn time_at(&self, x: f32) -> f64 {
+        let col = self.cols as f64 - ((self.rect.right() - x) / self.col_w) as f64;
+        (col + self.first as f64) * self.slice
+    }
+
+    /// The column `x` falls in, if any.
+    fn column_at(&self, x: f32) -> Option<usize> {
+        let left = self.rect.right() - self.cols as f32 * self.col_w;
+        let c = ((x - left) / self.col_w).floor();
+        (c >= 0.0 && (c as usize) < self.cols).then_some(c as usize)
+    }
 }
 
 impl Default for FrameGraph {
@@ -158,7 +193,21 @@ impl FrameGraph {
             mesh: Arc::new(Mesh::default()),
             columns: Vec::new(),
             marks: Vec::new(),
+            placed: None,
         }
+    }
+
+    /// Where the last [`show`](Self::show) drew, if it drew.
+    pub fn placed(&self) -> Option<Placed> {
+        self.placed
+    }
+
+    /// The frame (an index into the frames last shown) the column under
+    /// `x` shows: the tallest that touches it.
+    pub fn frame_at(&self, x: f32) -> Option<usize> {
+        let c = self.placed?.column_at(x)?;
+        let i = *self.columns.get(c)?;
+        (i != EMPTY).then_some(i as usize)
     }
 
     /// The ms the top of the graph stands for now.
@@ -196,6 +245,17 @@ impl FrameGraph {
         let cols = Self::columns(rect.width(), ppp);
         let budget = layout.budget_ms.max(1.0);
         self.place(frames, cols, layout.window_secs as f64);
+        let slice = (layout.window_secs as f64).max(1e-3) / cols as f64;
+        let last = frames
+            .last()
+            .map_or(0, |f| (f.end() / slice).floor() as i64);
+        self.placed = Some(Placed {
+            rect,
+            first: last - cols as i64 + 1,
+            slice,
+            col_w,
+            cols,
+        });
 
         // The ceiling eases toward the tallest bar shown, never under a
         // little over twice the budget, so both lines are always in view.

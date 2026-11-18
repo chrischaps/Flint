@@ -56,6 +56,7 @@ fn knobs_read_back_through_a_preset() {
         glide: 0.75,
         amplitude: 0.25,
         jitter: 2.0,
+        jitter_rate: 0.5,
         stagger: "per_branch".to_string(),
         boil_on: false,
         boil_paint: 0.5,
@@ -121,6 +122,7 @@ fn count_set(preset: &WoozePreset) -> usize {
         f.glide,
         f.amplitude,
         f.jitter,
+        f.jitter_rate,
         f.stagger,
         f.echo_count,
         f.echo_spread,
@@ -165,6 +167,7 @@ fn pressing_down_the_sliders_moves_every_knob_one_at_a_time() {
         let f = KnobFlags::set_by(moved);
         all = KnobFlags {
             step: all.step || f.step,
+            jitter_rate: all.jitter_rate || f.jitter_rate,
             echo_count: all.echo_count || f.echo_count,
             echo_spread: all.echo_spread || f.echo_spread,
             echo_alpha: all.echo_alpha || f.echo_alpha,
@@ -177,6 +180,7 @@ fn pressing_down_the_sliders_moves_every_knob_one_at_a_time() {
     assert!(all.step && all.echo_count && all.echo_spread && all.echo_alpha);
     assert!(all.variance_amount && all.variance_steady, "{sets:?}");
     assert!(all.softness, "the Silhouette slider: {sets:?}");
+    assert!(all.jitter_rate, "the jitter rate slider: {sets:?}");
 }
 
 #[test]
@@ -683,6 +687,7 @@ fn every_knob_has_the_key_its_layer_report_gives_it() {
             "glide",
             "amplitude",
             "jitter",
+            "jitter_rate",
             "stagger",
             "echoes.count",
             "echoes.spread",
@@ -733,7 +738,7 @@ fn every_knob_has_a_control_that_fits() {
     .into_iter()
     .map(|section| Knob::in_section(section).count())
     .collect();
-    assert_eq!(sections, [5, 3, 3, 1]);
+    assert_eq!(sections, [6, 3, 3, 1]);
 }
 
 // ---- Picking a tree in the world (#248) ----

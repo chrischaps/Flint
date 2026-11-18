@@ -99,6 +99,7 @@ mod fade;
 pub mod images;
 pub mod kit;
 pub mod ownership;
+mod registry;
 pub mod reveal;
 mod spec;
 mod targets;
@@ -107,6 +108,7 @@ pub mod variant_table;
 
 pub use ascii::{edge_view_thresholds, EDGE_VIEW_LEGEND};
 pub use edges::EDGE_FORMAT;
+pub use registry::{intern, intern_list, List, Style, StyleRegistry};
 pub use reveal::{RevealShape, StyleReveal};
 pub use spec::{
     apply_style_spec, apply_style_specs, check_style_specs, style_spec_help, StyleSpec,
@@ -120,2794 +122,14 @@ use crate::style_mask::StyleIds;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Where in the post chain a style runs; see the module docs for the order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum StyleStage {
-    /// Linear HDR (`Rgba16Float`) at the scene's render scale, after the
-    /// scene pass and before fog, bloom, grade and tonemapping.
-    Hdr,
-    /// Display-referred colour in the surface format, at output
-    /// resolution, after the composite and before FXAA. When the surface
-    /// format is sRGB, samples arrive linear and writes are encoded on the
-    /// way out: a style that works in display values decodes and encodes
-    /// itself ([`StyleFrame::srgb`]).
-    Display,
-}
-
-impl StyleStage {
-    /// Both stages, in chain order.
-    pub const ALL: [StyleStage; 2] = [StyleStage::Hdr, StyleStage::Display];
-}
-
-/// One numeric parameter a style takes, with the range the F4 menu offers.
-/// A value outside it is refused by `--style` and warned about in a scene
-/// table (#355): a style clamps it or draws it badly.
-///
-/// How the menu presents it rides on it too (#510): `.label(..)`,
-/// `.help(..)`, `.integer()`, `.when(..)` / `.unless(..)` ([`StyleUi`]).
-/// A colour's (`tint`, three parameters `tint_r/_g/_b`) are set on its red
-/// channel, where the menu's picker stands; on the other two they mean
-/// nothing.
-#[derive(Clone, Copy, Debug)]
-#[non_exhaustive]
-pub struct StyleParam {
-    pub name: &'static str,
-    pub default: f32,
-    pub min: f32,
-    pub max: f32,
-    /// Its label, help, whole-number stepping and conditions.
-    pub ui: StyleUi,
-}
-
-impl StyleParam {
-    /// A parameter with its default and the range the menu offers:
-    /// `StyleParam::new("cell", 8.0, 4.0..=32.0)`. Build every parameter
-    /// through this (#366): a field added later gets its default here, so
-    /// no style has to change.
-    pub const fn new(
-        name: &'static str,
-        default: f32,
-        range: std::ops::RangeInclusive<f32>,
-    ) -> Self {
-        Self {
-            name,
-            default,
-            min: *range.start(),
-            max: *range.end(),
-            ui: StyleUi::NONE,
-        }
-    }
-
-    /// What the F4 menu calls it ("Cell size (pt)"); unset, its name made
-    /// readable ("Cell").
-    pub const fn label(mut self, label: &'static str) -> Self {
-        self.ui.label = label;
-        self
-    }
-
-    /// One line for the hover text.
-    pub const fn help(mut self, help: &'static str) -> Self {
-        self.ui.help = help;
-        self
-    }
-
-    /// Whole numbers only (a cell size, a count): the slider steps by 1
-    /// and Copy TOML writes `cell = 8`.
-    pub const fn integer(mut self) -> Self {
-        self.ui.integer = true;
-        self
-    }
-
-    /// Read only while option `option` is one of `values` (#365):
-    /// `.when("color", &["tint"])`.
-    pub const fn when(mut self, option: &'static str, values: &'static [&'static str]) -> Self {
-        self.ui = self.ui.condition(option, values, false);
-        self
-    }
-
-    /// Does nothing while option `option` is one of `values` (#365):
-    /// `.unless("color", &["palette"])`.
-    pub const fn unless(mut self, option: &'static str, values: &'static [&'static str]) -> Self {
-        self.ui = self.ui.condition(option, values, true);
-        self
-    }
-
-    /// Why `value` won't draw as written, when it lies outside
-    /// `min..=max`: "cell=400 is outside its range 4..32". `None` inside.
-    pub fn range_error(&self, value: f32) -> Option<String> {
-        (value < self.min || value > self.max).then(|| {
-            format!(
-                "{}={value} is outside its range {}..{}",
-                self.name, self.min, self.max
-            )
-        })
-    }
-
-    /// `value` brought into `min..=max`, as a script's setter keeps it,
-    /// and, when it was outside, [`range_error`](Self::range_error)'s words
-    /// and what it became: "cell=400 is outside its range 4..32; clamped
-    /// to 32" (#492), for the script's author.
-    pub fn clamp(&self, value: f64) -> (f64, Option<String>) {
-        let kept = value.clamp(self.min as f64, self.max as f64);
-        let note = self
-            .range_error(value as f32)
-            .map(|e| format!("{e}; clamped to {}", kept as f32));
-        (kept, note)
-    }
-}
-
-/// One named choice a style takes (a font, a ramp, a colour mode): a
-/// string in `[post_process.styles.<name>]`, where a parameter is a number.
-#[derive(Clone, Copy, Debug)]
-#[non_exhaustive]
-pub struct StyleOption {
-    pub name: &'static str,
-    pub default: &'static str,
-    /// The values the F4 menu offers. Empty means any text (a file or set
-    /// name). A style still gets whatever the scene says and decides what
-    /// a value outside the list means.
-    pub choices: &'static [&'static str],
-    /// Choices found at run time (#322): the scene's own palettes or glyph
-    /// sets, or the ramps of the font chosen. When set, its list replaces
-    /// `choices` wherever a scene is known ([`Self::choices_in`]), and the
-    /// option is open: a value outside either list (a file path) is the
-    /// style's to resolve, so `--style` doesn't refuse it.
-    pub discover: Option<fn(&ChoiceScope<'_>) -> Vec<String>>,
-    /// Its label, help and conditions ([`StyleUi`], #510).
-    pub ui: StyleUi,
-}
-
-impl StyleOption {
-    /// A closed or suggested list with nothing found at run time.
-    pub const fn new(
-        name: &'static str,
-        default: &'static str,
-        choices: &'static [&'static str],
-    ) -> Self {
-        Self {
-            name,
-            default,
-            choices,
-            discover: None,
-            ui: StyleUi::NONE,
-        }
-    }
-
-    /// The same option, with its choices found at run time.
-    pub const fn discovered(mut self, discover: fn(&ChoiceScope<'_>) -> Vec<String>) -> Self {
-        self.discover = Some(discover);
-        self
-    }
-
-    /// What the F4 menu calls it ("Colour mode"); unset, its name made
-    /// readable.
-    pub const fn label(mut self, label: &'static str) -> Self {
-        self.ui.label = label;
-        self
-    }
-
-    /// One line for the hover text.
-    pub const fn help(mut self, help: &'static str) -> Self {
-        self.ui.help = help;
-        self
-    }
-
-    /// Read only while option `option` is one of `values` (#365).
-    pub const fn when(mut self, option: &'static str, values: &'static [&'static str]) -> Self {
-        self.ui = self.ui.condition(option, values, false);
-        self
-    }
-
-    /// Does nothing while option `option` is one of `values` (#365).
-    pub const fn unless(mut self, option: &'static str, values: &'static [&'static str]) -> Self {
-        self.ui = self.ui.condition(option, values, true);
-        self
-    }
-
-    /// Whether `choices` are the only values (#318): a fixed list with
-    /// nothing found at run time (a colour mode, a scope). A scene asking
-    /// for another is warned at load with the list. Discovered choices are
-    /// suggestions (a font's ramps, a palette that may be a file path), and
-    /// an empty list takes any text.
-    pub fn closed(&self) -> bool {
-        self.discover.is_none() && !self.choices.is_empty()
-    }
-
-    /// A value this option will never mean: outside a closed list.
-    pub fn refuses(&self, value: &str) -> bool {
-        self.closed() && !self.choices.contains(&value)
-    }
-
-    /// The values to offer for this option in `scope`: what `discover`
-    /// finds when the option has it, else its fixed `choices`. The F4 menu
-    /// and the unknown-value check (#318) read this one list.
-    pub fn choices_in(&self, scope: &ChoiceScope<'_>) -> Vec<String> {
-        match self.discover {
-            Some(discover) => discover(scope),
-            None => self.choices.iter().map(|c| c.to_string()).collect(),
-        }
-    }
-}
-
-/// What an option's run-time choices may depend on (#322): the scene's
-/// project and folder, and the style's other options as the menu shows
-/// them (the ramps a font has depend on the font).
-pub struct ChoiceScope<'a> {
-    /// Where the scene's files are searched from (ADR 0114); `None` when
-    /// there is no scene, and then only what is built in is offered.
-    pub assets: Option<&'a flint_core::project::AssetScope>,
-    /// Another option's current value (its default when unset).
-    pub option: &'a dyn Fn(&str) -> String,
-}
-
-impl<'a> ChoiceScope<'a> {
-    /// A scope for `assets` with every other option at its default.
-    pub fn defaults(assets: Option<&'a flint_core::project::AssetScope>) -> Self {
-        Self {
-            assets,
-            option: &|_| String::new(),
-        }
-    }
-
-    /// The names of every file of `kind` the scene can see, sorted: exactly
-    /// the files the project's one search finds
-    /// ([`Project::list`](flint_core::project::Project::list): the kind's
-    /// folder beside the scene, in each directory above it up to the
-    /// project root, then in the mounted engine; a nearer name hides a
-    /// farther one). Read through the vfs, so a bundle on the web lists the
-    /// same files.
-    pub fn files(&self, kind: flint_core::project::AssetKind) -> Vec<String> {
-        let Some(assets) = self.assets else {
-            return Vec::new();
-        };
-        let mut names: Vec<String> = assets.list(kind).into_iter().map(|l| l.name).collect();
-        names.sort();
-        names
-    }
-}
-
-/// `fixed`, then each of `found` not already in it.
-pub fn choices_with(fixed: &[&str], found: Vec<String>) -> Vec<String> {
-    let mut out: Vec<String> = fixed.iter().map(|c| c.to_string()).collect();
-    for name in found {
-        if !out.contains(&name) {
-            out.push(name);
-        }
-    }
-    out
-}
-
-/// How the F4 menu, `--list-styles` and Copy TOML present one parameter,
-/// option or colour (#268): a readable label, a hover line, whether only
-/// whole numbers make sense, and when the setting is read. Set on the
-/// setting itself (#510: `StyleParam::new(..).label(..).help(..)`), a
-/// colour's on its red channel. All of it is optional: a setting with none
-/// shows its name ("edge_max" -> "Edge max") on a plain slider, so a new
-/// style needs none to be tunable.
-///
-/// A colour is three parameters named `<base>_r`, `<base>_g`, `<base>_b`
-/// (each 0..1, display values: what the eye sees, sRGB-encoded): the
-/// menu folds them into one colour picker. See [`StyleColor`].
-#[derive(Clone, Copy, Debug)]
-#[non_exhaustive]
-pub struct StyleUi {
-    /// Empty: the name made readable ([`StyleDescriptor::label_for`]).
-    pub label: &'static str,
-    /// One line for the hover text; empty for none.
-    pub help: &'static str,
-    /// Whole numbers only (a cell size, a count): the slider steps by 1.
-    pub integer: bool,
-    /// When the setting matters (#365): up to two conditions on options,
-    /// from `when` and `unless`, all of which must hold for the style to
-    /// read it. While one fails the F4 menu greys the row out and says
-    /// why. None: always read.
-    pub conditions: [Option<StyleWhen>; 2],
-}
-
-/// One condition of a [`StyleUi`]: the setting is read only while option
-/// `option` is one of `values` (or, with `unless`, none of them).
-#[derive(Clone, Copy, Debug)]
-pub struct StyleWhen {
-    pub option: &'static str,
-    pub values: &'static [&'static str],
-    pub unless: bool,
-}
-
-impl StyleWhen {
-    /// Whether the setting is read while the option is `current`.
-    pub fn holds(&self, current: &str) -> bool {
-        self.values.contains(&current) != self.unless
-    }
-}
-
-impl StyleUi {
-    /// No label, help or conditions: what every setting starts with.
-    pub const NONE: StyleUi = StyleUi {
-        label: "",
-        help: "",
-        integer: false,
-        conditions: [None, None],
-    };
-
-    /// Whether it says nothing at all.
-    pub fn is_none(&self) -> bool {
-        self.label.is_empty()
-            && self.help.is_empty()
-            && !self.integer
-            && self.conditions.iter().all(Option::is_none)
-    }
-
-    const fn condition(
-        self,
-        option: &'static str,
-        values: &'static [&'static str],
-        unless: bool,
-    ) -> Self {
-        let c = StyleWhen {
-            option,
-            values,
-            unless,
-        };
-        let conditions = match self.conditions {
-            [None, b] => [Some(c), b],
-            [a @ Some(_), None] => [a, Some(c)],
-            [Some(_), Some(_)] => panic!("a setting holds at most two conditions"),
-        };
-        Self { conditions, ..self }
-    }
-}
-
-/// One row of a style's section in the F4 menu, in the order it is drawn:
-/// options first (they change what the sliders mean), then parameters,
-/// with each `<base>_r/_g/_b` triple folded into a [`Color`](Self::Color)
-/// where its red channel stood.
-#[derive(Clone, Copy, Debug)]
-pub enum StyleControl {
-    Option(&'static StyleOption),
-    Param(&'static StyleParam),
-    Color {
-        /// The name before `_r` (`tint`), the key a scene writes.
-        base: &'static str,
-        channels: [&'static StyleParam; 3],
-    },
-}
-
-impl StyleControl {
-    /// The parameter, option or colour base this row edits.
-    pub fn name(&self) -> &'static str {
-        match self {
-            StyleControl::Option(o) => o.name,
-            StyleControl::Param(p) => p.name,
-            StyleControl::Color { base, .. } => base,
-        }
-    }
-}
-
-/// One colour setting of a style (#315): the parameters `<base>_r`,
-/// `<base>_g` and `<base>_b`, each 0..1 in display values, that a scene
-/// writes as one key, `tint = [1.0, 0.7, 0.25]` (or `tint = "#ffb340"`),
-/// a style reads with [`StyleFrame::color`], F4 shows as one picker and
-/// Copy TOML writes back as one array. The channels stay parameters
-/// underneath, so a per-entity variant row, a uniform and `--style
-/// ascii:tint_g=0.5` see three numbers as they always did.
-#[derive(Clone, Copy, Debug)]
-pub struct StyleColor {
-    /// The key a scene writes (`tint`).
-    pub base: &'static str,
-    pub channels: [&'static StyleParam; 3],
-}
-
-impl StyleColor {
-    /// The colour the channels' defaults make.
-    pub fn default_rgb(&self) -> [f32; 3] {
-        self.channels.map(|c| c.default)
-    }
-}
-
-/// A colour from a TOML value: an array of three numbers (`[1.0, 0.7,
-/// 0.25]`, integers allowed) or a `#rrggbb` string (`"#ffb340"`), both in
-/// display values, 0..1 per channel.
-pub fn color_from_toml(value: &toml::Value) -> Option<[f32; 3]> {
-    if let Some(text) = value.as_str() {
-        return color_from_hex(text);
-    }
-    let number = |v: &toml::Value| {
-        flint_core::toml_util::toml_f64(v)
-            .filter(|n| n.is_finite())
-            .map(|n| n as f32)
-    };
-    match value.as_array()?.as_slice() {
-        [r, g, b] => Some([number(r)?, number(g)?, number(b)?]),
-        _ => None,
-    }
-}
-
-/// `#rrggbb` (or `rrggbb`) as 0..1 channels.
-pub fn color_from_hex(text: &str) -> Option<[f32; 3]> {
-    let hex = text.trim().trim_start_matches('#');
-    if hex.len() != 6 || !hex.is_ascii() {
-        return None;
-    }
-    let channel = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
-    Some([channel(0)?, channel(2)?, channel(4)?].map(|c| c as f32 / 255.0))
-}
-
-/// A colour as command-line text (#315): `#rrggbb`, or `r/g/b` with each
-/// channel a number (`0.3/1/0.4`). `--style` keys are split on commas, so
-/// a colour there can't be `r,g,b`.
-pub fn color_from_text(text: &str) -> Option<[f32; 3]> {
-    let text = text.trim();
-    if text.starts_with('#') {
-        return color_from_hex(text);
-    }
-    let parts: Vec<f32> = text
-        .split('/')
-        .map(|p| p.trim().parse::<f32>().ok().filter(|n| n.is_finite()))
-        .collect::<Option<_>>()?;
-    <[f32; 3]>::try_from(parts).ok()
-}
-
-/// What the framework needs to build a style.
-#[derive(Clone, Copy)]
-pub struct StyleDevice<'a> {
-    pub device: &'a wgpu::Device,
-    /// The style being built: lets one `create` serve many descriptors
-    /// (user-authored styles, #274, all share [`custom`]'s).
-    pub descriptor: &'static StyleDescriptor,
-    /// The format the style's output is drawn in: `Rgba16Float` for an
-    /// [`Hdr`](StyleStage::Hdr) style, the surface's for a
-    /// [`Display`](StyleStage::Display) one.
-    pub format: wgpu::TextureFormat,
-}
-
-/// An input the framework computes for the styles that ask for it
-/// ([`StyleDescriptor::needs`]), once a frame however many do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum StyleNeed {
-    /// The shared geometry edges ([`edges`]): silhouette and crease
-    /// strength and the direction across them, from the depth alone, read
-    /// as [`StyleFrame::edges`].
-    Edges,
-}
-
-/// Whether a style reads the entity style mask (#263), and when (#350).
-#[derive(Clone, Copy)]
-pub enum MaskUse {
-    /// Never: the mask is drawn for it only if it is per-entity and an
-    /// entity names it.
-    Never,
-    /// Whenever the style is on.
-    Always,
-    /// While the style is on and this says so for the frame's config and
-    /// ids: ASCII's outlines read it only with `edges > 0` and something
-    /// styled to outline.
-    When(fn(&PostProcessConfig, &StyleIds) -> bool),
-}
-
-impl MaskUse {
-    /// Whether the style may read the mask at all (`--list-styles`).
-    pub fn ever(self) -> bool {
-        !matches!(self, MaskUse::Never)
-    }
-
-    /// Whether it reads the mask under `config` with these ids.
-    pub fn now(self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
-        match self {
-            MaskUse::Never => false,
-            MaskUse::Always => true,
-            MaskUse::When(f) => f(config, ids),
-        }
-    }
-}
-
-impl std::fmt::Debug for MaskUse {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            MaskUse::Never => "Never",
-            MaskUse::Always => "Always",
-            MaskUse::When(_) => "When(..)",
-        })
-    }
-}
-
-/// A registered style: what it is called, where it runs and how to make it.
-/// Built with [`StyleDescriptor::new`] and its setters, never as a literal
-/// (#366); `non_exhaustive` holds other crates to that.
-#[non_exhaustive]
-pub struct StyleDescriptor {
-    /// The name in `[post_process.styles.<name>]`; lowercase, no spaces.
-    pub name: &'static str,
-    /// What the F4 menu and `--gpu-time` call it.
-    pub label: &'static str,
-    pub stage: StyleStage,
-    /// Parameters and their defaults, read with [`StyleFrame::param`].
-    pub params: &'static [StyleParam],
-    /// Named choices and their defaults, read with [`StyleFrame::option`].
-    pub options: &'static [StyleOption],
-    /// Whether the style reads the entity style mask (#263). While any
-    /// such style is on and [`MaskUse::now`] holds, the renderer draws the
-    /// mask each frame and hands it over as [`StyleFrame::mask`]; while
-    /// none is, the mask isn't made.
-    pub uses_mask: MaskUse,
-    /// Whether the style reads the style albedo (#869): the opaque
-    /// surfaces' own colour before light, drawn after the scene pass while
-    /// any such style is on and [`MaskUse::now`] holds (the same `Never` /
-    /// `Always` / `When` as the mask), handed over as
-    /// [`StyleFrame::albedo`]. The picture divided by it is the light.
-    pub uses_albedo: MaskUse,
-    /// Framework-made inputs the style reads (#301). While any style that
-    /// asks for one is on, the framework makes it once a frame for all of
-    /// them: [`StyleNeed::Edges`] is [`StyleFrame::edges`].
-    pub needs: &'static [StyleNeed],
-    /// The component an entity takes this style with, its fields being the
-    /// style's parameters and options (`ascii_style`, #266). A style with
-    /// one is per-entity: an entity carrying it (or a `style_mask` naming
-    /// the style) switches the style on for that entity's pixels alone,
-    /// with no `[post_process.styles]` table, and the style reads each
-    /// pixel's settings from [`StyleFrame::variants`] by its mask id.
-    pub component: Option<&'static str>,
-    /// Whether bloom reads this style's result by default (#300). Off, the
-    /// bloom threshold reads the unstylized scene, so a halo sits where
-    /// the original bright pixels were (Kuwahara's look: light from the
-    /// scene, not the brush). On, bloom reads the HDR stage's result, so a
-    /// style's own bright shapes glow. Only an [`Hdr`](StyleStage::Hdr)
-    /// style can feed bloom, which runs before the display stage. A scene
-    /// overrides it with `feeds_bloom` in the style's table
-    /// ([`StyleDescriptor::feeds_bloom_in`]).
-    pub feeds_bloom: bool,
-    /// Whether the style leaves the pixels another style owns (#384): an
-    /// entity that asks for another running style (`style_mask { style =
-    /// "pencil" }` in an ASCII frame) keeps the input there, put back by
-    /// the framework after the style draws ([`ownership`]). True for every
-    /// style but those that look at the whole picture on purpose: the
-    /// debug views and a glow over the finished frame
-    /// ([`draws_over_entities`](Self::draws_over_entities)).
-    pub yields: bool,
-    /// Whether the style draws its own entities' `blend` (#396). Off (the
-    /// default), the framework cross-fades: after the style's pass, every
-    /// pixel of an entity drawn in this style at a blend below 1 (the
-    /// mask's `.g`, #278) is mixed back toward the style's input by that
-    /// much, so a mask-reading style fades with no blend code of its own.
-    /// A style that does something better than a cross-fade (ASCII's
-    /// `transition = "dissolve"`) sets it with
-    /// [`blends_itself`](StyleDescriptor::blends_itself) and reads `.g`
-    /// itself.
-    pub blends_itself: bool,
-    /// Whether the style draws a blend itself for some settings (#879):
-    /// asked of the whole frame (`None`: the table's `blend`, which the
-    /// stage would otherwise draw as a mix, [`blend`]) and of each entity
-    /// variant (`Some`: the mask's `.g`, which the framework's cross-fade
-    /// would otherwise mix). Pencil's `transition = "draw"` answers yes, and
-    /// draws the blend as a front lines are drawn up to. `None` (the
-    /// default) leaves every blend to the framework.
-    pub draws_blend:
-        Option<fn(&PostProcessConfig, Option<&crate::style_mask::StyleVariant>) -> bool>,
-    /// Where it stands in its stage's chain when a scene says nothing
-    /// (#746): `None` is its registration index ([`chain_order`]). Lets a
-    /// style registered late run early without moving any other's index.
-    pub default_order: Option<f32>,
-    /// Build the style's pipelines. May panic on a broken driver; the
-    /// framework catches it.
-    pub create: fn(&StyleDevice) -> Box<dyn StylePass>,
-}
-
-/// Building a descriptor (#366): `StyleDescriptor::new` with what every
-/// style has, then a setter for each thing it differs in, all `const` so
-/// the result is a `static`:
-///
-/// ```ignore
-/// pub(super) static STYLE: StyleDescriptor =
-///     StyleDescriptor::new("invert", "Invert", StyleStage::Hdr, create)
-///         .params(&[StyleParam::new("amount", 1.0, 0.0..=1.0)]);
-/// ```
-///
-/// A field added to the descriptor gets its default in `new`, so no style
-/// module has to change; build descriptors only this way.
-impl StyleDescriptor {
-    /// A style with no parameters, options, mask or needs, not
-    /// per-entity, not feeding bloom.
-    pub const fn new(
-        name: &'static str,
-        label: &'static str,
-        stage: StyleStage,
-        create: fn(&StyleDevice) -> Box<dyn StylePass>,
-    ) -> Self {
-        Self {
-            name,
-            label,
-            stage,
-            params: &[],
-            options: &[],
-            uses_mask: MaskUse::Never,
-            uses_albedo: MaskUse::Never,
-            needs: &[],
-            component: None,
-            feeds_bloom: false,
-            yields: true,
-            blends_itself: false,
-            draws_blend: None,
-            default_order: None,
-            create,
-        }
-    }
-
-    /// Its parameters ([`StyleParam::new`]).
-    pub const fn params(mut self, params: &'static [StyleParam]) -> Self {
-        self.params = params;
-        self
-    }
-
-    /// Its named choices ([`StyleOption::new`]).
-    pub const fn options(mut self, options: &'static [StyleOption]) -> Self {
-        self.options = options;
-        self
-    }
-
-    /// Whether and when it reads the style mask.
-    pub const fn uses_mask(mut self, uses_mask: MaskUse) -> Self {
-        self.uses_mask = uses_mask;
-        self
-    }
-
-    /// Whether and when it reads the style albedo (#869).
-    pub const fn uses_albedo(mut self, uses_albedo: MaskUse) -> Self {
-        self.uses_albedo = uses_albedo;
-        self
-    }
-
-    /// The framework-made inputs it reads.
-    pub const fn needs(mut self, needs: &'static [StyleNeed]) -> Self {
-        self.needs = needs;
-        self
-    }
-
-    /// Per-entity, through `component` (`ascii_style`).
-    pub const fn component(mut self, component: &'static str) -> Self {
-        self.component = Some(component);
-        self
-    }
-
-    /// Whether bloom reads its result by default.
-    pub const fn feeds_bloom(mut self, feeds_bloom: bool) -> Self {
-        self.feeds_bloom = feeds_bloom;
-        self
-    }
-
-    /// Draws over every pixel, other styles' entities included
-    /// ([`yields`](Self::yields) off): a debug view, or a finishing glow.
-    pub const fn draws_over_entities(mut self) -> Self {
-        self.yields = false;
-        self
-    }
-
-    /// It honours its entities' `blend` itself, so the framework's
-    /// cross-fade leaves it alone (#396).
-    pub const fn blends_itself(mut self) -> Self {
-        self.blends_itself = true;
-        self
-    }
-
-    /// It draws the blends `when` says itself (#879), the whole frame's or
-    /// an entity variant's ([`draws_blend`](Self::draws_blend)); the stage's
-    /// mix and the framework's cross-fade leave those alone.
-    pub const fn draws_blend(
-        mut self,
-        when: fn(&PostProcessConfig, Option<&crate::style_mask::StyleVariant>) -> bool,
-    ) -> Self {
-        self.draws_blend = Some(when);
-        self
-    }
-
-    /// Its place in its stage's chain when a scene gives none
-    /// ([`default_order`](Self::default_order)), in the units a table's
-    /// `order` uses: registration indices.
-    pub const fn default_order(mut self, order: f32) -> Self {
-        self.default_order = Some(order);
-        self
-    }
-}
-
-impl StyleDescriptor {
-    /// Whether `config` switches this style on (post-processing as a whole
-    /// aside).
-    pub fn is_enabled(&self, config: &PostProcessConfig) -> bool {
-        config.styles.is_enabled(self.name)
-    }
-
-    /// Whether this style runs this frame: `config` draws it over the
-    /// frame ([`Self::covers_frame`]), or it is per-entity and an entity
-    /// asks for it (#266) at a blend above 0 (#400). Never while `config`
-    /// has it off everywhere (#376, `--style <name>:off`).
-    pub fn is_on(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
-        if config.styles.is_off_everywhere(self.name) {
-            return false;
-        }
-        self.covers_frame(config) || (self.component.is_some() && ids.requests(self.name))
-    }
-
-    /// Whether `config` draws this style over the whole frame: its table
-    /// is on and isn't a per-entity style's `scope = "entities"` preset,
-    /// which draws only where its entities ask (#400).
-    pub fn covers_frame(&self, config: &PostProcessConfig) -> bool {
-        self.is_enabled(config) && self.option(config, "scope") != "entities"
-    }
-
-    /// Whether this style reads the style mask this frame: its `uses_mask`
-    /// says so for this config, or it is per-entity and an entity names
-    /// it, opt-outs included.
-    pub fn reads_mask(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
-        self.is_on(config, ids)
-            && (self.uses_mask.now(config, ids)
-                || (self.component.is_some() && ids.mentions(self.name)))
-    }
-
-    /// The mask ids another running style owns this frame (#384), in id
-    /// order: ids whose variant names a registered style other than this
-    /// one that is on ([`is_on`](Self::is_on)), opt-outs aside. A style
-    /// that [`yields`](Self::yields) leaves their pixels as its input
-    /// had them.
-    pub fn foreign_ids(&self, config: &PostProcessConfig, ids: &StyleIds) -> Vec<u16> {
-        let table = owner_table(config, ids);
-        let me = registry_index(self).map(|i| i as u32);
-        (1..table.len())
-            .filter(|&id| table[id] != ownership::NONE && Some(table[id]) != me)
-            .map(|id| id as u16)
-            .collect()
-    }
-
-    /// Whether the framework cross-fades this style's entities by their
-    /// blend this frame (#396): it reads the mask and doesn't blend
-    /// itself.
-    pub fn framework_fades(&self, config: &PostProcessConfig, ids: &StyleIds) -> bool {
-        !self.blends_itself && self.reads_mask(config, ids)
-    }
-
-    /// Whether the style draws this blend itself (#879): the whole frame's
-    /// (`variant` `None`) or an entity variant's. Then the stage draws the
-    /// table's blend as 1 and the cross-fade passes over the variant's
-    /// pixels.
-    pub fn draws_own_blend(
-        &self,
-        config: &PostProcessConfig,
-        variant: Option<&crate::style_mask::StyleVariant>,
-    ) -> bool {
-        self.draws_blend.is_some_and(|when| when(config, variant))
-    }
-
-    /// Whether the style reads the shared edges ([`StyleNeed::Edges`]).
-    pub fn needs_edges(&self) -> bool {
-        self.needs.contains(&StyleNeed::Edges)
-    }
-
-    /// Whether bloom reads this style's result under `config` (#300): the
-    /// scene's `feeds_bloom`, or the descriptor's default. Always false
-    /// for a display style.
-    pub fn feeds_bloom_in(&self, config: &PostProcessConfig) -> bool {
-        self.stage == StyleStage::Hdr
-            && config
-                .styles
-                .feeds_bloom(self.name)
-                .unwrap_or(self.feeds_bloom)
-    }
-
-    /// Parameter `name`'s value in `config`, or its default.
-    pub fn param(&self, config: &PostProcessConfig, name: &str) -> f32 {
-        let default = self
-            .params
-            .iter()
-            .find(|p| p.name == name)
-            .map_or(0.0, |p| p.default);
-        config.styles.param(self.name, name).unwrap_or(default)
-    }
-
-    /// Option `name`'s value in `config`, or its default.
-    pub fn option<'c>(&self, config: &'c PostProcessConfig, name: &str) -> &'c str {
-        let default = self
-            .options
-            .iter()
-            .find(|o| o.name == name)
-            .map_or("", |o| o.default);
-        config.styles.option(self.name, name).unwrap_or(default)
-    }
-
-    /// How setting `name` is presented: an option's or a parameter's own
-    /// [`StyleUi`], and a colour base's (`tint`) its red channel's. A
-    /// colour's channels have none of their own (`tint_r` reads as
-    /// "Tint r"), and a name that is no setting has none.
-    pub fn ui(&self, name: &str) -> Option<&'static StyleUi> {
-        let options: &'static [StyleOption] = self.options;
-        let params: &'static [StyleParam] = self.params;
-        if let Some(o) = options.iter().find(|o| o.name == name) {
-            return Some(&o.ui);
-        }
-        if let Some(p) = params.iter().find(|p| p.name == name) {
-            return self.color_of(name).is_none().then_some(&p.ui);
-        }
-        self.color_setting(name).map(|c| &c.channels[0].ui)
-    }
-
-    /// Why setting `name` does nothing under `config`, or `None` while it
-    /// is read (#365): its [`when`](StyleParam::when) names an option whose
-    /// current value isn't one of those that read it. The line is what the
-    /// F4 menu shows on the greyed-out row.
-    pub fn unused_reason(&self, config: &PostProcessConfig, name: &str) -> Option<String> {
-        let ui = self.ui(name)?;
-        ui.conditions.iter().flatten().find_map(|c| {
-            let current = self.option(config, c.option);
-            if c.holds(current) {
-                return None;
-            }
-            let label = self.label_for(c.option);
-            let shown = if current.is_empty() {
-                "(default)"
-            } else {
-                current
-            };
-            Some(if c.unless {
-                format!("Unused while {label} is {shown}")
-            } else {
-                format!(
-                    "Unused while {label} is {shown}: only {} reads it",
-                    c.values.join(" or ")
-                )
-            })
-        })
-    }
-
-    /// What the F4 menu calls setting `name`: its label, or the name made
-    /// readable (`tint_r` -> `Tint r`).
-    pub fn label_for(&self, name: &str) -> String {
-        match self.ui(name) {
-            Some(ui) if !ui.label.is_empty() => ui.label.to_string(),
-            _ => humanize(name),
-        }
-    }
-
-    /// Setting `name`'s hover line; empty for none.
-    pub fn help_for(&self, name: &str) -> &'static str {
-        self.ui(name).map_or("", |ui| ui.help)
-    }
-
-    /// Whether setting `name` takes whole numbers only.
-    pub fn is_integer(&self, name: &str) -> bool {
-        self.ui(name).is_some_and(|ui| ui.integer)
-    }
-
-    /// The colour whose key is `base` (`tint`), if the style has its three
-    /// channels.
-    pub fn color_setting(&self, base: &str) -> Option<StyleColor> {
-        let params: &'static [StyleParam] = self.params;
-        let find = |c: &str| {
-            let name = format!("{base}_{c}");
-            params.iter().find(|p| p.name == name)
-        };
-        let (r, g, b) = (find("r")?, find("g")?, find("b")?);
-        // The red channel's name, less `_r`, is the 'static base
-        let base = &r.name[..r.name.len() - 2];
-        Some(StyleColor {
-            base,
-            channels: [r, g, b],
-        })
-    }
-
-    /// The style's colours (#315), in the order their red channels stand.
-    pub fn colors(&self) -> Vec<StyleColor> {
-        self.params
-            .iter()
-            .filter_map(|p| p.name.strip_suffix("_r"))
-            .filter_map(|base| self.color_setting(base))
-            .collect()
-    }
-
-    /// The colour a parameter is a channel of, if it is one.
-    pub fn color_of(&self, param: &str) -> Option<StyleColor> {
-        ["_r", "_g", "_b"]
-            .iter()
-            .find_map(|c| param.strip_suffix(c))
-            .and_then(|base| self.color_setting(base))
-    }
-
-    /// Colour `base` in `config`, each channel as set or its default. A
-    /// name that is no colour of this style reads black.
-    pub fn color(&self, config: &PostProcessConfig, base: &str) -> [f32; 3] {
-        match self.color_setting(base) {
-            Some(c) => c.channels.map(|p| self.param(config, p.name)),
-            None => [0.0; 3],
-        }
-    }
-
-    /// The keys a scene's table for this style takes besides `enabled` and
-    /// `order`: options, then parameters with each colour's channels folded
-    /// into its one key (`tint`), for error messages.
-    pub fn setting_keys(&self) -> Vec<&'static str> {
-        let mut keys: Vec<&'static str> = self.options.iter().map(|o| o.name).collect();
-        for p in self.params {
-            match self.color_of(p.name) {
-                Some(c) if !keys.contains(&c.base) => keys.push(c.base),
-                Some(_) => {}
-                None => keys.push(p.name),
-            }
-        }
-        keys
-    }
-
-    /// Every key a scene's table for this style can hold: the
-    /// framework's ([`RESERVED_KEYS`]: `enabled`, `order`, `feeds_bloom`,
-    /// `blend` and the reveal's), the options, each parameter (colour
-    /// channels one by one) and each colour's own key. A commit to the
-    /// scene (#364) owns these and leaves any other key alone, so a reveal
-    /// switched off in F4 leaves the file with it (#875).
-    pub fn table_keys(&self) -> Vec<&'static str> {
-        let mut keys = RESERVED_KEYS.to_vec();
-        keys.extend(self.options.iter().map(|o| o.name));
-        keys.extend(self.params.iter().map(|p| p.name));
-        keys.extend(self.colors().iter().map(|c| c.base));
-        keys
-    }
-
-    /// The rows of this style's F4 section, in drawing order.
-    pub fn controls(&self) -> Vec<StyleControl> {
-        let mut rows: Vec<StyleControl> = self.options.iter().map(StyleControl::Option).collect();
-        for p in self.params {
-            match self.color_of(p.name) {
-                Some(c) if std::ptr::eq(c.channels[0], p) => rows.push(StyleControl::Color {
-                    base: c.base,
-                    channels: c.channels,
-                }),
-                Some(_) => {}
-                None => rows.push(StyleControl::Param(p)),
-            }
-        }
-        rows
-    }
-}
-
-/// `tint_r` -> `Tint r`: a setting's name as a label.
-fn humanize(name: &str) -> String {
-    let spaced = name.replace('_', " ");
-    let mut chars = spaced.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => String::new(),
-    }
-}
-
-/// Style `descriptor`'s settings in `config` as the scene TOML that would
-/// set them (#268), for the F4 menu's Copy TOML: the table header, and
-/// only the values that differ from the defaults. A style that is off says
-/// so, since a table on its own switches its style on.
-pub fn style_toml(descriptor: &StyleDescriptor, config: &PostProcessConfig) -> String {
-    let mut out = format!("[post_process.styles.{}]\n", descriptor.name);
-    if !descriptor.is_enabled(config) {
-        out.push_str("enabled = false\n");
-    }
-    if let Some(order) = config.styles.order(descriptor.name) {
-        if order.fract() == 0.0 {
-            out.push_str(&format!("order = {}\n", order as i64));
-        } else {
-            out.push_str(&format!("order = {}\n", toml_float(order)));
-        }
-    }
-    let feeds = descriptor.feeds_bloom_in(config);
-    if descriptor.stage == StyleStage::Hdr && feeds != descriptor.feeds_bloom {
-        out.push_str(&format!("feeds_bloom = {feeds}\n"));
-    }
-    let blend = config.styles.blend(descriptor.name);
-    if blend < 1.0 {
-        out.push_str(&format!("blend = {}\n", toml_float(blend)));
-    }
-    if config.styles.follows_tear(descriptor.name) {
-        out.push_str("blend_source = \"tear\"\n");
-    }
-    if let Some(setting) = config.styles.get(descriptor.name) {
-        out.push_str(&setting.reveal.toml_lines());
-    }
-    for o in descriptor.options {
-        let value = descriptor.option(config, o.name);
-        if value != o.default {
-            out.push_str(&format!("{} = {:?}\n", o.name, value));
-        }
-    }
-    for p in descriptor.params {
-        // A colour is one array key, where its red channel stands (#315)
-        if let Some(c) = descriptor.color_of(p.name) {
-            let value = descriptor.color(config, c.base);
-            if std::ptr::eq(c.channels[0], p) && value != c.default_rgb() {
-                let [r, g, b] = value.map(toml_float);
-                out.push_str(&format!("{} = [{r}, {g}, {b}]\n", c.base));
-            }
-            continue;
-        }
-        let value = descriptor.param(config, p.name);
-        if value != p.default {
-            let integer = descriptor.is_integer(p.name) && value.fract() == 0.0;
-            if integer {
-                out.push_str(&format!("{} = {}\n", p.name, value as i64));
-            } else {
-                out.push_str(&format!("{} = {}\n", p.name, toml_float(value)));
-            }
-        }
-    }
-    out
-}
-
-/// An `f32` as a TOML float: the shortest spelling that reads back the
-/// same, with a `.0` so it stays a float.
-fn toml_float(value: f32) -> String {
-    let text = format!("{value}");
-    if text.contains(['.', 'e', 'E']) || !value.is_finite() {
-        text
-    } else {
-        format!("{text}.0")
-    }
-}
-
-/// A style's GPU side: pipelines, layouts and uniform buffers, made once.
-pub trait StylePass: Send + Sync {
-    /// Record this frame's draws: read `input`, write every pixel of
-    /// `output` (both [`StyleFrame::width`] x [`StyleFrame::height`], in
-    /// [`StyleFrame::format`]). `input_id` distinguishes the views the
-    /// input can be; key bind groups over it with it
-    /// ([`StyleFrame::sampled_input`] does).
-    fn encode(
-        &self,
-        frame: &StyleFrame<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-        input: &StyleInput<'_>,
-        output: &wgpu::TextureView,
-    );
-
-    /// Keep each frame's glyph grid for [`read_text`](Self::read_text)
-    /// (#317). Only a style that draws glyphs does anything with it.
-    fn set_text_capture(&self, _on: bool) {}
-
-    /// The glyph grid the last frame encoded with capture on drew, once
-    /// that frame's submission is done (this waits on the device). `None`
-    /// from a style that draws no glyphs, or before such a frame.
-    fn read_text(&self, _device: &wgpu::Device) -> Option<GlyphText> {
-        None
-    }
-
-    /// The grid this style draws the whole frame in whole cells of, when
-    /// it wants the edge of another style's entity snapped to it (#534):
-    /// the framework's [`ownership`] cut then gives each cell of the grid
-    /// wholly to one side, by how much of it is the other style's, rather
-    /// than cutting a cell along the entity's outline. Asked of a display
-    /// style once a frame, before the stage runs (`frame.descriptor` is
-    /// this style's); only the first style of the stage that answers is
-    /// heard. `None` (the default) keeps the cut to the mask's pixel.
-    fn ownership_cells(&self, _frame: &StyleFrame<'_>) -> Option<OwnershipCells> {
-        None
-    }
-}
-
-/// A whole-frame grid the [`ownership`] cut snaps to (#534), in output
-/// pixels: `cell` wide and tall from `origin`, as the style draws it. A
-/// cell is the style's (drawn whole, another style's pixels in it
-/// included) while at least `share` of its 16 lattice samples are not
-/// another style's; otherwise it is the other style's whole, and the
-/// style's own pixels in it show what came into the style.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct OwnershipCells {
-    pub cell: [f32; 2],
-    pub origin: [f32; 2],
-    /// 1/16..1: the least share of a cell's samples the style must hold.
-    pub share: f32,
-}
-
-/// The stage's snapped ownership (#534): which style snaps (its registry
-/// index), its grid, and where another style's ids can be on screen, so
-/// the cut leaves every other pixel at once.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct SnappedOwnership {
-    pub style: u32,
-    pub cells: OwnershipCells,
-    /// Output pixels (x0, y0, x1, y1).
-    pub rect: [f32; 4],
-}
-
-/// The view a style reads, with an id that's stable for as long as the
-/// chain's bind groups are.
-pub struct StyleInput<'a> {
-    pub view: &'a wgpu::TextureView,
-    pub id: u64,
-}
-
-/// The camera, for styles that read depth (edges, fog-aware washes).
-#[derive(Clone, Copy, Debug)]
-pub struct StyleCamera {
-    /// World to clip, column-major (for projecting an anchor, #266).
-    pub view_proj: [[f32; 4]; 4],
-    pub inv_view_proj: [[f32; 4]; 4],
-    pub position: [f32; 3],
-    pub near: f32,
-    pub far: f32,
-}
-
-/// Everything a style may read in one frame.
-pub struct StyleFrame<'a> {
-    pub device: &'a wgpu::Device,
-    pub queue: &'a wgpu::Queue,
-    pub config: &'a PostProcessConfig,
-    pub descriptor: &'static StyleDescriptor,
-    /// The size of the input and output, in pixels.
-    pub width: u32,
-    pub height: u32,
-    /// The input's and output's format.
-    pub format: wgpu::TextureFormat,
-    /// The scene's depth (single-sample; under a render scale, the scaled
-    /// scene's). Sample it by UV: at the display stage it is smaller than
-    /// the output.
-    pub depth: &'a wgpu::TextureView,
-    /// [`depth`](Self::depth)'s size in pixels, which a view doesn't say:
-    /// the scene's, so smaller than `width` x `height` at the display stage
-    /// under a render scale. The style mask is this size too.
-    pub depth_size: [u32; 2],
-    /// Who vouches for `depth`, so bind groups over it may be kept
-    /// ([`StyleFrame::depth_bind`], #379).
-    pub depth_key: crate::bind_cache::DepthKey,
-    pub camera: StyleCamera,
-    /// The entity style mask (#263): one style id a pixel
-    /// ([`STYLE_MASK_FORMAT`](crate::style_mask::STYLE_MASK_FORMAT),
-    /// `texture_2d<u32>`, 0 = unstyled), at the scene's resolution like
-    /// [`depth`](Self::depth), so a display-stage style reads it by UV
-    /// with `textureLoad`. `Some` whenever a style with
-    /// [`uses_mask`](StyleDescriptor::uses_mask) is on. It lives with the
-    /// chain; bind it with [`mask_bind`](Self::mask_bind).
-    pub mask: Option<&'a wgpu::TextureView>,
-    /// Whether some pixel of [`mask`](Self::mask) may hold a blend below 1
-    /// this frame: an entity part-way into its style (#278) or a veil in
-    /// front of one (#290). The framework's cross-fade (#396) runs only
-    /// while it holds.
-    pub mask_fades: bool,
-    /// Which id each style name has in [`mask`](Self::mask).
-    pub style_ids: &'a crate::style_mask::StyleIds,
-    /// Where each style id's entities can be on screen this frame (#385),
-    /// from the world bounds of the draws the mask draws. Read it through
-    /// [`styled_rect`](Self::styled_rect).
-    pub style_bounds: &'a crate::style_mask::StyleBounds,
-    /// The shared geometry edges (#301, [`edges`] says what the channels
-    /// hold): [`EDGE_FORMAT`], the depth's size, read by UV with
-    /// `textureLoad`. `Some` whenever a style that
-    /// [`needs`](StyleDescriptor::needs) them is on; the framework draws
-    /// them once, before the first stage, for every style that reads them.
-    /// Bind it with [`edges_bind`](Self::edges_bind).
-    pub edges: Option<Arc<StyleTexture>>,
-    /// The style albedo (#869): each opaque mesh's own colour before light
-    /// ([`ALBEDO_FORMAT`](crate::style_albedo::ALBEDO_FORMAT), linear rgb,
-    /// alpha 1 where a mesh was drawn and 0 where none was: the sky,
-    /// terrain, grass, the ocean, particles), at the depth's size, read by
-    /// UV with `textureLoad`. `Some` whenever a style that
-    /// [`uses_albedo`](StyleDescriptor::uses_albedo) is on; key bind groups
-    /// over it with [`albedo_key`](Self::albedo_key).
-    pub albedo: Option<Arc<StyleTexture>>,
-    /// The chain's linear, clamped sampler.
-    pub linear_sampler: &'a wgpu::Sampler,
-    /// Seconds of game time, for animated styles.
-    pub time: f32,
-    /// Seconds of game time since the last frame (#342), for history that
-    /// decays at a rate rather than a step a frame. Game time, so it is the
-    /// fixed step under `--frame-step` and the capture is deterministic.
-    /// Read it through [`per_60hz`] to turn a per-60 Hz-frame weight into
-    /// this frame's.
-    pub dt: f32,
-    /// This frame's number: one more than the last frame the renderer drew
-    /// through the post chain. A style that keeps history from frame to
-    /// frame (ASCII's temporal stability, #277) trusts it only when the
-    /// last frame it drew is `frame - 1`, so a frame drawn without it (the
-    /// style switched off a while) starts it over.
-    pub frame: u64,
-    /// Bumped by [`SceneRenderer::reset_style_history`](crate::SceneRenderer::reset_style_history)
-    /// (a new scene, a camera cut): history from another epoch is not
-    /// this picture's past.
-    pub history_epoch: u64,
-    /// Physical pixels per logical point of the window (the OS scale
-    /// factor). A style sized in points multiplies by it, so its cells keep
-    /// their size on a high-DPI display. 1 headless unless asked.
-    pub pixels_per_point: f32,
-    /// The scene's folder, when the host knows it.
-    pub scene_dir: Option<&'a std::path::Path>,
-    /// Where a style finds the files it loads (a glyph set, a palette, a
-    /// paper): the scene's project and folder, searched by the one rule
-    /// (ADR 0114). With no scene, the working directory stands in for the
-    /// scene's folder.
-    pub assets: &'a flint_core::project::AssetScope,
-    /// The renderer's debug shading mode: a style with a debug view of its
-    /// own draws it under its mode (ASCII's edges under
-    /// [`DebugMode::StyleEdges`](crate::DebugMode::StyleEdges), #349).
-    pub debug_mode: crate::DebugMode,
-    pub(crate) binds: &'a BindCache,
-    pub(crate) targets: &'a StyleTargets,
-    /// The grid the stage's ownership cut snaps to (#534), set by
-    /// [`run_stage`] from [`StylePass::ownership_cells`]; `None` cuts to
-    /// the mask's pixel.
-    pub(crate) snapped_ownership: Option<SnappedOwnership>,
-}
-
-/// Whether per-entity styles scissor their passes to their entities
-/// (#385): on unless `FLINT_STYLE_SCISSOR=0`, which is for checking that
-/// the scissored frame is the full one, byte for byte. Read once.
-pub fn scissor_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| flint_core::env::STYLE_SCISSOR.flag().unwrap_or(true))
-}
-
-/// A weight `w` that means "keep this much of last frame, per 60 Hz frame"
-/// as this frame's weight, `w^(dt * 60)` (#342): at 120 Hz two frames keep
-/// what one 60 Hz frame keeps, at 30 Hz one frame keeps what two do, so a
-/// change settles in the same game time at any rate. A `dt` that isn't a
-/// positive number says nothing about the rate and reads as 1/60.
-pub fn per_60hz(w: f32, dt: f32) -> f32 {
-    let dt = if dt.is_finite() && dt > 0.0 {
-        dt
-    } else {
-        1.0 / 60.0
-    };
-    w.clamp(0.0, 1.0).powf(dt * 60.0)
-}
-
-impl StyleFrame<'_> {
-    pub fn texel_size(&self) -> [f32; 2] {
-        [1.0 / self.width as f32, 1.0 / self.height as f32]
-    }
-
-    /// Whether [`format`](Self::format) is sRGB: samples come back linear
-    /// and writes are encoded.
-    pub fn srgb(&self) -> bool {
-        self.format.is_srgb()
-    }
-
-    /// This style's parameter `name`, from the config or its default.
-    pub fn param(&self, name: &str) -> f32 {
-        self.descriptor.param(self.config, name)
-    }
-
-    /// This style's option `name`, from the config or its default.
-    pub fn option(&self, name: &str) -> &str {
-        self.descriptor.option(self.config, name)
-    }
-
-    /// This style's colour `name` (`tint`, #315): its `_r`/`_g`/`_b`
-    /// channels from the config or their defaults, in display values.
-    pub fn color(&self, name: &str) -> [f32; 3] {
-        self.descriptor.color(self.config, name)
-    }
-
-    /// A texture of the style's own, `width` x `height` in `format`, made
-    /// on first use and kept until the chain is rebuilt (on resize).
-    /// `name` must be unique across styles; prefix it with the style's.
-    pub fn target(&self, name: &'static str, format: wgpu::TextureFormat) -> Arc<StyleTexture> {
-        self.targets
-            .get(self.device, name, format, self.width, self.height)
-    }
-
-    /// [`target`](Self::target) at a size of the style's own, such as one
-    /// texel per glyph cell. A name asked for at a new size is made again,
-    /// so bind groups over it must be keyed by something that changes with
-    /// it (see the ASCII style's history generation).
-    pub fn target_sized(
-        &self,
-        name: &'static str,
-        format: wgpu::TextureFormat,
-        width: u32,
-        height: u32,
-    ) -> Arc<StyleTexture> {
-        self.targets.get(self.device, name, format, width, height)
-    }
-
-    /// A bind group kept with the chain, made with `make` the first time.
-    pub fn bind(
-        &self,
-        name: &'static str,
-        variant: u64,
-        make: impl FnOnce() -> wgpu::BindGroup,
-    ) -> Arc<wgpu::BindGroup> {
-        self.binds.get(name, variant, make)
-    }
-
-    /// A bind group over [`depth`](Self::depth): kept while the chain owns
-    /// the depth or the caller's depth id holds, made for this frame alone
-    /// when nothing vouches for it (#379).
-    pub fn depth_bind(
-        &self,
-        name: &'static str,
-        variant: u64,
-        make: impl FnOnce() -> wgpu::BindGroup,
-    ) -> Arc<wgpu::BindGroup> {
-        self.binds.get_over(self.depth_key, name, variant, make)
-    }
-
-    /// True the first time it's asked about `name` while the chain lives:
-    /// for uniforms that only change on resize, such as texel sizes.
-    pub fn first_write(&self, name: &'static str) -> bool {
-        self.binds.first_write(name)
-    }
-
-    /// A kept bind group of `view` (binding 0) and the linear sampler
-    /// (binding 1), the shape most passes read a texture in. `view` must
-    /// live as long as the chain: a [`target`](Self::target) of this style.
-    pub fn sampled(
-        &self,
-        name: &'static str,
-        layout: &wgpu::BindGroupLayout,
-        view: &wgpu::TextureView,
-    ) -> Arc<wgpu::BindGroup> {
-        self.bind(name, 0, || self.make_sampled(name, layout, view))
-    }
-
-    /// [`sampled`](Self::sampled) over the style's input, keyed by which
-    /// view the input is this frame.
-    pub fn sampled_input(
-        &self,
-        name: &'static str,
-        layout: &wgpu::BindGroupLayout,
-        input: &StyleInput<'_>,
-    ) -> Arc<wgpu::BindGroup> {
-        self.bind(name, input.id, || {
-            self.make_sampled(name, layout, input.view)
-        })
-    }
-
-    /// A kept bind group of the style mask at binding 0, for a layout made
-    /// with [`kit::mask_layout`]; `None` while there's no mask.
-    pub fn mask_bind(
-        &self,
-        name: &'static str,
-        layout: &wgpu::BindGroupLayout,
-    ) -> Option<Arc<wgpu::BindGroup>> {
-        let mask = self.mask?;
-        Some(self.bind(name, 0, || {
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(name),
-                layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(mask),
-                }],
-            })
-        }))
-    }
-
-    /// A kept bind group of the shared edges at binding 0, for a layout
-    /// made with [`kit::texture_layout`]; `None` while no style needs them.
-    pub fn edges_bind(
-        &self,
-        name: &'static str,
-        layout: &wgpu::BindGroupLayout,
-    ) -> Option<Arc<wgpu::BindGroup>> {
-        let edges = self.edges.as_ref()?;
-        Some(self.bind(name, self.edges_key(), || {
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(name),
-                layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&edges.view),
-                }],
-            })
-        }))
-    }
-
-    /// A key for bind groups over [`albedo`](Self::albedo): its size, as
-    /// [`edges_key`](Self::edges_key) is the edges'. 0 while there is none.
-    pub fn albedo_key(&self) -> u64 {
-        self.albedo
-            .as_ref()
-            .map_or(0, |a| (u64::from(a.width) << 32) | u64::from(a.height))
-    }
-
-    /// A key for bind groups over [`edges`](Self::edges): its size, which
-    /// is what a render-scale step changes (the edge target is made again
-    /// at the depth's new size while the chain's bind groups stay). 0
-    /// while there are none.
-    pub fn edges_key(&self) -> u64 {
-        self.edges
-            .as_ref()
-            .map_or(0, |e| (u64::from(e.width) << 32) | u64::from(e.height))
-    }
-
-    /// The style mask id of style `name` this frame, if an entity asks
-    /// for it.
-    pub fn style_id(&self, name: &str) -> Option<u16> {
-        self.style_ids.id(name)
-    }
-
-    /// `(mask id, variant)` for each of this style's per-entity variants
-    /// this frame (#266), in id order. Read a variant's settings with
-    /// [`variant_param`](Self::variant_param) and
-    /// [`variant_option`](Self::variant_option).
-    pub fn variants(&self) -> impl Iterator<Item = (u16, &crate::style_mask::StyleVariant)> {
-        self.style_ids.variants_of(self.descriptor.name)
-    }
-
-    /// Parameter `name` of `variant`: the entity's, else the scene's, else
-    /// the style's default.
-    pub fn variant_param(&self, variant: &crate::style_mask::StyleVariant, name: &str) -> f32 {
-        variant.param(self.descriptor, self.config, name)
-    }
-
-    /// Colour `name` of `variant` (#315), channel by channel: the entity's,
-    /// else the scene's, else the style's default.
-    pub fn variant_color(&self, variant: &crate::style_mask::StyleVariant, name: &str) -> [f32; 3] {
-        match self.descriptor.color_setting(name) {
-            Some(c) => c.channels.map(|p| self.variant_param(variant, p.name)),
-            None => [0.0; 3],
-        }
-    }
-
-    /// Option `name` of `variant`: the entity's, else the scene's, else the
-    /// style's default.
-    pub fn variant_option<'v>(
-        &'v self,
-        variant: &'v crate::style_mask::StyleVariant,
-        name: &str,
-    ) -> &'v str {
-        variant.option(self.descriptor, self.config, name)
-    }
-
-    /// The mask ids whose pixels another running style owns (#384,
-    /// [`StyleDescriptor::foreign_ids`]). The framework already puts the
-    /// input back on them after a style that
-    /// [`yields`](StyleDescriptor::yields) draws; a style reads this to
-    /// skip work there (pencil's contours, ASCII's text grid).
-    pub fn foreign_ids(&self) -> Vec<u16> {
-        self.descriptor.foreign_ids(self.config, self.style_ids)
-    }
-
-    /// The owner table the ownership pass reads after this style, or
-    /// `None` when it has nothing to do: the style doesn't yield, there is
-    /// no mask, a debug view runs one style alone, or no pixel is another
-    /// style's.
-    pub(crate) fn owner_table(&self) -> Option<Vec<u32>> {
-        if !self.descriptor.yields
-            || self.mask.is_none()
-            || matches!(
-                self.debug_mode,
-                crate::DebugMode::StyleMask | crate::DebugMode::StyleEdges
-            )
-        {
-            return None;
-        }
-        let me = registry_index(self.descriptor)? as u32;
-        let table = owner_table(self.config, self.style_ids);
-        // Under a snapped cut (#534) a style that isn't the snapping one
-        // gives back the other styles' pixels in the cells the snapping
-        // style holds, even with nothing of its own to cut
-        let snapped = self.snapped_ownership.is_some_and(|s| s.style != me);
-        (snapped || table.iter().any(|&o| o != ownership::NONE && o != me)).then_some(table)
-    }
-
-    /// Where the mask can hold an id another running style owns (#534),
-    /// as [`mask_rect`](Self::mask_rect) is for this style's own ids:
-    /// `None` when they could be anywhere, empty when none is in view.
-    pub fn foreign_rect(&self, pad: u32) -> Option<kit::PixelRect> {
-        let foreign = self.foreign_ids();
-        self.ids_rect(pad, |id| foreign.binary_search(&id).is_ok())
-    }
-
-    /// Whether `config` switches this style on for the whole frame, rather
-    /// than only for the entities that ask for it.
-    pub fn whole_frame(&self) -> bool {
-        self.descriptor.is_enabled(self.config)
-    }
-
-    /// Whether the style draws every pixel this frame: its table is on and
-    /// its `scope` (where it has one) isn't `entities`. Otherwise it draws
-    /// only its entities' pixels and passes the rest through.
-    pub fn covers_frame(&self) -> bool {
-        self.whole_frame() && self.option("scope") != "entities"
-    }
-
-    /// The pixels of this frame (`width` x `height`) the style can change
-    /// (#385): the screen bounds of its per-entity variants' draws (opt-outs
-    /// left out), grown by `pad` pixels for how far a styled pixel reaches
-    /// (a cell, a blur) and by a pixel or two for the mask's own rounding.
-    /// `None` when that could be anywhere: the style
-    /// [`covers_frame`](Self::covers_frame), one of its draws has no bounds
-    /// or crosses the camera plane, or `FLINT_STYLE_SCISSOR=0` turns the
-    /// scissor off. An empty rect means no entity of the style is in view.
-    ///
-    /// Outside it a per-entity style's passthrough holds, so a pass that
-    /// writes the input there ([`kit::scissored_pass`]) is the full pass.
-    pub fn styled_rect(&self, pad: u32) -> Option<kit::PixelRect> {
-        if self.covers_frame() {
-            return None;
-        }
-        self.variants_rect(pad, |_, v| !v.off)
-    }
-
-    /// The pixels of this frame where the style mask can hold one of the
-    /// style's ids (#507): the screen bounds of every per-entity variant's
-    /// draws, opt-outs included, grown by `pad` and the mask's rounding as
-    /// [`styled_rect`](Self::styled_rect) is, whether or not the style
-    /// covers the frame. Outside it every mask texel within `pad` pixels
-    /// reads as none of the style's, so a whole-frame pass can skip its
-    /// mask reads there. `None` when the ids could be anywhere (as for
-    /// `styled_rect`, `FLINT_STYLE_SCISSOR=0` included); empty when none is
-    /// in view.
-    pub fn mask_rect(&self, pad: u32) -> Option<kit::PixelRect> {
-        self.variants_rect(pad, |_, _| true)
-    }
-
-    /// [`mask_rect`](Self::mask_rect) of the one variant with mask id `id`:
-    /// where its own pixels can be.
-    pub fn variant_rect(&self, id: u16, pad: u32) -> Option<kit::PixelRect> {
-        self.variants_rect(pad, |of, _| of == id)
-    }
-
-    fn variants_rect(
-        &self,
-        pad: u32,
-        with: impl Fn(u16, &crate::style_mask::StyleVariant) -> bool,
-    ) -> Option<kit::PixelRect> {
-        let mine: Vec<u16> = self
-            .variants()
-            .filter(|&(id, v)| with(id, v))
-            .map(|(id, _)| id)
-            .collect();
-        self.ids_rect(pad, |id| mine.contains(&id))
-    }
-
-    /// The screen bounds of the ids `with` picks, grown by `pad` and the
-    /// mask's rounding ([`variants_rect`](Self::variants_rect)).
-    fn ids_rect(&self, pad: u32, with: impl Fn(u16) -> bool) -> Option<kit::PixelRect> {
-        if !scissor_enabled() {
-            return None;
-        }
-        let mut uv = crate::style_mask::IdBounds::Nowhere;
-        for (id, _) in self.style_ids.iter() {
-            if with(id) {
-                uv = uv.union(self.style_bounds.get(id));
-            }
-        }
-        let [x0, y0, x1, y1] = match uv {
-            crate::style_mask::IdBounds::Everywhere => return None,
-            crate::style_mask::IdBounds::Nowhere => return Some(kit::PixelRect::EMPTY),
-            crate::style_mask::IdBounds::Uv(r) => r,
-        };
-        let (w, h) = (self.width as f32, self.height as f32);
-        let rect = kit::PixelRect {
-            x: (x0 * w).floor().max(0.0) as u32,
-            y: (y0 * h).floor().max(0.0) as u32,
-            width: 0,
-            height: 0,
-        };
-        let right = ((x1 * w).ceil().max(0.0) as u32).min(self.width);
-        let bottom = ((y1 * h).ceil().max(0.0) as u32).min(self.height);
-        let rect = kit::PixelRect {
-            width: right.saturating_sub(rect.x),
-            height: bottom.saturating_sub(rect.y),
-            ..rect
-        };
-        // The mask is drawn at the depth's size: a display pixel reads the
-        // mask texel under it, up to one texel (of this frame's pixels)
-        // past the projected box, and MSAA or a rasterizer's rounding a
-        // pixel more
-        let texel = (self.width as f32 / self.depth_size[0].max(1) as f32)
-            .max(self.height as f32 / self.depth_size[1].max(1) as f32)
-            .ceil() as u32;
-        let slack = 2 + texel;
-        let rect = rect.padded(pad.saturating_add(slack), self.width, self.height);
-        tracing::trace!(
-            style = self.descriptor.name,
-            pad,
-            x = rect.x,
-            y = rect.y,
-            w = rect.width,
-            h = rect.height,
-            "styled rect"
-        );
-        Some(rect)
-    }
-
-    /// Where world point `p` lands in this frame, in pixels from the top
-    /// left; `None` behind the camera.
-    pub fn project(&self, p: [f32; 3]) -> Option<[f32; 2]> {
-        let m = &self.camera.view_proj;
-        let row = |r: usize| m[0][r] * p[0] + m[1][r] * p[1] + m[2][r] * p[2] + m[3][r];
-        let w = row(3);
-        if !w.is_finite() || w <= 1e-6 {
-            return None;
-        }
-        let (x, y) = (row(0) / w, row(1) / w);
-        Some([
-            (x * 0.5 + 0.5) * self.width as f32,
-            (0.5 - y * 0.5) * self.height as f32,
-        ])
-    }
-
-    /// A kept bind group of one uniform buffer at binding 0.
-    pub fn uniform(
-        &self,
-        name: &'static str,
-        layout: &wgpu::BindGroupLayout,
-        buffer: &wgpu::Buffer,
-    ) -> Arc<wgpu::BindGroup> {
-        self.bind(name, 0, || {
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(name),
-                layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding(),
-                }],
-            })
-        })
-    }
-
-    fn make_sampled(
-        &self,
-        name: &'static str,
-        layout: &wgpu::BindGroupLayout,
-        view: &wgpu::TextureView,
-    ) -> wgpu::BindGroup {
-        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(name),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(self.linear_sampler),
-                },
-            ],
-        })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Settings: `[post_process.styles.<name>]`
-// ---------------------------------------------------------------------------
-
-/// One style's settings from the config.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct StyleSetting {
-    pub enabled: bool,
-    pub params: BTreeMap<String, f32>,
-    pub options: BTreeMap<String, String>,
-    /// Where the style stands in its stage's chain (#299): lower runs
-    /// first. `None` is its registration index ([`chain_order`]).
-    pub order: Option<f32>,
-    /// The scene's `feeds_bloom` (#300), when it sets one; `None` keeps
-    /// the descriptor's default.
-    pub feeds_bloom: Option<bool>,
-    /// How much of the style's result shows over what it read, 0 to 1
-    /// (#369); `None` is all of it. A script fades a whole-frame style in
-    /// and out by ramping it (the stage draws what the style read back over
-    /// its result, [`run_stage`]).
-    pub blend: Option<f32>,
-    /// Where on the screen the style shows (#406): `reveal` (0 to 1) and
-    /// the `reveal_*` keys, a ragged region the frame it read shows around.
-    /// Empty is everywhere.
-    pub reveal: reveal::StyleReveal,
-    /// `blend_source = "tear"` (#746): the style shows only where the frame
-    /// tears (`[post_process] tear`), its blend times the tear's mask at
-    /// each pixel, as a prop's does with the same key (#397). With no tear
-    /// it is left out of the chain. `"own"` (the default) is its blend
-    /// alone.
-    pub follows_tear: bool,
-    /// Off everywhere (#376): not only the table but every entity whose
-    /// component or `style_mask` would switch the style on for its own
-    /// pixels. `--style <name>:off` sets it, so a styled scene renders
-    /// unstyled with the rest of its post-processing kept; switching the
-    /// style on clears it. A scene's table never sets it.
-    pub off_everywhere: bool,
-}
-
-/// Keys every style's table reads besides its own parameters and options;
-/// no style may name a parameter or option after one. The `reveal` keys
-/// (#406) are [`reveal::KEYS`].
-pub const RESERVED_KEYS: [&str; 19] = [
-    "enabled",
-    "order",
-    "feeds_bloom",
-    "blend",
-    "blend_source",
-    "reveal",
-    "reveal_shape",
-    "reveal_ink",
-    "reveal_rim_color",
-    "reveal_scale",
-    "reveal_ragged",
-    "reveal_edge",
-    "reveal_angle",
-    "reveal_x",
-    "reveal_y",
-    "reveal_boil",
-    "reveal_seed",
-    "reveal_rim",
-    "reveal_shadow",
-];
-
-/// A table's `blend_source` (#746): `Some(true)` for `"tear"`, `Some(false)`
-/// for `"own"`, `None` for anything else.
-pub fn blend_source(value: &str) -> Option<bool> {
-    match value {
-        "tear" => Some(true),
-        "own" => Some(false),
-        _ => None,
-    }
-}
-
-/// The generic style settings on [`PostProcessConfig`], by style name.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct StyleSettings {
-    styles: BTreeMap<String, StyleSetting>,
-}
-
-impl StyleSettings {
-    pub fn is_enabled(&self, name: &str) -> bool {
-        self.styles.get(name).is_some_and(|s| s.enabled)
-    }
-
-    /// Switch style `name`'s table on or off. On also lifts an
-    /// [`off_everywhere`](Self::set_off_everywhere); off leaves the style's
-    /// entities to switch it on for their own pixels.
-    pub fn set_enabled(&mut self, name: &str, enabled: bool) {
-        let setting = self.styles.entry(name.to_string()).or_default();
-        setting.enabled = enabled;
-        if enabled {
-            setting.off_everywhere = false;
-        }
-    }
-
-    /// Whether style `name` is off everywhere (#376), its entities'
-    /// own components and `style_mask`s included.
-    pub fn is_off_everywhere(&self, name: &str) -> bool {
-        self.styles.get(name).is_some_and(|s| s.off_everywhere)
-    }
-
-    /// Turn style `name` off everywhere (#376): its table, and every
-    /// entity that would switch it on for its own pixels. What
-    /// `--style <name>:off` does; [`set_enabled`](Self::set_enabled)`(name,
-    /// true)` undoes it.
-    pub fn set_off_everywhere(&mut self, name: &str) {
-        let setting = self.styles.entry(name.to_string()).or_default();
-        setting.enabled = false;
-        setting.off_everywhere = true;
-    }
-
-    pub fn param(&self, name: &str, param: &str) -> Option<f32> {
-        self.styles.get(name)?.params.get(param).copied()
-    }
-
-    pub fn set_param(&mut self, name: &str, param: &str, value: f32) {
-        self.styles
-            .entry(name.to_string())
-            .or_default()
-            .params
-            .insert(param.to_string(), value);
-    }
-
-    /// Set colour `base` (`tint`, #315) of style `name`: its `_r`, `_g`
-    /// and `_b` channels.
-    pub fn set_color(&mut self, name: &str, base: &str, rgb: [f32; 3]) {
-        for (c, v) in ["r", "g", "b"].iter().zip(rgb) {
-            self.set_param(name, &format!("{base}_{c}"), v);
-        }
-    }
-
-    pub fn option(&self, name: &str, option: &str) -> Option<&str> {
-        self.styles
-            .get(name)?
-            .options
-            .get(option)
-            .map(String::as_str)
-    }
-
-    pub fn set_option(&mut self, name: &str, option: &str, value: &str) {
-        self.styles
-            .entry(name.to_string())
-            .or_default()
-            .options
-            .insert(option.to_string(), value.to_string());
-    }
-
-    /// Whether the scene says bloom reads style `name` (#300); `None` when
-    /// it doesn't say.
-    pub fn feeds_bloom(&self, name: &str) -> Option<bool> {
-        self.styles.get(name)?.feeds_bloom
-    }
-
-    /// Say whether bloom reads style `name`; `None` goes back to the
-    /// style's default. Leaves the style on or off as it was.
-    pub fn set_feeds_bloom(&mut self, name: &str, feeds: Option<bool>) {
-        self.styles.entry(name.to_string()).or_default().feeds_bloom = feeds;
-    }
-
-    /// How much of style `name` shows over what it read (#369): its
-    /// table's `blend`, 1 when it sets none.
-    pub fn blend(&self, name: &str) -> f32 {
-        self.styles
-            .get(name)
-            .and_then(|s| s.blend)
-            .map_or(1.0, |b| b.clamp(0.0, 1.0))
-    }
-
-    /// Set how much of style `name` shows, clamped to 0..1; `None` (or 1)
-    /// shows all of it. Leaves the style on or off as it was.
-    pub fn set_blend(&mut self, name: &str, blend: Option<f32>) {
-        let blend = blend
-            .filter(|b| b.is_finite())
-            .map(|b| b.clamp(0.0, 1.0))
-            .filter(|b| *b < 1.0);
-        match self.styles.get_mut(name) {
-            Some(setting) => setting.blend = blend,
-            None if blend.is_some() => {
-                self.styles.entry(name.to_string()).or_default().blend = blend;
-            }
-            None => {}
-        }
-    }
-
-    /// Style `name`'s reveal (#406), when its table has one: `None` with
-    /// no `reveal` key, whatever other `reveal_*` keys it sets.
-    pub fn reveal(&self, name: &str) -> Option<&reveal::StyleReveal> {
-        self.styles
-            .get(name)
-            .map(|s| &s.reveal)
-            .filter(|r| r.amount.is_some())
-    }
-
-    /// Set one reveal key of style `name` (#406) from a TOML value:
-    /// `reveal` (0..1), `reveal_shape`, `reveal_ink` or a `reveal_*`
-    /// number. Out of range a number is clamped, or refused with
-    /// `strict`. `Ok(false)`: not a reveal key. Leaves the style on or off
-    /// as it was.
-    pub fn set_reveal(
-        &mut self,
-        name: &str,
-        key: &str,
-        value: &toml::Value,
-        strict: bool,
-    ) -> Result<bool, String> {
-        if !reveal::is_key(key) {
-            return Ok(false);
-        }
-        let mut next = self
-            .styles
-            .get(name)
-            .map(|s| s.reveal.clone())
-            .unwrap_or_default();
-        next.set(key, value, strict)?;
-        self.styles.entry(name.to_string()).or_default().reveal = next;
-        Ok(true)
-    }
-
-    /// Make style `name`'s reveal exactly `reveal` (F4's Reveal group,
-    /// #875), every key at once; an empty one is [`clear_reveal`](Self::clear_reveal).
-    /// Leaves the style on or off as it was.
-    pub fn replace_reveal(&mut self, name: &str, reveal: reveal::StyleReveal) {
-        if reveal.is_empty() {
-            self.clear_reveal(name);
-        } else {
-            self.styles.entry(name.to_string()).or_default().reveal = reveal;
-        }
-    }
-
-    /// Take style `name`'s reveal off (#406): it shows everywhere again.
-    pub fn clear_reveal(&mut self, name: &str) {
-        if let Some(setting) = self.styles.get_mut(name) {
-            setting.reveal = reveal::StyleReveal::default();
-        }
-    }
-
-    /// Whether any of style `name` reaches the frame: a blend above 0
-    /// (#399) and, when it has a reveal (#406), a reveal above 0. A style
-    /// that doesn't is left out of its chain, so the frame is the one
-    /// without it, byte for byte. One that follows the tear (#746) needs
-    /// the frame torn too: [`shows_in`](Self::shows_in).
-    pub fn shows(&self, name: &str) -> bool {
-        self.blend(name) > 0.0
-            && self
-                .reveal(name)
-                .and_then(|r| r.amount)
-                .is_none_or(|a| a > 0.0)
-    }
-
-    /// [`shows`](Self::shows), and, for a style that follows the tear
-    /// (#746), a frame that tears (`postprocess::tear_active`).
-    pub fn shows_in(&self, name: &str, config: &PostProcessConfig) -> bool {
-        self.shows(name) && (!self.follows_tear(name) || crate::postprocess::tear_active(config))
-    }
-
-    /// Whether style `name` shows only where the frame tears
-    /// (`blend_source = "tear"`, #746).
-    pub fn follows_tear(&self, name: &str) -> bool {
-        self.styles.get(name).is_some_and(|s| s.follows_tear)
-    }
-
-    /// Say whether style `name` follows the tear (#746). Leaves the style
-    /// on or off as it was.
-    pub fn set_follows_tear(&mut self, name: &str, follows: bool) {
-        match self.styles.get_mut(name) {
-            Some(setting) => setting.follows_tear = follows,
-            None if follows => {
-                self.styles
-                    .entry(name.to_string())
-                    .or_default()
-                    .follows_tear = true;
-            }
-            None => {}
-        }
-    }
-
-    /// Style `name`'s settings, if it has any.
-    pub fn get(&self, name: &str) -> Option<&StyleSetting> {
-        self.styles.get(name)
-    }
-
-    /// Style `name`'s authored place in its stage, if it has one (#299).
-    pub fn order(&self, name: &str) -> Option<f32> {
-        self.styles.get(name)?.order
-    }
-
-    /// Give style `name` a place in its stage, or (`None`) put it back at
-    /// its registration index.
-    pub fn set_order(&mut self, name: &str, order: Option<f32>) {
-        match self.styles.get_mut(name) {
-            Some(setting) => setting.order = order,
-            None if order.is_some() => {
-                self.styles.entry(name.to_string()).or_default().order = order;
-            }
-            None => {}
-        }
-    }
-
-    /// Put style `name`'s parameters, options and place in the chain back
-    /// to their defaults, leaving it on or off as it was.
-    pub fn reset(&mut self, name: &str) {
-        if let Some(setting) = self.styles.get_mut(name) {
-            setting.params.clear();
-            setting.options.clear();
-            setting.order = None;
-            setting.feeds_bloom = None;
-            setting.blend = None;
-            setting.reveal = reveal::StyleReveal::default();
-            setting.follows_tear = false;
-        }
-    }
-
-    /// Make style `name` exactly what it is in `from` (the scene's
-    /// authored settings): on, off and every value; no settings in `from`
-    /// means none here.
-    pub fn restore(&mut self, name: &str, from: &StyleSettings) {
-        match from.styles.get(name) {
-            Some(setting) => {
-                self.styles.insert(name.to_string(), setting.clone());
-            }
-            None => {
-                self.styles.remove(name);
-            }
-        }
-    }
-
-    /// Make style `name`'s settings exactly `setting`, or (`None`) give it
-    /// none: a look's cross-fade (#496) lays each in-between setting so.
-    pub fn put(&mut self, name: &str, setting: Option<StyleSetting>) {
-        match setting {
-            Some(setting) => {
-                self.styles.insert(name.to_string(), setting);
-            }
-            None => {
-                self.styles.remove(name);
-            }
-        }
-    }
-
-    /// Whether style `name` is set the same here and in `other`. A style
-    /// with no settings is the same as one that is off with none.
-    pub fn same_style(&self, name: &str, other: &StyleSettings) -> bool {
-        let empty = StyleSetting::default();
-        self.styles.get(name).unwrap_or(&empty) == other.styles.get(name).unwrap_or(&empty)
-    }
-
-    /// The styles that have settings, by name.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &StyleSetting)> {
-        self.styles.iter().map(|(k, v)| (k.as_str(), v))
-    }
-
-    /// Read a scene's `[post_process.styles]` tables. A table switches its
-    /// style on unless it says `enabled = false`; an option is a string, a
-    /// parameter a number, a colour (#315) an array of three numbers or a
-    /// `#rrggbb` string (its channels may still be set one by one), and
-    /// `feeds_bloom` (#300) true or false. Returns the settings and a
-    /// warning for each name, key or value the registry doesn't know.
-    pub fn from_tables(tables: &BTreeMap<String, toml::Table>) -> (Self, Vec<String>) {
-        let mut settings = Self::default();
-        let mut warnings = Vec::new();
-        for (name, table) in tables {
-            let Some(descriptor) = find(name) else {
-                warnings.push(format!(
-                    "unknown style '{name}' in [post_process.styles]; registered: {}",
-                    names().join(", ")
-                ));
-                continue;
-            };
-            let mut setting = StyleSetting {
-                enabled: true,
-                ..Default::default()
-            };
-            for (key, value) in table {
-                if key == "enabled" {
-                    match value.as_bool() {
-                        Some(on) => setting.enabled = on,
-                        None => {
-                            warnings.push(format!("styles.{name}.enabled must be true or false"))
-                        }
-                    }
-                    continue;
-                }
-                if key == "order" {
-                    let number = flint_core::toml_util::toml_f64(value).filter(|n| n.is_finite());
-                    match number {
-                        Some(n) => setting.order = Some(n as f32),
-                        None => warnings.push(format!("styles.{name}.order must be a number")),
-                    }
-                    continue;
-                }
-                if key == "blend" {
-                    let number = flint_core::toml_util::toml_f64(value).filter(|n| n.is_finite());
-                    match number {
-                        Some(n) => {
-                            let b = (n as f32).clamp(0.0, 1.0);
-                            setting.blend = (b < 1.0).then_some(b);
-                        }
-                        None => warnings
-                            .push(format!("styles.{name}.blend must be a number from 0 to 1")),
-                    }
-                    continue;
-                }
-                if key == "blend_source" {
-                    // Where its blend comes from (#746)
-                    match value.as_str().and_then(blend_source) {
-                        Some(tear) => setting.follows_tear = tear,
-                        None => warnings.push(format!(
-                            "styles.{name}.blend_source must be \"own\" or \"tear\""
-                        )),
-                    }
-                    continue;
-                }
-                if reveal::is_key(key) {
-                    // Where the style shows (#406)
-                    if let Err(e) = setting.reveal.set(key, value, false) {
-                        warnings.push(format!("styles.{name}.{e}"));
-                    }
-                    continue;
-                }
-                if key == "feeds_bloom" {
-                    match value.as_bool() {
-                        Some(_) if descriptor.stage != StyleStage::Hdr => warnings.push(format!(
-                            "styles.{name}.feeds_bloom: {name} is a display style, after bloom; \
-                             only an hdr style can feed bloom"
-                        )),
-                        Some(feeds) => setting.feeds_bloom = Some(feeds),
-                        None => warnings
-                            .push(format!("styles.{name}.feeds_bloom must be true or false")),
-                    }
-                    continue;
-                }
-                if let Some(option) = descriptor.options.iter().find(|o| o.name == key) {
-                    match value.as_str() {
-                        // Kept all the same: the style falls back to its
-                        // default, and F4 shows the stray value as it is
-                        Some(text) => {
-                            if option.refuses(text) {
-                                warnings.push(format!(
-                                    "styles.{name}.{key}: unknown value '{text}'; \
-                                     it takes: {} (drawing as '{}')",
-                                    option.choices.join(", "),
-                                    option.default
-                                ));
-                            }
-                            setting.options.insert(key.clone(), text.to_string());
-                        }
-                        None => warnings.push(format!("styles.{name}.{key} must be a string")),
-                    }
-                    continue;
-                }
-                if let Some(color) = descriptor.color_setting(key) {
-                    match color_from_toml(value) {
-                        Some(rgb) => {
-                            for (p, v) in color.channels.iter().zip(rgb) {
-                                if let Some(e) = p.range_error(v) {
-                                    warnings.push(format!(
-                                        "styles.{name}.{key}: {e}; kept as written, \
-                                         past what the style is tuned for"
-                                    ));
-                                }
-                                setting.params.insert(p.name.to_string(), v);
-                            }
-                        }
-                        None => warnings.push(format!(
-                            "styles.{name}.{key} must be a colour: [r, g, b] (0-1) or \"#rrggbb\""
-                        )),
-                    }
-                    continue;
-                }
-                let Some(param) = descriptor.params.iter().find(|p| p.name == key) else {
-                    let known = descriptor.setting_keys();
-                    warnings.push(format!(
-                        "style '{name}' has no parameter '{key}'; it takes: {}",
-                        if known.is_empty() {
-                            "none".to_string()
-                        } else {
-                            known.join(", ")
-                        }
-                    ));
-                    continue;
-                };
-                let number = flint_core::toml_util::toml_f64(value);
-                match number {
-                    Some(n) => {
-                        // Kept as written, as a stray option is: F4 shows
-                        // it, and the style decides what to draw
-                        if let Some(e) = param.range_error(n as f32) {
-                            warnings.push(format!(
-                                "styles.{name}.{e}; kept as written, past what the style is tuned for"
-                            ));
-                        }
-                        setting.params.insert(key.clone(), n as f32);
-                    }
-                    None => warnings.push(format!("styles.{name}.{key} must be a number")),
-                }
-            }
-            settings.styles.insert(name.clone(), setting);
-        }
-        (settings, warnings)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// The set of built styles
-// ---------------------------------------------------------------------------
-
-/// The styles whose pipelines exist, by registry index. Lives on the post
-/// pipeline; nothing in it depends on the frame's size.
-#[derive(Default)]
-pub struct StyleSet {
-    built: Vec<Option<Box<dyn StylePass>>>,
-    /// Styles whose creation panicked; never retried.
-    failed: Vec<bool>,
-    /// The address of the descriptor each slot was built (or failed) from.
-    /// A user style whose `.shader.toml` is edited gets a new descriptor at
-    /// the same registry index ([`custom::reload_changed`], #275): a
-    /// different address here throws the old pass away and builds again.
-    from: Vec<usize>,
-    /// The shared edge pass (#301), built the first time a style needs it.
-    edges: Option<edges::EdgePass>,
-    /// The edge pass's creation panicked; the styles that need it draw
-    /// without (their [`StyleFrame::edges`] is `None`).
-    edges_failed: bool,
-    /// The shared cross-fade (#396), built the first time a style that
-    /// gets it is on.
-    fade: Option<fade::FadePass>,
-    /// Its creation panicked: styles draw at full blend.
-    fade_failed: bool,
-    /// How many times the edge pass has been drawn, for the test that a
-    /// frame draws it once however many styles read it.
-    edge_runs: std::sync::atomic::AtomicU64,
-    /// Whether glyph styles keep their frame as text (#317), handed to
-    /// each pass when it's built.
-    text_capture: bool,
-    /// The draw that shows a style's `blend` (#369), any style's.
-    blend: blend::BlendPass,
-    /// The ownership pass (#384), built with the first style.
-    ownership: Option<ownership::OwnershipPass>,
-    ownership_failed: bool,
-    /// The shader files each slot's build read from
-    /// `FLINT_STYLE_SHADER_DIR` (#418, [`dev_shader`]); empty when that's
-    /// off. A slot whose file moves is built again.
-    files: Vec<Vec<std::path::PathBuf>>,
-    /// The same for the shared passes (edges, cross-fade, ownership).
-    shared_files: Vec<std::path::PathBuf>,
-    /// Calls to [`ensure`](Self::ensure) since the files were last looked at.
-    dev_polls: u32,
-    /// Something was built again from changed files since
-    /// [`take_rebuilt`](Self::take_rebuilt) last asked.
-    rebuilt: bool,
-}
-
-/// A descriptor's identity, for [`StyleSet::from`].
-fn descriptor_id(d: &'static StyleDescriptor) -> usize {
-    d as *const StyleDescriptor as usize
-}
-
-impl StyleSet {
-    /// The draw every stage runs after a style whose `blend` is under 1
-    /// (#369); hand it to [`run_stage`].
-    pub(crate) fn blend_pass(&self) -> &blend::BlendPass {
-        &self.blend
-    }
-
-    /// Build every style `config` switches on that isn't built yet.
-    /// Returns the ones whose creation panicked (they stay off for the
-    /// rest of the run).
-    pub fn ensure(
-        &mut self,
-        device: &wgpu::Device,
-        surface_format: wgpu::TextureFormat,
-        config: &PostProcessConfig,
-        ids: &StyleIds,
-    ) -> Vec<&'static StyleDescriptor> {
-        let registry = registry();
-        self.built.resize_with(registry.len(), || None);
-        self.failed.resize(registry.len(), false);
-        self.from.resize(registry.len(), 0);
-        self.files.resize_with(registry.len(), Vec::new);
-        self.reload_changed_shaders();
-        let mut failed = Vec::new();
-        for (i, descriptor) in registry.iter().enumerate() {
-            let id = descriptor_id(descriptor);
-            if self.from[i] != id {
-                // Replaced since it was built (or never built): start over
-                self.built[i] = None;
-                self.failed[i] = false;
-                self.from[i] = id;
-            }
-            if self.built[i].is_some() || self.failed[i] || !descriptor.is_on(config, ids) {
-                continue;
-            }
-            let format = match descriptor.stage {
-                StyleStage::Hdr => crate::postprocess::HDR_FORMAT,
-                StyleStage::Display => surface_format,
-            };
-            // A frame note (#1077): a style switched on mid-game builds on
-            // the frame that first draws it, and that frame says so
-            let noted = || {
-                if is_native(descriptor.name) {
-                    descriptor.name.to_string()
-                } else {
-                    format!("{} (user style)", descriptor.name)
-                }
-            };
-            let (made, files) = flint_core::frame_notes::timed(
-                flint_core::frame_notes::NoteKind::StyleBuild,
-                noted,
-                || {
-                    dev_shader::build(descriptor.name, || {
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            // One descriptor at one format builds the same
-                            // layouts every time: what lets its pipelines be
-                            // kept (#911)
-                            let scope = (descriptor.name, id, format);
-                            crate::pipeline_cache::in_scope(scope, || {
-                                (descriptor.create)(&StyleDevice {
-                                    device,
-                                    descriptor,
-                                    format,
-                                })
-                            })
-                        }))
-                    })
-                },
-            );
-            self.files[i] = files;
-            match made {
-                Ok(pass) => {
-                    pass.set_text_capture(self.text_capture);
-                    self.built[i] = Some(pass);
-                }
-                Err(_) => {
-                    self.failed[i] = true;
-                    failed.push(*descriptor);
-                }
-            }
-        }
-        if self.ownership.is_none()
-            && !self.ownership_failed
-            && self.built.iter().any(Option::is_some)
-        {
-            let (made, files) = dev_shader::build("ownership", || {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    ownership::OwnershipPass::new(device)
-                }))
-            });
-            self.shared_files.extend(files);
-            match made {
-                Ok(pass) => self.ownership = Some(pass),
-                Err(_) => {
-                    tracing::warn!(
-                        "style ownership unavailable: its shader failed to build; whole-frame \
-                         styles draw over other styles' entities"
-                    );
-                    self.ownership_failed = true;
-                }
-            }
-        }
-        if self.edges.is_none()
-            && !self.edges_failed
-            && registry
-                .iter()
-                .any(|d| d.needs_edges() && d.is_on(config, ids))
-        {
-            let (made, files) = dev_shader::build("edges", || {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    crate::pipeline_cache::in_scope("Style Edges", || edges::EdgePass::new(device))
-                }))
-            });
-            self.shared_files.extend(files);
-            match made {
-                Ok(pass) => self.edges = Some(pass),
-                Err(_) => {
-                    tracing::warn!(
-                        "shared style edges unavailable: the edge shader failed to build"
-                    );
-                    self.edges_failed = true;
-                }
-            }
-        }
-        if self.fade.is_none()
-            && !self.fade_failed
-            && registry
-                .iter()
-                .any(|d| d.is_on(config, ids) && d.framework_fades(config, ids))
-        {
-            let (made, files) = dev_shader::build("fade", || {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    fade::FadePass::new(device)
-                }))
-            });
-            self.shared_files.extend(files);
-            match made {
-                Ok(pass) => self.fade = Some(pass),
-                Err(_) => {
-                    tracing::warn!("style cross-fade unavailable: its shader failed to build");
-                    self.fade_failed = true;
-                }
-            }
-        }
-        failed
-    }
-
-    /// With `FLINT_STYLE_SHADER_DIR` set (#418), every
-    /// [`dev_shader::POLL_FRAMES`] calls: drop each pass that read a
-    /// shader file whose stamp moved, so this [`ensure`](Self::ensure)
-    /// builds it again from the file. A drop sets
-    /// [`take_rebuilt`](Self::take_rebuilt), since the kept bind groups
-    /// hold the old passes' buffers.
-    fn reload_changed_shaders(&mut self) {
-        if !dev_shader::enabled() {
-            return;
-        }
-        self.dev_polls += 1;
-        if self.dev_polls < dev_shader::POLL_FRAMES {
-            return;
-        }
-        self.dev_polls = 0;
-        let changed = dev_shader::changed();
-        if changed.is_empty() {
-            return;
-        }
-        let moved = |files: &[std::path::PathBuf]| files.iter().any(|f| changed.contains(f));
-        for (i, files) in self.files.iter_mut().enumerate() {
-            if moved(files) {
-                self.built[i] = None;
-                self.failed[i] = false;
-                files.clear();
-            }
-        }
-        if moved(&self.shared_files) {
-            self.edges = None;
-            self.edges_failed = false;
-            self.fade = None;
-            self.fade_failed = false;
-            self.ownership = None;
-            self.ownership_failed = false;
-            self.shared_files.clear();
-        }
-        // The blend draw builds lazily, outside a build: always again
-        self.blend = blend::BlendPass::default();
-        let names: Vec<String> = changed
-            .iter()
-            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .collect();
-        tracing::info!(
-            "style shaders changed ({}): building again",
-            names.join(", ")
-        );
-        self.rebuilt = true;
-    }
-
-    /// Whether a pass was dropped for a changed shader file (#418) since
-    /// the last call. The renderer then forgets the kept bind groups.
-    pub fn take_rebuilt(&mut self) -> bool {
-        std::mem::take(&mut self.rebuilt)
-    }
-
-    /// The shared cross-fade (#396), for [`run_stage`]; `None` until a
-    /// style that gets it has been on.
-    pub(crate) fn fade(&self) -> Option<&fade::FadePass> {
-        self.fade.as_ref()
-    }
-
-    /// How many times the shared cross-fade has been drawn since the
-    /// renderer was made (#396).
-    pub fn fade_runs(&self) -> u64 {
-        self.fade.as_ref().map_or(0, fade::FadePass::runs)
-    }
-
-    /// Draw the shared edges (#301) if any of `styles` (this frame's
-    /// active ones, both stages) needs them, inside a GPU-timer scope of
-    /// their own. Returns the texture for [`StyleFrame::edges`].
-    pub(crate) fn encode_edges(
-        &self,
-        styles: &[(&'static StyleDescriptor, &dyn StylePass)],
-        frame: &StyleFrame<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-        scope: &mut Scope<'_>,
-    ) -> Option<Arc<StyleTexture>> {
-        let pass = self.edges.as_ref()?;
-        if !styles.iter().any(|(d, _)| d.needs_edges()) {
-            return None;
-        }
-        let mut made = None;
-        scope(edges::EDGE_LABEL, encoder, &mut |encoder| {
-            made = Some(pass.encode(frame, encoder));
-        });
-        self.edge_runs
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        made
-    }
-
-    /// The ownership pass (#384) [`run_stage`] draws after each style.
-    pub(crate) fn ownership(&self) -> Option<&ownership::OwnershipPass> {
-        self.ownership.as_ref()
-    }
-
-    /// How many times the shared edge pass has been drawn since the
-    /// renderer was made.
-    pub fn edge_runs(&self) -> u64 {
-        self.edge_runs.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Have glyph styles keep each frame's grid as text (#317), now and
-    /// for every style built later.
-    pub fn set_text_capture(&mut self, on: bool) {
-        self.text_capture = on;
-        for pass in self.built.iter().flatten() {
-            pass.set_text_capture(on);
-        }
-    }
-
-    /// The glyph grid style `name` drew in the last frame encoded with text
-    /// capture on, after its submission ([`StylePass::read_text`]).
-    pub fn read_text(&self, name: &str, device: &wgpu::Device) -> Option<GlyphText> {
-        let i = registry().iter().position(|d| d.name == name)?;
-        self.built.get(i)?.as_deref()?.read_text(device)
-    }
-
-    /// Whether style `name` is built.
-    pub fn is_built(&self, name: &str) -> bool {
-        registry()
-            .iter()
-            .position(|d| d.name == name)
-            .and_then(|i| self.built.get(i))
-            .is_some_and(Option::is_some)
-    }
-
-    /// The built styles of `stage` that are on this frame (by `config` or
-    /// an entity's request in `ids`), in chain order.
-    ///
-    /// A style whose table `blend` (or `reveal`, #406) is 0 (#399) is left out: all of it
-    /// would be drawn back over by its input, so the chain skips it and
-    /// the frame is the one without it, byte for byte and at no cost. It
-    /// stays built and [`is_on`](StyleDescriptor::is_on), so the mask,
-    /// ownership (#384) and its GPU state are what they were at 0.01, and
-    /// a fade out meets the plain frame with no pop.
-    pub fn active(
-        &self,
-        stage: StyleStage,
-        config: &PostProcessConfig,
-        ids: &StyleIds,
-    ) -> Vec<(&'static StyleDescriptor, &dyn StylePass)> {
-        if !config.enabled {
-            return Vec::new();
-        }
-        let mut on: Vec<(f32, (&'static StyleDescriptor, &dyn StylePass))> = registry()
-            .iter()
-            .enumerate()
-            .zip(&self.built)
-            .zip(&self.from)
-            // A pass built from a descriptor since replaced waits for ensure
-            .filter(|(((_, d), _), from)| **from == descriptor_id(d))
-            .filter(|(((_, d), _), _)| d.stage == stage && d.is_on(config, ids))
-            .filter(|(((_, d), _), _)| config.styles.shows_in(d.name, config))
-            .filter_map(|(((i, d), built), _)| {
-                built
-                    .as_deref()
-                    .map(|p| (chain_order(i, d, config), (*d, p)))
-            })
-            .collect();
-        // Stable: equal orders keep registration order
-        on.sort_by(|a, b| a.0.total_cmp(&b.0));
-        on.into_iter().map(|(_, style)| style).collect()
-    }
-}
-
-/// Keep only style `name` of a stage's [`StyleSet::active`] list when
-/// `name` is given (the `style` debug view's `mask_view`, #334), so it
-/// reads the stage's original input rather than another style's output;
-/// without a name, the list as it is.
-pub fn solo<T: Copy>(
-    styles: Vec<(&'static StyleDescriptor, T)>,
-    name: Option<&str>,
-) -> Vec<(&'static StyleDescriptor, T)> {
-    match name {
-        Some(name) => styles.into_iter().filter(|(d, _)| d.name == name).collect(),
-        None => styles,
-    }
-}
-
-/// Where the style at registry index `index` stands in its stage's chain
-/// (#299): its table's `order`, else the index itself, so a scene that
-/// orders nothing runs in registration order. Lower runs first.
-pub fn chain_order(index: usize, descriptor: &StyleDescriptor, config: &PostProcessConfig) -> f32 {
-    config
-        .styles
-        .order(descriptor.name)
-        .or(descriptor.default_order)
-        .unwrap_or(index as f32)
-}
-
-/// Every registered style of `stage`, in the order its chain would run
-/// them under `config` (on or not), with each one's [`chain_order`]. What
-/// the F4 menu lists; [`StyleSet::active`] keeps the ones that are on.
-pub fn stage_chain(
-    stage: StyleStage,
-    config: &PostProcessConfig,
-) -> Vec<(&'static StyleDescriptor, f32)> {
-    let mut chain: Vec<(&'static StyleDescriptor, f32)> = registry()
-        .iter()
-        .enumerate()
-        .filter(|(_, d)| d.stage == stage)
-        .map(|(i, d)| (*d, chain_order(i, d, config)))
-        .collect();
-    chain.sort_by(|a, b| a.1.total_cmp(&b.1));
-    chain
-}
-
-/// Which view each style of a stage reads and writes: `Input` is what the
-/// stage starts from, `Ping(n)` the framework's two targets, `Final` the
-/// caller's target. In the display stage ([`display_plan`]) the input is
-/// the framework's own texture, so a later style may write it again, and
-/// `Final` may be read too when it is a texture the frame owns (FXAA's
-/// intermediate, #302).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Slot {
-    Input,
-    Ping(u8),
-    Final,
-}
-
-/// The ping-pong plan for `count` styles. With `to_final`, the last style
-/// writes the caller's target; without, the stage's result stays in a ping
-/// target (the HDR stage, whose result the composite reads).
-pub fn plan(count: usize, to_final: bool) -> Vec<(Slot, Slot)> {
-    let mut steps = Vec::with_capacity(count);
-    let mut src = Slot::Input;
-    for i in 0..count {
-        let dst = if to_final && i + 1 == count {
-            Slot::Final
-        } else {
-            Slot::Ping((i % 2) as u8)
-        };
-        steps.push((src, dst));
-        src = dst;
-    }
-    steps
-}
-
-/// The display stage's plan for `count` styles (#302): the slot the
-/// composite draws into, and each style's (reads, writes). The stage owns
-/// its input, so after the first style has read it the input is free to
-/// be a ping: a chain of any length needs one texture beside it, and only
-/// from two styles on. With `final_owned` (FXAA on, whose intermediate is
-/// the final target) the intermediate is the other texture: the composite
-/// draws into whichever of the two the chain's parity leaves the last
-/// style writing the intermediate, so the stage adds one full-size texture
-/// to FXAA's, never more.
-pub fn display_plan(count: usize, final_owned: bool) -> (Slot, Vec<(Slot, Slot)>) {
-    if count == 0 {
-        return (Slot::Final, Vec::new());
-    }
-    let pair = match (final_owned, count % 2) {
-        (false, _) => [Slot::Input, Slot::Ping(0)],
-        (true, 1) => [Slot::Input, Slot::Final],
-        (true, _) => [Slot::Final, Slot::Input],
-    };
-    let steps = (0..count)
-        .map(|i| {
-            let dst = if i + 1 == count {
-                Slot::Final
-            } else {
-                pair[(i + 1) % 2]
-            };
-            (pair[i % 2], dst)
-        })
-        .collect();
-    (pair[0], steps)
-}
-
-/// How many textures of its own a stage's `steps` draw through: the pings
-/// they name, plus the input when the stage owns it (the display stage).
-pub fn plan_textures(steps: &[(Slot, Slot)], owns_input: bool) -> usize {
-    let used = |slot: Slot| steps.iter().any(|(s, d)| *s == slot || *d == slot);
-    (owns_input && !steps.is_empty()) as usize + (0..2).filter(|n| used(Slot::Ping(*n))).count()
-}
-
-/// Ids of the views a style's input can be, for keying bind groups.
-pub(crate) mod input_id {
-    /// The scene's HDR buffer.
-    pub const HDR: u64 = 0;
-    /// The HDR stage's ping targets: `HDR_PING + n`.
-    pub const HDR_PING: u64 = 1;
-    /// What the composite writes when display styles follow it.
-    pub const DISPLAY_IN: u64 = 3;
-    /// The display stage's ping targets: `DISPLAY_PING + n`.
-    pub const DISPLAY_PING: u64 = 4;
-    /// FXAA's intermediate, when the display stage draws through it (#302).
-    pub const FXAA_IN: u64 = 6;
-}
-
-const HDR_PINGS: [&str; 2] = ["style hdr ping 0", "style hdr ping 1"];
-const DISPLAY_PINGS: [&str; 2] = ["style display ping 0", "style display ping 1"];
-
-/// A GPU-timer scope around one style: `(label, encoder, draw)`.
-pub(crate) type Scope<'s> = dyn FnMut(&'static str, &mut wgpu::CommandEncoder, &mut dyn FnMut(&mut wgpu::CommandEncoder))
-    + 's;
-
-/// Run `styles` (one stage's, in order) by `steps` ([`plan`] or
-/// [`display_plan`], one per style), from `input` through the stage's ping
-/// targets; only the pings the steps name are made. With `to`, the last
-/// style writes there and this returns `None`; without, it returns the
-/// target holding the result and that target's input id. `frame` carries
-/// the stage's size and format; its descriptor is set per style. A style
-/// whose `blend` is under 1 (#369) has what it read drawn back over its
-/// result by `blender`, inside its own timing scope.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn run_stage(
-    styles: &[(&'static StyleDescriptor, &dyn StylePass)],
-    steps: &[(Slot, Slot)],
-    frame: &mut StyleFrame<'_>,
-    stage: StyleStage,
-    encoder: &mut wgpu::CommandEncoder,
-    input: StyleInput<'_>,
-    to: Option<StyleInput<'_>>,
-    blender: &blend::BlendPass,
-    ownership: Option<&ownership::OwnershipPass>,
-    fade: Option<&fade::FadePass>,
-    scope: &mut Scope<'_>,
-) -> Option<(Arc<StyleTexture>, u64)> {
-    debug_assert_eq!(styles.len(), steps.len());
-    let (names, base) = match stage {
-        StyleStage::Hdr => (HDR_PINGS, input_id::HDR_PING),
-        StyleStage::Display => (DISPLAY_PINGS, input_id::DISPLAY_PING),
-    };
-    let mut result = None;
-    let pings: [Option<Arc<StyleTexture>>; 2] = std::array::from_fn(|n| {
-        let slot = Slot::Ping(n as u8);
-        steps
-            .iter()
-            .any(|(s, d)| *s == slot || *d == slot)
-            .then(|| frame.target(names[n], frame.format))
-    });
-    let ping = |n: u8| pings[n as usize].as_ref().expect("a ping the steps name");
-    // A grid the ownership cut snaps to (#534), asked before any style of
-    // the stage draws, so a style that runs before the snapping one cuts
-    // along the same cells. The display stage's alone: its styles all draw
-    // at the output's size, which the grid is in
-    frame.snapped_ownership = match stage {
-        StyleStage::Display if ownership.is_some() => snapped_ownership(styles, frame),
-        _ => None,
-    };
-    for ((descriptor, pass), (src, dst)) in styles.iter().zip(steps.iter().copied()) {
-        frame.descriptor = *descriptor;
-        let src = match src {
-            Slot::Input => StyleInput {
-                view: input.view,
-                id: input.id,
-            },
-            Slot::Ping(n) => StyleInput {
-                view: &ping(n).view,
-                id: base + u64::from(n),
-            },
-            Slot::Final => {
-                let to = to.as_ref().expect("planned with a final target");
-                StyleInput {
-                    view: to.view,
-                    id: to.id,
-                }
-            }
-        };
-        let dst_view = match dst {
-            Slot::Ping(n) => {
-                result = Some((ping(n).clone(), base + u64::from(n)));
-                &ping(n).view
-            }
-            Slot::Final => {
-                result = None;
-                to.as_ref().expect("planned with a final target").view
-            }
-            Slot::Input => {
-                result = None;
-                input.view
-            }
-        };
-        let frame = &*frame;
-        // A style that draws its own whole-frame blend (#879, pencil's
-        // `transition = "draw"`) has drawn it already
-        let blend = if descriptor.draws_own_blend(frame.config, None) {
-            1.0
-        } else {
-            frame.config.styles.blend(descriptor.name)
-        };
-        // The framework's cross-fade (#396), timed with the style it fades
-        let fade = fade.filter(|_| fade::FadePass::applies(frame, descriptor));
-        scope(descriptor.label, encoder, &mut |encoder| {
-            pass.encode(frame, encoder, &src, dst_view);
-            // The blend, and where the style shows when it has a reveal
-            // (#406)
-            blender.draw(frame, encoder, &src, dst_view, blend);
-            // This style's own entities below blend 1 get some of its
-            // input back (#396)
-            if let Some(fade) = fade {
-                fade.encode(frame, descriptor, encoder, &src, dst_view);
-            }
-            // Each pixel one style's (#384): another style's entities get
-            // this style's input back
-            if let Some(ownership) = ownership {
-                ownership.encode(frame, encoder, &src, dst_view);
-            }
-        });
-    }
-    result
-}
-
-/// The first style of `styles` that yields and answers
-/// [`StylePass::ownership_cells`] (#534), with where the ids the other
-/// running styles own can be. `None` when none answers, its grid is no
-/// grid, or no other style's entity is in view.
-fn snapped_ownership(
-    styles: &[(&'static StyleDescriptor, &dyn StylePass)],
-    frame: &mut StyleFrame<'_>,
-) -> Option<SnappedOwnership> {
-    for (descriptor, pass) in styles {
-        if !descriptor.yields {
-            continue;
-        }
-        frame.descriptor = *descriptor;
-        let Some(cells) = pass.ownership_cells(frame) else {
-            continue;
-        };
-        let sane = |v: [f32; 2], least: f32| v.iter().all(|x| x.is_finite() && *x >= least);
-        if !sane(cells.cell, 1.0) || !sane(cells.origin, f32::MIN) || !cells.share.is_finite() {
-            return None;
-        }
-        let cells = OwnershipCells {
-            share: cells.share.clamp(1.0 / 16.0, 1.0),
-            ..cells
-        };
-        let style = registry_index(descriptor)? as u32;
-        // A cell touching a foreign id reads it: grow by two cells
-        let reach = (2.0 * cells.cell[0].max(cells.cell[1])).ceil() as u32;
-        let rect = match frame.foreign_rect(reach) {
-            Some(r) if r.width == 0 || r.height == 0 => return None,
-            Some(r) => [
-                r.x as f32,
-                r.y as f32,
-                (r.x + r.width) as f32,
-                (r.y + r.height) as f32,
-            ],
-            None => [0.0, 0.0, frame.width as f32, frame.height as f32],
-        };
-        return Some(SnappedOwnership { style, cells, rect });
-    }
-    None
-}
+mod descriptor;
+mod frame;
+mod set;
+mod settings;
+pub use descriptor::*;
+pub use frame::*;
+pub use set::*;
+pub use settings::*;
 
 // ---------------------------------------------------------------------------
 // Registry
@@ -2951,210 +173,27 @@ register_styles!(
     underwater
 );
 
-/// The built-ins followed by user styles registered at run time
-/// ([`custom`], #274). Append-only, so a style's index in it (which
-/// [`StyleSet`] keys its built passes by) never changes; each append leaks
-/// one small slice, once per style file loaded.
-static SNAPSHOT: std::sync::RwLock<&'static [&'static StyleDescriptor]> =
-    std::sync::RwLock::new(REGISTRY);
-
-/// The names of the styles a game binary registered in Rust ([`register`],
-/// #419), in the order it registered them.
-static GAME_STYLES: std::sync::RwLock<Vec<&'static str>> = std::sync::RwLock::new(Vec::new());
-
-/// Add a style written in Rust outside the engine: a game binary's own
-/// (#419). From then on it is a style like a built-in: F4 lists it, `--style
-/// <name>` and `[post_process.styles.<name>]` switch it on, `--list-styles`
-/// names it with `"source": "game"`, and the player draws it.
-///
-/// Build the descriptor as the engine's styles are, a `static` made with
-/// [`StyleDescriptor::new`] and its setters (they are `const`, so a field
-/// the engine adds later gets its default there and the game's code still
-/// builds, #366):
-///
-/// ```ignore
-/// static CYANOTYPE: StyleDescriptor =
-///     StyleDescriptor::new("cyanotype", "Cyanotype", StyleStage::Display, create)
-///         .params(&[StyleParam::new("exposure", 1.0, 0.25..=3.0)]);
-///
-/// flint_render::stylize::register(&CYANOTYPE)?;
-/// ```
-///
-/// Call it before the first scene is read: a `[post_process.styles]` table
-/// or a `--style` word naming a style the registry doesn't know yet is
-/// dropped with a warning. A game that embeds `PlayerApp` returns the
-/// descriptor from `PlayerExtension::styles` instead, and `add_extension`
-/// calls this.
-///
-/// The name must be lowercase letters, digits and `_`, and new: a built-in,
-/// a user style already loaded or another game style of that name is
-/// refused, as is a per-entity `component` another style already takes.
-/// Registering the same descriptor again (a second `PlayerApp` in one
-/// process) is accepted and changes nothing. The registry is one for the
-/// process and append-only, so a style stays registered once added.
-///
-/// A user `.shader.toml` style can't take a game style's name afterwards,
-/// and a hot reload never replaces one.
-pub fn register(descriptor: &'static StyleDescriptor) -> Result<(), String> {
-    let name = descriptor.name;
-    if !custom::is_identifier(name) {
-        return Err(format!(
-            "style name \"{name}\" must start with a lowercase letter and hold only \
-             lowercase letters, digits and _"
-        ));
-    }
-    // Held across the check and the append, so two threads registering one
-    // name can't both pass
-    let mut game = GAME_STYLES.write().unwrap_or_else(|e| e.into_inner());
-    if let Some(existing) = find(name) {
-        if std::ptr::eq(existing, descriptor) {
-            return Ok(());
-        }
-        let what = if is_builtin(name) {
-            "a built-in style"
-        } else if game.contains(&name) {
-            "a style the game has already registered"
-        } else {
-            "a user style already loaded (styles/*.shader.toml)"
-        };
-        return Err(format!(
-            "style \"{name}\" is {what}; pick another name. Registered: {}",
-            names().join(", ")
-        ));
-    }
-    if let Some(component) = descriptor.component {
-        if let Some(other) = registry().iter().find(|d| d.component == Some(component)) {
-            return Err(format!(
-                "style \"{name}\": component \"{component}\" is already style \"{}\"'s",
-                other.name
-            ));
-        }
-    }
-    register_runtime(descriptor);
-    game.push(name);
-    Ok(())
+/// The styles compiled into the engine, in their default chain order. A
+/// [`StyleRegistry`] starts from these; game and user styles are a
+/// registry's own (#742).
+pub fn builtins() -> &'static [&'static StyleDescriptor] {
+    REGISTRY
 }
 
-/// Whether `name` is a style a game registered in Rust ([`register`]).
-pub fn is_game_style(name: &str) -> bool {
-    GAME_STYLES
-        .read()
-        .unwrap_or_else(|e| e.into_inner())
-        .contains(&name)
-}
-
-/// Whether `name` is written in Rust: a built-in or a game's style, not a
-/// user `.shader.toml` one.
-pub fn is_native(name: &str) -> bool {
-    is_builtin(name) || is_game_style(name)
-}
-
-/// Append `descriptor` to the registry. Its name must be new (checked by
-/// the caller: [`register`], [`custom::load_dir`]).
-pub(crate) fn register_runtime(descriptor: &'static StyleDescriptor) {
-    let mut snapshot = SNAPSHOT.write().unwrap_or_else(|e| e.into_inner());
-    let mut all: Vec<&'static StyleDescriptor> = snapshot.to_vec();
-    all.push(descriptor);
-    *snapshot = Box::leak(all.into_boxed_slice());
-}
-
-/// Put `new` where the runtime style named `new.name` stands (an edited
-/// `.shader.toml`, #275), keeping its index; [`StyleSet`] sees a new
-/// descriptor there and builds it again. Returns false when no user style
-/// has that name (built-ins and game styles can't be replaced).
-pub(crate) fn replace_runtime(new: &'static StyleDescriptor) -> bool {
-    // Asked before the snapshot is locked: `register` takes the game list
-    // and then the snapshot, so the other order here could deadlock. A name
-    // is in the registry once, so a non-native match is the user style.
-    if is_native(new.name) {
-        return false;
-    }
-    let mut snapshot = SNAPSHOT.write().unwrap_or_else(|e| e.into_inner());
-    let Some(i) = snapshot.iter().position(|d| d.name == new.name) else {
-        return false;
-    };
-    let mut all: Vec<&'static StyleDescriptor> = snapshot.to_vec();
-    all[i] = new;
-    *snapshot = Box::leak(all.into_boxed_slice());
-    true
-}
-
-/// Every registered style, in chain order: the built-ins, then user
-/// styles in the order they were loaded.
-pub fn registry() -> &'static [&'static StyleDescriptor] {
-    *SNAPSHOT.read().unwrap_or_else(|e| e.into_inner())
+/// The built-in style called `name`.
+pub fn builtin(name: &str) -> Option<&'static StyleDescriptor> {
+    REGISTRY.iter().copied().find(|d| d.name == name)
 }
 
 /// Whether `name` is one of the styles compiled into the engine.
 pub fn is_builtin(name: &str) -> bool {
-    REGISTRY.iter().any(|d| d.name == name)
+    builtin(name).is_some()
 }
 
-/// Whether any style on this frame reads the style albedo (#869), so the
-/// renderer draws it after the scene pass.
-pub fn any_uses_albedo(config: &PostProcessConfig, ids: &StyleIds) -> bool {
-    config.enabled
-        && registry()
-            .iter()
-            .any(|d| d.is_on(config, ids) && d.uses_albedo.now(config, ids))
-}
-
-/// Whether any style on this frame reads the entity style mask: one
-/// asks for it, or one that [`yields`](StyleDescriptor::yields) is on
-/// while another running style owns an entity's pixels (#384).
-pub fn any_uses_mask(config: &PostProcessConfig, ids: &StyleIds) -> bool {
-    config.enabled
-        && registry().iter().any(|d| {
-            d.reads_mask(config, ids)
-                || (d.yields && d.is_on(config, ids) && !d.foreign_ids(config, ids).is_empty())
-        })
-}
-
-/// Which style owns each mask id this frame (#384), by registry index,
-/// [`ownership::NONE`] for none: the style its variant names, when that
-/// style is registered and on and the variant isn't an opt-out. A faded id
-/// (#400: its entities all at blend 0) keeps its style as owner though the
-/// style is off for it, so a whole-frame style leaves the prop as it came,
-/// as it did while the faded style still ran; a style off everywhere
-/// (#376) owns nothing, so its props are plain scene to every other
-/// style. Id 0 (unstyled) is always none; the table has a slot for every
-/// id (#740: it held 256, and ids past them were silently the whole
-/// frame's).
-pub fn owner_table(config: &PostProcessConfig, ids: &StyleIds) -> Vec<u32> {
-    let registry = registry();
-    let mut table = vec![ownership::NONE; ids.len() + 1];
-    for (id, _) in ids.iter() {
-        let slot = &mut table[id as usize];
-        let Some(v) = ids.variant(id) else {
-            continue;
-        };
-        if v.off {
-            continue;
-        }
-        if let Some(i) = registry.iter().position(|d| {
-            d.name == v.style
-                && !config.styles.is_off_everywhere(d.name)
-                && (ids.is_faded(id) || d.is_on(config, ids))
-        }) {
-            *slot = i as u32;
-        }
-    }
-    table
-}
-
-/// Where `d` stands in the [`registry`], by name.
-pub(crate) fn registry_index(d: &StyleDescriptor) -> Option<usize> {
-    registry().iter().position(|r| r.name == d.name)
-}
-
-/// The style called `name`.
-pub fn find(name: &str) -> Option<&'static StyleDescriptor> {
-    registry().iter().copied().find(|d| d.name == name)
-}
-
-/// The registered names, for messages.
-pub fn names() -> Vec<&'static str> {
-    registry().iter().map(|d| d.name).collect()
+/// Where the style called `name` stands in `styles`: an index into the
+/// owner table the ownership pass reads (#384).
+pub(crate) fn registry_index(styles: &StyleRegistry, d: &StyleDescriptor) -> Option<usize> {
+    styles.index_of(d.name)
 }
 
 #[cfg(test)]
@@ -3175,43 +214,50 @@ mod tests {
     /// game's, and registering it again is a no-op.
     #[test]
     fn a_registered_game_style_is_a_style_like_a_builtin() {
-        register(&GAME_WASH).unwrap();
-        register(&GAME_WASH).expect("the same descriptor again changes nothing");
+        let mut styles = StyleRegistry::new();
+        styles.register(&GAME_WASH).unwrap();
+        styles
+            .register(&GAME_WASH)
+            .expect("the same descriptor again changes nothing");
         assert_eq!(
-            registry()
+            styles
                 .iter()
                 .filter(|d| d.name == "utest_game_wash")
                 .count(),
             1
         );
-        let at = registry_index(&GAME_WASH).unwrap();
+        let at = styles.index_of("utest_game_wash").unwrap();
         assert!(at >= REGISTRY.len(), "after the built-ins");
-        assert!(is_game_style("utest_game_wash") && is_native("utest_game_wash"));
+        assert!(styles.is_game_style("utest_game_wash") && styles.is_native("utest_game_wash"));
         assert!(!is_builtin("utest_game_wash"));
+        // Another registry knows nothing of it (#742)
+        assert!(StyleRegistry::new().find("utest_game_wash").is_none());
 
         let tables: BTreeMap<String, toml::Table> =
             toml::from_str("[utest_game_wash]\namount = 0.75\n").unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) = StyleSettings::from_tables(&tables, &styles);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.param("utest_game_wash", "amount"), Some(0.75));
 
         let mut config = PostProcessConfig::default();
-        let errors = apply_style_specs(&mut config, &["utest_game_wash:amount=0.2".into()]);
+        let errors =
+            apply_style_specs(&mut config, &["utest_game_wash:amount=0.2".into()], &styles);
         assert!(errors.is_empty(), "{errors:?}");
         assert!(config.styles.is_enabled("utest_game_wash"));
         assert_eq!(config.styles.param("utest_game_wash", "amount"), Some(0.2));
 
-        let listing = catalog::listing_in(&GAME_WASH, None);
+        let listing = catalog::listing_in(&styles, &GAME_WASH, None);
         assert_eq!(listing.source, "game");
     }
 
     #[test]
     fn register_refuses_taken_names_components_and_bad_names() {
+        let mut styles = StyleRegistry::new();
         static BUILTIN: StyleDescriptor =
             StyleDescriptor::new("ascii", "Mine", StyleStage::Display, never_built);
-        let e = register(&BUILTIN).unwrap_err();
+        let e = styles.register(&BUILTIN).unwrap_err();
         assert!(e.contains("is a built-in style"), "{e}");
-        assert_eq!(find("ascii").unwrap().label, "ASCII");
+        assert_eq!(styles.find("ascii").unwrap().label, "ASCII");
 
         static FIRST: StyleDescriptor = StyleDescriptor::new(
             "utest_game_twice",
@@ -3225,40 +271,40 @@ mod tests {
             StyleStage::Display,
             never_built,
         );
-        register(&FIRST).unwrap();
-        let e = register(&SECOND).unwrap_err();
+        styles.register(&FIRST).unwrap();
+        let e = styles.register(&SECOND).unwrap_err();
         assert!(e.contains("already registered"), "{e}");
-        assert_eq!(find("utest_game_twice").unwrap().label, "First");
+        assert_eq!(styles.find("utest_game_twice").unwrap().label, "First");
 
         static TAKES_ASCIIS: StyleDescriptor =
             StyleDescriptor::new("utest_game_comp", "Comp", StyleStage::Display, never_built)
                 .component("ascii_style");
-        let e = register(&TAKES_ASCIIS).unwrap_err();
+        let e = styles.register(&TAKES_ASCIIS).unwrap_err();
         assert!(
             e.contains("\"ascii_style\" is already style \"ascii\"'s"),
             "{e}"
         );
-        assert!(find("utest_game_comp").is_none());
+        assert!(styles.find("utest_game_comp").is_none());
 
         for bad in ["", "Sepia", "9lives", "two words", "dash-ed"] {
-            // Leaked: a descriptor is 'static, and a refused one is never kept
+            // Leaked: a game's descriptor is 'static, and a refused one is
+            // never kept
             let d: &'static StyleDescriptor = Box::leak(Box::new(StyleDescriptor::new(
                 bad,
                 "Bad",
                 StyleStage::Display,
                 never_built,
             )));
-            let e = register(d).unwrap_err();
+            let e = styles.register(d).unwrap_err();
             assert!(e.contains("lowercase"), "{bad:?}: {e}");
         }
     }
-
     /// #365: ASCII's tint and palette settings say they're unused outside
     /// their colour modes, and background outside the grounds and the
     /// colour mode that read it.
     #[test]
     fn hints_say_when_a_setting_is_unused() {
-        let ascii = find("ascii").expect("ascii registered");
+        let ascii = builtin("ascii").expect("ascii registered");
         let mut pp = PostProcessConfig::default();
         pp.styles.set_enabled("ascii", true);
         // Default colour mode is source: neither tint nor palette is read
@@ -3331,7 +377,7 @@ mod tests {
 
     #[test]
     fn registry_names_are_unique_and_lowercase() {
-        let names = names();
+        let names = StyleRegistry::new().names();
         for (i, a) in names.iter().enumerate() {
             assert!(a.chars().all(|c| c.is_ascii_lowercase() || c == '_'), "{a}");
             assert!(!names[i + 1..].contains(a), "{a} registered twice");
@@ -3341,8 +387,8 @@ mod tests {
 
     #[test]
     fn param_defaults_sit_in_their_ranges() {
-        for d in registry() {
-            for p in d.params {
+        for d in builtins() {
+            for p in &d.params {
                 assert!(
                     p.min <= p.default && p.default <= p.max,
                     "{}.{}",
@@ -3355,7 +401,7 @@ mod tests {
 
     #[test]
     fn settings_ui_is_where_the_menu_reads_it() {
-        for d in registry() {
+        for d in builtins() {
             // A colour's label lives on its red channel (#510): one on green
             // or blue would never be shown
             for c in d.colors() {
@@ -3393,7 +439,7 @@ mod tests {
 
     #[test]
     fn controls_fold_rgb_triples_and_keep_every_setting() {
-        let ascii = find("ascii").unwrap();
+        let ascii = builtin("ascii").unwrap();
         let rows = ascii.controls();
         // Options first
         let first_param = rows
@@ -3421,7 +467,7 @@ mod tests {
             ]
         );
         // Every param is reachable exactly once
-        for d in registry() {
+        for d in builtins() {
             let mut seen: Vec<&str> = Vec::new();
             for r in d.controls() {
                 match r {
@@ -3441,7 +487,7 @@ mod tests {
 
     #[test]
     fn a_colour_is_one_key_in_a_scene() {
-        let ascii = find("ascii").unwrap();
+        let ascii = builtin("ascii").unwrap();
         let colors = ascii.colors();
         // The tint, and the edge ink's colour (#351)
         assert_eq!(colors.len(), 2);
@@ -3456,7 +502,8 @@ mod tests {
 
         let read = |text: &str| {
             let tables: BTreeMap<String, toml::Table> = toml::from_str(text).unwrap();
-            let (styles, warnings) = StyleSettings::from_tables(&tables);
+            let (styles, warnings) =
+                StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
             let config = PostProcessConfig {
                 styles,
                 ..Default::default()
@@ -3500,7 +547,7 @@ mod tests {
 
     #[test]
     fn labels_come_from_the_setting_or_the_name() {
-        let ascii = find("ascii").unwrap();
+        let ascii = builtin("ascii").unwrap();
         assert_eq!(ascii.label_for("cell"), "Cell size (pt)");
         assert!(ascii.is_integer("cell"));
         assert!(!ascii.is_integer("glow"));
@@ -3518,7 +565,7 @@ mod tests {
 
     #[test]
     fn style_toml_writes_only_changes_and_reads_back() {
-        let ascii = find("ascii").unwrap();
+        let ascii = builtin("ascii").unwrap();
         let mut config = PostProcessConfig::default();
         config.styles.set_enabled("ascii", true);
         assert_eq!(style_toml(ascii, &config), "[post_process.styles.ascii]\n");
@@ -3540,13 +587,14 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.clone(), v.as_table().unwrap().clone()))
             .collect();
-        let (read, warnings) = StyleSettings::from_tables(&tables);
+        let (read, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert!(warnings.is_empty(), "{warnings:?}");
         let back = PostProcessConfig {
             styles: read,
             ..Default::default()
         };
-        for p in ascii.params {
+        for p in &ascii.params {
             assert_eq!(
                 ascii.param(&back, p.name),
                 ascii.param(&config, p.name),
@@ -3554,7 +602,7 @@ mod tests {
                 p.name
             );
         }
-        for o in ascii.options {
+        for o in &ascii.options {
             assert_eq!(
                 ascii.option(&back, o.name),
                 ascii.option(&config, o.name),
@@ -3597,7 +645,7 @@ mod tests {
     fn solo_keeps_only_the_named_style() {
         // The display stage as a scene with ASCII and the mask view has it
         let display = |names: &[&str]| -> Vec<(&'static StyleDescriptor, ())> {
-            registry()
+            builtins()
                 .iter()
                 .filter(|d| names.contains(&d.name))
                 .map(|d| (*d, ()))
@@ -3619,7 +667,8 @@ mod tests {
     #[test]
     fn order_keys_rearrange_a_stage_and_default_to_registration() {
         let names = |config: &PostProcessConfig| -> Vec<&str> {
-            stage_chain(StyleStage::Display, config)
+            StyleRegistry::new()
+                .stage_chain(StyleStage::Display, config)
                 .iter()
                 .map(|(d, _)| d.name)
                 .filter(|n| ["watercolor", "ascii", "pencil", "invert"].contains(n))
@@ -3630,14 +679,15 @@ mod tests {
         assert_eq!(names(&config), ["watercolor", "ascii", "pencil", "invert"]);
         // ... but for a descriptor's own default place (#746: the reality
         // styles, registered last, run first)
-        let mut registered: Vec<&str> = registry()
+        let mut registered: Vec<&str> = builtins()
             .iter()
             .filter(|d| d.stage == StyleStage::Display && d.default_order.is_none())
             .map(|d| d.name)
             .collect();
         let placed = ["matrix", "blood", "drunk", "tron", "underwater"];
         registered.splice(0..0, placed);
-        let chain: Vec<&str> = stage_chain(StyleStage::Display, &config)
+        let chain: Vec<&str> = StyleRegistry::new()
+            .stage_chain(StyleStage::Display, &config)
             .iter()
             .map(|(d, _)| d.name)
             .collect();
@@ -3656,7 +706,8 @@ mod tests {
             "#,
         )
         .unwrap();
-        let (styles, warnings) = StyleSettings::from_tables(&tables);
+        let (styles, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert_eq!(warnings, vec!["styles.invert.order must be a number"]);
         assert_eq!(styles.order("watercolor"), Some(10.0));
         config.styles = styles;
@@ -3676,7 +727,7 @@ mod tests {
 
     #[test]
     fn style_toml_keeps_the_order() {
-        let watercolor = find("watercolor").unwrap();
+        let watercolor = builtin("watercolor").unwrap();
         let mut config = PostProcessConfig::default();
         config.styles.set_enabled("watercolor", true);
         config.styles.set_order("watercolor", Some(5.0));
@@ -3690,7 +741,7 @@ mod tests {
 
     #[test]
     fn no_style_names_a_setting_after_a_reserved_key() {
-        for d in registry() {
+        for d in builtins() {
             for key in RESERVED_KEYS {
                 assert!(
                     d.params.iter().all(|p| p.name != key)
@@ -3785,7 +836,8 @@ mod tests {
             "#,
         )
         .unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert!(settings.is_enabled("invert"));
         assert_eq!(settings.param("invert", "strength"), Some(0.5));
         assert_eq!(warnings.len(), 1);
@@ -3793,7 +845,8 @@ mod tests {
 
         let tables: BTreeMap<String, toml::Table> =
             toml::from_str("[invert]\nenabled = false\nstrength = 1\nwobble = 3\n").unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert!(!settings.is_enabled("invert"));
         assert_eq!(
             settings.param("invert", "strength"),
@@ -3809,7 +862,8 @@ mod tests {
         let tables: BTreeMap<String, toml::Table> =
             toml::from_str("[invert]\nstrength = 2\n[ascii]\ncell = 8\ntint = [0.3, 1.5, 0.4]\n")
                 .unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         // Kept as written, as a stray option is: F4 shows it
         assert_eq!(settings.param("invert", "strength"), Some(2.0));
         assert_eq!(settings.param("ascii", "tint_g"), Some(1.5));
@@ -3838,7 +892,8 @@ mod tests {
             "[matrix]\nblend_source = \"tear\"\n[tron]\nblend_source = \"own\"\n[blood]\nblend_source = \"torn\"\n",
         )
         .unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert!(settings.follows_tear("matrix"));
         assert!(!settings.follows_tear("tron"));
         assert_eq!(
@@ -3861,19 +916,36 @@ mod tests {
         );
         config.tear = 0.4;
         assert!(config.styles.shows_in("matrix", &config));
-        let matrix = find("matrix").unwrap();
+        let matrix = builtin("matrix").unwrap();
         assert!(style_toml(matrix, &config).contains("blend_source = \"tear\""));
         config.styles.reset("matrix");
         assert!(!config.styles.follows_tear("matrix"));
 
-        apply_style_spec(&mut config, "tron:blend_source=tear").unwrap();
+        apply_style_spec(
+            &mut config,
+            "tron:blend_source=tear",
+            &crate::stylize::StyleRegistry::new(),
+        )
+        .unwrap();
         assert!(config.styles.follows_tear("tron") && config.styles.is_enabled("tron"));
-        assert!(apply_style_spec(&mut config, "tron:blend_source=half").is_err());
-        crate::post_style::set_post_style_param(&mut config, "tron", "blend_source", "own".into())
-            .unwrap();
+        assert!(apply_style_spec(
+            &mut config,
+            "tron:blend_source=half",
+            &crate::stylize::StyleRegistry::new()
+        )
+        .is_err());
+        crate::post_style::set_post_style_param(
+            &mut config,
+            &crate::stylize::StyleRegistry::new(),
+            "tron",
+            "blend_source",
+            "own".into(),
+        )
+        .unwrap();
         assert!(!config.styles.follows_tear("tron"));
         assert!(crate::post_style::set_post_style_param(
             &mut config,
+            &crate::stylize::StyleRegistry::new(),
             "tron",
             "blend_source",
             1.0.into()
@@ -3886,7 +958,8 @@ mod tests {
     #[test]
     fn the_reality_styles_run_first_of_the_display_chain() {
         let config = PostProcessConfig::default();
-        let chain: Vec<&str> = stage_chain(StyleStage::Display, &config)
+        let chain: Vec<&str> = StyleRegistry::new()
+            .stage_chain(StyleStage::Display, &config)
             .iter()
             .map(|(d, _)| d.name)
             .collect();
@@ -3895,7 +968,7 @@ mod tests {
             ["matrix", "blood", "drunk", "tron", "underwater"]
         );
         for name in crate::render_mode::STYLES {
-            let d = find(name).unwrap();
+            let d = builtin(name).unwrap();
             assert_eq!(d.stage, StyleStage::Display, "{name}");
             assert!(
                 !d.yields,
@@ -3907,7 +980,7 @@ mod tests {
 
     #[test]
     fn feeds_bloom_reads_from_the_table_for_hdr_styles_only() {
-        let kuwahara = find("kuwahara").unwrap();
+        let kuwahara = builtin("kuwahara").unwrap();
         // Kuwahara's default is unchanged: bloom reads the original scene
         assert!(!kuwahara.feeds_bloom);
         assert!(!kuwahara.feeds_bloom_in(&PostProcessConfig::default()));
@@ -3915,7 +988,8 @@ mod tests {
             "[kuwahara]\nfeeds_bloom = true\n[ascii]\nfeeds_bloom = true\n[invert]\nfeeds_bloom = 1\n",
         )
         .unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         let config = PostProcessConfig {
             styles: settings.clone(),
             ..Default::default()
@@ -3929,7 +1003,7 @@ mod tests {
         );
         // ASCII draws after bloom: warned, ignored
         assert_eq!(settings.feeds_bloom("ascii"), None);
-        assert!(!find("ascii").unwrap().feeds_bloom_in(&config));
+        assert!(!builtin("ascii").unwrap().feeds_bloom_in(&config));
         assert!(warnings
             .iter()
             .any(|w| w.contains("ascii") && w.contains("display")));
@@ -3948,14 +1022,15 @@ mod tests {
         let tables: BTreeMap<String, toml::Table> =
             toml::from_str("[ascii]\ncell = 12\nramp = \"blocks\"\ncolor = \"tint\"\nfont = 3\n")
                 .unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert!(settings.is_enabled("ascii"));
         assert_eq!(settings.param("ascii", "cell"), Some(12.0));
         assert_eq!(settings.option("ascii", "ramp"), Some("blocks"));
         assert_eq!(settings.option("ascii", "color"), Some("tint"));
         assert_eq!(warnings, vec!["styles.ascii.font must be a string"]);
 
-        let ascii = find("ascii").unwrap();
+        let ascii = builtin("ascii").unwrap();
         let mut config = PostProcessConfig::default();
         assert_eq!(ascii.option(&config, "font"), "builtin");
         assert_eq!(ascii.option(&config, "color"), "source");
@@ -3966,7 +1041,8 @@ mod tests {
         // An unknown key names the options too
         let tables: BTreeMap<String, toml::Table> =
             toml::from_str("[ascii]\nglyphs = 1\n").unwrap();
-        let (_, warnings) = StyleSettings::from_tables(&tables);
+        let (_, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert!(warnings[0].contains("ramp"), "{warnings:?}");
     }
 
@@ -3976,7 +1052,8 @@ mod tests {
         // the list and the default it draws as, and is kept as written
         let tables: BTreeMap<String, toml::Table> =
             toml::from_str("[ascii]\ncolor = \"plaid\"\n").unwrap();
-        let (settings, warnings) = StyleSettings::from_tables(&tables);
+        let (settings, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(
             warnings[0].contains("styles.ascii.color")
@@ -3988,7 +1065,7 @@ mod tests {
         assert_eq!(settings.option("ascii", "color"), Some("plaid"));
 
         // Every closed option of every built-in style warns the same way
-        for d in registry() {
+        for d in builtins() {
             for o in d.options.iter().filter(|o| o.closed()) {
                 assert!(
                     !o.choices.is_empty(),
@@ -3999,7 +1076,8 @@ mod tests {
                 assert!(o.choices.contains(&o.default), "{}.{}", d.name, o.name);
                 let toml = format!("[{}]\n{} = \"plaid\"\n", d.name, o.name);
                 let tables: BTreeMap<String, toml::Table> = toml::from_str(&toml).unwrap();
-                let (_, warnings) = StyleSettings::from_tables(&tables);
+                let (_, warnings) =
+                    StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
                 assert_eq!(warnings.len(), 1, "{}.{}: {warnings:?}", d.name, o.name);
             }
         }
@@ -4012,13 +1090,14 @@ mod tests {
              [pencil]\ndirection = \"tensor\"\n",
         )
         .unwrap();
-        let (_, warnings) = StyleSettings::from_tables(&tables);
+        let (_, warnings) =
+            StyleSettings::from_tables(&tables, &crate::stylize::StyleRegistry::new());
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]
     fn descriptor_params_fall_back_to_defaults() {
-        let invert = find("invert").unwrap();
+        let invert = builtin("invert").unwrap();
         let mut config = PostProcessConfig::default();
         assert!(!invert.is_enabled(&config));
         assert_eq!(invert.param(&config, "strength"), 1.0);
@@ -4027,7 +1106,7 @@ mod tests {
         assert!(invert.is_enabled(&config));
         assert_eq!(invert.param(&config, "strength"), 0.25);
 
-        let kuwahara = find("kuwahara").unwrap();
+        let kuwahara = builtin("kuwahara").unwrap();
         assert!(!kuwahara.is_enabled(&config));
         assert_eq!(kuwahara.param(&config, "radius"), 4.0);
         config.styles.set_enabled("kuwahara", true);

@@ -111,7 +111,7 @@ impl Kuwahara {
             &kit::shader(
                 device,
                 "Kuwahara Tensor Shader",
-                kit::wgsl!("kuwahara_tensor.wgsl"),
+                kit::wgsl!("prelude_core.wgsl", "kuwahara_tensor.wgsl"),
             ),
             &layouts,
             HDR_FORMAT,

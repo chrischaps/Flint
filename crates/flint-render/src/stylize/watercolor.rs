@@ -349,6 +349,7 @@ impl Watercolor {
 }
 
 const PAINT_SHADER: kit::Wgsl = kit::wgsl!(
+    "prelude_core.wgsl",
     "watercolor.wgsl",
     "style_image.wgsl"
 );

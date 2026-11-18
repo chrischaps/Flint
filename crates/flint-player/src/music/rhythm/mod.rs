@@ -54,7 +54,7 @@ impl RhythmSubsystem {
             .scene
             .post_process
             .as_ref()
-            .map(crate::player_app::scene_loading::post_process_config_from_def)
+            .map(|d| crate::player_app::scene_loading::post_process_config_from_def(d, ctx.styles))
             .unwrap_or_default();
         Self {
             base,

@@ -16,6 +16,7 @@ pub mod context;
 pub mod draw2d;
 pub mod engine;
 pub mod errors;
+pub mod fn_times;
 pub mod host;
 #[cfg(test)]
 mod layout_tests;
@@ -37,6 +38,7 @@ pub use context::{CameraOverrides, FrameRequests, PostProcessOverrides};
 pub use context::{DrawCommand, DrawItem};
 use context::{InputSnapshot, ScriptCommand};
 pub use context::{SoundPlay, SoundRef};
+pub use engine::output::FnTime;
 use engine::ScriptEngine;
 pub use errors::{ScriptError, ScriptErrors};
 use flint_core::Result;
@@ -87,6 +89,16 @@ impl ScriptSystem {
     /// the frame it was spent in.
     pub fn take_times(&mut self) -> Vec<(String, f32)> {
         self.engine.take_times()
+    }
+
+    /// What each callback's functions took since the last take (#1100):
+    /// the engine functions it called (`raycast()`, every overload one
+    /// record) and its script's own (`scripts/hud.rhai:draw_bar()`), each
+    /// with its calls, total and worst ms, under the callback's
+    /// `<source>:<callback>` label. Empty unless timing is on. Take it with
+    /// [`take_times`](Self::take_times).
+    pub fn take_function_times(&mut self) -> Vec<FnTime> {
+        self.engine.take_function_times()
     }
 
     /// Every script error of the run (#693): each failure counted once per
@@ -675,6 +687,8 @@ impl ScriptSystem {
                 .iter()
                 .filter_map(|sig| api::registry::parse_signature(sig))
                 .filter(|f| !registry.declares(&f.name, f.params.len()))
+                // The function-timing wrappers' own (#1100), no script's to call
+                .filter(|f| f.name != fn_times::ENTER)
                 .collect();
             fns.sort_by(|a, b| (&a.name, a.params.len()).cmp(&(&b.name, b.params.len())));
             fns.dedup_by(|a, b| a.signature == b.signature);

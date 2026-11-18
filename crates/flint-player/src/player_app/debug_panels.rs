@@ -39,7 +39,9 @@ impl PlayerApp {
         self.scene
             .post_process
             .as_ref()
-            .map(|d| super::scene_loading::post_process_config_from_def(d).styles)
+            .map(|d| {
+                super::scene_loading::post_process_config_from_def(d, &self.core.styles).styles
+            })
             .unwrap_or_default()
     }
 

@@ -19,7 +19,7 @@ use std::collections::HashMap;
 /// The window's colours: a warm dark ground, one teal for what is
 /// selected, a gold thread for the selected entity, and the F2 overlay's
 /// Okabe-Ito bands for time (vermillion only for a hitch).
-mod ink {
+pub(super) mod ink {
     use egui::Color32;
     pub const GROUND: Color32 = Color32::from_rgb(20, 21, 24);
     pub const PANEL: Color32 = Color32::from_rgb(27, 28, 32);
@@ -359,6 +359,13 @@ impl App {
             return;
         }
         self.styled = true;
+        apply_style(ctx);
+    }
+}
+
+/// The window's look, for both tabs.
+pub(super) fn apply_style(ctx: &egui::Context) {
+    {
         let mut v = egui::Visuals::dark();
         v.panel_fill = ink::PANEL;
         v.window_fill = ink::RAISED;
@@ -378,7 +385,9 @@ impl App {
             s.spacing.button_padding = Vec2::new(7.0, 3.0);
         });
     }
+}
 
+impl App {
     /// The frame: input, then every pane.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
@@ -2241,7 +2250,7 @@ fn tag_ending_at(painter: &egui::Painter, pos: Pos2, words: &str, colour: Color3
 }
 
 /// `text` laid out on one line, cut with an ellipsis past `max_w`.
-fn elided(
+pub(super) fn elided(
     painter: &egui::Painter,
     text: String,
     font: FontId,

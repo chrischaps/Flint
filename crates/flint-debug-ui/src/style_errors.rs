@@ -16,7 +16,12 @@ const MAX_LINES: usize = 8;
 /// `flint_render::stylize::custom::errors` gives them). Nothing when the
 /// list is empty. `bottom_inset` lifts it above anything the host keeps at
 /// the bottom edge.
-pub fn paint_style_errors(ctx: &egui::Context, errors: &[(String, String)], bottom_inset: f32) {
+pub fn paint_style_errors(
+    ctx: &egui::Context,
+    errors: &[(String, String)],
+    styles: &flint_render::stylize::StyleRegistry,
+    bottom_inset: f32,
+) {
     if errors.is_empty() {
         return;
     }
@@ -74,7 +79,7 @@ pub fn paint_style_errors(ctx: &egui::Context, errors: &[(String, String)], bott
                     }
                     ui.add_space(4.0);
                     ui.label(
-                        RichText::new(hint(errors))
+                        RichText::new(hint(errors, styles))
                             .color(quiet)
                             .font(FontId::proportional(11.5)),
                     );
@@ -98,12 +103,15 @@ fn is_description_error(message: &str) -> bool {
 /// The card's last line: what draws meanwhile, and how to try again. A
 /// style that never loaded draws nothing (the scene's table for it waits);
 /// one that did keeps its last good build.
-fn hint(errors: &[(String, String)]) -> &'static str {
+fn hint(
+    errors: &[(String, String)],
+    styles: &flint_render::stylize::StyleRegistry,
+) -> &'static str {
     // A bundle is fixed: nothing reloads on the web (#415)
     if cfg!(target_arch = "wasm32") {
         return "Its input draws unchanged. Fix the file and pack the bundle again.";
     }
-    let registered = |(style, _): &(String, String)| flint_render::stylize::find(style).is_some();
+    let registered = |(style, _): &(String, String)| styles.find(style).is_some();
     match (
         errors.iter().any(|e| !registered(e)),
         errors.iter().any(registered),

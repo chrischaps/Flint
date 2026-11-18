@@ -369,6 +369,102 @@ fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
 
 A text detail (`flint_core::scope!("load_level", path)`, a `&str`, a `String` or a `&Path`) is copied into the recording, so keep it to scopes that run rarely, not to loops. A `&Path` is turned into text only while the scope records. A game's older `profiling::scope!` and `#[profiling::function]` still reach Tracy, but not the recorder.
 
+### Recording a trace
+
+A hitch is over by the time anyone notices it, and Tracy has to be attached before it happens. The recorder always holds the last few seconds instead, so the slow frame can be saved after the fact, scopes and all:
+
+```bash
+flint-player examples/hitch_metronome.scene.toml --trace out.json --exit-after 10   # the last 5 s, at exit
+flint-player examples/hitch_metronome.scene.toml --trace-on-hitch                   # 8 frames after the first hitch
+flint-player examples/hitch_metronome.scene.toml --trace-seconds 10                 # record; Shift+F3 saves
+```
+
+`flint play` takes the same flags. Each needs a build with the recorder: every debug build has one, and a release build has one with the `trace` feature (`cargo run --release -p flint-player --features trace -- ...`). A build without it refuses the flags with a line saying so.
+
+- **`--trace <file>`** writes the last `--trace-seconds` (default 5) when the run ends, however it ends.
+- **`--trace-on-hitch[=N]`** writes a trace eight frames after each of the first N hitches past the start (default 1), so the file shows what followed too. It passes over the first 2 s of game time, as the exit report does. Its files go beside `--trace`'s (`out-hitch-t3.000.json`), or into `traces/` at the project's root (`hitch_metronome-hitch-t3.000.json`).
+- **Shift+F3** (the `save_trace` debug key) saves the look-back mid-play, into the same place, and the note at the top names the file. With no flag, the first press starts the recorder and the next one saves.
+- **A frame capture** taken while the recorder runs ([Capturing from the running player](#capturing-from-the-running-player)) gets `trace.json` in its folder, and its manifest names it.
+- **`--trace-seconds 0`** keeps the whole session. That grows without bound: the tavern's trace came to about 180 bytes of JSON a scope with the other tracks, 1.6 MB a second at 270 fps. The run prints the size it wrote.
+
+Open the file in [Perfetto](https://ui.perfetto.dev) (Open trace file) or `chrome://tracing`. It is Chrome trace-event JSON, one process with these tracks:
+
+| Track | What it holds |
+|---|---|
+| a thread (`main`, ...) | every `flint_core::scope!` that closed on it, nested, each with its `frame`, `depth` and detail. Each script callback is a scope of its own while recording, named as `--perf` names its time (`scripts/stall.rhai:on_update`), inside the `script::call` that carries its file as detail, and each function it calls is a scope inside it ([Inside a script](#inside-a-script)) |
+| `frames` | each frame, from one `RedrawRequested` to the next, with its `ms` |
+| `phases` | the player's ten phases (`input`, `scripts`, `physics`, ..., `acquire`, `present`) between their marks |
+| `gpu` | each pass the GPU timer measured. The GPU's clock isn't the CPU's, so a frame's passes are laid from its render phase's start, with the GPU's own durations |
+| `hitches` | each hitch the detector found, spanning its frame, with the cause line the hitch log writes |
+| `notes` | the engine's frame notes (a model load, a pipeline build, a reload poll), at their frame's start |
+
+The header (Perfetto's **Info and stats**, or `otherData` in the file) names the reason, the scene, the adapter and backend, the build, the engine's commit, the look-back, each ring's size and which rings wrapped. `--trace` turns the GPU timer on, as F2 does, to fill the `gpu` track.
+
+The stall in `hitch_metronome` reads like this: a 100 ms `stall.rhai:on_update` inside that frame's `tick`, the `scripts` phase as long, and the frame and its hitch mark spanning both. Inside the callback is `stall.rhai:hold()`, the helper whose busy wait took the 100 ms.
+
+#### Inside a script
+
+A callback's time names the file, not the cause: a 12 ms `on_update` could be one slow loop or one engine function called 400 times. While a callback is timed (`--perf`, F2, `--hitch-log`, `--trace-on-hitch`) or the recorder records, every function it calls is timed as well (#1100):
+
+- **Engine functions** by name, every overload one record: `clamp()`, `raycast()`. In a trace each call is a scope inside the callback's, so 400 raycasts are 400 short bars.
+- **The script's own functions** as `<source>:<name>()`: `stall.rhai:hold()`. A function's time includes the engine calls it makes. Every level of a recursion counts as a call, but only the outermost call's time is added, so nothing is counted twice.
+- **Not timed, so their time stays with their caller's:** closures (`|x| x + 1`), functions that read `this`, the callbacks themselves (which have their own scope) and functions of an imported module (`import "menu"`).
+
+`--perf`'s worst-scripts list names each callback's slowest function in one frame of the window: `worst scripts: stall.rhai:on_update 0.33/100.1 (hold() 100.0)`, or `(raycast() x400 3.1)` when it was many calls. A host reads the same numbers from `ScriptSystem::take_function_times()`: one `FnTime` for each callback and function, with `calls`, `total_ms` and `worst_ms`.
+
+**What it costs.** With timing off, a script runs as it did before, and every engine function pays one thread-local flag read. In a release build, a script function call measured 387 to 392 ns with this change and 391 to 398 ns before it, and an engine call 246 to 250 ns against 251 to 256. With timing on, an engine call costs about 45 ns more (two clock reads) and a call of the script's own function about 0.48 µs more. A script called while timing runs on a copy of its functions in which each `fn f(a, b)` is a small wrapper that opens the timer and then calls the original body, so each call costs a second Rhai call. A helper called 400 times a frame therefore adds about 0.2 ms to that frame while it is timed, and the wrapper's share shows inside the callback's time, not the helper's. The wrapper also takes a call level, so a timed call runs with twice Rhai's call-level limit, and a deep recursion fails at the same depth either way (`cargo test -p flint-script --release --lib fn_call_cost -- --ignored --nocapture` measures it).
+
+**What it costs.** Each thread's ring is sized for its seconds at 32 768 scopes a second: 163 840 records, 6.6 MB a thread for the default 5 s, taken once at the thread's first scope. A frame with more than that many scopes a second shortens the look-back, and the header's `wrapped` and `scopes_from_ms` say so. Recording, a scope costs about 40 ns in a release build ([ADR 0128](https://github.com/chrischaps/Flint/blob/main/docs/adr/0128-one-scope-macro-two-sinks.md)), and the player's own tracks about 0.65 µs a frame. The tavern's 38 scopes a frame come to about 2 µs. A run with and without `--trace` on that scene couldn't tell the two apart: identical runs on a busy machine differed by more (3.6 to 4.5 ms a frame). Saving copies the window on the frame thread, about 1.8 ms for 24 000 scopes in release, then writes the JSON on a thread of its own. The GPU timer `--trace` turns on may cost more than the recorder: `--perf`, which turns on the same timing, read 0.3 to 0.6 ms a frame over plain runs on the tavern at 300 fps, inside that same noise. A default release build has none of it.
+
+**What a trace says about a game.** A trace holds names, never contents: scope names, script paths, asset and scene names, the adapter. That is still a description of a game. Before attaching one to a public issue, check it doesn't name what isn't public yet. `traces/` is in `.gitignore`.
+
+**On the web**, with the recorder in the build, `?perf=1`'s panel has a **Save trace** button that downloads the look-back. The site's release build has no recorder, so the button isn't shown there. In a browser that isn't cross-origin isolated, `performance.now()` is coarsened, so short scopes read as 0 (docs/design/web.md).
+
+### Reading a trace from the CLI
+
+Perfetto shows a trace; `flint profile` answers questions of one in text, which is what an agent can read ([The `profile` Command](../cli-reference/overview.md#the-profile-command)):
+
+```bash
+flint profile explain traces/hitch_metronome-hitch-t3.000.json
+```
+
+```text
+frame 525 took 107.28 ms (median 4.57): stall.rhai:on_update 100.09 ms against its median 0.032, +100.06 of the frame's +102.71 ms excess
+  inside tick > run_scripts > script::update > script::on_update > script::call (examples/scripts/stall.rhai) on main
+  the hitch detector: script stall.rhai:on_update 100.1 ms (judged 108.33 ms against 4.17)
+```
+
+`explain` holds the slow frame against the trace's normal ones and names the deepest scope that carries its excess, or the phase when no scope does (a wait in `acquire`). `flint profile frame <trace> hitch` prints that frame's scope tree, `top` the scopes over the whole trace, and `diff <a> <b>` two traces' per-scope means and p90s with the deltas their frames' own spread can explain marked. Each reads only the file, so a trace attached to an issue reads the same anywhere, and each answers `--json`.
+
+### The flame view
+
+Perfetto opens any trace, but it doesn't know what a Flint frame is. `flint frame open` does. It opens the frame debugger's window on a trace file, or on a capture that holds one, with a **Profiler** tab:
+
+```bash
+flint frame open traces/hitch_metronome-hitch-t3.000.json          # a trace alone: the profiler
+flint frame open captures/hitch_metronome-t3.106.flintframe        # a capture with trace.json: both tabs, P switches
+flint frame open out.json --compare --scope stall                  # the stall's path tinted, its calls marked
+flint frame open out.json --trace-frame 1150..1200 --screenshot p.png
+```
+
+![The profiler tab on the metronome's 5 s trace: the strip of 1017 frames with two orange hitches, the second chosen; under it frame 1181 as a flame chart, tick over run_scripts over script::update down to a 100 ms stall.rhai:on_update, the scripts lane and the GPU's passes beneath; on the right every scope of the frame with count, total, mean, p90 and worst](../images/profiler-hitch.jpg)
+
+It opens on the hitch: the capture's own, when it was taken on one, else the worst in the trace, else the longest frame. `--trace-frame` takes a frame number, `A..B`, `hitch` or `worst` instead.
+
+- **The strip**, along the top, is every frame of the trace as the F2 graph draws it, each frame's phases in the overlay's bands and each hitch marked in vermillion. Click a frame, or drag across a range. Left and Right step a frame, Shift widens the range, H jumps to the next hitch and Shift+H to the one before.
+- **The flame chart**, in the middle, is the chosen frames as an icicle: first the player's phases, then each thread's scopes nested under their parents, then the script callbacks on a row of their own, then the GPU's passes, laid from the frame's render phase as Perfetto's `gpu` track is. A bar is coloured by the phase it ran inside, in the overlay's colours, so the two tools read alike: scripts orange, physics green, render blue, HUD and present purple. A bar that spans phases, such as `tick`, is grey. The wheel zooms about the pointer and dragging pans. W and S zoom, A and D pan, and F fits the chosen frames again. Hover a bar for its name, detail, time, share of the frame, self time and path. Click it to choose its scope, and double-click it to zoom to it. Hitches run along the ruler's foot, and the frame notes (a model load, a pipeline build) are gold diamonds on it.
+- **The statistics**, on the right, are every scope over the chosen frames: count, total, mean, p90 (by nearest rank) and worst, in ms, each call counted, nested calls included. Click a header to sort, and type to filter. Choosing a scope, here or in the chart, dims every other bar, outlines each of its calls, and plots its time in every frame of the trace under the table and as a white line over the strip. A cost that grows slowly shows as a line that climbs.
+
+**Compare with the median frame** (C, or `--compare`) tints each bar by how much longer its path took in its frame than in the trace's median frame. A path is the scope's thread and the names above it (`tick / run_scripts / script::update / ... / stall.rhai:on_update`), so a name called from two places is compared with itself. A bar that took what it usually takes is greyed. One that took longer turns vermillion, in proportion to how far the whole frame ran over the median. A hitch's cause is then the one red line down the chart, its parents red above it, everything else quiet. It is the picture of what `flint profile explain` prints ([Reading a trace from the CLI](#reading-a-trace-from-the-cli)).
+
+![Compare on the same hitch: tick, run_scripts and script::update down to stall.rhai:on_update in vermillion, the render and present work beside them greyed; the card under the pointer says the stall took 100 ms, 96% of the frame, against 0.032 ms in the median frame](../images/profiler-compare.jpg)
+
+![A range of frames around the hitch with stall.rhai:on_update chosen: its calls outlined in the chart, the rest dimmed, and under the table its time in every frame of the trace, flat at 0.03 ms but for its 100 ms spikes at the two hitches](../images/profiler-scope.jpg)
+
+**What it costs to look.** The header says how long the tab took to lay out its last frame. On a 5 s trace at 60 fps (45 300 scopes, `profiler_cost` in `commands/frame/open/profile.rs`), with flint-cli and egui optimized, it takes 1.1 ms a frame with one frame chosen, 2.4 ms with all 300, and 3.4 ms with all 300 under Compare. In a debug build those are 1.5, 4.6 and 9.2 ms. Reading the file is the slow part: 68 ms optimized for its 5.6 MB, 150 ms in debug. The metronome's own 5 s trace with vsync off (140 743 scopes over 1567 frames, 19.5 MB) draws all of its frames in 15 ms in a debug build.
+
+`--screenshot` draws the tab with no window, as it does the frame debugger's (`--hover X,Y` puts the pointer down for a card). The flags are under **Profiler (a trace)** in `flint frame open --help`.
+
 ## Frame pacing
 
 A mean frame time hides uneven frames. `--exit-after N` prints two spreads beside the mean, both taken after the first 2 s:
@@ -430,6 +526,10 @@ A note made inside another, such as a model inside a transition or a pipeline in
 | `surface reconfigure` | the window's swapchain made again (a resize) |
 | `physics steps` | a frame that ran more than one fixed step |
 | `clock stall` | a frame over 250 ms, which pacing passed through as it was |
+| `screenshot` | a `--screenshot` frame read back and written as a PNG, by its file |
+| `stats overlay` | the HUD pass of the first frame F2 shows a view on (`opened`, `opened (graph)`) |
+
+The last two are the player's own tools at work. A hitch they account for (their times cover at least half its excess) is the tools' cost, not the game's. It is classed **`tooling`**, named by the tool (`screenshot shots/look_0003.png, 92.5 ms`, `stats overlay opened, 12.0 ms`) and counted apart from the game's hitches: the graph's counters, the perf line, the exit report's counts and every `--max-hitches` gate leave it out, and `--capture-on-hitch` doesn't capture it. A screenshot's read-back and write land in `present`, so before #1129 every `--screenshot-every` frame read as a 60 to 200 ms hitch `elsewhere, present`, which an agent validating with screenshots and the hitch log would take for the compositor.
 
 A `clock stall` is the long frame itself, so it is kept on the hitch but is no cause. Neither is `physics steps`: extra fixed steps are the clock paying back the game time a long frame before owed, and their own cost is the `physics` phase's, which the hitch names by phase.
 
@@ -466,7 +566,7 @@ A bar is split into the frame's phases, grouped into six bands, bottom up:
 
 The colours are Okabe and Ito's palette, which stays distinguishable under the common colour-vision deficiencies. Vermillion is kept for hitches. The line across the graph is the display's refresh period, labelled in ms and fps, and the fainter one is twice that. The top of the graph eases to fit the tallest bar and falls back slowly once a spike has scrolled off. It never sits below about twice the budget, and it stops at 250 ms, so a scene load doesn't flatten everything for seconds.
 
-The graph is quiet when nothing is wrong. A bar within its refresh is drawn dim, a bar past it brightens as it gets later, and a hitch is drawn at full colour with a vermillion mark over it and a faint band behind it. Under the graph are the session's hitches, hitches a minute, the worst frame, and how long since the last hitch. The count turns vermillion for a couple of seconds after a hitch, then fades back to grey. The line below says what the last hitch was, in the same words as the hitch log, the exit report and `--perf` (see [Finding a hitch](#finding-a-hitch)): `last 269 ms: style build ascii, 255.2 ms` when the engine noted what it was doing, `last 117 ms: script stall.rhai:on_update 100.0 ms` when a script took it, `last 30 ms: render +14.0 ms` for another phase of the player's work, and `last 42 ms: elsewhere, present 1.0 ms` (or `acquire`, whichever wait was longer) when it wasn't the player's. Scripts are timed while F2 is open, as under `--perf`, so a script hitch names its callback.
+The graph is quiet when nothing is wrong. A bar within its refresh is drawn dim, a bar past it brightens as it gets later, and a hitch is drawn at full colour with a vermillion mark over it and a faint band behind it. Under the graph are the session's hitches, hitches a minute, the worst frame, and how long since the last hitch. The count turns vermillion for a couple of seconds after a hitch, then fades back to grey. The line below says what the last hitch was, in the same words as the hitch log, the exit report and `--perf` (see [Finding a hitch](#finding-a-hitch)): `last 269 ms: style build ascii, 255.2 ms` when the engine noted what it was doing, `last 117 ms: script stall.rhai:on_update 100.0 ms` when a script took it, `last 30 ms: render +14.0 ms` for another phase of the player's work, and `last 42 ms: elsewhere, present 1.0 ms` (or `acquire`, whichever wait was longer) when it wasn't the player's. A hitch of the player's own tools reads `last 113 ms: screenshot shot_0001.png, 107.7 ms, not counted`: its bar has no mark, and the counters above it leave it out. Scripts are timed while F2 is open, as under `--perf`, so a script hitch names its callback.
 
 Press F2 again for the graph alone, in a corner, small enough to leave on while playing:
 
@@ -486,7 +586,7 @@ The overlay draws every bar into one mesh, which it keeps and refills from frame
 | the graph alone | 0.54–0.61 ms | 2.07–2.15 ms |
 | the full overlay | 0.56–0.63 ms | 2.89–2.94 ms |
 
-The full overlay's figures include the rendering stats rows. While the graph shows, the history keeps at least four and a half seconds of frames, which at 240 Hz is more than its 600.
+The full overlay's figures include the rendering stats rows. Its first frame costs more, since its text at five sizes is laid out and each glyph drawn once: in a debug build 12 ms on the looks tour and 8 to 44 ms on the metronome, 3.6 ms for the graph alone. That is a debug build with egui's text stack optimized (the root `Cargo.toml`, #1129). Unoptimized it was 108 to 121 ms, a hitch on the graph it had just opened. A first frame that still crosses the threshold is a `tooling` hitch, not the game's. While the graph shows, the history keeps at least four and a half seconds of frames, which at 240 Hz is more than its 600.
 
 The history is flint-player's `frame-history` Cargo feature, on by default. A shipped game that wants none of it builds flint-player without it (`default-features = false` and the features it does want). The player then records frames only while `--perf` is on, as it did before, and each call the frame makes costs a branch (measured at nothing beside the `Instant::now` the player takes anyway). `FLINT_FRAME_HISTORY=0` turns the history off in a build that has it, and `FLINT_FRAME_HISTORY=1` turns it on in one that doesn't. `--hitch-log` and `--max-hitches` (next section) turn it on whatever the build says.
 
@@ -511,7 +611,7 @@ The perf line's count includes the start's hitches; the exit report below sets t
 | `wall_time` | when it began, seconds since recording began |
 | `ms`, `judged_ms`, `median_ms` | its wall time, the time it was judged by (paced under vsync) and the median it stood out from |
 | `missed_refreshes` | under vsync, the refreshes it ran past its one; `null` without vsync |
-| `class` | `player` or `elsewhere` |
+| `class` | `player`, `elsewhere`, or `tooling` (the player's own screenshot or F2 overlay; see the notes above) |
 | `startup` | it came in the first two seconds of game time |
 | `player_ms` | the player's own work in it, every phase but `acquire` and `present` |
 | `phase`, `phase_ms` | the phase that grew most, and by how much (`player` only) |
@@ -534,7 +634,11 @@ That is a script that stalls 150 ms at t = 1, 3, 4 and 5 s, on a 240 Hz display 
 [perf] hitch log: hitches.jsonl (4 lines)
 ```
 
-Hitches in the first two seconds of game time (loading's last uploads, the first pipeline compiles) are counted apart as **startup**. They're the same two seconds the `[perf]` averages leave out.
+Hitches in the first two seconds of game time (loading's last uploads, the first pipeline compiles) are counted apart as **startup**. They're the same two seconds the `[perf]` averages leave out. The tools' own hitches get a line of their own when there were any, start or not:
+
+```text
+[perf] tooling hitches (screenshots, the F2 overlay; never gated): 4, worst 219.8 ms at t=9.62 s (screenshot shots/look_0003.png, 192.4 ms); causes: 4 screenshot
+```
 
 **Gate it.** `--max-hitches N` makes the run exit non-zero when it had more than N hitches after the start, the way `--strict-scripts` does for script errors, so a scripted run can fail:
 
@@ -543,7 +647,7 @@ flint-player levels/demo.scene.toml --frame-step 0.0166667 --input-script route.
   --exit-after 30 --hitch-log hitches.jsonl --max-hitches 0
 ```
 
-Startup hitches never count against `--max-hitches`. `--max-hitches-startup N` gives them a limit of their own. `--max-hitches-of player` counts only the engine's own work, and `--max-hitches-of elsewhere` only the time spent outside it. The failure line's worst hitch and causes are that class's too. A hitch fix is then provable: the same input script, fewer lines. `flint play` takes the same four flags. The gate reads the wall clock, so a machine busy with other work hitches too. Keep it out of CI, and gate `player` hitches when the machine is shared. Pass `--no-hot-reload` to a gated run as to any capture: in a debug build the reload poll can itself take 14 ms, which the log names as `reload poll`. A debug build's own spikes can still cross the 24 ms floor. `FLINT_HITCH_FLOOR_MS` raises it for a gate.
+Startup hitches never count against `--max-hitches`, and `tooling` hitches count against no gate, so a run validated with `--screenshot-every` isn't failed by its own screenshots. `--max-hitches-startup N` gives them a limit of their own. `--max-hitches-of player` counts only the engine's own work, and `--max-hitches-of elsewhere` only the time spent outside it. The failure line's worst hitch and causes are that class's too. A hitch fix is then provable: the same input script, fewer lines. `flint play` takes the same four flags. The gate reads the wall clock, so a machine busy with other work hitches too. Keep it out of CI, and gate `player` hitches when the machine is shared. Pass `--no-hot-reload` to a gated run as to any capture: in a debug build the reload poll can itself take 14 ms, which the log names as `reload poll`. A debug build's own spikes can still cross the 24 ms floor. `FLINT_HITCH_FLOOR_MS` raises it for a gate.
 
 **Look inside it.** The log says which phase and which script, and what the engine was doing. To see what happened inside a slow phase, build with the `profile` feature and open the frame in Tracy (above). To see inside a scope, sample it ([When scopes aren't enough](#when-scopes-arent-enough)).
 

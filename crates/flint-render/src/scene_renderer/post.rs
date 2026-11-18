@@ -287,6 +287,7 @@ impl SceneRenderer {
             surface_format,
             &self.postprocess_config,
             &self.style_mask.ids,
+            &self.styles,
         ) {
             failures.push(failed);
         }
@@ -304,16 +305,16 @@ impl SceneRenderer {
             resources.binds.evict_retired();
         }
         for failed in failures {
-            if !crate::stylize::is_native(failed.name) {
+            if failed.is_user() {
                 // A user style (ADR 0112) that panicked building is its
                 // author's bug, not a lost device: it stays off and says so
-                crate::stylize::custom::report_build_panic(failed.name);
+                self.styles.report_build_panic(failed.name);
                 self.postprocess_config
                     .styles
                     .set_enabled(failed.name, false);
                 continue;
             }
-            if crate::stylize::is_game_style(failed.name) {
+            if self.styles.is_game_style(failed.name) {
                 // A game's Rust style (#419) whose `create` panicked is the
                 // game's bug too: off, said once, the device kept
                 tracing::error!(

@@ -27,7 +27,7 @@
 fn stats_shown(p: vec2<i32>) -> vec3<f32> {
     let max_px = vec2<i32>(u.size) - vec2<i32>(1);
     let c = clamp(textureLoad(stats_in, clamp(p, vec2<i32>(0), max_px), 0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    return select(c, to_display(c), u.srgb == 1u);
+    return select(c, flint_to_display(c), u.srgb == 1u);
 }
 
 // The mask id under `p` (output pixels) the glyph pass finds its slot by:
@@ -94,7 +94,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     for (var j = 0u; j < STATS_RUN; j++) {
         let p = vec2<f32>((f32(first + j) + 0.5) / f32(STATS_COLS) * u.size.x, y);
         let w = f32((ours >> j) & 1u);
-        let l = luma(exposed(stats_shown(vec2<i32>(floor(p))), gain));
+        let l = flint_luma(exposed(stats_shown(vec2<i32>(floor(p))), gain));
         let lw = l * w;
         n += w;
         sum += lw;

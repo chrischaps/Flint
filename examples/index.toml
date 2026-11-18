@@ -10,7 +10,10 @@
 # change to a test, made on purpose).
 #
 # A new example gets an entry; a scene that only a test needs goes in
-# tests/fixtures/scenes/ instead. Topics are free text, but keep to the
+# tests/fixtures/scenes/ instead, and a whole film or place made to be
+# watched rather than to show one feature goes in the demos repository,
+# https://github.com/chrischaps/flint-demos (Understudy and the Luminarium
+# moved there on 2026-11-17). Topics are free text, but keep to the
 # ones below so the list groups well:
 #
 #   showcase   whole scenes to look at or play first
@@ -38,11 +41,6 @@ purpose = "The tavern as the CLI builds it: the scene the book's tavern guide qu
 scene = "showcase_crucible.scene.toml"
 topic = "showcase"
 purpose = "An underground forge: heavy post-processing, particles, a persistent store and a forge-spirit NPC"
-
-[[example]]
-scene = "phase3_showcase.scene.toml"
-topic = "showcase"
-purpose = "The Luminarium (Phase 3): PBR, procedural textures, imported models, many lights and cascaded shadows"
 
 [[example]]
 scene = "phase4_runtime.scene.toml"
@@ -319,6 +317,11 @@ purpose = "Forty living oaks with every knob moving, to check no frame goes with
 scene = "living_ease.scene.toml"
 topic = "living"
 purpose = "A held flame whose echoes widen and gather back over two seconds each, through tune_living(map, seconds) (#514)"
+
+[[example]]
+scene = "living_boil_rate.scene.toml"
+topic = "living"
+purpose = "A held flame whose boil doubles, halves and eases back to its spec's pace, through tune_living's jitter_rate (#529)"
 
 [[example]]
 scene = "living_compare.scene.toml"

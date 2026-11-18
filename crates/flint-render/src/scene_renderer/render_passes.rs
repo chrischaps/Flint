@@ -1456,12 +1456,16 @@ impl SceneRenderer {
         let solo = solo.or((self.debug_state.mode == DebugMode::StyleEdges).then_some("ascii"));
         let hdr_styles = crate::stylize::solo(
             pp.styles
-                .active(crate::stylize::StyleStage::Hdr, config, ids),
+                .active(crate::stylize::StyleStage::Hdr, config, ids, &self.styles),
             solo,
         );
         let display_styles = crate::stylize::solo(
-            pp.styles
-                .active(crate::stylize::StyleStage::Display, config, ids),
+            pp.styles.active(
+                crate::stylize::StyleStage::Display,
+                config,
+                ids,
+                &self.styles,
+            ),
             solo,
         );
         // The styles this frame runs, for its description (#1084)
@@ -1479,7 +1483,7 @@ impl SceneRenderer {
         }
         // The entity style mask (#263), drawn this frame by encode_to while
         // a style that reads it is on
-        let style_mask = crate::stylize::any_uses_mask(config, ids).then(|| {
+        let style_mask = self.styles.any_uses_mask(config, ids).then(|| {
             resources.styles.get(
                 device,
                 crate::style_mask::MASK_TARGET,
@@ -1490,7 +1494,7 @@ impl SceneRenderer {
         });
         // The style albedo (#869), drawn this frame by encode_to while a
         // style that reads it is on
-        let style_albedo = crate::stylize::any_uses_albedo(config, ids).then(|| {
+        let style_albedo = self.styles.any_uses_albedo(config, ids).then(|| {
             resources.styles.get(
                 device,
                 crate::style_albedo::ALBEDO_TARGET,
@@ -1512,6 +1516,7 @@ impl SceneRenderer {
                 queue,
                 config,
                 descriptor: hdr_styles.first().or(display_styles.first()).unwrap().0,
+                styles: &self.styles,
                 width: resources.width,
                 height: resources.height,
                 format: crate::postprocess::HDR_FORMAT,
@@ -1553,11 +1558,12 @@ impl SceneRenderer {
         // style on this frame that needs them
         if let Some(frame) = &mut style_frame {
             let both: Vec<_> = hdr_styles.iter().chain(&display_styles).copied().collect();
-            frame.edges =
+            let edges =
                 pp.styles
                     .encode_edges(&both, frame, encoder, &mut |label, encoder, run| {
                         self.run_style_part(device, scopes, label, encoder, run, None)
                     });
+            frame.edges = edges;
             scopes.note(crate::stylize::edges::EDGE_LABEL, |p| {
                 p.reads(&[sd]).writes(&["style edges"]);
             });
@@ -1898,7 +1904,7 @@ impl SceneRenderer {
         scopes: &mut crate::frame_capture::FrameScopes,
         stage: crate::stylize::StyleStage,
         ran: &[(
-            &'static crate::stylize::StyleDescriptor,
+            &crate::stylize::StyleDescriptor,
             &dyn crate::stylize::StylePass,
         )],
     ) {
@@ -1906,11 +1912,11 @@ impl SceneRenderer {
             return;
         }
         let config = &self.postprocess_config;
-        for d in crate::stylize::registry() {
+        for d in self.styles.iter() {
             if d.stage != stage || !d.is_on(config, &self.style_mask.ids) {
                 continue;
             }
-            if ran.iter().any(|(r, _)| std::ptr::eq(*r, *d)) {
+            if ran.iter().any(|(r, _)| std::ptr::eq(*r, d)) {
                 continue;
             }
             let why = if !config.enabled {
@@ -1932,7 +1938,7 @@ impl SceneRenderer {
 fn log_style_steps(
     scopes: &mut crate::frame_capture::FrameScopes,
     styles: &[(
-        &'static crate::stylize::StyleDescriptor,
+        &crate::stylize::StyleDescriptor,
         &dyn crate::stylize::StylePass,
     )],
     steps: &[(crate::stylize::Slot, crate::stylize::Slot)],
@@ -1961,7 +1967,7 @@ fn log_style_steps(
 fn style_dsts(
     capturing: bool,
     styles: &[(
-        &'static crate::stylize::StyleDescriptor,
+        &crate::stylize::StyleDescriptor,
         &dyn crate::stylize::StylePass,
     )],
     steps: &[(crate::stylize::Slot, crate::stylize::Slot)],

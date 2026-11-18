@@ -105,6 +105,43 @@ fn document() -> Option<web_sys::Document> {
     web_sys::window()?.document()
 }
 
+/// Offer `text` to the viewer as a file named `name` (#1097: the trace
+/// `?perf=1`'s Save trace button asks for): a blob behind a link clicked
+/// once, the object URL let go after.
+pub(super) fn download_text(name: &str, text: &str) -> Result<(), String> {
+    let document = document().ok_or("no document")?;
+    let parts = js_sys::Array::of1(&wasm_bindgen::JsValue::from_str(text));
+    let options = web_sys::BlobPropertyBag::new();
+    options.set_type("application/json");
+    let blob = web_sys::Blob::new_with_str_sequence_and_options(&parts, &options)
+        .map_err(|e| format!("a blob of the trace: {e:?}"))?;
+    let url = web_sys::Url::create_object_url_with_blob(&blob)
+        .map_err(|e| format!("an object URL: {e:?}"))?;
+    let link: web_sys::HtmlAnchorElement = document
+        .create_element("a")
+        .map_err(|e| format!("a link: {e:?}"))?
+        .dyn_into()
+        .map_err(|_| "a link that isn't one")?;
+    link.set_href(&url);
+    link.set_download(name);
+    link.click();
+    let _ = web_sys::Url::revoke_object_url(&url);
+    Ok(())
+}
+
+/// Whether the page's Save trace button was pressed since the last ask
+/// (`#perf`'s `data-trace-wanted`, which this clears).
+pub(super) fn trace_wanted() -> bool {
+    let Some(panel) = document().and_then(|d| d.get_element_by_id("perf")) else {
+        return false;
+    };
+    let wanted = panel.has_attribute("data-trace-wanted");
+    if wanted {
+        let _ = panel.remove_attribute("data-trace-wanted");
+    }
+    wanted
+}
+
 fn now_ms() -> f64 {
     web_sys::window()
         .and_then(|w| w.performance())

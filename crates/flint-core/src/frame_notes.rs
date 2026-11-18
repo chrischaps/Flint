@@ -62,11 +62,16 @@ pub enum NoteKind {
     PhysicsSteps,
     /// The clock saw a stall long enough that pacing passed it through.
     ClockStall,
+    /// A screenshot read back and written (`--screenshot`; `detail`: its
+    /// file). Tooling: see [`NoteKind::is_tooling`].
+    Screenshot,
+    /// The F2 stats overlay opened (`detail`: what it shows). Tooling.
+    StatsOverlay,
 }
 
 impl NoteKind {
     /// Every kind, in the order above.
-    pub const ALL: [NoteKind; 14] = [
+    pub const ALL: [NoteKind; 16] = [
         NoteKind::ModelLoad,
         NoteKind::TextureLoad,
         NoteKind::PipelineBuild,
@@ -81,6 +86,8 @@ impl NoteKind {
         NoteKind::SurfaceReconfigure,
         NoteKind::PhysicsSteps,
         NoteKind::ClockStall,
+        NoteKind::Screenshot,
+        NoteKind::StatsOverlay,
     ];
 
     /// The words a log line or an overlay names it by.
@@ -100,7 +107,17 @@ impl NoteKind {
             NoteKind::SurfaceReconfigure => "surface reconfigure",
             NoteKind::PhysicsSteps => "physics steps",
             NoteKind::ClockStall => "clock stall",
+            NoteKind::Screenshot => "screenshot",
+            NoteKind::StatsOverlay => "stats overlay",
         }
+    }
+
+    /// Whether the work was the player's own tools looking at the game (a
+    /// screenshot written, the F2 overlay opening) rather than the game:
+    /// a hitch they account for is the tools' cost, which the hitch
+    /// detector classes `tooling`, counts apart and no gate counts (#1129).
+    pub fn is_tooling(self) -> bool {
+        matches!(self, NoteKind::Screenshot | NoteKind::StatsOverlay)
     }
 
     /// Whether a note of this kind tells what a long frame *was* rather
@@ -434,5 +451,8 @@ mod tests {
         assert_eq!(labels.len(), NoteKind::ALL.len());
         assert!(NoteKind::ClockStall.is_symptom());
         assert!(!NoteKind::ModelLoad.is_symptom());
+        let tooling: Vec<_> = NoteKind::ALL.iter().filter(|k| k.is_tooling()).collect();
+        assert_eq!(tooling, [&NoteKind::Screenshot, &NoteKind::StatsOverlay]);
+        assert!(tooling.iter().all(|k| !k.is_symptom()));
     }
 }

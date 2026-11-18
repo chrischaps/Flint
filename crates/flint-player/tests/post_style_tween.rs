@@ -31,7 +31,13 @@ fn done(events: &[GameEvent]) -> Vec<(String, String)> {
 #[test]
 fn a_whole_frame_number_past_its_range_says_so() {
     let mut config = PostProcessConfig::default();
-    let applied = flint_player::set_post_style_param(&mut config, "kuwahara", "radius", 99.into());
+    let applied = flint_player::set_post_style_param(
+        &mut config,
+        &flint_render::stylize::StyleRegistry::new(),
+        "kuwahara",
+        "radius",
+        99.into(),
+    );
     match applied {
         StyleApplied::Clamped(None, note) => assert_eq!(
             note,
@@ -40,7 +46,15 @@ fn a_whole_frame_number_past_its_range_says_so() {
         other => panic!("a clamp expected, got {other:?}"),
     }
     let mut tweens = StyleTweens::default();
-    let applied = tweens.tween_post(&mut config, "kuwahara", "blend", 3.0, 1.0, "linear");
+    let applied = tweens.tween_post(
+        &mut config,
+        &flint_render::stylize::StyleRegistry::new(),
+        "kuwahara",
+        "blend",
+        3.0,
+        1.0,
+        "linear",
+    );
     match applied {
         StyleApplied::Clamped(None, note) => assert!(
             note.starts_with("tween_post_style_param: kuwahara.blend=3 is outside its range 0..1"),
@@ -58,7 +72,15 @@ fn a_reveal_tween_opens_from_the_live_frame_to_the_style() {
     assert!(config.styles.shows("pencil"), "no reveal: all of it");
     let mut tweens = StyleTweens::default();
 
-    let applied = tweens.tween_post(&mut config, "pencil", "reveal", 1.0, 1.0, "linear");
+    let applied = tweens.tween_post(
+        &mut config,
+        &flint_render::stylize::StyleRegistry::new(),
+        "pencil",
+        "reveal",
+        1.0,
+        1.0,
+        "linear",
+    );
     assert!(matches!(applied, StyleApplied::Done(None)), "{applied:?}");
     // It starts where the style had none: at 0, so the first frame is live
     assert_eq!(reveal(&config, "pencil"), Some(0.0));
@@ -67,7 +89,11 @@ fn a_reveal_tween_opens_from_the_live_frame_to_the_style() {
 
     let mut events = Vec::new();
     for i in 1..=60 {
-        let (step, moved) = tweens.step_post(&mut config, 1.0 / 60.0);
+        let (step, moved) = tweens.step_post(
+            &mut config,
+            &flint_render::stylize::StyleRegistry::new(),
+            1.0 / 60.0,
+        );
         assert!(moved);
         assert!(step.failures.is_empty(), "{:?}", step.failures);
         events.extend(step.events);
@@ -79,7 +105,11 @@ fn a_reveal_tween_opens_from_the_live_frame_to_the_style() {
     assert_eq!(reveal(&config, "pencil"), Some(1.0), "the target, exactly");
     assert_eq!(done(&events), [("pencil".into(), "reveal".into())]);
     assert_eq!(tweens.post_len(), 0);
-    let (_, moved) = tweens.step_post(&mut config, 1.0 / 60.0);
+    let (_, moved) = tweens.step_post(
+        &mut config,
+        &flint_render::stylize::StyleRegistry::new(),
+        1.0 / 60.0,
+    );
     assert!(!moved, "nothing running: the config is left alone");
 }
 
@@ -87,19 +117,51 @@ fn a_reveal_tween_opens_from_the_live_frame_to_the_style() {
 fn a_new_tween_replaces_the_old_and_a_set_stops_it() {
     let mut config = PostProcessConfig::default();
     let mut tweens = StyleTweens::default();
-    tweens.tween_post(&mut config, "pencil", "reveal", 1.0, 2.0, "smooth");
-    tweens.step_post(&mut config, 1.0);
+    tweens.tween_post(
+        &mut config,
+        &flint_render::stylize::StyleRegistry::new(),
+        "pencil",
+        "reveal",
+        1.0,
+        2.0,
+        "smooth",
+    );
+    tweens.step_post(
+        &mut config,
+        &flint_render::stylize::StyleRegistry::new(),
+        1.0,
+    );
     let midway = reveal(&config, "pencil").unwrap();
     assert!(midway > 0.4 && midway < 0.6, "{midway}");
     // Back out from wherever it had got to
-    tweens.tween_post(&mut config, "pencil", "reveal", 0.0, 1.0, "linear");
+    tweens.tween_post(
+        &mut config,
+        &flint_render::stylize::StyleRegistry::new(),
+        "pencil",
+        "reveal",
+        0.0,
+        1.0,
+        "linear",
+    );
     assert_eq!(tweens.post_len(), 1);
     assert_eq!(reveal(&config, "pencil"), Some(midway));
-    tweens.step_post(&mut config, 0.5);
+    tweens.step_post(
+        &mut config,
+        &flint_render::stylize::StyleRegistry::new(),
+        0.5,
+    );
     let back = reveal(&config, "pencil").unwrap();
     assert!((back - midway / 2.0).abs() < 1e-3, "{back}");
     // Blend and reveal ease side by side; stopping one leaves the other
-    tweens.tween_post(&mut config, "pencil", "blend", 0.5, 1.0, "linear");
+    tweens.tween_post(
+        &mut config,
+        &flint_render::stylize::StyleRegistry::new(),
+        "pencil",
+        "blend",
+        0.5,
+        1.0,
+        "linear",
+    );
     tweens.stop_post("pencil", Some("reveal"));
     assert!(!tweens.is_tweening_post("pencil", "reveal"));
     assert!(tweens.is_tweening_post("pencil", "blend"));
@@ -111,7 +173,15 @@ fn a_new_tween_replaces_the_old_and_a_set_stops_it() {
 fn no_time_sets_it_now_and_mistakes_are_refused() {
     let mut config = PostProcessConfig::default();
     let mut tweens = StyleTweens::default();
-    let applied = tweens.tween_post(&mut config, "pencil", "reveal_edge", 5.0, 0.0, "linear");
+    let applied = tweens.tween_post(
+        &mut config,
+        &flint_render::stylize::StyleRegistry::new(),
+        "pencil",
+        "reveal_edge",
+        5.0,
+        0.0,
+        "linear",
+    );
     let StyleApplied::Done(Some(event)) = applied else {
         panic!("{applied:?}")
     };
@@ -132,7 +202,15 @@ fn no_time_sets_it_now_and_mistakes_are_refused() {
         ("pencil", "reveal", "bouncy"),
         ("pencl", "reveal", "linear"),
     ] {
-        let applied = tweens.tween_post(&mut config, style, param, 1.0, 1.0, easing);
+        let applied = tweens.tween_post(
+            &mut config,
+            &flint_render::stylize::StyleRegistry::new(),
+            style,
+            param,
+            1.0,
+            1.0,
+            easing,
+        );
         assert!(
             matches!(applied, StyleApplied::Failed(_)),
             "{style}.{param}"

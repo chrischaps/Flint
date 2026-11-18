@@ -148,6 +148,7 @@ impl PlayerApp {
         // either is up. Timing the game turned on stays on after.
         if self.stats.view == super::StatsView::Full
             || (self.stats.perf.readout && self.stats.perf.gpu_wanted)
+            || self.stats.perf.trace.is_some()
         {
             if !renderer.gpu_timing() {
                 self.stats.gpu_timing =
@@ -238,12 +239,26 @@ impl PlayerApp {
                 self.frame_captures
                     .record_replay(renderer, device, &mut encoder, &self.core.world);
             }
+            // The recorder's GPU track (#1097): this frame's scopes carry
+            // its index, to be laid beside it when they come back
+            let tracing = flint_core::profile::COMPILED_IN && self.stats.perf.trace.is_some();
+            if let (true, Some(timer)) = (tracing, renderer.gpu_timer_mut()) {
+                timer.trace(true);
+                timer.set_frame_tag(flint_core::profile::frame() as u64);
+            }
             renderer.encode_gpu_timings(&context.device, &mut encoder);
             {
                 flint_core::scope!("submit");
                 context.queue.submit(std::iter::once(encoder.finish()));
             }
             renderer.frame_submitted();
+            if let (true, Some(trace), Some(timer)) = (
+                tracing,
+                self.stats.perf.trace.as_deref_mut(),
+                renderer.gpu_timer_mut(),
+            ) {
+                trace.tracks.gpu(timer.take_traced());
+            }
             // The GPU time read back this frame, for the frame history
             self.stats.perf.gpu_ms(renderer.take_gpu_frame_ms());
             #[cfg(not(target_arch = "wasm32"))]
@@ -283,6 +298,8 @@ impl PlayerApp {
                 ) {
                     self.stats.perf.capturing();
                 }
+                // A capture handed to its writer gets the trace beside it
+                self.traces_into_captures();
             }
         }
         self.say_frame_captures();
@@ -292,6 +309,13 @@ impl PlayerApp {
         self.capture.last_frame_time = Some(self.core.clock.total_time);
         if let Some(path) = self.capture_path_due() {
             flint_core::scope!("screenshot");
+            // The read-back waits on the GPU and the PNG is written here, on
+            // the frame: noted, so the hitch it makes names it rather than
+            // reading as time elsewhere (#1129)
+            let _shot = flint_core::frame_notes::begin(
+                flint_core::frame_notes::NoteKind::Screenshot,
+                || flint_core::project::shown(&path),
+            );
             match self.write_screenshot(&output.texture, &path) {
                 Ok(()) => self.capture.written += 1,
                 Err(reason) => {
@@ -551,6 +575,8 @@ impl PlayerApp {
         }
         // Frame captures (#1086): a hitch just found, a time reached
         self.frame_capture_triggers(found);
+        // `--trace-on-hitch` (#1097), a few frames after it
+        self.trace_triggers(found);
         if self
             .launch
             .hold_at
@@ -736,13 +762,17 @@ impl PlayerApp {
             if FRAMES.fetch_add(1, Ordering::Relaxed) % 15 != 0 {
                 return;
             }
-            let reload =
-                flint_render::stylize::custom::reload_changed_for(&self.kept_asset_scope());
+            let scope = self.kept_asset_scope();
+            let reload = self.core.styles.reload_changed_for(&scope);
             for message in &reload.messages {
                 tracing::warn!("{message}");
             }
             if !reload.changed() {
                 return;
+            }
+            // The renderer draws the new installs from the next frame
+            if let Some(renderer) = &mut self.scene_renderer {
+                renderer.set_styles(self.core.styles.clone());
             }
             // What the scene authors, with --style over it, so a reloaded
             // style a word names keeps the word's settings (#328)
@@ -867,6 +897,21 @@ impl PlayerApp {
 
     fn render_hud(&mut self, target_view: &wgpu::TextureView, encoder: &mut wgpu::CommandEncoder) {
         flint_core::scope!("render_hud");
+        // The first pass to draw an F2 view lays out what it shows and
+        // uploads the glyphs that takes: the pass is timed as a note, so a
+        // hitch it makes names the overlay rather than the game's HUD (#1129)
+        let opened = self.stats.view.is_open() && self.stats.view != self.stats.drawn_view;
+        self.stats.drawn_view = self.stats.view;
+        let view = self.stats.view;
+        let _overlay = opened.then(|| {
+            flint_core::frame_notes::begin(flint_core::frame_notes::NoteKind::StatsOverlay, || {
+                match view {
+                    super::StatsView::Graph => "opened (graph)",
+                    _ => "opened",
+                }
+                .to_string()
+            })
+        });
         // Lazy-load any sprite textures referenced by draw commands
         // (must happen before egui_winit borrow)
         self.load_pending_sprites();
@@ -974,10 +1019,13 @@ impl PlayerApp {
         // compile (#418): shown until they do
         #[cfg(feature = "debug-hud")]
         let style_errors = {
-            let mut errors = flint_render::stylize::custom::errors();
+            let mut errors = self.core.styles.errors();
             errors.extend(flint_render::stylize::dev_shader::errors());
             errors
         };
+        // The registry they came from, for the card's "doesn't load" (#742)
+        #[cfg(feature = "debug-hud")]
+        let style_registry = self.core.styles.clone();
         // Scripts that fail (#693), each once with its count, until the
         // file is saved again or the scene changes
         #[cfg(feature = "debug-hud")]
@@ -1086,7 +1134,12 @@ impl PlayerApp {
                         script_errors_unkept,
                         inset,
                     );
-                    flint_debug_ui::paint_style_errors(ctx, &style_errors, inset + scripts);
+                    flint_debug_ui::paint_style_errors(
+                        ctx,
+                        &style_errors,
+                        &style_registry,
+                        inset + scripts,
+                    );
                 }
             });
             full_output
@@ -1303,6 +1356,11 @@ impl super::game_core::FrameHost for PlayerApp {
         let times = self.core.script.take_times();
         if !times.is_empty() {
             self.stats.perf.record_scripts(&times);
+        }
+        // ... and inside each callback, its functions (#1100)
+        let functions = self.core.script.take_function_times();
+        if !functions.is_empty() {
+            self.stats.perf.record_functions(&functions);
         }
     }
 

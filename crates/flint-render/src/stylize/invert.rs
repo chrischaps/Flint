@@ -30,7 +30,7 @@ fn create(d: &StyleDevice) -> Box<dyn StylePass> {
         pipeline: kit::fullscreen_pipeline(
             device,
             "Invert Pipeline",
-            &kit::shader(device, "Invert Shader", kit::wgsl!("invert.wgsl")),
+            &kit::shader(device, "Invert Shader", kit::wgsl!("prelude_core.wgsl", "invert.wgsl")),
             &[&uniform_bgl, &input_bgl],
             d.format,
         ),

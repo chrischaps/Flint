@@ -17,7 +17,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // The picture's luminance at the cell's centre, before the vignette,
     // so brightness matches what the eye saw.
     let center_uv = (cell + 0.5) * cell_px * r.texel_size;
-    let lum = luma(picture(center_uv));
+    let lum = flint_luma(picture(center_uv));
 
     // Glyph reroll: per-cell phase so the field flickers, not strobes.
     var rate = r.p0.z;
