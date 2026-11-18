@@ -131,6 +131,119 @@ pub fn capture_times(time: Option<&TimeSpec>, fps: f32) -> Vec<f64> {
     }
 }
 
+/// `--every`'s default: a tile a second of game time.
+pub const STRIP_EVERY: f64 = 1.0;
+
+/// The most tiles a strip draws. Past this a reviewer can't read a tile, and
+/// every tile waits in memory until the sheet is composed.
+pub const STRIP_MAX_TILES: usize = 100;
+
+/// The game time of every tile of a `--strip` (#574): a span's start, then a
+/// tile every `every` seconds up to its end, the end included when a step
+/// lands on it (a sheet doesn't loop, so its last moment belongs on it); or
+/// a list's moments. Each time is rounded to the nanosecond, so a tile's
+/// time is the number a reader types to render it alone (`0.1 * 3` is
+/// `0.3`, not `0.30000000000000004`).
+pub fn strip_times(time: Option<&TimeSpec>, every: Option<f64>) -> Result<Vec<f64>> {
+    let times = match time {
+        Some(&TimeSpec::Range(from, to)) => {
+            let every = every.unwrap_or(STRIP_EVERY);
+            let span = to - from;
+            let steps = (span / every + 1e-9).floor();
+            if steps as usize >= STRIP_MAX_TILES {
+                bail!(
+                    "--time {from}..{to} --every {every} is {} tiles, and a strip draws at most \
+                     {STRIP_MAX_TILES}: give a larger --every (--every {} is {} tiles)",
+                    steps as u64 + 1,
+                    nice_every(span),
+                    (span / nice_every(span) + 1e-9).floor() as u64 + 1,
+                );
+            }
+            (0..=steps as u64)
+                .map(|i| round_ns(from + i as f64 * every))
+                .collect()
+        }
+        Some(TimeSpec::List(moments)) => {
+            if every.is_some() {
+                bail!(
+                    "--every spaces a span's tiles, and --time {} names each moment: drop \
+                     --every, or give a span (--time 0..8 --every 1)",
+                    moments
+                        .iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
+            }
+            if moments.len() > STRIP_MAX_TILES {
+                bail!(
+                    "--time names {} moments, and a strip draws at most {STRIP_MAX_TILES}",
+                    moments.len()
+                );
+            }
+            moments.clone()
+        }
+        Some(&TimeSpec::At(t)) => bail!(
+            "--strip lays several moments side by side, and --time {t} is one: give a span \
+             (--time 0..8 --every 1) or a list (--time 2,5,9.5)"
+        ),
+        None => bail!("--strip needs a --time span or list: --time 0..8 --every 1"),
+    };
+    Ok(times)
+}
+
+/// A round `--every` that keeps a span within [`STRIP_MAX_TILES`], to suggest.
+fn nice_every(span: f64) -> f64 {
+    let least = span / (STRIP_MAX_TILES - 1) as f64;
+    let decade = 10f64.powf(least.log10().floor());
+    [1.0, 2.0, 5.0, 10.0]
+        .iter()
+        .map(|m| m * decade)
+        .find(|&e| e >= least)
+        .unwrap_or(10.0 * decade)
+}
+
+fn round_ns(t: f64) -> f64 {
+    (t * 1e9).round() / 1e9
+}
+
+/// How many tiles go across a strip of `tiles`: `columns`, else the fewest
+/// that make the sheet no taller than wide in tiles (9 is 3 x 3, 8 is 3 x 3
+/// with one short, 12 is 4 x 3).
+pub fn strip_columns(tiles: usize, columns: Option<u32>) -> usize {
+    match columns {
+        Some(c) => (c as usize).clamp(1, tiles.max(1)),
+        None => ((tiles as f64).sqrt().ceil() as usize).max(1),
+    }
+}
+
+/// A tile's time as its label says it: `t = 2 s`, `t = 0.25 s`.
+pub fn strip_label(t: f64) -> String {
+    format!("t = {} s", round_ns(t))
+}
+
+/// A strip is one picture, so it needs a plain PNG: not a GIF, and not a
+/// numbered sequence.
+pub fn check_strip_output(output: &str) -> Result<()> {
+    let png = Path::new(output)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("png"));
+    if is_gif(output) {
+        bail!(
+            "--strip writes the span as one PNG contact sheet, for a reader that can't play a \
+             GIF: give --output a .png, or drop --strip for the GIF"
+        );
+    }
+    if is_sequence(output) {
+        bail!("--strip writes one PNG: give --output a plain .png, not the sequence {output}");
+    }
+    if !png {
+        bail!("--strip writes a PNG: give --output a .png, not {output}");
+    }
+    Ok(())
+}
+
 /// Refuse what can't be written: a span is motion, so it needs a file that moves,
 /// a list is stills, and a GIF of one moment would be a slow way to write a still.
 pub fn check_output(output: &str, time: Option<&TimeSpec>) -> Result<()> {
@@ -282,6 +395,61 @@ mod tests {
         assert!(!is_sequence("a/f.png"));
         assert!(!is_sequence("a/%04x.png"));
         assert!(!is_sequence("a/%04d.gif"));
+    }
+
+    #[test]
+    fn a_strip_takes_a_tile_every_step_and_its_end() {
+        let span = |a, b| Some(TimeSpec::Range(a, b));
+        assert_eq!(
+            strip_times(span(0.0, 8.0).as_ref(), None).unwrap(),
+            [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+        );
+        // The end isn't a tile when no step lands on it
+        assert_eq!(
+            strip_times(span(1.0, 2.0).as_ref(), Some(0.4)).unwrap(),
+            [1.0, 1.4, 1.8]
+        );
+        // Times are what a reader would type
+        assert_eq!(
+            strip_times(span(0.0, 0.3).as_ref(), Some(0.1)).unwrap(),
+            [0.0, 0.1, 0.2, 0.3]
+        );
+        let list = TimeSpec::List(vec![2.0, 5.0, 9.5]);
+        assert_eq!(strip_times(Some(&list), None).unwrap(), [2.0, 5.0, 9.5]);
+        let err = |time: Option<TimeSpec>, every| {
+            strip_times(time.as_ref(), every).unwrap_err().to_string()
+        };
+        assert!(err(Some(list.clone()), Some(1.0)).contains("drop --every"));
+        assert!(err(Some(TimeSpec::At(3.0)), None).contains("is one"));
+        let many = err(span(0.0, 900.0), None);
+        assert!(
+            many.contains("901 tiles") && many.contains("--every 10 is 91"),
+            "{many}"
+        );
+    }
+
+    #[test]
+    fn a_strip_is_about_square_unless_told() {
+        assert_eq!(strip_columns(9, None), 3);
+        assert_eq!(strip_columns(8, None), 3);
+        assert_eq!(strip_columns(12, None), 4);
+        assert_eq!(strip_columns(1, None), 1);
+        assert_eq!(strip_columns(9, Some(5)), 5);
+        assert_eq!(strip_columns(3, Some(5)), 3);
+        assert_eq!(strip_label(2.0), "t = 2 s");
+        assert_eq!(strip_label(0.25), "t = 0.25 s");
+    }
+
+    #[test]
+    fn a_strip_is_one_png() {
+        assert!(check_strip_output("strip.png").is_ok());
+        assert!(check_strip_output("STRIP.PNG").is_ok());
+        assert!(check_strip_output("strip.gif")
+            .unwrap_err()
+            .to_string()
+            .contains(".png"));
+        assert!(check_strip_output("f/%04d.png").is_err());
+        assert!(check_strip_output("strip.jpg").is_err());
     }
 
     #[test]

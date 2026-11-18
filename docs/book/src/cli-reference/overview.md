@@ -931,6 +931,10 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--expression-timeline <file>` | (none) | Feed scripts' `expression()` and `on_expression` from a JSON timeline on the render's clock. Implies `--scripts` |
 | `--strict-scripts` | `false` | Exit 1, after writing the picture, when any script failed to load, to compile or while running (#693). Implies `--scripts`. Either way a scripted render prints each error once with its count, and `--report json` lists them as `script_errors` |
 | `--fps <n>` | `12` | With a `--time` span: GIF frames per second of game time, up to 50 |
+| `--strip` | `false` | With a `--time` span or list: one PNG contact sheet of it instead of a GIF, a tile a moment, each labelled with its time; each tile is the pixels of `--time <t>` rendered alone at the tile's size (640 x 360 by default). See [A span as a contact sheet](../guides/headless-rendering.md#a-span-as-a-contact-sheet) (#574) |
+| `--every <s>` | `1` | With `--strip` and a span: seconds of game time between tiles; the span's end is a tile when a step lands on it. At most 100 tiles |
+| `--columns <n>` | about square | With `--strip`: tiles a row (alias: cols) |
+| `--label <on\|off>` | `on` | With `--strip`: `off` draws only the tiles, 4 pixels apart, no title, times or borders |
 | `--sweep <knob=a,b,...>` | (none) | The same moment once per value, as labelled columns: `wooze.glide=0,0.25,0.5,1`. Takes `wooze.amplitude`, `.step`, `.glide`, `.jitter`, `.preset`, and the scene's `[living] echoes` as `living.echoes.count`, `.spread`, `.alpha` (#531) |
 | `--report json` | (none) | One JSON object on stdout: each living prop's lineage seed, pose indices, the wooze values it read, and every species value with the layer that set it, and `script_errors`, each script error of the run with its entity, callback, line and count. Everything else moves to stderr |
 | `--oren-nayar <f32>` | `0` | Oren-Nayar diffuse blend (0 = Lambert, 1 = full); see [Lighting](../concepts/lighting.md) |
