@@ -4174,10 +4174,18 @@ fn a_loop_that_never_ends_draws_a_frame() {
     renderer.set_styles(registry.clone());
     let all = ["utest_forever"];
     with_styles(&gpu, &mut renderer, &world, &all, &[]);
+    // The first frame builds the style's pipeline as well, which side by
+    // side competes for the CPU with every other test building theirs
+    // (1.07 s once, #560); what the guard bounds is the draw, so the
+    // limit is on a frame after it. An unguarded loop never returns from
+    // either frame, and the GPU wait or the harness's watchdog names it.
+    let start = std::time::Instant::now();
+    with_styles(&gpu, &mut renderer, &world, &all, &all);
+    let built = start.elapsed();
     let start = std::time::Instant::now();
     let pixels = with_styles(&gpu, &mut renderer, &world, &all, &all);
     let took = start.elapsed();
-    eprintln!("a never-ending loop's frame, built and drawn: {took:?}");
+    eprintln!("a never-ending loop's frame: built and drawn {built:?}, drawn {took:?}");
     assert!(
         registry.errors().iter().all(|(n, _)| n != "utest_forever"),
         "{:?}",
