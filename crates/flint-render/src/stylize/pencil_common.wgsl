@@ -19,7 +19,8 @@ struct PencilRow {
     f: vec4<f32>,
     // origin xy (px), flags (bits: 1 pass through, 2 world grid), darkness
     g: vec4<f32>,
-    // paper_scale (pt a texel), stroke_rows, paper image on, stroke image on (#390)
+    // paper_scale (pt a texel), stroke_rows, then the paper's and the
+    // stroke strip's layer plus one (#390, #547; 0 = procedural)
     h: vec4<f32>,
     // grazing (#404), tone (#869: 0 picture, 1 light), transition (#879:
     // 0 fade, 1 draw), the seed without the boil's steps (the draw order's)
@@ -43,10 +44,11 @@ struct PencilUniforms {
     // x: rows in use; y: 1 when slot 0 passes through (only entities
     // asked); z: 1 when the mask is bound
     info: vec4<u32>,
-    // The images' measures (#390): paper mean and spread of luma, stroke ink
-    img: vec4<f32>,
     // The shared edges' thresholds (#743): edge_depth, edge_normal, unused x2
     edge: vec4<f32>,
+    // Each layer of the paper and stroke stacks (#547): measures and size
+    papers: array<StyleImageLayer, 4>,
+    strokes: array<StyleImageLayer, 4>,
 };
 
 @group(0) @binding(0) var<uniform> u: PencilUniforms;
@@ -115,9 +117,9 @@ fn vnoise(p: vec2<f32>, seed: u32) -> f32 {
 
 @group(2) @binding(0) var scene_depth: texture_depth_2d;
 @group(2) @binding(1) var style_mask: texture_2d<u32>;
-// The paper and stroke images (#390), a blank texel while none is named
-@group(2) @binding(2) var paper_tex: texture_2d<f32>;
-@group(2) @binding(3) var stroke_tex: texture_2d<f32>;
+// The paper and stroke stacks (#390, #547), a blank texel while none is named
+@group(2) @binding(2) var paper_tex: texture_2d_array<f32>;
+@group(2) @binding(3) var stroke_tex: texture_2d_array<f32>;
 // The style albedo (#869): each opaque mesh's own colour, alpha 0 where none
 // was drawn; a blank texel while no row reads the light
 @group(2) @binding(4) var albedo_tex: texture_2d<f32>;

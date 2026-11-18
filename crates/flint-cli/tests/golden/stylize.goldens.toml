@@ -493,6 +493,25 @@ name = "pencil-world-stroke-image"
 scene = "tests/fixtures/scenes/pencil_sketch.scene.toml"
 args = ["--no-grid", "--style", "pencil:grid=world,scope=screen,stroke_image=../../../examples/strokes/graphite.png,stroke_rows=4,thickness=1.5"]
 
+# A paper each (#547): four props on four paper images in one frame (cold
+# press, cotton with the graphite strip, kraft, washi), a fifth on the
+# procedural paper, the images stacked as layers of one texture array.
+# The page case draws the whole frame too, its table naming no image, so
+# the ground stays procedural round the props' papers. A paper is texture,
+# not tone: main's one-paper-a-frame render is 0.39% past 48, mean 1.05,
+# inside the suite's limits, so these hold a tenth of them
+[[case]]
+name = "pencil-papers"
+scene = "tests/fixtures/scenes/pencil_papers.scene.toml"
+args = ["--no-grid"]
+tolerance = { level = 48, share = 0.001, mean = 0.5 }
+
+[[case]]
+name = "pencil-papers-page"
+scene = "tests/fixtures/scenes/pencil_papers.scene.toml"
+args = ["--no-grid", "--style", "pencil:scope=screen"]
+tolerance = { level = 48, share = 0.001, mean = 0.5 }
+
 # --- the other registered styles ------------------------------------------
 #
 # Smooth styles get a tighter tolerance than glyphs: a cell flipping glyph
@@ -687,6 +706,13 @@ tolerance = { level = 8, share = 0.005, mean = 0.3 }
 [[case]]
 name = "watercolor-entities"
 scene = "tests/fixtures/scenes/watercolor.scene.toml"
+args = ["--no-grid"]
+tolerance = { level = 8, share = 0.005, mean = 0.3 }
+
+# Three props on three paper images in one frame (#547)
+[[case]]
+name = "watercolor-papers"
+scene = "tests/fixtures/scenes/watercolor_papers.scene.toml"
 args = ["--no-grid"]
 tolerance = { level = 8, share = 0.005, mean = 0.3 }
 
