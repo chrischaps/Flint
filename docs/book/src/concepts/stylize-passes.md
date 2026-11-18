@@ -1288,7 +1288,7 @@ scene (HDR, render scale)
 
 Styles of one stage run one after another, each reading the one before it. The framework ping-pongs between two targets it owns, so any number of styles chain without a style knowing its neighbours.
 
-The display stage keeps its memory to two full-size textures (#302). At 1440p each one is about 15 MB, which matters on phones and the web. The composite draws into the stage's input, and once the first style has read that input it is free to be a ping. With FXAA on, FXAA's intermediate is the second texture: the composite draws into whichever of the two leaves the last style writing the intermediate. So one style needs one texture of its own (two with FXAA's), and longer chains need two (still two with FXAA's). The output is byte-identical to the old chain. A style's own intermediates come on top of these; watercolor's two washes are full size, for example. The player's F3 stats show every target as `Style targets: N (MB, K full-size)`, where the full-size count includes FXAA's intermediate. The count is everything asked for since the last resize, so switching a style off doesn't lower it.
+The display stage keeps its memory to two full-size textures (#302). At 1440p each one is about 15 MB, which matters on phones and the web. The composite draws into the stage's input, and once the first style has read that input it is free to be a ping. With FXAA on, FXAA's intermediate is the second texture: the composite draws into whichever of the two leaves the last style writing the intermediate. So one style needs one texture of its own (two with FXAA's), and longer chains need two (still two with FXAA's). The output is byte-identical to the old chain. A style's own intermediates come on top of these; watercolor's two washes are full size, for example. The player's F2 overlay shows the total as `Style targets: N (MB, K full-size)`, where the full-size count includes FXAA's intermediate, and under it each target with its size and MB. The count is everything asked for since the last resize, so switching a style off doesn't lower it.
 
 ### Order within a stage
 
@@ -1729,7 +1729,7 @@ Style targets: 7 (16.70 MB)
 
 That is `examples/user_styles.scene.toml --style orton --gpu-time 240` at 1280x720 on an RTX 4070: the four passes of the Orton glow together cost 0.032 ms.
 
-The F2 overlay's `Style targets` line includes them in its total. F4's `user` tag lists each pass's file and each target when you hover it.
+The player's F2 overlay lists the same textures while the style runs: under its `Style targets` total, a row for each with its name, size and MB, in name order, so a style's own targets and a history pair's `.a`/`.b` sit together (past 16 textures, the rest share one row). F4's `user` tag lists each pass's file and each target when you hover it.
 
 ![examples/user_styles.scene.toml under --style orton: the yard's light blooms softly, edges stay crisp](../images/user-style-orton.png)
 

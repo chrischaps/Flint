@@ -227,6 +227,120 @@ mod graph {
         }
     }
 }
+
+/// The most style textures the overlay lists one a row; the rest share one.
+pub(crate) const STYLE_TARGET_ROWS: usize = 16;
+/// The widest name the overlay prints whole.
+const STYLE_TARGET_NAME_COLS: usize = 22;
+
+/// The F2 overlay's rows under `Style targets` (#561): each of the style
+/// chain's textures with its size and MB, as `flint render --gpu-time`
+/// lists them (`StyleTargets::entries`, in name order, so a user style's
+/// `<style>.<target>` and its history pair's `.a`/`.b` sit together).
+/// Past [`STYLE_TARGET_ROWS`], the rest are one row with their count and
+/// MB. Called only while the full overlay shows.
+pub(crate) fn style_target_rows(targets: &[flint_render::stylize::TargetEntry]) -> Vec<String> {
+    const MB: f64 = 1024.0 * 1024.0;
+    let w = targets
+        .iter()
+        .map(|t| t.name.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(STYLE_TARGET_NAME_COLS);
+    let listed = if targets.len() > STYLE_TARGET_ROWS {
+        STYLE_TARGET_ROWS - 1
+    } else {
+        targets.len()
+    };
+    let mut rows: Vec<String> = targets[..listed]
+        .iter()
+        .map(|t| {
+            let name = if t.name.chars().count() > w {
+                let kept: String = t.name.chars().take(w - 1).collect();
+                format!("{kept}~")
+            } else {
+                t.name.to_string()
+            };
+            let size = format!("{}x{}", t.width, t.height);
+            format!("  {name:<w$} {size:>9} {:>6.2} MB", t.bytes as f64 / MB)
+        })
+        .collect();
+    let rest = &targets[listed..];
+    if !rest.is_empty() {
+        let bytes: u64 = rest.iter().map(|t| t.bytes).sum();
+        let more = format!("+{} more", rest.len());
+        rows.push(format!(
+            "  {more:<w$} {:>9} {:>6.2} MB",
+            "",
+            bytes as f64 / MB
+        ));
+    }
+    rows
+}
+
+#[cfg(test)]
+mod style_target_tests {
+    use super::{style_target_rows, STYLE_TARGET_ROWS};
+    use flint_render::stylize::TargetEntry;
+
+    fn entry(name: &'static str, width: u32, height: u32, texel: u64) -> TargetEntry {
+        TargetEntry {
+            name,
+            format: wgpu::TextureFormat::Rgba16Float,
+            width,
+            height,
+            bytes: u64::from(width) * u64::from(height) * texel,
+        }
+    }
+
+    #[test]
+    fn each_target_is_a_row_with_its_name_size_and_mb() {
+        let rows = style_target_rows(&[
+            entry("orton.exposed", 640, 360, 8),
+            entry("orton.trail.a", 640, 360, 8),
+            entry("style display in", 1280, 720, 4),
+        ]);
+        assert_eq!(
+            rows,
+            [
+                "  orton.exposed      640x360   1.76 MB",
+                "  orton.trail.a      640x360   1.76 MB",
+                "  style display in  1280x720   3.52 MB",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_long_chain_ends_in_one_row_for_the_rest() {
+        let names: Vec<&'static str> = (0..20)
+            .map(|i| &*Box::leak(format!("display_bloom.mip{i:02}").into_boxed_str()))
+            .collect();
+        let targets: Vec<_> = names.iter().map(|n| entry(n, 64, 64, 4)).collect();
+        let rows = style_target_rows(&targets);
+        assert_eq!(rows.len(), STYLE_TARGET_ROWS);
+        assert_eq!(rows[0], "  display_bloom.mip00     64x64   0.02 MB");
+        // 20 - 15 listed = 5 left, 5 x 16 KB
+        assert_eq!(
+            rows.last().unwrap(),
+            "  +5 more                         0.08 MB"
+        );
+        // Its MB in the column the others' are in
+        assert!(rows.iter().all(|r| r.len() == rows[0].len()));
+    }
+
+    #[test]
+    fn a_name_past_the_column_is_cut_with_a_mark() {
+        let rows = style_target_rows(&[entry("a_very_long_user_style.its_target", 8, 8, 4)]);
+        // 22 columns: 21 of the name and the mark
+        assert_eq!(rows, ["  a_very_long_user_styl~       8x8   0.00 MB"]);
+    }
+
+    #[test]
+    fn no_targets_no_rows() {
+        assert!(style_target_rows(&[]).is_empty());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
