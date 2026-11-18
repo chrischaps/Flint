@@ -587,9 +587,21 @@ impl Profiler {
         if let Some(r) = t.header_str("reason") {
             origin.push(format!("saved on {r}"));
         }
-        if let Some(c) = t.header_str("engine_commit") {
+        // The commit the binary was built from (#1290); a trace without one
+        // says it doesn't know, and a game's own checkout follows when it
+        // isn't the engine's
+        let engine = t.header_str("engine_commit");
+        let dirty = t.header.get("engine_dirty").and_then(|v| v.as_bool());
+        origin.push(format!(
+            "engine{}",
+            super::super::commit_words(engine, t.header_str("engine_subdir"), dirty)
+        ));
+        if let Some(c) = t
+            .header_str("project_commit")
+            .filter(|c| Some(*c) != engine)
+        {
             let short: String = c.chars().take(10).collect();
-            origin.push(format!("engine at {short}"));
+            origin.push(format!("project at {short}"));
         }
         if let Some(n) = &self.notice {
             origin.push(n.clone());

@@ -58,15 +58,21 @@ impl Origin<'_> {
             name,
             sha256: bytes.map(|b| flint_core::ContentHash::from_bytes(&b).to_hex()),
         });
-        // As the player writes it (#1086, #1208): the version, and the
-        // commit of the checkout the scene's project is in, so a replay of
-        // a render's capture can say which engine drew it
-        let (commit, dirty) = checkout_of(std::path::Path::new(self.scene));
+        // As the player writes it (#1086, #1208): the version and the commit
+        // this binary was built from, so a replay of a render's capture can
+        // say which engine drew it, and the checkout the scene's project is
+        // in beside it (#1290: that alone named a game's commit)
+        let built = flint_player::Provenance::built();
         description.engine = Some(flint_render::frame_capture::EngineDescription {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            commit,
-            dirty,
+            commit: built.engine.commit,
+            dirty: built.engine.dirty,
+            subdir: built.engine_subdir,
         });
+        let (commit, dirty) = checkout_of(std::path::Path::new(self.scene));
+        description.project = commit
+            .is_some()
+            .then_some(flint_render::frame_capture::ProjectDescription { commit, dirty });
         description.frame.game_time = self.game_time;
         description.written_by = Some(self.written_by.into());
         description.notes.extend(self.notes.iter().cloned());
@@ -75,9 +81,10 @@ impl Origin<'_> {
 }
 
 /// The commit of the checkout `scene`'s project is in, and whether its
-/// tracked files changed, where git can say: what the player's writer asks
-/// at its project root (`flint_player::git_state`), asked the same way.
-pub(super) fn checkout_of(scene: &std::path::Path) -> (Option<String>, Option<bool>) {
+/// tracked files changed, where git can say: a capture's `project`, what
+/// the player's writer asks at its project root (`flint_player::git_state`),
+/// asked the same way.
+fn checkout_of(scene: &std::path::Path) -> (Option<String>, Option<bool>) {
     let scene_dir = scene
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
