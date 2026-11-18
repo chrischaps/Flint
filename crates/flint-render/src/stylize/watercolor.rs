@@ -41,7 +41,9 @@
 //! ([`images`](super::images)): one texel every `grain_scale` points, its
 //! luma against its own mean and spread the paper's height (so `grain` and
 //! `granulation` read it as they read the noise), its hue tinting `paper`.
-//! One paper a frame: the scene table's, else the first entity's.
+//! Each entity may paint on its own (#547): up to
+//! [`MAX_LAYERS`](super::images::MAX_LAYERS) papers a frame, stacked in
+//! one texture array; a row naming one more paints on the procedural one.
 //!
 //! ## Per entity
 //!
@@ -60,7 +62,7 @@
 //! the other, and they share nothing (Kuwahara's structure tensor is an
 //! HDR-stage intermediate; the wash is the only smoothing watercolor does).
 
-use super::images::{ImageSlot, ImageUse, StyleImage};
+use super::images::{ImageStack, ImageUse, LayerInfo, StackedImages, MAX_LAYERS};
 use super::kit;
 use super::variant_table::{report_drop, storage_entry, VariantTable};
 use super::{
@@ -188,8 +190,8 @@ struct PaintUniforms {
     passthrough: u32,
     near: f32,
     far: f32,
-    /// The paper image's mean and spread of luma (#390), then 0, 0.
-    paper_stats: [f32; 4],
+    /// Each layer of the paper stack (#547): its measures and size.
+    papers: [LayerInfo; MAX_LAYERS],
 }
 
 struct Watercolor {
@@ -210,7 +212,7 @@ struct Watercolor {
     no_mask_view: wgpu::TextureView,
     /// The variant table (#740): grows with the frame.
     table: Mutex<VariantTable>,
-    paper: Mutex<ImageSlot>,
+    paper: Mutex<ImageStack>,
 }
 
 impl Watercolor {
@@ -259,7 +261,7 @@ impl Watercolor {
                     },
                     count: None,
                 },
-                super::pencil::image_entry(2),
+                super::pencil::image_stack_entry(2),
             ],
         });
         let module = kit::shader(device, "Watercolor Shader", PAINT_SHADER);
@@ -321,7 +323,7 @@ impl Watercolor {
                 "Watercolor",
                 std::mem::size_of::<RowUniform>(),
             )),
-            paper: Mutex::new(ImageSlot::new(ImageUse::Paper, "watercolor paper")),
+            paper: Mutex::new(ImageStack::new(ImageUse::Paper, "watercolor paper")),
         }
     }
 
@@ -330,7 +332,7 @@ impl Watercolor {
         &self,
         frame: &StyleFrame<'_>,
         with_mask: bool,
-        paper: &StyleImage,
+        paper: &StackedImages,
     ) -> Arc<wgpu::BindGroup> {
         let mask = frame.mask.filter(|_| with_mask);
         let key = mask.is_some() as u64 | paper.generation << 1;
@@ -361,13 +363,14 @@ impl Watercolor {
 
 const PAINT_SHADER: kit::Wgsl = kit::wgsl!(
     "prelude_core.wgsl",
+    "style_image_layer.wgsl",
     "watercolor.wgsl",
     "style_image.wgsl"
 );
 
 /// A row from a settings source: the scene's (`param` = the frame's) or a
-/// variant's. Its `image` flag is set later, once the frame's paper is
-/// known.
+/// variant's. Its `image` layer is set later, once the frame's papers
+/// are stacked.
 fn row(param: impl Fn(&str) -> f32, off: bool) -> RowUniform {
     RowUniform {
         wobble: param("wobble").clamp(0.0, 16.0),
@@ -446,36 +449,29 @@ impl StylePass for Watercolor {
             rows.push(row(|n| frame.variant_param(v, n), v.off));
             papers.push(frame.variant_option(v, "paper_image").to_string());
         }
-        // The frame's one paper image (#390): the scene's, else the first
-        // entity's; a row naming it paints on it, any other row on noise
-        let chosen = papers
-            .iter()
-            .find(|n| super::pencil::names_image(n))
-            .cloned()
-            .unwrap_or_default();
-        let paper = self.paper.lock().unwrap_or_else(|e| e.into_inner()).get(
+        // The frame's papers (#390), a layer each up to MAX_LAYERS (#547): a
+        // row paints on its own, past the cap (or a miss) on noise
+        let stacked = self.paper.lock().unwrap_or_else(|e| e.into_inner()).get(
             frame.device,
             frame.queue,
             frame.assets,
-            &chosen,
+            &papers,
             frame.frame.is_multiple_of(15),
         );
-        for (r, name) in rows.iter_mut().zip(&papers) {
-            r.image = (paper.found && *name == chosen) as u32 as f32;
+        for (r, layer) in rows.iter_mut().zip(&stacked.layer) {
+            r.image = *layer as f32;
         }
-        // One paper a frame: the first entity naming another is said (#740)
-        if let Some(i) = papers
-            .iter()
-            .position(|n| super::pencil::names_image(n) && *n != chosen)
-        {
+        // The first entity past the cap is said (#740)
+        if let Some(i) = stacked.over_cap {
             report_drop(
                 "watercolor",
                 "paper images",
-                1,
+                MAX_LAYERS,
                 frame.style_ids.entity(ids[i]).unwrap_or("?"),
-                &format!("painted on procedural paper (the frame's is \"{chosen}\")"),
+                "painted on procedural paper",
             );
         }
+        let paper = stacked.images;
         let with_mask = rows.len() > 1;
         let passthrough = !(frame.whole_frame() && frame.option("scope") != "entities");
 
@@ -540,7 +536,7 @@ impl StylePass for Watercolor {
             passthrough: passthrough as u32,
             near: frame.camera.near,
             far: frame.camera.far,
-            paper_stats: [paper.stats.mean, paper.stats.spread, 0.0, 0.0],
+            papers: paper.layers,
         };
         frame
             .queue
@@ -608,10 +604,7 @@ mod tests {
     fn uniforms_match_the_shader_layout() {
         assert_eq!(std::mem::size_of::<RowUniform>(), 80);
         assert_eq!(std::mem::size_of::<WashUniforms>(), 32);
-        assert_eq!(
-            std::mem::size_of::<PaintUniforms>(),
-            48
-        );
+        assert_eq!(std::mem::size_of::<PaintUniforms>(), 32 + 4 * 32);
     }
 
     #[test]

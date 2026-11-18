@@ -25,7 +25,7 @@
 //! ```
 //!
 //! A cap that remains (ASCII's tone-statistics width, its dissolve bands,
-//! snap grids and fonts, the one paper image a frame) reports what it
+//! snap grids and fonts, the papers and strips a frame stacks) reports what it
 //! drops through [`report_drop`]: one warning per style and cap, naming the
 //! first entity past it, kept in [`dropped`] for hosts to show
 //! (`flint render --report json`'s `style_drops`).
