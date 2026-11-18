@@ -1300,6 +1300,12 @@ impl SceneRenderer {
                 for id in self.skinning.bone_buffers.keys() {
                     self.motion_hold.bones_shown(*id);
                 }
+                // A prop's own strokes (#544, pencil's `grid = "local"`)
+                // ride the matrix it is drawn with, the held one
+                let hold = &mut self.motion_hold;
+                self.style_mask
+                    .ids
+                    .hold_local_frames(|root, live| hold.matrix(root, live));
             }
         }
 

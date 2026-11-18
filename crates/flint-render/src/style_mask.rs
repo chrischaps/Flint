@@ -241,6 +241,52 @@ pub struct StyleVariant {
     /// The world-space point an object-anchored grid (`grid = "object"`)
     /// is pinned to: the styled root's origin, this frame.
     pub anchor: Option<[f32; 3]>,
+    /// The body a `grid = "local"` variant's strokes ride on (#544): the
+    /// styled root and its world matrix this frame, as it is drawn.
+    pub local: Option<LocalFrame>,
+}
+
+/// A styled root's own frame (#544): what a style laying marks on the
+/// surfaces in the entity's space (pencil's `grid = "local"`) needs to
+/// take a world position back into it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LocalFrame {
+    /// The styled root, so a motion hold can give the matrix it draws.
+    pub root: EntityId,
+    /// Local to world, column-major (`m[col][row]`), as `get_world_matrix`.
+    pub matrix: [[f32; 4]; 4],
+}
+
+impl LocalFrame {
+    /// World to local as the top three rows of the inverse (`[r0, r1,
+    /// r2]`, each `[x, y, z, w]`, so `local.i = dot(r_i, [p, 1])`), or
+    /// `None` when the matrix is singular (a prop scaled to nothing).
+    pub fn inverse_rows(&self) -> Option<[[f32; 4]; 3]> {
+        let m = &self.matrix;
+        // The 3x3 part's columns, and the translation
+        let c = |i: usize| [m[i][0] as f64, m[i][1] as f64, m[i][2] as f64];
+        let (c0, c1, c2) = (c(0), c(1), c(2));
+        let t = [m[3][0] as f64, m[3][1] as f64, m[3][2] as f64];
+        let cross = |a: [f64; 3], b: [f64; 3]| {
+            [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ]
+        };
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        // The inverse's rows are the cross products of the other two
+        // columns over the determinant
+        let rows = [cross(c1, c2), cross(c2, c0), cross(c0, c1)];
+        let det = dot(c0, rows[0]);
+        if !det.is_finite() || det.abs() < 1e-12 {
+            return None;
+        }
+        Some(rows.map(|r| {
+            let r = r.map(|x| x / det);
+            [r[0] as f32, r[1] as f32, r[2] as f32, -dot(r, t) as f32]
+        }))
+    }
 }
 
 impl StyleVariant {
@@ -303,6 +349,19 @@ pub struct StyleIds {
 }
 
 impl StyleIds {
+    /// Pass each `grid = "local"` variant's frame through `held` (#544):
+    /// the renderer gives the matrix a motion hold draws the root with, so
+    /// strokes stay on a prop held on twos instead of sliding between its
+    /// drawings. Names and ids don't change.
+    pub(crate) fn hold_local_frames(
+        &mut self,
+        mut held: impl FnMut(EntityId, [[f32; 4]; 4]) -> [[f32; 4]; 4],
+    ) {
+        for f in self.variants.iter_mut().filter_map(|v| v.local.as_mut()) {
+            f.matrix = held(f.root, f.matrix);
+        }
+    }
+
     /// What id `id` stands for.
     pub fn variant(&self, id: u16) -> Option<&StyleVariant> {
         (id as usize)
@@ -747,7 +806,7 @@ pub fn user_style_range_warnings(world: &FlintWorld, styles: &StyleRegistry) -> 
 /// settings give equal names, so their entities share an id.
 fn variant_name(v: &StyleVariant, root: &str) -> String {
     let mut name = v.style.clone();
-    if v.anchor.is_some() {
+    if v.anchor.is_some() || v.local.is_some() {
         name.push('@');
         name.push_str(root);
     }
@@ -805,9 +864,20 @@ pub(crate) fn request(
     };
     // An object-anchored grid: one variant per root, pinned to its origin
     if let Some(d) = descriptor.filter(|d| d.component.is_some() && !variant.off) {
-        if variant.option(d, config, "grid") == "object" {
-            let p = world.get_world_position(root).unwrap_or_default();
-            variant.anchor = Some([p.x, p.y, p.z]);
+        match variant.option(d, config, "grid") {
+            "object" => {
+                let p = world.get_world_position(root).unwrap_or_default();
+                variant.anchor = Some([p.x, p.y, p.z]);
+            }
+            // Strokes on the root's own surfaces (#544): its frame, which
+            // the renderer swaps for the held one under a motion hold
+            "local" => {
+                let matrix = world
+                    .get_world_matrix(root)
+                    .unwrap_or_else(|| flint_core::Transform::default().to_matrix());
+                variant.local = Some(LocalFrame { root, matrix });
+            }
+            _ => {}
         }
     }
     let name = variant_name(&variant, world.get_name(root).unwrap_or(""));
@@ -2541,6 +2611,67 @@ mod tests {
         assert_eq!(v.param(ascii, &config, "cell"), 16.0);
         assert_eq!(v.option(ascii, &config, "color"), "tint");
         assert_eq!(v.param(ascii, &config, "ink"), 1.0);
+    }
+
+    /// `grid = "local"` (#544): one variant per root, carrying the root's
+    /// world matrix, whose inverse rows take a point on it back to where it
+    /// sits in the root's own space wherever the root has moved and turned.
+    #[test]
+    fn a_local_grid_carries_its_roots_frame_and_its_inverse() {
+        let mut world = FlintWorld::new();
+        with_component(&mut world, "cask", "pencil_style", "grid = \"local\"");
+        with_component(
+            &mut world,
+            "cask",
+            "transform",
+            "position = [1.0, 2.0, 3.0]\nrotation = [0.0, 90.0, 30.0]\nscale = [2.0, 1.0, 0.5]",
+        );
+        let hoop = world.spawn("hoop").unwrap();
+        world.set_parent_by_name("hoop", "cask").unwrap();
+        let (ids, out) = resolved(&world, &PostProcessConfig::default());
+        let cask_id = world.get_id("cask").unwrap();
+        let id = out[&cask_id];
+        assert_eq!(out[&hoop], id, "a child rides on its root's frame");
+        assert_eq!(ids.name(id), Some("pencil@cask{grid=local}"));
+        let v = ids.variant(id).unwrap();
+        assert_eq!(v.anchor, None, "no screen anchor");
+        let f = v.local.expect("a local frame");
+        assert_eq!(f.root, cask_id);
+        let m = world.get_world_matrix(cask_id).unwrap();
+        assert_eq!(f.matrix, m);
+
+        // A local point goes out to the world and back
+        let rows = f.inverse_rows().unwrap();
+        let local = [0.3, -0.7, 1.9];
+        let w: Vec<f32> = (0..3)
+            .map(|r| m[0][r] * local[0] + m[1][r] * local[1] + m[2][r] * local[2] + m[3][r])
+            .collect();
+        for (i, row) in rows.iter().enumerate() {
+            let back = row[0] * w[0] + row[1] * w[1] + row[2] * w[2] + row[3];
+            assert!((back - local[i]).abs() < 1e-5, "axis {i}: {back}");
+        }
+
+        // A root scaled to nothing has no inverse
+        let flat = LocalFrame {
+            root: cask_id,
+            matrix: [
+                [0.0; 4],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        };
+        assert_eq!(flat.inverse_rows(), None);
+
+        // A motion hold's matrix replaces the live one, names untouched
+        let mut held = ids.clone();
+        let kept = flint_core::Transform::default().to_matrix();
+        held.hold_local_frames(|root, _| {
+            assert_eq!(root, cask_id);
+            kept
+        });
+        assert_eq!(held.variant(id).unwrap().local.unwrap().matrix, kept);
+        assert_eq!(held.name(id), ids.name(id));
     }
 
     #[test]

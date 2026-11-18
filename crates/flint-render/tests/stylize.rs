@@ -4326,3 +4326,113 @@ reads = ["acc"]
     assert_eq!(names, ["utest_history.acc.a", "utest_history.acc.b"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// #544: `grid = "local"` lays pencil's strokes in the styled root's own
+/// space. Move a cube and the camera together, by a turn and a step, and
+/// the camera sees the same cube: its local strokes draw the same picture,
+/// while `grid = "world"` strokes, which belong to the world, change. The
+/// cube is unlit, so moving it under the lights changes no tone.
+#[test]
+fn local_strokes_ride_on_the_prop_and_world_strokes_stay_behind() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    // A point turned `yaw` degrees about +Y, then stepped by `step`
+    let moved = |p: [f64; 3], yaw: f64, step: [f64; 3]| {
+        let (s, c) = yaw.to_radians().sin_cos();
+        [
+            c * p[0] + s * p[2] + step[0],
+            p[1] + step[1],
+            -s * p[0] + c * p[2] + step[2],
+        ]
+    };
+    let draw = |grid: &str, yaw: f64, step: [f64; 3]| {
+        let mut world = FlintWorld::new();
+        let cube = world.spawn("cube").unwrap();
+        let mut transform = toml::Table::new();
+        transform.insert("position".into(), vec3(moved([0.4, 0.0, -0.3], yaw, step)));
+        // Euler ZYX with no roll: a turn about Y adds to the yaw
+        transform.insert("rotation".into(), vec3([20.0, 35.0 + yaw, 0.0]));
+        world
+            .set_component(cube, "transform", transform.into())
+            .unwrap();
+        let mut bounds = toml::Table::new();
+        bounds.insert("min".into(), vec3([-2.5, -2.5, -2.5]));
+        bounds.insert("max".into(), vec3([2.5, 2.5, 2.5]));
+        world.set_component(cube, "bounds", bounds.into()).unwrap();
+        let mut material = toml::Table::new();
+        material.insert("color".into(), vec3([0.35, 0.35, 0.35]));
+        material.insert("unlit".into(), true.into());
+        world
+            .set_component(cube, "material", material.into())
+            .unwrap();
+        let mut pencil = toml::Table::new();
+        pencil.insert("grid".into(), grid.into());
+        world
+            .set_component(cube, "pencil_style", pencil.into())
+            .unwrap();
+
+        let mut renderer = SceneRenderer::new_headless(
+            gpu.device,
+            gpu.queue,
+            FORMAT,
+            SIZE,
+            SIZE,
+            RendererConfig::default(),
+        );
+        let at = |p: [f64; 3]| {
+            let p = moved(p, yaw, step);
+            flint_core::Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32)
+        };
+        let camera = Camera {
+            position: at([7.0, 6.0, 9.0]),
+            target: at([0.4, 0.0, -0.3]),
+            aspect: 1.0,
+            ..Camera::default()
+        };
+        renderer.prepare(
+            gpu.device,
+            gpu.queue,
+            &world,
+            &flint_render::FrameInputs::default(),
+        );
+        renderer.render_to(
+            gpu.device,
+            gpu.queue,
+            &gpu.depth_view,
+            &camera,
+            &gpu.color_view,
+        );
+        let _ = flint_render::wait_for_gpu(gpu.device);
+        gpu.pixels()
+    };
+    // Pixels whose colour moved by more than float noise
+    let differ = |a: &[u8], b: &[u8]| {
+        a.chunks(4)
+            .zip(b.chunks(4))
+            .filter(|(p, q)| (0..3).any(|c| p[c].abs_diff(q[c]) > 8))
+            .count()
+    };
+    let (yaw, step) = (50.0, [0.37, 0.21, -0.61]);
+    let local = draw("local", 0.0, [0.0; 3]);
+    let local_moved = draw("local", yaw, step);
+    let world = draw("world", 0.0, [0.0; 3]);
+    let world_moved = draw("world", yaw, step);
+    let (local_d, world_d) = (differ(&local, &local_moved), differ(&world, &world_moved));
+    eprintln!(
+        "moved with the camera: local strokes changed {local_d} pixels, world strokes {world_d} \
+         (of {})",
+        SIZE * SIZE
+    );
+    assert_ne!(local, world, "the two grids drew the same strokes");
+    assert!(
+        world_d > 150,
+        "world strokes should stay with the world as the cube moves: only {world_d} changed"
+    );
+    assert!(
+        local_d * 10 < world_d,
+        "local strokes should ride on the cube: {local_d} pixels changed against world's {world_d}"
+    );
+}
