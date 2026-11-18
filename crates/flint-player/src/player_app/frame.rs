@@ -65,6 +65,13 @@ impl PlayerApp {
         // A look's cross-fade (#496) eases what the two looks differ in, on
         // game time, under the scripts' overrides stamped below
         self.step_look_fade(self.core.clock.delta_time);
+        // The presented frame as a PNG (#583): a capture line on the
+        // expression socket, `--record`. Nothing at all while neither asks
+        #[cfg(not(target_arch = "wasm32"))]
+        self.take_capture_asks();
+        #[cfg(not(target_arch = "wasm32"))]
+        let grab = (!self.frame_grabs.idle())
+            .then(|| self.frame_grabs.has_asks().then(|| self.capture_line_dir()));
         let Some(context) = &self.render_context else {
             return;
         };
@@ -246,12 +253,41 @@ impl PlayerApp {
                 timer.trace(true);
                 timer.set_frame_tag(flint_core::profile::frame() as u64);
             }
+            // The frame as shown, scene and HUD, copied for a capture line
+            // or the recording (#583), in the same encoder
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(dir) = &grab {
+                flint_core::scope!("frame_grab");
+                let at = super::frame_grab::GrabClock {
+                    game_time: self.core.clock.total_time,
+                    stepped: self.core.clock.frame_step.is_some(),
+                };
+                let place = super::frame_grab::GrabPlace {
+                    capture_dir: dir.as_deref(),
+                    scene_path: &self.core.scene_path,
+                };
+                self.frame_grabs.before_submit(
+                    &context.device,
+                    &mut encoder,
+                    &output.texture,
+                    context.surface_copyable,
+                    at,
+                    &place,
+                );
+            }
             renderer.encode_gpu_timings(&context.device, &mut encoder);
             {
                 flint_core::scope!("submit");
                 context.queue.submit(std::iter::once(encoder.finish()));
             }
             renderer.frame_submitted();
+            // Its map asked for, and earlier ones polled, never waited on
+            #[cfg(not(target_arch = "wasm32"))]
+            if grab.is_some() {
+                flint_core::scope!("frame_grab_poll");
+                self.frame_grabs.submitted();
+                self.frame_grabs.poll(&context.device);
+            }
             if let (true, Some(trace), Some(timer)) = (
                 tracing,
                 self.stats.perf.trace.as_deref_mut(),

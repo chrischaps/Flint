@@ -1958,6 +1958,7 @@ dependencies = [
  "flint-music",
  "flint-particles",
  "flint-physics",
+ "flint-pixels",
  "flint-procgen",
  "flint-query",
  "flint-render",

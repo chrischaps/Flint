@@ -622,6 +622,39 @@ playhead, a ruler of every event and the next one's time; for the socket, the
 connections open and the lines dropped as malformed or oversize and the states
 dropped under a flood.
 
+#### Asking the window for its frame
+
+Something driving the game over the socket often wants to see what it caused.
+A line with a `capture` key asks for the next frame the window presents, as a
+PNG of what the person saw, scene and HUD (#583):
+
+```text
+{"capture": "look.png", "id": 7}
+{"capture": true}
+```
+
+The file goes in `--capture-dir` (by default `captures/` at the project's
+root). A name is a plain file name, with `.png` added when it has none: no
+folders and no leading dot, so a client can't write anywhere else; `true`
+names it after the scene and the game time (`stage-t4.250.png`, then
+`-2`...). The frame is copied in its own encoder and read back on later frames
+without waiting, and when the file is written the connection hears one line:
+
+```text
+{"captured": "C:\\game\\captures\\look.png", "id": 7, "width": 1280, "height": 720, "t": 4.25, "frame": 255, "state": {"state": "speaking", "energy": 0.8}}
+```
+
+`state` is the last state the scripts had heard when the frame was drawn, so
+the picture and what it was showing come back together. A line that can't be
+taken (a bad name, a key other than `capture` and `id`, a surface that can't
+be copied) gets `{"capture_error": "<why>", "id": 7}` instead. A capture line
+is never a state: the scripts don't hear it, and a state that also carries a
+`capture` field is refused aloud rather than swallowed. Measured in a debug
+build at 960x540, the reply came about 70 ms after the line, and the frame
+spent about 8 µs on the copy. `examples/listening_lantern.scene.toml` answers
+four states; `--record` writes every frame at a rate instead ([CLI
+reference](../cli-reference/overview.md#player-screenshots-hud-included)).
+
 ### Log API
 
 <!-- script-api:begin module:log -->

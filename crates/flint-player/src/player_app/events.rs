@@ -638,6 +638,9 @@ impl ApplicationHandler for PlayerApp {
         // A frame capture still on its way is written before the run ends
         #[cfg(not(target_arch = "wasm32"))]
         self.finish_frame_captures();
+        // A recording's last frames and its ffconcat, a capture line's reply (#583)
+        #[cfg(not(target_arch = "wasm32"))]
+        self.finish_frame_grabs();
         // `--trace FILE`, and any trace still on its way (#1097)
         self.finish_traces();
         self.flush_persistent_store(true, "exit");
