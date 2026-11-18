@@ -3619,6 +3619,116 @@ fn three_hundred_props_each_keep_their_variant_and_their_owner() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
+/// #534: under whole-frame ASCII with `silhouette = "cell"`, the edge of a
+/// pencil prop is whole cells: every glyph cell is all ASCII's or all
+/// pencil's (its sketch and the plain scene beside it), in either chain
+/// order. Under `silhouette = "pixel"` the cut follows the prop's outline
+/// through the cells, which is what makes this a test of something.
+#[test]
+fn a_cell_silhouette_snaps_another_styles_edge_to_whole_glyphs() {
+    let Some(gpu) = gpu() else {
+        flint_render::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let vec3 = |v: [f64; 3]| toml::Value::Array(v.iter().map(|&x| x.into()).collect());
+    let mut world = FlintWorld::new();
+    let e = world.spawn("crate").unwrap();
+    let mut transform = toml::Table::new();
+    transform.insert("rotation".into(), vec3([25.0, 40.0, 10.0]));
+    world
+        .set_component(e, "transform", transform.into())
+        .unwrap();
+    let mut bounds = toml::Table::new();
+    bounds.insert("min".into(), vec3([-2.6; 3]));
+    bounds.insert("max".into(), vec3([2.6; 3]));
+    world.set_component(e, "bounds", bounds.into()).unwrap();
+    let mut mask = toml::Table::new();
+    mask.insert("style".into(), "pencil".into());
+    world.set_component(e, "style_mask", mask.into()).unwrap();
+
+    let mut renderer = SceneRenderer::new_headless(
+        gpu.device,
+        gpu.queue,
+        FORMAT,
+        SIZE,
+        SIZE,
+        RendererConfig::default(),
+    );
+    let base = renderer.post_process_config().clone();
+    let mut draw = |edit: &dyn Fn(&mut flint_render::postprocess::PostProcessConfig)| {
+        let mut config = base.clone();
+        edit(&mut config);
+        renderer.set_post_process_config(config);
+        renderer.ensure_style_resources(gpu.device);
+        gpu.frame(&mut renderer, &world)
+    };
+    let ascii = |silhouette: &'static str, order: Option<f32>| {
+        move |c: &mut flint_render::postprocess::PostProcessConfig| {
+            c.styles.set_enabled("ascii", true);
+            c.styles.set_option("ascii", "silhouette", silhouette);
+            if let Some(order) = order {
+                c.styles.set_order("ascii", Some(order));
+            }
+        }
+    };
+    // ASCII alone (the prop plain to it) and pencil alone
+    let glyphs = draw(&|c| {
+        ascii("cell", None)(c);
+        c.styles.set_off_everywhere("pencil");
+    });
+    let sketch = draw(&|_| {});
+    // Builtin 8x8 font at 8 points and 1 pixel a point: 8 px cells from 0
+    const CELL: usize = 8;
+    let px = |f: &[u8], i: usize| [f[i * 4], f[i * 4 + 1], f[i * 4 + 2]];
+    let near = |a: [u8; 3], b: [u8; 3]| (0..3).all(|k| a[k].abs_diff(b[k]) <= 3);
+    // Cells holding at least 4 pixels drawn as ASCII and 4 as pencil
+    let part_cells = |frame: &[u8]| {
+        let side = SIZE as usize;
+        let mut part = Vec::new();
+        for cy in (0..side).step_by(CELL) {
+            for cx in (0..side).step_by(CELL) {
+                let (mut glyph, mut other) = (0, 0);
+                for y in cy..cy + CELL {
+                    for x in cx..cx + CELL {
+                        let i = y * side + x;
+                        let (g, s) = (
+                            near(px(frame, i), px(&glyphs, i)),
+                            near(px(frame, i), px(&sketch, i)),
+                        );
+                        glyph += usize::from(g && !s);
+                        other += usize::from(s && !g);
+                    }
+                }
+                if glyph >= 4 && other >= 4 {
+                    part.push((cx / CELL, cy / CELL, glyph, other));
+                }
+            }
+        }
+        part
+    };
+    let prop = (0..(SIZE * SIZE) as usize)
+        .filter(|&i| !near(px(&sketch, i), px(&glyphs, i)))
+        .count();
+    assert!(
+        prop > (SIZE * SIZE) as usize / 8,
+        "the prop covers too little: {prop} px"
+    );
+    let by_pixel = part_cells(&draw(&ascii("pixel", None)));
+    assert!(
+        by_pixel.len() >= 3,
+        "a pixel cut should split cells along the prop's outline: {by_pixel:?}"
+    );
+    for (label, order) in [("ascii first", None), ("pencil first", Some(20.0))] {
+        let part = part_cells(&draw(&ascii("cell", order)));
+        assert!(
+            part.is_empty(),
+            "{label}: {} cells mix glyph and pencil pixels (pixel cut: {}): {part:?}",
+            part.len(),
+            by_pixel.len()
+        );
+    }
+}
+
 /// #740: a cap that remains says what it leaves out, once, naming the
 /// first entity past it. Ten ASCII props each dissolve and snap to whole
 /// cells of a grid of their own; a frame ranks eight dissolves and snaps

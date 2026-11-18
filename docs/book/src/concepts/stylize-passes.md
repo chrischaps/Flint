@@ -185,8 +185,8 @@ flint render examples/mesh_meadow.scene.toml --style ascii:ramp=blocks,tint=1/0.
 | `edge_tint` | `0` | For `edge_ink = "color"`: mix the colour toward the near side's hue (0--1) |
 | `outline` | `1` | Per-entity only: ink a styled entity's own pixels this many points from its silhouette (0--4, at least one pixel when on; 0 = off), so features thinner than a cell keep their shape ([Silhouettes](#silhouettes), #288) |
 | `min_coverage` | `0.5` | Per-entity only: the least ink of the pixels in a cell the entity only grazes (0--1) |
-| `silhouette` | `"pixel"` | Per-entity only: `pixel` cuts the glyphs at the entity's exact edge; `cell` draws every edge cell whole, as the entity's glyph or as the scene, by how much of it the entity covers ([Whole-cell silhouettes](#whole-cell-silhouettes), #338) |
-| `cell_share` | `0.5` | Per-entity only, with `silhouette = "cell"`: the share of a cell's 16 colour samples the entity must cover for the cell to be its (1/16--1) |
+| `silhouette` | `"pixel"` | `pixel` cuts the glyphs at the entity's exact edge; `cell` draws every edge cell whole, as the entity's glyph or as the scene, by how much of it the entity covers ([Whole-cell silhouettes](#whole-cell-silhouettes), #338). Set for the whole frame, `cell` also snaps the edge of another style's entity to whole glyphs (#534) |
+| `cell_share` | `0.5` | With `silhouette = "cell"`: the share of a cell's 16 colour samples the entity must cover for the cell to be its (1/16--1); for the whole frame, the share that must not be another style's entity for the cell to stay a glyph |
 | `temporal` | `on` | Temporal stability (#277), below. `off` draws every frame as if it were the first. `reproject` reads each cell's past where its surface was last frame ([Reprojected history](#reprojected-history), #344) |
 | `smoothing` | `0.6` | How much of last frame's colour a cell keeps, per 60 Hz frame (0--0.95): at 120 Hz each frame keeps its square root, at 30 Hz its square, so a change settles in the same game time at any frame rate (#342). A cell whose colour jumps takes the new one at once, so nothing trails. Edge cells keep its square root of their edge's length, direction and place ([Edge glyphs in motion](#edge-glyphs-in-motion), #477) |
 | `hysteresis` | `0.35` | How far, in ramp steps, a cell's tone may stray from its glyph's band before the glyph changes (0--1). It also sets how far an edge's length, direction and place may stray before its line glyph changes (#477) |
@@ -581,6 +581,21 @@ flint render examples/ascii_entities.scene.toml --no-grid --style ascii:silhouet
 ```
 
 The glyph pass works out each pixel's cell, so every pixel of a cell gets the same answer. It reads the cell's 16 mask samples once for the pixel's own grid, then once for each other grid a snapping variant uses (up to 8; a variant on a ninth still drops its own minority cells but fills none). Each pass keeps counts in registers for the first two snapping variants met in the cell, so a third variant of the same grid meeting them in one cell is left out. On `examples/ascii_entities` at 1080p on an RTX 4070 (`--gpu-time 240`, three alternating runs, two snapping grids) the ASCII pass took 0.34–0.38 ms with cells against 0.17–0.24 ms with pixels (edges off), and 0.64–0.68 ms against 0.49–0.54 ms with edges on: about 0.15 ms more. A first version that kept the samples in private arrays cost 0.4 ms more. A pixel the mask itself misses (a grazing silhouette pixel its depth tolerance drops) still passes through, as it does with `pixel`.
+
+#### At the edge of another style's entity
+
+With ASCII on for the whole frame and `silhouette = "cell"` in its table, the same rule meets the entities of other styles (#534). A pencil cask in an ASCII frame is [another style's](#each-pixel-is-one-styles), and the cut between them falls on ASCII's cells instead of the cask's outline:
+
+- A cell where at least `cell_share` of the 16 samples are not the cask's stays a glyph, whole. The cask's pixels in it are the glyph's, so pencil leaves them.
+- Any other cell is the cask's, whole. Its pencil pixels are sketched, and its other pixels show the scene as it came into the display stage: pencil draws only its own pixels, so what lies around the cask in that cell is the plain picture.
+
+![tests/fixtures/scenes/stylize_props.scene.toml at 3x under whole-frame ASCII with silhouette = "cell", the pencil crate: before #534 the cut followed the crate's outline through the glyph cells; after it, each cell along the crate is a whole glyph or wholly the crate's, sketch and plain scene](../images/ascii-cell-ownership.png)
+
+```bash
+flint render examples/stylize_props.scene.toml --no-grid --style ascii:silhouette=cell -o props.png
+```
+
+The framework does the cut, so any style the frame runs beside ASCII gets it: ASCII hands over its grid (`StylePass::ownership_cells`) before the display stage draws, and every style's [ownership pass](#each-pixel-is-one-styles) of that stage cuts along the same cells, in either chain order. A whole-frame style that runs beside ASCII (a palette) keeps the glyph cells as ASCII does. On `tests/fixtures/scenes/stylize_props.scene.toml` at 640x360 the cells along the pencil props that held both glyph and pencil pixels went from 66 to none, in either order; the golden is `ascii-cell-yields-to-pencil`. At 1080p on an RTX 4070 (`--gpu-time 240`, alternating runs) the ASCII and pencil passes, ownership included, measured the same with either cut, within the runs' spread (ASCII 0.39–0.40 ms, pencil 0.078–0.084 ms at the minimum). The HDR stage keeps the pixel cut: its styles draw at the scene's resolution, and the display stage decides every cell again after them.
 
 ## Pencil
 
@@ -1288,7 +1303,7 @@ flint render examples/stylize_props.scene.toml --style ascii --no-grid --output 
 The framework does it, so a new style (a user style included) gets it without code of its own. After each style draws, an ownership pass puts the style's input back on every pixel whose mask id another running style owns. The owner of an id is the style its variant names, when that style is registered and on this frame. The owner table has a slot for every id the frame has (it stopped at 255 before #740, and a crowd's props past it were drawn over without a word). An opt-out (`enabled = false`) is nobody's, so the whole-frame style draws it: the tag on the crate is glyphs. The pass reads the mask's blend, so a foreign entity fading out of its style (`blend` toward 0) fades into the whole frame's style. Styles read the same list as `StyleFrame::foreign_ids()`: pencil keeps its contours and hatching off those pixels, and ASCII's text grid (`--ascii-text`) writes their cells as ground.
 
 - **Who doesn't yield.** `mask_view`, `edges_view` and `display_bloom` draw over everything (`StyleDescriptor::draws_over_entities()`): the debug views show the whole picture, and the glow crosses styles as light does. The `style` and `edges` debug modes don't run the pass.
-- **The cut is the mask's.** The cut follows the mask pixel by pixel, so a glyph cell that straddles the cask's outline is cut along it. Whole-cell silhouettes ([#338](#whole-cell-silhouettes)) are a per-entity ASCII setting and don't apply to the edge of another style's entity.
+- **The cut is the mask's, or ASCII's cells.** The cut follows the mask pixel by pixel, so a glyph cell that straddles the cask's outline is cut along it. With `silhouette = "cell"` in ASCII's table the cut snaps to ASCII's cells instead, each cell along the cask all glyph or all cask ([At the edge of another style's entity](#at-the-edge-of-another-styles-entity), #534).
 - **The mask is drawn for it.** A style that yields asks for the mask while another running style owns an entity, even if it reads nothing else from the mask.
 - **Cost.** The pass is one full-screen triangle per yielding style, drawn only on frames where another style owns an entity. It discards every pixel that isn't foreign.
 
