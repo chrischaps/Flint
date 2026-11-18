@@ -547,6 +547,14 @@ pub(crate) fn run_stage<'a>(
             .then(|| frame.target(names[n], frame.format))
     });
     let ping = |n: u8| pings[n as usize].as_ref().expect("a ping the steps name");
+    // A grid the ownership cut snaps to (#534), asked before any style of
+    // the stage draws, so a style that runs before the snapping one cuts
+    // along the same cells. The display stage's alone: its styles all draw
+    // at the output's size, which the grid is in
+    frame.snapped_ownership = match stage {
+        StyleStage::Display if ownership.is_some() => snapped_ownership(styles, frame),
+        _ => None,
+    };
     for ((descriptor, pass), (src, dst)) in styles.iter().zip(steps.iter().copied()) {
         frame.descriptor = *descriptor;
         let src = match src {
@@ -608,4 +616,46 @@ pub(crate) fn run_stage<'a>(
         });
     }
     result
+}
+
+/// The first style of `styles` that yields and answers
+/// [`StylePass::ownership_cells`] (#534), with where the ids the other
+/// running styles own can be. `None` when none answers, its grid is no
+/// grid, or no other style's entity is in view.
+fn snapped_ownership<'a>(
+    styles: &[(&'a StyleDescriptor, &dyn StylePass)],
+    frame: &mut StyleFrame<'a>,
+) -> Option<SnappedOwnership> {
+    for (descriptor, pass) in styles {
+        if !descriptor.yields {
+            continue;
+        }
+        frame.descriptor = *descriptor;
+        let Some(cells) = pass.ownership_cells(frame) else {
+            continue;
+        };
+        let sane = |v: [f32; 2], least: f32| v.iter().all(|x| x.is_finite() && *x >= least);
+        if !sane(cells.cell, 1.0) || !sane(cells.origin, f32::MIN) || !cells.share.is_finite() {
+            return None;
+        }
+        let cells = OwnershipCells {
+            share: cells.share.clamp(1.0 / 16.0, 1.0),
+            ..cells
+        };
+        let style = frame.styles.index_of(descriptor.name)? as u32;
+        // A cell touching a foreign id reads it: grow by two cells
+        let reach = (2.0 * cells.cell[0].max(cells.cell[1])).ceil() as u32;
+        let rect = match frame.foreign_rect(reach) {
+            Some(r) if r.width == 0 || r.height == 0 => return None,
+            Some(r) => [
+                r.x as f32,
+                r.y as f32,
+                (r.x + r.width) as f32,
+                (r.y + r.height) as f32,
+            ],
+            None => [0.0, 0.0, frame.width as f32, frame.height as f32],
+        };
+        return Some(SnappedOwnership { style, cells, rect });
+    }
+    None
 }

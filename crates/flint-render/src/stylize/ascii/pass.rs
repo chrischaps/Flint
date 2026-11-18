@@ -728,11 +728,7 @@ impl Ascii {
     /// (#323). A reloaded set is a new Arc, so the stack re-uploads, and
     /// palettes are packed afresh every frame.
     pub(super) fn refresh_fonts(&self, frame: &StyleFrame<'_>, fonts: &mut Fonts) {
-        if fonts.cache.scope() != Some(frame.assets) {
-            fonts.cache = GlyphSetCache::new(frame.assets.clone());
-            fonts.palettes = PaletteCache::new(frame.assets.clone());
-            fonts.stack = None;
-        }
+        self.follow_scope(frame, fonts);
         fonts.since_poll += 1;
         if fonts.since_poll >= POLL_FRAMES {
             fonts.since_poll = 0;
@@ -750,6 +746,30 @@ impl Ascii {
                 fonts.warned = None;
             }
         }
+    }
+
+    /// The caches follow the scene's folder.
+    fn follow_scope(&self, frame: &StyleFrame<'_>, fonts: &mut Fonts) {
+        if fonts.cache.scope() != Some(frame.assets) {
+            fonts.cache = GlyphSetCache::new(frame.assets.clone());
+            fonts.palettes = PaletteCache::new(frame.assets.clone());
+            fonts.stack = None;
+        }
+    }
+
+    /// The whole frame's grid, as [`encode`](StylePass::encode) lays it:
+    /// the cell for the frame's font and its origin.
+    fn whole_frame_grid(
+        &self,
+        frame: &StyleFrame<'_>,
+        fonts: &mut Fonts,
+    ) -> ([f32; 2], [f32; 2]) {
+        let glyph = self
+            .set_named(fonts, frame.option("font"))
+            .atlas()
+            .cell_size();
+        let cell = cell_pixels(frame.param("cell"), frame.pixels_per_point, glyph);
+        (cell, grid_origin([frame.width, frame.height], cell))
     }
 
     /// The glyph set `name`, the built-in set when it can't be loaded (the
@@ -1347,6 +1367,30 @@ impl StylePass for Ascii {
             .unwrap_or_else(|e| e.into_inner())
             .as_mut()?
             .read(device)
+    }
+
+    /// The whole frame's grid under `silhouette = "cell"` (#534), so the
+    /// edge of another style's entity is whole glyphs too: a cell at least
+    /// `cell_share` not the other style's is drawn whole, any other is the
+    /// other style's. The silhouette that snaps ASCII's own props (#338)
+    /// then snaps the props of every other style the frame runs.
+    fn ownership_cells(
+        &self,
+        frame: &StyleFrame<'_>,
+    ) -> Option<crate::stylize::OwnershipCells> {
+        if !frame.covers_frame() || frame.option("silhouette") != "cell" {
+            return None;
+        }
+        let mut fonts = self.fonts.lock().unwrap_or_else(|e| e.into_inner());
+        // Before `encode` polls this frame: a glyph set reloaded this
+        // frame snaps to last frame's cell once
+        self.follow_scope(frame, &mut fonts);
+        let (cell, origin) = self.whole_frame_grid(frame, &mut fonts);
+        Some(crate::stylize::OwnershipCells {
+            cell,
+            origin,
+            share: frame.param("cell_share"),
+        })
     }
 }
 

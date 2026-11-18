@@ -23,8 +23,8 @@
 //! edge_tint = 0.0       # for edge_ink = "color": toward the near side's hue
 //! outline = 1.0         # per-entity: ink this many points along the silhouette (#288)
 //! min_coverage = 0.5    # per-entity: least ink in a cell the entity only grazes
-//! silhouette = "pixel"  # per-entity: pixel | cell (whole glyphs at the edge, #338)
-//! cell_share = 0.5      # per-entity, cell silhouette: share of a cell that is the entity's
+//! silhouette = "pixel"  # pixel | cell (whole glyphs at the edge, #338; whole frame: at other styles' entities too, #534)
+//! cell_share = 0.5      # cell silhouette: share of a cell that is the entity's (whole frame: not another style's)
 //! ```
 //!
 //! It runs at the display stage: on the finished picture at output
@@ -151,6 +151,13 @@
 //! its own minority cells, but fills no others). The pixel `outline` is
 //! off on a snapped variant: its edge is the cells'. A variant that cuts
 //! to the pixel keeps its own pixels inside a snapped neighbour's cell.
+//!
+//! For the whole frame (#534), `silhouette = "cell"` also snaps the edge
+//! of another style's entity: `StylePass::ownership_cells` hands the
+//! framework the whole frame's grid, and the ownership cut gives each cell
+//! along a pencil prop wholly to the glyph (at least `cell_share` of it
+//! not the prop's) or wholly to the prop (its scene pixels plain). See
+//! [`super::ownership`].
 
 use super::kit;
 use super::variant_table::{report_drop, storage_entry, VariantTable};
@@ -335,7 +342,7 @@ const PARAMS: &[StyleParam] = &[
         .help("Per-entity: the least ink in a cell the entity only grazes (a thin feature), 0..1"),
     StyleParam::new("cell_share", 0.5, 0.0625..=1.0)
         .label("Cell share")
-        .help("Per-entity, silhouette cell: how much of a cell the entity must cover for the cell to be drawn as its glyph; lower keeps thinner features"),
+        .help("Silhouette cell: how much of a cell the entity must cover for the cell to be drawn as its glyph; lower keeps thinner features. For the whole frame, how much of a cell must not be another style's entity for it to stay a glyph"),
 ];
 
 const OPTIONS: &[StyleOption] = &[
@@ -375,7 +382,7 @@ const OPTIONS: &[StyleOption] = &[
         .help("What inks the line glyphs: cell (as the cell's tone glyph), color (one colour, Edge colour), or hue (the near side's own colour, not the cell's mix of it and what's behind)"),
     StyleOption::new("silhouette", "pixel", SILHOUETTES)
         .label("Silhouette")
-        .help("Per-entity: pixel cuts the glyphs at the entity's exact edge; cell draws each edge cell whole or not at all, by how much of it the entity covers"),
+        .help("pixel cuts the glyphs at the entity's exact edge; cell draws each edge cell whole or not at all, by how much of it the entity covers. For the whole frame, cell also snaps the edge of another style's entity (a pencil prop) to whole glyphs"),
 ];
 
 pub(super) static STYLE: StyleDescriptor =

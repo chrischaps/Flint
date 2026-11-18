@@ -305,6 +305,14 @@ name = "ascii-full-yields-to-pencil"
 scene = "tests/fixtures/scenes/stylize_props.scene.toml"
 args = ["--no-grid", "--style", "ascii"]
 
+# The same cut snapped to the glyph cells (#534): under `silhouette = "cell"`
+# each cell along the pencil cask and crate is all glyph, or all pencil and
+# plain scene, never a glyph cut through
+[[case]]
+name = "ascii-cell-yields-to-pencil"
+scene = "tests/fixtures/scenes/stylize_props.scene.toml"
+args = ["--no-grid", "--style", "ascii:silhouette=cell"]
+
 [[case]]
 name = "ascii-style-screen"
 scene = "tests/fixtures/scenes/stylize_props_ascii.scene.toml"
@@ -458,6 +466,13 @@ args = ["--no-grid", "--style", "pencil:direction=tensor,scope=screen"]
 name = "pencil-world"
 scene = "tests/fixtures/scenes/pencil_sketch.scene.toml"
 args = ["--no-grid", "--style", "pencil:grid=world,scope=screen"]
+
+# Strokes in each prop's own space (#544): the back cask on the world's
+# strokes, the front cask (rolled) and the crate (turned) on their own
+[[case]]
+name = "pencil-local"
+scene = "tests/fixtures/scenes/pencil_rolling.scene.toml"
+args = ["--no-grid"]
 
 # Per-entity pencil_style variants (coloured, screen, object grid, blue
 # lead, an opt-out) as the demo scene authors them

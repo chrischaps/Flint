@@ -1550,6 +1550,7 @@ impl SceneRenderer {
                 debug_mode: self.debug_state.mode,
                 binds: &resources.binds,
                 targets: &resources.styles,
+                snapped_ownership: None,
             }
         });
 

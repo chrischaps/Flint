@@ -27,6 +27,12 @@ struct PencilRow {
     i: vec4<f32>,
     // clutter (#883), unused x3
     j: vec4<f32>,
+    // World to the styled root's own space (#544, `grid = "local"`): the
+    // inverse world matrix's top three rows, local.i = dot(row, (p, 1));
+    // the identity on any other row
+    k: vec4<f32>,
+    l: vec4<f32>,
+    m: vec4<f32>,
 };
 
 struct PencilUniforms {
@@ -168,6 +174,34 @@ fn passes_through(slot: u32) -> bool {
 // Whether the row's hatching is laid on the world's surfaces (#389)
 fn world_grid(row: PencilRow) -> bool {
     return (u32(row.g.z + 0.5) & 2u) != 0u;
+}
+
+// Whether a world grid's row lays its strokes in its root's own space (#544)
+fn local_grid(row: PencilRow) -> bool {
+    return (u32(row.g.z + 0.5) & 4u) != 0u;
+}
+
+// A world point in the row's local space
+fn to_local(row: PencilRow, p: vec3<f32>) -> vec3<f32> {
+    let h = vec4<f32>(p, 1.0);
+    return vec3<f32>(dot(row.k, h), dot(row.l, h), dot(row.m, h));
+}
+
+// A world direction (a derivative of a position) in the row's local space
+fn dir_to_local(row: PencilRow, d: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(dot(row.k.xyz, d), dot(row.l.xyz, d), dot(row.m.xyz, d));
+}
+
+// A world normal in the row's local space: through the inverse transpose of
+// the rows' 3x3 A, which is A's cofactor matrix (rows r1 x r2, r2 x r0,
+// r0 x r1) over its determinant. The determinant's scale and sign go with
+// the normalize and the triplanar weights' abs
+fn normal_to_local(row: PencilRow, n: vec3<f32>) -> vec3<f32> {
+    let r0 = row.k.xyz;
+    let r1 = row.l.xyz;
+    let r2 = row.m.xyz;
+    let c = vec3<f32>(dot(cross(r1, r2), n), dot(cross(r2, r0), n), dot(cross(r0, r1), n));
+    return c / max(length(c), 1e-12);
 }
 
 // --- depth --------------------------------------------------------------------

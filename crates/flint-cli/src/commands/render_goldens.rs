@@ -1682,6 +1682,7 @@ mod tests {
             "styles-mixed",
             // ASCII giving way to pencil needs both styles' props
             "ascii-full-yields-to-pencil",
+            "ascii-cell-yields-to-pencil",
         ];
         for case in &manifest.cases {
             if case.scene == "tests/fixtures/scenes/stylize_props.scene.toml" {

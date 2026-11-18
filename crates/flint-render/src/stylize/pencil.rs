@@ -101,6 +101,17 @@
 //! screen cross-faded with the next as a mip chain does, so strokes keep
 //! their size on screen at any distance; `direction` is not used (the sky
 //! keeps the screen's hatching), `angle` turns the strokes in each plane.
+//!
+//! World strokes stay put while the camera moves, so a prop moving through
+//! the world (a rolling cask) slides under them. `grid = "local"` (#544)
+//! hatches the same stripes on the styled root's own position: its row
+//! carries the root's world-to-local matrix (the held one under a motion
+//! hold), and the draw pass takes the world position, its derivatives and
+//! the normal into that space first. A rigid prop's strokes ride on it
+//! exactly, its children's too while they move with it; a skinned mesh's
+//! surfaces move within that frame, so its strokes still swim (that would
+//! need a rest-pose position from the scene pass). The whole frame's row
+//! has no root, so a table's `local` is `world`.
 
 pub use super::images::{names_image, NO_IMAGE};
 use super::images::{ImageStack, ImageUse, LayerInfo, Stacked, StackedImages, MAX_LAYERS};
@@ -119,9 +130,10 @@ pub const DIRECTIONS: &[&str] = &["surface", "screen", "tensor"];
 /// What a `[post_process.styles.pencil]` table covers (as ASCII's).
 pub const SCOPES: &[&str] = &["screen", "entities"];
 
-/// Where a variant's hatching is anchored: ASCII's two grids, and `world`,
-/// strokes laid on the surfaces themselves (#389).
-pub const GRIDS: &[&str] = &["screen", "object", "world"];
+/// Where a variant's hatching is anchored: ASCII's two grids, `world`,
+/// strokes laid on the surfaces themselves (#389), and `local`, laid on
+/// them in the entity's own space, so they ride on a moving prop (#544).
+pub const GRIDS: &[&str] = &["screen", "object", "world", "local"];
 
 /// Where the tone comes from (#869): the picture's luminance, or the light
 /// alone (the picture over its albedo).
@@ -249,7 +261,7 @@ const OPTIONS: &[StyleOption] = &[
         .help("screen: the table draws the whole frame; entities: it is only the preset for pencil_style entities"),
     StyleOption::new("grid", "screen", GRIDS)
         .label("Hatch anchor")
-        .help("screen: hatching fixed to the screen; object: pinned to each entity's origin, so strokes travel with it; world: laid on the surfaces, so they hold as the camera moves"),
+        .help("screen: hatching fixed to the screen; object: pinned to each entity's origin, so strokes travel with it; world: laid on the surfaces, so they hold as the camera moves; local: laid on each entity's surfaces in its own space, so they ride on it as it moves and turns too"),
     StyleOption::new("tone", "picture", TONES)
         .label("Tone from")
         .help("picture: hatch where the picture is dark, dark paint included; light: hatch where the light falls off (the picture over each mesh's own colour), so a dark floor in the sun stays blank and a white prop in shadow is hatched"),
@@ -595,12 +607,40 @@ pub fn any_tensor(rows: &[PencilRow]) -> bool {
     })
 }
 
-/// One variant's settings, ten vec4s (see `PencilRow` in the shader).
+/// One variant's settings, thirteen vec4s (see `PencilRow` in the shader):
+/// ten of settings, then the world-to-local rows of a `grid = "local"`
+/// variant (#544; the identity otherwise).
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Debug, PartialEq)]
 pub struct PencilRow {
-    pub v: [[f32; 4]; 10],
+    pub v: [[f32; 4]; 13],
 }
+
+impl PencilRow {
+    /// Hatch on the surfaces in the space `rows` take a world point into
+    /// (#544): the world-to-local rows of [`LocalFrame::inverse_rows`].
+    /// Only a world-grid row takes it, so a local grid is a world one plus
+    /// the frame.
+    ///
+    /// [`LocalFrame::inverse_rows`]: crate::style_mask::LocalFrame::inverse_rows
+    pub fn set_local(&mut self, rows: [[f32; 4]; 3]) {
+        let flags = self.v[6][2] as u32;
+        if flags & WORLD_GRID as u32 == 0 {
+            return;
+        }
+        if flags & LOCAL_GRID as u32 == 0 {
+            self.v[6][2] += LOCAL_GRID;
+        }
+        self.v[10..13].copy_from_slice(&rows);
+    }
+}
+
+/// The rows a row's local frame holds while it has none: the identity.
+const NO_LOCAL: [[f32; 4]; 3] = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+];
 
 /// The paper and stroke images, kept with the style (#390), a stack of
 /// each a frame (#547).
@@ -635,6 +675,11 @@ const PASS_THROUGH: f32 = 1.0;
 /// A row's flag (added to the others): its hatching is on the world's
 /// surfaces, `grid = "world"` (#389).
 const WORLD_GRID: f32 = 2.0;
+
+/// A row's flag (with [`WORLD_GRID`]): the world strokes are laid in the
+/// styled root's own space, `grid = "local"` (#544), through the row's
+/// last three vec4s.
+const LOCAL_GRID: f32 = 4.0;
 
 /// The slot of a mask id another registered style owns: its pixels are
 /// that style's (an ASCII prop in a pencil frame), so pencil leaves them.
@@ -735,8 +780,9 @@ pub fn row(
             [
                 origin[0],
                 origin[1],
+                // A local grid is a world one until its frame is set
                 flags
-                    + if option("grid") == "world" {
+                    + if matches!(option("grid").as_str(), "world" | "local") {
                         WORLD_GRID
                     } else {
                         0.0
@@ -757,6 +803,9 @@ pub fn row(
                 param("seed").max(0.0).floor(),
             ],
             [param("clutter").clamp(0.0, 1.0), 0.0, 0.0, 0.0],
+            NO_LOCAL[0],
+            NO_LOCAL[1],
+            NO_LOCAL[2],
         ],
     }
 }
@@ -926,13 +975,19 @@ impl Pencil {
             slots[id as usize] = rows.len() as u32;
             ids.push(id);
             names.push(image_names(&|n| frame.variant_option(v, n).to_string()));
-            rows.push(row(
+            let mut r = row(
                 &|n| frame.variant_param(v, n),
                 &|n| frame.variant_option(v, n).to_string(),
                 frame.time,
                 origin,
                 flags,
-            ));
+            );
+            // Strokes on the root's own surfaces (#544); a prop scaled to
+            // nothing has no frame and keeps the world's
+            if let Some(local) = v.local.and_then(|f| f.inverse_rows()) {
+                r.set_local(local);
+            }
+            rows.push(r);
         }
         Table {
             rows,
@@ -1207,8 +1262,9 @@ mod tests {
     }
 
     #[test]
-    fn a_row_is_ten_vec4s() {
-        assert_eq!(std::mem::size_of::<PencilRow>(), 160);
+    fn a_row_is_thirteen_vec4s() {
+        // Ten of settings, three of a local grid's frame (#544)
+        assert_eq!(std::mem::size_of::<PencilRow>(), 208);
         assert_eq!(
             std::mem::size_of::<PencilUniforms>(),
             // ... #743's edge thresholds, then the stacks' layers (#547)
@@ -1492,6 +1548,45 @@ mod tests {
             PASS_THROUGH + WORLD_GRID
         );
         assert!(GRIDS.contains(&"world"));
+    }
+
+    /// `grid = "local"` (#544) is a world grid until its frame is set,
+    /// then carries the frame's rows and its flag; any other row keeps the
+    /// identity and refuses a frame.
+    #[test]
+    fn a_local_grid_is_a_world_grid_with_its_roots_frame() {
+        let p = |n: &str| STYLE.params.iter().find(|q| q.name == n).unwrap().default;
+        let grid = |g: &'static str| {
+            move |n: &str| {
+                if n == "grid" {
+                    g.to_string()
+                } else {
+                    String::new()
+                }
+            }
+        };
+        let frame = [
+            [0.0, 0.0, -1.0, 2.0],
+            [0.0, 1.0, 0.0, -3.0],
+            [1.0, 0.0, 0.0, 0.5],
+        ];
+        let mut local = row(&p, &grid("local"), 0.0, [0.0, 0.0], 0.0);
+        assert_eq!(local.v[6][2], WORLD_GRID, "no frame yet: the world's");
+        assert_eq!(&local.v[10..13], &NO_LOCAL, "the identity");
+        local.set_local(frame);
+        assert_eq!(local.v[6][2], WORLD_GRID + LOCAL_GRID);
+        assert_eq!(&local.v[10..13], &frame);
+        local.set_local(frame);
+        assert_eq!(local.v[6][2], WORLD_GRID + LOCAL_GRID, "set twice, one flag");
+
+        let mut screen = row(&p, &grid("screen"), 0.0, [0.0, 0.0], 0.0);
+        screen.set_local(frame);
+        assert_eq!(screen.v[6][2], 0.0, "a screen grid takes no frame");
+        assert_eq!(&screen.v[10..13], &NO_LOCAL);
+        let mut off = row(&p, &grid("local"), 0.0, [0.0, 0.0], PASS_THROUGH);
+        off.set_local(frame);
+        assert_eq!(off.v[6][2], PASS_THROUGH + WORLD_GRID + LOCAL_GRID);
+        assert!(GRIDS.contains(&"local"));
     }
 
     #[test]
