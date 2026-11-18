@@ -779,6 +779,29 @@ args = ["--no-grid", "--style", "broken"]
 matches = ["--no-grid"]
 error = "broken.wgsl:9:9"
 
+# The same at the HDR stage (#563): `broken_hdr` sits before fog, bloom and
+# the tonemap and feeds bloom, so its passthrough (`return p.color`, no
+# curves) is what bloom's threshold reads. The bench's lamp is linear light
+# well above 1 and bloom is on, strong: a passthrough that clamped the HDR
+# values, or handed bloom another source, moves the lamp and its halo
+[[case]]
+name = "user-style-broken-hdr"
+scene = "crates/flint-cli/tests/golden/fixtures/broken_style.scene.toml"
+args = ["--no-grid", "--set", "post.bloom_enabled=true", "--set", "post.bloom_intensity=0.3", "--style", "broken_hdr"]
+matches = ["--no-grid", "--set", "post.bloom_enabled=true", "--set", "post.bloom_intensity=0.3"]
+error = "broken_hdr.wgsl:10:16"
+
+# A broken style that asks for every input (#563): depth, the mask and the
+# shared edges. Its passthrough is built with none of them, so it must still
+# bind, and must leave the one edges pass a frame alone: `edges_view` beside
+# it draws that pass, and the frame must equal `edges_view` alone
+[[case]]
+name = "user-style-broken-inputs"
+scene = "crates/flint-cli/tests/golden/fixtures/broken_style.scene.toml"
+args = ["--no-grid", "--style", "edges_view", "--style", "broken_inputs"]
+matches = ["--no-grid", "--style", "edges_view"]
+error = "broken_inputs.wgsl:11:9"
+
 # --- looks (#279) -----------------------------------------------------------
 # Each shipped styles/<name>.look.toml over the plain props bench, so only
 # the look's own styles draw. A new look adds a case here (look.rs checks).
