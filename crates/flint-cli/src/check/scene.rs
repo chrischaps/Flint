@@ -691,7 +691,15 @@ fn with_style_schemas(
 fn user_style_diagnostic(message: &str, scene_dir: &Path) -> Diagnostic {
     let warning = message.contains(": warning: ");
     let (from, what) = match message.split_once(": ") {
-        Some((from, what)) => (from.to_string(), what.trim_end().to_string()),
+        // The mark goes before the place is put in front (#573: a warning
+        // with a line and column read "line 12, column 45: warning: ...")
+        Some((from, what)) => (
+            from.to_string(),
+            what.strip_prefix("warning: ")
+                .unwrap_or(what)
+                .trim_end()
+                .to_string(),
+        ),
         None => (
             shown(&scene_dir.join("styles")),
             message.trim_end().to_string(),
@@ -712,7 +720,6 @@ fn user_style_diagnostic(message: &str, scene_dir: &Path) -> Diagnostic {
         ),
         _ => (from, what),
     };
-    let what = what.strip_prefix("warning: ").unwrap_or(&what).to_string();
     let d = if warning {
         Diagnostic::warning(codes::BAD_USER_STYLE, what)
     } else {

@@ -1413,6 +1413,45 @@ mod tests {
         );
     }
 
+    /// #573: a style that takes `fwidth` under a branch on the pixel packs
+    /// (natively it draws), with a warning at its line and column, since
+    /// the browser's WebGPU refuses it. Loop counts are warned the same way.
+    #[test]
+    fn a_derivative_under_a_branch_is_a_warning_with_its_line() {
+        let files = pack(&[
+            (
+                "styles/frost.shader.toml",
+                "version = 1\nname = \"frost\"\nshader = \"frost.wgsl\"\n\
+                 [params.lines]\ndefault = 40.0\nmin = 4.0\nmax = 120.0\n",
+            ),
+            (
+                "styles/frost.wgsl",
+                "fn style(p: StylePixel) -> vec4<f32> {\n    var c = p.color.rgb;\n    \
+                 if (flint_luma(p.color.rgb) > 0.6) {\n        \
+                 c = c * fwidth(p.uv.x * params.lines);\n    }\n    \
+                 return vec4<f32>(c, p.color.a);\n}\n",
+            ),
+            ("levels/a.scene.toml", "[scene]\nname = \"a\"\n"),
+        ]);
+        let report = check_packed(&files, &[]);
+        assert!(!report.has_errors(), "{:?}", report.diagnostics);
+        let said: Vec<_> = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "bad-user-style")
+            .collect();
+        assert_eq!(said.len(), 1, "{:?}", report.diagnostics);
+        let d = said[0];
+        assert_eq!(d.file.as_deref(), Some(Path::new("styles/frost.wgsl")));
+        assert!(
+            d.message
+                .starts_with("line 4, column 17: `fwidth` under the `if` at line 3"),
+            "{}",
+            d.message
+        );
+        assert!(!d.message.contains("warning:"), "said once: {}", d.message);
+    }
+
     /// #413: an image a user style reads must be packed: its `file` is a
     /// reference, and loading from the bundle reports it missing.
     #[test]
