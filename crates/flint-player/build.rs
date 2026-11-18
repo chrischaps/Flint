@@ -12,6 +12,11 @@
 //! `SCRIPT_MODULES` (the script modules it owns, #698) and its `DEBUG_KEYS`
 //! (a `flint_runtime::DebugKeyGroup`, #717), so a new subsystem
 //! is one new file and no other edit.
+//!
+//! And stamps the commit the engine's sources are at (#1290): a trace's
+//! `engine_commit` and a capture's `engine.commit` name the code the binary
+//! was built from, not the repository it happens to run in. See
+//! `src/provenance.rs`.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -39,6 +44,45 @@ fn main() {
     let dest = Path::new(&std::env::var("OUT_DIR").unwrap()).join("engine_schemas.rs");
     std::fs::write(dest, out).unwrap();
     subsystems();
+    commit();
+}
+
+/// `ENGINE_BUILD_COMMIT`: the commit of the checkout the engine's sources
+/// are in, and `ENGINE_BUILD_SUBDIR`: where in that checkout they are (empty
+/// in the engine's own; `engine/` in a game carrying it as a subtree, whose
+/// commit it then is). Both empty when git can't say, or when this crate
+/// isn't tracked by the checkout around it (a `git archive` unpacked inside
+/// another worktree). Read again when HEAD moves: a commit, a checkout, a
+/// reset each write the HEAD reflog.
+fn commit() {
+    let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(here)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    if let Some(dir) = git(&["rev-parse", "--absolute-git-dir"]) {
+        let dir = Path::new(&dir);
+        println!("cargo:rerun-if-changed={}", dir.join("HEAD").display());
+        println!("cargo:rerun-if-changed={}", dir.join("logs/HEAD").display());
+    }
+    let tracked = git(&["ls-files", "--error-unmatch", "--", "build.rs"]).is_some();
+    let commit = git(&["rev-parse", "HEAD"])
+        .filter(|c| tracked && !c.is_empty())
+        .unwrap_or_default();
+    // `crates/flint-player/` in the engine's checkout, `engine/crates/...`
+    // in a game's
+    let subdir = git(&["rev-parse", "--show-prefix"])
+        .filter(|_| !commit.is_empty())
+        .and_then(|p| p.strip_suffix("crates/flint-player/").map(str::to_string))
+        .unwrap_or_default();
+    println!("cargo:rustc-env=ENGINE_BUILD_COMMIT={commit}");
+    println!("cargo:rustc-env=ENGINE_BUILD_SUBDIR={subdir}");
 }
 
 /// `$OUT_DIR/subsystems.rs`: a module for each `src/player_app/subsystems/*.rs`,

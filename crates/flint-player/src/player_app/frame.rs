@@ -770,6 +770,23 @@ impl PlayerApp {
             if !reload.changed() {
                 return;
             }
+            // A description read again may take other fields: the scene's
+            // components of the styles it touched are checked against the
+            // new schema, as `bind_scene` checked them at load (#556)
+            let touched: Vec<String> = reload
+                .replaced
+                .iter()
+                .chain(&reload.added)
+                .cloned()
+                .collect();
+            for warning in flint_render::stylize::component_schema::user_style_component_warnings(
+                &self.core.world,
+                &self.core.styles,
+                &scope.project.allow,
+                Some(&touched),
+            ) {
+                tracing::warn!("{warning}");
+            }
             // The renderer draws the new installs from the next frame
             if let Some(renderer) = &mut self.scene_renderer {
                 renderer.set_styles(self.core.styles.clone());

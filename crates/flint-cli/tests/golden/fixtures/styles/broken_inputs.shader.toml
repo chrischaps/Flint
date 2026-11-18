@@ -1,0 +1,22 @@
+# A user style that never compiles (#563) and asks for every input: depth,
+# the style mask and the shared edges. Its passthrough is built with none
+# of them (`custom/pass.rs`, the `bare` source), so the failed style still
+# has to bind with the inputs it declared, and has to leave the one edges
+# pass a frame alone for the other styles that read it. `broken_inputs.wgsl`
+# reads the edges into an f32 on line 11.
+#
+# A style that reads the mask is per-entity; `--style broken_inputs` turns
+# it on over the whole frame, which is how the goldens draw it.
+#
+# It lives here, not in examples/styles/, so no demo scene shows its error.
+version = 1
+name = "broken_inputs"
+label = "Broken inputs (test fixture)"
+stage = "display"
+shader = "broken_inputs.wgsl"
+inputs = ["depth", "mask", "edges"]
+
+[params.ink]
+default = 0.8
+min = 0.0
+max = 1.0

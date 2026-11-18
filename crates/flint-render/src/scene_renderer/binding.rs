@@ -187,9 +187,16 @@ impl SceneRenderer {
         flint_core::scope!("bind_scene");
         self.set_asset_scope(binding.assets.clone());
         self.styles = binding.styles.clone();
-        // A user style's component has no schema ranges for the loader to
-        // check, so its out-of-range fields are said here (#492)
-        for warning in crate::style_mask::user_style_range_warnings(world, &self.styles) {
+        // A user style's component has no schema file for the loader to
+        // check it against (it loads at run time), so it is checked here
+        // against the schema its descriptor makes (#556): a misspelt field,
+        // a wrong type, an unknown choice, a value past its range (#492)
+        for warning in crate::stylize::component_schema::user_style_component_warnings(
+            world,
+            &self.styles,
+            &binding.assets.project.allow,
+            None,
+        ) {
             tracing::warn!("{warning}");
         }
         self.reset_style_history();

@@ -25,12 +25,13 @@ WARN styles.ascii.color: unknown value 'plaid'; it takes: source, tint, raw, mon
 WARN styles.invert.strength=3 is outside its range 0..1; kept as written, past what the style is tuned for
 ```
 
-An entity's own style component is held to the same ranges (#492). A built-in style's (`ascii_style`, `pencil_style`, `watercolor_style`) has a schema whose fields carry its parameters' ranges, colours' channels included, so the scene loader warns and `flint check` and `flint validate` report an `out-of-range` error, naming the entity, the field and the range. A user style's `<name>_style` is declared open, since it loads at run time, so the same check runs against the style's own `[params]` ranges: the renderer warns when it binds the scene and `flint check` reports it. A built-in style gets the value as written (and may clamp it or draw it badly: ASCII at `cell = 400` is two flat blocks); a user style clamps it into its range, so `glow = 90` draws exactly as `glow = 2` would, which is why it is said:
+An entity's own style component is held to the same ranges (#492). A built-in style's (`ascii_style`, `pencil_style`, `watercolor_style`) has a schema whose fields carry its parameters' ranges, colours' channels included, so the scene loader warns and `flint check` and `flint validate` report an `out-of-range` error, naming the entity, the field and the range. A user style's `<name>_style` has no schema file, since it loads at run time, so the engine makes its schema from the style's `.shader.toml` (#556): each `[params]` entry a number with its range, each option one of its choices, plus `enabled`, `blend` and `blend_source`. `flint check` and `flint validate` hold the scene to it as to a built-in's, so a misspelt field (`glwo = 2`) is an `unknown-field` warning naming the nearest field, a string where a number goes a `bad-type` error, and a value past its range `out-of-range`. A host that draws the scene (`flint play`, `flint render`, `flint edit`) says the same lines when it binds the scene, and the player again for a style whose `.shader.toml` you save while it runs. A built-in style gets the value as written (and may clamp it or draw it badly: ASCII at `cell = 400` is two flat blocks); a user style clamps it into its range, so `glow = 90` draws exactly as `glow = 2` would, which is why it is said:
 
 ```text
 error[out-of-range] entity 'bench' ascii_style.cell: 400 is above the maximum 32
 error[out-of-range] entity 'crate' ascii_style.tint[0]: 3 is above the maximum 1
-error[out-of-range] entity 'barrel' hologram_style.glow: 90 is outside its range 0..2
+error[out-of-range] entity 'barrel' hologram_style.glow: 90 is above the maximum 2
+warning[unknown-field] entity 'drum' hologram_style.glwo: `hologram_style` has no field `glwo`
 ```
 
 Kuwahara's table is `[post_process.styles.kuwahara]`, and the contour's `[post_process.styles.contour]`. Scenes from before the tables spell them `kuwahara_enabled`, `kuwahara_radius`, `contour_width` and so on in `[post_process]`; those keys are folded into the tables when the scene loads (see [Post-Processing](post-processing.md#kuwahara-painterly-filter)).
@@ -1583,7 +1584,7 @@ Until a broken style compiles, a card in the bottom-left corner of the player an
 
 ![flint-player over examples/user_styles.scene.toml a moment after a new styles/wash.shader.toml was saved with stage = "hrd": the card reads style 'wash' doesn't load and names the file and the stage](../images/user-style-load-error.png)
 
-**On the web.** `flint bundle` packs `styles/` with the rest of the game. It loads every user style each scene sees from the packed files, the way the browser will, and refuses the bundle if a description doesn't read, its shader isn't packed or the shader doesn't compile. In the browser the style is checked by the browser's own compiler, and nothing reloads. The compiler answers a frame or two after the style is built: until then the style draws its input, and if the compiler refused it, the same card shows its error with the line in your file, and the console logs it (#415). The browser is stricter than the bundle check in one place: it refuses a derivative (`dpdx`, `dpdy`, `fwidth`) inside a branch on the pixel's own value, which naga lets through. Take the derivative before the `if`, and use it inside. (`flint_sample` reads at mip 0, so it is fine anywhere.)
+**On the web.** `flint bundle` packs `styles/` with the rest of the game. It loads every user style each scene sees from the packed files, the way the browser will, and refuses the bundle if a description doesn't read, its shader isn't packed or the shader doesn't compile. In the browser the style is checked by the browser's own compiler, and nothing reloads. The compiler answers a frame or two after the style is built: until then the style draws its input, and if the compiler refused it, the same card shows its error with the line in your file, and the console logs it (#415). The browser is stricter than naga in one place: it refuses a derivative (`dpdx`, `dpdy`, `fwidth`, and `textureSample`, which takes its own) where the pixels of a 2x2 quad may not all arrive together: under an `if` or `switch` on a value that can differ from pixel to pixel, in a loop whose turns can, or after a `return` only some pixels take. A branch on a parameter counts, since `params` is a per-pixel `var<private>` in the prelude; one on `flint.*` (a uniform) or a constant doesn't. `flint style check`, `flint render`, `flint check` and `flint bundle` warn about each at its line and column (#573) and still pack the style, since it draws natively. Take the derivative before the branch and use the result inside it, or, when a quad's pixels always agree, put `@diagnostic(off, derivative_uniformity)` on the function that takes it. (`flint_sample` reads at mip 0, so it is fine anywhere.)
 
 ![the web player at ?game=frost: the card names frost.wgsl:12:42, 'fwidth' must only be called from uniform control flow](../images/user-style-web-error.png)
 
@@ -1610,10 +1611,11 @@ label = "Finish"           # optional, with help
 
 # An image the scene picks by file name: read as flint_image_paper(uv), and
 # its index in params.paper. Without choices it offers every image in its
-# default's folder (papers/ here), found when the style loads.
+# default's folder (papers/ here), listed again while the game runs.
 [options.paper]
 kind = "image"
 default = "papers/cotton.png"
+mips = true                # a mip chain, for a paper tiled smaller than its texels (#558)
 ```
 
 The scene picks with strings, as for any built-in's options: `[post_process.styles.darkroom] paper = "papers/washi.png"`, `--style darkroom:finish=gloss`, `--sweep darkroom.grade=luts/neutral.png,luts/bleach.png`. F4 draws each option as a combo box of its choices. A value outside them is warned when the scene loads, naming the choices and the default it draws as (#318), and `--style` refuses it.
@@ -1627,7 +1629,21 @@ Each image `<name>` gets four helpers. They read through the input's sampler, so
 | `flint_image_size_<name>()` | its size in texels, e.g. to tile it at one texel a point: `p.pos / (flint_image_size_paper() * flint.pixels_per_point)` |
 | `flint_lut_<name>(rgb)` | the image read as a 3D LUT strip: N slices of N x N side by side (N*N wide, N high), blue choosing the slice left to right, red across a slice and green down it, as Unreal's `RGBTable16x1.png` is laid out. Trilinear |
 
-Images are PNG or JPEG, 8 bits a channel and one mip, read through the vfs (so a bundle carries them; `flint bundle` refuses one that names an image it didn't pack). Without `srgb`, the shader gets the values as stored: at the display stage those are display values like `p.color`, and a LUT wants them untouched. A style may bind up to 8 images, image options among them, in group 3. Every file an image may read must exist when the style loads; a missing one is reported, and until it reads the style draws its input unchanged.
+Images are PNG or JPEG, 8 bits a channel, read through the vfs (so a bundle carries them; `flint bundle` refuses one that names an image it didn't pack). Without `srgb`, the shader gets the values as stored: at the display stage those are display values like `p.color`, and a LUT wants them untouched. A style may bind up to 8 images, image options among them, in group 3. Every file an image may read must exist when the style loads; a missing one is reported, and until it reads the style draws its input unchanged.
+
+**A folder of choices is listed again while the game runs** (#558, natively). An image option with no `choices` offers the images in its default's folder, and the hot-reload poll that watches the `.shader.toml` lists that folder too, without waiting on the disk. When another set of images is there (a PNG dropped into `luts/`, one deleted), the style is installed again with the new choices: F4's combo offers it, `--style` and a scene's table take it, and the settings the game has are kept, since no parameter changed. A scene that names a file before it exists is warned and draws the default, then draws the file once it lands. Saving an image that is already a choice was always picked up, by the image's own poll. On the web a bundle never changes, so nothing is listed again.
+
+**Mips** (#558). An image read smaller than its texels aliases: a paper tiled at `paper_scale = 0.25` puts sixteen texels under each pixel and keeps one of them, so the fibres turn into a hard grit the paper doesn't have. `mips = true`, on an `[images.<name>]` table or an image option, uploads a mip chain (each level a box filter of the one above, in linear light for an `srgb` image), and the helpers read the level the screen asks for:
+
+| | |
+|---|---|
+| `flint_image_<name>(uv)`, `flint_image_tiled_<name>(uv)` | as above, at the level `flint_image_lod_<name>(uv)` gives, two levels mixed (trilinear) |
+| `flint_image_lod_<name>(uv)` | log2 of how many of the image's texels one pixel spans along `uv`, from its screen derivatives; 0 when one or fewer |
+| `flint_image_level_<name>(uv, level)`, `flint_image_tiled_level_<name>(uv, level)` | at a level you give (0 is the file; a fraction mixes two) |
+
+`flint_lut_<name>` and `flint_image_size_<name>` still read level 0, the file. Leave `mips` off for a LUT: there a texel is a colour, not a detail, and its neighbours aren't its average. The level comes from derivatives, which WGSL defines only where neighbouring pixels run the same code: `flint_image_lod_<name>` waives the rule for itself, so a helper called inside an `if` still compiles in a browser, but where neighbours take different branches its level is a guess at the branch's edge. Pass a level there. An image without `mips` has exactly the helpers it had before, and draws the same bytes.
+
+On `examples/user_styles.scene.toml` at `--style darkroom:paper_scale=0.25`, against a 4x supersample (the paper at one texel a pixel, box-filtered down), the sky's luma was off by 2.6, 3.8 and 4.9 levels RMS on cotton, kraft and washi with one mip, and by 1.2, 1.2 and 1.3 with mips. At `paper_scale = 1` the two renders are the same file. `darkroom`'s paper has `mips = true`; its LUTs don't.
 
 A per-entity style (one with `inputs = ["mask"]`) takes options from each entity's `<name>_style` too, a row each. An image is one binding for the whole frame, so an image option always shows the scene's file, and an entity's value changes only its index in `params`.
 
@@ -1735,7 +1751,7 @@ The player's F2 overlay lists the same textures while the style runs: under its 
 
 **Passes, images and per-entity settings together.** A pass that reads targets binds them in group 3 after the style's [images](#images-and-options), so `flint_image_<name>` and `flint_target_<name>` work side by side in any pass. Every pass reads the same `params`, and for a per-entity style (`inputs = ["mask"]`) that is the pixel's own entity's settings in every pass.
 
-**What a user style can't do yet:** compute passes, mip chains, or targets whose size isn't a fraction of the stage's. The built-ins that need those stay in Rust. The demos in `examples/styles/` show what user styles reach: `risograph` (two misregistered inks), `contour_map` (survey lines from depth; `contour` before #599), `darkroom` (a LUT and a paper picked by the scene), `neon` (an hdr style that feeds bloom, `examples/neon_bloom.scene.toml`), `hologram` (a style mask on chosen props, `examples/user_styles.scene.toml`) and `orton` (four passes through three half-size targets).
+**What a user style can't do yet:** compute passes, mip chains of its own targets (its images can have one, [above](#images-and-options)), or targets whose size isn't a fraction of the stage's. The built-ins that need those stay in Rust. The demos in `examples/styles/` show what user styles reach: `risograph` (two misregistered inks), `contour_map` (survey lines from depth; `contour` before #599), `darkroom` (a LUT and a paper picked by the scene), `neon` (an hdr style that feeds bloom, `examples/neon_bloom.scene.toml`), `hologram` (a style mask on chosen props, `examples/user_styles.scene.toml`) and `orton` (four passes through three half-size targets).
 
 ## Goldens
 

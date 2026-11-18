@@ -213,6 +213,12 @@ pub struct ImageDef {
     /// `p.color`, and which a LUT or a height map wants untouched.
     #[serde(default)]
     pub srgb: bool,
+    /// Upload a mip chain (#558), so a read smaller than its texels (a
+    /// paper tiled small) averages them instead of aliasing; the clamped
+    /// and tiled helpers pick the level from the screen. Off for a LUT,
+    /// which must be read texel for texel.
+    #[serde(default)]
+    pub mips: bool,
 }
 
 /// One `[options.<name>]` table (#413).
@@ -236,6 +242,9 @@ pub struct OptionDef {
     /// An image option's files decode sRGB to linear (see [`ImageDef`]).
     #[serde(default)]
     pub srgb: bool,
+    /// An image option's files get a mip chain (see [`ImageDef`], #558).
+    #[serde(default)]
+    pub mips: bool,
 }
 
 /// What an option holds.
@@ -253,6 +262,9 @@ pub struct OptionSource {
     pub choices: Vec<String>,
     pub label: Option<String>,
     pub help: Option<String>,
+    /// An image option with no `choices`: they are the images found in its
+    /// default's folder, which the reload poll lists again (#558).
+    pub discovered: bool,
 }
 
 impl OptionSource {
@@ -272,6 +284,8 @@ pub struct ImageSource {
     /// whose file is the scene's choice.
     pub file: Option<String>,
     pub srgb: bool,
+    /// Uploaded with a mip chain (#558).
+    pub mips: bool,
 }
 
 /// How many images a style may bind: with the input and the three
@@ -317,12 +331,27 @@ pub(super) fn check_image_file(
 /// choices when it lists none. Read through the vfs, so a bundle lists the
 /// files it packed.
 pub(super) fn images_beside(dir: &Path, default: &str) -> Vec<String> {
-    let sub = Path::new(default).parent().unwrap_or(Path::new(""));
-    let mut found: Vec<String> = flint_core::vfs::read_dir(dir.join(sub))
+    let names = flint_core::vfs::read_dir(dir.join(choice_folder(default)))
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|p| {
-            let file = p.file_name()?.to_str()?.to_string();
+        .filter_map(|p| Some(p.file_name()?.to_str()?.to_string()));
+    image_choices(default, names)
+}
+
+/// The folder, relative to the style's, that an image option with no
+/// `choices` finds them in: its default's.
+pub(super) fn choice_folder(default: &str) -> &Path {
+    Path::new(default).parent().unwrap_or(Path::new(""))
+}
+
+/// An image option's choices from the file names in its default's folder
+/// ([`choice_folder`]): the images among them as paths from the style's
+/// folder, with `default`, sorted. What [`images_beside`] lists at load and
+/// the reload poll lists again (#558), so the two agree on a folder.
+pub(super) fn image_choices(default: &str, names: impl Iterator<Item = String>) -> Vec<String> {
+    let sub = choice_folder(default);
+    let mut found: Vec<String> = names
+        .filter_map(|file| {
             let ext = Path::new(&file).extension()?.to_str()?.to_ascii_lowercase();
             IMAGE_EXTENSIONS.contains(&ext.as_str()).then(|| {
                 if sub.as_os_str().is_empty() {
@@ -836,9 +865,10 @@ impl ShaderStyleDef {
             };
             let choices = match kind {
                 OptionKind::Choice => {
-                    if o.srgb {
+                    if o.srgb || o.mips {
+                        let key = if o.srgb { "srgb" } else { "mips" };
                         return Err(format!(
-                            "{at}: options.{name}: srgb is for an image option (kind = \"image\")"
+                            "{at}: options.{name}: {key} is for an image option (kind = \"image\")"
                         ));
                     }
                     if o.choices.is_empty() {
@@ -882,6 +912,7 @@ impl ShaderStyleDef {
                     name: name.clone(),
                     file: None,
                     srgb: o.srgb,
+                    mips: o.mips,
                 });
             }
             options.push((
@@ -889,6 +920,7 @@ impl ShaderStyleDef {
                 OptionSource {
                     kind,
                     default: o.default,
+                    discovered: kind == OptionKind::Image && o.choices.is_empty(),
                     choices,
                     label: o.label,
                     help: o.help,
@@ -908,6 +940,7 @@ impl ShaderStyleDef {
                 name,
                 file: Some(image.file),
                 srgb: image.srgb,
+                mips: image.mips,
             });
         }
         if images.len() > MAX_IMAGES {
