@@ -999,6 +999,14 @@ impl PlayerApp {
         } else {
             None
         };
+        // Each style texture's row (#561), only while the full overlay
+        // shows: closed, nothing is read or allocated
+        let style_target_rows = match (&stats_data, self.scene_renderer.as_ref()) {
+            (Some(stats), Some(r)) if stats.style_targets > 0 => {
+                super::stats_view::style_target_rows(&r.style_target_entries())
+            }
+            _ => Vec::new(),
+        };
         // The frame-time graph's frames and counters (#1078), while F2
         // shows anything: nothing is read or allocated while it doesn't
         #[cfg(feature = "debug-hud")]
@@ -1102,9 +1110,14 @@ impl PlayerApp {
                 let debug_width = 0.0;
 
                 match (stats_view, stats_data.as_ref()) {
-                    (super::StatsView::Full, Some(stats)) => {
-                        render_stats_overlay(ctx, stats, &gpu_label, graph.as_mut(), debug_width)
-                    }
+                    (super::StatsView::Full, Some(stats)) => render_stats_overlay(
+                        ctx,
+                        stats,
+                        &style_target_rows,
+                        &gpu_label,
+                        graph.as_mut(),
+                        debug_width,
+                    ),
                     (super::StatsView::Graph, _) => {
                         render_graph_overlay(ctx, graph.as_mut(), debug_width)
                     }
@@ -1598,10 +1611,12 @@ fn render_graph_overlay(ctx: &egui::Context, graph: Option<&mut OverlayGraph>, r
 }
 
 /// `right_inset`: width the debug columns take at the right edge, so the
-/// overlay sits beside them rather than over them.
+/// overlay sits beside them rather than over them. `style_targets`: a row
+/// for each of the style chain's textures (`stats_view::style_target_rows`).
 fn render_stats_overlay(
     ctx: &egui::Context,
     stats: &flint_render::RenderStats,
+    style_targets: &[String],
     gpu: &str,
     graph: Option<&mut OverlayGraph>,
     right_inset: f32,
@@ -1693,6 +1708,10 @@ fn render_stats_overlay(
                     stats.style_target_bytes as f64 / (1024.0 * 1024.0),
                     stats.full_size_targets
                 ));
+                // and each of them, with its size and MB (#561)
+                for row in style_targets {
+                    ui.colored_label(egui::Color32::from_gray(170), row);
+                }
             }
 
             ui.separator();
