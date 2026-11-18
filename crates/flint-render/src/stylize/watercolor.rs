@@ -195,6 +195,9 @@ struct PaintUniforms {
 struct Watercolor {
     wash_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     paint_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
+    /// `fs_passthrough` (#538): the paint pass's unpainted pixel, drawn
+    /// around the per-entity rect the paint pass is scissored to.
+    passthrough_pipeline: std::sync::Arc<wgpu::RenderPipeline>,
     uniform_bgl: wgpu::BindGroupLayout,
     /// The paint pass's group 0: its uniform and the variant table (#740).
     paint_bgl: wgpu::BindGroupLayout,
@@ -294,6 +297,14 @@ impl Watercolor {
                 "Watercolor Pipeline",
                 &module,
                 &[&paint_bgl, &sampled_bgl, &sampled_bgl, &entity_bgl],
+                d.format,
+            ),
+            passthrough_pipeline: kit::fullscreen_pipeline_entry(
+                device,
+                "Watercolor Passthrough Pipeline",
+                &module,
+                "fs_passthrough",
+                &[&paint_bgl, &sampled_bgl],
                 d.format,
             ),
             wash_h: kit::uniform_buffer::<WashUniforms>(device, "Watercolor Wash H Uniforms"),
@@ -480,22 +491,34 @@ impl StylePass for Watercolor {
             };
             frame.queue.write_buffer(buffer, 0, bytemuck::bytes_of(&u));
         }
+        // Per entity (#538), each pass runs only where what follows reads
+        // it: the paint inside its entities' rect, the wash inside the
+        // paint's reads, the first blur inside the second's
+        let ppp = frame.pixels_per_point.max(0.25);
+        let reach = Reach::of(&rows, ppp, radius);
+        let size = [frame.width, frame.height];
+        let paint_rect = frame.styled_rect(reach.paint);
+        let wash_rect = paint_rect.map(|r| r.padded(reach.wash, frame.width, frame.height));
+        let half_rect = wash_rect.map(|r| r.padded(reach.blur, frame.width, frame.height));
         let half = frame.target("watercolor.wash.h", frame.format);
         let washed = frame.target("watercolor.wash", frame.format);
-        kit::fullscreen_pass(
+        kit::fullscreen_pass_in(
             encoder,
             "Watercolor Wash H",
             &half.view,
+            size,
             &self.wash_pipeline,
             &[
                 &frame.uniform("Watercolor Wash H BG", &self.uniform_bgl, &self.wash_h),
                 &frame.sampled_input("Watercolor Input BG", &self.sampled_bgl, input),
             ],
+            half_rect,
         );
-        kit::fullscreen_pass(
+        kit::fullscreen_pass_in(
             encoder,
             "Watercolor Wash V",
             &washed.view,
+            size,
             &self.wash_pipeline,
             &[
                 &frame.uniform("Watercolor Wash V BG", &self.uniform_bgl, &self.wash_v),
@@ -505,6 +528,7 @@ impl StylePass for Watercolor {
                     &half.view,
                 ),
             ],
+            wash_rect,
         );
 
         // Pass 3: paint
@@ -521,22 +545,58 @@ impl StylePass for Watercolor {
         frame
             .queue
             .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
-        kit::fullscreen_pass(
+        let paint_bind = self.paint_bind(frame, &rows, &slots);
+        let input_bind =
+            frame.sampled_input("Watercolor Paint Input BG", &self.sampled_bgl, input);
+        kit::scissored_pass_around(
             encoder,
             "Watercolor Pass",
             output,
-            &self.paint_pipeline,
-            &[
-                &self.paint_bind(frame, &rows, &slots),
-                &frame.sampled_input("Watercolor Paint Input BG", &self.sampled_bgl, input),
-                &frame.sampled(
-                    "Watercolor Wash Texture BG",
-                    &self.sampled_bgl,
-                    &washed.view,
-                ),
-                &self.entity_bind(frame, with_mask, &paper),
-            ],
+            size,
+            (
+                &self.paint_pipeline,
+                &[
+                    &paint_bind,
+                    &input_bind,
+                    &frame.sampled(
+                        "Watercolor Wash Texture BG",
+                        &self.sampled_bgl,
+                        &washed.view,
+                    ),
+                    &self.entity_bind(frame, with_mask, &paper),
+                ],
+            ),
+            paint_rect,
+            (&self.passthrough_pipeline, &[&paint_bind, &input_bind]),
         );
+    }
+}
+
+/// How far, in pixels, each of watercolor's passes reads past the pixels
+/// it serves (#538), so a per-entity frame scissors them without changing
+/// a byte.
+#[derive(Debug, PartialEq)]
+struct Reach {
+    /// The paint pass: a pixel takes the paint of the mask read at its
+    /// wobbled position, up to `wobble` points away on each axis, so a
+    /// painted silhouette wanders that far out over its surroundings.
+    paint: u32,
+    /// The wash, read by a painted pixel at its own wobbled position and
+    /// 1.5 points either side of it (the glazes' slope), filtered.
+    wash: u32,
+    /// The first blur, read by the second up to two radii away, filtered.
+    blur: u32,
+}
+
+impl Reach {
+    fn of(rows: &[RowUniform], pixels_per_point: f32, radius: f32) -> Self {
+        let wobble = rows.iter().map(|r| r.wobble).fold(0.0f32, f32::max);
+        let px = |points: f32| (points * pixels_per_point).ceil() as u32;
+        Self {
+            paint: px(wobble) + 1,
+            wash: px(wobble + 1.5) + 2,
+            blur: (2.0 * radius).ceil() as u32 + 2,
+        }
     }
 }
 
@@ -584,6 +644,33 @@ mod tests {
         assert_eq!(r.paper, [0.5, 0.94, 0.87], "the entity's, then defaults");
         assert_eq!(r.flags, 0);
         assert_eq!(row(|n| STYLE.param(&config, n), true).flags, PASS_THROUGH);
+    }
+
+    /// #538: the paint reaches as far as the widest wobble any row has
+    /// (an opt-out's and the scene's too: an unpainted pixel wobbles by its
+    /// own row), the wash that plus the glazes' 1.5 pt, the first blur two
+    /// radii; each rounded out and grown for the filter.
+    #[test]
+    fn each_pass_reaches_as_far_as_what_reads_it() {
+        let config = crate::postprocess::PostProcessConfig::default();
+        let with = |wobble: f32| {
+            let mut r = row(|n| STYLE.param(&config, n), false);
+            r.wobble = wobble;
+            r
+        };
+        let reach = Reach::of(&[with(2.0), with(0.5)], 1.0, 4.0);
+        assert_eq!(
+            reach,
+            Reach {
+                paint: 3,
+                wash: 6,
+                blur: 10
+            }
+        );
+        let wide = Reach::of(&[with(0.0), with(2.5)], 2.0, 9.6);
+        assert_eq!(wide.paint, 6);
+        assert_eq!(wide.wash, 10);
+        assert_eq!(wide.blur, 22);
     }
 
     #[test]
