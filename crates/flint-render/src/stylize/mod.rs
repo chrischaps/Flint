@@ -92,6 +92,7 @@
 //! [`BindCache`]: crate::bind_cache::BindCache
 
 pub mod catalog;
+pub mod component_schema;
 pub mod custom;
 pub mod dev_shader;
 pub mod edges;
@@ -107,6 +108,7 @@ pub mod text;
 pub mod variant_table;
 
 pub use ascii::{edge_view_thresholds, EDGE_VIEW_LEGEND};
+pub use component_schema::{add_component_schemas, component_schema};
 pub use edges::EDGE_FORMAT;
 pub use registry::{intern, intern_list, List, Style, StyleRegistry};
 pub use reveal::{RevealShape, StyleReveal};

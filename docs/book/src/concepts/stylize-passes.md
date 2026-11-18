@@ -25,12 +25,13 @@ WARN styles.ascii.color: unknown value 'plaid'; it takes: source, tint, raw, mon
 WARN styles.invert.strength=3 is outside its range 0..1; kept as written, past what the style is tuned for
 ```
 
-An entity's own style component is held to the same ranges (#492). A built-in style's (`ascii_style`, `pencil_style`, `watercolor_style`) has a schema whose fields carry its parameters' ranges, colours' channels included, so the scene loader warns and `flint check` and `flint validate` report an `out-of-range` error, naming the entity, the field and the range. A user style's `<name>_style` is declared open, since it loads at run time, so the same check runs against the style's own `[params]` ranges: the renderer warns when it binds the scene and `flint check` reports it. A built-in style gets the value as written (and may clamp it or draw it badly: ASCII at `cell = 400` is two flat blocks); a user style clamps it into its range, so `glow = 90` draws exactly as `glow = 2` would, which is why it is said:
+An entity's own style component is held to the same ranges (#492). A built-in style's (`ascii_style`, `pencil_style`, `watercolor_style`) has a schema whose fields carry its parameters' ranges, colours' channels included, so the scene loader warns and `flint check` and `flint validate` report an `out-of-range` error, naming the entity, the field and the range. A user style's `<name>_style` has no schema file, since it loads at run time, so the engine makes its schema from the style's `.shader.toml` (#556): each `[params]` entry a number with its range, each option one of its choices, plus `enabled`, `blend` and `blend_source`. `flint check` and `flint validate` hold the scene to it as to a built-in's, so a misspelt field (`glwo = 2`) is an `unknown-field` warning naming the nearest field, a string where a number goes a `bad-type` error, and a value past its range `out-of-range`. A host that draws the scene (`flint play`, `flint render`, `flint edit`) says the same lines when it binds the scene, and the player again for a style whose `.shader.toml` you save while it runs. A built-in style gets the value as written (and may clamp it or draw it badly: ASCII at `cell = 400` is two flat blocks); a user style clamps it into its range, so `glow = 90` draws exactly as `glow = 2` would, which is why it is said:
 
 ```text
 error[out-of-range] entity 'bench' ascii_style.cell: 400 is above the maximum 32
 error[out-of-range] entity 'crate' ascii_style.tint[0]: 3 is above the maximum 1
-error[out-of-range] entity 'barrel' hologram_style.glow: 90 is outside its range 0..2
+error[out-of-range] entity 'barrel' hologram_style.glow: 90 is above the maximum 2
+warning[unknown-field] entity 'drum' hologram_style.glwo: `hologram_style` has no field `glwo`
 ```
 
 Kuwahara's table is `[post_process.styles.kuwahara]`, and the contour's `[post_process.styles.contour]`. Scenes from before the tables spell them `kuwahara_enabled`, `kuwahara_radius`, `contour_width` and so on in `[post_process]`; those keys are folded into the tables when the scene loads (see [Post-Processing](post-processing.md#kuwahara-painterly-filter)).
