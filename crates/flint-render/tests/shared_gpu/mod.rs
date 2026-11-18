@@ -54,6 +54,24 @@
 //! `FLINT_GPU_TEST_TIMES=1` prints a line per test as its lease drops: how
 //! long it held the device, and how much of that went on building
 //! pipelines (`pipeline_cache::thread_build_time`). CI's GPU job sets it.
+//!
+//! A lost device says so (#560). On wgpu 23, with a device per test, two
+//! tests of `tests/stylize.rs` once panicked together at
+//! `wgpu-core-23.0.1/src/resource.rs:749`. That line is `Buffer::destroy`
+//! taking the device's snatch lock to write, and the only way there from a
+//! test's draw was the device being lost: a HAL error (`Lost`,
+//! `Unexpected`, `ResourceCreationFailed`) met while the thread held the
+//! snatch lock to read (a submit, a map) made wgpu-core 23's
+//! `Device::lose` call `release_gpu_resources`, which destroys every
+//! buffer and so took the lock again on the same thread, and its
+//! debug-build guard panicked ("attempted to acquire a snatch lock
+//! recursively"). So the panic was a device loss with its message
+//! replaced. wgpu-core 30's `lose` releases nothing; `maintain` does, after
+//! dropping its snatch guard, and the tests make one device, not one each.
+//! What's left is to make a loss name itself: the device's lost callback
+//! records why and which tests held it, every test that holds it then or
+//! takes it later fails with that line, and the first failure is the one
+//! to read.
 
 #![allow(dead_code)] // each test binary uses its own share of this
 
@@ -92,6 +110,8 @@ enum Turn {
 }
 
 static GPU: OnceLock<Option<SharedGpu>> = OnceLock::new();
+/// Why the device was lost, and who held it then, once it has been (#560).
+static LOST: OnceLock<String> = OnceLock::new();
 /// Write: a test's turn. Read: a test alongside others ([`parallel`]).
 static TURNS: RwLock<()> = RwLock::new(());
 
@@ -117,6 +137,7 @@ pub fn device() -> Option<&'static SharedGpu> {
                 .request_device(&wgpu::DeviceDescriptor::default())
                 .await
                 .ok()?;
+            device.set_device_lost_callback(note_lost);
             Some(SharedGpu {
                 // On DX12 it names the shader compiler (#912)
                 adapter: flint_render::gpu_select::adapter_line(&info),
@@ -158,6 +179,7 @@ pub fn lease() -> Option<Lease> {
     }
     let gpu = device()?;
     let turn = Turn::Shared(TURNS.read().unwrap_or_else(|e| e.into_inner()));
+    check_lost("took the device");
     check_switch("took the device");
     Some(Lease::new(gpu, turn))
 }
@@ -167,7 +189,47 @@ pub fn lease() -> Option<Lease> {
 pub fn lease_alone() -> Option<Lease> {
     let gpu = device()?;
     let turn = Turn::Alone(TURNS.write().unwrap_or_else(|e| e.into_inner()));
+    check_lost("took the device");
     Some(Lease::new(gpu, turn))
+}
+
+/// The device's lost callback: keep why, with the tests holding it, and
+/// say it past libtest's capture. It may run on a thread inside wgpu-core
+/// holding the device's locks, so it touches nothing of wgpu's.
+fn note_lost(reason: wgpu::DeviceLostReason, message: String) {
+    let held: Vec<String> = HELD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .map(|(name, _)| name.clone())
+        .collect();
+    let line = format!(
+        "the shared GPU device was lost ({reason:?}{}) while {} held it",
+        if message.is_empty() {
+            String::new()
+        } else {
+            format!(": {message}")
+        },
+        if held.is_empty() {
+            "no test".to_string()
+        } else {
+            held.join(", ")
+        },
+    );
+    let _ = writeln!(std::io::stderr().lock(), "\nshared_gpu (#560): {line}");
+    let _ = LOST.set(line);
+}
+
+/// Fail a test that takes or held a device that has been lost: what it
+/// drew or read back is no evidence of anything.
+fn check_lost(when: &str) {
+    if let Some(lost) = LOST.get() {
+        panic!(
+            "{} {when}, but {lost}; every test that uses it after that fails \
+             too, so the first failure is the one to read (#560)",
+            std::thread::current().name().unwrap_or("<unnamed>"),
+        );
+    }
 }
 
 /// Fail a test sharing the device that finds the pipeline cache switched
@@ -213,6 +275,9 @@ impl Drop for Lease {
                     check_switch("gave the device back");
                 }
             }
+        }
+        if !std::thread::panicking() {
+            check_lost("gave the device back");
         }
         if flint_core::env::GPU_TEST_TIMES.flag() == Some(true) {
             let held = self.since.elapsed().as_secs_f64();
