@@ -28,6 +28,10 @@ kind = "image"
 default = "papers/cotton.png"
 label = "Paper"
 help = "A tileable paper the print sits on"
+# A mip chain (#558): tiled small (paper_scale under 1) the paper averages
+# its fibres instead of shimmering into moire. Not on the LUTs, which are
+# read texel for texel.
+mips = true
 
 # A choice option: params.finish is a u32 index, with FLINT_FINISH_MATTE
 # and FLINT_FINISH_GLOSS defined for it.

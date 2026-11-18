@@ -1620,6 +1620,222 @@ return vec4<f32>(c, 1.0);
     .unwrap_or_else(|e| panic!("{e:?}"));
 }
 
+/// #558: `mips` is asked for on an `[images]` table or an image option,
+/// and refused on a choice option; only an image option with no `choices`
+/// is a folder the reload poll lists again.
+#[test]
+fn mips_and_discovered_choices_are_read() {
+    let base = "version = 1\nname = \"x\"\nshader = \"x.wgsl\"\n";
+    let file = "styles/x.shader.toml";
+    let s = source(
+        &format!(
+            "{base}[images.paper]\nfile = \"paper.png\"\nmips = true\n\
+             [options.grade]\nkind = \"image\"\ndefault = \"luts/a.png\"\n\
+             [options.sheet]\nkind = \"image\"\ndefault = \"s/a.png\"\nmips = true\n\
+             choices = [\"s/a.png\", \"s/b.png\"]\n"
+        ),
+        file,
+    )
+    .unwrap();
+    let mips: Vec<(&str, bool)> = s.images.iter().map(|i| (i.name.as_str(), i.mips)).collect();
+    assert_eq!(mips, [("grade", false), ("paper", true), ("sheet", true)]);
+    let discovered: Vec<(&str, bool)> = s
+        .options
+        .iter()
+        .map(|(n, o)| (n.as_str(), o.discovered))
+        .collect();
+    assert_eq!(discovered, [("grade", true), ("sheet", false)]);
+    let err = source(
+        &format!("{base}[options.m]\ndefault = \"a\"\nchoices = [\"a\"]\nmips = true\n"),
+        file,
+    )
+    .unwrap_err();
+    assert!(err.contains("mips is for an image option"), "{err}");
+}
+
+/// #558: an image with mips gets helpers that pick a level from the
+/// screen and `_level` forms, and they validate called from a branch (the
+/// level function waives the derivative rule for itself). An image
+/// without mips keeps its level-0 text, with none of them.
+#[test]
+fn mipped_image_helpers_validate_in_a_branch() {
+    let base = "version = 1\nname = \"x\"\nshader = \"x.wgsl\"\n";
+    let mipped = source(
+        &format!("{base}[images.paper]\nfile = \"paper.png\"\nmips = true\n"),
+        "styles/x.shader.toml",
+    )
+    .unwrap();
+    let text = prelude(&mipped);
+    assert!(text.contains("@diagnostic(off, derivative_uniformity)\nfn flint_image_lod_paper"));
+    assert!(text.contains("fn flint_image_tiled_level_paper(uv: vec2<f32>, level: f32)"));
+    assert!(
+        text.contains("fn flint_lut_paper"),
+        "the LUT reads level 0 still"
+    );
+    let user = r#"
+fn style(p: StylePixel) -> vec4<f32> {
+    let uv = p.pos / (flint_image_size_paper() * 0.25);
+    var c = p.color.rgb;
+    if (p.color.r > 0.5) {
+        c *= flint_image_tiled_paper(uv).rgb * flint_image_paper(p.uv).a;
+    } else {
+        c *= flint_image_tiled_level_paper(uv, 2.5).rgb + flint_image_level_paper(p.uv, 1.0).rgb;
+    }
+    return vec4<f32>(c * flint_image_lod_paper(uv), 1.0);
+}
+"#;
+    check(&mipped, user).unwrap_or_else(|e| panic!("{e}"));
+
+    let plain = source(
+        &format!("{base}[images.paper]\nfile = \"paper.png\"\n"),
+        "styles/x.shader.toml",
+    )
+    .unwrap();
+    let text = prelude(&plain);
+    assert!(!text.contains("flint_image_lod_paper"), "{text}");
+    assert!(text.contains(
+        "fn flint_image_paper(uv: vec2<f32>) -> vec4<f32> {\n    \
+         return textureSampleLevel(flint_image_texture_paper, flint_sampler, uv, 0.0);"
+    ));
+}
+
+/// #558 on a real device: with mips the upload is the whole chain, level
+/// 0 the file's own texels and each level below their average (a 4x4
+/// checker of black and white is mid grey at its 1x1 level); without, one
+/// level.
+#[test]
+fn a_mipped_image_uploads_its_chain() {
+    let Some((device, queue)) = device() else {
+        crate::gpu_select::skip_without_gpu("no GPU adapter");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("flint-user-mips-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("checker.png");
+    image::RgbaImage::from_fn(4, 4, |x, y| {
+        let v = if (x + y) % 2 == 0 { 0 } else { 255 };
+        image::Rgba([v, v, v, 255])
+    })
+    .save(&path)
+    .unwrap();
+    let one = upload_texture(&device, &queue, &path, false, false, "one").unwrap();
+    assert_eq!(one.mip_level_count(), 1);
+    let chain = upload_texture(&device, &queue, &path, false, true, "chain").unwrap();
+    assert_eq!(chain.mip_level_count(), 3, "4x4, 2x2, 1x1");
+    // Read the 1x1 level and a texel of level 0 back
+    let read = |level: u32| -> [u8; 4] {
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 256,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &chain,
+                mip_level: level,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(256),
+                    rows_per_image: Some(1),
+                },
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        crate::wait_for_gpu(&device).expect("the read-back");
+        let bytes = buffer.slice(..).get_mapped_range().unwrap();
+        [bytes[0], bytes[1], bytes[2], bytes[3]]
+    };
+    assert_eq!(read(0), [0, 0, 0, 255], "level 0 is the file's");
+    let grey = read(2);
+    assert!(
+        (127..=128).contains(&grey[0]) && grey[0] == grey[1] && grey[3] == 255,
+        "{grey:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #558: an image option that lists its default's folder lists it again
+/// while it runs: a file added there or deleted is a new install with the
+/// new choices, reported as `rechosen` (the host keeps its settings), and
+/// a folder that holds still installs nothing. An option with `choices`
+/// isn't listed.
+#[test]
+fn an_image_options_folder_is_listed_again() {
+    let dir = std::env::temp_dir().join(format!("flint-user-folder-{}", std::process::id()));
+    let styles = dir.join("styles");
+    std::fs::create_dir_all(styles.join("luts")).unwrap();
+    std::fs::create_dir_all(styles.join("sheets")).unwrap();
+    let png = |path: &Path| {
+        image::RgbaImage::from_pixel(2, 1, image::Rgba([9, 9, 9, 255]))
+            .save(path)
+            .unwrap()
+    };
+    png(&styles.join("luts").join("a.png"));
+    png(&styles.join("luts").join("b.png"));
+    png(&styles.join("sheets").join("s.png"));
+    std::fs::write(
+        styles.join("utest_folder.shader.toml"),
+        "version = 1\nname = \"utest_folder\"\nshader = \"folder.wgsl\"\n\
+         [options.grade]\nkind = \"image\"\ndefault = \"luts/a.png\"\n\
+         [options.sheet]\nkind = \"image\"\ndefault = \"sheets/s.png\"\n\
+         choices = [\"sheets/s.png\"]\n",
+    )
+    .unwrap();
+    std::fs::write(styles.join("folder.wgsl"), PASSTHROUGH).unwrap();
+    let mut reg = super::super::StyleRegistry::new();
+    assert!(reg.load_dir(&dir).is_empty());
+    let choices = |reg: &super::super::StyleRegistry, option: &str| -> Vec<String> {
+        let d = reg.find("utest_folder").unwrap();
+        let o = d.options.iter().find(|o| o.name == option).unwrap();
+        o.choices.iter().map(|c| c.to_string()).collect()
+    };
+    assert_eq!(choices(&reg, "grade"), ["luts/a.png", "luts/b.png"]);
+    assert!(!reg.reload_changed(&dir).changed(), "nothing moved");
+
+    // A LUT dropped in while it runs is offered, and nothing else is said
+    png(&styles.join("luts").join("c.png"));
+    std::fs::write(styles.join("luts").join("notes.txt"), "not an image").unwrap();
+    png(&styles.join("sheets").join("t.png"));
+    let generation = reg.find("utest_folder").unwrap().generation;
+    let reload = reg.reload_changed(&dir);
+    assert_eq!(reload.rechosen, ["utest_folder"], "{reload:?}");
+    assert!(reload.replaced.is_empty() && reload.added.is_empty());
+    assert!(reload.messages.is_empty(), "{:?}", reload.messages);
+    assert!(reload.changed());
+    assert_eq!(
+        choices(&reg, "grade"),
+        ["luts/a.png", "luts/b.png", "luts/c.png"]
+    );
+    assert_eq!(
+        choices(&reg, "sheet"),
+        ["sheets/s.png"],
+        "listed, not found"
+    );
+    assert_ne!(reg.find("utest_folder").unwrap().generation, generation);
+    assert!(!reg.reload_changed(&dir).changed(), "settled");
+
+    // One deleted is no longer a choice; the default stays one even gone
+    std::fs::remove_file(styles.join("luts").join("b.png")).unwrap();
+    std::fs::remove_file(styles.join("luts").join("a.png")).unwrap();
+    assert_eq!(reg.reload_changed(&dir).rechosen, ["utest_folder"]);
+    assert_eq!(choices(&reg, "grade"), ["luts/a.png", "luts/c.png"]);
+    assert!(!reg.reload_changed(&dir).changed(), "settled");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// #413 with #414: a per-entity style's options sit in every row of its
 /// settings table, after the floats, and its prelude validates.
 #[test]
@@ -1893,6 +2109,7 @@ fn images_load_follow_choices_and_reload() {
         name: "zz".into(),
         file: Some("gone.png".into()),
         srgb: false,
+        mips: false,
     });
     let mut set = ImageSet::new(&device, &source).unwrap();
     let missing = set.update(&device, &queue, &choose, false);

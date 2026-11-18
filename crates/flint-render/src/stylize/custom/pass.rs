@@ -542,7 +542,8 @@ impl ImageSet {
             if tried {
                 continue;
             }
-            match upload_image(device, queue, &path, slot.source.srgb, &slot.source.name) {
+            let (srgb, mips) = (slot.source.srgb, slot.source.mips);
+            match upload_image(device, queue, &path, srgb, mips, &slot.source.name) {
                 Ok(view) => {
                     slot.loaded = Some((want.clone(), view));
                     #[cfg(not(target_arch = "wasm32"))]
@@ -594,15 +595,32 @@ impl ImageSet {
 }
 
 /// Decode the image at `path` (through the vfs) into a texture of its own,
-/// 8 bits a channel, one mip: `Rgba8UnormSrgb` with `srgb` (read back as
-/// linear light), else `Rgba8Unorm` (the stored values).
+/// 8 bits a channel: `Rgba8UnormSrgb` with `srgb` (read back as linear
+/// light), else `Rgba8Unorm` (the stored values). One mip, or with `mips`
+/// the whole chain down to 1x1 (#558), each level a box filter of the one
+/// above, averaged in linear light for an sRGB image and in the stored
+/// values otherwise, as the texture cache's are.
 pub(super) fn upload_image(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     path: &Path,
     srgb: bool,
+    mips: bool,
     name: &str,
 ) -> Result<wgpu::TextureView, String> {
+    upload_texture(device, queue, path, srgb, mips, name)
+        .map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()))
+}
+
+/// [`upload_image`]'s texture.
+pub(super) fn upload_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    path: &Path,
+    srgb: bool,
+    mips: bool,
+    name: &str,
+) -> Result<wgpu::Texture, String> {
     let image = crate::open_image(path)
         .map_err(|e| format!("{}: {e}", path.display()))?
         .to_rgba8();
@@ -619,36 +637,37 @@ pub(super) fn upload_image(
         height,
         depth_or_array_layers: 1,
     };
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(&format!("User Style Image {name}")),
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: if srgb {
-            wgpu::TextureFormat::Rgba8UnormSrgb
-        } else {
-            wgpu::TextureFormat::Rgba8Unorm
+    // Level 0 is the file's bytes either way, so an image with mips reads
+    // texel for texel as one without wherever it is drawn at its size
+    let (data, mip_level_count) = if mips {
+        crate::texture_cache::mip_chain(image.as_raw(), width, height, srgb)
+    } else {
+        (image.into_raw(), 1)
+    };
+    let texture = wgpu::util::DeviceExt::create_texture_with_data(
+        device,
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some(&format!("User Style Image {name}")),
+            size,
+            mip_level_count,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: if srgb {
+                wgpu::TextureFormat::Rgba8UnormSrgb
+            } else {
+                wgpu::TextureFormat::Rgba8Unorm
+            },
+            // COPY_SRC for the test that reads a level back
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
         },
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        &image,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(width * 4),
-            rows_per_image: Some(height),
-        },
-        size,
+        wgpu::util::TextureDataOrder::LayerMajor,
+        &data,
     );
-    Ok(texture.create_view(&wgpu::TextureViewDescriptor::default()))
+    Ok(texture)
 }
 
 /// Clear `view` to transparent black: a history target whose past isn't
