@@ -1,0 +1,20 @@
+# A user style that never compiles (#563), at the HDR stage, for the
+# goldens: `broken_hdr.wgsl` calls a function no prelude defines on line
+# 10. Its passthrough is `return p.color` with no curves, but it sits
+# before fog, bloom and the tonemap and, with `feeds_bloom = true`, it is
+# what bloom's threshold reads. The case over it turns bloom on and holds
+# the frame to the frame without the style, so a passthrough that clamps
+# the HDR values (or hands bloom the wrong source) moves the halo.
+#
+# It lives here, not in examples/styles/, so no demo scene shows its error.
+version = 1
+name = "broken_hdr"
+label = "Broken HDR (test fixture)"
+stage = "hdr"
+shader = "broken_hdr.wgsl"
+feeds_bloom = true
+
+[params.gain]
+default = 2.0
+min = 0.0
+max = 8.0

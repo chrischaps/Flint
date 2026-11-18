@@ -7,6 +7,10 @@
 #   flint render crates/flint-cli/tests/golden/fixtures/broken_style.scene.toml \
 #     --schemas schemas --no-grid --style broken
 #
+# Two more broken styles share it (#563): `broken_hdr` (stage hdr, feeds
+# bloom; the lamp gives it light above 1 for a clamp to cut) and
+# `broken_inputs` (depth, mask and edges).
+#
 # No models, so it finds nothing outside this folder but the schemas.
 
 [scene]
@@ -175,3 +179,18 @@ max = [0.5, 1.6, 0.5]
 [entities.hue_violet.material]
 color = [0.4, 0.12, 0.75, 1.0]
 roughness = 0.5
+
+# A lamp (#563): linear light well above 1, so the HDR-stage case has
+# values a clamp would cut and a halo for bloom to draw. Off to the right,
+# clear of the ramps.
+[entities.lamp]
+archetype = "furniture"
+[entities.lamp.transform]
+position = [5.6, 0, -1.0]
+[entities.lamp.bounds]
+min = [-0.3, 0, -0.3]
+max = [0.3, 2.2, 0.3]
+[entities.lamp.material]
+color = [1.0, 0.9, 0.7, 1.0]
+emissive = [6.0, 4.2, 2.0]
+roughness = 0.4
