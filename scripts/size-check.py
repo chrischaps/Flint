@@ -205,7 +205,7 @@ def check(files: list[Path], names: set[str], report: bool) -> list[str]:
         # colour type 4 or 6: grey or RGB with alpha
         if p.startswith("docs/") and png_size(data) and data[25] in (4, 6) and p not in ALPHA_EXCEPTIONS:
             problems.append(
-                f"{p}: a book PNG with an alpha channel; a render's is opaque, a quarter of its bytes "
+                f"{p}: a book PNG with an alpha channel; a render's is 255 everywhere, about 8% of the file "
                 f"(python tools/assets/pack_book_images.py {p}: same pixels; a needed alpha: ALPHA_EXCEPTIONS)"
             )
         if p.startswith(NOT_TEXTURES):
