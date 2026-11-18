@@ -162,6 +162,15 @@ fn sample_display(t: texture_2d<f32>, s: sampler, uv: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(select(rgb, flint_to_display(rgb), params.srgb == 1u), c.a);
 }
 
+// An unpainted pixel, as fs_main returns one whose wobbled read finds no
+// painted entity either (#538): the per-entity paint pass is scissored to
+// its entities, and this entry point draws the frame around them, so the
+// pixels there are fs_main's own bytes
+@fragment
+fn fs_passthrough(in: VertexOutput) -> @location(0) vec4<f32> {
+    return textureSampleLevel(input_texture, input_sampler, in.uv, 0.0);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ppp = params.pixels_per_point;

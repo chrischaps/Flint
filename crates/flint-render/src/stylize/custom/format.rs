@@ -52,6 +52,13 @@ pub struct ShaderStyleDef {
     /// Bloom reads this style's result (#300); hdr styles only.
     #[serde(default)]
     pub feeds_bloom: bool,
+    /// How far past its entities, in points, a per-entity style changes a
+    /// pixel (#538): further out, `style` returns `p.color` as it is. With
+    /// it the framework draws the style's last pass only inside its
+    /// entities' screen bounds grown by this, and its passthrough around
+    /// them. Mask-reading styles only.
+    #[serde(default)]
+    pub reach: Option<f32>,
     /// `[[passes]]` (#412): each a WGSL `fn style` of its own, run in
     /// order. Every pass but the last writes a target of the style's own;
     /// the last writes the stage's output.
@@ -358,6 +365,9 @@ pub struct StyleSource {
     pub inputs: Inputs,
     /// Bloom reads the style's result by default (#300).
     pub feeds_bloom: bool,
+    /// The style's `reach` in points (#538): set, its last pass is drawn
+    /// only within that of its entities (`StyleFrame::styled_rect`).
+    pub reach: Option<f32>,
     /// The component an entity takes the style with (#414): `<name>_style`
     /// for a style that reads the mask, its fields the parameters. It
     /// makes the style per-entity, as `ascii_style` does ASCII: a
@@ -748,6 +758,19 @@ impl ShaderStyleDef {
                 }
             }
         }
+        if let Some(reach) = self.reach {
+            if !inputs.mask {
+                return Err(format!(
+                    "{at}: reach needs inputs = [\"mask\"]: it says how far past its \
+                     entities a per-entity style draws, and without the mask it has none"
+                ));
+            }
+            if !(reach.is_finite() && (0.0..=MAX_REACH).contains(&reach)) {
+                return Err(format!(
+                    "{at}: reach = {reach}; it is 0..{MAX_REACH} points"
+                ));
+            }
+        }
         for (name, p) in &self.params {
             if !is_identifier(name) || name.starts_with("flint") || name.starts_with('_') {
                 return Err(format!(
@@ -902,6 +925,7 @@ impl ShaderStyleDef {
             stage,
             inputs,
             feeds_bloom: self.feeds_bloom,
+            reach: self.reach,
             params: self.params.into_iter().collect(),
             options,
             images,
@@ -917,6 +941,10 @@ impl ShaderStyleDef {
         })
     }
 }
+
+/// The largest `reach` a style may declare, in points (#538): past a few
+/// hundred the rect is the frame anyway.
+pub const MAX_REACH: f32 = 512.0;
 
 /// How many parameters a style may declare: 64 floats is a 272-byte
 /// uniform, well inside every backend's limit.

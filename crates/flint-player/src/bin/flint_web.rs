@@ -44,6 +44,9 @@
 //!                   the last 10 s, each phase's CPU time, each pass's GPU
 //!                   time where the adapter has timestamp-query (`cpu`
 //!                   leaves GPU timing off), and a line to copy
+//!   scissor=0       per-entity styles draw their whole frame instead of
+//!                   only their entities' (`FLINT_STYLE_SCISSOR=0`), to
+//!                   measure what the scissor saves (#385, #538)
 //!   fps=30|60|auto|native  which refreshes are drawn (#140). A rate is
 //!                   drawn as a whole number of refreshes (30 is every
 //!                   other at 60 Hz, every fourth at 120); `auto` draws
@@ -125,6 +128,10 @@ mod web {
         /// `FLINT_GPU_LABELS` does natively (#1083); none by default, so a
         /// frame makes no WebGPU call more.
         gpu_labels: Option<flint_render::gpu_labels::GpuLabels>,
+        /// `scissor=0`: per-entity styles draw their whole frame, as
+        /// `FLINT_STYLE_SCISSOR=0` does natively, to measure what the
+        /// scissor saves in a browser (#538).
+        scissor: Option<bool>,
     }
 
     impl WebArgs {
@@ -186,6 +193,7 @@ mod web {
                 gpu_labels: flint_render::gpu_labels::GpuLabels::parse(
                     get("gpu_labels").as_deref(),
                 ),
+                scissor: get("scissor").map(|v| v != "0"),
             }
         }
     }
@@ -233,6 +241,9 @@ mod web {
         // Before the renderer reads it
         if let Some(level) = args.gpu_labels {
             flint_render::gpu_labels::set_level(level);
+        }
+        if let Some(on) = args.scissor {
+            flint_render::stylize::set_scissor_enabled(on);
         }
         if let Some((w, h)) = args.size {
             fix_canvas_size(w, h);

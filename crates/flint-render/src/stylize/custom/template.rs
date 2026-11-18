@@ -58,7 +58,11 @@ fn toml(name: &str, stage: StyleStage, inputs: Inputs) -> String {
              #   style = \"{name}\"\n\
              # or the component `{name}_style`, whose fields are the params below\n\
              # (each entity its own `amount`) plus `enabled` and `blend`.\n\
-             # flint_style_blend(uv) says how much of it each pixel asks for.\n"
+             # flint_style_blend(uv) says how much of it each pixel asks for.\n\
+             # If the style returns p.color unchanged further than some distance\n\
+             # from its entities, say how far in points (#538), and it is drawn\n\
+             # only near them:\n\
+             #   reach = 0\n"
         )
     } else {
         String::new()
