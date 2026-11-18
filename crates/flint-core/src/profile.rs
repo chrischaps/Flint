@@ -186,6 +186,13 @@ pub struct TakenScope {
 pub enum TakenDetail {
     Count(u64),
     Text(String),
+    /// A summed record (#1288, [`record_calls`]): `calls` calls of one
+    /// function folded into one record, whose duration is their total and
+    /// whose start is the first call's; `worst_ns` the longest of them.
+    Calls {
+        calls: u32,
+        worst_ns: u64,
+    },
 }
 
 /// One thread's scopes, as `snapshot` copied them, oldest first by when
@@ -208,6 +215,20 @@ impl ThreadScopes {
     pub fn wrapped(&self) -> bool {
         self.written > self.held as u64
     }
+
+    /// Where this thread's record begins inside the window it was copied
+    /// for, ns from the epoch, when its ring lost records the window wanted
+    /// (#1288): it wrapped, and everything it still held was in the window,
+    /// so what it overwrote was too. `None` when the copy is whole. It is
+    /// the oldest held record's close: records are kept in close order, so
+    /// any scope that closed after it, and every frame that began after it,
+    /// is whole.
+    pub fn cut_at_ns(&self) -> Option<u64> {
+        if !self.wrapped() || self.scopes.len() < self.held {
+            return None;
+        }
+        self.scopes.iter().map(|s| s.start_ns + s.dur_ns).min()
+    }
 }
 
 #[cfg(not(any(debug_assertions, feature = "trace")))]
@@ -225,6 +246,9 @@ mod off {
 
     /// Nothing to size: the recorder is not in this build.
     pub fn set_ring_capacity(_records: usize) {}
+
+    /// Nothing to grow: the recorder is not in this build.
+    pub fn set_ring_growth(_seconds: f64, _max_records: usize) {}
 
     pub fn ring_capacity() -> usize {
         0
@@ -272,6 +296,32 @@ mod off {
         }
     }
 
+    /// A call that may fold into a summed record: nothing in this build.
+    pub struct Call;
+
+    impl Call {
+        #[inline(always)]
+        pub fn enter() -> Call {
+            Call
+        }
+
+        #[inline(always)]
+        pub fn close(self, _site: &'static super::Site) -> Option<(u64, u64)> {
+            None
+        }
+    }
+
+    /// Nothing to record: the recorder is not in this build.
+    #[inline(always)]
+    pub fn record_calls(
+        _site: &'static super::Site,
+        _start: u64,
+        _dur: u64,
+        _calls: u32,
+        _worst: u64,
+    ) {
+    }
+
     /// The one site of a name made at run time. With no recorder in the
     /// build there is nothing to name, so every name is one empty site;
     /// callers ask only while [`recording`], which is never here.
@@ -289,7 +339,7 @@ mod off {
 mod recorder {
     use super::{DetailValue, ScopeDetail, Site, TakenDetail, TakenScope, ThreadScopes};
     use std::cell::Cell;
-    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
 
     /// Whether the recorder is in this build.
@@ -298,6 +348,30 @@ mod recorder {
     static RECORDING: AtomicBool = AtomicBool::new(false);
     static FRAME: AtomicU32 = AtomicU32::new(0);
     static RING_CAPACITY: AtomicU32 = AtomicU32::new(DEFAULT_RING_CAPACITY as u32);
+    /// [`set_ring_growth`]: the seconds a ring should reach back (as `f64`
+    /// bits; 0 never grows), and the most records it may grow to.
+    static GROW_SECONDS: AtomicU64 = AtomicU64::new(0);
+    static GROW_MAX: AtomicU32 = AtomicU32::new(0);
+
+    /// Let a ring that laps in less than `seconds` grow, doubling, up to
+    /// `max_records` (#1288): a ring is sized by a guess at the scopes a
+    /// second, and a game that records more would lose most of its
+    /// look-back. It checks once a lap (when its writing comes round to the
+    /// oldest record, so they are in order and the growth copies nothing
+    /// out of place), and a growth is a frame note on its thread
+    /// ([`NoteKind::TraceRing`](crate::frame_notes::NoteKind::TraceRing),
+    /// a tool's cost). `seconds` 0 turns it off.
+    pub fn set_ring_growth(seconds: f64, max_records: usize) {
+        GROW_SECONDS.store(seconds.max(0.0).to_bits(), Ordering::Relaxed);
+        GROW_MAX.store(max_records.min(u32::MAX as usize) as u32, Ordering::Relaxed);
+    }
+
+    /// The ring's want, in clock ticks, and its most records, if it grows.
+    fn growth() -> Option<(u64, usize)> {
+        let seconds = f64::from_bits(GROW_SECONDS.load(Ordering::Relaxed));
+        let max = GROW_MAX.load(Ordering::Relaxed) as usize;
+        (seconds > 0.0 && max > 0).then(|| ((seconds * 1e9 / clock::ns_per_tick()) as u64, max))
+    }
 
     /// Records a thread's ring holds unless [`set_ring_capacity`] says
     /// otherwise: 65 536, 2.6 MB a thread.
@@ -492,6 +566,13 @@ mod recorder {
             at: u64,
             len: u16,
         },
+        /// A summed record ([`record_calls`]): how many calls, and the
+        /// longest in ticks (saturating; 1.4 s at 3 GHz). Eight bytes, so a
+        /// record stays 40.
+        Calls {
+            calls: u32,
+            worst: u32,
+        },
     }
 
     /// One thread's records, the oldest overwritten first. Its memory is
@@ -535,11 +616,13 @@ mod recorder {
             self.cap == 0
         }
 
-        fn push(&mut self, r: Record) {
+        /// Push a record; the ring's new size, and the ticks growing took,
+        /// if it grew.
+        fn push(&mut self, r: Record) -> Option<(usize, u64)> {
             if self.unbounded() {
                 self.records.push(r);
                 self.written += 1;
-                return;
+                return None;
             }
             if self.records.len() < self.cap {
                 if self.records.capacity() == 0 {
@@ -550,10 +633,32 @@ mod recorder {
                 self.records[self.next] = r;
             }
             self.next += 1;
+            self.written += 1;
             if self.next == self.cap {
                 self.next = 0;
+                // A lap ends: oldest at 0, newest last, so a longer ring
+                // carries on after them with nothing moved
+                if let Some((want, max)) = growth() {
+                    return self.grow_if_short(want, max);
+                }
             }
-            self.written += 1;
+            None
+        }
+
+        /// At a lap's end: double (up to `max`) when the lap spanned less
+        /// than `want` ticks.
+        fn grow_if_short(&mut self, want: u64, max: usize) -> Option<(usize, u64)> {
+            let (first, last) = (self.records.first()?, self.records.last()?);
+            let span = (last.start + last.dur).saturating_sub(first.start);
+            if span >= want || self.cap >= max {
+                return None;
+            }
+            let before = clock::now();
+            let cap = (self.cap * 2).min(max);
+            self.records.reserve_exact(cap - self.records.len());
+            self.next = self.records.len();
+            self.cap = cap;
+            Some((cap, clock::now().saturating_sub(before)))
         }
 
         fn push_text(&mut self, s: &str) -> Detail {
@@ -599,6 +704,7 @@ mod recorder {
             match r.detail {
                 Detail::None => None,
                 Detail::Count(n) => Some(n.to_string()),
+                Detail::Calls { calls, .. } => Some(format!("{calls} calls")),
                 Detail::Text { at, len } if self.unbounded() => {
                     let bytes = &self.text[at as usize..at as usize + len as usize];
                     Some(String::from_utf8_lossy(bytes).into_owned())
@@ -626,10 +732,14 @@ mod recorder {
         }
 
         /// What a detail is, for a copy that outlives the ring.
-        fn taken_detail(&self, r: &Record) -> Option<TakenDetail> {
+        fn taken_detail(&self, r: &Record, ns_per_tick: f64) -> Option<TakenDetail> {
             match r.detail {
                 Detail::None => None,
                 Detail::Count(n) => Some(TakenDetail::Count(n)),
+                Detail::Calls { calls, worst } => Some(TakenDetail::Calls {
+                    calls,
+                    worst_ns: (worst as f64 * ns_per_tick) as u64,
+                }),
                 Detail::Text { .. } => self.detail(r).map(TakenDetail::Text),
             }
         }
@@ -659,7 +769,7 @@ mod recorder {
                     dur_ns,
                     frame: r.frame,
                     depth: r.depth,
-                    detail: ring.taken_detail(r),
+                    detail: ring.taken_detail(r, k),
                 });
             }
             out.push(ThreadScopes {
@@ -680,6 +790,9 @@ mod recorder {
 
     thread_local! {
         static DEPTH: Cell<u16> = const { Cell::new(0) };
+        /// Records this thread has written: how a [`Call`] knows whether
+        /// anything was recorded inside it.
+        static RECORDED: Cell<u64> = const { Cell::new(0) };
         // Made at a thread's first recorded scope. Each ring is behind a lock
         // nobody else takes except a reader (`with_rings`), so it is
         // uncontended on the frame.
@@ -766,18 +879,105 @@ mod recorder {
             d.set(v);
             v
         });
-        let r = Record {
+        push(Record {
             site,
             start,
             dur: end.saturating_sub(start),
             frame: FRAME.load(Ordering::Relaxed),
             depth,
             detail,
-        };
+        });
+    }
+
+    fn push(r: Record) {
+        RECORDED.with(|n| n.set(n.get() + 1));
         RING.with(|ring| {
             if let Ok(mut ring) = ring.lock() {
-                ring.push(r);
+                if let Some((cap, ticks)) = ring.push(r) {
+                    // The growth's copy is the recorder's cost, not the game's
+                    let ms = (ticks as f64 * clock::ns_per_tick() / 1e6) as f32;
+                    let thread = ring.thread.clone();
+                    drop(ring);
+                    crate::frame_notes::note(
+                        crate::frame_notes::NoteKind::TraceRing,
+                        || format!("{thread} ring grew to {cap} records"),
+                        Some(ms),
+                    );
+                }
             }
+        });
+    }
+
+    /// A call that is a scope only if something inside it is (#1288).
+    ///
+    /// A script's engine functions are called hundreds of times a frame
+    /// (Float: 800 records a frame, most of them `get_field()` and
+    /// `clamp()`), which filled a ring sized for the frame's own scopes in
+    /// under a second. Such a call opens a level (so a scope inside it
+    /// nests as it would under a scope) but records nothing itself: its
+    /// [`close`](Call::close) hands back its start and length for the
+    /// caller to sum into one [`record_calls`] record a function, unless
+    /// something was recorded inside it, when it is recorded as a scope of
+    /// its own after all and the caller sums nothing.
+    pub struct Call {
+        start: Option<u64>,
+        recorded: u64,
+    }
+
+    impl Call {
+        #[inline]
+        pub fn enter() -> Call {
+            if !RECORDING.load(Ordering::Relaxed) {
+                return Call {
+                    start: None,
+                    recorded: 0,
+                };
+            }
+            DEPTH.with(|d| d.set(d.get().saturating_add(1)));
+            Call {
+                start: Some(clock::now()),
+                recorded: RECORDED.with(Cell::get),
+            }
+        }
+
+        /// The call ends: `(start, length)` in clock ticks for the caller
+        /// to sum when nothing was recorded inside it, else `None`, with
+        /// the call recorded under `site`. `None` too when it began before
+        /// recording did.
+        #[inline]
+        pub fn close(self, site: &'static Site) -> Option<(u64, u64)> {
+            let start = self.start?;
+            if RECORDED.with(Cell::get) != self.recorded {
+                record(site, start, Detail::None);
+                return None;
+            }
+            let end = clock::now();
+            DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+            Some((start, end.saturating_sub(start)))
+        }
+    }
+
+    /// One record standing for `calls` calls of `site` (#1288): from the
+    /// first call's `start` for their summed length `dur`, both in clock
+    /// ticks as [`Call::close`] gave them, with the longest call `worst`.
+    /// It nests one level inside the scopes open now, as the calls did,
+    /// and is a leaf: a reader never takes it for anything's parent, since
+    /// it may overlap its siblings (its length is the calls', laid from
+    /// the first). Nothing while not recording.
+    pub fn record_calls(site: &'static Site, start: u64, dur: u64, calls: u32, worst: u64) {
+        if !RECORDING.load(Ordering::Relaxed) || calls == 0 {
+            return;
+        }
+        push(Record {
+            site,
+            start,
+            dur,
+            frame: FRAME.load(Ordering::Relaxed),
+            depth: DEPTH.with(Cell::get),
+            detail: Detail::Calls {
+                calls,
+                worst: worst.min(u32::MAX as u64) as u32,
+            },
         });
     }
 
@@ -812,6 +1012,36 @@ mod recorder {
             assert_eq!(starts, vec![2, 3, 4, 5]);
             assert_eq!(ring.written(), 6);
             assert_eq!(ring.records.capacity(), 4, "the ring never grows");
+        }
+
+        #[test]
+        fn a_ring_that_laps_too_fast_doubles_at_the_lap_and_keeps_its_order() {
+            // A full first lap: records 0..=3, spanning 4 ticks
+            let mut ring = Ring::new("t".into(), 4);
+            for start in 0..4 {
+                ring.push(record_at(start));
+            }
+            // ... against a want of 10
+            let grown = ring.grow_if_short(10, 6).map(|(cap, _)| cap);
+            assert_eq!(grown, Some(6), "doubled, held at the most");
+            for start in 4..8 {
+                ring.push(record_at(start));
+            }
+            let starts: Vec<u64> = ring.records().map(|r| r.start).collect();
+            assert_eq!(
+                starts,
+                vec![2, 3, 4, 5, 6, 7],
+                "oldest first, nothing lost to the growth"
+            );
+            assert_eq!(ring.grow_if_short(10, 6), None, "at its most");
+            let mut long = Ring::new("t".into(), 2);
+            long.records.push(record_at(0));
+            long.records.push(record_at(50));
+            assert_eq!(
+                long.grow_if_short(10, 8),
+                None,
+                "a lap that spans its want stays"
+            );
         }
 
         #[test]
@@ -920,6 +1150,95 @@ mod tests {
             assert_eq!(calls, 1);
         });
         assert_eq!(seen, vec![("once", 0, Some("1".to_string()))]);
+    }
+
+    static CALLED: Site = Site {
+        name: "get_field()",
+        file: "",
+        line: 0,
+    };
+
+    #[test]
+    fn calls_with_nothing_inside_fold_into_one_record_a_leaf_at_their_depth() {
+        set_recording(true);
+        let seen = recorded_on_a_thread("profile-calls", || {
+            crate::scope!("on_update");
+            let (mut first, mut total, mut worst, mut calls) = (None, 0u64, 0u64, 0u32);
+            for _ in 0..500 {
+                let call = Call::enter();
+                if let Some((start, dur)) = call.close(&CALLED) {
+                    first.get_or_insert(start);
+                    total += dur;
+                    worst = worst.max(dur);
+                    calls += 1;
+                }
+            }
+            record_calls(&CALLED, first.unwrap(), total, calls, worst);
+        });
+        assert_eq!(
+            seen,
+            vec![
+                ("get_field()", 1, Some("500 calls".to_string())),
+                ("on_update", 0, None),
+            ],
+            "500 calls are one record, one level in"
+        );
+    }
+
+    #[test]
+    fn a_call_with_a_scope_inside_is_a_scope_of_its_own() {
+        set_recording(true);
+        let seen = recorded_on_a_thread("profile-call-scope", || {
+            crate::scope!("on_update");
+            let call = Call::enter();
+            {
+                crate::scope!("physics::raycast");
+            }
+            assert_eq!(call.close(&CALLED), None, "nothing to sum");
+            // and the depth is back where it was
+            crate::scope!("after");
+        });
+        assert_eq!(
+            seen,
+            vec![
+                ("physics::raycast", 2, None),
+                ("get_field()", 1, None),
+                ("after", 1, None),
+                ("on_update", 0, None),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_wrapped_ring_says_where_its_window_begins() {
+        set_recording(true);
+        let scope = |start_ns: u64| TakenScope {
+            name: "x",
+            file: "",
+            line: 0,
+            start_ns,
+            dur_ns: 10,
+            frame: 0,
+            depth: 0,
+            detail: None,
+        };
+        let mut t = ThreadScopes {
+            thread: "main".into(),
+            scopes: vec![scope(500), scope(600)],
+            held: 2,
+            written: 9,
+            capacity: Some(2),
+        };
+        assert_eq!(t.cut_at_ns(), Some(510), "the oldest held record's close");
+        t.held = 4;
+        assert_eq!(
+            t.cut_at_ns(),
+            None,
+            "it still held records before the window"
+        );
+        t.held = 2;
+        t.written = 2;
+        assert_eq!(t.cut_at_ns(), None, "it never wrapped");
     }
 
     #[test]

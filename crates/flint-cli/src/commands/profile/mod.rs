@@ -179,7 +179,15 @@ pub(crate) fn pick_frame(trace: &Trace, which: &str) -> Result<usize> {
                 .collect();
             let reason = trace.header.get("reason").and_then(|v| v.as_str());
             let meant = meant_hitch(reason, &marks).and_then(|h| frames[h]);
-            if let Some(pos) = meant.or_else(|| frames.into_iter().flatten().next_back()) {
+            // A hitch before the scopes begin has no frame here (#1288):
+            // the worst one after them, as the tab chooses
+            let worst_covered = || {
+                (0..marks.len())
+                    .filter(|&h| frames[h].is_some())
+                    .max_by(|&a, &b| marks[a].judged_ms.total_cmp(&marks[b].judged_ms))
+                    .and_then(|h| frames[h])
+            };
+            if let Some(pos) = meant.or_else(worst_covered) {
                 return Ok(pos);
             }
             let w = worst();
@@ -195,6 +203,13 @@ pub(crate) fn pick_frame(trace: &Trace, which: &str) -> Result<usize> {
             let Ok(n) = n.parse::<u32>() else {
                 bail!("`{n}` is not a frame: give a frame index, `worst` or `hitch`");
             };
+            if let Some(c) = trace.coverage.as_ref().filter(|c| c.before(n)) {
+                bail!(
+                    "frame {n} is in {} but before its scopes begin: {}",
+                    trace.path,
+                    c.line(&trace.frames)
+                );
+            }
             trace.position(n).ok_or_else(|| {
                 anyhow::anyhow!("frame {n} is not in {}: it holds {}", trace.path, held())
             })
@@ -248,7 +263,28 @@ pub(crate) fn about(trace: &Trace) -> String {
     if let Some(reason) = trace.header_str("reason") {
         line.push_str(&format!("\n  written for {reason}"));
     }
+    if let Some(c) = &trace.coverage {
+        line.push_str(&format!("\n  {}", c.line(&trace.frames)));
+    }
     line
+}
+
+/// What the scopes cover, for the JSON (`null` when they cover it all).
+pub(crate) fn coverage_json(trace: &Trace) -> serde_json::Value {
+    let Some(c) = &trace.coverage else {
+        return serde_json::Value::Null;
+    };
+    let first = |f: &[read::FrameSpan]| f.first().map(|f| f.frame);
+    let last = |f: &[read::FrameSpan]| f.last().map(|f| f.frame);
+    serde_json::json!({
+        "line": c.line(&trace.frames),
+        "from_ms": stats::round(c.from_ns as f64 / 1e6),
+        "threads": c.threads,
+        "covered_s": stats::round(c.covered_s),
+        "window_s": c.window_s,
+        "frames": { "first": first(&trace.frames), "last": last(&trace.frames), "count": trace.frames.len() },
+        "in_file": { "first": first(&c.all), "last": last(&c.all), "count": c.all.len() },
+    })
 }
 
 /// The header fields every JSON document carries.
@@ -271,6 +307,7 @@ pub(crate) fn about_json(trace: &Trace) -> serde_json::Value {
         "frames": trace.frames.len(),
         "frames_from_scopes": trace.frames_derived,
         "threads": trace.thread_names(),
+        "coverage": coverage_json(trace),
     })
 }
 

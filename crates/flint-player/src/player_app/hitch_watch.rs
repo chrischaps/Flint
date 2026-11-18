@@ -469,7 +469,7 @@ impl HitchWatch {
         let t = &self.tooling;
         if t.hitches > 0 {
             lines.push(format!(
-                "[perf] tooling hitches (screenshots, the F2 overlay; never gated): {}, {}",
+                "[perf] tooling hitches (screenshots, the F2 overlay, the trace ring; never gated): {}, {}",
                 t.hitches,
                 t.worst_and_causes()
             ));
@@ -967,7 +967,7 @@ mod tests {
         assert!(report[0].starts_with("[perf] hitches: 0 in "), "{report:?}");
         assert!(
             report[2].starts_with(
-                "[perf] tooling hitches (screenshots, the F2 overlay; never gated): 1, worst 110.0 ms at t="
+                "[perf] tooling hitches (screenshots, the F2 overlay, the trace ring; never gated): 1, worst 110.0 ms at t="
             ),
             "{report:?}"
         );

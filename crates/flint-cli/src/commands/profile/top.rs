@@ -36,12 +36,18 @@ fn top(trace: &Trace, args: &TopArgs) -> Result<(String, Value)> {
         .filter(|&i| (from..=to).contains(&trace.frames[i].frame))
         .collect();
     if positions.is_empty() {
+        let held = match &trace.coverage {
+            Some(c) => c.line(&trace.frames),
+            None => format!(
+                "it holds frames {}..{}",
+                trace.frames[0].frame,
+                trace.frames[trace.frames.len() - 1].frame
+            ),
+        };
         bail!(
-            "no frame of {} is in {}: it holds frames {}..{}",
+            "no frame of {} with scopes is in {}: {held}",
             trace.path,
             args.frames.as_deref().unwrap_or(""),
-            trace.frames[0].frame,
-            trace.frames[trace.frames.len() - 1].frame
         );
     }
     let per = stats::per_frame(trace, &threads, args.by_detail);
@@ -142,9 +148,11 @@ fn top(trace: &Trace, args: &TopArgs) -> Result<(String, Value)> {
         }));
     }
     text.push_str(&table.render("  "));
-    text.push_str(
-        "\n  ms/frame is the total over every frame in range; a scope inside itself counts once\n",
-    );
+    text.push_str(if trace.coverage.is_some() {
+        "\n  ms/frame is the total over the frames in range the scopes cover; a scope inside itself counts once\n"
+    } else {
+        "\n  ms/frame is the total over every frame in range; a scope inside itself counts once\n"
+    });
 
     let doc = json!({
         "trace": about_json(trace),

@@ -362,7 +362,7 @@ impl<'f, K: Kinds> Func<'f, K> {
         let id = crate::fn_times::engine_fn(name);
         let body = Arc::new(
             move |nctx: NativeCallContext, args: &mut [&mut Dynamic]| -> RhaiResult {
-                let _timed = crate::fn_times::enter(id);
+                let _timed = crate::fn_times::enter_engine(id);
                 body(nctx, args)
             },
         );
@@ -1148,7 +1148,7 @@ macro_rules! kinds_tuple {
                 engine.register_fn(
                     name,
                     move |nctx: NativeCallContext, $($a: $K::Typed),*| -> RhaiResult {
-                        let _timed = crate::fn_times::enter(id);
+                        let _timed = crate::fn_times::enter_engine(id);
                         let mut guard = crate::lock_or_recover(&ctx);
                         let mut call = Call::new(&mut guard, name, nctx.call_position());
                         let out = ($(

@@ -68,7 +68,7 @@ pub(crate) fn tree(thread: &Thread, frame: u32) -> Node {
         let node = node.child(&s.key(true));
         node.incl_ns += s.dur_ns;
         node.self_ns += thread.self_ns[i];
-        node.calls += 1;
+        node.calls += s.calls();
         node.count = match (&s.detail, node.calls) {
             (Some(Detail::Count(n)), 1) => Some(*n),
             _ => None,

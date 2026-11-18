@@ -67,11 +67,14 @@ pub enum NoteKind {
     Screenshot,
     /// The F2 stats overlay opened (`detail`: what it shows). Tooling.
     StatsOverlay,
+    /// The scope recorder's ring grew to hold its look-back (#1288;
+    /// `detail`: the thread and its new size). Tooling.
+    TraceRing,
 }
 
 impl NoteKind {
     /// Every kind, in the order above.
-    pub const ALL: [NoteKind; 16] = [
+    pub const ALL: [NoteKind; 17] = [
         NoteKind::ModelLoad,
         NoteKind::TextureLoad,
         NoteKind::PipelineBuild,
@@ -88,6 +91,7 @@ impl NoteKind {
         NoteKind::ClockStall,
         NoteKind::Screenshot,
         NoteKind::StatsOverlay,
+        NoteKind::TraceRing,
     ];
 
     /// The words a log line or an overlay names it by.
@@ -109,15 +113,20 @@ impl NoteKind {
             NoteKind::ClockStall => "clock stall",
             NoteKind::Screenshot => "screenshot",
             NoteKind::StatsOverlay => "stats overlay",
+            NoteKind::TraceRing => "trace ring",
         }
     }
 
     /// Whether the work was the player's own tools looking at the game (a
-    /// screenshot written, the F2 overlay opening) rather than the game:
-    /// a hitch they account for is the tools' cost, which the hitch
-    /// detector classes `tooling`, counts apart and no gate counts (#1129).
+    /// screenshot written, the F2 overlay opening, the trace recorder's
+    /// ring growing) rather than the game: a hitch they account for is the
+    /// tools' cost, which the hitch detector classes `tooling`, counts
+    /// apart and no gate counts (#1129).
     pub fn is_tooling(self) -> bool {
-        matches!(self, NoteKind::Screenshot | NoteKind::StatsOverlay)
+        matches!(
+            self,
+            NoteKind::Screenshot | NoteKind::StatsOverlay | NoteKind::TraceRing
+        )
     }
 
     /// Whether a note of this kind tells what a long frame *was* rather
@@ -452,7 +461,14 @@ mod tests {
         assert!(NoteKind::ClockStall.is_symptom());
         assert!(!NoteKind::ModelLoad.is_symptom());
         let tooling: Vec<_> = NoteKind::ALL.iter().filter(|k| k.is_tooling()).collect();
-        assert_eq!(tooling, [&NoteKind::Screenshot, &NoteKind::StatsOverlay]);
+        assert_eq!(
+            tooling,
+            [
+                &NoteKind::Screenshot,
+                &NoteKind::StatsOverlay,
+                &NoteKind::TraceRing
+            ]
+        );
         assert!(tooling.iter().all(|k| !k.is_symptom()));
     }
 }
