@@ -79,7 +79,11 @@ carries, with a decision on moving the heavy part out of the subtree.
    occlusion) PNG, drops alpha only where every material using it is
    `OPAQUE`, and rewrites a GLB's chunks and buffer views whole. Book images
    and golden renders are pictures, not textures, and are not held to it; a
-   PNG anywhere is saved compressed.
+   PNG anywhere is saved compressed. A book PNG has no alpha channel (#1276):
+   a render or screenshot is saved RGBA with every pixel opaque, and
+   `tools/assets/pack_book_images.py` drops the channel with the pixels
+   unchanged. `ALPHA_EXCEPTIONS` in the check names one whose page needs
+   the transparency.
 5. **A game's worktrees can leave the heavy part out.** A sparse checkout
    keeps `engine/examples`, `engine/docs`, `engine/tests` and
    `engine/showcase_game` out of a game's working tree. Nothing a game
@@ -139,3 +143,15 @@ the Context's 390 MB and 115 MB are the same tree a few commits earlier.
 `size-check.py` measures files on disk, so its 168.8 MB counts a Windows
 checkout's line endings. The game numbers are a throwaway repository with the engine added as a
 squashed subtree from this checkout, before and after.
+
+### The first breach (#1276, 2026-11-18)
+
+The book crossed 78 MB with Understudy (#885: a 3.8 MB film and six stills)
+and was 78.8 MB on main a day later. 91 of its 205 PNGs were RGBA with
+every pixel opaque, renders saved since #759. `pack_book_images.py` packed
+124 of them (alpha dropped, Pillow's slowest zlib): 70.35 to 66.64 MB of
+PNGs, every pixel checked against the old file, and the book to 75.1 MB.
+The budget stayed. The film stayed too: it was encoded tightly already
+(crf 28 saved 0.5 MB; crf 30 saved 1.3 MB at SSIM 0.984 against a copy
+that is itself lossy, the scene being in another repository), so the
+lossless repack was the cheaper room.
