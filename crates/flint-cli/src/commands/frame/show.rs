@@ -113,6 +113,7 @@ fn summary(d: &FrameDescription, top: usize) -> Value {
         "written_by": d.written_by,
         "captured_at": d.captured_at,
         "engine": d.engine,
+        "project": d.project,
         "scene": d.scene,
         "trigger": d.trigger,
         "notes": d.notes,
@@ -197,9 +198,23 @@ fn summary_text(shown: &str, s: &Value) -> String {
         let _ = write!(written, " at {at}");
     }
     if let Some(v) = s["engine"]["version"].as_str() {
-        let _ = write!(written, ", engine {v}");
-        if let Some(c) = s["engine"]["commit"].as_str() {
-            let _ = write!(written, " ({c})");
+        let e = &s["engine"];
+        let _ = write!(
+            written,
+            ", engine {v}{}",
+            super::commit_words(
+                e["commit"].as_str(),
+                e["subdir"].as_str(),
+                e["dirty"].as_bool()
+            )
+        );
+        // A game's own checkout, when it isn't the engine's (#1290)
+        if let Some(c) = s["project"]["commit"]
+            .as_str()
+            .filter(|c| Some(*c) != e["commit"].as_str())
+        {
+            let short: String = c.chars().take(10).collect();
+            let _ = write!(written, ", project at {short}");
         }
     }
     line(&mut out, "Capture", format!("{shown}  ({written})"));

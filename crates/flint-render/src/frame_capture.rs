@@ -85,6 +85,9 @@ pub struct FrameDescription {
     pub captured_at: Option<String>,
     /// The engine that drew it.
     pub engine: Option<EngineDescription>,
+    /// The checkout the run's project was in, when it was one (#1290).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<ProjectDescription>,
     /// The scene it drew, by path and hash.
     pub scene: Option<SceneDescription>,
     /// Why the frame was captured (#1086): a time, a key, a script, a hitch.
@@ -121,6 +124,7 @@ impl Default for FrameDescription {
             written_by: None,
             captured_at: None,
             engine: None,
+            project: None,
             scene: None,
             trigger: None,
             cpu: None,
@@ -265,11 +269,30 @@ pub struct FrameInfo {
 pub struct EngineDescription {
     /// The crate version (`CARGO_PKG_VERSION`).
     pub version: String,
-    /// The checkout's commit when the frame was captured (`git rev-parse
-    /// HEAD` at the project's root: a game carrying the engine as a subtree
-    /// names its own), `None` where git couldn't say.
+    /// The commit the binary that drew it was built from, stamped at
+    /// compile time (#1290; before it, the HEAD of the project it ran in,
+    /// which in a game's repository is the game's). `None` when the build
+    /// didn't know.
     pub commit: Option<String>,
-    /// Whether that checkout had changes to tracked files.
+    /// Whether the tree it was built from has changes to tracked files,
+    /// asked of the build's source folder while that is still at `commit`;
+    /// `None` when it couldn't be asked.
+    pub dirty: Option<bool>,
+    /// Where the engine's sources sat in the checkout `commit` is of, when
+    /// not at its root: `engine/` for a player a game built from its
+    /// subtree, whose commit `commit` then is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subdir: Option<String>,
+}
+
+/// The checkout the captured run's project was in (#1290): a game's own
+/// repository, at run time.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProjectDescription {
+    /// Its HEAD, `None` where git couldn't say.
+    pub commit: Option<String>,
+    /// Whether it had changes to tracked files.
     pub dirty: Option<bool>,
 }
 

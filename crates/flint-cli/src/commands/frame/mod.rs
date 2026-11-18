@@ -267,6 +267,29 @@ pub(crate) fn bytes_delta(d: i64) -> String {
 }
 
 /// Now, as RFC 3339 UTC to the second (`2026-11-16T22:30:00Z`).
+/// The engine's commit as the views say it (#1290): ` at <10 chars>`, with
+/// ` (in engine/)` when the commit is a game's carrying the engine as a
+/// subtree and ` (uncommitted changes)` when the build's tree had them, or
+/// ` at an unknown commit` when the writer didn't know which.
+pub(crate) fn commit_words(
+    commit: Option<&str>,
+    subdir: Option<&str>,
+    dirty: Option<bool>,
+) -> String {
+    let Some(c) = commit.filter(|c| !c.is_empty()) else {
+        return " at an unknown commit".into();
+    };
+    let short: String = c.chars().take(10).collect();
+    let mut s = format!(" at {short}");
+    if let Some(dir) = subdir.filter(|d| !d.is_empty()) {
+        s.push_str(&format!(" (in {dir})"));
+    }
+    if dirty == Some(true) {
+        s.push_str(" (uncommitted changes)");
+    }
+    s
+}
+
 pub(crate) fn utc_now() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

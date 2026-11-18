@@ -302,7 +302,7 @@ pub(crate) struct Header {
     from_ns: Option<u64>,
     to_ns: u64,
     ring_capacity: usize,
-    /// Where git is asked for the engine's commit (desktop only).
+    /// Where git is asked for the project's commit (desktop only).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     project_root: PathBuf,
 }
@@ -326,11 +326,12 @@ impl TraceJob {
         self.threads.iter().map(|t| t.scopes.len()).sum()
     }
 
-    /// The file's text. `engine` is the checkout's commit and whether it
-    /// was dirty, `written_at` the time, both found off the frame thread.
+    /// The file's text. `found` is the engine the binary was built from and
+    /// the project's checkout (#1290), `written_at` the time, both found off
+    /// the frame thread.
     pub(crate) fn to_json(
         &self,
-        engine: (Option<String>, Option<bool>),
+        found: &crate::provenance::Provenance,
         written_at: Option<String>,
     ) -> String {
         let mut trace = ChromeTrace::new();
@@ -439,7 +440,6 @@ impl TraceJob {
         }
         let features = features.join(",");
         let ring_bytes = (h.ring_capacity * RECORD_BYTES) as i64;
-        let commit = engine.0.unwrap_or_default();
         let written_at = written_at.unwrap_or_default();
         let ms = |ns: u64| ns as f64 / 1e6;
         let mut header = vec![
@@ -455,7 +455,6 @@ impl TraceJob {
             ("driver", Arg::Str(&driver)),
             ("build", Arg::Str(build)),
             ("features", Arg::Str(&features)),
-            ("engine_commit", Arg::Str(&commit)),
             ("seconds", Arg::Num(h.seconds)),
             ("window_to_ms", Arg::Num(ms(h.to_ns))),
             ("scopes", Arg::Int(scopes)),
@@ -473,8 +472,23 @@ impl TraceJob {
                 Arg::Str("names only: scopes, scripts, assets and the scene by name, never their contents"),
             ),
         ];
-        if let Some(dirty) = engine.1 {
+        // The commit the binary was built from; none when the build didn't
+        // know, which readers say as "unknown" (#1290)
+        if let Some(commit) = &found.engine.commit {
+            header.push(("engine_commit", Arg::Str(commit)));
+        }
+        if let Some(dirty) = found.engine.dirty {
             header.push(("engine_dirty", Arg::Bool(dirty)));
+        }
+        if let Some(subdir) = &found.engine_subdir {
+            header.push(("engine_subdir", Arg::Str(subdir)));
+        }
+        // The checkout the run's project is in: a game's own HEAD
+        if let Some(commit) = &found.project.commit {
+            header.push(("project_commit", Arg::Str(commit)));
+        }
+        if let Some(dirty) = found.project.dirty {
+            header.push(("project_dirty", Arg::Bool(dirty)));
         }
         if let Some(from) = h.from_ns {
             header.push(("window_from_ms", Arg::Num(ms(from))));
@@ -505,8 +519,8 @@ impl TraceJob {
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::disallowed_methods)] // a write path: the trace file the run asked for
 fn write(job: TraceJob) -> Result<String, String> {
-    let engine = super::frame_capture::git_state(&job.header.project_root);
-    let text = job.to_json(engine, Some(super::frame_capture::utc_now()));
+    let found = crate::provenance::Provenance::of(&job.header.project_root);
+    let text = job.to_json(&found, Some(super::frame_capture::utc_now()));
     let shown = flint_core::project::shown(&job.path);
     if let Some(dir) = job.path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| format!("{shown}: {e}"))?;
@@ -710,7 +724,7 @@ impl PlayerApp {
                 .path
                 .file_name()
                 .map_or("trace.json".into(), |n| n.to_string_lossy().into_owned());
-            let text = job.to_json((None, None), None);
+            let text = job.to_json(&crate::provenance::Provenance::built(), None);
             let line = match super::web_page::download_text(&name, &text) {
                 Ok(()) => format!("offered {name} as a download: {} scopes", job.scopes()),
                 Err(e) => {
@@ -939,6 +953,56 @@ mod tests {
         assert!(tracks.phases.len() <= 22, "{}", tracks.phases.len());
     }
 
+    /// The header names the engine the binary was built from and the
+    /// project's checkout apart (#1290), and says nothing of a commit it
+    /// doesn't know rather than an empty one.
+    #[test]
+    fn the_header_names_the_engine_built_and_the_project_apart() {
+        let job = TraceJob {
+            path: PathBuf::new(),
+            threads: Vec::new(),
+            frames: Vec::new(),
+            phases: Vec::new(),
+            gpu: Vec::new(),
+            hitches: Vec::new(),
+            notes: Vec::new(),
+            header: Header::default(),
+        };
+        let header = |found: &crate::provenance::Provenance| {
+            let text = job.to_json(found, None);
+            let doc: serde_json::Value = serde_json::from_str(&text).expect("the trace is JSON");
+            doc["otherData"].clone()
+        };
+        let in_a_game = crate::provenance::Provenance {
+            engine: crate::provenance::Checkout {
+                commit: Some("e".repeat(40)),
+                dirty: Some(false),
+            },
+            engine_subdir: None,
+            project: crate::provenance::Checkout {
+                commit: Some("9".repeat(40)),
+                dirty: Some(true),
+            },
+        };
+        let h = header(&in_a_game);
+        assert_eq!(h["engine_commit"], "e".repeat(40), "{h}");
+        assert_eq!(h["engine_dirty"], false, "{h}");
+        assert_eq!(h["project_commit"], "9".repeat(40), "{h}");
+        assert_eq!(h["project_dirty"], true, "{h}");
+        assert!(h.get("engine_subdir").is_none(), "{h}");
+
+        let subtree = crate::provenance::Provenance {
+            engine_subdir: Some("engine/".into()),
+            ..in_a_game
+        };
+        assert_eq!(header(&subtree)["engine_subdir"], "engine/");
+
+        let unknown = header(&Default::default());
+        for key in ["engine_commit", "engine_dirty", "project_commit"] {
+            assert!(unknown.get(key).is_none(), "{key}: {unknown}");
+        }
+    }
+
     /// What recording costs the player each frame beyond its scopes: the
     /// tracks' frame and ten phase spans. And what a save costs the frame
     /// thread (the copy) and its writer (the JSON), for five seconds of a
@@ -985,7 +1049,7 @@ mod tests {
             header: Header::default(),
         };
         let t0 = Instant::now();
-        let text = job.to_json((None, None), None);
+        let text = job.to_json(&Default::default(), None);
         let json = t0.elapsed();
         let events = job.scopes() + job.frames.len() + job.phases.len();
         println!(

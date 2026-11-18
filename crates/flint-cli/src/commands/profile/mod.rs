@@ -248,6 +248,7 @@ pub(crate) fn about_json(trace: &Trace) -> serde_json::Value {
         "build": pick("build"),
         "adapter": pick("adapter"),
         "engine_commit": pick("engine_commit"),
+        "project_commit": pick("project_commit"),
         "frames": trace.frames.len(),
         "frames_from_scopes": trace.frames_derived,
         "threads": trace.thread_names(),

@@ -506,8 +506,8 @@ fn a_fresh_capture_from_todays_writer_reads() {
     assert_eq!(s["written_by"], "flint render");
     assert_eq!(s["scene"]["name"], "Crate and Lantern");
     assert!(s["captured_at"].as_str().unwrap().ends_with('Z'));
-    // It names the engine's commit, as the player's do (#1208): this test
-    // runs in the engine's checkout, so git can say
+    // It names the engine's commit, as the player's do (#1208): the one
+    // the binary was built from (#1290), this checkout's HEAD
     let head = std::process::Command::new("git")
         .arg("-C")
         .arg(repo())

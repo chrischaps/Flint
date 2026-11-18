@@ -693,14 +693,20 @@ impl App {
         }
         if let Some(e) = &d.engine {
             let mut s = format!("engine {}", e.version);
-            if let Some(c) = &e.commit {
-                let short: String = c.chars().take(10).collect();
-                s.push_str(&format!(" at {short}"));
-                if e.dirty == Some(true) {
-                    s.push_str(" (uncommitted changes)");
-                }
-            }
+            s.push_str(&super::super::commit_words(
+                e.commit.as_deref(),
+                e.subdir.as_deref(),
+                e.dirty,
+            ));
             origin.push(s);
+        }
+        // A game's own checkout, when it isn't the engine's (#1290)
+        if let Some(c) = d.project.as_ref().and_then(|p| p.commit.as_deref()) {
+            let engine = d.engine.as_ref().and_then(|e| e.commit.as_deref());
+            if engine != Some(c) {
+                let short: String = c.chars().take(10).collect();
+                origin.push(format!("project at {short}"));
+            }
         }
         if let Some(t) = &d.trigger {
             let how = match t.kind.as_str() {
