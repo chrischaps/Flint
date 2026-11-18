@@ -63,7 +63,7 @@ pub fn check(source: &StyleSource, user: &str) -> Result<Report, String> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn check_pass(source: &StyleSource, pass: usize, user: &str) -> Result<Report, String> {
     let composed = compose_pass(source, pass, user);
-    let file = source.passes[pass].wgsl_path.display().to_string();
+    let file = shown(&source.passes[pass].wgsl_path);
     let mut module = naga::front::wgsl::parse_str(&composed.text).map_err(|e| {
         locate(
             &composed,
@@ -613,7 +613,7 @@ pub fn compiler_error_pass(
         .filter(|m| m.message_type == wgpu::CompilationMessageType::Error)
         .collect();
     let first = errors.first()?;
-    let file = source.passes[pass].wgsl_path.display().to_string();
+    let file = shown(&source.passes[pass].wgsl_path);
     let at = first
         .location
         .map(|l| (l.line_number, l.line_position))

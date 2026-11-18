@@ -615,14 +615,14 @@ pub(super) fn upload_image(
     name: &str,
 ) -> Result<wgpu::TextureView, String> {
     let image = crate::open_image(path)
-        .map_err(|e| format!("{}: {e}", path.display()))?
+        .map_err(|e| format!("{}: {e}", shown(path)))?
         .to_rgba8();
     let (width, height) = image.dimensions();
     let max = device.limits().max_texture_dimension_2d;
     if width == 0 || height == 0 || width > max || height > max {
         return Err(format!(
             "{}: {width}x{height} is not a size this GPU binds (1..{max} a side)",
-            path.display()
+            shown(path)
         ));
     }
     let size = wgpu::Extent3d {
@@ -728,7 +728,7 @@ impl CustomPass {
         let user = match flint_core::vfs::read_to_string(path) {
             Ok(user) => user,
             Err(e) => {
-                self.set_error(i, Some(format!("{}: {e}", path.display())));
+                self.set_error(i, Some(format!("{}: {e}", shown(path))));
                 return;
             }
         };
@@ -800,7 +800,7 @@ impl CustomPass {
                 i,
                 Some(format!(
                     "{}: the GPU refused it: {e}",
-                    source.passes[i].wgsl_path.display()
+                    shown(&source.passes[i].wgsl_path)
                 )),
             ),
             (None, None) => {
