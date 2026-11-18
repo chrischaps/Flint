@@ -74,6 +74,14 @@ path = "examples/styles/papers/cotton.png"
 sha256 = "2b3247309acd0c985c99bf6e4b1862d7bde27e2ffb3b2c735969874a9e654517"
 
 [[borrow]]
+path = "examples/styles/papers/kraft.png"
+sha256 = "3d6b0b559e5990e4b37df766fd9016c9914889475ade0259e9e55cb8a7859aa9"
+
+[[borrow]]
+path = "examples/styles/papers/washi.png"
+sha256 = "8df1ac69613f874150c26ca439364599aa3f42e84f2f741915b73fc4929dad0c"
+
+[[borrow]]
 path = "examples/terrain/dirt.png"
 sha256 = "951e94938c101fbb5b8e62e95ce3a21a1b073fa80bda057abdbcfd78fdfba23f"
 

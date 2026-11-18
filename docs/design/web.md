@@ -886,7 +886,51 @@ Desktop, 1920x1080, RTX 4070 laptop, best of five alternating runs:
 
 The control isn't scissored and moved within this machine's run-to-run
 spread. The saving scales with the share of the screen the props leave
-untouched, which is what a phone pays for. The browser is unmeasured.
+untouched, which is what a phone pays for.
+
+**In the browser (#538).** Measured with `tools/web-perf/run.mjs` on a
+`flint export web` folder of #270's ASCII variants plus
+`examples/watercolor.scene.toml` (watercolor is scissored since #538 too),
+each page twice: as written, and with the page's `?scissor=0`, which draws
+the full passes as `FLINT_STYLE_SCISSOR=0` does natively. Chrome 157, RTX
+4070 laptop, 1920x1080 device pixels, two 10 s windows a page, three runs
+(two at DPR 1, one at DPR 2) on 2026-11-17, the player built from the
+#538 branch:
+
+| page | canvas / scene | pass | scissored | `scissor=0` |
+|---|---|---|---|---|
+| DPR 1, `ascii_entities` | 1920x1080 / 1920x1080 | ASCII | 0.83--0.89 | 1.52--1.60 ms |
+| | | Style edges | 0.24--0.26 | 0.50--0.54 ms |
+| DPR 1, `watercolor` | 1920x1080 / 1920x1080 | Watercolor | 0.61--0.67 | 1.07--1.22 ms |
+| DPR 2 (cap 1.5), `ascii_entities` | 1920x1080 / 1440x810 | ASCII | 1.34 | 1.56--1.61 ms |
+| | | Style edges | 0.26 | 0.36--0.37 ms |
+| DPR 2, `watercolor` | 1920x1080 / 1440x810 | Watercolor | 0.76--0.79 | 1.44--1.53 ms |
+
+Every page said `under vsync at idle clocks` (39--46% busy), so the
+times read about four times the desktop's (`flint render --gpu-time`:
+watercolor 0.110 against 0.236 ms, ASCII 0.17 against 0.45). Compare the
+two columns, taken minutes apart in one Chrome, rather than either with
+the desktop. One more read is left out of the table: the first DPR 1
+`watercolor+scissor=0` window caught the GPU at 12% busy and read every
+pass lower (Watercolor 0.29, SSAO 1.00, against 3.3 on its next window).
+The control page (`ascii_none`) and the passes nothing scissors (Style
+mask 0.13--0.16, Bloom, Composite) are the same in both columns.
+
+- **The browser saves what the desktop does, in proportion.** ASCII at
+  DPR 1 is 45% cheaper scissored (desktop 63%), watercolor 45% (desktop
+  53%), and the shared edge pass, which reads only inside the per-entity
+  readers' rect (#743), half.
+- **DPR 2 saves less on ASCII**: its glyph rect is grown by two of the
+  largest cell, and 8 pt cells are 16 device pixels there, so the rect
+  holds more of the frame around the six props (15% off). Watercolor's
+  reach is a few points, and it still halves.
+- **The scissor adds a render pass on ASCII** (30 passes a frame against
+  29) and no bind group or buffer write; watercolor's count is the same
+  (22).
+
+The phone (#378's Pixel) is still unmeasured: it needs the pixel lock and
+Chris's phone. Mali's timestamps read 0.00 after `Scene` there, so it is a
+frame-time comparison, unpaced (`?fps=native`), against `?scissor=0`.
 
 **DX12.** The ASCII and mask passes read every texture with
 `textureLoad` and bind no sampler of their own (the chain's one linear

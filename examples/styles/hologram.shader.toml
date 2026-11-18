@@ -16,6 +16,10 @@ label = "Hologram"
 stage = "display"
 shader = "hologram.wgsl"
 inputs = ["mask"]
+# Off its entities the style returns p.color as it is (its rim is drawn on
+# their own pixels), so it reaches 0 points past them: the framework draws
+# it only inside their screen bounds (#538)
+reach = 0
 
 [params.lines]
 default = 3.0

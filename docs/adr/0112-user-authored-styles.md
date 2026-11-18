@@ -166,7 +166,7 @@ prototype; #275 wires the player and viewer.
 | no `fn style`, a binding, an entry point of the user's own | naga IR check | the same as above |
 | the backend's own compiler refuses what naga passed | `push_error_scope` around the pipeline (blocking natively) | the same as above |
 | a later edit breaks it (hot reload) | rebuild | the **last good build keeps drawing**; the error replaces the old one; fixing it logs "compiles again" |
-| a loop that never ends | **not detectable**, so every loop is **guarded** (#411, natively) | each user loop stops after `LOOP_LIMIT` (4096) turns a run; its pixel draws whatever it had reached, and the frame finishes. A `loop {}` style renders in `flint render` in 0.9 ms of GPU at 960x540. On the web (no naga) the loop runs as written, unguarded |
+| a loop that never ends | **not detectable**, so every loop is **guarded** (#411, natively) | each user loop stops after `LOOP_LIMIT` (4096) turns a run; its pixel draws whatever it had reached, and the frame finishes. A `loop {}` style renders in `flint render` in 0.9 ms of GPU at 960x540. On the web (no naga) the browser builds the guarded module `flint bundle` packed (#550) |
 | many texture reads | check | >32 reads written out are warned |
 | the shader crashes the driver | `catch_unwind` around `create` ([ADR 0111](0111-stylized-rendering.md)) | the style stays off; the renderer reports a lost device |
 
@@ -242,14 +242,12 @@ before. What it costs and shows:
   writing) is reported as a Flint bug and the style draws a passthrough;
   the unguarded text is never built.
 
-**On the web the guard is not run.** The player has no naga on wasm (§6):
-shipping `wgsl-in`, the validator and `wgsl-out` would put most of naga
-into the web build against the 4 MB gzip line (#123), to guard styles that
-`flint bundle` has already checked natively. The cheaper road is for the
-bundle to carry the guarded module, written at pack time, so the browser
-compiles that with no naga at all (#550). Until then a
-runaway loop in a bundle loses the device in the browser, as before (not
-tried here).
+**On the web the guard is not run; its result is packed.** The player has
+no naga on wasm (§6): shipping `wgsl-in`, the validator and `wgsl-out`
+would put most of naga into the web build against the 4 MB gzip line
+(#123), to guard styles that `flint bundle` has already checked natively.
+So the bundle carries the guarded module, written at pack time, and the
+browser compiles that with no naga at all. *Built in #550, below.*
 
 ### 5. Hot reload
 
@@ -275,6 +273,20 @@ scene's `[post_process]` (see "Built in #275" below).
 - **Bundles already carry them.** `flint bundle` packs `.toml` and
   `.wgsl` files that aren't excluded, and every read goes through the
   vfs.
+- **A bundle carries the loop guard too** (#550). For each style pass
+  with a loop to guard, `flint bundle` packs `Report::guarded` as
+  `<style>.guarded.wgsl` (`<style>.<pass>.guarded.wgsl` for a style of
+  several passes) beside the `.shader.toml`, and on wasm `check_pass`
+  returns it as the report's `guarded`, so `CustomPass::rebuild` builds it
+  as it does natively. A style without loops, or whose loops are all
+  bounded (#424), packs nothing. **A stale guarded module can't happen in
+  a bundle**: nothing in it changes after packing, and there is no hot
+  reload on the web. The module still names what it was written from: its
+  first line carries the SHA-256 of the composed text the guard ran on,
+  and the web takes it only when the text it composes hashes the same
+  (`custom::packed_guarded`). A module written by another engine version
+  (a prelude that moved) or beside a WGSL edited afterwards is passed
+  over with a warning, and the pass builds what it composed, unguarded.
 
 ## Alternatives considered
 
@@ -577,6 +589,39 @@ project reported nothing before and the cellar's warning after.
 Left as it was: the viewer and `flint render` show one scene a process,
 and `flint render --list-styles` and `flint style list` list every
 registered style, which for one scene is the ones it sees.
+
+## Built in #550: the loop guard on the web
+
+- **The packer writes it, the browser reads it.** After the bundle's check
+  passes, `flint bundle` reads every packed `.shader.toml` from the packed
+  files and calls `custom::guarded_file` for each pass: the native
+  `check_pass`, and when its `guarded` is `Some`, that module under a
+  first line `// flint guarded module (#550): <wgsl> as composed
+  sha256:<hex>`. On wasm `check_pass` composes the pass as before, and
+  `custom::packed_guarded` returns the packed module when the composed
+  text's hash matches the header, logging that it builds it. `rebuild`
+  is unchanged: it builds `report.guarded` on both targets.
+- **Named by the style, not its WGSL.** `spin.shader.toml` packs
+  `spin.guarded.wgsl`; a style of several passes packs
+  `<style>.<pass>.guarded.wgsl` for each pass with a loop to guard. Two
+  styles that share a WGSL file compose it with different preludes, so
+  each gets its own. A game file already at that path refuses the
+  bundle rather than be overwritten.
+- **No bytes against the gzip line** (#123): the wasm gains the hash
+  check (SHA-256 was in the build already, for `pipeline_cache`) and a
+  file read. The bundle gains the module: 4.2 KB for a one-function style.
+- **Measured** (2026-11-17, RTX 4070 laptop, Chrome over CDP, the
+  branch's own trunk build): a `flint init` game whose display style
+  walks forever on the left half of the frame (`loop` with a step that
+  points away from its goal there). In the browser it drew the same
+  split as `flint render`: the left half at the guard's limit, the right
+  where each walk ended. 562 frames in the last 10 s at 28 s,
+  nothing in the console about a lost device. The style's pass read
+  5.33 ms of GPU in `?perf=1` (at idle clocks, which reads high) against
+  0.12 ms for the same tint with no loop: a guarded runaway still costs
+  4096 turns a pixel. The same game without the guarded module was not
+  played: a runaway shader resets the display driver (TDR), which every
+  other GPU job on this machine would have felt.
 
 ## Follow-ups
 
